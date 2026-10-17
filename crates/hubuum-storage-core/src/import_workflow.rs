@@ -3,7 +3,7 @@ use std::fmt;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hubuum_computed_fields::Definition;
-use hubuum_domain::{ClassId, CollectionId, ObjectId, ResourceRevision, TaskId};
+use hubuum_domain::{ClassId, CollectionId, ObjectId, PlaintextPassword, ResourceRevision, TaskId};
 use serde_json::Value;
 
 use crate::{
@@ -881,7 +881,22 @@ impl StorageImportOperation {
                     validate_identity_scope_key(key)?;
                 }
                 match &parts.subtype {
-                    StorageImportPrincipalSubtype::Human { .. } => Ok(()),
+                    StorageImportPrincipalSubtype::Human {
+                        password,
+                        password_hash,
+                        ..
+                    } => {
+                        if password.is_some() && password_hash.is_some() {
+                            return Err(StorageError::invalid_input(
+                                "A human principal import accepts password or password_hash, not both",
+                            ));
+                        }
+                        if let Some(password) = password {
+                            PlaintextPassword::new(password.clone())
+                                .map_err(|error| StorageError::invalid_input(error.to_string()))?;
+                        }
+                        Ok(())
+                    }
                     StorageImportPrincipalSubtype::ServiceAccount {
                         owner_group_ref,
                         owner_group_key,

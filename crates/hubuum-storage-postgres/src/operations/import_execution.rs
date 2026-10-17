@@ -1,6 +1,7 @@
 //! Atomic PostgreSQL execution for validated backend-neutral import plans.
 use super::task_execution::{claimed_task, live_claimed_task};
 use hubuum_domain::JsonSchemaLimits;
+use hubuum_domain::PlaintextPassword;
 use hubuum_storage_core::{
     FencedImportItem, FencedImportPlan, FencedImportResults, StorageImportResult, StorageTaskLease,
 };
@@ -1672,7 +1673,13 @@ async fn upsert_principal(
             password: Some(password),
             password_hash: None,
             ..
-        } => Some(hash_password_async(password.clone()).await?),
+        } => Some(
+            hash_password_async(
+                PlaintextPassword::new(password.clone())
+                    .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?,
+            )
+            .await?,
+        ),
         StorageImportPrincipalSubtype::Human {
             password: None,
             password_hash,
@@ -2052,6 +2059,10 @@ fn validate_principal_credentials(
             "A human principal import accepts password or password_hash, not both",
         ));
     }
+    if let Some(password) = password {
+        PlaintextPassword::new(password.clone())
+            .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
+    }
     if let Some(hash) = password_hash {
         let parsed = PasswordHash::new(hash).map_err(|_| {
             PostgresStorageError::invalid_input(
@@ -2070,7 +2081,7 @@ fn validate_principal_credentials(
     Ok(())
 }
 
-async fn hash_password_async(password: String) -> Result<String, PostgresStorageError> {
+async fn hash_password_async(password: PlaintextPassword) -> Result<String, PostgresStorageError> {
     let permit = PASSWORD_WORK_SEMAPHORE
         .clone()
         .acquire_owned()
@@ -2081,7 +2092,7 @@ async fn hash_password_async(password: String) -> Result<String, PostgresStorage
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
         Argon2::default()
-            .hash_password(password.as_bytes())
+            .hash_password(password.as_str().as_bytes())
             .map(|hash| hash.to_string())
             .map_err(|error| PostgresStorageError::internal(error.to_string()))
     })

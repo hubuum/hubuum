@@ -5,6 +5,7 @@ use crate::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use crate::services::identity::ensure_identity_scope;
 use crate::storage::{LocalIdentityCredentialStorage, StorageDefaultAdminBootstrap, StorageHandle};
 use crate::utilities::auth::{generate_random_password, hash_password_async};
+use hubuum_domain::PlaintextPassword;
 
 use tracing::{error, warn};
 
@@ -41,9 +42,11 @@ pub(crate) async fn init(storage: &StorageHandle, settings: &InitializationSetti
 
     let created = bootstrap_default_admin_if_required(storage, settings, || async {
         let default_password = generate_random_password(32);
-        hash_password_async(default_password)
-            .await
-            .map_err(|error| format!("Failed to hash default administrator password: {error}"))
+        hash_password_async(
+            PlaintextPassword::new(default_password).map_err(|error| error.to_string())?,
+        )
+        .await
+        .map_err(|error| format!("Failed to hash default administrator password: {error}"))
     })
     .await?;
 

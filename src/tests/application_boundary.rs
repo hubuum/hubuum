@@ -2936,7 +2936,7 @@ fn external_identity_sync_is_owned_by_the_postgres_adapter() {
     );
     for method in [
         "get_external_principal_state",
-        "mark_external_sync_attempted",
+        "record_external_sync_failure",
         "sync_external_user",
     ] {
         let method_body = item_body(implementation, "fn", method);

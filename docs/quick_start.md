@@ -247,6 +247,7 @@ Paginated responses include `X-Page-Limit` with the effective page size.
 | `HUBUUM_TOKEN_RETENTION_PURGE_BATCH_SIZE` | `1000` | Maximum token rows deleted in one purge batch; minimum `10` |
 | `HUBUUM_LOGIN_RATE_LIMIT_ENABLED` | `true` | Master switch for login throttling |
 | `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS` | `5` | Max failed attempts per `(name, IP)` per window |
+| `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_ACCOUNT` | `20` | Max failed attempts per scoped account across networks (`0` disables) |
 | `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP` | `20` | Max failed attempts per client IP per window (`0` disables) |
 | `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET` | `100` | Max failed attempts per client subnet per window (`0` disables) |
 | `HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS` | `300` | Login rate-limit sliding window in seconds |

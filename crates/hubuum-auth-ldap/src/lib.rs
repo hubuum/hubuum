@@ -461,9 +461,7 @@ impl LdapIdentityProvider {
     ) -> Result<AuthenticatedExternalUser, AuthProviderError> {
         let profile = self.profile_from_entry(request.username(), dn, entry)?;
         if profile.subject != request.expected_subject() {
-            return Err(AuthProviderError::Protocol(
-                "ldap refresh returned a different external subject".to_string(),
-            ));
+            return Err(AuthProviderError::AuthenticationFailed);
         }
         Ok(AuthenticatedExternalUser {
             profile,
@@ -864,6 +862,20 @@ mod tests {
     }
 
     #[test]
+    fn refresh_filter_preserves_account_eligibility_and_escapes_username() {
+        let provider = LdapIdentityProvider::new(LdapScopeConfig {
+            user_filter: "(&(uid={username})(employeeType=active))".into(),
+            ..ldap_config("ldaps://localhost")
+        })
+        .unwrap();
+        let request = ExternalUserRefreshRequest::new("alice*", "subject").unwrap();
+        assert_eq!(
+            provider.refresh_filter(&request),
+            "(&(uid=alice\\2a)(employeeType=active))"
+        );
+    }
+
+    #[test]
     fn refresh_filter_uses_username_instead_of_stable_subject() {
         let provider = LdapIdentityProvider::new(LdapScopeConfig {
             subject_attribute: "entryUUID".into(),
@@ -903,11 +915,7 @@ mod tests {
             .refreshed_user_from_entry(&request, &entry.dn, &entry)
             .unwrap_err();
 
-        assert!(matches!(error, AuthProviderError::Protocol(_)));
-        assert_eq!(
-            error.to_string(),
-            "provider protocol error: ldap refresh returned a different external subject"
-        );
+        assert!(matches!(error, AuthProviderError::AuthenticationFailed));
     }
 
     #[test]

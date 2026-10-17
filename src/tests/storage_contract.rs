@@ -1,4 +1,5 @@
 use hubuum_storage_core::{EventSinkGrantAction, StorageAuditSubject, StorageEventSinkGrantChange};
+mod authentication;
 mod authorization_resources;
 mod catalog_filters;
 mod credential_approvals;
@@ -36,7 +37,7 @@ use hubuum_storage_conformance::{
     verify_backend_audit_contract, verify_delivery_fault_contract,
     verify_lease_loss_fault_contract, verify_restore_coordination_fault_contract,
 };
-use hubuum_storage_core::{StorageBackupBudget, StorageTaskClaimToken};
+use hubuum_storage_core::{StorageBackupBudget, StorageExternalSyncFailure, StorageTaskClaimToken};
 use hubuum_storage_memory::MemoryStorage;
 use hubuum_storage_postgres::test_support::fanout_event;
 use hubuum_storage_postgres::{
@@ -3349,7 +3350,10 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
             .expect("synchronized external identity should have refresh state");
         assert_eq!(external_state.identity_scope(), external_scope);
         backend
-            .mark_external_sync_attempted(principal_id(external_id.id()))
+            .record_external_sync_failure(
+                principal_id(external_id.id()),
+                StorageExternalSyncFailure::Unavailable,
+            )
             .await
             .expect("certified backend should record external sync attempts");
 

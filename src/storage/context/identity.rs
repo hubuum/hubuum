@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_storage_core::StorageExternalSyncFailure;
 use hubuum_storage_core::{StorageAuthorizationResource, StorageAuthorizationResourcesQuery};
 
 #[async_trait]
@@ -455,17 +456,21 @@ impl ExternalIdentityStorage for StorageHandle {
         .await
     }
 
-    async fn mark_external_sync_attempted(
+    async fn record_external_sync_failure(
         &self,
         principal_id: PrincipalId,
+        failure: StorageExternalSyncFailure,
     ) -> Result<(), StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ExternalIdentity,
+            // Keep the established telemetry label for existing dashboards.
             "mark_external_sync_attempted",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.mark_external_sync_attempted(principal_id).await
+                    backend
+                        .record_external_sync_failure(principal_id, failure)
+                        .await
                 })
             },
         )

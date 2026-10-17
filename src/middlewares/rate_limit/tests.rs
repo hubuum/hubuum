@@ -34,6 +34,7 @@ fn valkey_store_settings_debug_redacts_connection_url() {
 
 #[rstest]
 #[case("u:local/alice|192.0.2.1", "principal_ip")]
+#[case("p:local/alice", "principal")]
 #[case("i:192.0.2.1", "ip")]
 #[case("s:192.0.2.0/24", "subnet")]
 #[case("x:unexpected", "unknown")]
@@ -45,6 +46,7 @@ fn cfg() -> LoginRateLimitConfig {
     LoginRateLimitConfig {
         enabled: true,
         max_attempts: 5,
+        max_attempts_per_account: 0,
         max_attempts_per_ip: 20,
         max_attempts_per_subnet: 100,
         window_seconds: 300,
@@ -111,6 +113,97 @@ async fn assert_store_contract(store: &impl LoginRateLimitStore, username: &str)
 async fn memory_store_satisfies_limiter_contract() {
     let _guard = LOGIN_RATE_LIMIT_TEST_LOCK.lock().await;
     assert_store_contract(&MemoryLoginRateLimitStore, "memory-contract").await;
+}
+
+async fn assert_account_limit_across_networks(store: &impl LoginRateLimitStore) {
+    let config = LoginRateLimitConfig {
+        max_attempts_per_account: 2,
+        ..cfg()
+    };
+    let permit = |scope: &str, name: &str, ip: &str| {
+        let ip = ip.parse().unwrap();
+        LoginAttemptPermit {
+            scopes: scopes_for(scope, name, Some(ip), &config),
+            user_ip_key: user_ip_key(scope, name, &ip_label(Some(ip))),
+            reservation: Reservation::new(Duration::from_secs(config.window_seconds)),
+            enabled: true,
+        }
+    };
+    store.clear_all().await.unwrap();
+    for ip in ["192.0.2.1", "198.51.100.1"] {
+        let attempt = permit("local", "alice", ip);
+        assert!(store.begin(&attempt, &config).await.unwrap());
+        store
+            .finish(&attempt, LoginAttemptOutcome::Failed, &config)
+            .await
+            .unwrap();
+    }
+    assert!(
+        !store
+            .begin(&permit("local", "alice", "203.0.113.1"), &config)
+            .await
+            .unwrap()
+    );
+    for (scope, name) in [("local", "bob"), ("directory", "alice")] {
+        let attempt = permit(scope, name, "203.0.113.1");
+        assert!(store.begin(&attempt, &config).await.unwrap());
+        store
+            .finish(&attempt, LoginAttemptOutcome::Aborted, &config)
+            .await
+            .unwrap();
+    }
+    store.clear_all().await.unwrap();
+    let first = permit("local", "alice", "192.0.2.1");
+    assert!(store.begin(&first, &config).await.unwrap());
+    store
+        .finish(&first, LoginAttemptOutcome::Failed, &config)
+        .await
+        .unwrap();
+    let success = permit("local", "alice", "198.51.100.1");
+    assert!(store.begin(&success, &config).await.unwrap());
+    store
+        .finish(&success, LoginAttemptOutcome::Succeeded, &config)
+        .await
+        .unwrap();
+    let first = permit("local", "alice", "203.0.113.1");
+    let second = permit("local", "alice", "203.1.113.1");
+    assert!(store.begin(&first, &config).await.unwrap());
+    assert!(store.begin(&second, &config).await.unwrap());
+    assert!(
+        !store
+            .begin(&permit("local", "alice", "203.2.113.1"), &config)
+            .await
+            .unwrap()
+    );
+    store
+        .finish(&first, LoginAttemptOutcome::Aborted, &config)
+        .await
+        .unwrap();
+    store
+        .finish(&second, LoginAttemptOutcome::Aborted, &config)
+        .await
+        .unwrap();
+    store.clear_all().await.unwrap();
+}
+
+#[tokio::test]
+async fn memory_account_limit_spans_networks_and_reserves_concurrent_attempts() {
+    let _guard = LOGIN_RATE_LIMIT_TEST_LOCK.lock().await;
+    assert_account_limit_across_networks(&MemoryLoginRateLimitStore).await;
+}
+
+#[cfg(feature = "login-rate-limit-valkey")]
+#[tokio::test]
+#[ignore = "requires Valkey or Redis"]
+async fn valkey_account_limit_spans_networks_and_reserves_concurrent_attempts() {
+    let store = valkey::ValkeyLoginRateLimitStore::connect(
+        valkey_test_url(),
+        format!("hubuum:account-limit:{}", Uuid::new_v4()),
+        Duration::from_secs(1),
+    )
+    .await
+    .unwrap();
+    assert_account_limit_across_networks(&store).await;
 }
 
 #[cfg(feature = "login-rate-limit-valkey")]

@@ -62,6 +62,37 @@ a mapped name must match at least one regular expression to be included.
 Omitting the list or setting it to an empty list preserves all groups produced
 by a group rule.
 
+### Identity subjects and account eligibility
+
+`subject_attribute` selects the identity key within each scope. Use an immutable
+identifier such as `entryUUID` when the provider exposes one. Providers that only
+expose usernames can use `subject_attribute = "uid"` (or their username attribute).
+Repeated logins with the same configured subject continue to use the same local
+account. With username subjects, the directory must prevent username reuse: Hubuum
+cannot distinguish a recycled username from the original identity.
+
+When a different subject presents an existing name, synchronization fails without
+changing that account, its memberships, or its permissions. A stable subject can
+still rename its own principal to an unused name. Changing `subject_attribute`
+on an established scope is an identity migration: provision a new scope and
+explicitly review permission assignments instead of relying on name matching.
+
+Account eligibility belongs in `user_filter`, which is applied both at login and
+at token-time refresh. Include your directory's enabled-account condition; for
+example, if your directory uses `employeeType=active` as its eligibility policy:
+
+```toml
+user_filter = "(&(uid={username})(employeeType=active))"
+```
+
+Use your provider's actual status attributes and matching rules, and ensure the
+service bind can search them. Hubuum does not infer account status from arbitrary
+returned attributes. A successful service-account search is not a user password
+bind, so a directory rejecting disabled users' password binds alone does not
+invalidate existing Hubuum tokens. Test that disabling a user removes it from
+this configured search. Eligibility changes are detected at the next refresh;
+choose `refresh_ttl_seconds` to match your revocation requirements.
+
 ### Multiple LDAP scopes
 
 Each `[[ldap]]` entry creates an independent provider instance keyed by its
@@ -125,10 +156,14 @@ TTL. Refresh locates the current directory entry with `user_filter` and the
 materialized principal name, then verifies that the entry's
 `subject_attribute` still matches the stable subject stored at login. The
 subject attribute therefore does not need to support an efficient
-directory-wide search. If refresh fails, cached membership remains usable only
-inside the configured max-stale window. Further requests back off for the scope
-refresh TTL before retrying the provider, so one outage does not serialize
-every request on repeated LDAP timeouts. Once the cache exceeds
+directory-wide search. Only temporary provider unavailability permits cached
+membership inside the configured max-stale window. A missing/filtered-out account,
+a changed subject, an invalid provider response, or a configuration error fails
+closed: cached authority is invalidated and existing tokens are revoked. A later
+outage cannot restore rejected authority; a new successful login is required.
+Further requests back off for the scope refresh TTL before retrying the provider,
+so one outage does not serialize every request on repeated LDAP timeouts. Once
+the cache exceeds
 `max_stale_seconds`, requests fail with `503 Service Unavailable` during that
 backoff instead of using stale membership. Both durations must be positive and
 representable, and `max_stale_seconds` must be greater than or equal to

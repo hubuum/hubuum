@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_storage_core::StorageExternalSyncFailure;
 use hubuum_storage_core::{StorageAuthorizationResource, StorageAuthorizationResourcesQuery};
 
 #[async_trait]
@@ -869,11 +870,13 @@ impl ExternalIdentityStorage for MemoryStorage {
         .map_err(invalid_contract_value)
     }
 
-    async fn mark_external_sync_attempted(
+    async fn record_external_sync_failure(
         &self,
         principal_id: PrincipalId,
+        failure: StorageExternalSyncFailure,
     ) -> Result<(), StorageError> {
-        let mut state = self.state.write().await;
+        let mut live = self.state.write().await;
+        let mut state = live.clone();
         let current = state
             .users
             .get(&principal_id.id())
@@ -885,6 +888,26 @@ impl ExternalIdentityStorage for MemoryStorage {
             return Ok(());
         }
         let now = Utc::now();
+        if failure == StorageExternalSyncFailure::Rejected {
+            let record = state
+                .users
+                .get_mut(&principal_id.id())
+                .expect("external user exists");
+            record.last_sync_success_at = None;
+            for token in state
+                .tokens
+                .values_mut()
+                .filter(|token| token.principal_id == principal_id)
+            {
+                if token.revoked_at.is_none() {
+                    token.revision = token
+                        .revision
+                        .checked_advance()
+                        .map_err(|error| StorageError::internal(error.to_string()))?;
+                    token.revoked_at = Some(now);
+                }
+            }
+        }
         state
             .users
             .get_mut(&principal_id.id())
@@ -916,10 +939,15 @@ impl ExternalIdentityStorage for MemoryStorage {
         .settings(principal.settings().clone())
         .external_subject(principal.external_subject().map(ToOwned::to_owned))
         .last_sync_attempted_at(Some(now))
-        .last_sync_success_at(principal.last_sync_success_at())
+        .last_sync_success_at(if failure == StorageExternalSyncFailure::Rejected {
+            None
+        } else {
+            principal.last_sync_success_at()
+        })
         .try_build()
         .map_err(invalid_contract_value)?;
         state.principals.insert(principal_id.id(), updated);
+        *live = state;
         Ok(())
     }
 
@@ -955,13 +983,27 @@ impl ExternalIdentityStorage for MemoryStorage {
             state.identity_scopes.insert(id.id(), scope.clone());
             scope
         };
+        // A name is not evidence that two external identities are the same user.
+        // Check all principals, including non-human and unmanaged collisions.
+        if state.principals.values().any(|principal| {
+            principal.identity_scope_id() == scope.id()
+                && ((principal.name() == name
+                    && principal.external_subject() != Some(subject.as_str()))
+                    || ((principal.name() == name
+                        || principal.external_subject() == Some(subject.as_str()))
+                        && (!principal.provider_managed()
+                            || principal.kind() != PrincipalKind::Human)))
+        }) {
+            return Err(StorageError::conflict(
+                "identity scope already contains a different principal with this name",
+            ));
+        }
         let existing_id = state
             .users
             .iter()
             .find(|(_, record)| {
                 record.identity_scope_id == scope.id()
-                    && (record.external_subject.as_deref() == Some(subject.as_str())
-                        || record.name == name)
+                    && record.external_subject.as_deref() == Some(subject.as_str())
             })
             .map(|(id, _)| *id);
         let now = Utc::now();
@@ -2830,6 +2872,20 @@ fn create_token_in_state(
 ) -> Result<StorageMutationOutcome<StorageTokenMetadata>, StorageError> {
     let claim = request.take_credential_claim();
     let request = request.into_parts();
+    if let Some(login) = request.login() {
+        let matches = state
+            .users
+            .get(&request.principal_id().id())
+            .is_some_and(|record| {
+                login.matches_user(&record.user)
+                    && (!record.provider_managed || record.last_sync_success_at.is_some())
+            });
+        if !matches {
+            return Err(StorageError::authentication_required(
+                "Authentication failed",
+            ));
+        }
+    }
     let approval_audit = state.consume_credential_claim(
         claim.as_ref(),
         StorageCredentialOperation::CreateToken,

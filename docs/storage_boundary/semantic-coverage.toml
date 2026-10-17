@@ -21,7 +21,7 @@ best_effort_observation = [
 bootstrap_and_provider_reconciliation = [
     "LocalIdentityCredentialStorage::bootstrap_default_admin",
     "IdentityScopeStorage::ensure_identity_scope",
-    "ExternalIdentityStorage::mark_external_sync_attempted",
+    "ExternalIdentityStorage::record_external_sync_failure",
     "ExternalIdentityStorage::sync_external_user",
 ]
 workflow_state_machine = [
@@ -139,9 +139,9 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.ExternalIdentityStorage]
 source = "crates/hubuum-storage-core/src/identity_operations.rs"
-methods = ["get_external_principal_state", "mark_external_sync_attempted", "sync_external_user"]
-effects = { point_read = ["get_external_principal_state"], workflow_mutation = ["mark_external_sync_attempted", "sync_external_user"] }
-shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
+methods = ["get_external_principal_state", "record_external_sync_failure", "sync_external_user"]
+effects = { point_read = ["get_external_principal_state"], workflow_mutation = ["record_external_sync_failure", "sync_external_user"] }
+shared_scenarios = ["src/tests/storage_contract/authentication.rs::every_backend_preserves_subject_binding", "src/tests/storage_contract/authentication.rs::every_backend_allows_rename_only_for_the_same_external_subject", "src/tests/storage_contract/authentication.rs::every_backend_invalidates_rejected_identity_even_during_later_outage", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
 
 [traits.UserStorage]
 source = "crates/hubuum-storage-core/src/identity_users.rs"
@@ -153,7 +153,7 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 source = "crates/hubuum-storage-core/src/identity_tokens.rs"
 methods = ["create_credential_approval", "get_credential_approval", "list_retained_tokens", "token_key_usage", "create_token", "renew_token", "get_token_metadata", "load_token_metadata_by_ids", "revoke_token", "revoke_token_by_hash", "revoke_all_principal_tokens"]
 effects = { point_read = ["get_credential_approval", "get_token_metadata"], page_read = ["list_retained_tokens"], batch_read = ["load_token_metadata_by_ids"], complete_read = ["token_key_usage"], audited_mutation = ["create_credential_approval", "create_token", "renew_token", "revoke_token", "revoke_token_by_hash", "revoke_all_principal_tokens"] }
-shared_scenarios = ["src/tests/storage_contract/login_events.rs::every_backend_commits_login_snapshot_with_token_and_lifecycle_receipts", "src/tests/storage_contract/login_events.rs::every_backend_rejects_failed_login_issuance_without_a_success_event", "src/tests/storage_contract/login_events.rs::ordinary_token_issuance_never_records_a_login", "src/tests/storage_contract/credential_approvals.rs::approvals_allow_only_one_concurrent_consumer_and_retain_evidence", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations", "src/tests/storage_contract.rs::every_available_storage_backend_migrates_legacy_token_digests_safely"]
+shared_scenarios = ["src/tests/storage_contract/authentication.rs::every_backend_rejects_login_evidence_after_credential_change", "src/tests/storage_contract/authentication.rs::concurrent_password_reset_cannot_leave_a_login_token_active", "src/tests/storage_contract/login_events.rs::every_backend_commits_login_snapshot_with_token_and_lifecycle_receipts", "src/tests/storage_contract/login_events.rs::every_backend_rejects_failed_login_issuance_without_a_success_event", "src/tests/storage_contract/login_events.rs::ordinary_token_issuance_never_records_a_login", "src/tests/storage_contract/credential_approvals.rs::approvals_allow_only_one_concurrent_consumer_and_retain_evidence", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations", "src/tests/storage_contract.rs::every_available_storage_backend_migrates_legacy_token_digests_safely"]
 
 [traits.AuthorizationDataStorage]
 source = "crates/hubuum-storage-core/src/authorization.rs"

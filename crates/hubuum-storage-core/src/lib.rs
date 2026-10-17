@@ -161,15 +161,15 @@ pub use identity::{
 pub use identity_operations::{
     ExternalIdentityStorage, GroupMembershipStorage, IdentityScopeStorage,
     LocalIdentityCredentialStorage, ServiceAccountStorage, StorageDefaultAdminBootstrap,
-    StorageExternalGroup, StorageExternalPrincipalState, StorageExternalUserSync,
-    StorageExternalUserSyncBuilder, StorageGroupListQuery, StorageIdentityGroup,
-    StorageIdentityGroupBuilder, StorageIdentityScope, StorageIdentityScopeEnsure,
-    StorageLocalPasswordReset, StoragePrincipalGroup, StoragePrincipalGroupListQuery,
-    StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountDetails,
-    StorageServiceAccountDisableOutcome, StorageServiceAccountListItem,
-    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountUpdate,
-    StorageSyncedHuman, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
-    StorageTokenMetadataBuilder, StorageTokenObservation,
+    StorageExternalGroup, StorageExternalPrincipalState, StorageExternalSyncFailure,
+    StorageExternalUserSync, StorageExternalUserSyncBuilder, StorageGroupListQuery,
+    StorageIdentityGroup, StorageIdentityGroupBuilder, StorageIdentityScope,
+    StorageIdentityScopeEnsure, StorageLocalPasswordReset, StoragePrincipalGroup,
+    StoragePrincipalGroupListQuery, StorageServiceAccount, StorageServiceAccountCreate,
+    StorageServiceAccountDetails, StorageServiceAccountDisableOutcome,
+    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
+    StorageServiceAccountUpdate, StorageSyncedHuman, StorageTokenListQuery, StorageTokenListState,
+    StorageTokenMetadata, StorageTokenMetadataBuilder, StorageTokenObservation,
 };
 pub use identity_resources::{
     GroupStorage, PrincipalStorage, StorageGroupCreate, StorageGroupMember, StorageGroupUpdate,
@@ -177,7 +177,7 @@ pub use identity_resources::{
     StoragePrincipalSettingsMutation,
 };
 pub use identity_tokens::{
-    StoragePrincipalTokensRevoke, StorageTokenCreate, StorageTokenCreateParts,
+    StorageLogin, StoragePrincipalTokensRevoke, StorageTokenCreate, StorageTokenCreateParts,
     StorageTokenHashRevoke, StorageTokenIssuancePolicy, StorageTokenIssuancePolicyError,
     StorageTokenKeyUsage, StorageTokenRenew, StorageTokenRevoke, TokenStorage,
 };

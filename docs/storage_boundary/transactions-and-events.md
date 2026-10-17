@@ -103,9 +103,18 @@ fan-out capability creates durable delivery rows, and delivery workers call the
 configured sinks with at-least-once semantics. Notifications reduce latency;
 polling the durable event and delivery state remains the recovery path.
 
-Login issuance uses `StorageTokenCreate::for_login`: `TokenStorage::create_token`
-must commit the token, `token.created`, and `authentication.succeeded` together
-and return both audit receipts. The application supplies a validated
+Login issuance uses `StorageTokenCreate::for_login` with a validated `StorageLogin`
+snapshot. The adapter checks that the current human's password hash and update
+stamp still match the authenticated snapshot and that the user is not anonymized.
+Provider-managed users must also retain a successful external sync; a rejected
+identity cannot issue tokens while its cached authority is invalid.
+This check and token insertion share the principal lock used by password changes,
+so issuance either precedes reset and is revoked, or observes the reset and fails
+with `AuthenticationRequired`. Both backends cover this in
+`src/tests/storage_contract/authentication.rs`.
+
+`TokenStorage::create_token` must commit the token, `token.created`, and
+`authentication.succeeded` together and return both audit receipts. The application supplies a validated
 `EventSubject` after authentication, identity synchronization, and the configured
 administrator-policy check. Adapters persist this immutable snapshot in
 `metadata.subject`; fan-out must not look up current membership or identity.
@@ -146,8 +155,9 @@ for an exception.
   `LocalIdentityCredentialStorage::bootstrap_default_admin` runs only while no
   actor can yet exist; `IdentityScopeStorage::ensure_identity_scope` is
   idempotent provider configuration reconciliation;
-  `ExternalIdentityStorage::mark_external_sync_attempted` is synchronization
-  telemetry; and `ExternalIdentityStorage::sync_external_user` is an
+  `ExternalIdentityStorage::record_external_sync_failure` is synchronization
+  bookkeeping and fails closed by invalidating rejected identities;
+  `ExternalIdentityStorage::sync_external_user` is an
   identity-provider reconciliation operation that emits a system-attributed
   audit event and returns its `StorageMutationOutcome`.
 - Workflow state machines:
@@ -339,3 +349,20 @@ adapters must commit it in the same fenced transaction as the updated checkpoint
 workers and activation proofs use `get_schema_work` without reading past findings.
 Impact does not replace active evidence. Strict activation rechecks the captured baseline
 and population epoch while holding the class boundary.
+
+## External identity rejection
+
+`sync_external_user` matches existing humans by the configured external subject.
+Name collisions with different subjects, unmanaged principals, or other principal
+kinds must fail without overwriting identity state. Stable subjects may rename to
+an unused name; username subjects remain valid identity keys within a scope.
+
+`record_external_sync_failure` distinguishes `Unavailable` from `Rejected`.
+Unavailability records the attempt while preserving the last successful sync.
+Rejection atomically clears the last success, invalidates pending login evidence,
+and revokes all active principal tokens. Subsequent unavailable attempts must not
+restore the rejected cache. Use the same principal lock and transaction ordering
+as token issuance and external synchronization. The operation retains
+`mark_external_sync_attempted` as its telemetry label for compatibility.
+These are synchronization metadata
+and credential invalidation effects, with no independent lifecycle audit event.

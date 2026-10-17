@@ -484,6 +484,7 @@ fn subnet_label(ip: IpAddr, cfg: &LoginRateLimitConfig) -> String {
 fn scope_kind(key: &str) -> &'static str {
     match key.as_bytes().first() {
         Some(b'u') => "principal_ip",
+        Some(b'p') => "principal",
         Some(b'i') => "ip",
         Some(b's') => "subnet",
         _ => "unknown",
@@ -491,7 +492,7 @@ fn scope_kind(key: &str) -> &'static str {
 }
 
 /// The set of `(key, threshold)` scopes that apply to a login attempt. The user+IP scope
-/// always applies; the per-IP and per-subnet scopes apply only when a client IP is known
+/// always applies. The optional account scope spans all client networks; the per-IP and per-subnet scopes apply only when a client IP is known
 /// and their thresholds are non-zero (a zero threshold disables that scope).
 fn scopes_for(
     identity_scope: &str,
@@ -504,6 +505,12 @@ fn scopes_for(
         cfg.max_attempts,
     )];
 
+    if cfg.max_attempts_per_account > 0 {
+        scopes.push((
+            format!("p:{}", principal_label(identity_scope, username)),
+            cfg.max_attempts_per_account,
+        ));
+    }
     if let Some(ip) = client_ip {
         if cfg.max_attempts_per_ip > 0 {
             scopes.push((format!("i:{ip}"), cfg.max_attempts_per_ip));
@@ -701,7 +708,9 @@ impl LoginRateLimitStore for MemoryLoginRateLimitStore {
                         lockouts.push(key.clone());
                     }
                 }
-                LoginAttemptOutcome::Succeeded if key == &permit.user_ip_key => {
+                LoginAttemptOutcome::Succeeded
+                    if key == &permit.user_ip_key || key.starts_with("p:") =>
+                {
                     state.attempts.clear();
                     state.locked_until = None;
                     state.lockout_level = 0;
