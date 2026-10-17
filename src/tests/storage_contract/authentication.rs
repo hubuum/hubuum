@@ -139,6 +139,47 @@ async fn every_backend_allows_rename_only_for_the_same_external_subject() {
 }
 
 #[actix_web::test]
+async fn every_backend_preserves_pending_logins_across_unchanged_external_sync() {
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let scope = prefix("unchanged_external_login");
+        let request = || {
+            StorageExternalUserSync::builder(&scope, "ldap", "subject", "alice")
+                .proper_name(Some("Alice".into()))
+                .email(Some("alice@example.invalid".into()))
+                .build()
+        };
+        let external = backend
+            .sync_external_user(request())
+            .await
+            .unwrap()
+            .into_value();
+        let fixture = BackendUserFixture {
+            id: external.id(),
+            principal_id: principal_id(external.id().id()),
+            raw_token: String::new(),
+            token_hash: String::new(),
+        };
+        let first = login_request(&backend, &fixture, &prefix("first_external_login")).await;
+        backend
+            .sync_external_user(request())
+            .await
+            .unwrap()
+            .into_value();
+        let second = login_request(&backend, &fixture, &prefix("second_external_login")).await;
+        let (first, second) =
+            tokio::join!(backend.create_token(first), backend.create_token(second));
+        first
+            .expect("unchanged synchronization must preserve the earlier login")
+            .into_value();
+        second
+            .expect("the overlapping login must also succeed")
+            .into_value();
+        cleanup_external(&scope).await;
+    }
+}
+
+#[actix_web::test]
 async fn every_backend_invalidates_rejected_identity_even_during_later_outage() {
     let _permit = postgres_permit().await;
     for backend in available_backends() {

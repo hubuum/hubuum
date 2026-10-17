@@ -157,7 +157,8 @@ materialized principal name, then verifies that the entry's
 `subject_attribute` still matches the stable subject stored at login. The
 subject attribute therefore does not need to support an efficient
 directory-wide search. Only temporary provider unavailability permits cached
-membership inside the configured max-stale window. A missing/filtered-out account,
+membership inside the configured max-stale window, including LDAP `busy` (51) and
+`unavailable` (52) responses during service binding or search. A missing/filtered-out account,
 a changed subject, an invalid provider response, or a configuration error fails
 closed: cached authority is invalidated and existing tokens are revoked. A later
 outage cannot restore rejected authority; a new successful login is required.

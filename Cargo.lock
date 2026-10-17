@@ -2137,8 +2137,11 @@ dependencies = [
  "hubuum-secrets",
  "ldap3",
  "regex",
+ "rstest",
  "serde",
+ "stringprep",
  "tokio",
+ "unicode-normalization",
  "url",
 ]
 

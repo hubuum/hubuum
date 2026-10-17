@@ -1,12 +1,15 @@
 use actix_web::{HttpRequest, web};
+use hubuum_auth_ldap::login_rate_limit_key;
 use ipnet::{Ipv4Net, Ipv6Net};
 
 use crate::config::{LoginRateLimitConfig, login_rate_limit_config};
 use crate::errors::ApiError;
 use crate::middlewares::client_allowlist::{ProxyTrust, extract_client_ip_from_http_request};
+use crate::models::LOCAL_IDENTITY_SCOPE;
 #[cfg(feature = "login-rate-limit-valkey")]
 use crate::models::REDACTED_DEBUG_VALUE;
 
+use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::net::IpAddr;
@@ -448,11 +451,20 @@ fn lockout_duration(level: u32, base_seconds: u64, max_seconds: u64) -> Duration
 }
 
 fn principal_label(identity_scope: &str, username: &str) -> String {
-    format!(
-        "{}/{}",
-        identity_scope.trim().to_ascii_lowercase(),
-        username.trim().to_ascii_lowercase()
-    )
+    // Local identities and provider scope names are exact, case-sensitive keys.
+    // LDAP-equivalent Unicode variants must share the same attempt budget.
+    let username = if identity_scope == LOCAL_IDENTITY_SCOPE {
+        Cow::Borrowed(username)
+    } else {
+        Cow::Owned(login_rate_limit_key(username))
+    };
+    let escape = |value: &str| {
+        value
+            .replace('%', "%25")
+            .replace('/', "%2F")
+            .replace('|', "%7C")
+    };
+    format!("{}/{}", escape(identity_scope), escape(&username))
 }
 
 fn user_ip_key(identity_scope: &str, username: &str, ip_label: &str) -> String {

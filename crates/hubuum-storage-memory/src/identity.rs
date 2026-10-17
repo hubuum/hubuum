@@ -1014,13 +1014,23 @@ impl ExternalIdentityStorage for MemoryStorage {
                 .cloned()
                 .expect("selected external user exists");
             let parts = record.user.into_parts();
+            // PostgreSQL suppresses unchanged user writes. Preserve the same
+            // credential snapshot when another login only refreshes sync metadata.
+            let updated_at = if parts.password_hash().is_none()
+                && parts.proper_name() == proper_name.as_deref()
+                && parts.email() == email.as_deref()
+            {
+                parts.updated_at()
+            } else {
+                now
+            };
             let user = StorageUser::try_new(
                 parts.id(),
                 None,
                 proper_name.clone(),
                 email.clone(),
                 parts.created_at(),
-                now,
+                updated_at,
                 parts.anonymized_at(),
             )
             .map_err(invalid_contract_value)?;

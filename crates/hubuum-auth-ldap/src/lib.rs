@@ -1,11 +1,15 @@
 #![allow(async_fn_in_trait)]
 
+mod username;
+
+pub use username::login_rate_limit_key;
+
 use hubuum_auth_core::{
     AuthProviderError, AuthenticatedExternalUser, ExternalGroup, ExternalIdentityProvider,
     ExternalUserProfile, ExternalUserRefreshRequest, IdentityScopeName,
 };
 use hubuum_secrets::{ResolvedSecret, SecretError, SecretName};
-use ldap3::{LdapConnAsync, LdapConnSettings, Scope, SearchEntry};
+use ldap3::{LdapConnAsync, LdapConnSettings, LdapError, Scope, SearchEntry};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -135,6 +139,30 @@ pub struct LdapIdentityProvider {
 #[async_trait::async_trait]
 pub trait LdapSecretSource: Send + Sync {
     async fn resolve(&self, alias: &str) -> Result<ResolvedSecret, SecretError>;
+}
+
+#[derive(Clone, Copy, Debug)]
+enum LdapOperation {
+    ServiceBind,
+    UserSearch,
+    UserBind,
+}
+
+impl LdapOperation {
+    fn result_error(self, error: LdapError) -> AuthProviderError {
+        // RFC 4511: busy (51) and unavailable (52) describe temporary server
+        // conditions, not rejected credentials or invalid directory responses.
+        if matches!(&error, LdapError::LdapResult { result } if matches!(result.rc, 51 | 52)) {
+            return AuthProviderError::Unavailable(error.to_string());
+        }
+        match self {
+            Self::ServiceBind => {
+                AuthProviderError::Config(format!("ldap service bind failed: {error}"))
+            }
+            Self::UserSearch => AuthProviderError::Protocol(error.to_string()),
+            Self::UserBind => AuthProviderError::AuthenticationFailed,
+        }
+    }
 }
 
 impl LdapIdentityProvider {
@@ -346,9 +374,7 @@ impl LdapIdentityProvider {
             .await
             .map_err(|error| AuthProviderError::Unavailable(error.to_string()))?
             .success()
-            .map_err(|error| {
-                AuthProviderError::Config(format!("ldap service bind failed: {error}"))
-            })
+            .map_err(|error| LdapOperation::ServiceBind.result_error(error))
             .map(|_| ())
     }
 
@@ -370,7 +396,7 @@ impl LdapIdentityProvider {
             .await
             .map_err(|e| AuthProviderError::Unavailable(e.to_string()))?
             .success()
-            .map_err(|e| AuthProviderError::Protocol(e.to_string()))?;
+            .map_err(|error| LdapOperation::UserSearch.result_error(error))?;
 
         if entries.len() != 1 {
             return Err(AuthProviderError::AuthenticationFailed);
@@ -479,7 +505,7 @@ impl LdapIdentityProvider {
             .await
             .map_err(|e| AuthProviderError::Unavailable(e.to_string()))?
             .success()
-            .map_err(|_| AuthProviderError::AuthenticationFailed)?;
+            .map_err(|error| LdapOperation::UserBind.result_error(error))?;
         Ok(())
     }
 
@@ -573,16 +599,76 @@ fn default_operation_timeout_seconds() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::mem::discriminant;
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use hubuum_secrets::{FileProvider, SecretName, SecretProviderKind, SecretRef, SecretResolver};
+    use ldap3::LdapResult;
+    use rstest::rstest;
 
     use super::*;
     use std::collections::HashMap;
 
     static NEXT_SECRET_TEST_ID: AtomicU64 = AtomicU64::new(1);
+
+    #[rstest]
+    #[case::busy(51)]
+    #[case::unavailable(52)]
+    fn temporary_server_results_remain_unavailable(
+        #[case] code: u32,
+        #[values(
+            LdapOperation::ServiceBind,
+            LdapOperation::UserSearch,
+            LdapOperation::UserBind
+        )]
+        operation: LdapOperation,
+    ) {
+        let error = operation.result_error(failed_ldap_result(code));
+        assert!(
+            matches!(error, AuthProviderError::Unavailable(_)),
+            "{error}"
+        );
+    }
+
+    #[rstest]
+    #[case::service_credentials(
+        LdapOperation::ServiceBind,
+        49,
+        AuthProviderError::Config(String::new())
+    )]
+    #[case::search_protocol(
+        LdapOperation::UserSearch,
+        2,
+        AuthProviderError::Protocol(String::new())
+    )]
+    #[case::search_permissions(
+        LdapOperation::UserSearch,
+        50,
+        AuthProviderError::Protocol(String::new())
+    )]
+    #[case::user_credentials(LdapOperation::UserBind, 49, AuthProviderError::AuthenticationFailed)]
+    fn permanent_server_results_preserve_rejection_kind(
+        #[case] operation: LdapOperation,
+        #[case] code: u32,
+        #[case] expected: AuthProviderError,
+    ) {
+        let error = operation.result_error(failed_ldap_result(code));
+        assert_eq!(discriminant(&error), discriminant(&expected), "{error}");
+    }
+
+    fn failed_ldap_result(rc: u32) -> LdapError {
+        LdapResult {
+            rc,
+            matched: String::new(),
+            text: String::new(),
+            refs: Vec::new(),
+            ctrls: Vec::new(),
+        }
+        .success()
+        .unwrap_err()
+    }
 
     struct TestSecretDirectory(PathBuf);
 

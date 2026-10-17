@@ -58,6 +58,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Send `Cache-Control: no-store` with successful login responses and add an account
   limit across IP addresses: 20 failures per window by default, configurable through
   `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_ACCOUNT` (`0` disables it).
+- Keep distinct local accounts and identity scopes in separate login throttle
+  buckets, so one account's successful login cannot clear another's failures.
+- Group equivalent LDAP Unicode usernames in the same login throttle bucket,
+  preventing ignored characters, Unicode case variants, or compatibility forms
+  from bypassing the account-wide limit across client networks.
+- Preserve the bounded LDAP stale cache for temporary `busy` and `unavailable`
+  server responses instead of revoking sessions; permanent rejections still revoke.
+- Preserve pending login evidence across unchanged external synchronization in
+  memory storage, including overlapping logins for the same directory account.
 - **Breaking storage SDK change:** login token requests require `StorageLogin`
   evidence and adapters must check it atomically against the current user under
   the same lock as credential changes. Replace `mark_external_sync_attempted` with

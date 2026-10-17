@@ -33,6 +33,13 @@ A login is throttled if *any* applicable scope is currently locked out.
 
 The account scope applies across all client IPs, including unknown IPs. Setting
 `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_ACCOUNT=0` disables this scope.
+Local account names retain their exact case and whitespace. Provider scope names
+are also case-sensitive. LDAP usernames use RFC 4518 case-ignore grouping,
+including Unicode case folding, compatibility normalization, ignored characters,
+and insignificant spaces, so equivalent directory names share a budget. This
+normalization affects throttle keys only; LDAP receives the original username.
+Delimiters in scope names and usernames are escaped in
+the admin identifiers so distinct identities cannot share a bucket accidentally.
 Account lockouts can also deny the account owner access until expiry or an admin
 release; tune the threshold for your traffic and support process.
 
