@@ -1642,6 +1642,7 @@ mod tests {
             "/api/v1/restores/{restore_id}/confirm",
             "/api/v1/restores/{restore_id}/status",
             "/api/v1/search",
+            "/api/v1/search/hydrate",
             "/api/v1/search/stream",
             "/api/v1/tasks",
             "/api/v1/tasks/{task_id}",
