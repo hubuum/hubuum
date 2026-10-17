@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in `POST /api/v1/search/hydrate` for inspecting a bounded, permission-aware
+  object neighborhood alongside search results, with unique objects/relations,
+  visible paths, and explicit truncation. Root search matches and pagination
+  are unchanged.
+
 ### Changed
 
 - Refresh compatible runtime dependencies, including Actix Web 4.17, Tokio

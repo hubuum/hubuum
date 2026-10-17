@@ -194,6 +194,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         relations::delete_object_relation,
         search::get_search,
         search::post_search,
+        search::hydrate_search,
         search::post_stream_search,
         search::stream_search,
         exports::run_export,

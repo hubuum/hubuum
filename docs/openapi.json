@@ -21317,6 +21317,93 @@
         ]
       }
     },
+    "/api/v1/search/hydrate": {
+      "post": {
+        "tags": [
+          "search"
+        ],
+        "summary": "Post Api V1 Search Hydrate",
+        "description": "Lazy bounded visible neighborhood for one root object. Scope is all visible related endpoints in the selected class, not evidence for a search predicate. Does not execute or change root search results or cursors. Returns unique objects/relations and up to limit visible paths, with a truncation flag; no hydration pagination.",
+        "operationId": "postApiV1SearchHydrate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchHydrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Bounded visible neighborhood",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchHydrationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid hydration request or traversal work bound exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Root or target class unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Resources changed during hydration; retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/search/stream": {
       "get": {
         "tags": [
@@ -34128,6 +34215,135 @@
           "cancelled",
           "superseded"
         ]
+      },
+      "SearchHydrationPath": {
+        "type": "object",
+        "description": "One visible bidirectional path. Relation IDs correspond to successive\nobject ID pairs; an edge's stored orientation need not match traversal.",
+        "required": [
+          "object_ids",
+          "relation_ids"
+        ],
+        "properties": {
+          "object_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "relation_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        }
+      },
+      "SearchHydrationRequest": {
+        "type": "object",
+        "description": "Opt-in, lazy hydration of one search-result object's visible neighborhood.\nThis request does not execute or modify the root search. The class selects\nrelated endpoints; intermediate path objects may belong to other classes.",
+        "required": [
+          "version",
+          "root_class_id",
+          "root_object_id",
+          "class",
+          "depth",
+          "limit"
+        ],
+        "properties": {
+          "class": {
+            "$ref": "#/components/schemas/StructuredClassSelector"
+          },
+          "depth": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 10,
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum visible paths, not an exact count of related objects.",
+            "maximum": 50,
+            "minimum": 1
+          },
+          "root_class_id": {
+            "$ref": "#/components/schemas/HubuumClassID"
+          },
+          "root_object_id": {
+            "$ref": "#/components/schemas/HubuumObjectID"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 1,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "SearchHydrationResponse": {
+        "type": "object",
+        "description": "A bounded visible neighborhood, independent of root search pagination.\nObjects and relations are unique by ID and include only the returned paths.\nClass/collection IDs are references, not authorization to read their names.",
+        "required": [
+          "version",
+          "root_object_id",
+          "target_class_id",
+          "depth",
+          "limit",
+          "objects",
+          "relations",
+          "paths",
+          "truncated"
+        ],
+        "properties": {
+          "depth": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HubuumObject"
+            }
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHydrationPath"
+            }
+          },
+          "relations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HubuumObjectRelation"
+            }
+          },
+          "root_object_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "target_class_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "Additional visible paths exist. No count of hidden resources is exposed.\nThis version does not paginate hydration; narrow the class/depth or raise\nthe path limit, up to 50, to inspect a different bounded scope."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
       },
       "SecretSourceConfig": {
         "type": "object",
