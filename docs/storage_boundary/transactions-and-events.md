@@ -360,8 +360,13 @@ an unused name; username subjects remain valid identity keys within a scope.
 `record_external_sync_failure` distinguishes `Unavailable` from `Rejected`.
 Unavailability records the attempt while preserving the last successful sync.
 Rejection atomically clears the last success, invalidates pending login evidence,
-and revokes all active principal tokens. Subsequent unavailable attempts must not
-restore the rejected cache. Use the same principal lock and transaction ordering
+and revokes all active principal tokens. Pending evidence must remain invalid after
+a later successful synchronization, even when the profile is unchanged. The current
+adapters store a non-authenticating rejection marker in the existing password field
+to advance the user snapshot; successful synchronization clears that marker and
+returns a password-free human with a newer snapshot. This requires no migration.
+Subsequent unavailable attempts must not restore the rejected cache.
+Use the same principal lock and transaction ordering
 as token issuance and external synchronization. The operation retains
 `mark_external_sync_attempted` as its telemetry label for compatibility.
 These are synchronization metadata

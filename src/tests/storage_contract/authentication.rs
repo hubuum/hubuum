@@ -138,8 +138,13 @@ async fn every_backend_allows_rename_only_for_the_same_external_subject() {
     }
 }
 
+#[rstest]
+#[case::initial_login(false)]
+#[case::recovered_identity(true)]
 #[actix_web::test]
-async fn every_backend_preserves_pending_logins_across_unchanged_external_sync() {
+async fn every_backend_preserves_pending_logins_across_unchanged_external_sync(
+    #[case] recover: bool,
+) {
     let _permit = postgres_permit().await;
     for backend in available_backends() {
         let scope = prefix("unchanged_external_login");
@@ -160,6 +165,30 @@ async fn every_backend_preserves_pending_logins_across_unchanged_external_sync()
             raw_token: String::new(),
             token_hash: String::new(),
         };
+        if recover {
+            backend
+                .record_external_sync_failure(
+                    fixture.principal_id,
+                    StorageExternalSyncFailure::Rejected,
+                )
+                .await
+                .unwrap();
+            backend
+                .sync_external_user(request())
+                .await
+                .unwrap()
+                .into_value();
+        }
+        assert!(
+            backend
+                .get_user(fixture.id)
+                .await
+                .unwrap()
+                .into_parts()
+                .password_hash()
+                .is_none(),
+            "synchronized humans must match the password-free login projection"
+        );
         let first = login_request(&backend, &fixture, &prefix("first_external_login")).await;
         backend
             .sync_external_user(request())
@@ -237,6 +266,54 @@ async fn every_backend_invalidates_rejected_identity_even_during_later_outage() 
             backend.create_token(login).await.unwrap_err().kind(),
             StorageErrorKind::AuthenticationRequired
         );
+        cleanup_external(&scope).await;
+    }
+}
+
+#[rstest]
+#[case::one_rejection(1)]
+#[case::repeated_rejection(2)]
+#[actix_web::test]
+async fn every_backend_rejects_pending_login_after_external_identity_recovers(
+    #[case] rejections: usize,
+) {
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let scope = prefix("recovered_identity");
+        let request = || {
+            StorageExternalUserSync::builder(&scope, "ldap", "subject", "alice")
+                .proper_name(Some("Alice".into()))
+                .email(Some("alice@example.invalid".into()))
+                .build()
+        };
+        let external = backend
+            .sync_external_user(request())
+            .await
+            .unwrap()
+            .into_value();
+        let fixture = BackendUserFixture {
+            id: external.id(),
+            principal_id: principal_id(external.id().id()),
+            raw_token: String::new(),
+            token_hash: String::new(),
+        };
+        let pending = login_request(&backend, &fixture, &prefix("rejected_pending")).await;
+        for _ in 0..rejections {
+            backend
+                .record_external_sync_failure(
+                    fixture.principal_id,
+                    StorageExternalSyncFailure::Rejected,
+                )
+                .await
+                .unwrap();
+        }
+        backend
+            .sync_external_user(request())
+            .await
+            .unwrap()
+            .into_value();
+        let error = backend.create_token(pending).await.unwrap_err();
+        assert_eq!(error.kind(), StorageErrorKind::AuthenticationRequired);
         cleanup_external(&scope).await;
     }
 }

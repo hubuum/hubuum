@@ -141,7 +141,7 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 source = "crates/hubuum-storage-core/src/identity_operations.rs"
 methods = ["get_external_principal_state", "record_external_sync_failure", "sync_external_user"]
 effects = { point_read = ["get_external_principal_state"], workflow_mutation = ["record_external_sync_failure", "sync_external_user"] }
-shared_scenarios = ["src/tests/storage_contract/authentication.rs::every_backend_preserves_subject_binding", "src/tests/storage_contract/authentication.rs::every_backend_allows_rename_only_for_the_same_external_subject", "src/tests/storage_contract/authentication.rs::every_backend_invalidates_rejected_identity_even_during_later_outage", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
+shared_scenarios = ["src/tests/storage_contract/authentication.rs::every_backend_preserves_subject_binding", "src/tests/storage_contract/authentication.rs::every_backend_allows_rename_only_for_the_same_external_subject", "src/tests/storage_contract/authentication.rs::every_backend_invalidates_rejected_identity_even_during_later_outage", "src/tests/storage_contract/authentication.rs::every_backend_rejects_pending_login_after_external_identity_recovers", "src/tests/storage_contract/authentication.rs::every_backend_preserves_pending_logins_across_unchanged_external_sync", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
 
 [traits.UserStorage]
 source = "crates/hubuum-storage-core/src/identity_users.rs"

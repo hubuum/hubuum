@@ -21,6 +21,7 @@ use crate::operations::event_record::append_event;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
 const HUMAN_PRINCIPAL_KIND: &str = "human";
+const REJECTED_EXTERNAL_PASSWORD: &str = "!external-identity-rejected-no-login";
 const DATABASE_UTC_NOW_QUERY: &str = "SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now";
 
 #[derive(Queryable)]
@@ -194,6 +195,13 @@ pub async fn record_external_sync_failure(
                 .execute(connection)
                 .await?;
             if failure == StorageExternalSyncFailure::Rejected {
+                // A timestamp-only user update is suppressed by the revision trigger.
+                // This non-authenticating marker advances the credential snapshot;
+                // successful synchronization clears it without reviving older logins.
+                diesel::update(crate::schema::users::table.find(principal_id))
+                    .set(crate::schema::users::password.eq(Some(REJECTED_EXTERNAL_PASSWORD)))
+                    .execute(connection)
+                    .await?;
                 diesel::update(crate::schema::principals::table.find(principal_id))
                     .set(crate::schema::principals::last_sync_success_at.eq(None::<NaiveDateTime>))
                     .execute(connection)
@@ -404,6 +412,7 @@ async fn reconcile_user(
         .on_conflict(crate::schema::users::id)
         .do_update()
         .set((
+            crate::schema::users::password.eq(excluded(crate::schema::users::password)),
             crate::schema::users::proper_name.eq(excluded(crate::schema::users::proper_name)),
             crate::schema::users::email.eq(excluded(crate::schema::users::email)),
         ))

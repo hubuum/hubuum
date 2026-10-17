@@ -889,10 +889,23 @@ impl ExternalIdentityStorage for MemoryStorage {
         }
         let now = Utc::now();
         if failure == StorageExternalSyncFailure::Rejected {
+            // Match PostgreSQL's non-authenticating rejection marker. Clearing it
+            // during recovery advances the snapshot instead of reviving old logins.
+            let parts = current.user.into_parts();
             let record = state
                 .users
                 .get_mut(&principal_id.id())
                 .expect("external user exists");
+            record.user = StorageUser::try_new(
+                parts.id(),
+                Some("!external-identity-rejected-no-login".into()),
+                parts.proper_name().map(ToOwned::to_owned),
+                parts.email().map(ToOwned::to_owned),
+                parts.created_at(),
+                now,
+                parts.anonymized_at(),
+            )
+            .map_err(invalid_contract_value)?;
             record.last_sync_success_at = None;
             for token in state
                 .tokens

@@ -47,6 +47,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   identity scope and review its permission assignments for such migrations.
 - Fence login token issuance against concurrent password resets, password changes,
   anonymization, and rejected external identity refreshes in both storage backends.
+  Pending logins remain invalid after a later successful external sync, including
+  recovery with an unchanged profile; fresh logins continue to work. No database
+  migration is required.
 - Reject empty plaintext passwords at creation, update, reset, import, and login; apply
   the same 4096-character limit to plaintext password writes. **Breaking behavior:**
   reset any existing empty-password credentials before upgrading; they cannot log
