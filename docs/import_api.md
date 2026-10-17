@@ -32,6 +32,10 @@ Authentication:
 - Collection-scoped items are planned against the principal's live collection
   permissions. Scoped tokens are supported, and their permission and resource
   boundaries are persisted with the task.
+- Overwriting an existing class or object checks `UpdateClass` or `UpdateObject`
+  on that resource's identity and current attributes. External policy and token
+  resource boundaries apply to the resolved target; permission for a collection
+  probe alone does not authorize its overwrite.
 - Creating collections inside an import, and importing identity, template, or
   integration records, requires an unscoped runtime administrator.
 

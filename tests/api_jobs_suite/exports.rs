@@ -36,6 +36,184 @@ mod tests {
     static EXPIRED_OUTPUT_PURGE_LOCK: TestMutex = test_mutex();
 
     #[derive(Clone, Copy)]
+    enum DownloadResourceBoundary {
+        Same,
+        Broader,
+        OtherCollection,
+        Unscoped,
+    }
+
+    #[rstest]
+    #[case::unscoped_artifact(
+        false,
+        DownloadResourceBoundary::OtherCollection,
+        StatusCode::FORBIDDEN
+    )]
+    #[case::different_scope(true, DownloadResourceBoundary::OtherCollection, StatusCode::FORBIDDEN)]
+    #[case::same_scope(true, DownloadResourceBoundary::Same, StatusCode::OK)]
+    #[case::broader_scope(true, DownloadResourceBoundary::Broader, StatusCode::OK)]
+    #[case::unscoped_reader(true, DownloadResourceBoundary::Unscoped, StatusCode::OK)]
+    #[actix_web::test]
+    async fn export_download_enforces_resource_boundary(
+        #[future(awt)] test_context: TestContext,
+        #[case] scoped_submission: bool,
+        #[case] reader: DownloadResourceBoundary,
+        #[case] expected: StatusCode,
+    ) {
+        let context = test_context;
+        let exported = context.collection_fixture("export_download_source").await;
+        let other = context.collection_fixture("export_download_other").await;
+        for fixture in [&exported, &other] {
+            fixture
+                .owner_group
+                .add_member_without_events(&context.pool, &context.normal_user)
+                .await
+                .unwrap();
+        }
+        let resource = |id| TokenResourceScope::Collection(CollectionID::new(id).unwrap());
+        let submitter = if scoped_submission {
+            resource_scoped_token(
+                &context.pool,
+                context.normal_user.id,
+                vec![resource(exported.collection.id)],
+            )
+            .await
+        } else {
+            context.normal_token.clone()
+        };
+        let reader = match reader {
+            DownloadResourceBoundary::Unscoped => context.normal_token.clone(),
+            boundary => {
+                let resources = match boundary {
+                    DownloadResourceBoundary::Same => vec![resource(exported.collection.id)],
+                    DownloadResourceBoundary::Broader => vec![
+                        resource(exported.collection.id),
+                        resource(other.collection.id),
+                    ],
+                    DownloadResourceBoundary::OtherCollection => {
+                        vec![resource(other.collection.id)]
+                    }
+                    DownloadResourceBoundary::Unscoped => unreachable!(),
+                };
+                resource_scoped_token(&context.pool, context.normal_user.id, resources).await
+            }
+        };
+        let response = post_request_with_headers(
+            &context.pool, &submitter, EXPORTS_ENDPOINT,
+            &serde_json::json!({"scope": {"kind": "collections"}, "query": format!("id={}", exported.collection.id)}), vec![],
+        ).await;
+        let response = assert_response_status(response, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(response).await;
+        wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+
+        let response = get_request(
+            &context.pool,
+            &reader,
+            &format!("/api/v1/exports/{}/output", task.id),
+        )
+        .await;
+        let response = assert_response_status(response, expected).await;
+        if expected == StatusCode::OK {
+            let output: ExportJsonResponse = test::read_body_json(response).await;
+            assert_eq!(
+                output
+                    .items
+                    .iter()
+                    .map(|item| item["id"].clone())
+                    .collect::<Vec<_>>(),
+                vec![serde_json::json!(exported.collection.id)]
+            );
+        }
+        exported.cleanup().await.unwrap();
+        other.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[case::unscoped_artifact(false, false, StatusCode::FORBIDDEN)]
+    #[case::narrower_permissions(true, false, StatusCode::FORBIDDEN)]
+    #[case::matching_permissions(true, true, StatusCode::OK)]
+    #[actix_web::test]
+    async fn export_download_requires_object_read_boundary(
+        #[future(awt)] test_context: TestContext,
+        #[case] scoped_submission: bool,
+        #[case] reader_can_read_objects: bool,
+        #[case] expected: StatusCode,
+        #[values(false, true)] templated: bool,
+    ) {
+        let context = test_context;
+        let fixture = context
+            .collection_fixture("export_download_permissions")
+            .await;
+        fixture
+            .owner_group
+            .add_member_without_events(&context.pool, &context.normal_user)
+            .await
+            .unwrap();
+        let class = create_named_class(
+            &context.pool,
+            fixture.collection.id,
+            &context.scoped_name("download_class"),
+        )
+        .await;
+        let _ = create_export_objects(&context.pool, &class).await;
+        let permissions = [
+            Permissions::ReadClass,
+            Permissions::ReadObject,
+            Permissions::ReadTemplate,
+        ];
+        let submitter = if scoped_submission {
+            scoped_token(&context.pool, context.normal_user.id, &permissions).await
+        } else {
+            context.normal_token.clone()
+        };
+        let reader = scoped_token(
+            &context.pool,
+            context.normal_user.id,
+            if reader_can_read_objects {
+                &permissions
+            } else {
+                &[Permissions::ReadClass, Permissions::ReadTemplate]
+            },
+        )
+        .await;
+        let (endpoint, body) = if templated {
+            let template_id = create_template(
+                &context.pool,
+                fixture.collection.id,
+                class.id,
+                ExportScopeKind::ObjectsInClass,
+                &context.scoped_name("download_template"),
+                ExportContentType::TextPlain,
+                "{% for item in items %}{{ item.data.hostname }}\n{% endfor %}",
+            )
+            .await;
+            (
+                format!("/api/v1/export-templates/{template_id}/exports"),
+                serde_json::json!({}),
+            )
+        } else {
+            (
+                EXPORTS_ENDPOINT.to_string(),
+                serde_json::json!({"scope": {"kind": "objects_in_class", "class_id": class.id}}),
+            )
+        };
+        let response =
+            post_request_with_headers(&context.pool, &submitter, &endpoint, &body, vec![]).await;
+        let response = assert_response_status(response, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(response).await;
+        wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+
+        let response = get_request(
+            &context.pool,
+            &reader,
+            &format!("/api/v1/exports/{}/output", task.id),
+        )
+        .await;
+        assert_response_status(response, expected).await;
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[derive(Clone, Copy)]
     enum ExportCaller {
         NonAdmin,
         ScopedAdmin,

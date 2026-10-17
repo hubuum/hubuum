@@ -14279,6 +14279,16 @@
               }
             }
           },
+          "403": {
+            "description": "Token scope does not cover the stored export",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Export output not found",
             "content": {

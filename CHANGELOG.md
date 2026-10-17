@@ -40,6 +40,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- Stored export downloads enforce the requesting token's permission and resource
+  boundaries against the submitting token's saved scope, including rendered
+  template output. Scoped tokens can no longer read artifacts produced with a
+  wider or unrestricted boundary; submit a new export with the narrower token.
+- Import overwrites authorize the existing object or class identity, respecting
+  external resource-specific policy and token resource boundaries instead of
+  relying on collection-level permission probes.
 - Update the locked rustls dependency to 0.23.46, addressing
   RUSTSEC-2026-0346, RUSTSEC-2026-0347, RUSTSEC-2026-0348 and
   RUSTSEC-2026-0349.

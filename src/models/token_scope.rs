@@ -342,6 +342,38 @@ impl TokenScope {
         })
     }
 
+    /// Whether this boundary contains every permission and explicit resource
+    /// entry in an earlier boundary. Stored artifacts cannot be filtered again,
+    /// so an unrestricted submitting dimension requires an unrestricted reader
+    /// dimension. Do not infer containment from current resource ancestry: a
+    /// class or object may have moved since the artifact was produced.
+    pub(crate) fn covers(&self, earlier: &Self) -> bool {
+        let permissions = self.permissions.as_ref().is_none_or(|allowed| {
+            earlier.permissions.as_ref().is_some_and(|required| {
+                required
+                    .iter()
+                    .all(|permission| allowed.contains(permission))
+            })
+        });
+        let resources = self.resources.as_ref().is_none_or(|allowed| {
+            earlier.resources.as_ref().is_some_and(|required| {
+                required
+                    .collections
+                    .iter()
+                    .all(|id| allowed.collections.contains(id))
+                    && required
+                        .classes
+                        .iter()
+                        .all(|id| allowed.classes.contains(id))
+                    && required
+                        .objects
+                        .iter()
+                        .all(|id| allowed.objects.contains(id))
+            })
+        });
+        permissions && resources
+    }
+
     pub fn allows_resource(&self, resource: &ResourceRef) -> bool {
         let Some(resources) = &self.resources else {
             return true;
@@ -491,6 +523,75 @@ impl TokenScope {
 mod tests {
     use super::*;
     use crate::permissions::{ClassResourceEndpoint, ResourceRef};
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::same(
+        r#"{"permissions":["ReadObject"]}"#,
+        r#"{"permissions":["ReadObject"]}"#,
+        true
+    )]
+    #[case::broader_permissions(
+        r#"{"permissions":["ReadClass","ReadObject"]}"#,
+        r#"{"permissions":["ReadObject"]}"#,
+        true
+    )]
+    #[case::missing_permission(
+        r#"{"permissions":["ReadClass"]}"#,
+        r#"{"permissions":["ReadObject"]}"#,
+        false
+    )]
+    #[case::legacy_snapshot(r#"{"permissions":["ReadObject"]}"#, r#"["ReadObject"]"#, true)]
+    #[case::unrestricted_permissions(
+        r#"{"resource_scopes":[{"kind":"collection","id":7}]}"#,
+        r#"{"permissions":["ReadObject"],"resource_scopes":[{"kind":"collection","id":7}]}"#,
+        true
+    )]
+    #[case::unrestricted_submitter_permissions(
+        r#"{"permissions":["ReadObject"],"resource_scopes":[{"kind":"collection","id":7}]}"#,
+        r#"{"resource_scopes":[{"kind":"collection","id":7}]}"#,
+        false
+    )]
+    #[case::broader_resources(
+        r#"{"resource_scopes":[{"kind":"collection","id":7},{"kind":"collection","id":8}]}"#,
+        r#"{"resource_scopes":[{"kind":"collection","id":7}]}"#,
+        true
+    )]
+    #[case::missing_resource(
+        r#"{"resource_scopes":[{"kind":"collection","id":8}]}"#,
+        r#"{"resource_scopes":[{"kind":"collection","id":7}]}"#,
+        false
+    )]
+    #[case::unrestricted_submitter_resources(
+        r#"{"permissions":["ReadObject"],"resource_scopes":[{"kind":"collection","id":7}]}"#,
+        r#"{"permissions":["ReadObject"]}"#,
+        false
+    )]
+    #[case::no_ancestry_inference(
+        r#"{"resource_scopes":[{"kind":"collection","id":7}]}"#,
+        r#"{"resource_scopes":[{"kind":"class","id":7}]}"#,
+        false
+    )]
+    #[case::empty_reader_permissions(
+        r#"{"permissions":[]}"#,
+        r#"{"permissions":["ReadObject"]}"#,
+        false
+    )]
+    #[case::empty_reader_resources(
+        r#"{"resource_scopes":[]}"#,
+        r#"{"resource_scopes":[{"kind":"object","id":7}]}"#,
+        false
+    )]
+    fn stored_artifact_scope_coverage(
+        #[case] reader: &str,
+        #[case] submitter: &str,
+        #[case] expected: bool,
+    ) {
+        let scope = |json: &str| {
+            TokenScope::from_snapshot_json(&serde_json::from_str(json).unwrap()).unwrap()
+        };
+        assert_eq!(scope(reader).covers(&scope(submitter)), expected);
+    }
 
     fn scope(resources: Vec<TokenResourceScope>) -> TokenScope {
         TokenScope::from_stored_parts(None, Some(resources)).unwrap()

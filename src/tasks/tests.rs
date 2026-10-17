@@ -3378,3 +3378,242 @@ async fn test_reindex_failure_finalization_reloads_persisted_progress() {
 }
 
 mod fencing;
+
+#[tokio::test]
+async fn import_overwrite_does_not_reuse_collection_grants_outside_object_scope() {
+    use crate::models::{HubuumObjectID, TokenResourceScope, TokenScope};
+    use crate::traits::CanDelete;
+
+    let context = TestContext::new().await;
+    let fixture = context.collection_fixture("import_scoped_overwrite").await;
+    fixture
+        .owner_group
+        .add_member_without_events(&context.pool, &context.normal_user)
+        .await
+        .unwrap();
+    let class = NewHubuumClass {
+        collection_id: fixture.collection.id,
+        name: context.scoped_name("import_scoped_class"),
+        description: "scoped overwrite".into(),
+        json_schema: None,
+        validate_schema: None,
+    }
+    .save_without_events(&context.pool)
+    .await
+    .unwrap();
+    let mut objects = Vec::new();
+    for label in ["allowed", "denied"] {
+        objects.push(
+            NewHubuumObject {
+                collection_id: fixture.collection.id,
+                hubuum_class_id: class.id,
+                name: context.scoped_name(label),
+                description: "original".into(),
+                data: serde_json::json!({}),
+            }
+            .save_without_events(&context.pool)
+            .await
+            .unwrap(),
+        );
+    }
+    let scope = TokenScope::from_stored_parts(
+        Some(vec![Permissions::UpdateObject]),
+        Some(vec![TokenResourceScope::Object(
+            HubuumObjectID::new(objects[0].id).unwrap(),
+        )]),
+    )
+    .unwrap();
+    let request: ImportRequest = serde_json::from_value(serde_json::json!({
+        "version": CURRENT_IMPORT_VERSION,
+        "mode": {"collision_policy": "overwrite", "permission_policy": "continue", "atomicity": "best_effort"},
+        "graph": {"objects": objects.iter().map(|object| serde_json::json!({
+            "name": object.name,
+            "description": "updated",
+            "data": {},
+            "class_key": {"name": class.name, "collection_key": {"name": fixture.collection.name}}
+        })).collect::<Vec<_>>()}
+    })).unwrap();
+
+    let planning = plan_import(&context.pool, &context.normal_user, Some(&scope), &request).await;
+    assert!(matches!(planning.planned_items.as_slice(), [PlannedItem {
+        execution: Some(PlannedExecution::UpdateObject {object_id, ..}), ..
+    }] if *object_id == objects[0].id));
+    assert!(matches!(
+        planning.failures.as_slice(),
+        [PlanningFailure {
+            kind: FailureKind::Permission,
+            ..
+        }]
+    ));
+
+    for object in objects {
+        object.delete_without_events(&context.pool).await.unwrap();
+    }
+    class.delete_without_events(&context.pool).await.unwrap();
+    fixture.cleanup().await.unwrap();
+}
+
+#[rstest]
+#[case::object_denied(ResourceKind::Object, false)]
+#[case::object_allowed(ResourceKind::Object, true)]
+#[case::class_denied(ResourceKind::Class, false)]
+#[case::class_allowed(ResourceKind::Class, true)]
+#[tokio::test]
+async fn import_overwrite_authorizes_existing_resource(
+    #[case] kind: ResourceKind,
+    #[case] allowed: bool,
+    #[values(false, true)] scoped: bool,
+) {
+    use crate::models::{HubuumClassID, HubuumObjectID, TokenResourceScope, TokenScope};
+    use crate::traits::{CanDelete, SelfAccessors};
+    let context = TestContext::new().await;
+    let fixture = context.collection_fixture("import_overwrite_policy").await;
+    let class = NewHubuumClass {
+        collection_id: fixture.collection.id,
+        name: context.scoped_name("import_overwrite_class"),
+        description: "original".into(),
+        json_schema: None,
+        validate_schema: None,
+    }
+    .save_without_events(&context.pool)
+    .await
+    .unwrap();
+    let object = NewHubuumObject {
+        collection_id: fixture.collection.id,
+        hubuum_class_id: class.id,
+        name: context.scoped_name("import_overwrite_object"),
+        description: "original".into(),
+        data: serde_json::json!({"protected": true}),
+    }
+    .save_without_events(&context.pool)
+    .await
+    .unwrap();
+    let (permission, resource_id, graph) = match kind {
+        ResourceKind::Object => (
+            Permissions::UpdateObject,
+            object.id,
+            serde_json::json!({"objects": [{
+                "name": object.name,
+                "description": "updated",
+                "data": {"protected": false},
+                "class_key": {"name": class.name, "collection_key": {"name": fixture.collection.name}}
+            }]}),
+        ),
+        ResourceKind::Class => (
+            Permissions::UpdateClass,
+            class.id,
+            serde_json::json!({"classes": [{
+                "name": class.name,
+                "description": "updated",
+                "collection_key": {"name": fixture.collection.name}
+            }]}),
+        ),
+        _ => unreachable!("only class and object overwrites are exercised"),
+    };
+    let policy = MockTreetopBackend::new();
+    // A collection probe may succeed even when the actual resource is denied.
+    if allowed {
+        policy.add_rule(MockAllowRule {
+            group_id: fixture.owner_group.id,
+            action: permission,
+            resource_kind: kind.clone(),
+            resource_id: Some(resource_id),
+            attrs: ResourceFields::default(),
+        });
+    } else {
+        policy.add_prospective_rule(MockAllowRule {
+            group_id: fixture.owner_group.id,
+            action: permission,
+            resource_kind: kind.clone(),
+            resource_id: None,
+            attrs: ResourceFields {
+                collection_id: Some(fixture.collection.id),
+                ..ResourceFields::default()
+            },
+        });
+    }
+    let backend = crate::tests::app_context_with_permission_backend(
+        context.pool.get_ref().clone(),
+        Arc::new(policy),
+    );
+    let scopes = scoped.then(|| {
+        let resource = match kind {
+            ResourceKind::Object => {
+                TokenResourceScope::Object(HubuumObjectID::new(object.id).unwrap())
+            }
+            ResourceKind::Class => TokenResourceScope::Class(HubuumClassID::new(class.id).unwrap()),
+            _ => unreachable!(),
+        };
+        TokenScope::from_stored_parts(Some(vec![permission]), Some(vec![resource])).unwrap()
+    });
+    let request: ImportRequest = serde_json::from_value(serde_json::json!({
+        "version": CURRENT_IMPORT_VERSION,
+        "mode": {"collision_policy": "overwrite"},
+        "graph": graph
+    }))
+    .unwrap();
+    let planning = plan_import(&backend, &context.admin_user, scopes.as_ref(), &request).await;
+    if allowed {
+        assert!(planning.failures.is_empty());
+        assert_eq!(planning.planned_items.len(), 1);
+    } else {
+        assert!(matches!(
+            planning.failures.as_slice(),
+            [PlanningFailure {
+                kind: FailureKind::Permission,
+                ..
+            }]
+        ));
+        assert!(planning.planned_items.is_empty());
+    }
+    let task = create_worker_test_task(
+        &context,
+        StorageTaskKind::Import,
+        serde_json::to_value(request).unwrap(),
+        1,
+        "import_overwrite_policy",
+    )
+    .await;
+    let claimed = claim_worker_test_task(&context, task.id).await;
+    let principal = crate::services::authentication::ExecutionPrincipal::resolve(
+        &backend,
+        context.admin_user.id,
+    )
+    .await
+    .unwrap();
+    let status =
+        super::execution::execute_import_task(&backend, &claimed, &principal, scopes.as_ref())
+            .await
+            .unwrap();
+    assert_eq!(
+        status,
+        if allowed {
+            TaskStatus::Succeeded
+        } else {
+            TaskStatus::Failed
+        }
+    );
+    let description = match kind {
+        ResourceKind::Object => {
+            HubuumObjectID::new(object.id)
+                .unwrap()
+                .instance(&context.pool)
+                .await
+                .unwrap()
+                .description
+        }
+        ResourceKind::Class => {
+            HubuumClassID::new(class.id)
+                .unwrap()
+                .instance(&context.pool)
+                .await
+                .unwrap()
+                .description
+        }
+        _ => unreachable!(),
+    };
+    assert_eq!(description, if allowed { "updated" } else { "original" });
+    object.delete_without_events(&context.pool).await.unwrap();
+    class.delete_without_events(&context.pool).await.unwrap();
+    fixture.cleanup().await.unwrap();
+}

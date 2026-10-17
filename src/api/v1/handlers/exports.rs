@@ -141,6 +141,7 @@ pub async fn get_export(
             )
         ),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Token scope does not cover the stored export", body = ApiErrorResponse),
         (status = 404, description = "Export output not found", body = ApiErrorResponse),
         (status = 410, description = "Export output expired", body = ApiErrorResponse)
     )
@@ -158,7 +159,7 @@ pub async fn get_export_output(
     if !task.discovery_authorized {
         return Err(ApiError::NotFound("Export output not found".into()));
     }
-    match export_output(&context, task_id).await? {
+    match export_output(&context, &task, requestor.scopes()).await? {
         ExportOutputLookup::Available(output) => render_export_task_output(output),
         ExportOutputLookup::Expired { expires_at } => Err(ApiError::Gone(format!(
             "Export output expired at {expires_at} UTC"
