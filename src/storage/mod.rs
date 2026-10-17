@@ -91,7 +91,7 @@ pub(crate) use hubuum_storage_core::{
     StorageHistoryCollectionScope, StorageHistoryListQuery, StorageHistoryMetadata,
     StorageHistoryOperation, StorageHistoryPrincipalName, StorageIdentityGroup,
     StorageIdentityScope, StorageIdentityScopeEnsure, StorageInventoryCounts,
-    StorageLocalPasswordReset, StorageMutationOutcome, StorageNotification,
+    StorageLocalPasswordReset, StorageLogin, StorageMutationOutcome, StorageNotification,
     StorageNotificationListener, StorageNotificationShutdown, StorageObject,
     StorageObjectAggregateAuthorization, StorageObjectAggregateAuthorizationCandidate,
     StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateDimension,

@@ -1,19 +1,28 @@
 use chrono::Utc;
 use hubuum_domain::PrincipalKind;
 use hubuum_events_core::{EventSubject, EventSubscriptionFilter};
+use hubuum_storage_core::StorageLogin;
 use rstest::rstest;
 
 use super::*;
 
-fn login_request(user: &BackendUserFixture, digest: &str) -> StorageTokenCreate {
+pub(super) async fn login_request(
+    backend: &StorageHandle,
+    user: &BackendUserFixture,
+    digest: &str,
+) -> StorageTokenCreate {
     StorageTokenCreate::for_login(
-        EventSubject::try_new(
-            user.principal_id,
-            "snapshot-name".into(),
-            PrincipalKind::Human,
-            "local".into(),
-            "local".into(),
-            true,
+        StorageLogin::try_new(
+            EventSubject::try_new(
+                user.principal_id,
+                "snapshot-name".into(),
+                PrincipalKind::Human,
+                "local".into(),
+                "local".into(),
+                true,
+            )
+            .unwrap(),
+            backend.get_user(user.id).await.unwrap(),
         )
         .unwrap(),
         StorageTokenDigest::legacy_unidentified(digest),
@@ -47,7 +56,7 @@ async fn every_backend_commits_login_snapshot_with_token_and_lifecycle_receipts(
     for backend in available_backends() {
         let user = create_backend_user(&backend, &prefix("login_snapshot")).await;
         let result = backend
-            .create_token(login_request(&user, &prefix("login_digest")))
+            .create_token(login_request(&backend, &user, &prefix("login_digest")).await)
             .await
             .unwrap();
         assert_eq!(result.audits().unwrap().len(), 2);
@@ -77,7 +86,7 @@ async fn every_backend_rejects_failed_login_issuance_without_a_success_event() {
         // The existing fixture token makes this issuance fail its unique digest constraint.
         assert!(
             backend
-                .create_token(login_request(&user, &user.token_hash))
+                .create_token(login_request(&backend, &user, &user.token_hash).await)
                 .await
                 .is_err()
         );
@@ -132,7 +141,7 @@ async fn postgres_rolls_back_login_token_and_both_events_before_commit() {
     let user = create_backend_user(&backend, &prefix("login_rollback")).await;
     let digest = prefix("rolled_back_digest");
     let result = PostgresFaultController::failing(PostgresFaultPoint::TransactionBeforeCommit)
-        .run(backend.create_token(login_request(&user, &digest)))
+        .run(backend.create_token(login_request(&backend, &user, &digest).await))
         .await;
     assert_eq!(result.unwrap_err().kind(), StorageErrorKind::Backend);
     assert!(login_events(&backend, &user).await.is_empty());

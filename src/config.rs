@@ -980,6 +980,12 @@ pub struct AppConfig {
     )]
     pub login_rate_limit_max_attempts: usize,
 
+    /// Maximum failed attempts per (identity scope, username) across all networks.
+    /// `0` disables account-wide throttling.
+    #[clap(long, env = "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_ACCOUNT",
+        default_value_t = DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_ACCOUNT)]
+    pub login_rate_limit_max_attempts_per_account: usize,
+
     /// Maximum failed login attempts per client IP (across all usernames) within the
     /// rate-limit window. Throttles password spraying from a single host. `0` disables
     /// this scope.
@@ -1705,6 +1711,7 @@ pub fn max_transitive_depth() -> i32 {
 pub struct LoginRateLimitConfig {
     pub enabled: bool,
     pub max_attempts: usize,
+    pub max_attempts_per_account: usize,
     pub max_attempts_per_ip: usize,
     pub max_attempts_per_subnet: usize,
     pub window_seconds: u64,
@@ -1719,6 +1726,7 @@ impl Default for LoginRateLimitConfig {
         Self {
             enabled: DEFAULT_LOGIN_RATE_LIMIT_ENABLED,
             max_attempts: DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS,
+            max_attempts_per_account: DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_ACCOUNT,
             max_attempts_per_ip: DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP,
             max_attempts_per_subnet: DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET,
             window_seconds: DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS,
@@ -1735,6 +1743,7 @@ impl From<&AppConfig> for LoginRateLimitConfig {
         Self {
             enabled: config.login_rate_limit_enabled,
             max_attempts: config.login_rate_limit_max_attempts,
+            max_attempts_per_account: config.login_rate_limit_max_attempts_per_account,
             max_attempts_per_ip: config.login_rate_limit_max_attempts_per_ip,
             max_attempts_per_subnet: config.login_rate_limit_max_attempts_per_subnet,
             window_seconds: config.login_rate_limit_window_seconds,
@@ -2252,6 +2261,12 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         login_rate_limit_max_attempts: env_or_default("HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS", "5")
             .parse()
             .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS),
+        login_rate_limit_max_attempts_per_account: env_or_default(
+            "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_ACCOUNT",
+            "20",
+        )
+        .parse()
+        .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_ACCOUNT),
         login_rate_limit_max_attempts_per_ip: env_or_default(
             "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP",
             "20",

@@ -1,3 +1,4 @@
+use hubuum_domain::PlaintextPassword;
 use std::fmt;
 
 use chrono::NaiveDateTime;
@@ -308,6 +309,10 @@ impl ImportPrincipalInput {
             return Err(ApiError::BadRequest(
                 "A human principal import accepts password or password_hash, not both".to_string(),
             ));
+        }
+        if let Some(password) = password {
+            PlaintextPassword::new(password.clone())
+                .map_err(|error| ApiError::BadRequest(error.to_string()))?;
         }
         if let Some(hash) = password_hash {
             let parsed = argon2::PasswordHash::new(hash).map_err(|_| {
@@ -1070,6 +1075,7 @@ mod tests {
 
     #[rstest]
     #[case::plain_password(Some("secret"), None, true)]
+    #[case::empty_password(Some(""), None, false)]
     #[case::both(
         Some("secret"),
         Some("$argon2id$v=19$m=1,t=1,p=1$c2FsdA$aGFzaA"),

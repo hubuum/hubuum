@@ -90,7 +90,7 @@ pub(crate) struct UserRow {
 }
 
 impl UserRow {
-    fn into_storage(self) -> Result<StorageUser, PostgresStorageError> {
+    pub(crate) fn into_storage(self) -> Result<StorageUser, PostgresStorageError> {
         crate::validate_persisted(
             "user",
             StorageUser::try_new(

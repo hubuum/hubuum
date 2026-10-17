@@ -1475,7 +1475,7 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             strings(&["begin", "finish", "snapshot", "release", "clear"])
         }
         ("hubuum_login_lockouts_total", "scope") => {
-            strings(&["principal_ip", "ip", "subnet", "unknown"])
+            strings(&["principal_ip", "principal", "ip", "subnet", "unknown"])
         }
         ("hubuum_metrics_refresh_skipped_total", "reason") => strings(&["concurrent"]),
         (name, "event") if name.starts_with("hubuum_template_worker") => strings(&[

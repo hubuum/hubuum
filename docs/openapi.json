@@ -37,6 +37,14 @@
         "responses": {
           "200": {
             "description": "Token and authoritative expiry issued",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -46,7 +54,7 @@
             }
           },
           "400": {
-            "description": "Login fields exceed their supported lengths",
+            "description": "Password is empty or login fields exceed their supported lengths",
             "content": {
               "application/json": {
                 "schema": {
@@ -492,7 +500,7 @@
           {
             "name": "scope",
             "in": "query",
-            "description": "Filter by scope kind: `user_ip`, `ip`, or `subnet`",
+            "description": "Filter by scope kind: `user_ip`, `account`, `ip`, or `subnet`",
             "required": false,
             "schema": {
               "type": "string"
@@ -29326,6 +29334,7 @@
         "required": [
           "enabled",
           "max_attempts",
+          "max_attempts_per_account",
           "max_attempts_per_ip",
           "max_attempts_per_subnet",
           "window_seconds",
@@ -29356,6 +29365,10 @@
             "type": "boolean"
           },
           "max_attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_attempts_per_account": {
             "type": "integer",
             "minimum": 0
           },
@@ -29402,6 +29415,7 @@
           "enabled",
           "backend",
           "max_attempts",
+          "max_attempts_per_account",
           "max_attempts_per_ip",
           "max_attempts_per_subnet",
           "window_seconds",
@@ -29428,6 +29442,10 @@
             "type": "boolean"
           },
           "max_attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_attempts_per_account": {
             "type": "integer",
             "minimum": 0
           },
@@ -29458,7 +29476,7 @@
       },
       "LoginRateLimitEntryResponse": {
         "type": "object",
-        "description": "One tracked rate-limit scope (a user+IP pair, an IP, or a subnet).",
+        "description": "One tracked rate-limit scope (a user+IP pair, an account, an IP, or a subnet).",
         "required": [
           "id",
           "scope",
@@ -29502,7 +29520,7 @@
           },
           "scope": {
             "type": "string",
-            "description": "Scope kind: `user_ip`, `ip`, or `subnet`."
+            "description": "Scope kind: `user_ip`, `account`, `ip`, or `subnet`."
           }
         }
       },
@@ -29586,7 +29604,8 @@
           },
           "password": {
             "type": "string",
-            "maxLength": 4096
+            "maxLength": 4096,
+            "minLength": 1
           }
         },
         "example": {
@@ -30372,7 +30391,9 @@
             "type": "string"
           },
           "password": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1
           },
           "proper_name": {
             "type": [
@@ -36781,7 +36802,9 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "maxLength": 4096,
+            "minLength": 1
           },
           "proper_name": {
             "type": [

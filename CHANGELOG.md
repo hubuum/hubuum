@@ -40,6 +40,42 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- Reject LDAP synchronization when a different external subject presents an
+  existing principal name. Username-only LDAP subjects remain supported; prevent
+  username recycling in the directory. **Breaking behavior:** implicit rebinding
+  after changing `subject_attribute` is no longer supported. Provision a new
+  identity scope and review its permission assignments for such migrations.
+- Fence login token issuance against concurrent password resets, password changes,
+  anonymization, and rejected external identity refreshes in both storage backends.
+  Pending logins remain invalid after a later successful external sync, including
+  recovery with an unchanged profile; fresh logins continue to work. No database
+  migration is required.
+- Reject empty plaintext passwords at creation, update, reset, import, and login; apply
+  the same 4096-character limit to plaintext password writes. **Breaking behavior:**
+  reset any existing empty-password credentials before upgrading; they cannot log
+  in afterward. Password whitespace and Unicode remain unchanged.
+- Fail closed and revoke tokens when LDAP refresh rejects an identity or returns
+  configuration/protocol errors. Cached authority is allowed only during temporary
+  provider unavailability. Configure `user_filter` to exclude disabled accounts;
+  account status remains directory-specific and is checked at the refresh TTL.
+- Send `Cache-Control: no-store` with successful login responses and add an account
+  limit across IP addresses: 20 failures per window by default, configurable through
+  `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_ACCOUNT` (`0` disables it).
+- Keep distinct local accounts and identity scopes in separate login throttle
+  buckets, so one account's successful login cannot clear another's failures.
+- Group equivalent LDAP Unicode usernames in the same login throttle bucket,
+  preventing ignored characters, Unicode case variants, or compatibility forms
+  from bypassing the account-wide limit across client networks.
+- Preserve the bounded LDAP stale cache for temporary `busy` and `unavailable`
+  server responses instead of revoking sessions; permanent rejections still revoke.
+- Preserve pending login evidence across unchanged external synchronization in
+  memory storage, including overlapping logins for the same directory account.
+- **Breaking storage SDK change:** login token requests require `StorageLogin`
+  evidence and adapters must check it atomically against the current user under
+  the same lock as credential changes. Replace `mark_external_sync_attempted` with
+  `record_external_sync_failure` and implement rejection invalidation and token
+  revocation. No database migration is required.
+
 - Update the locked rustls dependency to 0.23.46, addressing
   RUSTSEC-2026-0346, RUSTSEC-2026-0347, RUSTSEC-2026-0348 and
   RUSTSEC-2026-0349.

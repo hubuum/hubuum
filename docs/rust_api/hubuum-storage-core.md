@@ -21,6 +21,13 @@ Applications compose safe lifecycle semantics through the crate-owned
 operation types returned by `StorageTransaction`; native connections and query
 interfaces remain private to each adapter.
 
+Login issuance requires `StorageLogin` evidence carried by
+`StorageTokenCreate::for_login`. Adapters must recheck it atomically against the
+current user while fencing credential changes. External refresh bookkeeping uses
+`record_external_sync_failure` with `StorageExternalSyncFailure`; rejection must
+invalidate cached authority, pending login evidence, and active tokens. See the
+[transaction contract](../storage_boundary/transactions-and-events.md).
+
 Ordinary resource mutations require `EventContext` and return
 `StorageMutationOutcome`. A committed outcome includes a non-empty set of
 non-sensitive `StorageAuditReceipt` values for the durable events written atomically

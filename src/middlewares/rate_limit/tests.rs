@@ -34,6 +34,7 @@ fn valkey_store_settings_debug_redacts_connection_url() {
 
 #[rstest]
 #[case("u:local/alice|192.0.2.1", "principal_ip")]
+#[case("p:local/alice", "principal")]
 #[case("i:192.0.2.1", "ip")]
 #[case("s:192.0.2.0/24", "subnet")]
 #[case("x:unexpected", "unknown")]
@@ -45,6 +46,7 @@ fn cfg() -> LoginRateLimitConfig {
     LoginRateLimitConfig {
         enabled: true,
         max_attempts: 5,
+        max_attempts_per_account: 0,
         max_attempts_per_ip: 20,
         max_attempts_per_subnet: 100,
         window_seconds: 300,
@@ -111,6 +113,263 @@ async fn assert_store_contract(store: &impl LoginRateLimitStore, username: &str)
 async fn memory_store_satisfies_limiter_contract() {
     let _guard = LOGIN_RATE_LIMIT_TEST_LOCK.lock().await;
     assert_store_contract(&MemoryLoginRateLimitStore, "memory-contract").await;
+}
+
+async fn assert_account_limit_across_networks(store: &impl LoginRateLimitStore) {
+    let config = LoginRateLimitConfig {
+        max_attempts_per_account: 2,
+        ..cfg()
+    };
+    let permit = |scope: &str, name: &str, ip: &str| {
+        let ip = ip.parse().unwrap();
+        LoginAttemptPermit {
+            scopes: scopes_for(scope, name, Some(ip), &config),
+            user_ip_key: user_ip_key(scope, name, &ip_label(Some(ip))),
+            reservation: Reservation::new(Duration::from_secs(config.window_seconds)),
+            enabled: true,
+        }
+    };
+    store.clear_all().await.unwrap();
+    for ip in ["192.0.2.1", "198.51.100.1"] {
+        let attempt = permit("local", "alice", ip);
+        assert!(store.begin(&attempt, &config).await.unwrap());
+        store
+            .finish(&attempt, LoginAttemptOutcome::Failed, &config)
+            .await
+            .unwrap();
+    }
+    assert!(
+        !store
+            .begin(&permit("local", "alice", "203.0.113.1"), &config)
+            .await
+            .unwrap()
+    );
+    for (scope, name) in [("local", "bob"), ("directory", "alice")] {
+        let attempt = permit(scope, name, "203.0.113.1");
+        assert!(store.begin(&attempt, &config).await.unwrap());
+        store
+            .finish(&attempt, LoginAttemptOutcome::Aborted, &config)
+            .await
+            .unwrap();
+    }
+    store.clear_all().await.unwrap();
+    let first = permit("local", "alice", "192.0.2.1");
+    assert!(store.begin(&first, &config).await.unwrap());
+    store
+        .finish(&first, LoginAttemptOutcome::Failed, &config)
+        .await
+        .unwrap();
+    let success = permit("local", "alice", "198.51.100.1");
+    assert!(store.begin(&success, &config).await.unwrap());
+    store
+        .finish(&success, LoginAttemptOutcome::Succeeded, &config)
+        .await
+        .unwrap();
+    let first = permit("local", "alice", "203.0.113.1");
+    let second = permit("local", "alice", "203.1.113.1");
+    assert!(store.begin(&first, &config).await.unwrap());
+    assert!(store.begin(&second, &config).await.unwrap());
+    assert!(
+        !store
+            .begin(&permit("local", "alice", "203.2.113.1"), &config)
+            .await
+            .unwrap()
+    );
+    store
+        .finish(&first, LoginAttemptOutcome::Aborted, &config)
+        .await
+        .unwrap();
+    store
+        .finish(&second, LoginAttemptOutcome::Aborted, &config)
+        .await
+        .unwrap();
+    store.clear_all().await.unwrap();
+}
+
+#[tokio::test]
+async fn memory_account_limit_spans_networks_and_reserves_concurrent_attempts() {
+    let _guard = LOGIN_RATE_LIMIT_TEST_LOCK.lock().await;
+    assert_account_limit_across_networks(&MemoryLoginRateLimitStore).await;
+}
+
+#[cfg(feature = "login-rate-limit-valkey")]
+#[tokio::test]
+#[ignore = "requires Valkey or Redis"]
+async fn valkey_account_limit_spans_networks_and_reserves_concurrent_attempts() {
+    let store = valkey::ValkeyLoginRateLimitStore::connect(
+        valkey_test_url(),
+        format!("hubuum:account-limit:{}", Uuid::new_v4()),
+        Duration::from_secs(1),
+    )
+    .await
+    .unwrap();
+    assert_account_limit_across_networks(&store).await;
+}
+
+async fn assert_distinct_account_success_preserves_failures(
+    store: &impl LoginRateLimitStore,
+    first: (&str, &str),
+    second: (&str, &str),
+) {
+    let config = LoginRateLimitConfig {
+        max_attempts_per_account: 2,
+        max_attempts_per_ip: 0,
+        max_attempts_per_subnet: 0,
+        ..cfg()
+    };
+    let permit = |(scope, name): (&str, &str), ip: &str| {
+        let ip = Some(ip.parse().unwrap());
+        LoginAttemptPermit {
+            scopes: scopes_for(scope, name, ip, &config),
+            user_ip_key: user_ip_key(scope, name, &ip_label(ip)),
+            reservation: Reservation::new(Duration::from_secs(config.window_seconds)),
+            enabled: true,
+        }
+    };
+    store.clear_all().await.unwrap();
+    for (identity, ip, outcome) in [
+        (first, "192.0.2.1", LoginAttemptOutcome::Failed),
+        (second, "198.51.100.1", LoginAttemptOutcome::Succeeded),
+        (first, "203.0.113.1", LoginAttemptOutcome::Failed),
+    ] {
+        let attempt = permit(identity, ip);
+        assert!(store.begin(&attempt, &config).await.unwrap());
+        store.finish(&attempt, outcome, &config).await.unwrap();
+    }
+    assert!(
+        !store
+            .begin(&permit(first, "203.0.114.1"), &config)
+            .await
+            .unwrap(),
+        "another account's success must not erase accumulated failures"
+    );
+    store.clear_all().await.unwrap();
+}
+
+#[rstest]
+#[case::local_case(("local", "Alice"), ("local", "alice"))]
+#[case::local_whitespace(("local", "alice"), ("local", " alice "))]
+#[case::scope_case(("Directory", "alice"), ("directory", "alice"))]
+#[case::scope_delimiter(("directory/ops", "alice"), ("directory", "ops/alice"))]
+#[case::escaped_delimiter(("local", "alice/bob"), ("local", "alice%2Fbob"))]
+#[tokio::test]
+async fn memory_distinct_account_success_preserves_failures(
+    #[case] first: (&str, &str),
+    #[case] second: (&str, &str),
+) {
+    let _guard = LOGIN_RATE_LIMIT_TEST_LOCK.lock().await;
+    assert_distinct_account_success_preserves_failures(&MemoryLoginRateLimitStore, first, second)
+        .await;
+}
+
+#[cfg(feature = "login-rate-limit-valkey")]
+#[rstest]
+#[case::local_case(("local", "Alice"), ("local", "alice"))]
+#[case::local_whitespace(("local", "alice"), ("local", " alice "))]
+#[case::scope_case(("Directory", "alice"), ("directory", "alice"))]
+#[case::scope_delimiter(("directory/ops", "alice"), ("directory", "ops/alice"))]
+#[case::escaped_delimiter(("local", "alice/bob"), ("local", "alice%2Fbob"))]
+#[tokio::test]
+#[ignore = "requires Valkey or Redis"]
+async fn valkey_distinct_account_success_preserves_failures(
+    #[case] first: (&str, &str),
+    #[case] second: (&str, &str),
+) {
+    let store = valkey::ValkeyLoginRateLimitStore::connect(
+        valkey_test_url(),
+        format!("hubuum:distinct-account:{}", Uuid::new_v4()),
+        Duration::from_secs(1),
+    )
+    .await
+    .unwrap();
+    assert_distinct_account_success_preserves_failures(&store, first, second).await;
+}
+
+#[test]
+fn directory_username_variants_share_the_account_budget() {
+    assert_eq!(
+        principal_label("Directory", " Alice "),
+        principal_label("Directory", "alice")
+    );
+}
+
+async fn assert_directory_aliases_share_account_limit(
+    store: &impl LoginRateLimitStore,
+    username: &str,
+    alias: &str,
+) {
+    let config = LoginRateLimitConfig {
+        max_attempts_per_account: 2,
+        max_attempts_per_ip: 0,
+        max_attempts_per_subnet: 0,
+        ..cfg()
+    };
+    let permit = |name: &str, ip: &str| {
+        let ip = Some(ip.parse().unwrap());
+        LoginAttemptPermit {
+            scopes: scopes_for("directory", name, ip, &config),
+            user_ip_key: user_ip_key("directory", name, &ip_label(ip)),
+            reservation: Reservation::new(Duration::from_secs(config.window_seconds)),
+            enabled: true,
+        }
+    };
+    store.clear_all().await.unwrap();
+    for ip in ["192.0.2.1", "198.51.100.1"] {
+        let attempt = permit(username, ip);
+        assert!(store.begin(&attempt, &config).await.unwrap());
+        store
+            .finish(&attempt, LoginAttemptOutcome::Failed, &config)
+            .await
+            .unwrap();
+    }
+    assert!(
+        !store
+            .begin(&permit(alias, "203.0.113.1"), &config)
+            .await
+            .unwrap(),
+        "an LDAP-equivalent username must not bypass the locked account"
+    );
+    store.clear_all().await.unwrap();
+}
+
+#[rstest]
+#[case::soft_hyphen("alice", "al\u{00ad}ice")]
+#[case::format_control("alice", "al\u{200e}ice")]
+#[case::unicode_case("strasse", "Straße")]
+#[case::compatibility("alice", "Ａｌｉｃｅ")]
+#[case::composition("élodie", "E\u{0301}lodie")]
+#[case::spaces("alice smith", " Alice\t\u{00a0} Smith ")]
+#[tokio::test]
+async fn memory_directory_aliases_cannot_bypass_account_limit(
+    #[case] username: &str,
+    #[case] alias: &str,
+) {
+    let _guard = LOGIN_RATE_LIMIT_TEST_LOCK.lock().await;
+    assert_directory_aliases_share_account_limit(&MemoryLoginRateLimitStore, username, alias).await;
+}
+
+#[cfg(feature = "login-rate-limit-valkey")]
+#[rstest]
+#[case::soft_hyphen("alice", "al\u{00ad}ice")]
+#[case::format_control("alice", "al\u{200e}ice")]
+#[case::unicode_case("strasse", "Straße")]
+#[case::compatibility("alice", "Ａｌｉｃｅ")]
+#[case::composition("élodie", "E\u{0301}lodie")]
+#[case::spaces("alice smith", " Alice\t\u{00a0} Smith ")]
+#[tokio::test]
+#[ignore = "requires Valkey or Redis"]
+async fn valkey_directory_aliases_cannot_bypass_account_limit(
+    #[case] username: &str,
+    #[case] alias: &str,
+) {
+    let store = valkey::ValkeyLoginRateLimitStore::connect(
+        valkey_test_url(),
+        format!("hubuum:directory-alias:{}", Uuid::new_v4()),
+        Duration::from_secs(1),
+    )
+    .await
+    .unwrap();
+    assert_directory_aliases_share_account_limit(&store, username, alias).await;
 }
 
 #[cfg(feature = "login-rate-limit-valkey")]
@@ -382,7 +641,7 @@ fn scopes_cover_user_ip_and_subnet_when_enabled() {
         &cfg(),
     );
     let keys: Vec<&str> = scopes.iter().map(|(k, _)| k.as_str()).collect();
-    assert!(keys.iter().any(|k| k.starts_with("u:directory/alice|")));
+    assert!(keys.iter().any(|k| k.starts_with("u:Directory/alice|")));
     assert!(keys.contains(&"i:198.51.100.7"));
     assert!(keys.contains(&"s:198.51.100.0/24"));
 }

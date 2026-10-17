@@ -230,6 +230,7 @@ pub struct AuthenticationConfig {
 pub struct LoginRateLimitConfig {
     pub enabled: bool,
     pub max_attempts: usize,
+    pub max_attempts_per_account: usize,
     pub max_attempts_per_ip: usize,
     pub max_attempts_per_subnet: usize,
     pub window_seconds: u64,
@@ -482,6 +483,7 @@ impl RunningConfig {
                 login_rate_limit: LoginRateLimitConfig {
                     enabled: config.login_rate_limit_enabled,
                     max_attempts: config.login_rate_limit_max_attempts,
+                    max_attempts_per_account: config.login_rate_limit_max_attempts_per_account,
                     max_attempts_per_ip: config.login_rate_limit_max_attempts_per_ip,
                     max_attempts_per_subnet: config.login_rate_limit_max_attempts_per_subnet,
                     window_seconds: config.login_rate_limit_window_seconds,

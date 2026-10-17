@@ -202,6 +202,40 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
+    async fn account_throttle_is_visible_and_releasable(#[future(awt)] test_context: TestContext) {
+        let _guard = lock_test_mutex(&LOGIN_RATE_LIMIT_TEST_LOCK).await;
+        reset_login_rate_limit_for_tests().await;
+        let context = test_context;
+        record_login_failure(
+            "local",
+            "distributed-account",
+            Some("203.0.113.77".parse().unwrap()),
+        )
+        .await;
+        let response = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{LOGIN_RATE_LIMIT_ENDPOINT}?include=all&scope=account&q=distributed-account"),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let body: Value = test::read_body_json(response).await;
+        assert_eq!(body["config"]["max_attempts_per_account"], 20);
+        let entries = body["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["scope"], "account");
+        let id = entries[0]["id"].as_str().unwrap();
+        let response = delete_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{LOGIN_RATE_LIMIT_ENDPOINT}/{id}"),
+        )
+        .await;
+        assert_response_status(response, StatusCode::OK).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
     async fn test_login_rate_limit_filter_by_scope_and_query(
         #[future(awt)] test_context: TestContext,
     ) {
@@ -209,7 +243,7 @@ mod tests {
         reset_login_rate_limit_for_tests().await;
         let context = test_context;
 
-        // One failure seeds three scopes: user_ip, ip, and subnet.
+        // One failure seeds user_ip, account, ip, and subnet scopes.
         record_login_failure(
             "local",
             "filter-alice",

@@ -231,6 +231,7 @@ pub struct LoginRateLimitConfigResponse {
     enabled: bool,
     backend: String,
     max_attempts: usize,
+    max_attempts_per_account: usize,
     max_attempts_per_ip: usize,
     max_attempts_per_subnet: usize,
     window_seconds: u64,
@@ -240,12 +241,12 @@ pub struct LoginRateLimitConfigResponse {
     subnet_prefix_v6: u8,
 }
 
-/// One tracked rate-limit scope (a user+IP pair, an IP, or a subnet).
+/// One tracked rate-limit scope (a user+IP pair, an account, an IP, or a subnet).
 #[derive(Serialize, Debug, ToSchema)]
 pub struct LoginRateLimitEntryResponse {
     /// Opaque, URL-safe id; pass to `DELETE /meta/login-rate-limit/{id}` to release it.
     id: String,
-    /// Scope kind: `user_ip`, `ip`, or `subnet`.
+    /// Scope kind: `user_ip`, `account`, `ip`, or `subnet`.
     scope: String,
     /// Human-readable identifier for the scope.
     identifier: String,
@@ -286,7 +287,7 @@ pub struct ClearRateLimitResponse {
 pub struct LoginRateLimitQuery {
     /// `locked` (default) returns only locked scopes; `all` returns every tracked scope.
     include: Option<String>,
-    /// Restrict to a single scope kind: `user_ip`, `ip`, or `subnet`.
+    /// Restrict to a single scope kind: `user_ip`, `account`, `ip`, or `subnet`.
     scope: Option<String>,
     /// Case-insensitive substring match on the scope identifier (username or IP/subnet).
     q: Option<String>,
@@ -296,6 +297,8 @@ pub struct LoginRateLimitQuery {
 fn scope_and_identifier(key: &str) -> (&'static str, String) {
     if let Some(rest) = key.strip_prefix("u:") {
         ("user_ip", rest.to_string())
+    } else if let Some(rest) = key.strip_prefix("p:") {
+        ("account", rest.to_string())
     } else if let Some(rest) = key.strip_prefix("i:") {
         ("ip", rest.to_string())
     } else if let Some(rest) = key.strip_prefix("s:") {
@@ -312,7 +315,7 @@ fn scope_and_identifier(key: &str) -> (&'static str, String) {
     security(("bearer_auth" = [])),
     params(
         ("include" = Option<String>, Query, description = "`locked` (default) or `all`"),
-        ("scope" = Option<String>, Query, description = "Filter by scope kind: `user_ip`, `ip`, or `subnet`"),
+        ("scope" = Option<String>, Query, description = "Filter by scope kind: `user_ip`, `account`, `ip`, or `subnet`"),
         ("q" = Option<String>, Query, description = "Case-insensitive substring match on the scope identifier")
     ),
     responses(
@@ -376,6 +379,7 @@ pub async fn get_login_rate_limit_state(
             enabled: cfg.enabled,
             backend: get_config()?.login_rate_limit_backend.as_str().to_string(),
             max_attempts: cfg.max_attempts,
+            max_attempts_per_account: cfg.max_attempts_per_account,
             max_attempts_per_ip: cfg.max_attempts_per_ip,
             max_attempts_per_subnet: cfg.max_attempts_per_subnet,
             window_seconds: cfg.window_seconds,

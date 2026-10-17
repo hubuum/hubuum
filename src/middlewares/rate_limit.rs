@@ -1,12 +1,15 @@
 use actix_web::{HttpRequest, web};
+use hubuum_auth_ldap::login_rate_limit_key;
 use ipnet::{Ipv4Net, Ipv6Net};
 
 use crate::config::{LoginRateLimitConfig, login_rate_limit_config};
 use crate::errors::ApiError;
 use crate::middlewares::client_allowlist::{ProxyTrust, extract_client_ip_from_http_request};
+use crate::models::LOCAL_IDENTITY_SCOPE;
 #[cfg(feature = "login-rate-limit-valkey")]
 use crate::models::REDACTED_DEBUG_VALUE;
 
+use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::net::IpAddr;
@@ -448,11 +451,20 @@ fn lockout_duration(level: u32, base_seconds: u64, max_seconds: u64) -> Duration
 }
 
 fn principal_label(identity_scope: &str, username: &str) -> String {
-    format!(
-        "{}/{}",
-        identity_scope.trim().to_ascii_lowercase(),
-        username.trim().to_ascii_lowercase()
-    )
+    // Local identities and provider scope names are exact, case-sensitive keys.
+    // LDAP-equivalent Unicode variants must share the same attempt budget.
+    let username = if identity_scope == LOCAL_IDENTITY_SCOPE {
+        Cow::Borrowed(username)
+    } else {
+        Cow::Owned(login_rate_limit_key(username))
+    };
+    let escape = |value: &str| {
+        value
+            .replace('%', "%25")
+            .replace('/', "%2F")
+            .replace('|', "%7C")
+    };
+    format!("{}/{}", escape(identity_scope), escape(&username))
 }
 
 fn user_ip_key(identity_scope: &str, username: &str, ip_label: &str) -> String {
@@ -484,6 +496,7 @@ fn subnet_label(ip: IpAddr, cfg: &LoginRateLimitConfig) -> String {
 fn scope_kind(key: &str) -> &'static str {
     match key.as_bytes().first() {
         Some(b'u') => "principal_ip",
+        Some(b'p') => "principal",
         Some(b'i') => "ip",
         Some(b's') => "subnet",
         _ => "unknown",
@@ -491,7 +504,7 @@ fn scope_kind(key: &str) -> &'static str {
 }
 
 /// The set of `(key, threshold)` scopes that apply to a login attempt. The user+IP scope
-/// always applies; the per-IP and per-subnet scopes apply only when a client IP is known
+/// always applies. The optional account scope spans all client networks; the per-IP and per-subnet scopes apply only when a client IP is known
 /// and their thresholds are non-zero (a zero threshold disables that scope).
 fn scopes_for(
     identity_scope: &str,
@@ -504,6 +517,12 @@ fn scopes_for(
         cfg.max_attempts,
     )];
 
+    if cfg.max_attempts_per_account > 0 {
+        scopes.push((
+            format!("p:{}", principal_label(identity_scope, username)),
+            cfg.max_attempts_per_account,
+        ));
+    }
     if let Some(ip) = client_ip {
         if cfg.max_attempts_per_ip > 0 {
             scopes.push((format!("i:{ip}"), cfg.max_attempts_per_ip));
@@ -701,7 +720,9 @@ impl LoginRateLimitStore for MemoryLoginRateLimitStore {
                         lockouts.push(key.clone());
                     }
                 }
-                LoginAttemptOutcome::Succeeded if key == &permit.user_ip_key => {
+                LoginAttemptOutcome::Succeeded
+                    if key == &permit.user_ip_key || key.starts_with("p:") =>
+                {
                     state.attempts.clear();
                     state.locked_until = None;
                     state.lockout_level = 0;

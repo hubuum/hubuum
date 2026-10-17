@@ -1009,9 +1009,16 @@ fn opaque_storage_entrypoints_have_unique_bounded_observation_labels() {
                 .unwrap_or_else(|| {
                     panic!("{trait_name}::{method} must use a static operation label")
                 });
+            // Preserve the published telemetry label when this capability is renamed.
+            let expected_operation = match (trait_name.as_str(), method.as_str()) {
+                ("ExternalIdentityStorage", "record_external_sync_failure") => {
+                    "mark_external_sync_attempted"
+                }
+                _ => method.as_str(),
+            };
             assert_eq!(
-                operation, method,
-                "{trait_name}::{method} must use the trait method name as its operation label"
+                operation, expected_operation,
+                "{trait_name}::{method} must use its established operation label"
             );
         }
     }
@@ -2936,7 +2943,7 @@ fn external_identity_sync_is_owned_by_the_postgres_adapter() {
     );
     for method in [
         "get_external_principal_state",
-        "mark_external_sync_attempted",
+        "record_external_sync_failure",
         "sync_external_user",
     ] {
         let method_body = item_body(implementation, "fn", method);

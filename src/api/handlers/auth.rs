@@ -12,6 +12,7 @@ use crate::models::{LOCAL_IDENTITY_SCOPE, LoginUser, REDACTED_DEBUG_VALUE, Token
 use crate::observability::metrics;
 use crate::permissions::AppContext;
 use crate::services::authentication::issue_login_token;
+use actix_web::http::StatusCode;
 use actix_web::{HttpRequest, Responder, get, post, web};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -62,8 +63,8 @@ pub async fn get_auth_providers() -> Result<impl Responder, ApiError> {
     tag = "auth",
     request_body = LoginUser,
     responses(
-        (status = 200, description = "Token and authoritative expiry issued", body = LoginResponse),
-        (status = 400, description = "Login fields exceed their supported lengths", body = ApiErrorResponse),
+        (status = 200, description = "Token and authoritative expiry issued", body = LoginResponse, headers(("Cache-Control" = String, description = "no-store"))),
+        (status = 400, description = "Password is empty or login fields exceed their supported lengths", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 429, description = "Too many login attempts", body = ApiErrorResponse),
         (status = 500, description = "Internal server error", body = ApiErrorResponse)
@@ -123,6 +124,10 @@ pub async fn login(
 
     let token = match token_generation_result {
         Ok(token) => token,
+        Err(e @ ApiError::Unauthorized(_)) => {
+            metrics::login_attempt("bad_credentials");
+            return Err(e);
+        }
         Err(e) => {
             metrics::login_attempt("internal_error");
             warn!(
@@ -139,7 +144,10 @@ pub async fn login(
     debug!(message = "Login successful", name = name, user_id = user.id,);
     metrics::login_attempt("success");
 
-    Ok(ApiResponse::ok(LoginResponse::from_issued(&token)))
+    Ok(ApiResponse::new_no_store(
+        LoginResponse::from_issued(&token),
+        StatusCode::OK,
+    ))
 }
 
 #[utoipa::path(

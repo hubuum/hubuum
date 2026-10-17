@@ -21,14 +21,27 @@ endpoint. Two attacks motivated the current design (see advisory GHSA-63j4-jh8h-
 
 ## Layered scopes
 
-Every failed login is recorded against up to three scopes, each with its own threshold.
+Every failed login is recorded against up to four scopes, each with its own threshold.
 A login is throttled if *any* applicable scope is currently locked out.
 
 | Scope | Key | Default threshold | Catches |
 | ----- | --- | ----------------- | ------- |
-| Name + IP | `(name, client IP)` | `5` | Single-account brute force from one host |
+| Name + IP | `(identity scope, name, client IP)` | `5` | Single-account brute force from one host |
+| Account | `(identity scope, name)` | `20` | Guessing one account across different networks |
 | IP | `client IP` | `20` | Spraying many account names from one host |
 | Subnet | `client IP / prefix` | `100` | Distributed spraying from one network |
+
+The account scope applies across all client IPs, including unknown IPs. Setting
+`HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_ACCOUNT=0` disables this scope.
+Local account names retain their exact case and whitespace. Provider scope names
+are also case-sensitive. LDAP usernames use RFC 4518 case-ignore grouping,
+including Unicode case folding, compatibility normalization, ignored characters,
+and insignificant spaces, so equivalent directory names share a budget. This
+normalization affects throttle keys only; LDAP receives the original username.
+Delimiters in scope names and usernames are escaped in
+the admin identifiers so distinct identities cannot share a bucket accidentally.
+Account lockouts can also deny the account owner access until expiry or an admin
+release; tune the threshold for your traffic and support process.
 
 The per-IP and per-subnet scopes apply only when a client IP is known and their thresholds
 are non-zero. Setting `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP=0` or
@@ -37,7 +50,7 @@ are non-zero. Setting `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP=0` or
 Subnets are formed by masking the client IP to a configurable prefix length (default `/24`
 for IPv4, `/64` for IPv6).
 
-A successful login clears only the `(name, IP)` scope. The per-IP and per-subnet
+A successful login clears the account and its current `(name, IP)` scope. The per-IP and per-subnet
 budgets are deliberately left intact, so one user's success cannot reset the spray or
 distributed counters for the whole host or network.
 
@@ -131,6 +144,7 @@ the peer is the attacker's own untrusted address, so it becomes the client regar
 | -------- | ------- | ----------- |
 | `HUBUUM_LOGIN_RATE_LIMIT_ENABLED` | `true` | Master switch for login throttling |
 | `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS` | `5` | Max failed attempts per `(name, IP)` per window |
+| `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_ACCOUNT` | `20` | Max failed attempts per scoped account across all networks (`0` disables) |
 | `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP` | `20` | Max failed attempts per client IP per window (`0` disables) |
 | `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET` | `100` | Max failed attempts per client subnet per window (`0` disables) |
 | `HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS` | `300` | Sliding window length in seconds |
@@ -162,7 +176,7 @@ Query parameters (all optional, and combinable):
 
 - `include` — `locked` (default, only currently-locked scopes) or `all` (every tracked
   scope).
-- `scope` — restrict to one scope kind: `user_ip`, `ip`, or `subnet`.
+- `scope` — restrict to one scope kind: `user_ip`, `account`, `ip`, or `subnet`.
 - `q` — case-insensitive substring match on the scope identifier (a name, IP, or
   subnet). For example, `q=alice` or `q=198.51.100`.
 
@@ -174,7 +188,7 @@ configuration, those counts, and the matching scopes:
 {
   "config": {
     "enabled": true, "backend": "memory", "max_attempts": 5, "max_attempts_per_ip": 20,
-    "max_attempts_per_subnet": 100, "window_seconds": 300,
+    "max_attempts_per_account": 20, "max_attempts_per_subnet": 100, "window_seconds": 300,
     "backoff_base_seconds": 300, "backoff_max_seconds": 86400,
     "subnet_prefix_v4": 24, "subnet_prefix_v6": 64
   },

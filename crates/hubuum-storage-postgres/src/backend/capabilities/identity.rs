@@ -1,4 +1,5 @@
 use super::super::*;
+use hubuum_storage_core::StorageExternalSyncFailure;
 use hubuum_storage_core::{StorageAuthorizationResource, StorageAuthorizationResourcesQuery};
 
 #[async_trait]
@@ -299,13 +300,15 @@ impl ExternalIdentityStorage for PostgresStorage {
         .map_err(StorageError::from)
     }
 
-    async fn mark_external_sync_attempted(
+    async fn record_external_sync_failure(
         &self,
         principal_id: PrincipalId,
+        failure: StorageExternalSyncFailure,
     ) -> Result<(), StorageError> {
-        crate::operations::external_identity::mark_external_sync_attempted(
+        crate::operations::external_identity::record_external_sync_failure(
             self.runtime(),
             principal_id.id(),
+            failure,
         )
         .await
         .map_err(StorageError::from)
