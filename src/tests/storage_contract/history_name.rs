@@ -83,31 +83,40 @@ async fn move_class(backend: &StorageHandle, class_id: ClassId, collection_id: C
 }
 
 async fn relocate_object(
-    backend: &StorageHandle,
+    environment: &BackendTestEnvironment,
     id: ObjectId,
     source: &BackendObjectFixture,
     target: &BackendObjectFixture,
-) -> StorageObject {
-    // Keep each live object consistent with its class while the original class
-    // moves. The intermediate target-class snapshot is outside the name query.
-    update(
-        backend,
-        id,
-        StorageObjectUpdate::builder()
-            .class_id(Some(target.class.id()))
-            .collection_id(Some(target.collection.id()))
-            .build(),
-    )
-    .await;
-    move_class(backend, source.class.id(), target.collection.id()).await;
-    update(
-        backend,
-        id,
-        StorageObjectUpdate::builder()
-            .class_id(Some(source.class.id()))
-            .build(),
-    )
-    .await
+) {
+    match environment {
+        BackendTestEnvironment::Postgres { pool } => {
+            hubuum_storage_postgres::test_support::relocate_object_history_fixture(
+                pool,
+                source.class.id(),
+                id,
+                target.collection.id(),
+            )
+            .await
+            .unwrap();
+        }
+        BackendTestEnvironment::Memory { .. } => {
+            let backend = environment.storage();
+            let object = backend.object_store().get_object(id).await.unwrap();
+            move_class(&backend, source.class.id(), target.collection.id()).await;
+            backend
+                .object_store()
+                .update_object(
+                    &object,
+                    StorageObjectUpdate::builder()
+                        .collection_id(Some(target.collection.id()))
+                        .build(),
+                    &EventContext::system(),
+                )
+                .await
+                .unwrap()
+                .into_value();
+        }
+    }
 }
 
 async fn grant_object_reads(backend: &StorageHandle, fixture: &BackendObjectFixture) {
@@ -411,13 +420,14 @@ fn external_permissions(
 #[actix_web::test]
 async fn every_backend_name_history_applies_both_collection_checks(#[case] deny_current: bool) {
     let _permit = postgres_permit().await;
-    for backend in available_backends() {
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
         let mut fixture =
             create_backend_object_fixture(&backend, &prefix("history_collections"), vec![]).await;
         let target =
             create_backend_object_fixture(&backend, &prefix("history_target"), vec![]).await;
         let object = create_named(&backend, &fixture, "server01").await;
-        let object = relocate_object(&backend, object.id(), &fixture, &target).await;
+        relocate_object(&environment, object.id(), &fixture, &target).await;
         fixture.objects.push(object);
         let visible = if deny_current {
             fixture.collection.id()
@@ -819,13 +829,14 @@ async fn name_history_api_validates_queries_even_without_matches(
 #[actix_web::test]
 async fn name_history_token_collection_scope_filters_historical_placement(#[case] external: bool) {
     let _permit = postgres_permit().await;
-    for backend in available_backends() {
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
         let mut fixture =
             create_backend_object_fixture(&backend, &prefix("history_scope_source"), vec![]).await;
         let target =
             create_backend_object_fixture(&backend, &prefix("history_scope_target"), vec![]).await;
         let object = create_named(&backend, &fixture, "server01").await;
-        let object = relocate_object(&backend, object.id(), &fixture, &target).await;
+        relocate_object(&environment, object.id(), &fixture, &target).await;
         fixture.objects.push(object);
         let user = owner_user(&backend, &fixture).await;
         grant_object_reads(&backend, &target).await;

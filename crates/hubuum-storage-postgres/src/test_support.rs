@@ -14,8 +14,8 @@ use diesel::{
 };
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{
-    EventDeliveryId, EventDeliverySettings, EventDeliveryStatus, GroupId, PrincipalId,
-    ResourceRevision, RestoreJobId, TaskId,
+    ClassId, CollectionId, EventDeliveryId, EventDeliverySettings, EventDeliveryStatus, GroupId,
+    ObjectId, PrincipalId, ResourceRevision, RestoreJobId, TaskId,
 };
 use hubuum_events_core::{Action, EntityType, EventEntityId, EventSequence, NewEvent};
 use hubuum_storage_core::{
@@ -56,6 +56,35 @@ pub fn integration_test_pool(max_size: u32) -> PostgresPool {
         .build()
         .expect("integration-test PostgreSQL settings must be valid");
     build_postgres_pool(&settings).expect("integration-test PostgreSQL pool must be constructed")
+}
+
+/// Manufacture a retained collection transition that public object updates do
+/// not expose. Keep the live class/object placement consistent atomically and
+/// let the normal database triggers retain both historical shapes.
+pub async fn relocate_object_history_fixture(
+    pool: &PostgresPool,
+    class_id: ClassId,
+    object_id: ObjectId,
+    collection_id: CollectionId,
+) -> Result<(), PostgresStorageError> {
+    crate::with_transaction(pool, async |connection| {
+        use crate::schema::{hubuumclass::dsl as classes, hubuumobject::dsl as objects};
+
+        diesel::update(classes::hubuumclass.filter(classes::id.eq(class_id.id())))
+            .set(classes::collection_id.eq(collection_id.id()))
+            .execute(connection)
+            .await?;
+        diesel::update(
+            objects::hubuumobject
+                .filter(objects::id.eq(object_id.id()))
+                .filter(objects::hubuum_class_id.eq(class_id.id())),
+        )
+        .set(objects::collection_id.eq(collection_id.id()))
+        .execute(connection)
+        .await?;
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
 }
 
 /// Whether the repository runner provisioned the dedicated database-role fixture.
