@@ -36,9 +36,9 @@ async fn versions(
         .unwrap()
         .into_parts()
         .0;
-    // This fixture needs chronological boundaries regardless of the older
-    // identity-history listing's adapter-specific default ordering.
-    rows.sort_by_key(|row| row.clone().into_parts().1.revision());
+    // Deletion tombstones may retain the preceding revision. History identities
+    // order all transitions, independent of the older listing's default order.
+    rows.sort_by_key(|row| row.clone().into_parts().1.into_parts().history_entry_id());
     rows
 }
 
