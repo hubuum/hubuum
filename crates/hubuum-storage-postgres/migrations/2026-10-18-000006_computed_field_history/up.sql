@@ -20,19 +20,19 @@ CREATE UNIQUE INDEX computed_field_history_open ON computed_field_history (class
     WHERE valid_to IS NULL; -- hubuum-compat: bounded-transactional-index
 
 CREATE FUNCTION record_shared_computed_field_history(target_class INTEGER)
-RETURNS VOID LANGUAGE plpgsql AS $$
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE
-    previous computed_field_history%ROWTYPE;
+    previous public.computed_field_history%ROWTYPE;
     snapshot JSONB;
     boundary TIMESTAMPTZ;
 BEGIN
     -- The same class lock used by definition writes and schema activation.
     PERFORM pg_advisory_xact_lock(1133113, target_class);
-    SELECT * INTO previous FROM computed_field_history
+    SELECT * INTO previous FROM public.computed_field_history
         WHERE class_id = target_class AND valid_to IS NULL FOR UPDATE;
     boundary := GREATEST(clock_timestamp(), previous.valid_from + INTERVAL '1 microsecond');
-    IF NOT EXISTS (SELECT 1 FROM hubuumclass WHERE id = target_class) THEN
-        UPDATE computed_field_history SET valid_to = boundary
+    IF NOT EXISTS (SELECT 1 FROM public.hubuumclass WHERE id = target_class) THEN
+        UPDATE public.computed_field_history SET valid_to = boundary
             WHERE class_id = target_class AND valid_to IS NULL;
         RETURN;
     END IF;
@@ -44,27 +44,27 @@ BEGIN
             'enabled', enabled, 'semantics_version', semantics_version
         )
     ) ORDER BY id), '[]'::jsonb) INTO snapshot
-        FROM computed_field_definitions WHERE class_id = target_class AND visibility = 'shared';
+        FROM public.computed_field_definitions WHERE class_id = target_class AND visibility = 'shared';
     IF previous.definitions = snapshot AND previous.evaluator_version = 1 THEN
         RETURN;
     END IF;
-    UPDATE computed_field_history SET valid_to = boundary
+    UPDATE public.computed_field_history SET valid_to = boundary
         WHERE class_id = target_class AND valid_to IS NULL;
-    INSERT INTO computed_field_history (class_id, valid_from, evaluator_version, definitions)
+    INSERT INTO public.computed_field_history (class_id, valid_from, evaluator_version, definitions)
         VALUES (target_class, boundary, 1, snapshot);
 END;
 $$;
 
 CREATE FUNCTION track_shared_computed_field_history()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
     IF TG_OP <> 'INSERT' AND OLD.visibility = 'shared' THEN
-        PERFORM record_shared_computed_field_history(OLD.class_id);
+        PERFORM public.record_shared_computed_field_history(OLD.class_id);
     END IF;
     IF TG_OP <> 'DELETE' AND NEW.visibility = 'shared' AND (
         TG_OP = 'INSERT' OR OLD.visibility <> 'shared' OR OLD.class_id <> NEW.class_id
     ) THEN
-        PERFORM record_shared_computed_field_history(NEW.class_id);
+        PERFORM public.record_shared_computed_field_history(NEW.class_id);
     END IF;
     RETURN NULL;
 END;
@@ -74,12 +74,12 @@ CREATE TRIGGER computed_field_history_change
     FOR EACH ROW EXECUTE FUNCTION track_shared_computed_field_history();
 
 CREATE FUNCTION track_class_computed_field_history()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
     IF TG_OP = 'DELETE' THEN
-        PERFORM record_shared_computed_field_history(OLD.id);
+        PERFORM public.record_shared_computed_field_history(OLD.id);
     ELSE
-        PERFORM record_shared_computed_field_history(NEW.id);
+        PERFORM public.record_shared_computed_field_history(NEW.id);
     END IF;
     RETURN NULL;
 END;
@@ -89,4 +89,9 @@ CREATE TRIGGER computed_field_history_class
     FOR EACH ROW EXECUTE FUNCTION track_class_computed_field_history();
 
 -- Observation starts here; pre-migration definition history is unavailable.
-SELECT record_shared_computed_field_history(id) FROM hubuumclass ORDER BY id;
+SELECT record_shared_computed_field_history(id) FROM public.hubuumclass ORDER BY id;
+
+-- Only owner-executed triggers may write authoritative history.
+REVOKE ALL ON FUNCTION record_shared_computed_field_history(INTEGER) FROM PUBLIC;
+REVOKE ALL ON FUNCTION track_shared_computed_field_history() FROM PUBLIC;
+REVOKE ALL ON FUNCTION track_class_computed_field_history() FROM PUBLIC;

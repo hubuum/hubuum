@@ -1,6 +1,8 @@
 use super::*;
 use crate::{test_support::integration_test_pool, with_transaction};
-use diesel::sql_types::Json;
+use diesel::sql_types::{Json, Text};
+use diesel_async::SimpleAsyncConnection;
+use uuid::Uuid;
 
 #[derive(QueryableByName)]
 struct Explain {
@@ -9,28 +11,33 @@ struct Explain {
     plan: Value,
 }
 
+#[derive(QueryableByName)]
+struct ClassRow {
+    #[diesel(sql_type = Integer)]
+    id: i32,
+}
+
 #[tokio::test]
-async fn computed_history_trigger_rolls_back_with_definition_writes() {
+async fn computed_history_trigger_rolls_back_with_runtime_definition_writes() {
     let pool = integration_test_pool(1);
     with_transaction(&pool, async |connection| {
-        use diesel_async::SimpleAsyncConnection;
-        connection.batch_execute("CREATE TEMP TABLE hubuumclass (id integer) ON COMMIT DROP;
-            CREATE TEMP TABLE computed_field_history (LIKE public.computed_field_history INCLUDING ALL) ON COMMIT DROP;
-            CREATE TEMP TABLE computed_field_definitions (
-                id integer, class_id integer, revision bigint, visibility text, key text, label text,
-                description text, operation jsonb, result_type text, enabled boolean, semantics_version smallint
-            ) ON COMMIT DROP;
-            CREATE TRIGGER computed_history AFTER INSERT OR UPDATE OR DELETE ON computed_field_definitions
-                FOR EACH ROW EXECUTE FUNCTION public.track_shared_computed_field_history();
-            INSERT INTO hubuumclass VALUES (42);
-            SELECT public.record_shared_computed_field_history(42);
-            SAVEPOINT definition_write;
-            INSERT INTO computed_field_definitions VALUES (1, 42, 1, 'shared', 'value', 'Value', '',
-                '{\"type\":\"first_non_null\",\"paths\":[\"/value\"]}', 'integer', true, 1);
-            ROLLBACK TO SAVEPOINT definition_write;").await?;
-        let row = sql_query("SELECT jsonb_build_object('records', count(*), 'fields', sum(jsonb_array_length(definitions))) AS snapshot FROM pg_temp.computed_field_history")
-            .get_result::<HistoryRow>(connection).await?;
+        connection.batch_execute("SAVEPOINT history_fixture").await?;
+        let name = format!("computed_history_{}", Uuid::new_v4().simple());
+        let class = sql_query("WITH collection AS (
+            INSERT INTO public.collections(name, description, parent_collection_id)
+            SELECT $1, 'computed history test', id FROM public.collections WHERE parent_collection_id IS NULL RETURNING id
+        ) INSERT INTO public.hubuumclass(name, collection_id, description, validate_schema)
+            SELECT $1, id, 'computed history test', false FROM collection RETURNING id")
+            .bind::<Text, _>(&name).get_result::<ClassRow>(connection).await?;
+        connection.batch_execute("SAVEPOINT definition_write").await?;
+        sql_query("INSERT INTO public.computed_field_definitions(class_id, visibility, key, label, operation, result_type)
+            VALUES ($1, 'shared', 'value', 'Value', '{\"type\":\"first_non_null\",\"paths\":[\"/value\"]}', 'integer')")
+            .bind::<Integer, _>(class.id).execute(connection).await?;
+        connection.batch_execute("ROLLBACK TO SAVEPOINT definition_write").await?;
+        let row = sql_query("SELECT jsonb_build_object('records', count(*), 'fields', sum(jsonb_array_length(definitions))) AS snapshot FROM public.computed_field_history WHERE class_id = $1")
+            .bind::<Integer, _>(class.id).get_result::<HistoryRow>(connection).await?;
         assert_eq!(row.snapshot, serde_json::json!({"records":1,"fields":0}));
+        connection.batch_execute("ROLLBACK TO SAVEPOINT history_fixture").await?;
         Ok::<_, PostgresStorageError>(())
     }).await.unwrap();
 }
