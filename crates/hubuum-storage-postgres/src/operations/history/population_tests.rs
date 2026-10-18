@@ -81,8 +81,14 @@ async fn historical_population_indexes_sparse_validity_intervals() {
             AND tstzrange(valid_from, valid_to, '[)') @> '2026-01-03'::timestamptz")
             .get_result::<Explain>(connection).await?.plan;
         let scan = &plan[0]["Plan"]["Plans"][0];
-        assert_eq!(scan["Node Type"], "Index Scan", "{plan:#}");
-        assert!(scan["Index Cond"].as_str().unwrap().contains("@>"), "{plan:#}");
+        let index = match scan["Node Type"].as_str() {
+            Some("Index Scan") => scan,
+            Some("Bitmap Heap Scan") => &scan["Plans"][0],
+            _ => panic!("Expected indexed interval lookup: {plan:#}"),
+        };
+        assert!(matches!(index["Node Type"].as_str(), Some("Index Scan" | "Bitmap Index Scan")), "{plan:#}");
+        assert!(index["Index Cond"].as_str().unwrap().contains("@>"), "{plan:#}");
+        assert_eq!(index["Actual Rows"].as_f64().unwrap(), 1.0, "{plan:#}");
         assert_eq!(scan["Actual Rows"].as_f64().unwrap(), 1.0, "{plan:#}");
         Ok::<_, PostgresStorageError>(())
     }).await.unwrap();
