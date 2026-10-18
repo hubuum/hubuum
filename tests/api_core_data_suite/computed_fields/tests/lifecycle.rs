@@ -1,3 +1,5 @@
+use hubuum_storage_postgres::test_support::delete_corrupt_computed_history_fixture;
+
 #[rstest::rstest]
 #[tokio::test]
 async fn object_and_materialization_rollback_together_on_unexpected_failure(
@@ -45,6 +47,9 @@ async fn object_and_materialization_rollback_together_on_unexpected_failure(
     assert_eq!(current.data, fixture.objects[0].data);
 
     fixture.cleanup().await.unwrap();
+    delete_corrupt_computed_history_fixture(typed_class_id(fixture.class.id))
+        .await
+        .unwrap();
 }
 
 #[rstest::rstest]
