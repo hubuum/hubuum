@@ -676,15 +676,63 @@ visibility filter. As-of endpoints authorize only the version selected by the
 requested timestamp and return **403 Forbidden** when that historical version
 is not readable.
 
-### Limitations and Future Work
+### Direct Relationship History
 
-#### Relation History (Deferred to Plan 2b)
+Direct relationship history is available independently of live adjacency:
 
-The following relation tables are tracked in history but do NOT yet have read endpoints:
-- `hubuumclass_relation_history`
-- `hubuumobject_relation_history`
+- `GET /api/v1/classes/{class_id}/relations/history`
+- `GET /api/v1/classes/{class_id}/relations/history/as-of?at=<RFC3339>`
+- `GET /api/v1/classes/{class_id}/{object_id}/relations/history`
+- `GET /api/v1/classes/{class_id}/{object_id}/relations/history/as-of?at=<RFC3339>`
 
-Exposing relation history is planned for a future release (Plan 2b).
+The change endpoints include retained inserts, updates, and deletion markers.
+As-of endpoints require exactly one `at` and select active non-deleted versions
+with `valid_from <= at < valid_to` (null means open). Nanosecond request precision
+is preserved when comparing PostgreSQL's microsecond boundaries. Recreating an
+edge produces a different relationship ID; deletion markers do not create active
+adjacency. These endpoints return direct edges only.
+
+All four accept `limit`, `cursor`, `include_total` (default true), and
+`sort=history_id` or `sort=-history_id` (default). Other filters and sorts are
+rejected. Continuations are bound to the root, selected instant or change stream,
+ordering, principal, token, and token scope. `include_total=false` omits the total
+header and stops scanning once an authorized page plus look-ahead is found.
+
+The body contains `at` (null for a change stream), `relations`, and
+`coverage: "retained_history"`. Each entry has `kind: "class"` or `"object"`, the
+stored `relation`, revision, history ID, operation, validity, durable provenance,
+and `context_at`. Relationship changes resolve endpoint context at their
+`valid_from`; as-of reads resolve it at the requested `at`. Class relationship
+aliases and limits come from that relationship version. Object relationship
+`class_relation_id` remains a historical reference without expanded class-edge
+labels. Collection and class IDs are historical references; collection names,
+object payloads, computed values, and schemas are not expanded.
+
+The `from` and `to` contexts have `status: "available"` with a lightweight
+`snapshot` containing the historical name, identity, class (for objects),
+collection, history ID, revision, and validity. An authorized endpoint with no
+retained effective version has `status: "unavailable"` and
+`reason: "history_unavailable"`. Current rows never fill a historical gap.
+An empty retained page does not prove that no relationship existed.
+
+Current and historical relationship and endpoint permissions are checked before
+rows, counts, or cursors are exposed. Class reads require `ReadClassRelation` and
+`ReadClass`; object reads require `ReadObjectRelation` and `ReadObject`. Token
+resource scopes must cover both endpoints. A live endpoint moved to an unreadable
+collection hides the edge, including its older versions. A deleted edge or
+endpoint requires an unscoped administrator, following the existing deleted
+history policy; surviving endpoints still pass their current and historical
+checks. Missing historical endpoint context is also restricted to an unscoped
+administrator. External policy selection is preserved. Object routes use the
+current class for a live object; retained context can describe an older class.
+
+Both adapters bound candidate pages and endpoint hydration. PostgreSQL reads each
+page and its endpoint batch in one read-only snapshot, using two disjoint indexed
+endpoint branches and one batched historical endpoint query. Exact authorized
+counts may scan all candidates in bounded pages. Deploy the relationship-history
+index migration during maintenance: transactional index builds use a five-second
+lock timeout and a sixty-second statement timeout and temporarily block writes.
+Existing live relationship endpoints and their response shapes are unchanged.
 
 #### Background Task Attribution
 

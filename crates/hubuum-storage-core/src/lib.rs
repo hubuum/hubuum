@@ -144,13 +144,15 @@ pub use families::{
 };
 pub use history::{
     HistoryStorage, StorageClassHistoryRecord, StorageClassObjectsAsOfQuery,
-    StorageCollectionHistoryRecord, StorageExportTemplateHistoryRecord, StorageHistoryAsOfQuery,
-    StorageHistoryCollectionScope, StorageHistoryEntry, StorageHistoryEntryQuery,
-    StorageHistoryListQuery, StorageHistoryMarker, StorageHistoryMetadata,
-    StorageHistoryMetadataParts, StorageHistoryNavigationQuery, StorageHistoryOperation,
-    StorageHistoryPosition, StorageHistoryPrincipalName, StorageHistoryResource,
-    StorageHistorySelection, StorageHistoryWindow, StorageObjectHistoryAsOfQuery,
-    StorageObjectHistoryListQuery, StorageObjectHistoryNameQuery, StorageObjectHistoryRecord,
+    StorageCollectionHistoryRecord, StorageExportTemplateHistoryRecord, StorageHistoricalRelation,
+    StorageHistoryAsOfQuery, StorageHistoryCollectionScope, StorageHistoryEndpointSnapshot,
+    StorageHistoryEntry, StorageHistoryEntryQuery, StorageHistoryListQuery, StorageHistoryMarker,
+    StorageHistoryMetadata, StorageHistoryMetadataParts, StorageHistoryNavigationQuery,
+    StorageHistoryOperation, StorageHistoryPosition, StorageHistoryPrincipalName,
+    StorageHistoryResource, StorageHistorySelection, StorageHistoryWindow,
+    StorageObjectHistoryAsOfQuery, StorageObjectHistoryListQuery, StorageObjectHistoryNameQuery,
+    StorageObjectHistoryRecord, StorageRelationHistoryEntry, StorageRelationHistoryQuery,
+    StorageRelationHistoryRecord, StorageRelationHistoryResource, StorageRelationHistorySelection,
     StorageRemoteTargetHistoryRecord,
 };
 pub use hubuum_domain::PrincipalKind;

@@ -1493,6 +1493,14 @@ impl EventRetentionStorage for MemoryStorage {
 
 #[async_trait]
 impl HistoryStorage for MemoryStorage {
+    async fn list_relation_history(
+        &self,
+        query: StorageRelationHistoryQuery,
+    ) -> Result<StoragePage<StorageRelationHistoryEntry>, StorageError> {
+        let state = self.state.read().await;
+        crate::backup::list_relation_history(&state, &query)
+    }
+
     async fn list_history_markers(
         &self,
         query: StorageHistoryNavigationQuery,

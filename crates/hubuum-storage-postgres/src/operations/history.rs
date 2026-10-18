@@ -1,4 +1,5 @@
 pub(crate) mod navigation;
+pub(crate) mod relations;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, OptionalExtension, QueryDsl};

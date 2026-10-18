@@ -4,7 +4,9 @@ use super::*;
 use serde_json::{Map, Value, json};
 
 mod identity;
+mod relation_history;
 mod resources;
+pub(super) use relation_history::list_relation_history;
 mod schemas;
 mod workflows;
 

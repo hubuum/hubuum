@@ -271,6 +271,16 @@ integer cursor values and optional totals follow object history, and adapters
 must bound retained result state before cloning full snapshots. Retained rows
 provide no evidence of complete historical coverage.
 
+`list_relation_history` consumes `StorageRelationHistoryQuery`, selecting direct
+class or object edges as changes or at an instant. Order by unique history ID,
+apply half-open non-deletion validity for as-of queries, and return bounded pages
+with optional candidate totals. Hydrate only lightweight endpoint context from
+the same instant in a bounded batch; missing retained context stays absent.
+`StorageRelationHistoryEntry` proves endpoint identity and effective validity.
+Application authorization checks current and historical edges and endpoints
+before exposing rows, totals or cursors, including deleted-history restrictions.
+PostgreSQL retains native index-seek and constant-query-count regression coverage.
+
 ### `inventory_queries`
 
 Required trait: `InventoryStorage`.

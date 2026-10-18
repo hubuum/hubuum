@@ -9,15 +9,17 @@ use super::{AppHistoryMetadata, class_from_storage, history_total, object_from_s
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::models::{
-    HistoryAuthorizationSnapshot, HistoryDirection, HistoryMarker, HistoryTimelineParameters,
-    HubuumClassHistory, HubuumObjectHistory, Permissions, TokenScope,
+    HistoricalRelation, HistoryAuthorizationSnapshot, HistoryDirection, HistoryMarker,
+    HistoryTimelineParameters, HubuumClassHistory, HubuumObjectHistory, Permissions, TokenScope,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
 use crate::storage::{
     HistoryStorage, StorageHistoryCollectionScope, StorageHistoryEntry, StorageHistoryEntryQuery,
     StorageHistoryMarker, StorageHistoryNavigationQuery, StorageHistoryPosition,
-    StorageHistoryResource, StorageHistorySelection, StorageHistoryWindow, storage_handle,
+    StorageHistoryResource, StorageHistorySelection, StorageHistoryWindow,
+    StorageRelationHistoryQuery, StorageRelationHistoryResource, StorageRelationHistorySelection,
+    storage_handle,
 };
 use crate::traits::AuthzSubject;
 use hubuum_storage_core::{
@@ -51,6 +53,22 @@ fn unavailable() -> ApiError {
 }
 
 impl<'a, S: AuthzSubject> HistoryReader<'a, S> {
+    pub(crate) async fn relationships(
+        &self,
+        selection: StorageRelationHistorySelection,
+        options: QueryOptions,
+    ) -> Result<(Vec<HistoricalRelation>, i64), ApiError> {
+        let resource = match self.resource {
+            StorageHistoryResource::Class(id) => StorageRelationHistoryResource::Class(id),
+            StorageHistoryResource::Object { object_id, .. } => {
+                StorageRelationHistoryResource::Object(object_id)
+            }
+        };
+        let query = StorageRelationHistoryQuery::try_new(resource, selection, options)
+            .map_err(|error| error.into_request_error())?;
+        super::relations::list(self.context, self.subject, self.scopes, query).await
+    }
+
     pub(crate) async fn authorize(
         context: &'a AppContext,
         subject: &'a S,
@@ -61,67 +79,66 @@ impl<'a, S: AuthzSubject> HistoryReader<'a, S> {
             StorageHistoryResource::Class(_) => Permissions::ReadClass,
             StorageHistoryResource::Object { .. } => Permissions::ReadObject,
         };
-        let live = async {
-            let key = match resource {
-                StorageHistoryResource::Class(id) => StorageAuthorizationResourceKey::Class(id),
-                StorageHistoryResource::Object { object_id, .. } => {
-                    StorageAuthorizationResourceKey::Object(object_id)
-                }
-            };
-            let facts = storage_handle(context)
-                .load_authorization_resources(StorageAuthorizationResourcesQuery::new([key]))
-                .await?
-                .into_iter()
-                .next()
-                .ok_or_else(unavailable)?;
-            let snapshot = match (facts, resource) {
-                (
-                    StorageAuthorizationResource::Class {
-                        resource: class,
-                        name,
-                    },
-                    StorageHistoryResource::Class(id),
-                ) if class.id() == id => {
-                    HistoryAuthorizationSnapshot::class(id.id(), class.collection_id().id(), name)
-                }
-                (
-                    StorageAuthorizationResource::Object(object),
-                    StorageHistoryResource::Object {
-                        class_id,
-                        object_id,
-                    },
-                ) if object.id() == object_id && object.class_id() == class_id => {
-                    HistoryAuthorizationSnapshot::object(
-                        object_id.id(),
-                        object.collection_id().id(),
-                        class_id.id(),
-                        object.name().to_owned(),
-                    )
-                }
-                _ => return Err(unavailable()),
-            };
-            authorize_history_snapshot(context, subject, scopes, permission, snapshot).await
-        }
-        .await;
-        let visibility = match live {
-            Ok(())
-                if context
-                    .permission_backend()
-                    .supports_storage_visibility_filtering() =>
+        let key = match resource {
+            StorageHistoryResource::Class(id) => StorageAuthorizationResourceKey::Class(id),
+            StorageHistoryResource::Object { object_id, .. } => {
+                StorageAuthorizationResourceKey::Object(object_id)
+            }
+        };
+        let facts = storage_handle(context)
+            .load_authorization_resources(StorageAuthorizationResourcesQuery::new([key]))
+            .await?
+            .into_iter()
+            .next();
+        let snapshot = match (facts, resource) {
+            (
+                Some(StorageAuthorizationResource::Class {
+                    resource: class,
+                    name,
+                }),
+                StorageHistoryResource::Class(id),
+            ) if class.id() == id => Some(HistoryAuthorizationSnapshot::class(
+                id.id(),
+                class.collection_id().id(),
+                name,
+            )),
+            (
+                Some(StorageAuthorizationResource::Object(object)),
+                StorageHistoryResource::Object {
+                    class_id,
+                    object_id,
+                },
+            ) if object.id() == object_id && object.class_id() == class_id => {
+                Some(HistoryAuthorizationSnapshot::object(
+                    object_id.id(),
+                    object.collection_id().id(),
+                    class_id.id(),
+                    object.name().to_owned(),
+                ))
+            }
+            (None, _) => None,
+            // A mismatched live identity is not a deleted resource. In particular,
+            // an administrator must still use the live object's current class.
+            _ => return Err(unavailable()),
+        };
+        let visibility = if let Some(snapshot) = snapshot {
+            authorize_history_snapshot(context, subject, scopes, permission, snapshot).await?;
+            if context
+                .permission_backend()
+                .supports_storage_visibility_filtering()
             {
                 let ids =
                     readable_history_collection_ids(context, subject, scopes, permission).await?;
                 HistoryVisibility::Collections(
                     super::HistoryCollectionFilter::Visible(&ids).try_into()?,
                 )
+            } else {
+                HistoryVisibility::Policy
             }
-            Ok(()) => HistoryVisibility::Policy,
-            Err(ApiError::NotFound(_))
-                if can_read_deleted_history(context, subject, scopes.is_some()).await? =>
-            {
-                HistoryVisibility::DeletedAdministrator
-            }
-            Err(error) => return Err(error),
+        } else if can_read_deleted_history(context, subject, scopes.is_some()).await? {
+            HistoryVisibility::DeletedAdministrator
+        } else {
+            return Err(unavailable());
         };
         Ok(Self {
             context,

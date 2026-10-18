@@ -2402,6 +2402,7 @@ dependencies = [
  "ipnet",
  "json-patch",
  "regex",
+ "rstest",
  "serde_json",
  "tokio",
  "uuid",

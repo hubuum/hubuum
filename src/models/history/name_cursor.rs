@@ -1,3 +1,4 @@
+use crate::storage::{StorageHistoryResource, StorageRelationHistorySelection};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use hubuum_domain::ClassId;
@@ -20,6 +21,35 @@ struct Envelope {
 }
 
 impl HistoryNameCursor {
+    pub(crate) fn for_relationships(
+        resource: StorageHistoryResource,
+        selection: StorageRelationHistorySelection,
+        options: &QueryOptions,
+        principal_id: i32,
+        token_id: i32,
+        scope: Option<&TokenScope>,
+    ) -> Result<Self, ApiError> {
+        let (class_id, object_id) = match resource {
+            StorageHistoryResource::Class(id) => (id, None),
+            StorageHistoryResource::Object {
+                class_id,
+                object_id,
+            } => (class_id, Some(object_id.id())),
+        };
+        let at = match selection {
+            StorageRelationHistorySelection::Changes => None,
+            StorageRelationHistorySelection::At(at) => Some(at),
+        };
+        Self::for_selection(
+            class_id,
+            serde_json::json!({"kind": "relationships", "object": object_id, "at": at}),
+            options,
+            principal_id,
+            token_id,
+            scope,
+        )
+    }
+
     pub(crate) fn new(
         class_id: ClassId,
         name: &str,

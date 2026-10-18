@@ -9,6 +9,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Class and object relationship history and direct adjacency at an RFC3339
+  instant, with historical endpoint context, provenance, authorized cursor
+  pagination, and optional totals. Deleted relationships remain restricted to
+  unscoped administrators. Apply the relationship-history index migration during
+  maintenance before upgrading; its bounded transactional builds temporarily
+  block writes.
+
 - Point-in-time class object populations at
   `GET /api/v1/classes/{class_id}/objects/history/as-of?at=...`, with the
   matching historical class/schema snapshot, authorized cursor pagination and
@@ -35,6 +42,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   are unchanged.
 
 ### Changed
+
+- **Breaking storage SDK change:** `HistoryStorage` adapters must implement
+  `list_relation_history(StorageRelationHistoryQuery)` before upgrading. Return
+  bounded relationship versions with endpoint context from the same instant,
+  preserve missing retained context, and implement half-open as-of selection.
+  Application authorization filters candidates before exposing counts or cursors.
 
 - **Breaking storage SDK change:** `HistoryStorage` adapters must implement
   `list_class_objects_as_of` using `StorageClassObjectsAsOfQuery`. Apply historical
@@ -67,6 +80,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   portable regex vocabulary and run its shared conformance cases.
 
 ### Fixed
+
+- Historical object navigation rejects a live object requested through the wrong
+  class, including for administrators with deleted-history access.
 
 - Invalid regex patterns consistently return a client error on every backend,
   even for empty results and independently of the database message language.

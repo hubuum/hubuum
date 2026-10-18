@@ -27,3 +27,6 @@ regex = "1"
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 tokio = { version = "1", features = ["rt", "sync"] }
 uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+rstest = "0.27"

@@ -4,7 +4,7 @@ use crate::models::{
     NewHubuumClassRelation, NewHubuumObjectRelation,
 };
 use crate::permissions::{AuthzTarget, ResourceRef};
-use crate::services::authorization_resources::task_authorization_resources;
+use crate::services::authorization_resources::load_current_authorization_resources;
 use crate::traits::{CanDelete, CanSave};
 use hubuum_domain::{ExportTemplateId, RemoteTargetId};
 use hubuum_storage_core::StorageAuthorizationResourceKey as K;
@@ -132,7 +132,9 @@ async fn batched_authorization_facts_match_individual_resolution_on_every_backen
             facts.iter().map(|fact| fact.key()).collect::<HashSet<_>>(),
             expected.keys().copied().collect::<HashSet<_>>()
         );
-        let actual = task_authorization_resources(&backend, keys).await.unwrap();
+        let actual = load_current_authorization_resources(&backend, keys)
+            .await
+            .unwrap();
         assert_eq!(actual, expected);
         object_relation
             .delete_without_events(&backend)

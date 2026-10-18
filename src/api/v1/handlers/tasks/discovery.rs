@@ -1,5 +1,5 @@
 use crate::errors::ApiError;
-use crate::services::authorization_resources::task_authorization_resources;
+use crate::services::authorization_resources::load_current_authorization_resources;
 use chrono::Utc;
 use hubuum_storage_core::StorageAuthorizationResourceKey;
 use hubuum_storage_core::{
@@ -184,7 +184,8 @@ pub(super) async fn authorize_filters(
         };
         references.push(reference.key());
     }
-    let resources = task_authorization_resources(context, references.iter().copied()).await?;
+    let resources =
+        load_current_authorization_resources(context, references.iter().copied()).await?;
     let mut requests = Vec::with_capacity(references.len());
     for key in references {
         let resource = resources
@@ -268,7 +269,7 @@ pub(crate) async fn redact(
     if unique.is_empty() {
         return Ok(());
     }
-    let resources = task_authorization_resources(context, unique.iter().copied()).await?;
+    let resources = load_current_authorization_resources(context, unique.iter().copied()).await?;
     let mut allowed = HashSet::new();
     let mut indexes = Vec::new();
     let mut requests = Vec::new();

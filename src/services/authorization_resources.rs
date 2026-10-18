@@ -273,7 +273,7 @@ pub(crate) async fn authorize_object_relation_candidates(
 }
 
 /// Load a page's current authorization facts without per-resource lookups.
-pub(crate) async fn task_authorization_resources(
+pub(crate) async fn load_current_authorization_resources(
     backend: &impl StorageContext,
     keys: impl IntoIterator<Item = hubuum_storage_core::StorageAuthorizationResourceKey>,
 ) -> Result<HashMap<hubuum_storage_core::StorageAuthorizationResourceKey, ResourceRef>, ApiError> {
