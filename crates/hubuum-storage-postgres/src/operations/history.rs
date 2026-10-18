@@ -13,15 +13,19 @@ use hubuum_storage_core::{
     StorageExportTemplateHistoryRecord, StorageHistoryAsOfQuery, StorageHistoryCollectionScope,
     StorageHistoryListQuery, StorageHistoryMetadata, StorageHistoryOperation,
     StorageHistoryPrincipalName, StorageObject, StorageObjectHistoryAsOfQuery,
-    StorageObjectHistoryListQuery, StorageObjectHistoryRecord, StoragePage, StorageRemoteTarget,
-    StorageRemoteTargetDefinition, StorageRemoteTargetHistoryRecord, StorageRemoteTargetHttpMethod,
-    StorageRemoteTargetPolicy, StorageRemoteTargetSubjectType, StorageRemoteTargetTransport,
+    StorageObjectHistoryListQuery, StorageObjectHistoryNameQuery, StorageObjectHistoryRecord,
+    StoragePage, StorageRemoteTarget, StorageRemoteTargetDefinition,
+    StorageRemoteTargetHistoryRecord, StorageRemoteTargetHttpMethod, StorageRemoteTargetPolicy,
+    StorageRemoteTargetSubjectType, StorageRemoteTargetTransport,
 };
 use serde_json::Value;
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
 use crate::revision::record_metadata;
 use crate::{PostgresRevision, PostgresRuntime, PostgresStorageError};
+
+#[cfg(test)]
+mod name_tests;
 
 #[derive(diesel::Queryable)]
 #[diesel(table_name = crate::schema::collections_history)]
@@ -621,6 +625,80 @@ pub async fn list_object_history(
             for parameter in options.filters() {
                 crate::postgres_revision_filter!(records, parameter, history::revision);
             }
+            crate::apply_query_options_with_fields!(
+                records,
+                options,
+                fields,
+                crate::cursor::CursorTieBreaker::new(
+                    FilterField::HistoryId,
+                    false,
+                    history_cursor_field(&FilterField::HistoryId, "hubuumobject_history")?,
+                )
+            );
+            let rows = records
+                .load::<ObjectHistoryRow>(connection)
+                .await?
+                .into_iter()
+                .map(StorageObjectHistoryRecord::try_from)
+                .collect::<Result<Vec<_>, _>>()?;
+            crate::persisted_page(rows, total)
+        })
+        .await
+}
+
+fn object_name_history_query(
+    query: &StorageObjectHistoryNameQuery,
+) -> Result<
+    crate::schema::hubuumobject_history::BoxedQuery<'static, diesel::pg::Pg>,
+    PostgresStorageError,
+> {
+    use crate::schema::{hubuumobject::dsl as live, hubuumobject_history::dsl as history};
+
+    let mut records = history::hubuumobject_history
+        .into_boxed()
+        .filter(history::hubuum_class_id.eq(query.class_id().id()))
+        .filter(history::name.eq(query.name().to_owned()));
+    let current_ids = live::hubuumobject
+        .filter(live::hubuum_class_id.eq(query.class_id().id()))
+        .select(live::id);
+    if let Some(collection_ids) = visible_collection_ids(query.collection_scope()) {
+        let readable_ids = current_ids.filter(live::collection_id.eq_any(collection_ids.clone()));
+        let visible = history::id
+            .eq_any(readable_ids)
+            .and(history::collection_id.eq_any(collection_ids));
+        if query.include_deleted() {
+            records = records.filter(visible.or(history::id.ne_all(current_ids)));
+        } else {
+            records = records.filter(visible);
+        }
+    } else if !query.include_deleted() {
+        records = records.filter(history::id.eq_any(current_ids));
+    }
+    for parameter in query.options().filters() {
+        crate::postgres_revision_filter!(records, parameter, history::revision);
+    }
+    Ok(records)
+}
+
+pub async fn list_object_history_by_name(
+    runtime: &PostgresRuntime,
+    query: StorageObjectHistoryNameQuery,
+) -> Result<StoragePage<StorageObjectHistoryRecord>, PostgresStorageError> {
+    let options = query.options();
+    let fields = history_cursor_fields(options, "hubuumobject_history")?;
+    runtime
+        .with_read_only_snapshot(async |connection| {
+            let total = if options.include_total() {
+                Some(
+                    object_name_history_query(&query)?
+                        .count()
+                        .get_result::<i64>(connection)
+                        .await?,
+                )
+            } else {
+                None
+            };
+            let mut records = object_name_history_query(&query)?;
             crate::apply_query_options_with_fields!(
                 records,
                 options,

@@ -9,6 +9,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Exact-name object history at
+  `GET /api/v1/classes/{class_id}/objects/history?name=...`, spanning retained
+  versions across deletion and recreation with distinct IDs. Responses include
+  full snapshots, provenance, cursor pagination, and optional exact totals.
+  Deleted predecessors remain restricted to unscoped administrators; live and
+  historical authorization and token boundaries apply independently.
 - Lightweight class/object history timelines and direct, resource-scoped history
   entry lookup, including deletion markers. Timelines support exact timestamp
   and entry anchors, time windows, stable cursors, and optional authorized counts
@@ -22,6 +28,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking storage SDK change:** `HistoryStorage` now requires
+  `list_object_history_by_name(StorageObjectHistoryNameQuery)`. External adapters
+  must implement exact historical class/name matching, current and historical
+  collection visibility, deleted-history selection, revision filters, and stable
+  cursor paging before upgrading. PostgreSQL deployments must apply the new
+  concurrent class/name/history-ID index migration with the normal migrator.
 - **Breaking storage SDK change:** `HistoryStorage` implementations must add
   `list_history_markers` and `get_history_entry`. Implement the metadata projection,
   resource-scoped identities, full-precision time/identity ordering and selection,

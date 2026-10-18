@@ -817,6 +817,11 @@ effect = "page_read"
 carrier = "StorageObjectHistoryListQuery"
 profile = "history"
 
+[methods."HistoryStorage::list_object_history_by_name"]
+effect = "page_read"
+carrier = "StorageObjectHistoryNameQuery"
+profile = "history"
+
 [methods."HistoryStorage::list_export_template_history"]
 effect = "page_read"
 carrier = "StorageHistoryListQuery"

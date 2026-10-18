@@ -248,6 +248,18 @@ Owns revision-filtered pages and point-in-time reads for collections, classes,
 objects, export templates, and remote targets. Visibility applies before
 filtering, counting, and paging. Provenance-name resolution is batched.
 
+`list_object_history_by_name` matches the stored class ID and exact historical
+name across identities. `StorageObjectHistoryNameQuery` validates query fields
+and normalizes the default descending history-ID order and missing tie-breaker;
+its collection scope applies to both the historical snapshot and the current
+object in that class. Only `include_deleted` admits identities absent from the
+current class, without requiring a live replacement. Historical names never
+select whole lifetimes. Apply revision filters, stable history-ID tie-breakers,
+cursors, and optional totals before returning a bounded page. The application
+additionally checks current and historical resource attributes and scoped tokens
+in bounded authorization batches. PostgreSQL uses the class/name/history-ID index;
+memory retains only the requested page's candidate keys and full snapshots.
+
 ### `inventory_queries`
 
 Required trait: `InventoryStorage`.
