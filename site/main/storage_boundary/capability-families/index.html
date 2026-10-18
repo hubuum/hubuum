@@ -5392,6 +5392,16 @@ cursors, and optional totals before returning a bounded page. The application
 additionally checks current and historical resource attributes and scoped tokens
 in bounded authorization batches. PostgreSQL uses the class/name/history-ID index;
 memory retains only the requested page's candidate keys and full snapshots.</p>
+<p><code>list_class_objects_as_of</code> consumes a validated, bounded
+<code>StorageClassObjectsAsOfQuery</code>. Select at most one effective non-deletion version
+per object using the historical class and half-open validity interval, including
+full timestamp precision. Apply revision filters to that version only. Current
+live identity and historical collection visibility both apply; a class change
+must still authorize the actual current object. Missing live identities require
+<code>include_deleted</code>. Count and pagination must share a read snapshot. Ordering,
+integer cursor values and optional totals follow object history, and adapters
+must bound retained result state before cloning full snapshots. Retained rows
+provide no evidence of complete historical coverage.</p>
 <h3 id="inventory_queries"><code>inventory_queries</code><a class="headerlink" href="#inventory_queries" title="Permanent link">&para;</a></h3>
 <p>Required trait: <code>InventoryStorage</code>.</p>
 <p>Owns one consistent administrative snapshot of collection, class, object, and

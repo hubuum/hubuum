@@ -1644,6 +1644,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#historical-class-object-populations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Historical class object populations
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5516,6 +5527,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#historical-class-object-populations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Historical class object populations
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6223,6 +6245,59 @@ is not readable.</p>
 <li><strong>Anonymization logic</strong>: <code>src/utilities/iam.rs</code></li>
 <li><strong>Anonymization endpoint</strong>: <code>src/api/v1/handlers/users.rs</code></li>
 </ul>
+<h2 id="historical-class-object-populations">Historical class object populations<a class="headerlink" href="#historical-class-object-populations" title="Permanent link">&para;</a></h2>
+<p><code>GET /api/v1/classes/{class_id}/objects/history/as-of?at=&lt;RFC3339&gt;</code> lists
+objects that belonged to the class at the requested instant. It reads each
+object's retained <code>hubuum_class_id</code> and half-open validity interval
+(<code>valid_from &lt;= at &lt; valid_to</code>, with an open upper bound for current versions).
+Deletion markers do not represent active objects. Recreating a name creates a
+separate identity; current names, membership, data and computed values are never
+substituted for historical fields.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="err">GET /api/v1/classes/12/objects/history/as-of?at=2026-10-18T10:00:00Z&amp;limit=25&amp;include_total=false</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="err">Authorization: Bearer &lt;token&gt;</span>
+</code></pre></div>
+<p>The response contains <code>at</code>, <code>class</code>, <code>objects</code> and
+<code>coverage: "retained_history"</code>. <code>class</code> is the class history response, including
+its stored JSON schema, effective at the same instant. <code>objects</code> contains normal
+object history responses, with stable object/history IDs, revision, validity,
+provenance and stored fields. Collection IDs are historical references;
+expanded collection names and metadata are not included. Clients needing them
+must use the collection as-of API at the same instant and treat unavailable
+context explicitly. Computed values are unavailable on this endpoint.</p>
+<p>The caller needs current and historical class read access and current and
+historical object read access. External policy attributes and token resource
+scopes apply to both shapes. Moving an object does not preserve access through
+its old collection. Only unscoped administrators can include subsequently deleted
+objects or query a deleted class. Hidden objects contribute neither rows nor
+counts nor cursor boundaries.</p>
+<p>Pagination uses the standard headers and configured <code>limit</code> bounds (defaults:
+100 rows, maximum 250),
+<code>cursor</code> and <code>include_total</code> (default true). Totals count authorized retained
+objects across all pages; <code>include_total=false</code> omits the total header and avoids
+a full count. Supported sorting is <code>history_id</code> (descending by default) and
+<code>revision</code>, with a unique history-ID tie-breaker; prefix a sort field with <code>-</code>
+for descending. Revision filters use the standard numeric operators, applied
+only to the effective historical version. Other filters, including live JSON or
+computed filters, are rejected. Cursors bind the class, full-precision instant,
+filters, ordering, principal and token scope. Changing any of these requires a
+new first page; changing the page size does not.</p>
+<p>A missing class snapshot returns <code>404</code> with no claim about whether it never
+existed or its history was removed. Successful results describe retained
+versions only. An empty page or zero total does <strong>not</strong> establish that a class
+was historically empty; retained-history completeness and expiry are not yet
+tracked (see retention issue #251). Authorization is evaluated again on each
+page, so changing access can change subsequent results.</p>
+<p>The PostgreSQL adapter uses class/history-ID and validity-range
+indexes, applies count and page selection in one read snapshot, and fetches only
+the requested bounded page. The memory adapter retains only bounded candidate
+keys and the selected snapshots. External authorization fetches candidates in
+bounded batches and never hydrates a whole class. Optional exact counts can
+still require visiting all matching candidates. Apply the new migration with
+<code>hubuum-admin --migrate</code> during maintenance before starting the upgraded server.
+Both index builds share a transaction and temporarily block writes. Lock
+acquisition is limited to 5 seconds and each statement to 60 seconds; failure
+rolls back both builds. Check build duration on representative history tables
+before upgrading.</p>
 
 
 

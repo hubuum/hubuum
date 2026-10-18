@@ -4623,6 +4623,12 @@ paging. Live identities require both current and historical collection access;
 missing identities are included only when the application's deleted-history gate
 sets <code>include_deleted</code>. External adapters must implement this method before
 upgrading; a default empty result is not a compatible implementation.</p>
+<p><code>HistoryStorage::list_class_objects_as_of</code> is a mandatory SDK addition.
+Adapters must implement the complete historical-population contract using
+<code>StorageClassObjectsAsOfQuery</code>, including current and historical authorization,
+effective-version selection, bounded pagination and optional exact counts.
+Update external adapters before upgrading; returning an empty fallback would
+misrepresent retained history.</p>
 <p>Login issuance requires <code>StorageLogin</code> evidence carried by
 <code>StorageTokenCreate::for_login</code>. Adapters must recheck it atomically against the
 current user while fencing credential changes. External refresh bookkeeping uses
