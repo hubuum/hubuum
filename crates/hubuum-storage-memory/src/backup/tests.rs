@@ -58,6 +58,21 @@ fn restored_relationship_history_preserves_endpoint_availability(#[case] prune_e
             .unwrap()
             .into_value();
         let at = Utc::now();
+        let endpoint = storage
+            .resolve_class(StorageClassSelector::Id(classes[1].id()))
+            .await
+            .unwrap();
+        storage
+            .update_class(
+                &endpoint,
+                StorageClassUpdate::builder()
+                    .name(Some("renamed".into()))
+                    .build(),
+                &EventContext::system(),
+            )
+            .await
+            .unwrap()
+            .into_value();
         storage
             .delete_class_relation(&relation, &EventContext::system())
             .await
@@ -78,6 +93,7 @@ fn restored_relationship_history_preserves_endpoint_availability(#[case] prune_e
                     rows.retain(|row| {
                         row.get("id").and_then(Value::as_i64)
                             != Some(i64::from(classes[1].id().id()))
+                            || row.get("valid_to").is_some_and(Value::is_null)
                     });
                 }
             },
