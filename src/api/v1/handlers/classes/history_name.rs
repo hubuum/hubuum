@@ -59,10 +59,8 @@ pub async fn get_object_history_by_name(
         &name,
         &options,
         requestor.principal.principal_id(),
-        (
-            requestor.token_meta.id().id(),
-            requestor.token_meta.revision().get(),
-        ),
+        requestor.token_meta.id().id(),
+        requestor.scopes(),
     )?;
     let cursor = options
         .cursor()

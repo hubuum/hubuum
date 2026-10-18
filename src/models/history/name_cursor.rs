@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::errors::ApiError;
-use crate::models::{HubuumObjectHistory, search::QueryOptions};
+use crate::models::{HubuumObjectHistory, TokenScope, search::QueryOptions};
 use crate::pagination::{MAX_ENCODED_CURSOR_BYTES, normalized_sorts};
 
 /// Binds history continuation to its exact selection and authorization token.
@@ -24,12 +24,28 @@ impl HistoryNameCursor {
         name: &str,
         options: &QueryOptions,
         principal_id: i32,
-        token: (i32, i64),
+        token_id: i32,
+        scope: Option<&TokenScope>,
     ) -> Result<Self, ApiError> {
+        // Token revisions also change during transparent credential migration.
+        // Bind the actual authorization boundary instead of that metadata.
+        let scope = scope
+            .map(|scope| {
+                let permissions = scope.permissions().map(|permissions| {
+                    let mut permissions = permissions.to_vec();
+                    permissions.sort_by_key(ToString::to_string);
+                    permissions
+                });
+                Ok::<_, ApiError>(serde_json::json!({
+                    "permissions": permissions,
+                    "resources": scope.resources()?,
+                }))
+            })
+            .transpose()?;
         let selection = serde_json::json!({
             "class": class_id.id(), "name": name,
             "sort": normalized_sorts::<HubuumObjectHistory>(options.sort())?.iter().map(|sort| (sort.field.to_string(), sort.descending)).collect::<Vec<_>>(),
-            "filters": options.filters().iter().map(|filter| (filter.field().to_string(), filter.operator().to_string(), filter.value())).collect::<Vec<_>>(), "principal": principal_id, "token": token,
+            "filters": options.filters().iter().map(|filter| (filter.field().to_string(), filter.operator().to_string(), filter.value())).collect::<Vec<_>>(), "principal": principal_id, "token": token_id, "scope": scope,
         });
         Ok(Self(
             URL_SAFE_NO_PAD.encode(Sha256::digest(selection.to_string().as_bytes())),
@@ -66,5 +82,51 @@ impl HistoryNameCursor {
             ));
         }
         Ok(encoded)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{CollectionID, Permissions, TokenResourceScope};
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::permission(Permissions::UpdateObject, 1)]
+    #[case::resource(Permissions::ReadObject, 2)]
+    fn cursor_rejects_changed_token_boundary(
+        #[case] permission: Permissions,
+        #[case] collection: i32,
+    ) {
+        let scope = |permission, collection| {
+            TokenScope::from_request_parts(
+                Some(vec![permission]),
+                Some(vec![TokenResourceScope::Collection(
+                    CollectionID::new(collection).unwrap(),
+                )]),
+            )
+            .unwrap()
+            .unwrap()
+        };
+        let options = QueryOptions::empty();
+        let binding = |scope: &TokenScope| {
+            HistoryNameCursor::new(
+                ClassId::new(1).unwrap(),
+                "server01",
+                &options,
+                1,
+                1,
+                Some(scope),
+            )
+            .unwrap()
+        };
+        let cursor = binding(&scope(Permissions::ReadObject, 1))
+            .encode("page".into())
+            .unwrap();
+        assert!(
+            binding(&scope(permission, collection))
+                .decode(&cursor)
+                .is_err()
+        );
     }
 }

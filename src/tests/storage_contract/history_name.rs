@@ -62,6 +62,26 @@ async fn delete(backend: &StorageHandle, id: ObjectId) {
         .into_value();
 }
 
+async fn move_class(backend: &StorageHandle, class_id: ClassId, collection_id: CollectionId) {
+    let class = backend
+        .class_store()
+        .resolve_class(StorageClassSelector::Id(class_id))
+        .await
+        .unwrap();
+    backend
+        .class_store()
+        .update_class(
+            &class,
+            StorageClassUpdate::builder()
+                .collection_id(Some(collection_id))
+                .build(),
+            &EventContext::system(),
+        )
+        .await
+        .unwrap()
+        .into_value();
+}
+
 fn query(class: ClassId, name: &str, params: &str) -> StorageObjectHistoryNameQuery {
     StorageObjectHistoryNameQuery::try_new(
         class,
@@ -352,6 +372,7 @@ async fn every_backend_name_history_applies_both_collection_checks(#[case] deny_
         let target =
             create_backend_object_fixture(&backend, &prefix("history_target"), vec![]).await;
         let object = create_named(&backend, &fixture, "server01").await;
+        move_class(&backend, fixture.class.id(), target.collection.id()).await;
         let object = update(
             &backend,
             object.id(),
@@ -572,7 +593,14 @@ async fn name_history_api_hides_deleted_predecessors_in_rows_totals_and_cursors(
                     .to_request(),
             )
             .await;
-            assert_eq!(response.status(), http::StatusCode::OK);
+            if response.status() != http::StatusCode::OK {
+                let status = response.status();
+                let body = test::read_body(response).await;
+                panic!(
+                    "page {index} returned {status}: {}",
+                    String::from_utf8_lossy(&body)
+                );
+            }
             assert_eq!(
                 response
                     .headers()
@@ -760,6 +788,7 @@ async fn name_history_token_collection_scope_filters_historical_placement(#[case
         let target =
             create_backend_object_fixture(&backend, &prefix("history_scope_target"), vec![]).await;
         let object = create_named(&backend, &fixture, "server01").await;
+        move_class(&backend, fixture.class.id(), target.collection.id()).await;
         fixture.objects.push(
             update(
                 &backend,

@@ -502,7 +502,8 @@ revision ties across identities, independently of timestamp ties. Revision
 filters use the existing history syntax. `include_total=false` skips the exact
 total and stops authorization after a page plus look-ahead. Cursors are specific
 to the class, exact name, revision filters, normalized ordering, and authorization
-token; changing any of these requires starting without a cursor.
+token and its permission/resource scopes; changing any of these requires
+starting without a cursor. Routine token credential migration preserves cursors.
 
 Each live identity must pass its current `ReadObject` check and every returned
 version must pass the historical snapshot check, including the token's resource
