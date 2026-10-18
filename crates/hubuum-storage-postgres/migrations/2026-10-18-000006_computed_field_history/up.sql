@@ -58,6 +58,10 @@ $$;
 CREATE FUNCTION track_shared_computed_field_history()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
+    IF current_setting('hubuum.restore_history', true) = 'on'
+        AND pg_has_role(session_user, current_user, 'MEMBER') THEN
+        RETURN NULL;
+    END IF;
     IF TG_OP <> 'INSERT' AND OLD.visibility = 'shared' THEN
         PERFORM public.record_shared_computed_field_history(OLD.class_id);
     END IF;
@@ -76,6 +80,10 @@ CREATE TRIGGER computed_field_history_change
 CREATE FUNCTION track_class_computed_field_history()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
+    IF current_setting('hubuum.restore_history', true) = 'on'
+        AND pg_has_role(session_user, current_user, 'MEMBER') THEN
+        RETURN NULL;
+    END IF;
     IF TG_OP = 'DELETE' THEN
         PERFORM public.record_shared_computed_field_history(OLD.id);
     ELSE

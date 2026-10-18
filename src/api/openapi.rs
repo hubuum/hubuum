@@ -1767,6 +1767,7 @@ mod tests {
             "/api/v1/classes/{class_id}/{object_id}/events",
             "/api/v1/classes/{class_id}/{object_id}/history",
             "/api/v1/classes/{class_id}/{object_id}/history/as-of",
+            "/api/v1/classes/{class_id}/{object_id}/history/computed/as-of",
             "/api/v1/classes/{class_id}/{object_id}/relations/history",
             "/api/v1/classes/{class_id}/{object_id}/relations/history/as-of",
             "/api/v1/classes/{class_id}/objects/history",

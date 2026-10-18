@@ -22,6 +22,17 @@
       "fingerprints": [
         "8441f83436d0"
       ]
+    },
+    {
+      "id": "historical-computed-backup-format-10",
+      "baseline": "v0.0.19",
+      "expires": "2027-01-31",
+      "reason": "Format 10 retains authoritative shared computed-definition history while continuing to accept formats 6 through 9. Legacy artifacts begin missing definition history at the restore boundary rather than inventing earlier definitions.",
+      "migration": "Upgrade the restore server before restoring version 10 artifacts. Retain a pre-upgrade backup with matching binaries for rollback; versions 6 through 9 remain accepted.",
+      "changelog_entry": "**Breaking:** full backups now use version 10 to retain shared computed-definition",
+      "fingerprints": [
+        "c8de28364855"
+      ]
     }
   ]
 }

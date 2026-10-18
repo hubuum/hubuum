@@ -1,7 +1,11 @@
 use super::*;
-use crate::{test_support::integration_test_pool, with_transaction};
+use crate::{
+    test_support::{database_role_tests_enabled, integration_test_pool},
+    with_transaction,
+};
 use diesel::sql_types::{Json, Text};
 use diesel_async::SimpleAsyncConnection;
+use rstest::rstest;
 use uuid::Uuid;
 
 #[derive(QueryableByName)]
@@ -17,11 +21,22 @@ struct ClassRow {
     id: i32,
 }
 
+#[rstest]
+#[case::ordinary(false)]
+#[case::forged_restore(true)]
 #[tokio::test]
-async fn computed_history_trigger_rolls_back_with_runtime_definition_writes() {
+async fn computed_history_trigger_rolls_back_with_runtime_definition_writes(
+    #[case] forged_restore: bool,
+) {
+    if forged_restore && !database_role_tests_enabled() {
+        return;
+    }
     let pool = integration_test_pool(1);
     with_transaction(&pool, async |connection| {
         connection.batch_execute("SAVEPOINT history_fixture").await?;
+        if forged_restore {
+            connection.batch_execute("SET LOCAL hubuum.restore_history = 'on'").await?;
+        }
         let name = format!("computed_history_{}", Uuid::new_v4().simple());
         let class = sql_query("WITH collection AS (
             INSERT INTO public.collections(name, description, parent_collection_id)
@@ -33,6 +48,9 @@ async fn computed_history_trigger_rolls_back_with_runtime_definition_writes() {
         sql_query("INSERT INTO public.computed_field_definitions(class_id, visibility, key, label, operation, result_type)
             VALUES ($1, 'shared', 'value', 'Value', '{\"type\":\"first_non_null\",\"paths\":[\"/value\"]}', 'integer')")
             .bind::<Integer, _>(class.id).execute(connection).await?;
+        let before_rollback = sql_query("SELECT jsonb_build_object('records', count(*), 'fields', sum(jsonb_array_length(definitions))) AS snapshot FROM public.computed_field_history WHERE class_id = $1")
+            .bind::<Integer, _>(class.id).get_result::<HistoryRow>(connection).await?;
+        assert_eq!(before_rollback.snapshot, serde_json::json!({"records":2,"fields":1}));
         connection.batch_execute("ROLLBACK TO SAVEPOINT definition_write").await?;
         let row = sql_query("SELECT jsonb_build_object('records', count(*), 'fields', sum(jsonb_array_length(definitions))) AS snapshot FROM public.computed_field_history WHERE class_id = $1")
             .bind::<Integer, _>(class.id).get_result::<HistoryRow>(connection).await?;
