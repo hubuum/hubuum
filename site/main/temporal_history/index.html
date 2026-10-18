@@ -1140,6 +1140,67 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#lightweight-timeline-navigation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Lightweight Timeline Navigation
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Lightweight Timeline Navigation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#selection-and-pagination" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Selection and Pagination
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#frontend-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Frontend Integration
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#identity-visibility-and-availability" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Identity, Visibility, and Availability
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#storage-and-performance" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Storage and Performance
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#generic-history-trigger" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4940,6 +5001,67 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#lightweight-timeline-navigation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Lightweight Timeline Navigation
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Lightweight Timeline Navigation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#selection-and-pagination" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Selection and Pagination
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#frontend-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Frontend Integration
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#identity-visibility-and-availability" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Identity, Visibility, and Availability
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#storage-and-performance" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Storage and Performance
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#generic-history-trigger" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5502,6 +5624,163 @@ or purging a task cannot erase attribution from immutable history.</p>
 - It has <code>op = 'D'</code>.
 - Both <code>valid_from</code> and <code>valid_to</code> are set to the deletion timestamp (matching the format seen in line 24 of <code>up.sql</code>).
 - This tombstone allows auditing what was deleted and when, while being logically distinct from an UPDATE closure.</p>
+<h2 id="lightweight-timeline-navigation">Lightweight Timeline Navigation<a class="headerlink" href="#lightweight-timeline-navigation" title="Permanent link">&para;</a></h2>
+<p>Class and object history can be browsed without fetching every full snapshot:</p>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Class route</th>
+<th>Object route</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Timeline</td>
+<td><code>/api/v1/classes/{class_id}/history/timeline</code></td>
+<td><code>/api/v1/classes/{class_id}/{object_id}/history/timeline</code></td>
+</tr>
+<tr>
+<td>Exact entry</td>
+<td><code>/api/v1/classes/{class_id}/history/entries/{history_id}</code></td>
+<td><code>/api/v1/classes/{class_id}/{object_id}/history/entries/{history_id}</code></td>
+</tr>
+</tbody>
+</table>
+<p>Timeline responses are arrays containing resource identity, historical name and
+collection/class identity, <code>history_id</code>, <code>revision</code>, <code>op</code>, <code>valid_from</code>, <code>valid_to</code>,
+and actor/initiator/task provenance. They omit <code>data</code> and <code>json_schema</code>. Exact
+entry responses have the same full snapshot shape as the existing history APIs.
+Successful responses use <code>Cache-Control: private, no-store</code>.</p>
+<h3 id="selection-and-pagination">Selection and Pagination<a class="headerlink" href="#selection-and-pagination" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>direction</code></td>
+<td><code>older</code> (default) orders descending; <code>newer</code> orders ascending. Both order by <code>(valid_from, history_id)</code>.</td>
+</tr>
+<tr>
+<td><code>at</code></td>
+<td>Exact RFC3339 instant. <code>older</code> includes entries whose <code>valid_from &lt;= at</code>; <code>newer</code> includes entries whose <code>valid_from &gt; at</code>.</td>
+</tr>
+<tr>
+<td><code>anchor</code></td>
+<td>Authorized history entry in this resource. Return entries strictly before/after its <code>(valid_from, history_id)</code> position. Mutually exclusive with <code>at</code>.</td>
+</tr>
+<tr>
+<td><code>from</code>, <code>until</code></td>
+<td>Optional creation-time window: <code>from &lt;= valid_from &lt; until</code>. When both are supplied, <code>from</code> must precede <code>until</code>.</td>
+</tr>
+<tr>
+<td><code>limit</code></td>
+<td>Positive page size, using the configured default and maximum.</td>
+</tr>
+<tr>
+<td><code>cursor</code></td>
+<td>Opaque <code>X-Next-Cursor</code> value from the previous page. Preserve the resource, direction, window and anchor when continuing.</td>
+</tr>
+<tr>
+<td><code>include_total</code></td>
+<td>Defaults to <code>false</code>. <code>true</code> returns <code>X-Total-Count</code> for authorized entries matching the window and selection, independent of the cursor.</td>
+</tr>
+</tbody>
+</table>
+<p>The effective limit is returned in <code>X-Page-Limit</code>. <code>X-Next-Cursor</code> is omitted
+when no more authorized entries remain in that direction. Generic <code>sort</code> and
+filter parameters are not supported by timeline routes.</p>
+<p>Timestamp ties are ordered by history identity. Keep server timestamps as exact
+strings; do not round them through a JavaScript <code>Date</code> before sending them back.
+An anchor selects neighbors without timestamp arithmetic. Inserts newer than a
+descending cursor do not duplicate or shift earlier entries; refresh the first
+page to discover newly committed versions. Pagination is not a frozen snapshot
+across requests, and authorization is evaluated on every request.</p>
+<h3 id="frontend-integration">Frontend Integration<a class="headerlink" href="#frontend-integration" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Load a timeline page for markers and snapshot covers.</li>
+<li>Fetch <code>entries/{history_id}</code> only for the selected snapshot and comparison
+   baseline. Prefetch a bounded number of neighbors if useful.</li>
+<li>On a date jump, use the existing <code>history/as-of?at=...</code> route for the active
+   snapshot. Load surrounding markers with <code>timeline?at=...&amp;direction=older</code>
+   and <code>timeline?at=...&amp;direction=newer</code>.</li>
+<li>For exact bookmarks or pinned comparisons, use resource identity plus
+   <code>history_id</code>. Fetch that entry directly, then use <code>anchor={history_id}</code> for
+   its older and newer neighbors.</li>
+</ol>
+<p>For the first/last available authorized marker, request <code>limit=1</code> with
+<code>direction=newer</code>/<code>direction=older</code> and no selection or window. This avoids
+requiring an exact count or loading all versions just to establish bounds.
+Full-document comparisons and change summaries remain opt-in client work;
+listing markers never computes document diffs. Existing clients can continue
+using the original full-row history list and as-of endpoints.</p>
+<h3 id="identity-visibility-and-availability">Identity, Visibility, and Availability<a class="headerlink" href="#identity-visibility-and-availability" title="Permanent link">&para;</a></h3>
+<p>A history ID is table-specific. Exact lookup always constrains it by resource
+kind and resource ID; object routes also constrain the stored class ID. A
+revision alone cannot identify a deletion marker because the marker retains
+the final live revision. Exact lookup can return a tombstone even though as-of
+lookup cannot return a zero-width active interval.</p>
+<p>Current resource access is required before navigation. Historical versions must
+also pass checks using their own stored collection, class, and name. Hidden
+entries do not contribute markers, totals, cursors, or availability bounds.
+Only unscoped administrators may browse deleted-resource history, matching the
+existing policy. Inaccessible, missing, wrong-resource, and unavailable exact
+entries or anchors return the same <code>404</code> response after the live-resource gate.</p>
+<p>Empty windows return an empty page for a known authorized resource. Bounds
+describe available authorized data; they do not prove an uninterrupted history
+or establish a retention cutoff. Until retention provenance is implemented in
+<a href="https://github.com/hubuum/hubuum/issues/251">#251</a>, a missing version is not
+labelled expired and no <code>410</code> response is inferred from the oldest visible row.</p>
+<h3 id="storage-and-performance">Storage and Performance<a class="headerlink" href="#storage-and-performance" title="Permanent link">&para;</a></h3>
+<p>Both PostgreSQL and memory implement the navigation contract. PostgreSQL selects
+only marker and authorization fields and uses indexes beginning with the resource
+identity, followed by <code>valid_from</code> and <code>history_id</code>. Apply the navigation-index
+migration through the normal one-shot administrator migration process during
+maintenance: its transactional index builds briefly block history writes. Lock
+acquisition is limited to five seconds and each statement to sixty seconds;
+failure rolls back both indexes. Test the migration against a representative
+database before upgrading a deployment with very large history tables.</p>
+<p>The regression suite exercises deep index seeks on 12,000 entries with 64 KiB
+JSON payloads, in both directions and with tied timestamps. It checks bounded
+query-plan work and compares full-row and marker payload sizes. HTTP tests also
+check that schemas and object data never appear in marker responses. These
+checks establish payload/query bounds; they are not a production latency claim.</p>
+<p>A PostgreSQL 18 measurement using these installed indexes and 12,000 versions
+with 64 KiB JSON snapshots produced the following uncompressed <code>row_to_json</code>
+sizes for 25 entries:</p>
+<table>
+<thead>
+<tr>
+<th>Resource</th>
+<th>Full rows (bytes)</th>
+<th>Marker projection (bytes)</th>
+<th>Reduction</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Class</td>
+<td>1,647,098</td>
+<td>5,898</td>
+<td>99.64%</td>
+</tr>
+<tr>
+<td>Object</td>
+<td>1,646,848</td>
+<td>5,898</td>
+<td>99.64%</td>
+</tr>
+</tbody>
+</table>
+<p>Deep 25-entry seeks in both directions used index scans, visited 25 rows, and
+touched 5–6 local buffer blocks, without a sort or sequential scan. These
+synthetic database measurements exclude HTTP provenance enrichment and transport
+compression; the API projection/count tests separately verify the real request
+path does not load JSON snapshots or run an unrequested history count.</p>
 <h2 id="generic-history-trigger">Generic History Trigger<a class="headerlink" href="#generic-history-trigger" title="Permanent link">&para;</a></h2>
 <h3 id="the-hubuum_record_history-function">The <code>hubuum_record_history()</code> Function<a class="headerlink" href="#the-hubuum_record_history-function" title="Permanent link">&para;</a></h3>
 <p>A single PL/pgSQL trigger function handles all three DML operations (INSERT, UPDATE, DELETE) for all versioned tables:</p>
