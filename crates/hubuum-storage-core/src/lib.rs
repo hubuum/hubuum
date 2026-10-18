@@ -145,9 +145,12 @@ pub use families::{
 pub use history::{
     HistoryStorage, StorageClassHistoryRecord, StorageCollectionHistoryRecord,
     StorageExportTemplateHistoryRecord, StorageHistoryAsOfQuery, StorageHistoryCollectionScope,
-    StorageHistoryListQuery, StorageHistoryMetadata, StorageHistoryMetadataParts,
-    StorageHistoryOperation, StorageHistoryPrincipalName, StorageObjectHistoryAsOfQuery,
-    StorageObjectHistoryListQuery, StorageObjectHistoryRecord, StorageRemoteTargetHistoryRecord,
+    StorageHistoryEntry, StorageHistoryEntryQuery, StorageHistoryListQuery, StorageHistoryMarker,
+    StorageHistoryMetadata, StorageHistoryMetadataParts, StorageHistoryNavigationQuery,
+    StorageHistoryOperation, StorageHistoryPosition, StorageHistoryPrincipalName,
+    StorageHistoryResource, StorageHistorySelection, StorageHistoryWindow,
+    StorageObjectHistoryAsOfQuery, StorageObjectHistoryListQuery, StorageObjectHistoryRecord,
+    StorageRemoteTargetHistoryRecord,
 };
 pub use hubuum_domain::PrincipalKind;
 pub use hubuum_events_core::AuditDocument;

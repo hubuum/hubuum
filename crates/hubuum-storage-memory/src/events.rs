@@ -1493,6 +1493,92 @@ impl EventRetentionStorage for MemoryStorage {
 
 #[async_trait]
 impl HistoryStorage for MemoryStorage {
+    async fn list_history_markers(
+        &self,
+        query: StorageHistoryNavigationQuery,
+    ) -> Result<StoragePage<StorageHistoryMarker>, StorageError> {
+        let state = self.state.read().await;
+        let options = query.options();
+        let mut entries = state
+            .history
+            .iter()
+            .filter(|entry| {
+                history_matches_resource(entry, query.resource())
+                    && history_scope_allows(query.scope(), entry.value.collection_id())
+                    && query.time_window().contains(entry.valid_from)
+                    && query
+                        .selected()
+                        .contains(StorageHistoryPosition::new(entry.valid_from, entry.id))
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| (entry.valid_from, entry.id.id()));
+        if options.sort()[0].descending {
+            entries.reverse();
+        }
+        let total = options.include_total().then_some(entries.len() as i64);
+        if let Some(values) = options
+            .cursor_values(options.sort())
+            .map_err(|error| StorageError::invalid_input(error.to_string()))?
+        {
+            let [CursorValue::DateTime(at), CursorValue::Integer(id)] = values.as_ref() else {
+                return Err(StorageError::invalid_input("invalid history cursor values"));
+            };
+            entries.retain(|entry| {
+                let key = (entry.valid_from.naive_utc(), entry.id.id());
+                if options.sort()[0].descending {
+                    key < (*at, *id)
+                } else {
+                    key > (*at, *id)
+                }
+            });
+        }
+        entries.truncate(options.limit().expect("bounded navigation query"));
+        let rows = entries
+            .into_iter()
+            .map(|entry| {
+                let name = match &entry.value {
+                    MemoryHistoryValue::Class(record) => record.name(),
+                    MemoryHistoryValue::Object(record) => record.name(),
+                    _ => unreachable!("resource matched"),
+                };
+                Ok(StorageHistoryMarker::new(
+                    query.resource(),
+                    entry.value.collection_id(),
+                    name.to_owned(),
+                    entry.metadata()?,
+                ))
+            })
+            .collect::<Result<Vec<_>, StorageError>>()?;
+        StoragePage::try_new(rows, total).map_err(invalid_contract_value)
+    }
+
+    async fn get_history_entry(
+        &self,
+        query: StorageHistoryEntryQuery,
+    ) -> Result<Option<StorageHistoryEntry>, StorageError> {
+        let state = self.state.read().await;
+        state
+            .history
+            .iter()
+            .find(|entry| {
+                entry.id == query.history_id() && history_matches_resource(entry, query.resource())
+            })
+            .map(|entry| match &entry.value {
+                MemoryHistoryValue::Class(record) => {
+                    StorageClassHistoryRecord::try_new(record.clone(), entry.metadata()?)
+                        .map(StorageHistoryEntry::Class)
+                        .map_err(invalid_contract_value)
+                }
+                MemoryHistoryValue::Object(record) => {
+                    StorageObjectHistoryRecord::try_new(record.clone(), entry.metadata()?)
+                        .map(StorageHistoryEntry::Object)
+                        .map_err(invalid_contract_value)
+                }
+                _ => unreachable!("resource matched"),
+            })
+            .transpose()
+    }
+
     async fn resolve_history_principal_names(
         &self,
         principal_ids: Vec<PrincipalId>,
@@ -1881,5 +1967,19 @@ fn ensure_memory_sink_allowed(
         Err(StorageError::permission_denied(
             "Sink is not available to this collection",
         ))
+    }
+}
+
+fn history_matches_resource(entry: &MemoryHistoryEntry, resource: StorageHistoryResource) -> bool {
+    match (&entry.value, resource) {
+        (MemoryHistoryValue::Class(record), StorageHistoryResource::Class(id)) => record.id() == id,
+        (
+            MemoryHistoryValue::Object(record),
+            StorageHistoryResource::Object {
+                class_id,
+                object_id,
+            },
+        ) => record.id() == object_id && record.class_id() == class_id,
+        _ => false,
     }
 }

@@ -1,24 +1,17 @@
 //! Shared building blocks for the per-resource history read API:
 //! a response wrapper that adds the actor's username and `as_of` query parsing.
 
-use std::future::Future;
-
+use crate::errors::ApiError;
+use crate::events::{PrincipalNames, Provenance, StoredProvenance};
+use crate::models::TemporalHistoryProvenance;
+pub use crate::services::history::access::{
+    authorize_history_page, authorize_history_snapshot, can_read_deleted_history,
+    readable_history_collection_ids,
+};
+use crate::services::history::resolve_principal_names;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
-
-use crate::errors::ApiError;
-use crate::events::{PrincipalNames, Provenance, StoredProvenance};
-use crate::models::collection::user_can_on_any;
-use crate::models::search::QueryOptions;
-use crate::models::{
-    HistoryAuthorizationSnapshot, Permissions, TemporalHistoryProvenance, TokenScope,
-};
-use crate::permissions::visibility::authorize_cursor_page_from_storage;
-use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
-use crate::services::history::resolve_principal_names;
-use crate::traits::scope_allows;
-use crate::traits::{AuthzSubject, CursorPaginated};
 
 /// A serialized history row plus the resolved username of its actor (if any).
 #[derive(Serialize, ToSchema)]
@@ -66,104 +59,6 @@ where
     resolve_principal_names(pool, principal_ids).await
 }
 
-/// Authorize one historical resource shape, including its stored attributes.
-pub async fn authorize_history_snapshot<S>(
-    context: &AppContext,
-    subject: &S,
-    scopes: Option<&TokenScope>,
-    permission: Permissions,
-    snapshot: HistoryAuthorizationSnapshot,
-) -> Result<(), ApiError>
-where
-    S: AuthzSubject + ?Sized,
-{
-    authorize_resources(
-        context.permission_backend(),
-        context,
-        subject,
-        scopes,
-        vec![permission],
-        vec![snapshot.into_resource()],
-    )
-    .await
-}
-
-/// Fetch bounded historical pages and authorize their stored resource snapshots.
-pub async fn authorize_history_page<S, T, F, Fetch, FetchFuture>(
-    context: &AppContext,
-    subject: &S,
-    scopes: Option<&TokenScope>,
-    permission: Permissions,
-    fetch: Fetch,
-    query_options: &QueryOptions,
-    to_snapshot: F,
-) -> Result<(Vec<T>, i64), ApiError>
-where
-    S: AuthzSubject + ?Sized,
-    T: CursorPaginated,
-    F: Fn(&T) -> HistoryAuthorizationSnapshot,
-    Fetch: FnMut(QueryOptions) -> FetchFuture,
-    FetchFuture: Future<Output = Result<Vec<T>, ApiError>>,
-{
-    if !scope_allows(scopes, &[permission]) {
-        return Err(ApiError::Forbidden("Permission denied".to_string()));
-    }
-    let principal = PrincipalRef::load(context, subject).await?;
-    let page = authorize_cursor_page_from_storage(
-        context.permission_backend(),
-        &principal,
-        scopes,
-        vec![permission],
-        query_options,
-        fetch,
-        |candidate| {
-            to_snapshot(candidate)
-                .into_resource()
-                .normalized_for_permission(permission)
-        },
-    )
-    .await?;
-    Ok((page.rows, page.total_count))
-}
-
-/// Resolve the collection ids visible through the local SQL permission store.
-pub async fn readable_history_collection_ids<S>(
-    context: &AppContext,
-    subject: &S,
-    scopes: Option<&TokenScope>,
-    permission: Permissions,
-) -> Result<Vec<i32>, ApiError>
-where
-    S: AuthzSubject + ?Sized,
-{
-    let mut collection_ids = user_can_on_any(context, subject, permission, scopes)
-        .await?
-        .into_iter()
-        .map(|collection| collection.id)
-        .collect::<Vec<_>>();
-    collection_ids.sort_unstable();
-    collection_ids.dedup();
-    Ok(collection_ids)
-}
-
-/// Deleted resources have no live row to authorize against. Only unscoped
-/// admins may use the history endpoints as a compliance/audit surface for
-/// those tombstones; ordinary callers must pass the normal live-resource check.
-pub async fn can_read_deleted_history<S>(
-    context: &AppContext,
-    subject: &S,
-    token_scoped: bool,
-) -> Result<bool, ApiError>
-where
-    S: AuthzSubject + ?Sized,
-{
-    if token_scoped {
-        return Ok(false);
-    }
-    let principal = PrincipalRef::load(context, subject).await?;
-    context.permission_backend().is_admin(&principal).await
-}
-
 /// Parse the required `at=<rfc3339>` query parameter for the as-of endpoint.
 pub fn parse_as_of(query_string: &str) -> Result<DateTime<Utc>, ApiError> {
     let (_opts, passthrough) =
@@ -186,8 +81,8 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::models::HubuumClassHistory;
     use crate::models::search::parse_query_parameter;
+    use crate::models::{HistoryAuthorizationSnapshot, HubuumClassHistory, Permissions};
     use crate::pagination::paginate_in_memory;
     use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
     use crate::permissions::{ResourceFields, ResourceKind};

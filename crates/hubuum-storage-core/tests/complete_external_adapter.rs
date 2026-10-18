@@ -1197,6 +1197,22 @@ impl EventRetentionStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl HistoryStorage for CompleteExternalAdapter {
+    async fn list_history_markers(
+        &self,
+        query: StorageHistoryNavigationQuery,
+    ) -> Result<StoragePage<StorageHistoryMarker>, StorageError> {
+        let _ = query;
+        Err(StorageError::internal("compile-only adapter"))
+    }
+
+    async fn get_history_entry(
+        &self,
+        query: StorageHistoryEntryQuery,
+    ) -> Result<Option<StorageHistoryEntry>, StorageError> {
+        let _ = query;
+        Err(StorageError::internal("compile-only adapter"))
+    }
+
     async fn resolve_history_principal_names(
         &self,
         principal_ids: Vec<PrincipalId>,

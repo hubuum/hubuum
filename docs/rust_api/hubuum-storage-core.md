@@ -163,3 +163,29 @@ semantics: all requested permissions must occur in one group grant for that
 collection. Do not combine partial grants from different groups. Local permission
 batches use this operation for both endpoints of relations, including non-admin
 callers, without per-resource database calls.
+
+## History Navigation
+
+`HistoryStorage::list_history_markers` consumes a validated
+`StorageHistoryNavigationQuery` and projects metadata without object JSON or
+class schemas. `StorageHistoryResource` binds the resource kind and identity;
+objects also carry their class identity. `StorageHistoryWindow` validates the
+half-open timestamp window. `StorageHistorySelection` distinguishes exact entry
+lookup, timestamp seeks, and strict entry-position seeks without conflating them.
+
+Adapters must use full-precision UTC `(valid_from, history_id)` ordering in the
+requested direction, apply historical collection visibility and selection before
+counts/pagination, and honor opaque or internal continuation cursors. A count is
+optional and independent of the cursor; when requested it shares the page's read
+snapshot. Return `InvalidInput` for malformed cursors. Metadata reads must not
+hydrate snapshot JSON or compute diffs.
+
+`get_history_entry` consumes `StorageHistoryEntryQuery`, constraining the history
+ID by table, resource ID, and the object's historical class. It returns the typed
+class/object entry, including tombstones, or `None`. Application callers authorize
+historical attributes through metadata before loading the full entry. Do not infer an expiry
+reason from a missing row or from the oldest retained timestamp.
+
+Adding these two required methods is a breaking pre-1.0 SDK change. Adapter
+implementations must add both methods and run the shared history-navigation
+conformance coverage. Existing full-row history and as-of methods are unchanged.

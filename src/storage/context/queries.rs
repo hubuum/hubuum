@@ -4,6 +4,36 @@ use super::*;
 
 #[async_trait]
 impl HistoryStorage for StorageHandle {
+    async fn list_history_markers(
+        &self,
+        query: StorageHistoryNavigationQuery,
+    ) -> Result<StoragePage<StorageHistoryMarker>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::History,
+            "list_history_markers",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.list_history_markers(query).await
+                })
+            },
+        )
+        .await
+    }
+
+    async fn get_history_entry(
+        &self,
+        query: StorageHistoryEntryQuery,
+    ) -> Result<Option<StorageHistoryEntry>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::History,
+            "get_history_entry",
+            async { dispatch_backend!(self, |backend| { backend.get_history_entry(query).await }) },
+        )
+        .await
+    }
+
     async fn resolve_history_principal_names(
         &self,
         principal_ids: Vec<PrincipalId>,

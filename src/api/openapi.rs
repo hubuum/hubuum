@@ -35,9 +35,9 @@ use crate::models::{
     ExportJsonResponse, ExportLimits, ExportMeta, ExportMissingDataPolicy, ExportRequest,
     ExportScope, ExportScopeKind, ExportTaskDetails, ExportTemplate, ExportTemplateHistory,
     ExportTemplateID, ExportTemplateKind, ExportTemplateRunRequest, ExportWarning, Group, GroupKey,
-    GroupPermission, GroupPointResponse, GroupResponse, HubuumClass, HubuumClassExpanded,
-    HubuumClassHistory, HubuumClassRelation, HubuumClassWithPath, HubuumObject,
-    HubuumObjectComputedResponse, HubuumObjectHistory, HubuumObjectReadResponse,
+    GroupPermission, GroupPointResponse, GroupResponse, HistoryDirection, HubuumClass,
+    HubuumClassExpanded, HubuumClassHistory, HubuumClassRelation, HubuumClassWithPath,
+    HubuumObject, HubuumObjectComputedResponse, HubuumObjectHistory, HubuumObjectReadResponse,
     HubuumObjectRelation, HubuumObjectWithPath, IdentityScopeKey, ImportAtomicity,
     ImportClassInput, ImportClassRelationInput, ImportCollectionInput,
     ImportCollectionPermissionInput, ImportCollisionPolicy, ImportComputedFieldInput,
@@ -291,6 +291,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
         classes::get_class_by_name,
         classes::get_class_history,
         classes::get_class_as_of,
+        classes::get_class_history_timeline,
+        classes::get_class_history_entry,
         classes::update_class,
         classes::update_class_by_name,
         classes::delete_class,
@@ -323,6 +325,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
         classes::get_object_in_class_by_name,
         classes::get_object_history,
         classes::get_object_as_of,
+        classes::get_object_history_timeline,
+        classes::get_object_history_entry,
         classes::patch_object_in_class,
         classes::patch_object_in_class_by_name,
         classes::patch_object_data_in_class,
@@ -387,6 +391,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             PrincipalSettingsPatchDocument,
             PrincipalSettingsResponse,
             ResourceRevision,
+            HistoryDirection,
             NewServiceAccount,
             ServiceAccountResponse,
             ServiceAccountPointResponse,
@@ -756,7 +761,9 @@ impl Modify for OperationDefaults {
                     ));
                 }
 
-                if is_cursor_paginated_get(path, method)
+                if path.ends_with("/history/timeline") && method.eq_ignore_ascii_case("get") {
+                    add_history_navigation_docs(operation);
+                } else if is_cursor_paginated_get(path, method)
                     || operation_has_cursor_pagination(operation)
                 {
                     add_cursor_pagination_docs(operation);
@@ -1176,6 +1183,25 @@ fn add_cursor_pagination_docs(operation: &mut Operation) {
         }
     }
 
+    if let Some(response) = operation.responses.responses.get_mut("200") {
+        add_total_count_header(response);
+        add_next_cursor_header(response);
+        add_page_limit_header(response);
+    }
+}
+
+fn add_history_navigation_docs(operation: &mut Operation) {
+    let limits = page_limits_or_defaults();
+    upsert_page_limit_parameter(
+        operation.parameters.get_or_insert_with(Vec::new),
+        "limit",
+        "Maximum navigation entries; values above the configured maximum are clamped.",
+        limits.default_limit(),
+        limits.maximum_limit(),
+    );
+    if let Some(description) = operation.description.as_mut() {
+        description.push_str(" Entries are ordered by (valid_from, history_id), descending for older and ascending for newer. Reuse X-Next-Cursor with the same selection and direction. include_total defaults to false. Use direction=newer&limit=1 or direction=older&limit=1 without a selection to discover the first or last authorized available entry; these bounds do not prove uninterrupted retention.");
+    }
     if let Some(response) = operation.responses.responses.get_mut("200") {
         add_total_count_header(response);
         add_next_cursor_header(response);
@@ -1715,6 +1741,8 @@ mod tests {
             "/api/v1/classes/{class_id}/events",
             "/api/v1/classes/{class_id}/history",
             "/api/v1/classes/{class_id}/history/as-of",
+            "/api/v1/classes/{class_id}/history/timeline",
+            "/api/v1/classes/{class_id}/history/entries/{history_id}",
             "/api/v1/classes/{class_id}/permissions",
             "/api/v1/classes/{class_id}/object-aggregates",
             "/api/v1/classes/{class_id}/related/classes",
@@ -1728,6 +1756,8 @@ mod tests {
             "/api/v1/classes/{class_id}/{object_id}/events",
             "/api/v1/classes/{class_id}/{object_id}/history",
             "/api/v1/classes/{class_id}/{object_id}/history/as-of",
+            "/api/v1/classes/{class_id}/{object_id}/history/timeline",
+            "/api/v1/classes/{class_id}/{object_id}/history/entries/{history_id}",
             "/api/v1/classes/{class_id}/objects/{object_id}/related/objects",
             "/api/v1/classes/{class_id}/objects/{object_id}/related/relations",
             "/api/v1/classes/{class_id}/objects/{object_id}/related/graph",
