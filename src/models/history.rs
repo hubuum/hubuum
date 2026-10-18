@@ -1,6 +1,9 @@
 use crate::permissions::ClassResourceEndpoint;
 use crate::permissions::ResourceRef;
 
+mod name_cursor;
+pub(crate) use name_cursor::HistoryNameCursor;
+
 use super::{
     CollectionHistory, ExportTemplateHistory, HubuumClassHistory, HubuumObjectHistory,
     RemoteTargetHistory,

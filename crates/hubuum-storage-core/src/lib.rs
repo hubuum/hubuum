@@ -147,7 +147,8 @@ pub use history::{
     StorageExportTemplateHistoryRecord, StorageHistoryAsOfQuery, StorageHistoryCollectionScope,
     StorageHistoryListQuery, StorageHistoryMetadata, StorageHistoryMetadataParts,
     StorageHistoryOperation, StorageHistoryPrincipalName, StorageObjectHistoryAsOfQuery,
-    StorageObjectHistoryListQuery, StorageObjectHistoryRecord, StorageRemoteTargetHistoryRecord,
+    StorageObjectHistoryListQuery, StorageObjectHistoryNameQuery, StorageObjectHistoryRecord,
+    StorageRemoteTargetHistoryRecord,
 };
 pub use hubuum_domain::PrincipalKind;
 pub use hubuum_events_core::AuditDocument;

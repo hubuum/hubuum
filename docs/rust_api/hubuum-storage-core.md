@@ -21,6 +21,14 @@ Applications compose safe lifecycle semantics through the crate-owned
 operation types returned by `StorageTransaction`; native connections and query
 interfaces remain private to each adapter.
 
+`HistoryStorage::list_object_history_by_name` is a mandatory SDK addition.
+Adapters consume `StorageObjectHistoryNameQuery`, match exact retained class/name
+coordinates across object identities, and apply visibility before counting and
+paging. Live identities require both current and historical collection access;
+missing identities are included only when the application's deleted-history gate
+sets `include_deleted`. External adapters must implement this method before
+upgrading; a default empty result is not a compatible implementation.
+
 Login issuance requires `StorageLogin` evidence carried by
 `StorageTokenCreate::for_login`. Adapters must recheck it atomically against the
 current user while fencing credential changes. External refresh bookkeeping uses

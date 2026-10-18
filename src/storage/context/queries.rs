@@ -102,6 +102,23 @@ impl HistoryStorage for StorageHandle {
         .await
     }
 
+    async fn list_object_history_by_name(
+        &self,
+        query: StorageObjectHistoryNameQuery,
+    ) -> Result<StoragePage<StorageObjectHistoryRecord>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::History,
+            "list_object_history_by_name",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.list_object_history_by_name(query).await
+                })
+            },
+        )
+        .await
+    }
+
     async fn get_object_history_as_of(
         &self,
         query: StorageObjectHistoryAsOfQuery,

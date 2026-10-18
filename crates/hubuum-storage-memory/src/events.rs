@@ -1653,6 +1653,115 @@ impl HistoryStorage for MemoryStorage {
         page(rows, &options)
     }
 
+    async fn list_object_history_by_name(
+        &self,
+        query: StorageObjectHistoryNameQuery,
+    ) -> Result<StoragePage<StorageObjectHistoryRecord>, StorageError> {
+        use crate::object_filters::ObjectFilters;
+        use std::collections::BinaryHeap;
+
+        let options = query.options();
+        let filters = ObjectFilters::new(options.filters())?;
+        let mut sorts = options.sort().to_vec();
+        if !sorts
+            .iter()
+            .any(|sort| sort.field == FilterField::HistoryId)
+        {
+            sorts.push(SortParam {
+                field: FilterField::HistoryId,
+                descending: true,
+            });
+        }
+        let boundary = options
+            .cursor_values(&sorts)
+            .map_err(|error| StorageError::invalid_input(error.to_string()))?
+            .map(|values| {
+                values
+                    .iter()
+                    .zip(&sorts)
+                    .map(|(value, sort)| {
+                        let CursorValue::Integer(value) = value else {
+                            return Err(StorageError::invalid_input(
+                                "History cursor requires integer values",
+                            ));
+                        };
+                        Ok(if sort.descending {
+                            -i128::from(*value)
+                        } else {
+                            i128::from(*value)
+                        })
+                    })
+                    .collect::<Result<Vec<_>, StorageError>>()
+            })
+            .transpose()?;
+        let state = self.state.read().await;
+        let limit = options.limit().unwrap_or(usize::MAX);
+        let mut selected = BinaryHeap::new();
+        let mut total = 0;
+        for (index, entry) in state.history.iter().enumerate() {
+            let MemoryHistoryValue::Object(record) = &entry.value else {
+                continue;
+            };
+            if record.name() != query.name()
+                || record.class_id() != query.class_id()
+                || !filters.matches(record)
+            {
+                continue;
+            }
+            let visible = match state
+                .objects
+                .get(&record.id().id())
+                .filter(|live| live.class_id() == query.class_id())
+            {
+                Some(live) => {
+                    history_scope_allows(query.collection_scope(), live.collection_id())
+                        && history_scope_allows(query.collection_scope(), record.collection_id())
+                }
+                None => query.include_deleted(),
+            };
+            if !visible {
+                continue;
+            }
+            total += 1;
+            let key = sorts
+                .iter()
+                .map(|sort| {
+                    let value = if sort.field == FilterField::Revision {
+                        record.revision().get()
+                    } else {
+                        entry.id.id()
+                    };
+                    if sort.descending {
+                        -i128::from(value)
+                    } else {
+                        i128::from(value)
+                    }
+                })
+                .collect::<Vec<_>>();
+            if boundary.as_ref().is_some_and(|boundary| key <= *boundary) {
+                continue;
+            }
+            selected.push((key, index));
+            if selected.len() > limit {
+                selected.pop();
+            }
+        }
+        let rows = selected
+            .into_sorted_vec()
+            .into_iter()
+            .map(|(_, index)| {
+                let entry = &state.history[index];
+                let MemoryHistoryValue::Object(record) = &entry.value else {
+                    unreachable!()
+                };
+                StorageObjectHistoryRecord::try_new(record.clone(), entry.metadata()?)
+                    .map_err(invalid_contract_value)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        StoragePage::try_new(rows, options.include_total().then_some(total))
+            .map_err(invalid_contract_value)
+    }
+
     async fn get_object_history_as_of(
         &self,
         query: StorageObjectHistoryAsOfQuery,

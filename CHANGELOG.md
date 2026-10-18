@@ -9,6 +9,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Exact-name object history at
+  `GET /api/v1/classes/{class_id}/objects/history?name=...`, spanning retained
+  versions across deletion and recreation with distinct IDs. Responses include
+  full snapshots, provenance, cursor pagination, and optional exact totals.
+  Deleted predecessors remain restricted to unscoped administrators; live and
+  historical authorization and token boundaries apply independently.
 - Opt-in `POST /api/v1/search/hydrate` for inspecting a bounded, permission-aware
   object neighborhood alongside search results, with unique objects/relations,
   visible paths, and explicit truncation. Root search matches and pagination
@@ -16,6 +22,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking storage SDK change:** `HistoryStorage` now requires
+  `list_object_history_by_name(StorageObjectHistoryNameQuery)`. External adapters
+  must implement exact historical class/name matching, current and historical
+  collection visibility, deleted-history selection, revision filters, and stable
+  cursor paging before upgrading. PostgreSQL deployments must apply the new
+  concurrent class/name/history-ID index migration with the normal migrator.
 - Refresh compatible runtime dependencies, including Actix Web 4.17, Tokio
   1.53.3, and HTTP compression library updates.
 - **Breaking regex search change:** every backend now implements the bounded

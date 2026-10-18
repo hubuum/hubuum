@@ -4,7 +4,7 @@ use hubuum_domain::{
     ClassId, CollectionId, HistoryRecordId, ObjectId, PrincipalId, ResourceId, ResourceRevision,
     TaskId,
 };
-use hubuum_query::QueryOptions;
+use hubuum_query::{FilterField, QueryOptions};
 
 use crate::{
     StorageClass, StorageCollection, StorageError, StorageExportTemplate, StorageObject,
@@ -101,6 +101,101 @@ impl StorageObjectHistoryListQuery {
             self.query_options,
             self.collection_scope,
         )
+    }
+}
+
+/// Exact historical name selection across object identities within one class.
+///
+/// Visibility applies to both the stored snapshot and the current object. A
+/// missing current object (or one now in another class) is included only when
+/// `include_deleted` is enabled by the application's deleted-history policy.
+#[derive(Clone)]
+pub struct StorageObjectHistoryNameQuery {
+    class_id: ClassId,
+    name: String,
+    options: QueryOptions,
+    collection_scope: StorageHistoryCollectionScope,
+    include_deleted: bool,
+}
+
+impl StorageObjectHistoryNameQuery {
+    pub fn try_new(
+        class_id: ClassId,
+        name: String,
+        options: QueryOptions,
+    ) -> Result<Self, StorageValidationError> {
+        if name.contains('\0') {
+            return Err(StorageValidationError::invalid(
+                "Historical name cannot contain NUL",
+            ));
+        }
+        if options
+            .filters()
+            .iter()
+            .any(|filter| *filter.field() != FilterField::Revision)
+            || options.structured_filter().is_some()
+        {
+            return Err(StorageValidationError::invalid(
+                "Only revision filters are supported for history",
+            ));
+        }
+        if options
+            .sort()
+            .iter()
+            .any(|sort| !matches!(sort.field, FilterField::HistoryId | FilterField::Revision))
+        {
+            return Err(StorageValidationError::invalid(
+                "History can only be ordered by history_id or revision",
+            ));
+        }
+        Ok(Self {
+            class_id,
+            name,
+            options,
+            collection_scope: StorageHistoryCollectionScope::All,
+            include_deleted: false,
+        })
+    }
+
+    #[must_use]
+    pub fn visibility(
+        mut self,
+        scope: StorageHistoryCollectionScope,
+        include_deleted: bool,
+    ) -> Self {
+        self.collection_scope = scope;
+        self.include_deleted = include_deleted;
+        self
+    }
+
+    pub fn with_options(self, options: QueryOptions) -> Result<Self, StorageValidationError> {
+        Ok(Self::try_new(self.class_id, self.name, options)?
+            .visibility(self.collection_scope, self.include_deleted))
+    }
+
+    #[must_use]
+    pub const fn class_id(&self) -> ClassId {
+        self.class_id
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
+    pub const fn options(&self) -> &QueryOptions {
+        &self.options
+    }
+
+    #[must_use]
+    pub const fn collection_scope(&self) -> &StorageHistoryCollectionScope {
+        &self.collection_scope
+    }
+
+    #[must_use]
+    pub const fn include_deleted(&self) -> bool {
+        self.include_deleted
     }
 }
 
@@ -495,6 +590,11 @@ pub trait HistoryStorage: Send + Sync {
     async fn list_object_history(
         &self,
         query: StorageObjectHistoryListQuery,
+    ) -> Result<StoragePage<StorageObjectHistoryRecord>, StorageError>;
+
+    async fn list_object_history_by_name(
+        &self,
+        query: StorageObjectHistoryNameQuery,
     ) -> Result<StoragePage<StorageObjectHistoryRecord>, StorageError>;
 
     async fn get_object_history_as_of(

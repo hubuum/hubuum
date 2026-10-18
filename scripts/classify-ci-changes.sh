@@ -84,6 +84,8 @@ for path in "$@"; do
       src/models/permissions.rs | src/models/token.rs | \
       src/models/token_scope.rs | src/models/unified_search.rs | \
       src/api/v1/handlers/search.rs | src/api/v1/handlers/tasks.rs | src/api/v1/handlers/tasks/* | \
+      src/api/v1/handlers/classes/history_name.rs | src/services/history/name.rs | \
+      src/tests/storage_contract/history_name.rs | \
       tests/api_jobs_suite/tasks.rs | src/tests/permissions/* | \
       src/extractors/mod.rs | src/api/v1/handlers/principals.rs | \
       src/api/v1/handlers/service_accounts.rs | \

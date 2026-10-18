@@ -1239,6 +1239,13 @@ impl HistoryStorage for CompleteExternalAdapter {
         fixture_result()
     }
 
+    async fn list_object_history_by_name(
+        &self,
+        query: StorageObjectHistoryNameQuery,
+    ) -> Result<StoragePage<StorageObjectHistoryRecord>, StorageError> {
+        fixture_result()
+    }
+
     async fn get_object_history_as_of(
         &self,
         query: StorageObjectHistoryAsOfQuery,

@@ -469,6 +469,57 @@ Each history row is wrapped in a `HistoryResponse` containing:
 ]
 ```
 
+#### Exact-Name Object History Across Identities
+
+```http
+GET /api/v1/classes/42/objects/history?name=server01&limit=50
+```
+
+This read-only endpoint selects full retained object snapshots by **stored class
+ID and exact stored name**, across deletion and recreation with different object
+IDs. It does not resolve a live object first. Names are case-sensitive; numeric
+names such as `123` remain names. Supply `name` exactly once, URL-encoded as a
+query value (including commas, slashes, spaces, and Unicode). An empty name is
+also an exact value. Class-name reuse across different class IDs is not followed.
+
+If object 123 named `server01` is deleted and object 456 is created with the same
+name, an authorized query includes both identities' matching versions and 123's
+delete tombstone. If 456 is renamed to `server02`, its new version is excluded;
+renaming back adds matching versions again. The existing ID history endpoint
+continues to follow one identity through all its names.
+
+The response uses the existing full `HistoryResponse<HubuumObjectHistory>` shape:
+`id` is the object ID, `history_id` identifies the exact returned snapshot,
+`hubuum_class_id` and `collection_id` are historical coordinates, and `name`,
+`revision`, `op`, `valid_from`, `valid_to`, `data`, and provenance describe that
+version. No follow-up snapshot fetch is required. Delete tombstones retain the
+final live revision, so revision alone is not a unique history-entry identifier.
+
+Clients use the standard `X-Next-Cursor`, `X-Page-Limit`, and optional
+`X-Total-Count` headers. Default ordering is descending `history_id`; `sort`
+accepts `history_id` or `revision` with an optional `-` prefix. `history_id` breaks
+revision ties across identities, independently of timestamp ties. Revision
+filters use the existing history syntax. `include_total=false` skips the exact
+total and stops authorization after a page plus look-ahead. Cursors are specific
+to the class, exact name, revision filters, normalized ordering, and authorization
+token; changing any of these requires starting without a cursor.
+
+Each live identity must pass its current `ReadObject` check and every returned
+version must pass the historical snapshot check, including the token's resource
+boundary and external policies. A readable replacement never authorizes its
+predecessor. **Deleted identities remain visible only to unscoped administrators**,
+as with ID history; this also covers identities no longer present in the requested
+class. Scoped administrators cannot read deleted predecessors. Hidden versions
+contribute no rows, totals, or cursor boundaries. The endpoint returns `200` with
+an empty array when no authorized retained versions match, including unknown
+class IDs or names with no live object. A token excluding `ReadObject` gets `403`.
+
+This is historical state lookup. Audit search separately selects actions under
+`ReadAudit` and can have different retention and snapshot redaction rules.
+Rust clients and CLI implementations should offer explicit ID and name selectors,
+preserve the returned object IDs, reuse the full snapshot type, and treat cursor
+values as opaque. The CLI syntax in issue #471 remains client follow-up work.
+
 #### 2. Point-in-Time Snapshot (As-Of Query)
 
 Returns the historical version of an entity that was valid at a specific instant.

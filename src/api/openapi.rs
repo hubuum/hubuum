@@ -322,6 +322,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         classes::get_object_in_class,
         classes::get_object_in_class_by_name,
         classes::get_object_history,
+        classes::get_object_history_by_name,
         classes::get_object_as_of,
         classes::patch_object_in_class,
         classes::patch_object_in_class_by_name,

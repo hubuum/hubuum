@@ -58,6 +58,8 @@ for transport_path in tests/python/integration/event_transports.py tests/python/
 done
 
 for authorization_path in src/tests/permissions/candidate_paging.rs \
+  src/api/v1/handlers/classes/history_name.rs src/services/history/name.rs \
+  src/tests/storage_contract/history_name.rs \
   src/api/v1/handlers/tasks.rs src/api/v1/handlers/tasks/discovery.rs tests/api_jobs_suite/tasks.rs; do
   authorization_output="$(bash "$classifier" "$authorization_path")"
   assert_flag "$authorization_output" code true
