@@ -14287,6 +14287,16 @@
               }
             }
           },
+          "403": {
+            "description": "Token scope does not cover the stored export",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Export output not found",
             "content": {
@@ -19969,7 +19979,7 @@
           "remote-targets"
         ],
         "summary": "Post Api V1 Remote Targets",
-        "description": "Auto-generated documentation for POST /api/v1/remote-targets.",
+        "description": "Create a collection target. Server-credential authentication additionally requires an unscoped runtime administrator; enabled targets constitute approval of their destination and credential binding.",
         "operationId": "postApiV1RemoteTargets",
         "requestBody": {
           "content": {
@@ -20428,7 +20438,7 @@
           "remote-targets"
         ],
         "summary": "Patch Api V1 Remote Targets By Target Id",
-        "description": "Auto-generated documentation for PATCH /api/v1/remote-targets/{target_id}.",
+        "description": "Update a target. Credential-binding changes and re-enabling require an unscoped runtime administrator. Binding edits disable the target unless enabled=true explicitly approves the result. Concurrent edits return a conflict.",
         "operationId": "patchApiV1RemoteTargetsByTargetId",
         "parameters": [
           {
@@ -20734,7 +20744,7 @@
           "remote-targets"
         ],
         "summary": "Post Api V1 Remote Targets By Target Id Invoke",
-        "description": "Auto-generated documentation for POST /api/v1/remote-targets/{target_id}/invoke.",
+        "description": "Invoke the current target revision using ExecuteRemoteTarget and subject read permission. Credential-owner authority is not required. The worker rejects changed revisions before resolving credentials.",
         "operationId": "postApiV1RemoteTargetsByTargetIdInvoke",
         "parameters": [
           {

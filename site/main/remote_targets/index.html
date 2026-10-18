@@ -1510,6 +1510,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Permissions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sharing-credential-bearing-targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sharing credential-bearing targets
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4514,6 +4531,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Permissions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sharing-credential-bearing-targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sharing credential-bearing targets
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4708,7 +4742,8 @@
 
 <h1 id="remote-target-api">Remote Target API<a class="headerlink" href="#remote-target-api" title="Permanent link">&para;</a></h1>
 <p>Remote targets let collection administrators define outbound HTTP actions and let authorized users
-invoke one action for one Hubuum subject.</p>
+invoke one action for one Hubuum subject. Using server credentials additionally requires approval
+from an unscoped runtime administrator, who controls the destination and credential binding.</p>
 <p>The first version is manual invocation only:</p>
 <ul>
 <li>targets are collection-scoped</li>
@@ -4804,6 +4839,38 @@ outbound call.</p>
 <p><code>ExecuteRemoteTarget</code> is checked on the target collection. <code>ReadRemoteTarget</code> is not required to
 invoke a target by ID. For relation subjects, the target collection must be one of the relation
 endpoint collections.</p>
+<h3 id="sharing-credential-bearing-targets">Sharing credential-bearing targets<a class="headerlink" href="#sharing-credential-bearing-targets" title="Permanent link">&para;</a></h3>
+<p>An unscoped runtime administrator creates and approves targets that use <code>bearer_secret</code>,
+<code>basic_secret</code>, or <code>api_key_secret</code>. Grant consumers <code>ExecuteRemoteTarget</code> and the required subject
+read permission to share invocation. Consumers do not need <code>ReadRemoteTarget</code> or access to the
+resolved secret. Collection ownership and scoped administrator tokens do not grant credential-owner
+authority. Administrator authority follows the configured authorization backend.</p>
+<p>Creating a credential-bearing target requires this separate authority even when <code>enabled</code> is false.
+For an existing credential-bearing target, changing its destination, method, authentication, header
+or body templates, collection, class, or allowed subject types also requires that authority.
+Adding or removing authentication follows the same rule. These changes disable the target unless
+the administrator explicitly includes <code>"enabled": true</code> to approve the resulting binding. An
+administrator can also review a disabled target and approve it with <code>PATCH {"enabled": true}</code>.
+Supplying a binding field requires renewed approval even if its value is unchanged.
+Collection managers can still edit the name, description and timeout, or disable the target.
+Re-enabling a credential-bearing target requires administrator approval.</p>
+<p>Credential-bearing URL templates must start with a literal HTTPS host and optional port. Templates
+may fill the path or query; they cannot select the scheme, host or port. Before resolving a secret,
+the worker checks that the rendered URL has the approved origin. Transport-controlled headers
+remain forbidden, redirects are not followed, and existing DNS/address screening still applies.
+The administrator must review the permitted path, query and request-body substitutions as part of
+approving what the shared action can do.</p>
+<p>Every invocation records the target revision. If the target changes before execution, the worker
+fails that invocation and the caller must submit a new one. This includes metadata edits and
+pre-upgrade queued invocations without a recorded revision. Once dispatch starts, an in-flight
+request uses the already checked target snapshot; later edits cannot redirect it.</p>
+<p><strong>Upgrade:</strong> stop older API servers and workers before applying the remote credential binding
+migration. It disables existing credential-bearing targets because their destination bindings
+previously did not require administrator approval. Review each target, replace any dynamic host
+or port with a literal HTTPS authority, then explicitly enable it using an unscoped administrator
+token. The rollback does not re-enable these targets. Resubmit queued remote calls after upgrading.
+Administrative imports and restores remain trusted operations; review credential-bearing targets
+in their input as well.</p>
 <h2 id="target-model">Target model<a class="headerlink" href="#target-model" title="Permanent link">&para;</a></h2>
 <p>Example:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">{</span>
@@ -4922,6 +4989,9 @@ The default environment source maps aliases as follows:</p>
 <p>The reference name is configuration metadata, not a secret value. Users with <code>ReadRemoteTarget</code> can
 see which reference name a target uses, but only the worker receives the
 resolved value.</p>
+<p>Target definitions, including literal URLs and header templates, remain visible to readers.
+Keep reusable credentials in the secret source and reference them through <code>auth_config</code>; this
+binding protection does not turn inline configuration values into hidden secrets.</p>
 <p>For example, this target auth config:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"bearer_secret"</span><span class="p">,</span>
@@ -5110,8 +5180,9 @@ collection must be one of the subject collections. Disabled targets return <code
 <p>The response includes:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>Location: /api/v1/tasks/42
 </code></pre></div>
-<p><code>Idempotency-Key</code> is supported. Reusing the same key with the same rendered task submission returns
-the same task. Reusing it with a different submission returns <code>409 Conflict</code>.
+<p><code>Idempotency-Key</code> is supported. Reusing the same key with the same invocation input and target
+revision returns the same task. Reusing it with different input or a changed target revision returns
+<code>409 Conflict</code>; use a new key when resubmitting after a target edit.
 Keys must contain between 1 and 255 bytes; empty or longer keys return
 <code>400 Bad Request</code>.</p>
 <h2 id="execution-and-result-handling">Execution and result handling<a class="headerlink" href="#execution-and-result-handling" title="Permanent link">&para;</a></h2>

@@ -4797,6 +4797,16 @@ generic task system.</p>
 <li>Scoped tokens are supported. Their permission and resource boundaries are
   persisted with the task and intersected with the principal's live grants
   during worker execution.</li>
+<li>Downloading stored output also requires the requesting token to cover the
+  submitting token's saved boundary. A scoped reader must include every saved
+  permission and explicit resource entry in each dimension it restricts;
+  an unrestricted submitting dimension requires an unrestricted reader dimension.
+  Resource entries are compared by kind and ID, without inferring historical
+  containment from current collection or class membership. A narrower token,
+  including a scoped token reading an export submitted without a scope, receives
+  <code>403 Forbidden</code> and must submit a new export using its own scope. This applies
+  to JSON and rendered template output, which cannot be filtered after creation.
+  Existing task access and discovery authorization checks still apply.</li>
 </ul>
 <h2 id="submission-model">Submission model<a class="headerlink" href="#submission-model" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">{</span>
