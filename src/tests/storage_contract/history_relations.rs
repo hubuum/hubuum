@@ -356,7 +356,8 @@ async fn every_backend_hydrates_endpoint_at_selected_instant(
             fixture.classes[1].name()
         };
         let created = history(&backend, resource).await[0].context_at();
-        rename_endpoint(&backend, &fixture, objects, "renamed-endpoint").await;
+        let new_name = prefix("renamed_endpoint");
+        rename_endpoint(&backend, &fixture, objects, &new_name).await;
         let at = if after_rename { Utc::now() } else { created };
         let row = backend
             .list_relation_history(query(
@@ -373,7 +374,7 @@ async fn every_backend_hydrates_endpoint_at_selected_instant(
         assert_eq!(
             row.to().unwrap().name(),
             if after_rename {
-                "renamed-endpoint"
+                new_name.as_str()
             } else {
                 old_name
             }
@@ -509,14 +510,15 @@ async fn relationship_policy_requires_current_and_historical_endpoint_names(
         } else {
             fixture.classes[1].name()
         };
-        rename_endpoint(&backend, &fixture, objects, "new-name").await;
+        let new_name = prefix("renamed_policy_endpoint");
+        rename_endpoint(&backend, &fixture, objects, &new_name).await;
         let user = user(&backend, &fixture).await;
         let context = AppContext::new(
             backend.clone(),
             policy(
                 &fixture,
                 objects,
-                Some(if current { "new-name" } else { old_name }),
+                Some(if current { new_name.as_str() } else { old_name }),
                 false,
             ),
         );
