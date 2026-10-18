@@ -6,7 +6,7 @@ use rstest::rstest;
 
 use super::*;
 use crate::events::EventContext;
-use crate::models::{NewUser, UpdateUser, UserID};
+use crate::models::{LoginUser, NewUser, UpdateUser, UserID};
 use crate::services::authentication::issue_login_token;
 use crate::storage::{ExternalIdentityStorage, StorageExternalUserSync, storage_handle};
 use crate::tests::{TestContext, app_context};
@@ -22,7 +22,9 @@ async fn verified_password_cannot_issue_a_token_after_reset() {
             identity_scope: None,
             name: name.clone(),
             password: "testpassword".into(),
-        },
+        }
+        .validate()
+        .unwrap(),
     )
     .await
     .unwrap();
@@ -94,8 +96,8 @@ impl AuthProviderBackend for FailingDirectory {
     fn authenticate<'a>(
         &'a self,
         _storage: &'a crate::storage::StorageHandle,
-        _login: LoginUser,
-    ) -> AuthProviderFuture<'a, User> {
+        _login: ValidatedLogin,
+    ) -> AuthProviderFuture<'a, StorageUser> {
         Box::pin(async { Err(auth_failure()) })
     }
 

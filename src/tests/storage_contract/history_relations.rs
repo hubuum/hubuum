@@ -26,14 +26,18 @@ fn relation_permission(objects: bool) -> Permissions {
 #[case::ordinary(false)]
 #[case::administrator(true)]
 #[actix_web::test]
-async fn live_relationship_root_rejects_wrong_class_even_for_deleted_history_admin(
+async fn relationship_root_rejects_wrong_class_even_for_deleted_history_admin(
     #[case] admin: bool,
+    #[values(false, true)] deleted: bool,
 ) {
     let _permit = postgres_permit().await;
     for backend in available_backends() {
         let fixture =
             create_backend_relation_fixture(&backend, &prefix("relation_wrong_class")).await;
         let user = user(&backend, &fixture).await;
+        if deleted {
+            super::history_fixtures::delete(&backend, fixture.objects[0].id()).await;
+        }
         let context = AppContext::new(backend.clone(), policy(&fixture, true, None, admin));
         let principal = backend
             .get_authentication_identity(user.principal_id)
@@ -51,6 +55,16 @@ async fn live_relationship_root_rejects_wrong_class_even_for_deleted_history_adm
             },
         )
         .await;
+        let result = match result {
+            Ok(reader) => reader
+                .relationships(
+                    StorageRelationHistorySelection::Changes,
+                    parse_query_parameter("limit=10").unwrap(),
+                )
+                .await
+                .map(|_| ()),
+            Err(error) => Err(error),
+        };
         assert!(matches!(result, Err(ApiError::NotFound(_))));
         delete_backend_user(&backend, user).await;
         cleanup(&backend, fixture).await;

@@ -557,10 +557,12 @@ pub async fn create_user_with_params(pool: &PostgresPool, username: &str, passwo
         "testpassword" => {
             crate::services::identity::create_user_with_password_hash(
                 pool,
-                NewUser {
-                    password: TEST_USER_PASSWORD_HASH.clone(),
-                    ..new_user
-                },
+                new_user.with_password_hash(
+                    crate::utilities::auth::HashedPassword::from_encoded(
+                        TEST_USER_PASSWORD_HASH.clone(),
+                    )
+                    .unwrap(),
+                ),
                 &EventContext::system(),
             )
             .await
@@ -568,10 +570,12 @@ pub async fn create_user_with_params(pool: &PostgresPool, username: &str, passwo
         "testadminpassword" => {
             crate::services::identity::create_user_with_password_hash(
                 pool,
-                NewUser {
-                    password: TEST_ADMIN_PASSWORD_HASH.clone(),
-                    ..new_user
-                },
+                new_user.with_password_hash(
+                    crate::utilities::auth::HashedPassword::from_encoded(
+                        TEST_ADMIN_PASSWORD_HASH.clone(),
+                    )
+                    .unwrap(),
+                ),
                 &EventContext::system(),
             )
             .await

@@ -696,28 +696,7 @@ async fn every_backend_population_uses_historical_class_membership(
             create_backend_object_fixture(&backend, &prefix("population_target_class"), vec![])
                 .await;
         let object = create_named(&backend, &source, "moving").await;
-        match &environment {
-            BackendTestEnvironment::Postgres { pool } => {
-                hubuum_storage_postgres::test_support::reclassify_object_history_fixture(
-                    pool,
-                    object.id(),
-                    target.class.id(),
-                )
-                .await
-                .unwrap();
-            }
-            BackendTestEnvironment::Memory { .. } => {
-                update(
-                    &backend,
-                    object.id(),
-                    StorageObjectUpdate::builder()
-                        .class_id(Some(target.class.id()))
-                        .collection_id(Some(target.collection.id()))
-                        .build(),
-                )
-                .await;
-            }
-        }
+        super::history_fixtures::reclassify_object(&environment, object.id(), &target).await;
         let boundary = versions(&backend, target.class.id(), object.id()).await[0]
             .clone()
             .into_parts()

@@ -252,8 +252,8 @@ filtering, counting, and paging. Provenance-name resolution is batched.
 name across identities. `StorageObjectHistoryNameQuery` validates query fields
 and normalizes the default descending history-ID order and missing tie-breaker;
 its collection scope applies to both the historical snapshot and the current
-object in that class. Only `include_deleted` admits identities absent from the
-current class, without requiring a live replacement. Historical names never
+object, even when it has moved to another class. Only `include_deleted` admits
+identities absent from the live object store, without requiring a live replacement. Historical names never
 select whole lifetimes. Apply revision filters, stable history-ID tie-breakers,
 cursors, and optional totals before returning a bounded page. The application
 additionally checks current and historical resource attributes and scoped tokens

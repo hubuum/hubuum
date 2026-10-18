@@ -46,6 +46,7 @@ pub(crate) async fn init(storage: &StorageHandle, settings: &InitializationSetti
             PlaintextPassword::new(default_password).map_err(|error| error.to_string())?,
         )
         .await
+        .map(|hash| hash.into_encoded())
         .map_err(|error| format!("Failed to hash default administrator password: {error}"))
     })
     .await?;

@@ -1,4 +1,3 @@
-use crate::models::token_scope::TokenScope;
 use std::{fmt, str::FromStr};
 
 use chrono::NaiveDateTime;
@@ -13,13 +12,10 @@ use crate::config::{
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
-    Collection, CollectionID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
-    HubuumObjectRelationID, Permissions, REDACTED_DEBUG_VALUE, ResourceRevision,
-    redacted_debug_option,
+    CollectionID, HubuumClassID, HubuumClassRelationID, HubuumObjectID, HubuumObjectRelationID,
+    REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_option,
 };
 use crate::pagination::{CursorPaginated, CursorValue};
-use crate::traits::UserPermissions;
-use crate::traits::{ClassAccessors, CollectionAccessors, ObjectAccessors, SelfAccessors};
 
 pub use hubuum_domain::RemoteTargetId as RemoteTargetID;
 
@@ -487,14 +483,6 @@ impl StoredRemoteCallTaskPayload {
     }
 }
 
-pub struct ResolvedRemoteInvocationSubject {
-    pub subject_type: RemoteTargetSubjectType,
-    pub subject_id: i32,
-    pub collections: Vec<Collection>,
-    pub required_read_permission: Permissions,
-    pub context: RemoteTemplateContext,
-}
-
 #[derive(Clone)]
 pub struct RemoteTemplateContext {
     value: serde_json::Value,
@@ -694,197 +682,6 @@ impl RemoteTarget {
     pub fn allows_subject_type(&self, subject_type: RemoteTargetSubjectType) -> bool {
         self.allowed_subject_types.contains(&subject_type)
     }
-}
-
-pub async fn authorize_remote_invocation<C>(
-    backend: &C,
-    actor: &impl crate::traits::AuthzSubject,
-    scopes: Option<&TokenScope>,
-    target: &RemoteTarget,
-    subject: &RemoteInvocationSubject,
-) -> Result<ResolvedRemoteInvocationSubject, ApiError>
-where
-    C: crate::permissions::AuthorizationContext,
-{
-    let pool = backend;
-    let target_collection_id = CollectionID::new(target.collection_id)?;
-    crate::can!(
-        backend,
-        actor,
-        scopes,
-        [Permissions::ExecuteRemoteTarget],
-        target_collection_id
-    );
-
-    if !target.enabled {
-        return Err(ApiError::BadRequest(
-            "Remote target is disabled".to_string(),
-        ));
-    }
-
-    let resolved = subject.resolve(pool).await?;
-    if !target.allows_subject_type(resolved.subject_type) {
-        return Err(ApiError::BadRequest(format!(
-            "Remote target does not allow '{}' subjects",
-            resolved.subject_type.as_str()
-        )));
-    }
-    if let RemoteInvocationSubject::Object { class_id, .. } = subject
-        && target.class_id != Some(class_id.id())
-    {
-        return Err(ApiError::NotFound(
-            "Remote target not found for invocation subject class".to_string(),
-        ));
-    }
-    if !resolved
-        .collections
-        .iter()
-        .any(|collection| collection.id == target.collection_id)
-    {
-        return Err(ApiError::NotFound(
-            "Remote target not found for invocation subject".to_string(),
-        ));
-    }
-    for collection in &resolved.collections {
-        crate::can!(
-            backend,
-            actor,
-            scopes,
-            [resolved.required_read_permission],
-            collection
-        );
-    }
-
-    Ok(resolved)
-}
-
-impl RemoteInvocationSubject {
-    pub async fn resolve(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<ResolvedRemoteInvocationSubject, ApiError> {
-        match self {
-            Self::Collection { collection_id } => {
-                let collection = collection_id.collection(pool).await?;
-                let context = serde_json::json!({
-                    "subject_type": self.subject_type().as_str(),
-                    "subject": collection.clone(),
-                    "collection": collection.clone(),
-                });
-                Ok(ResolvedRemoteInvocationSubject {
-                    subject_type: self.subject_type(),
-                    subject_id: self.subject_id(),
-                    collections: vec![collection],
-                    required_read_permission: Permissions::ReadCollection,
-                    context: RemoteTemplateContext::new(context)?,
-                })
-            }
-            Self::Class { class_id } => {
-                let class = class_id.class(pool).await?;
-                let collection = CollectionID::new(class.collection_id)?
-                    .collection(pool)
-                    .await?;
-                let context = serde_json::json!({
-                    "subject_type": self.subject_type().as_str(),
-                    "subject": class.clone(),
-                    "class": class.clone(),
-                    "collection": collection.clone(),
-                });
-                Ok(ResolvedRemoteInvocationSubject {
-                    subject_type: self.subject_type(),
-                    subject_id: self.subject_id(),
-                    collections: vec![collection],
-                    required_read_permission: Permissions::ReadClass,
-                    context: RemoteTemplateContext::new(context)?,
-                })
-            }
-            Self::Object {
-                class_id,
-                object_id,
-            } => {
-                let class = class_id.class(pool).await?;
-                let object = object_id.instance(pool).await?;
-                if object.hubuum_class_id != class.id {
-                    return Err(ApiError::NotFound("Object not found in class".to_string()));
-                }
-                let collection = CollectionID::new(object.collection_id)?
-                    .collection(pool)
-                    .await?;
-                let context = serde_json::json!({
-                    "subject_type": self.subject_type().as_str(),
-                    "subject": object.clone(),
-                    "object": object.clone(),
-                    "class": class.clone(),
-                    "collection": collection.clone(),
-                });
-                Ok(ResolvedRemoteInvocationSubject {
-                    subject_type: self.subject_type(),
-                    subject_id: self.subject_id(),
-                    collections: vec![collection],
-                    required_read_permission: Permissions::ReadObject,
-                    context: RemoteTemplateContext::new(context)?,
-                })
-            }
-            Self::ClassRelation { relation_id } => {
-                let relation = relation_id.instance(pool).await?;
-                let (from_class, to_class) = relation_id.class(pool).await?;
-                let collections = relation_id.collection(pool).await?;
-                let subject_collections =
-                    unique_collections(vec![collections.0.clone(), collections.1.clone()]);
-                let context = serde_json::json!({
-                    "subject_type": self.subject_type().as_str(),
-                    "subject": relation.clone(),
-                    "class_relation": relation.clone(),
-                    "from_class": from_class.clone(),
-                    "to_class": to_class.clone(),
-                    "collections": [collections.0.clone(), collections.1.clone()],
-                });
-                Ok(ResolvedRemoteInvocationSubject {
-                    subject_type: self.subject_type(),
-                    subject_id: self.subject_id(),
-                    collections: subject_collections,
-                    required_read_permission: Permissions::ReadClassRelation,
-                    context: RemoteTemplateContext::new(context)?,
-                })
-            }
-            Self::ObjectRelation { relation_id } => {
-                let relation = relation_id.instance(pool).await?;
-                let (from_object, to_object) = relation_id.object(pool).await?;
-                let class_relation_id = HubuumClassRelationID::new(relation.class_relation_id)?;
-                let class_relation = class_relation_id.instance(pool).await?;
-                let (from_class, to_class) = class_relation_id.class(pool).await?;
-                let collections = relation_id.collection(pool).await?;
-                let subject_collections =
-                    unique_collections(vec![collections.0.clone(), collections.1.clone()]);
-                let context = serde_json::json!({
-                    "subject_type": self.subject_type().as_str(),
-                    "subject": relation.clone(),
-                    "object_relation": relation.clone(),
-                    "from_object": from_object.clone(),
-                    "to_object": to_object.clone(),
-                    "class_relation": class_relation.clone(),
-                    "from_class": from_class.clone(),
-                    "to_class": to_class.clone(),
-                    "collections": [collections.0.clone(), collections.1.clone()],
-                });
-                Ok(ResolvedRemoteInvocationSubject {
-                    subject_type: self.subject_type(),
-                    subject_id: self.subject_id(),
-                    collections: subject_collections,
-                    required_read_permission: Permissions::ReadObjectRelation,
-                    context: RemoteTemplateContext::new(context)?,
-                })
-            }
-        }
-    }
-}
-
-fn unique_collections(collections: Vec<Collection>) -> Vec<Collection> {
-    let mut seen = std::collections::HashSet::new();
-    collections
-        .into_iter()
-        .filter(|collection| seen.insert(collection.id))
-        .collect()
 }
 
 /// Validated remote header names, string sources and count, shared by target

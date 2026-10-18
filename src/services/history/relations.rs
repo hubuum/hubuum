@@ -4,18 +4,17 @@ use hubuum_domain::{ClassRelationId, ObjectRelationId};
 use hubuum_storage_core::StorageAuthorizationResourceKey as Key;
 
 use super::AppHistoryMetadata;
+use super::access::{HistoryAccess, HistoryIdentity};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     HistoricalEndpointContext, HistoricalEndpointUnavailableReason, HistoricalRelation,
-    HistoricalRelationEndpoint, HistoricalRelationValue, Permissions, TokenScope,
+    HistoricalRelationEndpoint, HistoricalRelationValue, Permissions,
 };
 use crate::permissions::visibility::{
     authorize_all_candidates, filter_authorized_cursor_page_from_storage,
 };
-use crate::permissions::{
-    AppContext, ClassResourceEndpoint, ObjectResourceEndpoint, PrincipalRef, ResourceRef,
-};
+use crate::permissions::{ClassResourceEndpoint, ObjectResourceEndpoint, ResourceRef};
 use crate::services::authorization_resources::load_current_authorization_resources;
 use crate::services::relation_queries::{
     class_relation_from_storage, object_relation_from_storage,
@@ -25,7 +24,7 @@ use crate::storage::{
     StorageHistoryResource, StorageRelationHistoryEntry, StorageRelationHistoryQuery,
     StorageRelationHistoryResource, storage_handle,
 };
-use crate::traits::{AuthzSubject, CursorPaginated, CursorValue, scope_allows};
+use crate::traits::{CursorPaginated, CursorValue, scope_allows};
 
 struct Candidate(StorageRelationHistoryEntry);
 
@@ -132,7 +131,7 @@ fn historical_relation(entry: &StorageRelationHistoryEntry) -> Option<ResourceRe
 fn checks(
     entry: &StorageRelationHistoryEntry,
     current: &HashMap<Key, ResourceRef>,
-    deleted_admin: bool,
+    access: &HistoryAccess<'_>,
     permission: Permissions,
 ) -> Option<Vec<(Permissions, ResourceRef)>> {
     let relation_permission = match entry.record().relation() {
@@ -140,16 +139,16 @@ fn checks(
         StorageHistoricalRelation::Object(_) => Permissions::ReadObjectRelation,
     };
     let mut checks = Vec::with_capacity(6);
-    match current.get(&relation_key(entry.record().relation())) {
-        Some(live) => {
+    match access.identity(current.get(&relation_key(entry.record().relation()))) {
+        Some(HistoryIdentity::Live(live)) => {
             checks.push((relation_permission, live.clone()));
             match historical_relation(entry) {
                 Some(historical) => checks.push((relation_permission, historical)),
-                None if deleted_admin => {}
+                None if access.deleted().is_some() => {}
                 None => return None,
             }
         }
-        None if deleted_admin => {}
+        Some(HistoryIdentity::Deleted(_)) => {}
         None => return None,
     }
     for (identity, historical) in entry
@@ -159,16 +158,16 @@ fn checks(
         .into_iter()
         .zip([entry.from(), entry.to()])
     {
-        match current.get(&endpoint_key(identity)) {
-            Some(live) => {
+        match access.identity(current.get(&endpoint_key(identity))) {
+            Some(HistoryIdentity::Live(live)) => {
                 checks.push((permission, live.clone()));
                 match historical {
                     Some(historical) => checks.push((permission, historical_endpoint(historical))),
-                    None if deleted_admin => {}
+                    None if access.deleted().is_some() => {}
                     None => return None,
                 }
             }
-            None if deleted_admin => {}
+            Some(HistoryIdentity::Deleted(_)) => {}
             None => return None,
         }
     }
@@ -176,9 +175,7 @@ fn checks(
 }
 
 pub(super) async fn list(
-    context: &AppContext,
-    subject: &impl AuthzSubject,
-    scopes: Option<&TokenScope>,
+    access: &HistoryAccess<'_>,
     query: StorageRelationHistoryQuery,
 ) -> Result<(Vec<HistoricalRelation>, i64), ApiError> {
     let permission = match query.resource() {
@@ -189,12 +186,13 @@ pub(super) async fn list(
         StorageRelationHistoryResource::Class(_) => Permissions::ReadClassRelation,
         StorageRelationHistoryResource::Object(_) => Permissions::ReadObjectRelation,
     };
+    let scopes = access.scopes();
+    let context = access.context();
     if !scope_allows(scopes, &[permission, relation_permission]) {
         return Err(ApiError::Forbidden("Permission denied".into()));
     }
-    let backend = context.permission_backend();
-    let principal = PrincipalRef::load(context, subject).await?;
-    let deleted_admin = scopes.is_none() && backend.is_admin(&principal).await?;
+    let backend = access.backend();
+    let principal = access.principal();
     let storage = storage_handle(context);
     let page = filter_authorized_cursor_page_from_storage(
         backend,
@@ -217,7 +215,6 @@ pub(super) async fn list(
             }
         },
         |candidates: Vec<Candidate>| {
-            let principal = &principal;
             async move {
                 let keys = candidates.iter().flat_map(|candidate| {
                     let relation = candidate.0.record().relation();
@@ -228,8 +225,7 @@ pub(super) async fn list(
                 let candidates = candidates
                     .into_iter()
                     .filter_map(|row| {
-                        checks(&row.0, &current, deleted_admin, permission)
-                            .map(|checks| (row, checks))
+                        checks(&row.0, &current, access, permission).map(|checks| (row, checks))
                     })
                     .collect::<Vec<_>>();
                 let mut allowed = vec![0usize; candidates.len()];

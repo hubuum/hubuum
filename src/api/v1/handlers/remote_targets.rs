@@ -1,3 +1,4 @@
+use crate::services::remote_targets::invocation::AuthorizedRemoteInvocation;
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 use hubuum_task_core::IdempotencyKey;
 use tracing::{debug, info};
@@ -17,7 +18,6 @@ use crate::models::{
     CollectionID, HistoryAuthorizationSnapshot, HubuumClassID, NewRemoteTarget, Permissions,
     PrincipalID, RemoteTarget, RemoteTargetHistory, RemoteTargetID, RemoteTargetInvokeRequest,
     StoredRemoteCallTaskPayload, TaskKind, TaskRecord, TaskResponse, TokenID, UpdateRemoteTarget,
-    authorize_remote_invocation,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::{
@@ -348,9 +348,15 @@ pub async fn invoke_remote_target(
     let target_id = target_id.into_inner();
     let invoke = body.into_inner();
     let target = remote_target_service::get_remote_target(&context, target_id.id()).await?;
-    let resolved =
-        authorize_remote_invocation(&context, user, requestor.scopes(), &target, &invoke.subject)
-            .await?;
+    let invocation = AuthorizedRemoteInvocation::authorize(
+        &context,
+        user,
+        requestor.scopes(),
+        target,
+        &invoke.subject,
+    )
+    .await?;
+    let target = invocation.target();
 
     let payload = serde_json::to_value(StoredRemoteCallTaskPayload {
         target_id,
@@ -377,8 +383,8 @@ pub async fn invoke_remote_target(
         &context,
         target.id,
         task.id,
-        resolved.subject_type,
-        resolved.subject_id,
+        invocation.subject_type(),
+        invocation.subject_id(),
         event_context,
     )
     .await?;
@@ -388,8 +394,8 @@ pub async fn invoke_remote_target(
         message = "Remote target invocation queued",
         task_id = task.id,
         target_id = target.id,
-        subject_type = resolved.subject_type.as_str(),
-        subject_id = resolved.subject_id
+        subject_type = invocation.subject_type().as_str(),
+        subject_id = invocation.subject_id()
     );
 
     Ok(ApiResponse::accepted_at(

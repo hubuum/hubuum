@@ -174,3 +174,33 @@ pub(super) fn external_permissions(
     }
     backend
 }
+
+/// Manufacture retained class changes with each adapter's supported test fixture.
+pub(super) async fn reclassify_object(
+    environment: &BackendTestEnvironment,
+    object_id: ObjectId,
+    target: &BackendObjectFixture,
+) {
+    match environment {
+        BackendTestEnvironment::Postgres { pool } => {
+            hubuum_storage_postgres::test_support::reclassify_object_history_fixture(
+                pool,
+                object_id,
+                target.class.id(),
+            )
+            .await
+            .unwrap();
+        }
+        BackendTestEnvironment::Memory { .. } => {
+            update(
+                &environment.storage(),
+                object_id,
+                StorageObjectUpdate::builder()
+                    .class_id(Some(target.class.id()))
+                    .collection_id(Some(target.collection.id()))
+                    .build(),
+            )
+            .await;
+        }
+    }
+}

@@ -34,3 +34,75 @@ async fn remote_target_updates_are_fenced_by_the_authorized_revision() {
         delete_backend_object_fixture(&backend, fixture).await;
     }
 }
+
+#[rstest::rstest]
+#[case::approved_path("https://approved.example/other", true)]
+#[case::different_host("https://other.example/hook", false)]
+#[case::different_port("https://approved.example:8443/hook", false)]
+#[case::http("http://approved.example/hook", false)]
+#[actix_web::test]
+async fn authorized_invocation_preserves_the_credential_destination(
+    #[case] rendered_url: &str,
+    #[case] allowed: bool,
+) {
+    use crate::models::{RemoteInvocationSubject, StoredRemoteCallTaskPayload};
+    use crate::services::remote_targets::invocation::AuthorizedRemoteInvocation;
+    use hubuum_outbound_http::validate_outbound_url;
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let fixture =
+            create_backend_object_fixture(&backend, &prefix("remote_destination"), vec![]).await;
+        let user = super::history_fixtures::owner_user(&backend, &fixture).await;
+        backend
+            .apply_local_collection_grant(StorageAuthorizationGrantMutation::new(
+                StorageAuthorizationGrantKey::new(
+                    fixture.collection.id(),
+                    fixture.owned_group.as_ref().unwrap().id(),
+                ),
+                [
+                    StorageAuthorizationPermission::ReadCollection,
+                    StorageAuthorizationPermission::ExecuteRemoteTarget,
+                ],
+                false,
+                EventContext::system(),
+            ))
+            .await
+            .unwrap()
+            .into_value();
+        let target = create_remote_target(&backend, serde_json::from_value(serde_json::json!({
+            "collection_id":fixture.collection.id().id(), "name":prefix("target"), "description":"test",
+            "method":"post", "url_template":"https://approved.example/hook", "allowed_subject_types":["collection"],
+            "auth_config":{"type":"bearer_secret","secret":"remote_test_token"}
+        })).unwrap(), EventContext::system()).await.unwrap();
+        let context = AppContext::new(
+            backend.clone(),
+            Arc::new(LocalPermissionBackend::new(backend.clone(), "admin".into())),
+        );
+        let principal = backend
+            .get_authentication_identity(user.principal_id)
+            .await
+            .unwrap()
+            .into_parts()
+            .0;
+        let request = StoredRemoteCallTaskPayload {
+            target_id: RemoteTargetId::new(target.id).unwrap(),
+            target_revision: Some(target.revision),
+            subject: RemoteInvocationSubject::Collection {
+                collection_id: fixture.collection.id(),
+            },
+            parameters: Default::default(),
+            body_override: Default::default(),
+        };
+        let invocation =
+            AuthorizedRemoteInvocation::from_stored(&context, &principal, None, &request)
+                .await
+                .unwrap();
+        let approved = match validate_outbound_url(rendered_url) {
+            Ok(parts) => invocation.approve_destination(parts).is_ok(),
+            Err(_) => false,
+        };
+        assert_eq!(approved, allowed);
+        delete_backend_user(&backend, user).await;
+        delete_backend_object_fixture(&backend, fixture).await;
+    }
+}

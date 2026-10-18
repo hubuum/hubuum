@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
-use hubuum_domain::{CollectionId, ResourceId};
+use hubuum_domain::ResourceId;
 
 use crate::errors::ApiError;
-use crate::models::collection::user_can_on_any;
 use crate::models::{
     HistoryAuthorizationSnapshot, HubuumObjectHistory, Permissions, TokenScope,
     search::QueryOptions,
@@ -12,7 +11,7 @@ use crate::pagination::prepare_db_pagination;
 use crate::permissions::visibility::{
     authorize_all_candidates, filter_authorized_cursor_page_from_storage,
 };
-use crate::permissions::{AppContext, ClassResourceEndpoint, PrincipalRef, ResourceRef};
+use crate::permissions::{AppContext, ClassResourceEndpoint, ResourceRef};
 use crate::storage::{
     AuthorizationDataStorage, HistoryStorage, StorageAuthorizationResourceIds,
     StorageClassObjectsAsOfQuery, StorageHandle, StorageHistoryCollectionScope,
@@ -20,6 +19,7 @@ use crate::storage::{
 };
 use crate::traits::{AuthzSubject, scope_allows};
 
+use super::access::{HistoryAccess, HistoryIdentity};
 use super::{history_total, object_from_storage};
 
 #[derive(Clone)]
@@ -57,10 +57,6 @@ impl ObjectHistoryQuery {
             Self::Population(query) => storage.list_class_objects_as_of(query).await?,
         })
     }
-    fn matches_live_class(&self, class_id: i32, historical_class_id: i32) -> bool {
-        // Population reads authorize the current object even if its class changed.
-        matches!(self, Self::Population(_)) || class_id == historical_class_id
-    }
 }
 
 pub async fn class_objects_as_of(
@@ -97,25 +93,16 @@ async fn authorized_object_history(
     if !scope_allows(scopes, &[Permissions::ReadObject]) {
         return Err(ApiError::Forbidden("Permission denied".to_string()));
     }
-    let principal = PrincipalRef::load(context, subject).await?;
-    let permission_backend = context.permission_backend();
-    let include_deleted = scopes.is_none() && permission_backend.is_admin(&principal).await?;
-    let collections = if permission_backend.supports_storage_visibility_filtering() {
-        // Token resource boundaries are applied to each concrete current and
-        // historical object below, including object-only tokens.
-        StorageHistoryCollectionScope::Visible(
-            user_can_on_any(context, subject, Permissions::ReadObject, None)
-                .await?
-                .into_iter()
-                .map(|collection| CollectionId::new(collection.id))
-                .collect::<Result<Vec<_>, _>>()?,
-        )
-    } else {
-        StorageHistoryCollectionScope::All
-    };
+    let access = HistoryAccess::load(context, subject, scopes).await?;
+    let principal = access.principal();
+    let permission_backend = access.backend();
+    let include_deleted = access.deleted().is_some();
+    let collections = access
+        .candidate_collections(Permissions::ReadObject)
+        .await?;
     let query = query.visibility(collections, include_deleted);
     let storage = storage_handle(context);
-    if permission_backend.supports_storage_visibility_filtering() && scopes.is_none() {
+    if access.uses_storage_visibility() {
         // The adapter can enforce both collection checks in the same snapshot
         // as COUNT/LIMIT. External policies and resource-scoped tokens require
         // the bounded candidate path below.
@@ -152,8 +139,7 @@ async fn authorized_object_history(
         },
         |candidates: Vec<HubuumObjectHistory>| {
             let storage = &storage;
-            let principal = &principal;
-            let query = &query;
+            let access = &access;
             async move {
                 let current = storage
                     .list_authorization_objects(StorageAuthorizationResourceIds::new(
@@ -169,10 +155,8 @@ async fn authorized_object_history(
                 let mut deleted = Vec::new();
                 let mut live = Vec::new();
                 for (index, row) in candidates.into_iter().enumerate() {
-                    match current.get(&row.id).filter(|object| {
-                        query.matches_live_class(object.class_id().id(), row.hubuum_class_id)
-                    }) {
-                        Some(object) => live.push((
+                    match access.identity(current.get(&row.id)) {
+                        Some(HistoryIdentity::Live(object)) => live.push((
                             index,
                             row,
                             ResourceRef::object(
@@ -184,7 +168,7 @@ async fn authorized_object_history(
                                 Some(object.name().to_owned()),
                             ),
                         )),
-                        None if include_deleted => deleted.push((index, row)),
+                        Some(HistoryIdentity::Deleted(_)) => deleted.push((index, row)),
                         None => {}
                     }
                 }

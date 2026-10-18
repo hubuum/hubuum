@@ -58,6 +58,7 @@ for transport_path in tests/python/integration/event_transports.py tests/python/
 done
 
 for authorization_path in src/tests/permissions/candidate_paging.rs \
+  src/tests/storage_contract/history_access.rs src/services/remote_targets/invocation.rs \
   src/api/v1/handlers/classes/history_relations.rs src/tests/storage_contract/history_relations.rs \
   src/api/v1/handlers/classes/history_population.rs src/api/v1/handlers/classes/history_name.rs src/services/history/name.rs \
   src/tests/storage_contract/history_population.rs src/tests/storage_contract/history_fixtures.rs src/tests/storage_contract/history_name.rs \

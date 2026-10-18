@@ -619,8 +619,9 @@ Each live identity must pass its current `ReadObject` check and every returned
 version must pass the historical snapshot check, including the token's resource
 boundary and external policies. A readable replacement never authorizes its
 predecessor. **Deleted identities remain visible only to unscoped administrators**,
-as with ID history; this also covers identities no longer present in the requested
-class. Scoped administrators cannot read deleted predecessors. Hidden versions
+as with ID history. An object moved to another class remains a live identity: its
+actual current placement and the retained snapshot must both be readable, including
+for external-policy administrators. Scoped administrators cannot read deleted predecessors. Hidden versions
 contribute no rows, totals, or cursor boundaries. The endpoint returns `200` with
 an empty array when no authorized retained versions match, including unknown
 class IDs or names with no live object. A token excluding `ReadObject` gets `403`.
@@ -725,6 +726,8 @@ history policy; surviving endpoints still pass their current and historical
 checks. Missing historical endpoint context is also restricted to an unscoped
 administrator. External policy selection is preserved. Object routes use the
 current class for a live object; retained context can describe an older class.
+A deleted root must have retained object history in the requested class; an
+unrelated class or nonexistent root returns `404`, including for administrators.
 
 Both adapters bound candidate pages and endpoint hydration. PostgreSQL reads each
 page and its endpoint batch in one read-only snapshot, using two disjoint indexed

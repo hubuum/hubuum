@@ -6,16 +6,17 @@ use crate::models::credential_approval::{
     CredentialApprovalRecord, CredentialApprovalResponse, CredentialApprovalSecret,
     CredentialOperation,
 };
+use crate::models::user::ValidatedLogin;
 use crate::models::{LoginUser, PrincipalID, User, configured_token_lifetime};
 use crate::permissions::AppContext;
 use crate::services::identity;
 use crate::storage::storage_handle;
 use chrono::{SubsecRound, Utc};
-use hubuum_domain::{IdentityScopeId, TokenId, UserId};
+use hubuum_domain::{IdentityScopeId, TokenId};
 use hubuum_storage_core::{
     IdentityScopeStorage, StorageCredentialApprovalCreate, StorageCredentialApprovalMetadata,
     StorageCredentialClaim, StorageCredentialUse, StorageError, StorageTokenCreate,
-    StorageTokenRenew, StorageUserCreate, StorageUserUpdate, TokenStorage, UserStorage,
+    StorageTokenRenew, TokenStorage, UserStorage,
 };
 
 /// An authenticated human with an unscoped credential. The originating token
@@ -111,7 +112,7 @@ impl CredentialActor {
         &self,
         context: &AppContext,
         password: String,
-    ) -> Result<LoginUser, ApiError> {
+    ) -> Result<ValidatedLogin, ApiError> {
         let point = identity::get_user_point(context, self.user.id).await?;
         let scope = storage_handle(context)
             .resolve_identity_scope_name(IdentityScopeId::new(point.identity_scope_id)?)
@@ -121,8 +122,7 @@ impl CredentialActor {
             name: point.name,
             password,
         };
-        login.validate()?;
-        Ok(login)
+        login.validate()
     }
 }
 
@@ -140,7 +140,7 @@ pub struct FreshCredentialAuthentication {
 pub async fn verify_password(
     context: &AppContext,
     actor: &CredentialActor,
-    login: LoginUser,
+    login: ValidatedLogin,
 ) -> Result<FreshCredentialAuthentication, ApiError> {
     let authenticated = crate::auth::login(context, login).await?;
     let user = authenticated.user();
@@ -294,15 +294,8 @@ pub async fn write_user(
             let user = user.hash_password().await?;
             backend
                 .create_user(
-                    StorageUserCreate::new(
-                        user.identity_scope,
-                        user.name,
-                        user.password,
-                        user.proper_name,
-                        user.email,
-                        event_context.clone(),
-                    )
-                    .with_credential_claim(approved.claim),
+                    user.into_storage(event_context.clone())
+                        .with_credential_claim(approved.claim),
                 )
                 .await
         }
@@ -310,14 +303,8 @@ pub async fn write_user(
             let user = user.hash_password().await?;
             backend
                 .update_user(
-                    StorageUserUpdate::new(
-                        UserId::new(user_id.id())?,
-                        user.password,
-                        user.proper_name,
-                        user.email,
-                        event_context.clone(),
-                    )
-                    .with_credential_claim(approved.claim),
+                    user.into_storage(user_id, event_context.clone())
+                        .with_credential_claim(approved.claim),
                 )
                 .await
         }

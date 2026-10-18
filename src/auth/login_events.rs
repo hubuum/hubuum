@@ -11,6 +11,7 @@ use rstest::rstest;
 
 use super::*;
 use crate::events::{EntityType, EventContext};
+use crate::models::LoginUser;
 use crate::permissions::test_support::mock_treetop::MockTreetopBackend;
 use crate::services::authentication::issue_login_token;
 use crate::storage::{AuthorizationDataStorage, storage_handle};
@@ -48,17 +49,17 @@ impl AuthProviderBackend for DirectoryProvider {
     fn authenticate<'a>(
         &'a self,
         storage: &'a crate::storage::StorageHandle,
-        login: LoginUser,
-    ) -> AuthProviderFuture<'a, User> {
+        login: ValidatedLogin,
+    ) -> AuthProviderFuture<'a, StorageUser> {
         Box::pin(async move {
-            if login.password != "directory-password" {
+            if login.password().as_str() != "directory-password" {
                 return Err(ApiError::Unauthorized("Authentication failure".into()));
             }
             sync_external_user_from_backend(
                 storage,
                 &self.scope,
                 LDAP_PROVIDER_KIND,
-                self.identity(&login.name, true),
+                self.identity(login.name(), true),
             )
             .await
         })
@@ -110,7 +111,9 @@ async fn configured_external_login_snapshots_synced_identity_and_policy(#[case] 
             identity_scope: Some(scope.clone()),
             name: username.clone(),
             password: "directory-password".into(),
-        },
+        }
+        .validate()
+        .unwrap(),
         &registry,
     )
     .await

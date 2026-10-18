@@ -13,7 +13,7 @@ use crate::can;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated, ObjectDataPatchPayload};
 use crate::models::collection as collection_model;
-use crate::models::traits::{ExpandCollection, ToHubuumObjects, check_if_object_in_class};
+use crate::models::traits::{ExpandCollection, ToHubuumObjects};
 use crate::pagination::{
     SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, page_limits,
     prepare_db_pagination,
@@ -28,18 +28,14 @@ use crate::services::authorization_resources::{
 };
 use crate::services::catalog as catalog_service;
 use crate::services::computed_objects::enrich_objects_with_computed;
-use crate::services::history::{
-    HistoryCollectionFilter, class_as_of, class_history_paginated_with_total_count, object_as_of,
-    object_history_paginated_with_total_count,
-};
 use crate::services::relation_queries;
 use crate::storage::with_revision_precondition;
 use crate::traits::{UserPermissions, scope_allows};
 
 use crate::models::{
-    ClassGraphRow, ClassSelector, CollectionID, GroupPermission, HistoryAuthorizationSnapshot,
-    HubuumClass, HubuumClassExpanded, HubuumClassHistory, HubuumClassID, HubuumClassRelation,
-    HubuumClassRelationID, HubuumClassWithPath, HubuumObject, HubuumObjectHistory, HubuumObjectID,
+    ClassGraphRow, ClassSelector, CollectionID, GroupPermission, HubuumClass, HubuumClassExpanded,
+    HubuumClassHistory, HubuumClassID, HubuumClassRelation, HubuumClassRelationID,
+    HubuumClassWithPath, HubuumObject, HubuumObjectHistory, HubuumObjectID,
     HubuumObjectReadResponse, HubuumObjectRelation, HubuumObjectWithPath, NewHubuumClass,
     NewHubuumClassRelationFromClass, NewHubuumObjectRequest, ObjectDataPatchDocument,
     ObjectRelationCreateSelector, ObjectRelationEndpoint, ObjectRelationSelector, ObjectSelector,
