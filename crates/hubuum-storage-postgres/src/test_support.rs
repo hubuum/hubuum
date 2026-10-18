@@ -87,6 +87,31 @@ pub async fn relocate_object_history_fixture(
     .await
 }
 
+/// Manufacture a retained class transition that public object updates do not
+/// expose. The normal triggers preserve the previous membership and advance the
+/// object revision; the target class supplies the matching collection.
+pub async fn reclassify_object_history_fixture(
+    pool: &PostgresPool,
+    object_id: ObjectId,
+    target_class_id: ClassId,
+) -> Result<(), PostgresStorageError> {
+    crate::with_connection(pool, async |connection| {
+        let changed = diesel::sql_query(
+            "UPDATE hubuumobject SET hubuum_class_id = target.id, collection_id = target.collection_id \
+             FROM hubuumclass AS target WHERE hubuumobject.id = $1 AND target.id = $2",
+        )
+        .bind::<Integer, _>(object_id.id())
+        .bind::<Integer, _>(target_class_id.id())
+        .execute(connection)
+        .await?;
+        if changed != 1 {
+            return Err(PostgresStorageError::not_found("Historical class-move fixture was not found"));
+        }
+        Ok(())
+    })
+    .await
+}
+
 /// Whether the repository runner provisioned the dedicated database-role fixture.
 #[must_use]
 pub fn database_role_tests_enabled() -> bool {

@@ -22,7 +22,7 @@ async fn versions(
     class: ClassId,
     object: ObjectId,
 ) -> Vec<StorageObjectHistoryRecord> {
-    backend
+    let mut rows = backend
         .list_object_history(StorageObjectHistoryListQuery::new(
             object,
             class,
@@ -35,7 +35,11 @@ async fn versions(
         .await
         .unwrap()
         .into_parts()
-        .0
+        .0;
+    // This fixture needs chronological boundaries regardless of the older
+    // identity-history listing's adapter-specific default ordering.
+    rows.sort_by_key(|row| row.clone().into_parts().1.revision());
+    rows
 }
 
 #[rstest]
@@ -683,7 +687,8 @@ async fn every_backend_population_uses_historical_class_membership(
     #[case] expected: usize,
 ) {
     let _permit = postgres_permit().await;
-    for backend in available_backends() {
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
         let mut source =
             create_backend_object_fixture(&backend, &prefix("population_source_class"), vec![])
                 .await;
@@ -691,15 +696,28 @@ async fn every_backend_population_uses_historical_class_membership(
             create_backend_object_fixture(&backend, &prefix("population_target_class"), vec![])
                 .await;
         let object = create_named(&backend, &source, "moving").await;
-        let object = update(
-            &backend,
-            object.id(),
-            StorageObjectUpdate::builder()
-                .class_id(Some(target.class.id()))
-                .collection_id(Some(target.collection.id()))
-                .build(),
-        )
-        .await;
+        match &environment {
+            BackendTestEnvironment::Postgres { pool } => {
+                hubuum_storage_postgres::test_support::reclassify_object_history_fixture(
+                    pool,
+                    object.id(),
+                    target.class.id(),
+                )
+                .await
+                .unwrap();
+            }
+            BackendTestEnvironment::Memory { .. } => {
+                update(
+                    &backend,
+                    object.id(),
+                    StorageObjectUpdate::builder()
+                        .class_id(Some(target.class.id()))
+                        .collection_id(Some(target.collection.id()))
+                        .build(),
+                )
+                .await;
+            }
+        }
         let boundary = versions(&backend, target.class.id(), object.id()).await[0]
             .clone()
             .into_parts()
