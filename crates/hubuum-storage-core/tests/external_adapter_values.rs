@@ -111,6 +111,9 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let _ = StorageEventRetentionSummary::new;
     let _ = StorageCollectionHistoryRecord::try_new;
     let _ = StorageClassHistoryRecord::try_new;
+    let _ = StorageHistoryMarker::new;
+    let _ = StorageHistoryEntry::Class;
+    let _ = StorageHistoryEntry::Object;
     let _ = StorageExportTemplateHistoryRecord::try_new;
     let _ = StorageHistoryMetadata::try_new;
     let _ = StorageHistoryPrincipalName::new(PrincipalId::new(1).unwrap(), "principal");

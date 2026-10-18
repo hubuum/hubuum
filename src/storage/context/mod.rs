@@ -7,6 +7,10 @@ use hubuum_domain::{
     PrincipalId, RemoteTargetId, RestoreJobId, ServiceAccountId, TaskId, TokenId, UserId,
 };
 use hubuum_storage_core::{QueryUsageAnalysisProvider, StorageQueryObservationSettings};
+use hubuum_storage_core::{
+    StorageHistoryEntry, StorageHistoryEntryQuery, StorageHistoryMarker,
+    StorageHistoryNavigationQuery,
+};
 use hubuum_storage_memory::MemoryStorage;
 #[cfg(any(test, feature = "integration-test-support", feature = "postgres-bench"))]
 use hubuum_storage_postgres::PostgresPool;

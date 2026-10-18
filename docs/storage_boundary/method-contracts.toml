@@ -1044,3 +1044,20 @@ unsupported_error = "InvalidInput"
 effect = "complete_read"
 carrier = "StorageQueryUsageScope"
 profile = "query_usage_declarations"
+
+[query_profiles.history_navigation]
+shape = "page"
+filters = ["resource", "historical collection visibility", "from inclusive", "until exclusive", "time or entry seek", "exact entry identity"]
+sorts = ["valid_from and history_id, both ascending or both descending"]
+cursor = "opaque keyset over full-precision UTC valid_from and history_id"
+visibility = "historical collection scope before count/page; external policy is applied by the application"
+count = "optional exact count within the selection, before cursor"
+snapshot = "count and page share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds; no JSON snapshot projection"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[methods."HistoryStorage::list_history_markers"]
+effect = "page_read"
+carrier = "StorageHistoryNavigationQuery"
+profile = "history_navigation"

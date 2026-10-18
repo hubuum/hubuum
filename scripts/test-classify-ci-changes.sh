@@ -798,3 +798,11 @@ for rust_input in Cargo.toml src/models/token.rs crates/hubuum-query/src/lib.rs 
   output="$(bash "$classifier" "$rust_input")"
   assert_flag "$output" rust true
 done
+
+for history_input in src/services/history/access.rs src/services/history/navigation.rs \
+  src/models/history/navigation.rs src/api/v1/handlers/classes/history_navigation.rs \
+  tests/api_core_data_suite/history_navigation.rs; do
+  history_output="$(bash "$classifier" "$history_input")"
+  assert_flag "$history_output" rust true
+  assert_flag "$history_output" treetop_conformance true
+done

@@ -82,6 +82,50 @@ async fn move_class(backend: &StorageHandle, class_id: ClassId, collection_id: C
         .into_value();
 }
 
+async fn relocate_object(
+    backend: &StorageHandle,
+    id: ObjectId,
+    source: &BackendObjectFixture,
+    target: &BackendObjectFixture,
+) -> StorageObject {
+    // Keep each live object consistent with its class while the original class
+    // moves. The intermediate target-class snapshot is outside the name query.
+    update(
+        backend,
+        id,
+        StorageObjectUpdate::builder()
+            .class_id(Some(target.class.id()))
+            .collection_id(Some(target.collection.id()))
+            .build(),
+    )
+    .await;
+    move_class(backend, source.class.id(), target.collection.id()).await;
+    update(
+        backend,
+        id,
+        StorageObjectUpdate::builder()
+            .class_id(Some(source.class.id()))
+            .build(),
+    )
+    .await
+}
+
+async fn grant_object_reads(backend: &StorageHandle, fixture: &BackendObjectFixture) {
+    backend
+        .apply_local_collection_grant(StorageAuthorizationGrantMutation::new(
+            StorageAuthorizationGrantKey::new(
+                fixture.collection.id(),
+                fixture.owned_group.as_ref().unwrap().id(),
+            ),
+            [StorageAuthorizationPermission::ReadObject],
+            false,
+            EventContext::system(),
+        ))
+        .await
+        .unwrap()
+        .into_value();
+}
+
 fn query(class: ClassId, name: &str, params: &str) -> StorageObjectHistoryNameQuery {
     StorageObjectHistoryNameQuery::try_new(
         class,
@@ -288,6 +332,7 @@ async fn every_backend_name_history_handles_no_live_object(
 }
 
 async fn owner_user(backend: &StorageHandle, fixture: &BackendObjectFixture) -> BackendUserFixture {
+    grant_object_reads(backend, fixture).await;
     let user = create_backend_user(backend, &prefix("history_reader")).await;
     backend
         .add_group_member(
@@ -372,15 +417,7 @@ async fn every_backend_name_history_applies_both_collection_checks(#[case] deny_
         let target =
             create_backend_object_fixture(&backend, &prefix("history_target"), vec![]).await;
         let object = create_named(&backend, &fixture, "server01").await;
-        move_class(&backend, fixture.class.id(), target.collection.id()).await;
-        let object = update(
-            &backend,
-            object.id(),
-            StorageObjectUpdate::builder()
-                .collection_id(Some(target.collection.id()))
-                .build(),
-        )
-        .await;
+        let object = relocate_object(&backend, object.id(), &fixture, &target).await;
         fixture.objects.push(object);
         let visible = if deny_current {
             fixture.collection.id()
@@ -788,18 +825,10 @@ async fn name_history_token_collection_scope_filters_historical_placement(#[case
         let target =
             create_backend_object_fixture(&backend, &prefix("history_scope_target"), vec![]).await;
         let object = create_named(&backend, &fixture, "server01").await;
-        move_class(&backend, fixture.class.id(), target.collection.id()).await;
-        fixture.objects.push(
-            update(
-                &backend,
-                object.id(),
-                StorageObjectUpdate::builder()
-                    .collection_id(Some(target.collection.id()))
-                    .build(),
-            )
-            .await,
-        );
+        let object = relocate_object(&backend, object.id(), &fixture, &target).await;
+        fixture.objects.push(object);
         let user = owner_user(&backend, &fixture).await;
+        grant_object_reads(&backend, &target).await;
         backend
             .add_group_member(
                 user.principal_id,

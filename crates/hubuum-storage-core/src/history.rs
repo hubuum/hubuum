@@ -11,6 +11,9 @@ use crate::{
     StoragePage, StorageRemoteTarget, StorageValidationError,
 };
 
+mod navigation;
+pub use navigation::*;
+
 /// Collection visibility applied by the adapter before counting or paging.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StorageHistoryCollectionScope {
@@ -572,6 +575,16 @@ impl StorageRemoteTargetHistoryRecord {
 /// Complete temporal-history capability required of every selectable backend.
 #[async_trait]
 pub trait HistoryStorage: Send + Sync {
+    async fn list_history_markers(
+        &self,
+        query: StorageHistoryNavigationQuery,
+    ) -> Result<StoragePage<StorageHistoryMarker>, StorageError>;
+
+    async fn get_history_entry(
+        &self,
+        query: StorageHistoryEntryQuery,
+    ) -> Result<Option<StorageHistoryEntry>, StorageError>;
+
     async fn resolve_history_principal_names(
         &self,
         principal_ids: Vec<PrincipalId>,

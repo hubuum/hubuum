@@ -92,6 +92,9 @@ for path in "$@"; do
       src/api/v1/handlers/credential_approvals.rs | src/services/credential_approvals.rs | \
       tests/api_identity_suite/administrative_authorization.rs | \
       src/services/authorized_traversal.rs | src/services/authorization_resources.rs | \
+      src/services/history/* | src/models/history/* | \
+      src/api/v1/handlers/classes/history_navigation.rs | \
+      tests/api_core_data_suite/history_navigation.rs | \
       src/models/traits/user.rs | src/tests/search/related_objects.rs | \
       tests/api_core_data_suite/object_aggregates/external_authorization.rs)
       treetop_conformance=true

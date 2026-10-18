@@ -5,6 +5,7 @@ mod catalog_filters;
 mod credential_approvals;
 mod event_delivery;
 mod history_name;
+mod history_navigation;
 mod login_events;
 mod regex;
 mod remote_targets;

@@ -1,3 +1,6 @@
+mod navigation;
+pub use navigation::*;
+
 use crate::permissions::ClassResourceEndpoint;
 use crate::permissions::ResourceRef;
 
@@ -42,6 +45,7 @@ macro_rules! impl_temporal_history_provenance {
 }
 
 impl_temporal_history_provenance!(
+    HistoryMarker,
     CollectionHistory,
     ExportTemplateHistory,
     HubuumClassHistory,
