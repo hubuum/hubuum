@@ -550,7 +550,9 @@ async fn history_navigation_hides_inaccessible_historical_collections(
     #[values(false, true)] object: bool,
     #[case] endpoint: &str,
 ) {
-    use hubuum_storage_postgres::capture_queries;
+    use hubuum_storage_postgres::{
+        capture_queries, schema::hubuumobject::dsl as objects, with_connection,
+    };
     let fixture = Fixture::new().await;
     let destination = fixture
         .context
@@ -571,11 +573,24 @@ async fn history_navigation_hides_inaccessible_historical_collections(
     let response = patch_request(
         &fixture.context.pool,
         &fixture.context.admin_token,
-        &fixture.resource_path(object),
+        &fixture.resource_path(false),
         json!({"collection_id":destination.collection.id}),
     )
     .await;
     assert_response_status(response, StatusCode::OK).await;
+    if object {
+        // Object moves are unavailable through HTTP. Manufacture a retained
+        // collection transition, with the history trigger recording both shapes.
+        with_connection(&fixture.context.pool, async |connection| {
+            diesel::update(objects::hubuumobject.filter(objects::id.eq(fixture.object.id)))
+                .set(objects::collection_id.eq(destination.collection.id))
+                .execute(connection)
+                .await
+                .map_err(PostgresStorageError::from)
+        })
+        .await
+        .unwrap();
+    }
     let suffix = match endpoint {
         "entry" => format!("entries/{}", previous[0]["history_id"]),
         "anchor" => format!("timeline?anchor={}", previous[0]["history_id"]),
