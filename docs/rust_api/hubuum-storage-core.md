@@ -36,6 +36,14 @@ effective-version selection, bounded pagination and optional exact counts.
 Update external adapters before upgrading; returning an empty fallback would
 misrepresent retained history.
 
+`HistoryStorage::list_relation_history` is a mandatory SDK addition. Implement
+`StorageRelationHistoryQuery` for both class and object endpoints, changes and
+half-open as-of selection, bounded history-ID pages, and optional candidate
+totals. Return `StorageRelationHistoryEntry` with endpoint context from the same
+instant; preserve missing history instead of filling it from live state. The
+application authorizes candidates before exposing rows, totals and cursors.
+External adapters must implement this method before upgrading.
+
 Login issuance requires `StorageLogin` evidence carried by
 `StorageTokenCreate::for_login`. Adapters must recheck it atomically against the
 current user while fencing credential changes. External refresh bookkeeping uses
