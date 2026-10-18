@@ -29,7 +29,7 @@ impl Fixture {
             collection_id: collection.collection.id,
             name: context.scoped_name("history_class"),
             description: "initial".into(),
-            json_schema: Some(json!({"description": "x".repeat(100_000)})),
+            json_schema: Some(json!({"description": "x".repeat(32_000)})),
             validate_schema: Some(false),
         }
         .save_without_events(&context.pool)
