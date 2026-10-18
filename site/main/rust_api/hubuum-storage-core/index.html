@@ -4616,6 +4616,13 @@ semantic coverage inventory, and contract documentation must change together.</p
 Applications compose safe lifecycle semantics through the crate-owned
 operation types returned by <code>StorageTransaction</code>; native connections and query
 interfaces remain private to each adapter.</p>
+<p><code>HistoryStorage::list_object_history_by_name</code> is a mandatory SDK addition.
+Adapters consume <code>StorageObjectHistoryNameQuery</code>, match exact retained class/name
+coordinates across object identities, and apply visibility before counting and
+paging. Live identities require both current and historical collection access;
+missing identities are included only when the application's deleted-history gate
+sets <code>include_deleted</code>. External adapters must implement this method before
+upgrading; a default empty result is not a compatible implementation.</p>
 <p>Login issuance requires <code>StorageLogin</code> evidence carried by
 <code>StorageTokenCreate::for_login</code>. Adapters must recheck it atomically against the
 current user while fencing credential changes. External refresh bookkeeping uses

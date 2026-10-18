@@ -1552,6 +1552,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#exact-name-object-history-across-identities" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Exact-Name Object History Across Identities
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#2-point-in-time-snapshot-as-of-query" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5413,6 +5424,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#exact-name-object-history-across-identities" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Exact-Name Object History Across Identities
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#2-point-in-time-snapshot-as-of-query" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6107,6 +6129,49 @@ Each history row is wrapped in a <code>HistoryResponse</code> containing:
 <a id="__codelineno-13-23" name="__codelineno-13-23" href="#__codelineno-13-23"></a><span class="w">  </span><span class="p">}</span>
 <a id="__codelineno-13-24" name="__codelineno-13-24" href="#__codelineno-13-24"></a><span class="p">]</span>
 </code></pre></div></p>
+<h4 id="exact-name-object-history-across-identities">Exact-Name Object History Across Identities<a class="headerlink" href="#exact-name-object-history-across-identities" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="err">GET /api/v1/classes/42/objects/history?name=server01&amp;limit=50</span>
+</code></pre></div>
+<p>This read-only endpoint selects full retained object snapshots by <strong>stored class
+ID and exact stored name</strong>, across deletion and recreation with different object
+IDs. It does not resolve a live object first. Names are case-sensitive; numeric
+names such as <code>123</code> remain names. Supply <code>name</code> exactly once, URL-encoded as a
+query value (including commas, slashes, spaces, and Unicode). An empty name is
+also an exact value. Class-name reuse across different class IDs is not followed.</p>
+<p>If object 123 named <code>server01</code> is deleted and object 456 is created with the same
+name, an authorized query includes both identities' matching versions and 123's
+delete tombstone. If 456 is renamed to <code>server02</code>, its new version is excluded;
+renaming back adds matching versions again. The existing ID history endpoint
+continues to follow one identity through all its names.</p>
+<p>The response uses the existing full <code>HistoryResponse&lt;HubuumObjectHistory&gt;</code> shape:
+<code>id</code> is the object ID, <code>history_id</code> identifies the exact returned snapshot,
+<code>hubuum_class_id</code> and <code>collection_id</code> are historical coordinates, and <code>name</code>,
+<code>revision</code>, <code>op</code>, <code>valid_from</code>, <code>valid_to</code>, <code>data</code>, and provenance describe that
+version. No follow-up snapshot fetch is required. Delete tombstones retain the
+final live revision, so revision alone is not a unique history-entry identifier.</p>
+<p>Clients use the standard <code>X-Next-Cursor</code>, <code>X-Page-Limit</code>, and optional
+<code>X-Total-Count</code> headers. Default ordering is descending <code>history_id</code>; <code>sort</code>
+accepts <code>history_id</code> or <code>revision</code> with an optional <code>-</code> prefix. <code>history_id</code> breaks
+revision ties across identities, independently of timestamp ties. Revision
+filters use the existing history syntax. <code>include_total=false</code> skips the exact
+total and stops authorization after a page plus look-ahead. Cursors are specific
+to the class, exact name, revision filters, normalized ordering, and authorization
+token and its permission/resource scopes; changing any of these requires
+starting without a cursor. Routine token credential migration preserves cursors.</p>
+<p>Each live identity must pass its current <code>ReadObject</code> check and every returned
+version must pass the historical snapshot check, including the token's resource
+boundary and external policies. A readable replacement never authorizes its
+predecessor. <strong>Deleted identities remain visible only to unscoped administrators</strong>,
+as with ID history; this also covers identities no longer present in the requested
+class. Scoped administrators cannot read deleted predecessors. Hidden versions
+contribute no rows, totals, or cursor boundaries. The endpoint returns <code>200</code> with
+an empty array when no authorized retained versions match, including unknown
+class IDs or names with no live object. A token excluding <code>ReadObject</code> gets <code>403</code>.</p>
+<p>This is historical state lookup. Audit search separately selects actions under
+<code>ReadAudit</code> and can have different retention and snapshot redaction rules.
+Rust clients and CLI implementations should offer explicit ID and name selectors,
+preserve the returned object IDs, reuse the full snapshot type, and treat cursor
+values as opaque. The CLI syntax in issue #471 remains client follow-up work.</p>
 <h4 id="2-point-in-time-snapshot-as-of-query">2. Point-in-Time Snapshot (As-Of Query)<a class="headerlink" href="#2-point-in-time-snapshot-as-of-query" title="Permanent link">&para;</a></h4>
 <p>Returns the historical version of an entity that was valid at a specific instant.</p>
 <p><strong>Endpoints:</strong>
@@ -6120,7 +6185,7 @@ Each history row is wrapped in a <code>HistoryResponse</code> containing:
 <p><strong>Response:</strong>
 Returns a single <code>HistoryResponse</code> object with the same structure as the list endpoint. Returns 404 if no version existed at the specified timestamp.</p>
 <p><strong>Example:</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>GET<span class="w"> </span>/api/v1/classes/42/history/as-of?at<span class="o">=</span><span class="m">2026</span>-06-30T11:00:00Z
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>GET<span class="w"> </span>/api/v1/classes/42/history/as-of?at<span class="o">=</span><span class="m">2026</span>-06-30T11:00:00Z
 </code></pre></div></p>
 <h3 id="access-control">Access Control<a class="headerlink" href="#access-control" title="Permanent link">&para;</a></h3>
 <p>History read access mirrors the base resource's Read permission. Live resources
