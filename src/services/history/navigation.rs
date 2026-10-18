@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use hubuum_domain::HistoryRecordId;
 
 use super::access::{
@@ -253,6 +254,39 @@ impl<'a, S: AuthzSubject> HistoryReader<'a, S> {
             }
         }
         Ok((rows, total, options))
+    }
+
+    pub(crate) async fn as_of(&self, at: DateTime<Utc>) -> Result<HistoryEntry, ApiError> {
+        let (entry, snapshot) = match self.resource {
+            StorageHistoryResource::Class(id) => {
+                let row = super::class_as_of(id.id(), at, self.context)
+                    .await?
+                    .ok_or_else(unavailable)?;
+                let snapshot = HistoryAuthorizationSnapshot::from(&row);
+                (HistoryEntry::Class(row), snapshot)
+            }
+            StorageHistoryResource::Object {
+                class_id,
+                object_id,
+            } => {
+                let row = super::object_as_of(object_id.id(), class_id.id(), at, self.context)
+                    .await?
+                    .ok_or_else(unavailable)?;
+                let snapshot = HistoryAuthorizationSnapshot::from(&row);
+                (HistoryEntry::Object(row), snapshot)
+            }
+        };
+        if !matches!(self.visibility, HistoryVisibility::DeletedAdministrator) {
+            authorize_history_snapshot(
+                self.context,
+                self.subject,
+                self.scopes,
+                self.permission,
+                snapshot,
+            )
+            .await?;
+        }
+        Ok(entry)
     }
 
     pub(crate) async fn entry(&self, id: HistoryRecordId) -> Result<HistoryEntry, ApiError> {

@@ -9,6 +9,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Point-in-time class object populations at
+  `GET /api/v1/classes/{class_id}/objects/history/as-of?at=...`, with the
+  matching historical class/schema snapshot, authorized cursor pagination and
+  optional counts. Results describe retained history, including subsequently
+  deleted objects only for unscoped administrators. Apply the bounded
+  historical-population index migration during maintenance before upgrading,
+  since it temporarily blocks writes.
+
 - Exact-name object history at
   `GET /api/v1/classes/{class_id}/objects/history?name=...`, spanning retained
   versions across deletion and recreation with distinct IDs. Responses include
@@ -27,6 +35,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   are unchanged.
 
 ### Changed
+
+- **Breaking storage SDK change:** `HistoryStorage` adapters must implement
+  `list_class_objects_as_of` using `StorageClassObjectsAsOfQuery`. Apply historical
+  membership and half-open validity, current and historical visibility, revision
+  filtering and bounded pagination before returning snapshots or counts.
 
 - **Breaking storage SDK change:** `HistoryStorage` now requires
   `list_object_history_by_name(StorageObjectHistoryNameQuery)`. External adapters

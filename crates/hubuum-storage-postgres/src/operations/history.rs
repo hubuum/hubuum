@@ -8,13 +8,13 @@ use hubuum_domain::{
 };
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
-    StorageClass, StorageClassHistoryRecord, StorageClassSchemaPolicy, StorageCollection,
-    StorageCollectionHistoryRecord, StorageExportTemplate, StorageExportTemplateDefinition,
-    StorageExportTemplateHistoryRecord, StorageHistoryAsOfQuery, StorageHistoryCollectionScope,
-    StorageHistoryListQuery, StorageHistoryMetadata, StorageHistoryOperation,
-    StorageHistoryPrincipalName, StorageObject, StorageObjectHistoryAsOfQuery,
-    StorageObjectHistoryListQuery, StorageObjectHistoryNameQuery, StorageObjectHistoryRecord,
-    StoragePage, StorageRemoteTarget, StorageRemoteTargetDefinition,
+    StorageClass, StorageClassHistoryRecord, StorageClassObjectsAsOfQuery,
+    StorageClassSchemaPolicy, StorageCollection, StorageCollectionHistoryRecord,
+    StorageExportTemplate, StorageExportTemplateDefinition, StorageExportTemplateHistoryRecord,
+    StorageHistoryAsOfQuery, StorageHistoryCollectionScope, StorageHistoryListQuery,
+    StorageHistoryMetadata, StorageHistoryOperation, StorageHistoryPrincipalName, StorageObject,
+    StorageObjectHistoryAsOfQuery, StorageObjectHistoryListQuery, StorageObjectHistoryNameQuery,
+    StorageObjectHistoryRecord, StoragePage, StorageRemoteTarget, StorageRemoteTargetDefinition,
     StorageRemoteTargetHistoryRecord, StorageRemoteTargetHttpMethod, StorageRemoteTargetPolicy,
     StorageRemoteTargetSubjectType, StorageRemoteTargetTransport,
 };
@@ -26,6 +26,8 @@ use crate::{PostgresRevision, PostgresRuntime, PostgresStorageError};
 
 #[cfg(test)]
 mod name_tests;
+#[cfg(test)]
+mod population_tests;
 
 #[derive(diesel::Queryable)]
 #[diesel(table_name = crate::schema::collections_history)]
@@ -699,6 +701,81 @@ pub async fn list_object_history_by_name(
                 None
             };
             let mut records = object_name_history_query(&query)?;
+            crate::apply_query_options_with_fields!(
+                records,
+                options,
+                fields,
+                crate::cursor::CursorTieBreaker::new(
+                    FilterField::HistoryId,
+                    false,
+                    history_cursor_field(&FilterField::HistoryId, "hubuumobject_history")?,
+                )
+            );
+            let rows = records
+                .load::<ObjectHistoryRow>(connection)
+                .await?
+                .into_iter()
+                .map(StorageObjectHistoryRecord::try_from)
+                .collect::<Result<Vec<_>, _>>()?;
+            crate::persisted_page(rows, total)
+        })
+        .await
+}
+
+fn class_objects_as_of_query(
+    query: &StorageClassObjectsAsOfQuery,
+) -> Result<
+    crate::schema::hubuumobject_history::BoxedQuery<'static, diesel::pg::Pg>,
+    PostgresStorageError,
+> {
+    use crate::schema::{hubuumobject::dsl as live, hubuumobject_history::dsl as history};
+
+    let mut records = history::hubuumobject_history
+        .into_boxed()
+        .filter(history::hubuum_class_id.eq(query.class_id().id()))
+        .filter(diesel::dsl::sql::<diesel::sql_types::Bool>(
+            "tstzrange(hubuumobject_history.valid_from, hubuumobject_history.valid_to, '[)') @> "
+        ).bind::<diesel::sql_types::Timestamptz, _>(query.at()))
+        .filter(history::op.ne("D"));
+    let current_ids = live::hubuumobject.select(live::id);
+    if let Some(collection_ids) = visible_collection_ids(query.collection_scope()) {
+        let readable_ids = current_ids.filter(live::collection_id.eq_any(collection_ids.clone()));
+        let visible = history::id
+            .eq_any(readable_ids)
+            .and(history::collection_id.eq_any(collection_ids));
+        if query.include_deleted() {
+            records = records.filter(visible.or(history::id.ne_all(current_ids)));
+        } else {
+            records = records.filter(visible);
+        }
+    } else if !query.include_deleted() {
+        records = records.filter(history::id.eq_any(current_ids));
+    }
+    for parameter in query.options().filters() {
+        crate::postgres_revision_filter!(records, parameter, history::revision);
+    }
+    Ok(records)
+}
+
+pub async fn list_class_objects_as_of(
+    runtime: &PostgresRuntime,
+    query: StorageClassObjectsAsOfQuery,
+) -> Result<StoragePage<StorageObjectHistoryRecord>, PostgresStorageError> {
+    let options = query.options();
+    let fields = history_cursor_fields(options, "hubuumobject_history")?;
+    runtime
+        .with_read_only_snapshot(async |connection| {
+            let total = if options.include_total() {
+                Some(
+                    class_objects_as_of_query(&query)?
+                        .count()
+                        .get_result::<i64>(connection)
+                        .await?,
+                )
+            } else {
+                None
+            };
+            let mut records = class_objects_as_of_query(&query)?;
             crate::apply_query_options_with_fields!(
                 records,
                 options,

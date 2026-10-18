@@ -58,13 +58,16 @@ for transport_path in tests/python/integration/event_transports.py tests/python/
 done
 
 for authorization_path in src/tests/permissions/candidate_paging.rs \
-  src/api/v1/handlers/classes/history_name.rs src/services/history/name.rs \
-  src/tests/storage_contract/history_name.rs \
+  src/api/v1/handlers/classes/history_population.rs src/api/v1/handlers/classes/history_name.rs src/services/history/name.rs \
+  src/tests/storage_contract/history_population.rs src/tests/storage_contract/history_fixtures.rs src/tests/storage_contract/history_name.rs \
   src/api/v1/handlers/tasks.rs src/api/v1/handlers/tasks/discovery.rs tests/api_jobs_suite/tasks.rs; do
   authorization_output="$(bash "$classifier" "$authorization_path")"
   assert_flag "$authorization_output" code true
   assert_flag "$authorization_output" treetop_conformance true
 done
+
+population_output="$(bash "$classifier" src/api/v1/handlers/classes/history_population.rs)"
+assert_flag "$population_output" openapi true
 
 for cursor_input in crates/hubuum-storage-postgres/src/cursor/query_plan_tests.rs \
   crates/hubuum-storage-postgres/migrations/2026-09-13-000001_byte_ordered_cursor_indexes/up.sql \

@@ -74,6 +74,15 @@ impl HistoryStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
+    async fn list_class_objects_as_of(
+        &self,
+        query: StorageClassObjectsAsOfQuery,
+    ) -> Result<StoragePage<StorageObjectHistoryRecord>, StorageError> {
+        crate::operations::history::list_class_objects_as_of(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
+    }
+
     async fn list_object_history_by_name(
         &self,
         query: StorageObjectHistoryNameQuery,

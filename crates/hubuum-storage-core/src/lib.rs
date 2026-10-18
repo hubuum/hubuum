@@ -143,14 +143,15 @@ pub use families::{
     WorkflowStorage,
 };
 pub use history::{
-    HistoryStorage, StorageClassHistoryRecord, StorageCollectionHistoryRecord,
-    StorageExportTemplateHistoryRecord, StorageHistoryAsOfQuery, StorageHistoryCollectionScope,
-    StorageHistoryEntry, StorageHistoryEntryQuery, StorageHistoryListQuery, StorageHistoryMarker,
-    StorageHistoryMetadata, StorageHistoryMetadataParts, StorageHistoryNavigationQuery,
-    StorageHistoryOperation, StorageHistoryPosition, StorageHistoryPrincipalName,
-    StorageHistoryResource, StorageHistorySelection, StorageHistoryWindow,
-    StorageObjectHistoryAsOfQuery, StorageObjectHistoryListQuery, StorageObjectHistoryNameQuery,
-    StorageObjectHistoryRecord, StorageRemoteTargetHistoryRecord,
+    HistoryStorage, StorageClassHistoryRecord, StorageClassObjectsAsOfQuery,
+    StorageCollectionHistoryRecord, StorageExportTemplateHistoryRecord, StorageHistoryAsOfQuery,
+    StorageHistoryCollectionScope, StorageHistoryEntry, StorageHistoryEntryQuery,
+    StorageHistoryListQuery, StorageHistoryMarker, StorageHistoryMetadata,
+    StorageHistoryMetadataParts, StorageHistoryNavigationQuery, StorageHistoryOperation,
+    StorageHistoryPosition, StorageHistoryPrincipalName, StorageHistoryResource,
+    StorageHistorySelection, StorageHistoryWindow, StorageObjectHistoryAsOfQuery,
+    StorageObjectHistoryListQuery, StorageObjectHistoryNameQuery, StorageObjectHistoryRecord,
+    StorageRemoteTargetHistoryRecord,
 };
 pub use hubuum_domain::PrincipalKind;
 pub use hubuum_events_core::AuditDocument;

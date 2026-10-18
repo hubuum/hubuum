@@ -697,3 +697,65 @@ Writes performed by background tasks (e.g., imports, async jobs in `src/tasks`) 
 - **Request-scoped actor context**: `src/middlewares/actor_context.rs`
 - **Anonymization logic**: `src/utilities/iam.rs`
 - **Anonymization endpoint**: `src/api/v1/handlers/users.rs`
+
+## Historical class object populations
+
+`GET /api/v1/classes/{class_id}/objects/history/as-of?at=<RFC3339>` lists
+objects that belonged to the class at the requested instant. It reads each
+object's retained `hubuum_class_id` and half-open validity interval
+(`valid_from <= at < valid_to`, with an open upper bound for current versions).
+Deletion markers do not represent active objects. Recreating a name creates a
+separate identity; current names, membership, data and computed values are never
+substituted for historical fields.
+
+```http
+GET /api/v1/classes/12/objects/history/as-of?at=2026-10-18T10:00:00Z&limit=25&include_total=false
+Authorization: Bearer <token>
+```
+
+The response contains `at`, `class`, `objects` and
+`coverage: "retained_history"`. `class` is the class history response, including
+its stored JSON schema, effective at the same instant. `objects` contains normal
+object history responses, with stable object/history IDs, revision, validity,
+provenance and stored fields. Collection IDs are historical references;
+expanded collection names and metadata are not included. Clients needing them
+must use the collection as-of API at the same instant and treat unavailable
+context explicitly. Computed values are unavailable on this endpoint.
+
+The caller needs current and historical class read access and current and
+historical object read access. External policy attributes and token resource
+scopes apply to both shapes. Moving an object does not preserve access through
+its old collection. Only unscoped administrators can include subsequently deleted
+objects or query a deleted class. Hidden objects contribute neither rows nor
+counts nor cursor boundaries.
+
+Pagination uses the standard headers and configured `limit` bounds (defaults:
+100 rows, maximum 250),
+`cursor` and `include_total` (default true). Totals count authorized retained
+objects across all pages; `include_total=false` omits the total header and avoids
+a full count. Supported sorting is `history_id` (descending by default) and
+`revision`, with a unique history-ID tie-breaker; prefix a sort field with `-`
+for descending. Revision filters use the standard numeric operators, applied
+only to the effective historical version. Other filters, including live JSON or
+computed filters, are rejected. Cursors bind the class, full-precision instant,
+filters, ordering, principal and token scope. Changing any of these requires a
+new first page; changing the page size does not.
+
+A missing class snapshot returns `404` with no claim about whether it never
+existed or its history was removed. Successful results describe retained
+versions only. An empty page or zero total does **not** establish that a class
+was historically empty; retained-history completeness and expiry are not yet
+tracked (see retention issue #251). Authorization is evaluated again on each
+page, so changing access can change subsequent results.
+
+The PostgreSQL adapter uses class/history-ID and validity-range
+indexes, applies count and page selection in one read snapshot, and fetches only
+the requested bounded page. The memory adapter retains only bounded candidate
+keys and the selected snapshots. External authorization fetches candidates in
+bounded batches and never hydrates a whole class. Optional exact counts can
+still require visiting all matching candidates. Apply the new migration with
+`hubuum-admin --migrate` during maintenance before starting the upgraded server.
+Both index builds share a transaction and temporarily block writes. Lock
+acquisition is limited to 5 seconds and each statement to 60 seconds; failure
+rolls back both builds. Check build duration on representative history tables
+before upgrading.

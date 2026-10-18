@@ -132,35 +132,7 @@ impl StorageObjectHistoryNameQuery {
                 "Historical name cannot contain NUL",
             ));
         }
-        if options
-            .filters()
-            .iter()
-            .any(|filter| *filter.field() != FilterField::Revision)
-            || options.structured_filter().is_some()
-        {
-            return Err(StorageValidationError::invalid(
-                "Only revision filters are supported for history",
-            ));
-        }
-        if options
-            .sort()
-            .iter()
-            .any(|sort| !matches!(sort.field, FilterField::HistoryId | FilterField::Revision))
-        {
-            return Err(StorageValidationError::invalid(
-                "History can only be ordered by history_id or revision",
-            ));
-        }
-        if !options
-            .sort()
-            .iter()
-            .any(|sort| sort.field == FilterField::HistoryId)
-        {
-            options
-                .sort_mut()
-                .append_tie_breaker(SortParam::new(FilterField::HistoryId, true))
-                .map_err(|error| StorageValidationError::invalid(error.to_string()))?;
-        }
+        validate_object_history_options(&mut options)?;
         Ok(Self {
             class_id,
             name,
@@ -206,6 +178,112 @@ impl StorageObjectHistoryNameQuery {
         &self.collection_scope
     }
 
+    #[must_use]
+    pub const fn include_deleted(&self) -> bool {
+        self.include_deleted
+    }
+}
+
+fn validate_object_history_options(
+    options: &mut QueryOptions,
+) -> Result<(), StorageValidationError> {
+    if options
+        .filters()
+        .iter()
+        .any(|filter| *filter.field() != FilterField::Revision)
+        || options.structured_filter().is_some()
+    {
+        return Err(StorageValidationError::invalid(
+            "Only revision filters are supported for history",
+        ));
+    }
+    if options
+        .sort()
+        .iter()
+        .any(|sort| !matches!(sort.field, FilterField::HistoryId | FilterField::Revision))
+    {
+        return Err(StorageValidationError::invalid(
+            "History can only be ordered by history_id or revision",
+        ));
+    }
+    if !options
+        .sort()
+        .iter()
+        .any(|sort| sort.field == FilterField::HistoryId)
+    {
+        options
+            .sort_mut()
+            .append_tie_breaker(SortParam::new(FilterField::HistoryId, true))
+            .map_err(|error| StorageValidationError::invalid(error.to_string()))?;
+    }
+    Ok(())
+}
+
+/// A bounded class population selected from retained object validity intervals.
+/// Current and historical collections must both be visible. Only callers with
+/// deleted-history authority may include objects without a live identity.
+#[derive(Clone)]
+pub struct StorageClassObjectsAsOfQuery {
+    class_id: ClassId,
+    at: DateTime<Utc>,
+    options: QueryOptions,
+    collection_scope: StorageHistoryCollectionScope,
+    include_deleted: bool,
+}
+
+impl StorageClassObjectsAsOfQuery {
+    pub fn try_new(
+        class_id: ClassId,
+        at: DateTime<Utc>,
+        mut options: QueryOptions,
+    ) -> Result<Self, StorageValidationError> {
+        validate_object_history_options(&mut options)?;
+        if options.limit().is_none() {
+            return Err(StorageValidationError::invalid(
+                "Historical population requires an explicit page limit",
+            ));
+        }
+        Ok(Self {
+            class_id,
+            at,
+            options,
+            collection_scope: StorageHistoryCollectionScope::All,
+            include_deleted: false,
+        })
+    }
+
+    #[must_use]
+    pub fn visibility(
+        mut self,
+        scope: StorageHistoryCollectionScope,
+        include_deleted: bool,
+    ) -> Self {
+        self.collection_scope = scope;
+        self.include_deleted = include_deleted;
+        self
+    }
+
+    pub fn with_options(self, options: QueryOptions) -> Result<Self, StorageValidationError> {
+        Ok(Self::try_new(self.class_id, self.at, options)?
+            .visibility(self.collection_scope, self.include_deleted))
+    }
+
+    #[must_use]
+    pub const fn class_id(&self) -> ClassId {
+        self.class_id
+    }
+    #[must_use]
+    pub const fn at(&self) -> DateTime<Utc> {
+        self.at
+    }
+    #[must_use]
+    pub const fn options(&self) -> &QueryOptions {
+        &self.options
+    }
+    #[must_use]
+    pub const fn collection_scope(&self) -> &StorageHistoryCollectionScope {
+        &self.collection_scope
+    }
     #[must_use]
     pub const fn include_deleted(&self) -> bool {
         self.include_deleted
@@ -613,6 +691,11 @@ pub trait HistoryStorage: Send + Sync {
     async fn list_object_history(
         &self,
         query: StorageObjectHistoryListQuery,
+    ) -> Result<StoragePage<StorageObjectHistoryRecord>, StorageError>;
+
+    async fn list_class_objects_as_of(
+        &self,
+        query: StorageClassObjectsAsOfQuery,
     ) -> Result<StoragePage<StorageObjectHistoryRecord>, StorageError>;
 
     async fn list_object_history_by_name(

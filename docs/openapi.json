@@ -5072,6 +5072,163 @@
         ]
       }
     },
+    "/api/v1/classes/{class_id}/objects/history/as-of": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Objects History As Of",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/objects/history/as-of. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1ClassesByClassIdObjectsHistoryAsOf",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Historical class identity",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "at",
+            "in": "query",
+            "description": "Required RFC3339 instant, with full timestamp precision",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Continuation bound to instant, class, filters, ordering and authorization token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Include exact authorized retained-object count (default true)",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "history_id (default descending) or revision; prefix - for descending",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "revision",
+            "in": "query",
+            "description": "Filter the effective historical object revision",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Effective retained object versions and class/schema snapshot at the same instant. Collection IDs are historical references; expanded collections and computed values are not included. An empty retained page does not prove historical emptiness. The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoricalClassObjects"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query or mismatched continuation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class history unavailable at this instant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/classes/{class_id}/objects/{object_id}/related/graph": {
       "get": {
         "tags": [
@@ -27215,6 +27372,40 @@
             "format": "date-time"
           }
         }
+      },
+      "HistoricalClassObjects": {
+        "type": "object",
+        "required": [
+          "at",
+          "class",
+          "objects",
+          "coverage"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "class": {
+            "$ref": "#/components/schemas/HistoryResponse_HubuumClassHistory"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/HistoricalPopulationCoverage"
+          },
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryResponse_HubuumObjectHistory"
+            }
+          }
+        }
+      },
+      "HistoricalPopulationCoverage": {
+        "type": "string",
+        "description": "Retained snapshots do not prove that all historical membership is available.",
+        "enum": [
+          "retained_history"
+        ]
       },
       "HistoryDirection": {
         "type": "string",

@@ -260,6 +260,17 @@ additionally checks current and historical resource attributes and scoped tokens
 in bounded authorization batches. PostgreSQL uses the class/name/history-ID index;
 memory retains only the requested page's candidate keys and full snapshots.
 
+`list_class_objects_as_of` consumes a validated, bounded
+`StorageClassObjectsAsOfQuery`. Select at most one effective non-deletion version
+per object using the historical class and half-open validity interval, including
+full timestamp precision. Apply revision filters to that version only. Current
+live identity and historical collection visibility both apply; a class change
+must still authorize the actual current object. Missing live identities require
+`include_deleted`. Count and pagination must share a read snapshot. Ordering,
+integer cursor values and optional totals follow object history, and adapters
+must bound retained result state before cloning full snapshots. Retained rows
+provide no evidence of complete historical coverage.
+
 ### `inventory_queries`
 
 Required trait: `InventoryStorage`.
