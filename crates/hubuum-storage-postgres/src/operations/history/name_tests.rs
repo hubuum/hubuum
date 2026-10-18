@@ -58,7 +58,7 @@ async fn name_history_seeks_installed_index_with_timestamp_ties(
         assert_eq!(scan["Node Type"], "Index Scan", "{plan:#}");
         let condition = scan["Index Cond"].as_str().unwrap();
         assert!(condition.contains("hubuum_class_id") && condition.contains("name") && condition.contains("history_id"), "{plan:#}");
-        assert!(scan["Actual Rows"].as_u64().unwrap() <= 2, "{plan:#}");
+        assert!(scan["Actual Rows"].as_f64().expect("actual row count") <= 2.0, "{plan:#}");
         Ok::<_, PostgresStorageError>(())
     }).await.unwrap();
 }
