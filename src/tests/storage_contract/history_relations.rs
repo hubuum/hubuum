@@ -857,34 +857,24 @@ async fn relationship_local_policy_checks_moved_endpoint_collection(#[case] obje
         let target =
             create_backend_object_fixture(&backend, &prefix("relation_private_target"), vec![])
                 .await;
-        let at = Utc::now();
-        if objects {
-            match environment {
-                BackendTestEnvironment::Postgres { ref pool } => {
-                    hubuum_storage_postgres::test_support::relocate_object_history_fixture(
-                        pool,
-                        fixture.classes[1].id(),
-                        fixture.objects[1].id(),
-                        target.collection.id(),
-                    )
-                    .await
-                    .unwrap()
-                }
-                BackendTestEnvironment::Memory { .. } => {
-                    move_class(&backend, fixture.classes[1].id(), target.collection.id()).await;
-                    update(
-                        &backend,
-                        fixture.objects[1].id(),
-                        StorageObjectUpdate::builder()
-                            .collection_id(Some(target.collection.id()))
-                            .build(),
-                    )
-                    .await;
-                }
-            }
-        } else {
-            move_class(&backend, fixture.classes[1].id(), target.collection.id()).await;
-        }
+        backend
+            .apply_local_collection_grant(StorageAuthorizationGrantMutation::new(
+                StorageAuthorizationGrantKey::new(
+                    fixture.collection.id(),
+                    fixture.owner_group.id(),
+                ),
+                [
+                    StorageAuthorizationPermission::ReadClass,
+                    StorageAuthorizationPermission::ReadObject,
+                    StorageAuthorizationPermission::ReadClassRelation,
+                    StorageAuthorizationPermission::ReadObjectRelation,
+                ],
+                false,
+                EventContext::system(),
+            ))
+            .await
+            .unwrap()
+            .into_value();
         let user = user(&backend, &fixture).await;
         let context = AppContext::new(
             backend.clone(),
@@ -899,6 +889,55 @@ async fn relationship_local_policy_checks_moved_endpoint_collection(#[case] obje
         let reader = HistoryReader::authorize(&context, &principal, None, root(&fixture, objects))
             .await
             .unwrap();
+        let at = Utc::now();
+        let (before, _) = reader
+            .relationships(
+                StorageRelationHistorySelection::At(at),
+                parse_query_parameter("limit=1&include_total=false").unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            before.len(),
+            1,
+            "the edge must be visible before its endpoint moves"
+        );
+        if objects {
+            match environment {
+                BackendTestEnvironment::Postgres { ref pool } => {
+                    hubuum_storage_postgres::test_support::relocate_object_history_fixture(
+                        pool,
+                        fixture.classes[1].id(),
+                        fixture.objects[1].id(),
+                        target.collection.id(),
+                    )
+                    .await
+                    .unwrap()
+                }
+                BackendTestEnvironment::Memory { .. } => {
+                    let object = backend
+                        .object_store()
+                        .get_object(fixture.objects[1].id())
+                        .await
+                        .unwrap();
+                    move_class(&backend, fixture.classes[1].id(), target.collection.id()).await;
+                    backend
+                        .object_store()
+                        .update_object(
+                            &object,
+                            StorageObjectUpdate::builder()
+                                .collection_id(Some(target.collection.id()))
+                                .build(),
+                            &EventContext::system(),
+                        )
+                        .await
+                        .unwrap()
+                        .into_value();
+                }
+            }
+        } else {
+            move_class(&backend, fixture.classes[1].id(), target.collection.id()).await;
+        }
         let (rows, total) = reader
             .relationships(
                 StorageRelationHistorySelection::At(at),
