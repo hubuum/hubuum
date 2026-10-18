@@ -22,6 +22,7 @@ pub enum CursorSqlType {
     Boolean,
     String,
     DateTime,
+    DateTimeUtc,
     IntegerArray,
     Json,
 }
@@ -336,6 +337,10 @@ where
             "'{}'::timestamp",
             value.format("%Y-%m-%d %H:%M:%S%.f")
         )),
+        (CursorSqlType::DateTimeUtc, CursorValue::DateTime(value)) => Ok(format!(
+            "'{}+00'::timestamptz",
+            value.format("%Y-%m-%d %H:%M:%S%.f")
+        )),
         (CursorSqlType::IntegerArray, CursorValue::IntegerArray(values)) if values.is_empty() => {
             Ok("ARRAY[]::integer[]".to_string())
         }
@@ -383,7 +388,7 @@ macro_rules! apply_cursor_ordering_fields {
     ($query:ident, $sorts:expr, $sql_fields:expr) => {{
         use diesel::dsl::sql;
         use diesel::sql_types::{
-            Array, BigInt, Bool, Integer, Jsonb, Nullable, Numeric, Text, Timestamp,
+            Array, BigInt, Bool, Integer, Jsonb, Nullable, Numeric, Text, Timestamp, Timestamptz,
         };
 
         let mut is_first_order = true;
@@ -453,14 +458,26 @@ macro_rules! apply_cursor_ordering_fields {
                 (true, $crate::cursor::CursorSqlType::DateTime, false) => {
                     $query.order_by(sql::<Timestamp>(&order_sql))
                 }
+                (true, $crate::cursor::CursorSqlType::DateTimeUtc, false) => {
+                    $query.order_by(sql::<Timestamptz>(&order_sql))
+                }
                 (false, $crate::cursor::CursorSqlType::DateTime, false) => {
                     $query.then_order_by(sql::<Timestamp>(&order_sql))
+                }
+                (false, $crate::cursor::CursorSqlType::DateTimeUtc, false) => {
+                    $query.then_order_by(sql::<Timestamptz>(&order_sql))
                 }
                 (true, $crate::cursor::CursorSqlType::DateTime, true) => {
                     $query.order_by(sql::<Nullable<Timestamp>>(&order_sql))
                 }
+                (true, $crate::cursor::CursorSqlType::DateTimeUtc, true) => {
+                    $query.order_by(sql::<Nullable<Timestamptz>>(&order_sql))
+                }
                 (false, $crate::cursor::CursorSqlType::DateTime, true) => {
                     $query.then_order_by(sql::<Nullable<Timestamp>>(&order_sql))
+                }
+                (false, $crate::cursor::CursorSqlType::DateTimeUtc, true) => {
+                    $query.then_order_by(sql::<Nullable<Timestamptz>>(&order_sql))
                 }
                 (true, $crate::cursor::CursorSqlType::IntegerArray, false) => {
                     $query.order_by(sql::<Array<Integer>>(&order_sql))

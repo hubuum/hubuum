@@ -1,3 +1,6 @@
+pub(crate) mod access;
+pub(crate) mod navigation;
+
 use chrono::{DateTime, Utc};
 use hubuum_domain::{ClassId, CollectionId, ObjectId, PrincipalId, ResourceId};
 

@@ -845,6 +845,8 @@ mod class_objects;
 mod class_related;
 mod computed_objects;
 mod history_endpoints;
+mod history_navigation;
+pub use history_navigation::*;
 pub(crate) mod object_aggregates;
 mod object_related;
 

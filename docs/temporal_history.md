@@ -58,6 +58,101 @@ When a row is deleted (D operation), a **zero-width tombstone** is created:
 - Both `valid_from` and `valid_to` are set to the deletion timestamp (matching the format seen in line 24 of `up.sql`).
 - This tombstone allows auditing what was deleted and when, while being logically distinct from an UPDATE closure.
 
+## Lightweight Timeline Navigation
+
+Class and object history can be browsed without fetching every full snapshot:
+
+| Operation | Class route | Object route |
+| --- | --- | --- |
+| Timeline | `/api/v1/classes/{class_id}/history/timeline` | `/api/v1/classes/{class_id}/{object_id}/history/timeline` |
+| Exact entry | `/api/v1/classes/{class_id}/history/entries/{history_id}` | `/api/v1/classes/{class_id}/{object_id}/history/entries/{history_id}` |
+
+Timeline responses are arrays containing resource identity, historical name and
+collection/class identity, `history_id`, `revision`, `op`, `valid_from`, `valid_to`,
+and actor/initiator/task provenance. They omit `data` and `json_schema`. Exact
+entry responses have the same full snapshot shape as the existing history APIs.
+All new responses use `Cache-Control: private, no-store`.
+
+### Selection and Pagination
+
+| Parameter | Meaning |
+| --- | --- |
+| `direction` | `older` (default) orders descending; `newer` orders ascending. Both order by `(valid_from, history_id)`. |
+| `at` | Exact RFC3339 instant. `older` includes entries whose `valid_from <= at`; `newer` includes entries whose `valid_from > at`. |
+| `anchor` | Authorized history entry in this resource. Return entries strictly before/after its `(valid_from, history_id)` position. Mutually exclusive with `at`. |
+| `from`, `until` | Optional creation-time window: `from <= valid_from < until`. When both are supplied, `from` must precede `until`. |
+| `limit` | Positive page size, using the configured default and maximum. |
+| `cursor` | Opaque `X-Next-Cursor` value from the previous page. Preserve the resource, direction, window and anchor when continuing. |
+| `include_total` | Defaults to `false`. `true` returns `X-Total-Count` for authorized entries matching the window and selection, independent of the cursor. |
+
+The effective limit is returned in `X-Page-Limit`. `X-Next-Cursor` is omitted
+when no more authorized entries remain in that direction. Generic `sort` and
+filter parameters are not supported by timeline routes.
+
+Timestamp ties are ordered by history identity. Keep server timestamps as exact
+strings; do not round them through a JavaScript `Date` before sending them back.
+An anchor selects neighbors without timestamp arithmetic. Inserts newer than a
+descending cursor do not duplicate or shift earlier entries; refresh the first
+page to discover newly committed versions. Pagination is not a frozen snapshot
+across requests, and authorization is evaluated on every request.
+
+### Frontend Integration
+
+1. Load a timeline page for markers and snapshot covers.
+2. Fetch `entries/{history_id}` only for the selected snapshot and comparison
+   baseline. Prefetch a bounded number of neighbors if useful.
+3. On a date jump, use the existing `history/as-of?at=...` route for the active
+   snapshot. Load surrounding markers with `timeline?at=...&direction=older`
+   and `timeline?at=...&direction=newer`.
+4. For exact bookmarks or pinned comparisons, use resource identity plus
+   `history_id`. Fetch that entry directly, then use `anchor={history_id}` for
+   its older and newer neighbors.
+
+For the first/last available authorized marker, request `limit=1` with
+`direction=newer`/`direction=older` and no selection or window. This avoids
+requiring an exact count or loading all versions just to establish bounds.
+Full-document comparisons and change summaries remain opt-in client work;
+listing markers never computes document diffs. Existing clients can continue
+using the original full-row history list and as-of endpoints.
+
+### Identity, Visibility, and Availability
+
+A history ID is table-specific. Exact lookup always constrains it by resource
+kind and resource ID; object routes also constrain the stored class ID. A
+revision alone cannot identify a deletion marker because the marker retains
+the final live revision. Exact lookup can return a tombstone even though as-of
+lookup cannot return a zero-width active interval.
+
+Current resource access is required before navigation. Historical versions must
+also pass checks using their own stored collection, class, and name. Hidden
+entries do not contribute markers, totals, cursors, or availability bounds.
+Only unscoped administrators may browse deleted-resource history, matching the
+existing policy. Inaccessible, missing, wrong-resource, and unavailable exact
+entries or anchors return the same `404` response after the live-resource gate.
+
+Empty windows return an empty page for a known authorized resource. Bounds
+describe available authorized data; they do not prove an uninterrupted history
+or establish a retention cutoff. Until retention provenance is implemented in
+[#251](https://github.com/hubuum/hubuum/issues/251), a missing version is not
+labelled expired and no `410` response is inferred from the oldest visible row.
+
+### Storage and Performance
+
+Both PostgreSQL and memory implement the navigation contract. PostgreSQL selects
+only marker and authorization fields and uses indexes beginning with the resource
+identity, followed by `valid_from` and `history_id`. Apply the navigation-index
+migration through the normal one-shot administrator migration process during
+maintenance: its transactional index builds briefly block history writes. Lock
+acquisition is limited to five seconds and each statement to sixty seconds;
+failure rolls back both indexes. Test the migration against a representative
+database before upgrading a deployment with very large history tables.
+
+The regression suite exercises deep index seeks on 12,000 entries with 64 KiB
+JSON payloads, in both directions and with tied timestamps. It checks bounded
+query-plan work and compares full-row and marker payload sizes. HTTP tests also
+check that schemas and object data never appear in marker responses. These
+checks establish payload/query bounds; they are not a production latency claim.
+
 ## Generic History Trigger
 
 ### The `hubuum_record_history()` Function

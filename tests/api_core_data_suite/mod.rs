@@ -2,6 +2,7 @@ mod by_name_routes;
 mod classes;
 mod collections;
 mod computed_fields;
+mod history_navigation;
 mod object_aggregates;
 mod object_data_patch;
 mod objects;

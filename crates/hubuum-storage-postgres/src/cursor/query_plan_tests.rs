@@ -45,6 +45,50 @@ enum Position {
     Continuation,
 }
 
+#[rstest]
+#[case::class("hubuumclass_history", "json_schema", "")]
+#[case::object("hubuumobject_history", "data", " AND hubuum_class_id = 3")]
+#[tokio::test]
+async fn history_navigation_plan_uses_bounded_index_seek(
+    #[case] table: &str,
+    #[case] payload: &str,
+    #[case] scope: &str,
+    #[values(false, true)] descending: bool,
+) {
+    use chrono::{DateTime, Utc};
+    let pool = integration_test_pool(1);
+    with_transaction(&pool, async |connection| {
+        diesel::sql_query(format!("CREATE TEMP TABLE history_navigation_plan (LIKE public.{table} INCLUDING INDEXES) ON COMMIT DROP")).execute(connection).await?;
+        let required = diesel::sql_query("SELECT attname::text AS value FROM pg_attribute WHERE attrelid = 'pg_temp.history_navigation_plan'::regclass AND attnum > 0 AND attnotnull AND attname NOT IN ('id', 'history_id', 'valid_from')").load::<TextRow>(connection).await?;
+        for attribute in required {
+            diesel::sql_query(format!("ALTER TABLE history_navigation_plan ALTER COLUMN \"{}\" DROP NOT NULL", attribute.value.replace('"', "\"\""))).execute(connection).await?;
+        }
+        let class_column = if scope.is_empty() { "" } else { ", hubuum_class_id" };
+        let class_value = if scope.is_empty() { "" } else { ", 3" };
+        diesel::sql_query(format!("INSERT INTO history_navigation_plan (id, collection_id, history_id, revision, name, op, valid_from, valid_to, {payload}{class_column}) SELECT 7, 9, n, n, 'snapshot', 'U', '2026-01-01T00:00:00Z'::timestamptz + (n / 2) * interval '1 microsecond', '2027-01-01T00:00:00Z'::timestamptz, jsonb_build_object('blob', repeat('x', 65536)){class_value} FROM generate_series(1, 12000) n")).execute(connection).await?;
+        diesel::sql_query("ANALYZE history_navigation_plan").execute(connection).await?;
+        // Exercise timezone independence rather than relying on the session's default.
+        diesel::sql_query("SET LOCAL TIME ZONE 'Pacific/Auckland'").execute(connection).await?;
+        let anchor = if descending { 4 } else { 11996 };
+        let at: DateTime<Utc> = "2026-01-01T00:00:00Z".parse().unwrap();
+        let at = at + chrono::Duration::microseconds(anchor / 2);
+        let sorts = [SortParam::new(FilterField::ValidFrom, descending), SortParam::new(FilterField::HistoryId, descending)];
+        let fields = [CursorSqlField { column: "valid_from", sql_type: CursorSqlType::DateTimeUtc, nullable: false }, CursorSqlField { column: "history_id", sql_type: CursorSqlType::BigInt, nullable: false }];
+        let mut options = QueryOptions::new(vec![], sorts.to_vec(), Some(2), None, false).unwrap();
+        options.set_cursor(Some(encode_cursor_values(&sorts, vec![CursorValue::DateTime(at.naive_utc()), CursorValue::Integer(anchor)]).unwrap())).unwrap();
+        let cursor = cursor_filter_sql_for_fields(&options, &sorts, &fields)?.unwrap();
+        let order = sorts.iter().zip(&fields).map(|(sort, field)| order_sql_clause_for_field(sort, field)).collect::<Vec<_>>().join(", ");
+        let projection = "collection_id, name, op, valid_from, valid_to, actor_id, history_id, actor_kind, initiator_user_id, task_id, revision";
+        let explain = diesel::sql_query(format!("EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF, FORMAT JSON) SELECT {projection} FROM history_navigation_plan WHERE id = 7{scope} AND {cursor} ORDER BY {order} LIMIT 2")).get_result::<Explain>(connection).await?;
+        assert_bounded_plan(&explain.value, true);
+        let sizes = diesel::sql_query(format!("SELECT json_build_object('full', (SELECT sum(octet_length(row_to_json(r)::text)) FROM (SELECT * FROM history_navigation_plan ORDER BY history_id LIMIT 25) r), 'markers', (SELECT sum(octet_length(row_to_json(r)::text)) FROM (SELECT {projection} FROM history_navigation_plan ORDER BY history_id LIMIT 25) r))::text AS value")).get_result::<TextRow>(connection).await?;
+        let sizes: Value = serde_json::from_str(&sizes.value).unwrap();
+        assert!(sizes["full"].as_u64().unwrap() > sizes["markers"].as_u64().unwrap() * 100);
+        eprintln!("history_navigation_measurement table={table} descending={descending} rows=12000 page=25 sizes={sizes} plan={}", explain.value);
+        Ok::<_, PostgresStorageError>(())
+    }).await.unwrap();
+}
+
 fn assert_bounded_plan(plan: &Value, continued: bool) {
     fn visit(node: &Value, visited: &mut u64, index_conditions: &mut usize) {
         let kind = node["Node Type"].as_str().expect("plan node type");

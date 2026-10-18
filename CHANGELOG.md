@@ -9,6 +9,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Lightweight class/object history timelines and direct, resource-scoped history
+  entry lookup, including deletion markers. Timelines support exact timestamp
+  and entry anchors, time windows, stable cursors, and optional authorized counts
+  without downloading object data or class schemas. PostgreSQL navigation indexes
+  keep deep pages bounded; apply the bounded index-build migration during
+  maintenance before starting the new server, since it temporarily blocks writes.
 - Opt-in `POST /api/v1/search/hydrate` for inspecting a bounded, permission-aware
   object neighborhood alongside search results, with unique objects/relations,
   visible paths, and explicit truncation. Root search matches and pagination
@@ -16,6 +22,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking storage SDK change:** `HistoryStorage` implementations must add
+  `list_history_markers` and `get_history_entry`. Implement the metadata projection,
+  resource-scoped identities, full-precision time/identity ordering and selection,
+  visibility-before-pagination, and optional counts described by the history
+  navigation contract. Existing HTTP history list/as-of APIs are unchanged.
 - Refresh compatible runtime dependencies, including Actix Web 4.17, Tokio
   1.53.3, and HTTP compression library updates.
 - **Breaking regex search change:** every backend now implements the bounded

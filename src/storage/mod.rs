@@ -1,3 +1,8 @@
+pub use hubuum_storage_core::{
+    StorageHistoryEntry, StorageHistoryEntryQuery, StorageHistoryMarker,
+    StorageHistoryNavigationQuery, StorageHistoryPosition, StorageHistoryResource,
+    StorageHistorySelection, StorageHistoryWindow,
+};
 mod context;
 mod contract;
 mod database_diagnostics;
