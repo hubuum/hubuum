@@ -19,7 +19,9 @@ use crate::storage::{
 use hubuum_domain::{ClassId, ClassRelationId, ObjectId, ObjectRelationId, ResourceId};
 use hubuum_query::{MAX_TRAVERSAL_WORK_ROWS, TraversalBudget};
 
-fn class_relation_from_storage(row: StorageClassRelation) -> Result<HubuumClassRelation, ApiError> {
+pub(crate) fn class_relation_from_storage(
+    row: StorageClassRelation,
+) -> Result<HubuumClassRelation, ApiError> {
     let (
         id,
         from_hubuum_class_id,
@@ -48,7 +50,7 @@ fn class_relation_from_storage(row: StorageClassRelation) -> Result<HubuumClassR
     })
 }
 
-fn object_relation_from_storage(
+pub(crate) fn object_relation_from_storage(
     row: StorageObjectRelation,
 ) -> Result<HubuumObjectRelation, ApiError> {
     let (

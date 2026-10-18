@@ -2,6 +2,15 @@ use super::super::*;
 
 #[async_trait]
 impl HistoryStorage for PostgresStorage {
+    async fn list_relation_history(
+        &self,
+        query: StorageRelationHistoryQuery,
+    ) -> Result<StoragePage<StorageRelationHistoryEntry>, StorageError> {
+        crate::operations::history::relations::list_relation_history(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
+    }
+
     async fn list_history_markers(
         &self,
         query: StorageHistoryNavigationQuery,

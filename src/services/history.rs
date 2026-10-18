@@ -4,6 +4,7 @@ pub(crate) mod navigation;
 use chrono::{DateTime, Utc};
 
 mod name;
+mod relations;
 use hubuum_domain::{ClassId, CollectionId, ObjectId, PrincipalId, ResourceId};
 pub use name::{class_objects_as_of, object_history_by_name};
 

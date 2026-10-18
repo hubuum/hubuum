@@ -8,6 +8,7 @@ mod history_fixtures;
 mod history_name;
 mod history_navigation;
 mod history_population;
+mod history_relations;
 mod login_events;
 mod regex;
 mod remote_targets;

@@ -25,6 +25,86 @@ fn edit_history(
     StorageBackupSnapshot::try_new(state, Some(history)).unwrap()
 }
 
+#[rstest::rstest]
+#[case::retained(false)]
+#[case::missing_endpoint(true)]
+#[test]
+fn restored_relationship_history_preserves_endpoint_availability(#[case] prune_endpoint: bool) {
+    run(async {
+        let storage = MemoryStorage::new();
+        let mut classes = Vec::new();
+        for name in ["first", "second"] {
+            classes.push(
+                storage
+                    .create_class(
+                        StorageClassCreate::builder(name, CollectionId::new(1).unwrap(), "")
+                            .build(),
+                        &EventContext::system(),
+                    )
+                    .await
+                    .unwrap()
+                    .into_value(),
+            );
+        }
+        let prepared = storage
+            .prepare_class_relation(
+                StorageClassRelationCreate::builder(classes[0].id(), classes[1].id()).build(),
+            )
+            .await
+            .unwrap();
+        let relation = storage
+            .create_class_relation(&prepared, &EventContext::system())
+            .await
+            .unwrap()
+            .into_value();
+        let at = Utc::now();
+        storage
+            .delete_class_relation(&relation, &EventContext::system())
+            .await
+            .unwrap()
+            .into_value();
+        let snapshot = storage
+            .capture_backup_snapshot(
+                true,
+                StorageBackupBudget::new(16 * 1024 * 1024, 10000).unwrap(),
+            )
+            .await
+            .unwrap();
+        let snapshot = edit_history(
+            snapshot,
+            StorageBackupHistorySection::ClassHistory,
+            |rows| {
+                if prune_endpoint {
+                    rows.retain(|row| {
+                        row.get("id").and_then(Value::as_i64)
+                            != Some(i64::from(classes[1].id().id()))
+                    });
+                }
+            },
+        );
+        let restored = restored(snapshot);
+        let query = StorageRelationHistoryQuery::try_new(
+            StorageRelationHistoryResource::Class(classes[0].id()),
+            StorageRelationHistorySelection::At(at),
+            QueryOptions::new(vec![], vec![], Some(2), None, false).unwrap(),
+        )
+        .unwrap();
+        let (rows, total) = restored
+            .list_relation_history(query)
+            .await
+            .unwrap()
+            .into_parts();
+        assert!(total.is_none());
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].from().is_some());
+        assert_eq!(rows[0].to().is_none(), prune_endpoint);
+        assert_eq!(
+            rows[0].record().relation(),
+            &StorageHistoricalRelation::Class(relation.relation().clone())
+        );
+    });
+}
+
 #[test]
 fn schema_history_allocation_survives_reordered_backup_rows() {
     run(async {

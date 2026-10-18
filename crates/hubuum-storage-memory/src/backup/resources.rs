@@ -40,7 +40,7 @@ pub(super) fn object(r: &Row<'_>) -> Result<StorageObject, StorageError> {
     ))
 }
 
-fn class_relation(r: &Row<'_>) -> Result<StorageClassRelation, StorageError> {
+pub(super) fn class_relation(r: &Row<'_>) -> Result<StorageClassRelation, StorageError> {
     let forward = r.optional_text("forward_template_alias")?;
     let reverse = r.optional_text("reverse_template_alias")?;
     let from = r.optional_integer("from_max_relations")?;
@@ -55,7 +55,7 @@ fn class_relation(r: &Row<'_>) -> Result<StorageClassRelation, StorageError> {
     .map_err(invalid_contract_value)
 }
 
-fn object_relation(r: &Row<'_>) -> Result<StorageObjectRelation, StorageError> {
+pub(super) fn object_relation(r: &Row<'_>) -> Result<StorageObjectRelation, StorageError> {
     StorageObjectRelation::try_new(
         r.metadata()?,
         ObjectId::new(r.integer("from_object_id")?).map_err(|_| invalid("from_object_id"))?,

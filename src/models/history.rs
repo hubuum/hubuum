@@ -1,5 +1,7 @@
 mod navigation;
 pub use navigation::*;
+mod relations;
+pub use relations::*;
 
 use crate::permissions::ClassResourceEndpoint;
 use crate::permissions::ResourceRef;
@@ -45,6 +47,7 @@ macro_rules! impl_temporal_history_provenance {
 }
 
 impl_temporal_history_provenance!(
+    HistoricalRelation,
     HistoryMarker,
     CollectionHistory,
     ExportTemplateHistory,

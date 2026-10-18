@@ -13,6 +13,8 @@ use crate::{
 
 mod navigation;
 pub use navigation::*;
+mod relations;
+pub use relations::*;
 
 /// Collection visibility applied by the adapter before counting or paging.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -427,6 +429,19 @@ impl StorageHistoryMetadataParts {
 }
 
 impl StorageHistoryMetadata {
+    pub const fn operation(&self) -> StorageHistoryOperation {
+        self.operation
+    }
+    pub const fn valid_from(&self) -> DateTime<Utc> {
+        self.valid_from
+    }
+    pub const fn valid_to(&self) -> Option<DateTime<Utc>> {
+        self.valid_to
+    }
+    pub const fn history_entry_id(&self) -> HistoryRecordId {
+        self.history_entry_id
+    }
+
     pub fn try_new(
         operation: StorageHistoryOperation,
         valid_from: DateTime<Utc>,
@@ -653,6 +668,14 @@ impl StorageRemoteTargetHistoryRecord {
 /// Complete temporal-history capability required of every selectable backend.
 #[async_trait]
 pub trait HistoryStorage: Send + Sync {
+    /// Raw bounded candidates with endpoint context from the same instant.
+    /// The application authorizes current and historical edges/endpoints before
+    /// exposing rows, counts or cursors. Adapters hydrate each page in bounded batches.
+    async fn list_relation_history(
+        &self,
+        query: StorageRelationHistoryQuery,
+    ) -> Result<StoragePage<StorageRelationHistoryEntry>, StorageError>;
+
     async fn list_history_markers(
         &self,
         query: StorageHistoryNavigationQuery,
