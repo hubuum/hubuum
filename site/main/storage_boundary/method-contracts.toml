@@ -1066,3 +1066,20 @@ unsupported_error = "InvalidInput"
 effect = "page_read"
 carrier = "StorageHistoryNavigationQuery"
 profile = "history_navigation"
+
+[query_profiles.relationship_history]
+shape = "page"
+filters = ["root endpoint", "changes or half-open as-of instant"]
+sorts = ["history_id"]
+cursor = "opaque keyset over history_id"
+visibility = "application applies current and historical relationship and endpoint authorization before exposing rows, totals and continuations"
+count = "optional exact candidate count within the selection, before cursor"
+snapshot = "count, page and historical endpoint context share one read snapshot"
+bounds = "validated QueryOptions limit and cursor-byte bounds; page-only batched lightweight endpoint projection"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[methods."HistoryStorage::list_relation_history"]
+effect = "page_read"
+carrier = "StorageRelationHistoryQuery"
+profile = "relationship_history"

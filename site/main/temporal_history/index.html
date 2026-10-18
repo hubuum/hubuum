@@ -1590,27 +1590,16 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#limitations-and-future-work" class="md-nav__link">
+  <a href="#direct-relationship-history" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Limitations and Future Work
+        Direct Relationship History
       </span>
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Limitations and Future Work">
+    <nav class="md-nav" aria-label="Direct Relationship History">
       <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#relation-history-deferred-to-plan-2b" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Relation History (Deferred to Plan 2b)
-      </span>
-    </span>
-  </a>
-  
-</li>
         
           <li class="md-nav__item">
   <a href="#background-task-attribution" class="md-nav__link">
@@ -5473,27 +5462,16 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#limitations-and-future-work" class="md-nav__link">
+  <a href="#direct-relationship-history" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Limitations and Future Work
+        Direct Relationship History
       </span>
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Limitations and Future Work">
+    <nav class="md-nav" aria-label="Direct Relationship History">
       <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#relation-history-deferred-to-plan-2b" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Relation History (Deferred to Plan 2b)
-      </span>
-    </span>
-  </a>
-  
-</li>
         
           <li class="md-nav__item">
   <a href="#background-task-attribution" class="md-nav__link">
@@ -6229,12 +6207,57 @@ collections the caller cannot read. Counts and cursors are computed after this
 visibility filter. As-of endpoints authorize only the version selected by the
 requested timestamp and return <strong>403 Forbidden</strong> when that historical version
 is not readable.</p>
-<h3 id="limitations-and-future-work">Limitations and Future Work<a class="headerlink" href="#limitations-and-future-work" title="Permanent link">&para;</a></h3>
-<h4 id="relation-history-deferred-to-plan-2b">Relation History (Deferred to Plan 2b)<a class="headerlink" href="#relation-history-deferred-to-plan-2b" title="Permanent link">&para;</a></h4>
-<p>The following relation tables are tracked in history but do NOT yet have read endpoints:
-- <code>hubuumclass_relation_history</code>
-- <code>hubuumobject_relation_history</code></p>
-<p>Exposing relation history is planned for a future release (Plan 2b).</p>
+<h3 id="direct-relationship-history">Direct Relationship History<a class="headerlink" href="#direct-relationship-history" title="Permanent link">&para;</a></h3>
+<p>Direct relationship history is available independently of live adjacency:</p>
+<ul>
+<li><code>GET /api/v1/classes/{class_id}/relations/history</code></li>
+<li><code>GET /api/v1/classes/{class_id}/relations/history/as-of?at=&lt;RFC3339&gt;</code></li>
+<li><code>GET /api/v1/classes/{class_id}/{object_id}/relations/history</code></li>
+<li><code>GET /api/v1/classes/{class_id}/{object_id}/relations/history/as-of?at=&lt;RFC3339&gt;</code></li>
+</ul>
+<p>The change endpoints include retained inserts, updates, and deletion markers.
+As-of endpoints require exactly one <code>at</code> and select active non-deleted versions
+with <code>valid_from &lt;= at &lt; valid_to</code> (null means open). Nanosecond request precision
+is preserved when comparing PostgreSQL's microsecond boundaries. Recreating an
+edge produces a different relationship ID; deletion markers do not create active
+adjacency. These endpoints return direct edges only.</p>
+<p>All four accept <code>limit</code>, <code>cursor</code>, <code>include_total</code> (default true), and
+<code>sort=history_id</code> or <code>sort=-history_id</code> (default). Other filters and sorts are
+rejected. Continuations are bound to the root, selected instant or change stream,
+ordering, principal, token, and token scope. <code>include_total=false</code> omits the total
+header and stops scanning once an authorized page plus look-ahead is found.</p>
+<p>The body contains <code>at</code> (null for a change stream), <code>relations</code>, and
+<code>coverage: "retained_history"</code>. Each entry has <code>kind: "class"</code> or <code>"object"</code>, the
+stored <code>relation</code>, revision, history ID, operation, validity, durable provenance,
+and <code>context_at</code>. Relationship changes resolve endpoint context at their
+<code>valid_from</code>; as-of reads resolve it at the requested <code>at</code>. Class relationship
+aliases and limits come from that relationship version. Object relationship
+<code>class_relation_id</code> remains a historical reference without expanded class-edge
+labels. Collection and class IDs are historical references; collection names,
+object payloads, computed values, and schemas are not expanded.</p>
+<p>The <code>from</code> and <code>to</code> contexts have <code>status: "available"</code> with a lightweight
+<code>snapshot</code> containing the historical name, identity, class (for objects),
+collection, history ID, revision, and validity. An authorized endpoint with no
+retained effective version has <code>status: "unavailable"</code> and
+<code>reason: "history_unavailable"</code>. Current rows never fill a historical gap.
+An empty retained page does not prove that no relationship existed.</p>
+<p>Current and historical relationship and endpoint permissions are checked before
+rows, counts, or cursors are exposed. Class reads require <code>ReadClassRelation</code> and
+<code>ReadClass</code>; object reads require <code>ReadObjectRelation</code> and <code>ReadObject</code>. Token
+resource scopes must cover both endpoints. A live endpoint moved to an unreadable
+collection hides the edge, including its older versions. A deleted edge or
+endpoint requires an unscoped administrator, following the existing deleted
+history policy; surviving endpoints still pass their current and historical
+checks. Missing historical endpoint context is also restricted to an unscoped
+administrator. External policy selection is preserved. Object routes use the
+current class for a live object; retained context can describe an older class.</p>
+<p>Both adapters bound candidate pages and endpoint hydration. PostgreSQL reads each
+page and its endpoint batch in one read-only snapshot, using two disjoint indexed
+endpoint branches and one batched historical endpoint query. Exact authorized
+counts may scan all candidates in bounded pages. Deploy the relationship-history
+index migration during maintenance: transactional index builds use a five-second
+lock timeout and a sixty-second statement timeout and temporarily block writes.
+Existing live relationship endpoints and their response shapes are unchanged.</p>
 <h4 id="background-task-attribution">Background Task Attribution<a class="headerlink" href="#background-task-attribution" title="Permanent link">&para;</a></h4>
 <p>Writes performed by background tasks (e.g., imports, async jobs in <code>src/tasks</code>) currently record <code>actor_id = NULL</code>, even when the task was initiated by a user. This is a known limitation carried over from Plan 1. Future work (Plan 2c) will thread the originating user through task execution for proper attribution.</p>
 <h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>

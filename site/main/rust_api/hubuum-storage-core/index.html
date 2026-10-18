@@ -4629,6 +4629,13 @@ Adapters must implement the complete historical-population contract using
 effective-version selection, bounded pagination and optional exact counts.
 Update external adapters before upgrading; returning an empty fallback would
 misrepresent retained history.</p>
+<p><code>HistoryStorage::list_relation_history</code> is a mandatory SDK addition. Implement
+<code>StorageRelationHistoryQuery</code> for both class and object endpoints, changes and
+half-open as-of selection, bounded history-ID pages, and optional candidate
+totals. Return <code>StorageRelationHistoryEntry</code> with endpoint context from the same
+instant; preserve missing history instead of filling it from live state. The
+application authorizes candidates before exposing rows, totals and cursors.
+External adapters must implement this method before upgrading.</p>
 <p>Login issuance requires <code>StorageLogin</code> evidence carried by
 <code>StorageTokenCreate::for_login</code>. Adapters must recheck it atomically against the
 current user while fencing credential changes. External refresh bookkeeping uses
