@@ -49,6 +49,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(events::get_class_events)
         .service(classes::get_class_history)
         .service(classes::get_class_as_of)
+        .service(classes::get_class_objects_as_of)
         .service(classes::get_object_history_by_name)
         .service(classes::get_class_history_timeline)
         .service(classes::get_class_history_entry)

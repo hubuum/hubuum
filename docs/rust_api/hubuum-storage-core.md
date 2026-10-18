@@ -29,6 +29,13 @@ missing identities are included only when the application's deleted-history gate
 sets `include_deleted`. External adapters must implement this method before
 upgrading; a default empty result is not a compatible implementation.
 
+`HistoryStorage::list_class_objects_as_of` is a mandatory SDK addition.
+Adapters must implement the complete historical-population contract using
+`StorageClassObjectsAsOfQuery`, including current and historical authorization,
+effective-version selection, bounded pagination and optional exact counts.
+Update external adapters before upgrading; returning an empty fallback would
+misrepresent retained history.
+
 Login issuance requires `StorageLogin` evidence carried by
 `StorageTokenCreate::for_login`. Adapters must recheck it atomically against the
 current user while fencing credential changes. External refresh bookkeeping uses

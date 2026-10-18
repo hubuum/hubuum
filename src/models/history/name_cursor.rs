@@ -1,4 +1,5 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::{DateTime, Utc};
 use hubuum_domain::ClassId;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -27,6 +28,42 @@ impl HistoryNameCursor {
         token_id: i32,
         scope: Option<&TokenScope>,
     ) -> Result<Self, ApiError> {
+        Self::for_selection(
+            class_id,
+            serde_json::json!({"name": name}),
+            options,
+            principal_id,
+            token_id,
+            scope,
+        )
+    }
+
+    pub(crate) fn for_population(
+        class_id: ClassId,
+        at: DateTime<Utc>,
+        options: &QueryOptions,
+        principal_id: i32,
+        token_id: i32,
+        scope: Option<&TokenScope>,
+    ) -> Result<Self, ApiError> {
+        Self::for_selection(
+            class_id,
+            serde_json::json!({"at": at, "kind": "population"}),
+            options,
+            principal_id,
+            token_id,
+            scope,
+        )
+    }
+
+    fn for_selection(
+        class_id: ClassId,
+        selection: serde_json::Value,
+        options: &QueryOptions,
+        principal_id: i32,
+        token_id: i32,
+        scope: Option<&TokenScope>,
+    ) -> Result<Self, ApiError> {
         // Token revisions also change during transparent credential migration.
         // Bind the actual authorization boundary instead of that metadata.
         let scope = scope
@@ -42,18 +79,22 @@ impl HistoryNameCursor {
                 }))
             })
             .transpose()?;
-        let selection = serde_json::json!({
-            "class": class_id.id(), "name": name,
+        let mut binding = serde_json::json!({
+            "class": class_id.id(),
             "sort": normalized_sorts::<HubuumObjectHistory>(options.sort())?.iter().map(|sort| (sort.field.to_string(), sort.descending)).collect::<Vec<_>>(),
             "filters": options.filters().iter().map(|filter| (filter.field().to_string(), filter.operator().to_string(), filter.value())).collect::<Vec<_>>(), "principal": principal_id, "token": token_id, "scope": scope,
         });
+        binding
+            .as_object_mut()
+            .expect("object binding")
+            .extend(selection.as_object().expect("object selection").clone());
         Ok(Self(
-            URL_SAFE_NO_PAD.encode(Sha256::digest(selection.to_string().as_bytes())),
+            URL_SAFE_NO_PAD.encode(Sha256::digest(binding.to_string().as_bytes())),
         ))
     }
 
     pub(crate) fn decode(&self, cursor: &str) -> Result<String, ApiError> {
-        let invalid = || ApiError::BadRequest("Invalid name-history cursor".to_string());
+        let invalid = || ApiError::BadRequest("Invalid history selection cursor".to_string());
         if cursor.len() > MAX_ENCODED_CURSOR_BYTES {
             return Err(invalid());
         }
@@ -63,7 +104,7 @@ impl HistoryNameCursor {
             return Err(invalid());
         }
         if envelope.scope != self.0 {
-            return Err(ApiError::BadRequest("Name-history cursor does not match the class, name, filters, ordering, or authorization token".to_string()));
+            return Err(ApiError::BadRequest("History selection cursor does not match the class, selection, filters, ordering, or authorization token".to_string()));
         }
         Ok(envelope.cursor)
     }
@@ -78,7 +119,7 @@ impl HistoryNameCursor {
         let encoded = URL_SAFE_NO_PAD.encode(bytes);
         if encoded.len() > MAX_ENCODED_CURSOR_BYTES {
             return Err(ApiError::BadRequest(
-                "Name-history cursor is too large".to_string(),
+                "History selection cursor is too large".to_string(),
             ));
         }
         Ok(encoded)

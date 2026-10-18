@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 
 mod name;
 use hubuum_domain::{ClassId, CollectionId, ObjectId, PrincipalId, ResourceId};
-pub use name::object_history_by_name;
+pub use name::{class_objects_as_of, object_history_by_name};
 
 use crate::errors::ApiError;
 use crate::events::PrincipalNames;
