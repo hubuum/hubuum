@@ -469,7 +469,7 @@ async fn timestamp_ties_have_stable_pages(
     #[case] direction: &str,
 ) {
     use chrono::{DateTime, Utc};
-    use diesel::sql_types::Text;
+    use diesel::sql_types::{Integer, Text, Timestamptz};
     use hubuum_storage_postgres::test_support::{
         database_role_tests_enabled, integration_test_database_roles,
         integration_test_migration_pool,
@@ -489,19 +489,19 @@ async fn timestamp_ties_have_stable_pages(
                 .execute(connection)
                 .await?;
         }
-        if object {
-            use crate::schema::hubuumobject_history::dsl as h;
-            diesel::update(h::hubuumobject_history.filter(h::id.eq(fixture.object.id)))
-                .set((h::valid_from.eq(at), h::valid_to.eq(Some(at))))
-                .execute(connection)
-                .await?;
+        let (table, id) = if object {
+            ("hubuumobject_history", fixture.object.id)
         } else {
-            use crate::schema::hubuumclass_history::dsl as h;
-            diesel::update(h::hubuumclass_history.filter(h::id.eq(fixture.class.id)))
-                .set((h::valid_from.eq(at), h::valid_to.eq(Some(at))))
-                .execute(connection)
-                .await?;
-        }
+            ("hubuumclass_history", fixture.class.id)
+        };
+        diesel::sql_query(format!(
+            "UPDATE {table} SET valid_from = $1, \
+             valid_to = CASE WHEN valid_to IS NULL THEN NULL ELSE $1 END WHERE id = $2"
+        ))
+        .bind::<Timestamptz, _>(at)
+        .bind::<Integer, _>(id)
+        .execute(connection)
+        .await?;
         Ok::<_, PostgresStorageError>(())
     })
     .await
