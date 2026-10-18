@@ -7,7 +7,7 @@ use crate::tests::api_operations::{delete_request, get_request, patch_request};
 use crate::tests::asserts::{assert_response_status, header_value};
 use crate::tests::{CollectionFixture, TestContext};
 use crate::traits::CanSave;
-use hubuum_storage_postgres::{diesel_async_prelude::*, with_transaction};
+use hubuum_storage_postgres::{PostgresStorageError, diesel_async_prelude::*, with_transaction};
 
 struct Fixture {
     context: TestContext,
@@ -287,6 +287,29 @@ async fn timeline_window_is_half_open(#[values(false, true)] object: bool) {
 }
 
 #[rstest]
+#[case::inclusive_start("from", 0)]
+#[case::exclusive_end("until", 1)]
+#[actix_web::test]
+async fn timeline_window_preserves_submicrosecond_boundaries(
+    #[values(false, true)] object: bool,
+    #[case] parameter: &str,
+    #[case] expected: usize,
+) {
+    use chrono::{DateTime, Duration, Utc};
+    let fixture = Fixture::new().await;
+    let rows = fixture.timeline(object, "").await;
+    let at: DateTime<Utc> = rows[0]["valid_from"].as_str().unwrap().parse().unwrap();
+    let bound = (at + Duration::nanoseconds(1))
+        .to_rfc3339()
+        .replace('+', "%2B");
+    let page = fixture
+        .timeline(object, &format!("{parameter}={bound}"))
+        .await;
+    assert_eq!(page.len(), expected);
+    fixture.cleanup().await;
+}
+
+#[rstest]
 #[actix_web::test]
 async fn timeline_cursor_survives_new_versions(#[values(false, true)] object: bool) {
     let fixture = Fixture::new().await;
@@ -464,7 +487,7 @@ async fn timestamp_ties_have_stable_pages(
                 .execute(connection)
                 .await?;
         }
-        Ok::<_, crate::errors::ApiError>(())
+        Ok::<_, PostgresStorageError>(())
     })
     .await
     .unwrap();
@@ -512,6 +535,7 @@ async fn history_navigation_hides_inaccessible_historical_collections(
     #[values(false, true)] object: bool,
     #[case] endpoint: &str,
 ) {
+    use hubuum_storage_postgres::capture_queries;
     let fixture = Fixture::new().await;
     let destination = fixture
         .context
@@ -542,12 +566,18 @@ async fn history_navigation_hides_inaccessible_historical_collections(
         "anchor" => format!("timeline?anchor={}", previous[0]["history_id"]),
         _ => endpoint.to_string(),
     };
-    let response = get_request(
+    let (response, queries) = capture_queries(get_request(
         &fixture.context.pool,
         &fixture.context.normal_token,
         &format!("{}/history/{suffix}", fixture.resource_path(object)),
-    )
+    ))
     .await;
+    for sql in queries.query_counts().keys() {
+        assert!(
+            !sql.contains("\"data\"") && !sql.contains("\"json_schema\""),
+            "unauthorized snapshots must not be loaded: {sql}"
+        );
+    }
     if endpoint.starts_with("timeline") {
         let response = assert_response_status(response, StatusCode::OK).await;
         assert_eq!(
@@ -574,7 +604,7 @@ async fn timeline_external_policy_filters_before_paging(
     #[case] include_total: bool,
 ) {
     use crate::models::Permissions;
-    use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
+    use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
     use crate::permissions::{ResourceFields, ResourceKind};
     use crate::tests::api_operations::get_request_with_permission_backend;
     use std::sync::Arc;

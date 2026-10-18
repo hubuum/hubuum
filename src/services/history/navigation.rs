@@ -256,37 +256,17 @@ impl<'a, S: AuthzSubject> HistoryReader<'a, S> {
     }
 
     pub(crate) async fn entry(&self, id: HistoryRecordId) -> Result<HistoryEntry, ApiError> {
+        // Resolve historical visibility using metadata before loading a potentially
+        // large snapshot. Missing and inaccessible identities take the same path.
+        self.anchor(id).await?;
         let row = storage_handle(self.context)
             .get_history_entry(StorageHistoryEntryQuery::new(self.resource, id))
             .await?
             .ok_or_else(unavailable)?;
-        let (entry, snapshot) = match row {
-            StorageHistoryEntry::Class(row) => {
-                let row = class_from_storage(row)?;
-                let snapshot = HistoryAuthorizationSnapshot::from(&row);
-                (HistoryEntry::Class(row), snapshot)
-            }
-            StorageHistoryEntry::Object(row) => {
-                let row = object_from_storage(row)?;
-                let snapshot = HistoryAuthorizationSnapshot::from(&row);
-                (HistoryEntry::Object(row), snapshot)
-            }
-        };
-        if !matches!(self.visibility, HistoryVisibility::DeletedAdministrator) {
-            authorize_history_snapshot(
-                self.context,
-                self.subject,
-                self.scopes,
-                self.permission,
-                snapshot,
-            )
-            .await
-            .map_err(|error| match error {
-                ApiError::Forbidden(_) => unavailable(),
-                other => other,
-            })?;
+        match row {
+            StorageHistoryEntry::Class(row) => class_from_storage(row).map(HistoryEntry::Class),
+            StorageHistoryEntry::Object(row) => object_from_storage(row).map(HistoryEntry::Object),
         }
-        Ok(entry)
     }
 }
 

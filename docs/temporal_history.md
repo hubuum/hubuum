@@ -71,7 +71,7 @@ Timeline responses are arrays containing resource identity, historical name and
 collection/class identity, `history_id`, `revision`, `op`, `valid_from`, `valid_to`,
 and actor/initiator/task provenance. They omit `data` and `json_schema`. Exact
 entry responses have the same full snapshot shape as the existing history APIs.
-All new responses use `Cache-Control: private, no-store`.
+Successful responses use `Cache-Control: private, no-store`.
 
 ### Selection and Pagination
 
@@ -152,6 +152,21 @@ JSON payloads, in both directions and with tied timestamps. It checks bounded
 query-plan work and compares full-row and marker payload sizes. HTTP tests also
 check that schemas and object data never appear in marker responses. These
 checks establish payload/query bounds; they are not a production latency claim.
+
+A PostgreSQL 18 measurement using these installed indexes and 12,000 versions
+with 64 KiB JSON snapshots produced the following uncompressed `row_to_json`
+sizes for 25 entries:
+
+| Resource | Full rows (bytes) | Marker projection (bytes) | Reduction |
+| --- | --- | --- | --- |
+| Class | 1,647,098 | 5,898 | 99.64% |
+| Object | 1,646,848 | 5,898 | 99.64% |
+
+Deep 25-entry seeks in both directions used index scans, visited 25 rows, and
+touched 5–6 local buffer blocks, without a sort or sequential scan. These
+synthetic database measurements exclude HTTP provenance enrichment and transport
+compression; the API projection/count tests separately verify the real request
+path does not load JSON snapshots or run an unrequested history count.
 
 ## Generic History Trigger
 

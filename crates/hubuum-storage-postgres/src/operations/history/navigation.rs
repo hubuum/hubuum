@@ -9,6 +9,12 @@ use hubuum_storage_core::{
 
 use super::*;
 
+// PostgreSQL stores microseconds. Adjust comparisons, rather than rounding an
+// exclusive/inclusive boundary into a different set of entries.
+fn timestamp_floor(at: DateTime<Utc>) -> DateTime<Utc> {
+    at - chrono::Duration::nanoseconds(i64::from(at.timestamp_subsec_nanos() % 1_000))
+}
+
 #[derive(diesel::Queryable)]
 struct MarkerRow {
     collection_id: i32,
@@ -77,10 +83,20 @@ macro_rules! marker_page {
                         records = records.filter(h::collection_id.eq_any(ids));
                     }
                     if let Some(from) = query.time_window().from() {
-                        records = records.filter(h::valid_from.ge(from));
+                        let floor = timestamp_floor(from);
+                        records = if from == floor {
+                            records.filter(h::valid_from.ge(floor))
+                        } else {
+                            records.filter(h::valid_from.gt(floor))
+                        };
                     }
                     if let Some(until) = query.time_window().until() {
-                        records = records.filter(h::valid_from.lt(until));
+                        let floor = timestamp_floor(until);
+                        records = if until == floor {
+                            records.filter(h::valid_from.lt(floor))
+                        } else {
+                            records.filter(h::valid_from.le(floor))
+                        };
                     }
                     records = match query.selected() {
                         StorageHistorySelection::All => records,
@@ -88,9 +104,21 @@ macro_rules! marker_page {
                             records.filter(h::history_id.eq(id.id()))
                         }
                         StorageHistorySelection::AtOrBefore(at) => {
-                            records.filter(h::valid_from.le(at))
+                            records.filter(h::valid_from.le(timestamp_floor(at)))
                         }
-                        StorageHistorySelection::After(at) => records.filter(h::valid_from.gt(at)),
+                        StorageHistorySelection::After(at) => {
+                            records.filter(h::valid_from.gt(timestamp_floor(at)))
+                        }
+                        StorageHistorySelection::BeforeEntry(anchor)
+                            if anchor.at() != timestamp_floor(anchor.at()) =>
+                        {
+                            records.filter(h::valid_from.le(timestamp_floor(anchor.at())))
+                        }
+                        StorageHistorySelection::AfterEntry(anchor)
+                            if anchor.at() != timestamp_floor(anchor.at()) =>
+                        {
+                            records.filter(h::valid_from.gt(timestamp_floor(anchor.at())))
+                        }
                         StorageHistorySelection::BeforeEntry(anchor) => records.filter(
                             sql::<Bool>("(valid_from, history_id) < (")
                                 .bind::<Timestamptz, _>(anchor.at())

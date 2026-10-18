@@ -182,8 +182,8 @@ hydrate snapshot JSON or compute diffs.
 
 `get_history_entry` consumes `StorageHistoryEntryQuery`, constraining the history
 ID by table, resource ID, and the object's historical class. It returns the typed
-class/object entry, including tombstones, or `None`. Application authorization
-still applies to the returned historical attributes. Do not infer an expiry
+class/object entry, including tombstones, or `None`. Application callers authorize
+historical attributes through metadata before loading the full entry. Do not infer an expiry
 reason from a missing row or from the oldest retained timestamp.
 
 Adding these two required methods is a breaking pre-1.0 SDK change. Adapter

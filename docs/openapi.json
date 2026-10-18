@@ -27066,6 +27066,13 @@
           }
         }
       },
+      "HistoryDirection": {
+        "type": "string",
+        "enum": [
+          "older",
+          "newer"
+        ]
+      },
       "HistoryMarker": {
         "type": "object",
         "description": "Metadata used to navigate history without downloading object data or class schemas.",
