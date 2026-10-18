@@ -2,14 +2,53 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use hubuum_domain::{PrincipalId, TokenId};
+use hubuum_domain::{PrincipalId, PrincipalKind, TokenId};
 use hubuum_events_core::{EventContext, EventSubject};
 
 use crate::{
     MAX_TOKEN_HASH_KEYS, StorageAuthenticationCredential, StorageAuthenticationTokenScope,
     StorageError, StorageMutationOutcome, StoragePage, StorageTokenDigest, StorageTokenListQuery,
-    StorageTokenMetadata, StorageTokenObservation, StorageValidationError,
+    StorageTokenMetadata, StorageTokenObservation, StorageUser, StorageValidationError,
 };
+
+/// Authentication evidence that must still match the human row when the token
+/// commits. Adapters check this while holding the password-reset principal lock.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StorageLogin {
+    subject: EventSubject,
+    user: StorageUser,
+}
+
+impl StorageLogin {
+    pub fn try_new(
+        subject: EventSubject,
+        user: StorageUser,
+    ) -> Result<Self, StorageValidationError> {
+        let parts = user.clone().into_parts();
+        if subject.principal_id().id() != parts.id().id()
+            || subject.kind() != PrincipalKind::Human
+            || parts.anonymized_at().is_some()
+        {
+            return Err(StorageValidationError::invalid(
+                "invalid authenticated login subject",
+            ));
+        }
+        Ok(Self { subject, user })
+    }
+
+    pub fn subject(&self) -> &EventSubject {
+        &self.subject
+    }
+
+    pub fn matches_user(&self, current: &StorageUser) -> bool {
+        let expected = self.user.clone().into_parts();
+        let current = current.clone().into_parts();
+        current.id() == expected.id()
+            && current.password_hash() == expected.password_hash()
+            && current.updated_at() == expected.updated_at()
+            && current.anonymized_at().is_none()
+    }
+}
 
 /// Aggregate retirement evidence for one persisted token-hash key identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -103,13 +142,17 @@ pub struct StorageTokenCreateParts {
     scope: Option<StorageAuthenticationTokenScope>,
     policy: StorageTokenIssuancePolicy,
     event_context: EventContext,
-    login_subject: Option<EventSubject>,
+    login: Option<StorageLogin>,
 }
 
 impl StorageTokenCreateParts {
     /// Snapshot present only for successful login issuance.
     pub fn login_subject(&self) -> Option<&EventSubject> {
-        self.login_subject.as_ref()
+        self.login.as_ref().map(StorageLogin::subject)
+    }
+
+    pub fn login(&self) -> Option<&StorageLogin> {
+        self.login.as_ref()
     }
 
     #[must_use]
@@ -221,7 +264,7 @@ pub struct StorageTokenCreate {
     policy: StorageTokenIssuancePolicy,
     event_context: EventContext,
     credential_claim: Option<crate::StorageCredentialClaim>,
-    login_subject: Option<EventSubject>,
+    login: Option<StorageLogin>,
 }
 
 impl StorageTokenCreate {
@@ -229,11 +272,12 @@ impl StorageTokenCreate {
     /// owner are derived from the same subject; request correlation is preserved.
     #[must_use]
     pub fn for_login(
-        subject: EventSubject,
+        login: StorageLogin,
         digest: StorageTokenDigest,
         policy: StorageTokenIssuancePolicy,
         context: &EventContext,
     ) -> Self {
+        let subject = login.subject();
         let context = EventContext::user(
             subject.principal_id(),
             context.request_id(),
@@ -242,7 +286,7 @@ impl StorageTokenCreate {
         .with_trace_link(context.trace_link().cloned());
         let principal_id = subject.principal_id();
         Self {
-            login_subject: Some(subject),
+            login: Some(login),
             ..Self::new(principal_id, digest, policy, context)
         }
     }
@@ -274,7 +318,7 @@ impl StorageTokenCreate {
             policy,
             event_context,
             credential_claim: None,
-            login_subject: None,
+            login: None,
         }
     }
 
@@ -313,7 +357,7 @@ impl StorageTokenCreate {
             scope: self.scope,
             policy: self.policy,
             event_context: self.event_context,
-            login_subject: self.login_subject,
+            login: self.login,
         }
     }
 }

@@ -1770,6 +1770,13 @@ pub trait ServiceAccountStorage: Send + Sync {
     ) -> Result<StorageMutationOutcome<()>, StorageError>;
 }
 
+/// Whether a refresh failed temporarily or authoritatively rejected an identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageExternalSyncFailure {
+    Unavailable,
+    Rejected,
+}
+
 /// External-provider identity refresh and reconciliation.
 #[async_trait]
 pub trait ExternalIdentityStorage: Send + Sync {
@@ -1782,10 +1789,12 @@ pub trait ExternalIdentityStorage: Send + Sync {
         principal_id: PrincipalId,
     ) -> Result<Option<StorageExternalPrincipalState>, StorageError>;
 
-    /// Record the current external refresh attempt time for one principal.
-    async fn mark_external_sync_attempted(
+    /// Record a failed refresh. Rejection atomically invalidates cached authority,
+    /// pending login evidence, and active tokens; an outage preserves the last success.
+    async fn record_external_sync_failure(
         &self,
         principal_id: PrincipalId,
+        failure: StorageExternalSyncFailure,
     ) -> Result<(), StorageError>;
 
     /// Atomically reconcile one external human, its profile, effective external

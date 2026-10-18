@@ -1,4 +1,6 @@
+use hubuum_domain::PlaintextPassword;
 use hubuum_domain::{GroupId, PrincipalId};
+use hubuum_storage_core::StorageExternalSyncFailure;
 use std::collections::HashMap;
 
 use chrono::SubsecRound;
@@ -38,9 +40,12 @@ pub(crate) async fn reset_local_password(
     principal_name: &str,
     new_password: String,
 ) -> Result<usize, ApiError> {
-    let password_hash = crate::utilities::auth::hash_password_async(new_password)
-        .await
-        .map_err(|error| ApiError::HashError(format!("Failed to hash password: {error}")))?;
+    let password_hash = crate::utilities::auth::hash_password_async(
+        PlaintextPassword::new(new_password)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+    )
+    .await
+    .map_err(|error| ApiError::HashError(format!("Failed to hash password: {error}")))?;
     Ok(storage_handle(context)
         .reset_local_password(StorageLocalPasswordReset::new(
             principal_name,
@@ -862,12 +867,13 @@ pub async fn get_external_principal_state(
         .map(external_state_from_storage))
 }
 
-pub async fn mark_external_sync_attempted(
+pub async fn record_external_sync_failure(
     context: &impl StorageContext,
     principal_id: i32,
+    failure: StorageExternalSyncFailure,
 ) -> Result<(), ApiError> {
     Ok(storage_handle(context)
-        .mark_external_sync_attempted(PrincipalId::new(principal_id)?)
+        .record_external_sync_failure(PrincipalId::new(principal_id)?, failure)
         .await?)
 }
 

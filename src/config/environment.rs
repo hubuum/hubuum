@@ -193,6 +193,10 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_LOGIN_RATE_LIMIT_ENABLED", Authentication),
     option!("HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS", Authentication),
     option!(
+        "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_ACCOUNT",
+        Authentication
+    ),
+    option!(
         "HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP",
         Authentication
     ),

@@ -1,5 +1,5 @@
 use chrono::SubsecRound;
-use hubuum_domain::PrincipalId;
+use hubuum_domain::{PrincipalId, UserId};
 use hubuum_events_core::{EventContext, EventSubject};
 use tracing::{Instrument, field, info_span};
 
@@ -11,8 +11,8 @@ use crate::models::{IssuedToken, Token, configured_token_lifetime};
 use crate::permissions::AppContext;
 use crate::storage::{
     AuthenticationStorage, StorageAuthenticatedToken, StorageAuthenticationAttempt, StorageContext,
-    StorageTokenCreate, StorageTokenFormat, StorageTokenMigrationOutcome, TokenStorage,
-    storage_handle,
+    StorageLogin, StorageTokenCreate, StorageTokenFormat, StorageTokenMigrationOutcome,
+    StorageUser, TokenStorage, storage_handle,
 };
 use crate::utilities::auth::generate_token;
 
@@ -37,7 +37,20 @@ pub(crate) async fn issue_login_token(
     .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
     let token = generate_token();
     let request = StorageTokenCreate::for_login(
-        subject,
+        StorageLogin::try_new(
+            subject,
+            StorageUser::try_new(
+                UserId::new(user.id)?,
+                user.password.clone(),
+                user.proper_name.clone(),
+                user.email.clone(),
+                user.created_at.and_utc(),
+                user.updated_at.and_utc(),
+                user.anonymized_at.map(|at| at.and_utc()),
+            )
+            .map_err(|error| ApiError::InternalServerError(error.to_string()))?,
+        )
+        .map_err(|_| ApiError::Unauthorized("Authentication failed".into()))?,
         token.storage_digest()?,
         super::identity::token_policy(configured_token_issuance_policy()?),
         event_context,

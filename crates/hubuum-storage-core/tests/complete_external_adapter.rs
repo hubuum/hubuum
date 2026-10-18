@@ -6,6 +6,7 @@
 
 #![allow(unused_variables)]
 
+use hubuum_storage_core::StorageExternalSyncFailure;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -454,9 +455,10 @@ impl ExternalIdentityStorage for CompleteExternalAdapter {
         fixture_result()
     }
 
-    async fn mark_external_sync_attempted(
+    async fn record_external_sync_failure(
         &self,
         principal_id: PrincipalId,
+        failure: StorageExternalSyncFailure,
     ) -> Result<(), StorageError> {
         fixture_result()
     }

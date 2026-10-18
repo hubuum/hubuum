@@ -212,6 +212,22 @@
         "3b38339d6b20",
         "87b55b5ff097"
       ]
+    },
+    {
+      "id": "v0.0.19-nonempty-bounded-passwords",
+      "baseline": "v0.0.19",
+      "expires": "2027-01-31",
+      "reason": "Authentication rejects empty passwords and applies the existing 4096-character login bound to plaintext writes. Credential-approval operations embed the same tightened create/update password schemas; those operations remain supported.",
+      "migration": "reset any existing empty-password credentials before upgrading; they cannot log in afterward.",
+      "changelog_entry": "Reject empty plaintext passwords at creation, update, reset, import, and login",
+      "fingerprints": [
+        "010207fd41bb",
+        "69d449b066bd",
+        "7994d5e46cb8",
+        "79fc3f3c525d",
+        "8f0a6f708c82",
+        "b4a1f53e34e7"
+      ]
     }
   ]
 }

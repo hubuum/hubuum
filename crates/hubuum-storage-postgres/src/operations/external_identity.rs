@@ -1,5 +1,6 @@
 //! PostgreSQL implementation of external-identity synchronization contracts.
 
+use hubuum_storage_core::StorageExternalSyncFailure;
 use std::collections::{HashMap, HashSet};
 
 use chrono::NaiveDateTime;
@@ -20,6 +21,7 @@ use crate::operations::event_record::append_event;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
 const HUMAN_PRINCIPAL_KIND: &str = "human";
+const REJECTED_EXTERNAL_PASSWORD: &str = "!external-identity-rejected-no-login";
 const DATABASE_UTC_NOW_QUERY: &str = "SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now";
 
 #[derive(Queryable)]
@@ -28,6 +30,7 @@ struct ExternalPrincipalRow {
     kind: String,
     name: String,
     provider_managed: bool,
+    external_subject: Option<String>,
 }
 
 #[derive(Queryable, Selectable)]
@@ -168,20 +171,44 @@ pub async fn get_external_principal_state(
     .map(Some)
 }
 
-pub async fn mark_external_sync_attempted(
+pub async fn record_external_sync_failure(
     runtime: &PostgresRuntime,
     principal_id: i32,
+    failure: StorageExternalSyncFailure,
 ) -> Result<(), PostgresStorageError> {
     validate_positive_id(principal_id, "principal id")?;
     runtime
-        .with_connection(async move |connection| {
-            diesel::update(
-                crate::schema::principals::table
-                    .filter(crate::schema::principals::id.eq(principal_id)),
-            )
-            .set(crate::schema::principals::last_sync_attempted_at.eq(diesel::dsl::now))
-            .execute(connection)
-            .await?;
+        .with_transaction(async move |connection| {
+            // Lock before invalidating login evidence or revoking tokens, in the same
+            // order as token issuance and successful external synchronization.
+            let managed = crate::schema::principals::table
+                .find(principal_id)
+                .for_update()
+                .select(crate::schema::principals::provider_managed)
+                .first::<bool>(connection)
+                .await?;
+            if !managed {
+                return Ok(());
+            }
+            diesel::update(crate::schema::principals::table.find(principal_id))
+                .set(crate::schema::principals::last_sync_attempted_at.eq(diesel::dsl::now))
+                .execute(connection)
+                .await?;
+            if failure == StorageExternalSyncFailure::Rejected {
+                // A timestamp-only user update is suppressed by the revision trigger.
+                // This non-authenticating marker advances the credential snapshot;
+                // successful synchronization clears it without reviving older logins.
+                diesel::update(crate::schema::users::table.find(principal_id))
+                    .set(crate::schema::users::password.eq(Some(REJECTED_EXTERNAL_PASSWORD)))
+                    .execute(connection)
+                    .await?;
+                diesel::update(crate::schema::principals::table.find(principal_id))
+                    .set(crate::schema::principals::last_sync_success_at.eq(None::<NaiveDateTime>))
+                    .execute(connection)
+                    .await?;
+                super::token::revoke_all_principal_tokens_on_connection(connection, principal_id)
+                    .await?;
+            }
             Ok::<_, PostgresStorageError>(())
         })
         .await
@@ -297,15 +324,22 @@ async fn reconcile_principal(
         crate::schema::principals::kind,
         crate::schema::principals::name,
         crate::schema::principals::provider_managed,
+        crate::schema::principals::external_subject,
     );
     let existing = crate::schema::principals::table
         .filter(crate::schema::principals::identity_scope_id.eq(scope_id))
         .filter(crate::schema::principals::external_subject.eq(subject))
+        .for_update()
         .select(selection)
         .first::<ExternalPrincipalRow>(connection)
         .await
         .optional()?;
     if let Some(existing) = existing {
+        if !existing.provider_managed || existing.kind != HUMAN_PRINCIPAL_KIND {
+            return Err(PostgresStorageError::conflict(
+                "external subject belongs to a different principal",
+            ));
+        }
         if existing.name == name {
             return Ok(existing);
         }
@@ -346,10 +380,14 @@ async fn reconcile_principal(
     let principal = crate::schema::principals::table
         .filter(crate::schema::principals::identity_scope_id.eq(scope_id))
         .filter(crate::schema::principals::name.eq(name))
+        .for_update()
         .select(selection)
         .first::<ExternalPrincipalRow>(connection)
         .await?;
-    if principal.provider_managed && principal.kind == HUMAN_PRINCIPAL_KIND {
+    if principal.provider_managed
+        && principal.kind == HUMAN_PRINCIPAL_KIND
+        && principal.external_subject.as_deref() == Some(subject)
+    {
         Ok(principal)
     } else {
         Err(PostgresStorageError::conflict(
@@ -374,6 +412,7 @@ async fn reconcile_user(
         .on_conflict(crate::schema::users::id)
         .do_update()
         .set((
+            crate::schema::users::password.eq(excluded(crate::schema::users::password)),
             crate::schema::users::proper_name.eq(excluded(crate::schema::users::proper_name)),
             crate::schema::users::email.eq(excluded(crate::schema::users::email)),
         ))

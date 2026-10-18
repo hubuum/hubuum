@@ -29,6 +29,7 @@ use serde_json::{Value, json};
 use crate::cursor::{CursorSqlField, CursorSqlType};
 use crate::operations::authentication::active_token_predicate;
 use crate::operations::event_record::append_event;
+use crate::operations::user::UserRow;
 use crate::revision::RevisionOwner;
 use crate::runtime::assert_locked_revision_precondition;
 use crate::{PostgresConnection, PostgresRevision, PostgresRuntime, PostgresStorageError};
@@ -292,6 +293,7 @@ pub async fn create_token(
     let policy = parts.policy();
     let event_context = parts.event_context().clone();
     let login_subject = parts.login_subject().cloned();
+    let login = parts.login().cloned();
     validate_positive_id(principal_id, "principal id")?;
     runtime
         .with_transaction(
@@ -299,6 +301,36 @@ pub async fn create_token(
                 StorageMutationOutcome<StorageTokenMetadata>,
                 PostgresStorageError,
             > {
+                if let Some(login) = &login {
+                    // Password changes/anonymization take this same lock before
+                    // updating the user and revoking tokens. Either issuance wins
+                    // and is revoked, or it observes the changed credential.
+                    let (managed, last_sync_success) = crate::schema::principals::table
+                        .filter(crate::schema::principals::id.eq(principal_id))
+                        .for_update()
+                        .select((
+                            crate::schema::principals::provider_managed,
+                            crate::schema::principals::last_sync_success_at,
+                        ))
+                        .first::<(bool, Option<NaiveDateTime>)>(connection)
+                        .await?;
+                    if managed && last_sync_success.is_none() {
+                        return Err(PostgresStorageError::authentication_required(
+                            "Authentication failed",
+                        ));
+                    }
+                    let user = crate::schema::users::table
+                        .find(principal_id)
+                        .select(UserRow::as_select())
+                        .first::<UserRow>(connection)
+                        .await?
+                        .into_storage()?;
+                    if !login.matches_user(&user) {
+                        return Err(PostgresStorageError::authentication_required(
+                            "Authentication failed",
+                        ));
+                    }
+                }
                 let approval_audit = super::credential_approval::consume(
                     connection,
                     credential_claim.as_ref(),

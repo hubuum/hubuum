@@ -3,6 +3,7 @@ use chrono::NaiveDateTime;
 use hubuum_auth_core::AuthenticatedExternalUser;
 use hubuum_auth_core::{AuthProviderError, ExternalIdentityProvider, ExternalUserRefreshRequest};
 use hubuum_auth_ldap::{LdapIdentityProvider, LdapScopeConfig, LdapSecretSource};
+use hubuum_storage_core::StorageExternalSyncFailure;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs::File;
@@ -19,7 +20,7 @@ use crate::models::user::{LoginUser, User, auth_failure};
 use crate::models::{LDAP_PROVIDER_KIND, LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use crate::services::identity::ensure_identity_scope;
 use crate::services::identity::{
-    ExternalPrincipalState, get_external_principal_state, mark_external_sync_attempted,
+    ExternalPrincipalState, get_external_principal_state, record_external_sync_failure,
     sync_external_user as sync_external_user_from_backend,
 };
 
@@ -136,7 +137,7 @@ type AuthProviderRefreshFuture<'a> =
     Pin<Box<dyn Future<Output = Result<(), AuthProviderRefreshError>> + Send + 'a>>;
 
 enum AuthProviderRefreshError {
-    Provider(ApiError),
+    Provider(AuthProviderError),
     Internal(ApiError),
 }
 
@@ -381,7 +382,7 @@ impl AuthProviderBackend for LdapAuthProvider {
                 .provider
                 .refresh_user(&state.refresh_request)
                 .await
-                .map_err(|error| AuthProviderRefreshError::Provider(provider_error(error)))?;
+                .map_err(AuthProviderRefreshError::Provider)?;
             sync_external_user_from_backend(storage, &self.scope, LDAP_PROVIDER_KIND, refreshed)
                 .await
                 .map(|_| ())
@@ -471,9 +472,19 @@ pub async fn refresh_principal_if_needed(
     principal_id: i32,
 ) -> Result<(), ApiError> {
     let storage = crate::storage::storage_handle(storage);
-    let Some(state) = external_user_state(&storage, principal_id).await? else {
+    let Some(state) = get_external_principal_state(&storage, principal_id).await? else {
         return Ok(());
     };
+    refresh_principal_with_registry(&storage, principal_id, state, auth_provider_registry()?).await
+}
+
+async fn refresh_principal_with_registry(
+    storage: &crate::storage::StorageHandle,
+    principal_id: i32,
+    state: ExternalPrincipalState,
+    registry: &AuthProviderRegistry,
+) -> Result<(), ApiError> {
+    let state = ExternalUserState::from_registry(state, registry)?;
 
     match refresh_status(&state) {
         RefreshStatus::Fresh => return Ok(()),
@@ -485,15 +496,13 @@ pub async fn refresh_principal_if_needed(
     {
         let _guard = lock.lock().await;
 
-        match external_user_state(&storage, principal_id).await {
+        match external_user_state(storage, principal_id, registry).await {
             Err(err) => Err(err),
             Ok(None) => Ok(()),
             Ok(Some(state)) => match refresh_status(&state) {
                 RefreshStatus::Fresh => Ok(()),
                 RefreshStatus::Backoff => cached_external_state_result(&state),
-                RefreshStatus::Due => match auth_provider_registry()
-                    .and_then(|registry| registry.provider(&state.identity_scope))
-                {
+                RefreshStatus::Due => match registry.provider(&state.identity_scope) {
                     Err(err) => Err(err),
                     Ok(configured) => {
                         let span = info_span!(
@@ -504,7 +513,7 @@ pub async fn refresh_principal_if_needed(
                         );
                         let refresh_result = configured
                             .backend
-                            .refresh(&storage, &state)
+                            .refresh(storage, &state)
                             .instrument(span.clone())
                             .await;
                         span.record(
@@ -518,8 +527,29 @@ pub async fn refresh_principal_if_needed(
                         match refresh_result {
                             Ok(()) => Ok(()),
                             Err(AuthProviderRefreshError::Internal(err)) => Err(err),
-                            Err(AuthProviderRefreshError::Provider(err)) => {
-                                match mark_external_sync_attempted(&storage, principal_id).await {
+                            Err(AuthProviderRefreshError::Provider(
+                                error @ (AuthProviderError::AuthenticationFailed
+                                | AuthProviderError::Config(_)
+                                | AuthProviderError::Protocol(_)),
+                            )) => {
+                                record_external_sync_failure(
+                                    storage,
+                                    principal_id,
+                                    StorageExternalSyncFailure::Rejected,
+                                )
+                                .await?;
+                                Err(provider_error(error))
+                            }
+                            Err(AuthProviderRefreshError::Provider(
+                                AuthProviderError::Unavailable(err),
+                            )) => {
+                                match record_external_sync_failure(
+                                    storage,
+                                    principal_id,
+                                    StorageExternalSyncFailure::Unavailable,
+                                )
+                                .await
+                                {
                                     Err(mark_err) => Err(mark_err),
                                     Ok(()) => {
                                         if within_max_stale(
@@ -777,6 +807,20 @@ struct ExternalUserState {
 }
 
 impl ExternalUserState {
+    fn from_registry(
+        state: ExternalPrincipalState,
+        registry: &AuthProviderRegistry,
+    ) -> Result<Self, ApiError> {
+        let configured = registry.provider(&state.identity_scope)?;
+        let refresh_policy = configured.refresh_policy.ok_or_else(|| {
+            ApiError::InternalServerError(format!(
+                "Authentication provider '{}' does not support external refresh",
+                configured.name
+            ))
+        })?;
+        Self::new(state, refresh_policy)
+    }
+
     fn new(state: ExternalPrincipalState, refresh_policy: RefreshPolicy) -> Result<Self, ApiError> {
         let refresh_request =
             match ExternalUserRefreshRequest::new(state.username, state.external_subject) {
@@ -800,18 +844,12 @@ impl ExternalUserState {
 async fn external_user_state(
     pool: &impl crate::storage::StorageContext,
     principal_id_value: i32,
+    registry: &AuthProviderRegistry,
 ) -> Result<Option<ExternalUserState>, ApiError> {
     let Some(state) = get_external_principal_state(pool, principal_id_value).await? else {
         return Ok(None);
     };
-    let configured = auth_provider_registry()?.provider(&state.identity_scope)?;
-    let refresh_policy = configured.refresh_policy.ok_or_else(|| {
-        ApiError::InternalServerError(format!(
-            "Authentication provider '{}' does not support external refresh",
-            configured.name
-        ))
-    })?;
-    ExternalUserState::new(state, refresh_policy).map(Some)
+    ExternalUserState::from_registry(state, registry).map(Some)
 }
 
 #[cfg(feature = "integration-test-support")]
@@ -1191,3 +1229,6 @@ mod tests {
 
 #[cfg(test)]
 mod login_events;
+
+#[cfg(test)]
+mod security_tests;

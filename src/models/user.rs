@@ -1,3 +1,4 @@
+use hubuum_domain::PlaintextPassword;
 use std::fmt;
 
 use crate::events::EventContext;
@@ -19,7 +20,7 @@ use tracing::{error, warn};
 
 pub const MAX_LOGIN_IDENTITY_SCOPE_CHARACTERS: usize = 255;
 pub const MAX_LOGIN_NAME_CHARACTERS: usize = 255;
-pub const MAX_LOGIN_PASSWORD_CHARACTERS: usize = 4096;
+pub const MAX_LOGIN_PASSWORD_CHARACTERS: usize = PlaintextPassword::MAX_CHARACTERS;
 
 /// A human user. The id is the principal id; the login/display name lives on
 /// `principals.name`, not here.
@@ -303,6 +304,7 @@ impl User {
 #[derive(Deserialize, Serialize, Clone, ToSchema)]
 #[schema(example = update_user_example)]
 pub struct UpdateUser {
+    #[schema(min_length = 1, max_length = 4096)]
     pub password: Option<String>,
     pub proper_name: Option<String>,
     pub email: Option<String>,
@@ -312,11 +314,14 @@ impl UpdateUser {
     pub async fn hash_password(mut self) -> Result<Self, ApiError> {
         if let Some(password) = self.password.take() {
             self.password = Some(
-                crate::utilities::auth::hash_password_async(password)
-                    .await
-                    .map_err(|error| {
-                        ApiError::HashError(format!("Failed to hash password: {error}"))
-                    })?,
+                crate::utilities::auth::hash_password_async(
+                    PlaintextPassword::new(password)
+                        .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+                )
+                .await
+                .map_err(|error| {
+                    ApiError::HashError(format!("Failed to hash password: {error}"))
+                })?,
             );
         }
         Ok(self)
@@ -359,6 +364,7 @@ impl UpdateUser {
 pub struct NewUser {
     pub identity_scope: Option<String>,
     pub name: String,
+    #[schema(min_length = 1, max_length = 4096)]
     pub password: String,
     pub proper_name: Option<String>,
     pub email: Option<String>,
@@ -397,9 +403,12 @@ impl NewUser {
     }
 
     pub async fn hash_password(mut self) -> Result<Self, ApiError> {
-        self.password = crate::utilities::auth::hash_password_async(self.password)
-            .await
-            .map_err(|error| ApiError::HashError(format!("Failed to hash password: {error}")))?;
+        self.password = crate::utilities::auth::hash_password_async(
+            PlaintextPassword::new(self.password)
+                .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+        )
+        .await
+        .map_err(|error| ApiError::HashError(format!("Failed to hash password: {error}")))?;
         Ok(self)
     }
 }
@@ -454,7 +463,7 @@ pub struct LoginUser {
     pub identity_scope: Option<String>,
     #[schema(max_length = 255)]
     pub name: String,
-    #[schema(max_length = 4096)]
+    #[schema(min_length = 1, max_length = 4096)]
     pub password: String,
 }
 
@@ -466,7 +475,9 @@ impl LoginUser {
             MAX_LOGIN_IDENTITY_SCOPE_CHARACTERS,
         )?;
         validate_login_field_length("name", &self.name, MAX_LOGIN_NAME_CHARACTERS)?;
-        validate_login_field_length("password", &self.password, MAX_LOGIN_PASSWORD_CHARACTERS)
+        PlaintextPassword::new(self.password.clone())
+            .map(|_| ())
+            .map_err(|error| ApiError::BadRequest(error.to_string()))
     }
 
     /// Check if the user exists and the plaintext password in the struct
@@ -644,7 +655,8 @@ mod tests {
         "p".repeat(MAX_LOGIN_PASSWORD_CHARACTERS + 1),
         "password"
     )]
-    fn oversized_login_fields_are_rejected(
+    #[case::empty_password(None, "alice".into(), String::new(), "password")]
+    fn invalid_login_fields_are_rejected(
         #[case] identity_scope: Option<String>,
         #[case] name: String,
         #[case] password: String,

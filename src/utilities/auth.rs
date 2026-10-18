@@ -1,6 +1,7 @@
 extern crate argon2;
 
 use crate::models::token::Token;
+use hubuum_domain::PlaintextPassword;
 
 use argon2::{
     Argon2,
@@ -73,18 +74,25 @@ pub async fn verify_dummy_password_async(password: String) -> Result<bool, Passw
 
 /// Hash a plaintext password.
 pub fn hash_password(password: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let password = PlaintextPassword::new(password.to_string())?;
+    hash_validated_password(&password)
+}
+
+fn hash_validated_password(
+    password: &PlaintextPassword,
+) -> Result<String, Box<dyn std::error::Error>> {
     let argon2 = Argon2::default();
     let password_hash = argon2
-        .hash_password(password.as_bytes())
+        .hash_password(password.as_str().as_bytes())
         .map_err(|e| format!("Failed to hash password: {}", e))?
         .to_string();
 
     Ok(password_hash)
 }
 
-pub async fn hash_password_async(password: String) -> Result<String, PasswordWorkError> {
+pub async fn hash_password_async(password: PlaintextPassword) -> Result<String, PasswordWorkError> {
     run_password_work(move || {
-        hash_password(&password).map_err(|error| PasswordWorkError(error.to_string()))
+        hash_validated_password(&password).map_err(|error| PasswordWorkError(error.to_string()))
     })
     .await
 }
@@ -107,6 +115,9 @@ pub async fn hash_password_async(password: String) -> Result<String, PasswordWor
 /// assert!(!verify_password("wrong password", &hashed_password).unwrap());
 /// ```
 pub fn verify_password(password: &str, hash: &str) -> Result<bool, argon2::Error> {
+    if password.is_empty() {
+        return Ok(false);
+    }
     let parsed_hash_result = PasswordHash::new(hash);
 
     let parsed_hash = match parsed_hash_result {
@@ -159,6 +170,12 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn empty_password_never_authenticates_even_against_a_legacy_empty_hash() {
+        let hash = Argon2::default().hash_password(b"").unwrap().to_string();
+        assert!(!verify_password("", &hash).unwrap());
+    }
+
     #[rstest]
     #[case("correct horse battery staple", true)]
     #[case("wrong password", false)]
@@ -167,9 +184,11 @@ mod tests {
         #[case] candidate: &str,
         #[case] expected: bool,
     ) {
-        let hash = hash_password_async("correct horse battery staple".to_string())
-            .await
-            .unwrap();
+        let hash = hash_password_async(
+            PlaintextPassword::new("correct horse battery staple".to_string()).unwrap(),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             verify_password_async(candidate.to_string(), hash)
                 .await

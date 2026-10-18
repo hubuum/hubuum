@@ -170,6 +170,8 @@ mod tests {
             test::read_body(resp).await
         );
 
+        assert_eq!(resp.headers().get("Cache-Control").unwrap(), "no-store");
+
         // Check Content Type
         let content_type_header = resp
             .headers()

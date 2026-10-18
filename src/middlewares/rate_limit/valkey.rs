@@ -166,6 +166,9 @@ for i = 0, scope_count - 1 do
         redis.call('DEL', attempts)
         table.insert(lockouts, raw)
       end
+    elseif outcome == 'succeeded' and string.sub(raw, 1, 2) == 'p:' then
+      redis.call('DEL', attempts, state)
+      locked_until = 0
     end
 
     local attempt_count = redis.call('ZCARD', attempts)
