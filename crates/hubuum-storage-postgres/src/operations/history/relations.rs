@@ -213,17 +213,38 @@ impl RelationTables {
         }
     }
 
-    fn page_sql(&self, descending: bool) -> String {
+    fn page_sql(&self, descending: bool, has_cursor: bool) -> String {
         let order = if descending { "DESC" } else { "ASC" };
-        let comparison = if descending { "<" } else { ">" };
+        let comparison = match (descending, has_cursor) {
+            (true, true) => "<",
+            (false, true) => ">",
+            (true, false) => "<=",
+            (false, false) => ">=",
+        };
+        let lower_comparison = if descending { ">=" } else { comparison };
+        let upper_comparison = if descending { comparison } else { "<=" };
+        let lower = if descending {
+            "0"
+        } else {
+            "COALESCE($3::bigint, 0)"
+        };
+        let upper = if descending {
+            format!("COALESCE($3::bigint, {})", i64::MAX)
+        } else {
+            i64::MAX.to_string()
+        };
         // Canonical distinct endpoints make these branches disjoint. Each branch
         // seeks its endpoint/history-id index and contributes at most one page.
+        // Two tuple bounds keep the endpoint in the ordering key. A scalar
+        // endpoint equality lets PostgreSQL choose the global history-ID index
+        // and filter arbitrarily many rows belonging to other endpoints.
         let branch = |endpoint| {
             format!(
             "(SELECT id, {from} AS from_id, {to} AS to_id, {projection}, created_at, updated_at, {metadata}
-             FROM {table} WHERE {endpoint} = $1 AND {validity}
-             AND ($3::bigint IS NULL OR history_id {comparison} $3)
-             ORDER BY history_id {order} LIMIT $4)",
+             FROM {table} WHERE {validity}
+             AND ({endpoint}, history_id) {lower_comparison} ($1, {lower})
+             AND ({endpoint}, history_id) {upper_comparison} ($1, {upper})
+             ORDER BY {endpoint} {order}, history_id {order} LIMIT $4)",
             from=self.from, to=self.to, projection=self.edge_projection, metadata=METADATA,
             table=self.edges, validity=VALIDITY,
         )
@@ -236,12 +257,15 @@ impl RelationTables {
     }
 
     fn endpoint_sql(&self) -> String {
+        // Seek the latest version first, including tombstones. Checking validity
+        // afterward preserves gaps without scanning thousands of older versions.
         format!(
             "SELECT requested.ordinal, endpoint.* FROM unnest($1::int4[], $2::timestamptz[]) WITH ORDINALITY AS requested(id, at, ordinal)
              CROSS JOIN LATERAL (SELECT id, {class}, collection_id, name, {metadata} FROM {table}
-               WHERE id = requested.id AND op <> 'D' AND valid_from <= requested.at
-               AND (valid_to IS NULL OR requested.at < valid_to)
-               ORDER BY history_id DESC LIMIT 1) endpoint ORDER BY requested.ordinal",
+               WHERE id = requested.id AND valid_from <= requested.at
+               ORDER BY valid_from DESC, history_id DESC LIMIT 1) endpoint
+             WHERE endpoint.op <> 'D' AND (endpoint.valid_to IS NULL OR requested.at < endpoint.valid_to)
+             ORDER BY requested.ordinal",
             class=self.class_projection, metadata=METADATA, table=self.endpoints,
         )
     }
@@ -281,7 +305,7 @@ pub(crate) async fn list_relation_history(
                 .bind::<Integer, _>(root).bind::<Nullable<Timestamptz>, _>(at)
                 .get_result::<Count>(connection).await?.count)
         } else { None };
-        let records = sql_query(tables.page_sql(options.sort()[0].descending))
+        let records = sql_query(tables.page_sql(options.sort()[0].descending, boundary.is_some()))
             .bind::<Integer, _>(root).bind::<Nullable<Timestamptz>, _>(at)
             .bind::<Nullable<BigInt>, _>(boundary).bind::<BigInt, _>(limit)
             .load::<RelationRow>(connection).await?.into_iter().map(RelationRow::project).collect::<Result<Vec<_>, _>>()?;

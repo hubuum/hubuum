@@ -1,3 +1,4 @@
+DROP INDEX hubuumobject_history_endpoint_time_idx;
 DROP INDEX hubuumobject_relation_history_validity_idx;
 DROP INDEX hubuumobject_relation_history_to_page_idx;
 DROP INDEX hubuumobject_relation_history_from_page_idx;
