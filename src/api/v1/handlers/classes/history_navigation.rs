@@ -11,7 +11,7 @@ use crate::permissions::AppContext;
 use crate::services::history::navigation::{HistoryEntry, HistoryReader};
 use crate::storage::StorageHistoryResource;
 use actix_web::{Responder, get, http::StatusCode, web};
-use hubuum_domain::{ClassId, HistoryRecordId, ObjectId};
+use hubuum_domain::HistoryRecordId;
 
 #[utoipa::path(get, path = "/api/v1/classes/{class_id}/history/timeline", tag = "classes", security(("bearer_auth" = [])),
     params(("class_id" = i32, Path, description = "class_id"), HistoryTimelineParameters),
@@ -32,7 +32,7 @@ pub async fn get_class_history_timeline(
         &context,
         &requestor.principal,
         requestor.scopes(),
-        StorageHistoryResource::Class(ClassId::new(class_id.id())?),
+        StorageHistoryResource::Class(class_id),
     )
     .await?;
     let (rows, total, options) = reader.timeline(params.into_inner()).await?;
@@ -70,7 +70,7 @@ pub async fn get_class_history_entry(
         &context,
         &requestor.principal,
         requestor.scopes(),
-        StorageHistoryResource::Class(ClassId::new(class_id.id())?),
+        StorageHistoryResource::Class(class_id),
     )
     .await?;
     let HistoryEntry::Class(row) = reader.entry(history_id).await? else {
@@ -105,8 +105,8 @@ pub async fn get_object_history_timeline(
         &requestor.principal,
         requestor.scopes(),
         StorageHistoryResource::Object {
-            class_id: ClassId::new(class_id.id())?,
-            object_id: ObjectId::new(object_id.id())?,
+            class_id,
+            object_id,
         },
     )
     .await?;
@@ -146,8 +146,8 @@ pub async fn get_object_history_entry(
         &requestor.principal,
         requestor.scopes(),
         StorageHistoryResource::Object {
-            class_id: ClassId::new(class_id.id())?,
-            object_id: ObjectId::new(object_id.id())?,
+            class_id,
+            object_id,
         },
     )
     .await?;
