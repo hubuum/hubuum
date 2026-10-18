@@ -469,11 +469,26 @@ async fn timestamp_ties_have_stable_pages(
     #[case] direction: &str,
 ) {
     use chrono::{DateTime, Utc};
+    use diesel::sql_types::Text;
+    use hubuum_storage_postgres::test_support::{
+        database_role_tests_enabled, integration_test_database_roles,
+        integration_test_migration_pool,
+    };
     let fixture = Fixture::new().await;
     fixture.change(object, "middle").await;
     fixture.change(object, "latest").await;
     let at: DateTime<Utc> = "2026-01-01T12:34:56.123456Z".parse().unwrap();
-    with_transaction(&fixture.context.pool, async |connection| {
+    let migration_pool = integration_test_migration_pool(1);
+    with_transaction(&migration_pool, async |connection| {
+        // Historical rows are immutable to the runtime role. Only this isolated
+        // fixture uses the migrator to manufacture identical timestamps.
+        if database_role_tests_enabled() {
+            let roles = integration_test_database_roles();
+            diesel::sql_query("SELECT set_config('role', $1, true)")
+                .bind::<Text, _>(roles.owner().as_str())
+                .execute(connection)
+                .await?;
+        }
         if object {
             use crate::schema::hubuumobject_history::dsl as h;
             diesel::update(h::hubuumobject_history.filter(h::id.eq(fixture.object.id)))
