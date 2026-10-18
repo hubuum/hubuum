@@ -24,6 +24,7 @@ use crate::tests::TestScope;
 pub struct RestoreContractFixture {
     kind: StorageBackendKind,
     storage: StorageHandle,
+    actor_id: PrincipalId,
     collection_id: CollectionId,
     class: StorageResolvedClass,
     query_usage_id: ResourceId,
@@ -44,6 +45,18 @@ impl RestoreContractFixture {
             .await?;
         let scope = TestScope::new();
         let context = EventContext::system();
+        let actor = storage
+            .create_user(StorageUserCreate::new(
+                None,
+                scope.scoped_name("actor"),
+                "recovery-contract-password-hash",
+                None,
+                None,
+                context.clone(),
+            ))
+            .await?
+            .into_value();
+        let actor_id = PrincipalId::new(actor.into_parts().id().id())?;
         let group = storage
             .create_group(
                 StorageGroupCreate::new(
@@ -103,9 +116,8 @@ impl RestoreContractFixture {
             .into_value();
         // A deleted definition survives only in authoritative history. Every
         // restore generation must retain it without recreating a live field.
-        let actor = PrincipalId::new(1).unwrap();
         let (retired, _) = storage.create_shared_computed_field(StorageSharedComputedFieldCreate::new(
-            class.id(), collection.id(), actor,
+            class.id(), collection.id(), actor_id,
             StorageComputedFieldDefinitionInput::new(serde_json::from_value(json!({
                 "key": "retired_recovery_field", "label": "Retired recovery field", "description": "",
                 "operation": {"type":"first_non_null", "paths":["/retained"]},
@@ -118,7 +130,7 @@ impl RestoreContractFixture {
                 class.id(),
                 collection.id(),
                 ComputedFieldDefinitionId::from(retired.metadata().id()),
-                actor,
+                actor_id,
                 context.clone(),
             ))
             .await?
@@ -132,7 +144,7 @@ impl RestoreContractFixture {
                     vec![StorageQueryUsageOperation::Equals],
                 )
                 .unwrap(),
-                EventContext::user(PrincipalId::new(1).unwrap(), None, None),
+                EventContext::user(actor_id, None, None),
             ))
             .await?
             .into_value();
@@ -251,6 +263,7 @@ impl RestoreContractFixture {
             kind,
             original,
             storage,
+            actor_id,
             collection_id: collection.id(),
             class: resolved,
             query_usage_id: query_usage.metadata().id(),
@@ -292,7 +305,7 @@ impl RestoreContractFixture {
             .create_task(
                 StorageTaskCreateRequest::builder(
                     payload.task_kind(),
-                    PrincipalId::new(1)?,
+                    self.actor_id,
                     json!({"input": "retained"}),
                     1,
                 )
@@ -396,13 +409,12 @@ impl RestoreContractFixture {
                     .unwrap_or(0)
             })
             .unwrap_or(0);
-        let actor = PrincipalId::new(1).unwrap();
         let (definition, _) = self
             .storage
             .create_shared_computed_field(StorageSharedComputedFieldCreate::new(
                 self.class.class().id(),
                 self.collection_id,
-                actor,
+                self.actor_id,
                 StorageComputedFieldDefinitionInput::new(
                     serde_json::from_value(json!({
                         "key": "recovered_field", "label": "Recovered field", "description": "",
@@ -425,7 +437,7 @@ impl RestoreContractFixture {
                 self.class.class().id(),
                 self.collection_id,
                 ComputedFieldDefinitionId::from(definition.metadata().id()),
-                actor,
+                self.actor_id,
                 context.clone(),
             ))
             .await?
@@ -460,7 +472,7 @@ impl RestoreContractFixture {
             updated.metadata().revision().get(),
             declaration.metadata().revision().get() + 1
         );
-        assert_eq!(updated.created_by(), Some(PrincipalId::new(1).unwrap()));
+        assert_eq!(updated.created_by(), Some(self.actor_id));
         let _ = self
             .storage
             .collection_store()
