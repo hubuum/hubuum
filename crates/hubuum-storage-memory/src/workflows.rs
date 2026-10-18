@@ -88,7 +88,7 @@ impl RemoteTargetStorage for MemoryStorage {
         &self,
         request: StorageRemoteTargetUpdate,
     ) -> Result<StorageMutationOutcome<StorageRemoteTarget>, StorageError> {
-        let (target_id, patch, context) = request.into_parts();
+        let (target_id, expected_revision, patch, context) = request.into_parts();
         let mut state = self.state.write().await;
         let current = state
             .remote_targets
@@ -99,6 +99,11 @@ impl RemoteTargetStorage for MemoryStorage {
             })?;
         let (current_metadata, current_collection_id, current_name, current_definition) =
             current.into_parts();
+        if current_metadata.revision() != expected_revision {
+            return Err(StorageError::conflict(
+                "Remote target changed after authorization; reload and retry",
+            ));
+        }
         let (current_description, current_transport, current_policy) =
             current_definition.into_parts();
         let transport = current_transport.into_parts();

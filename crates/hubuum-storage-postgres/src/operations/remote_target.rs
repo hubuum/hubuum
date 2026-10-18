@@ -400,7 +400,7 @@ pub async fn update_remote_target(
     runtime: &PostgresRuntime,
     request: StorageRemoteTargetUpdate,
 ) -> Result<StorageMutationOutcome<StorageRemoteTarget>, PostgresStorageError> {
-    let (target_id, patch, event_context) = request.into_parts();
+    let (target_id, expected_revision, patch, event_context) = request.into_parts();
     let target_id = target_id.id();
     ensure_positive_target_id(target_id)?;
     let changes = UpdateRemoteTargetRow::from_patch(patch)?;
@@ -420,6 +420,11 @@ pub async fn update_remote_target(
                 before.revision,
             )
             .await?;
+            if before.revision.into_domain() != expected_revision {
+                return Err(PostgresStorageError::conflict(
+                    "Remote target changed after authorization; reload and retry",
+                ));
+            }
             if !changes.has_changes(&before) {
                 return Ok(StorageMutationOutcome::unchanged(before.into_storage()?));
             }

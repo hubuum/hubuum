@@ -119,6 +119,16 @@ pub(crate) async fn update_remote_target(
         .as_ref()
         .map_or(existing.body_template.as_deref(), |value| value.as_deref());
     let effective_auth_config = update.auth_config.as_ref().unwrap_or(&existing.auth_config);
+    // A changed credential binding is inactive until the owner explicitly approves
+    // it with enabled=true. Metadata-only edits preserve its existing state.
+    let enabled = if update.changes_binding()
+        && (existing.auth_config.uses_server_credentials()
+            || effective_auth_config.uses_server_credentials())
+    {
+        Some(update.enabled.unwrap_or(false))
+    } else {
+        update.enabled
+    };
     let effective_allowed_subject_types = update
         .allowed_subject_types
         .as_deref()
@@ -151,11 +161,12 @@ pub(crate) async fn update_remote_target(
         .with_auth_config(update.auth_config.map(serde_json::to_value).transpose()?)
         .with_allowed_subject_types(update.allowed_subject_types.map(subject_types_to_storage))
         .with_timeout_ms(update.timeout_ms)
-        .with_enabled(update.enabled);
+        .with_enabled(enabled);
     let target = storage_handle(backend)
         .update_remote_target(StorageRemoteTargetUpdate::new(
             hubuum_domain::RemoteTargetId::new(target_id)
                 .expect("validated remote target id must be positive"),
+            existing.revision,
             patch,
             event_context,
         ))

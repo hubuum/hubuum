@@ -30,13 +30,16 @@ use crate::models::{
     ImportPermissionPolicy, ImportPrincipalSubtype, ImportRequest, ImportWriteCondition,
     Permissions, RestoreTimestamps,
 };
-use crate::permissions::AuthorizationContext;
+use crate::permissions::{
+    AuthorizationContext, AuthorizationMode, ClassResourceEndpoint, ResourceRef,
+    authorize_resources,
+};
 use crate::services::schema_evolution;
 
 use crate::storage::{
     ImportStorage, StorageClassSchemaPolicy, StorageImportPlanItem, storage_handle,
 };
-use crate::traits::UserPermissions;
+use crate::traits::{UserPermissions, scope_allows, scope_allows_resource};
 
 fn import_item_allows_overwrite(
     condition: Option<ImportWriteCondition>,
@@ -305,6 +308,58 @@ where
         .collection_permission_cache
         .insert(key, result.clone());
     result
+}
+
+/// Existing resources must retain their identity for external policy and token
+/// resource checks. Only local collection grants may share a cached decision.
+async fn ensure_existing_resource_permission<C>(
+    backend: &C,
+    user: &impl crate::traits::AuthzSubject,
+    state: &mut PlanningState,
+    resource: ResourceRef,
+    permission: Permissions,
+) -> Result<(), String>
+where
+    C: AuthorizationContext,
+{
+    if state.scopes.is_none() && is_import_admin(backend, user, state).await? {
+        return Ok(());
+    }
+    if !scope_allows(state.scopes.as_ref(), &[permission])
+        || !scope_allows_resource(state.scopes.as_ref(), &resource)
+    {
+        return Err("Permission denied".into());
+    }
+    match backend.authorization_mode() {
+        AuthorizationMode::Delegated(permission_backend) => authorize_resources(
+            permission_backend,
+            backend,
+            user,
+            state.scopes.as_ref(),
+            vec![permission],
+            vec![resource],
+        )
+        .await
+        .map_err(|error| error.to_string()),
+        AuthorizationMode::LocalStorage => {
+            let collection_id = resource
+                .collection_id()
+                .ok_or_else(|| "Import resource has no collection".to_string())?;
+            let key = (collection_id, permission);
+            if let Some(result) = state.collection_permission_cache.get(&key) {
+                return result.clone();
+            }
+            let collection = CollectionID::new(collection_id).map_err(|error| error.to_string())?;
+            let result = user
+                .can(backend, [permission], [collection], state.scopes.as_ref())
+                .await
+                .map_err(|error| error.to_string());
+            state
+                .collection_permission_cache
+                .insert(key, result.clone());
+            result
+        }
+    }
 }
 
 async fn class_relation_exists_cached(
@@ -1361,12 +1416,11 @@ where
     let identifier = format!("{}::{}", collection.name, input.name);
 
     if let Some(class) = existing {
-        ensure_collection_permission_cached(
+        ensure_existing_resource_permission(
             backend,
             user,
             state,
-            collection.id,
-            collection.exists_in_db,
+            ResourceRef::class(class.id, class.collection_id, Some(class.name.clone())),
             Permissions::UpdateClass,
         )
         .await
@@ -1660,12 +1714,15 @@ where
         })?;
 
     if let Some(object) = existing {
-        ensure_collection_permission_cached(
+        ensure_existing_resource_permission(
             backend,
             user,
             state,
-            collection.id,
-            collection.exists_in_db,
+            ResourceRef::object(
+                object.id,
+                ClassResourceEndpoint::new(object.collection_id, object.class_id),
+                Some(object.name.clone()),
+            ),
             Permissions::UpdateObject,
         )
         .await

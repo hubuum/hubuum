@@ -1,7 +1,7 @@
 use std::{fmt, str::FromStr};
 
 use async_trait::async_trait;
-use hubuum_domain::{ClassId, CollectionId, RemoteTargetId, ResourceId, TaskId};
+use hubuum_domain::{ClassId, CollectionId, RemoteTargetId, ResourceId, ResourceRevision, TaskId};
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 use serde_json::Value;
@@ -679,6 +679,7 @@ impl fmt::Debug for StorageRemoteTargetPatch {
 #[derive(Clone, PartialEq)]
 pub struct StorageRemoteTargetUpdate {
     target_id: RemoteTargetId,
+    expected_revision: ResourceRevision,
     patch: StorageRemoteTargetPatch,
     event_context: EventContext,
 }
@@ -687,19 +688,33 @@ impl StorageRemoteTargetUpdate {
     #[must_use]
     pub const fn new(
         target_id: RemoteTargetId,
+        expected_revision: ResourceRevision,
         patch: StorageRemoteTargetPatch,
         event_context: EventContext,
     ) -> Self {
         Self {
             target_id,
+            expected_revision,
             patch,
             event_context,
         }
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (RemoteTargetId, StorageRemoteTargetPatch, EventContext) {
-        (self.target_id, self.patch, self.event_context)
+    pub fn into_parts(
+        self,
+    ) -> (
+        RemoteTargetId,
+        ResourceRevision,
+        StorageRemoteTargetPatch,
+        EventContext,
+    ) {
+        (
+            self.target_id,
+            self.expected_revision,
+            self.patch,
+            self.event_context,
+        )
     }
 }
 

@@ -1237,6 +1237,7 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
     let updated = backend
         .update_remote_target(StorageRemoteTargetUpdate::new(
             target_id,
+            created.metadata().revision(),
             StorageRemoteTargetPatch::new().with_description(Some("after".to_string())),
             context.clone(),
         ))
@@ -1256,6 +1257,7 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
     let unchanged = backend
         .update_remote_target(StorageRemoteTargetUpdate::new(
             target_id,
+            updated_metadata.revision(),
             StorageRemoteTargetPatch::new()
                 .with_collection_id(Some(collection_id))
                 .with_class_id(Some(class_id))

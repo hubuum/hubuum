@@ -2,7 +2,7 @@ use crate::models::token_scope::TokenScope;
 use std::{fmt, str::FromStr};
 
 use chrono::NaiveDateTime;
-use hubuum_outbound_http::OutboundHeaderName;
+use hubuum_outbound_http::{OutboundHeaderName, OutboundUrlParts, validate_outbound_url};
 use hubuum_templates::{TemplateBatch, TemplateExecution, TemplateLimits};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -116,6 +116,49 @@ pub enum RemoteAuthConfig {
         header: String,
         secret: String,
     },
+}
+
+impl RemoteAuthConfig {
+    pub(crate) fn uses_server_credentials(&self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
+/// An HTTPS authority fixed by the credential owner's target definition.
+/// Invocation data may fill paths and queries, but cannot select another origin.
+pub(crate) struct CredentialBoundDestination {
+    host: String,
+    port: u16,
+}
+
+impl CredentialBoundDestination {
+    pub(crate) fn from_template(template: &str) -> Result<Self, ApiError> {
+        let authority = template
+            .strip_prefix("https://")
+            .and_then(|rest| rest.split(['/', '?', '#']).next())
+            .filter(|authority| !authority.contains(['{', '}', '\\']))
+            .ok_or_else(|| ApiError::BadRequest(
+                "Credential-bearing targets require a literal HTTPS host and port in url_template".to_string(),
+            ))?;
+        let parts = validate_outbound_url(&format!("https://{authority}/"))
+            .map_err(|_| ApiError::BadRequest(
+                "Credential-bearing targets require a literal HTTPS host and port without URL credentials".to_string(),
+            ))?;
+        Ok(Self {
+            host: parts.host().to_owned(),
+            port: parts.port(),
+        })
+    }
+
+    pub(crate) fn validate_rendered(&self, parts: &OutboundUrlParts) -> Result<(), ApiError> {
+        if parts.host() != self.host || parts.port() != self.port {
+            return Err(ApiError::Forbidden(
+                "Rendered destination differs from the credential owner's approved origin"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl fmt::Debug for RemoteAuthConfig {
@@ -423,9 +466,25 @@ impl RemoteInvocationSubject {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StoredRemoteCallTaskPayload {
     pub target_id: RemoteTargetID,
+    #[serde(default)]
+    pub target_revision: Option<ResourceRevision>,
     pub subject: RemoteInvocationSubject,
     pub parameters: RemoteInvocationParameters,
     pub body_override: RemoteInvocationBodyOverride,
+}
+
+impl StoredRemoteCallTaskPayload {
+    pub(crate) fn validate_target_revision(
+        &self,
+        revision: ResourceRevision,
+    ) -> Result<(), ApiError> {
+        if self.target_revision != Some(revision) {
+            return Err(ApiError::Conflict(
+                "Remote target changed or this invocation predates revision binding; submit a new invocation".to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 pub struct ResolvedRemoteInvocationSubject {
@@ -510,6 +569,26 @@ impl_redacted_remote_call_result_debug!(
 );
 
 impl UpdateRemoteTarget {
+    pub(crate) fn changes_binding(&self) -> bool {
+        self.collection_id.is_some()
+            || self.class_id.is_some()
+            || self.method.is_some()
+            || self.url_template.is_some()
+            || self.headers_template.is_some()
+            || self.body_template.is_some()
+            || self.auth_config.is_some()
+            || self.allowed_subject_types.is_some()
+    }
+
+    pub(crate) fn requires_credential_owner(&self, existing: &RemoteTarget) -> bool {
+        (existing.auth_config.uses_server_credentials()
+            || self
+                .auth_config
+                .as_ref()
+                .is_some_and(RemoteAuthConfig::uses_server_credentials))
+            && (self.changes_binding() || self.enabled == Some(true))
+    }
+
     pub fn is_empty(&self) -> bool {
         self.collection_id.is_none()
             && self.class_id.is_none()
@@ -567,6 +646,9 @@ pub async fn validate_target_parts(
         ApiError::BadRequest(format!("Invalid {label}: {error}"))
     })?;
     validate_auth_config(auth_config)?;
+    if auth_config.uses_server_credentials() {
+        CredentialBoundDestination::from_template(url_template)?;
+    }
     validate_allowed_subject_types(allowed_subject_types)?;
     validate_class_scope(class_id, allowed_subject_types)?;
     Ok(())
@@ -953,6 +1035,47 @@ mod tests {
 
     use rstest::rstest;
 
+    #[rstest]
+    #[case::path("https://service.example/hook/{{ parameters.id }}", true)]
+    #[case::query("https://service.example?asset={{ object.id }}", true)]
+    #[case::port("https://service.example:8443/hook", true)]
+    #[case::host("https://{{ parameters.host }}/hook", false)]
+    #[case::suffix("https://service.example{{ parameters.suffix }}/hook", false)]
+    #[case::port_template("https://service.example:{{ parameters.port }}/hook", false)]
+    #[case::scheme("{{ parameters.url }}", false)]
+    #[case::credentials("https://user:password@service.example/hook", false)]
+    #[case::backslash("https://service.example\\@elsewhere.example/hook", false)]
+    #[case::http("http://service.example/hook", false)]
+    fn credential_destination_requires_literal_authority(
+        #[case] template: &str,
+        #[case] valid: bool,
+    ) {
+        assert_eq!(
+            CredentialBoundDestination::from_template(template).is_ok(),
+            valid
+        );
+    }
+
+    #[rstest]
+    #[case::same_origin("https://service.example/other?asset=2", true)]
+    #[case::default_port("https://service.example:443/hook", true)]
+    #[case::other_host("https://elsewhere.example/hook", false)]
+    #[case::other_port("https://service.example:8443/hook", false)]
+    #[case::userinfo("https://service.example@elsewhere.example/hook", false)]
+    #[case::downgrade("http://service.example/hook", false)]
+    fn rendered_credential_destination_stays_on_approved_origin(
+        #[case] url: &str,
+        #[case] valid: bool,
+    ) {
+        let destination = CredentialBoundDestination::from_template(
+            "https://service.example/{{ parameters.path }}",
+        )
+        .unwrap();
+        let accepted = validate_outbound_url(url)
+            .is_ok_and(|parts| destination.validate_rendered(&parts).is_ok());
+        assert_eq!(accepted, valid);
+    }
+
     use super::*;
 
     #[rstest]
@@ -1214,6 +1337,7 @@ mod tests {
     fn remote_invocation_debug_redacts_parameters_body_and_context() {
         let payload = StoredRemoteCallTaskPayload {
             target_id: RemoteTargetID::new(1).unwrap(),
+            target_revision: Some(ResourceRevision::INITIAL),
             subject: RemoteInvocationSubject::Collection {
                 collection_id: CollectionID::new(2).unwrap(),
             },

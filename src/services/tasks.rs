@@ -715,10 +715,24 @@ pub(crate) async fn backup_output_summary(
 
 pub(crate) async fn export_output(
     backend: &impl StorageContext,
-    task_id: TaskID,
+    task: &TaskRecord,
+    scopes: Option<&TokenScope>,
 ) -> Result<ExportOutputLookup<ExportTaskOutput>, ApiError> {
+    if let Some(scopes) = scopes {
+        let covered = task.submitted_token_scoped
+            && scopes.covers(&TokenScope::from_snapshot_json(
+                &task.submitted_token_scopes,
+            )?);
+        if !covered {
+            return Err(ApiError::Forbidden(
+                "Export output requires a token covering the submitting token's scope; create a new export with this token".into(),
+            ));
+        }
+    }
     Ok(map_export_lookup(
-        storage_handle(backend).get_export_output(task_id).await?,
+        storage_handle(backend)
+            .get_export_output(TaskID::new(task.id)?)
+            .await?,
         export_output_from_storage,
     ))
 }

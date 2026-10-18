@@ -24,6 +24,16 @@ Authentication:
 - Scoped tokens are supported. Their permission and resource boundaries are
   persisted with the task and intersected with the principal's live grants
   during worker execution.
+- Downloading stored output also requires the requesting token to cover the
+  submitting token's saved boundary. A scoped reader must include every saved
+  permission and explicit resource entry in each dimension it restricts;
+  an unrestricted submitting dimension requires an unrestricted reader dimension.
+  Resource entries are compared by kind and ID, without inferring historical
+  containment from current collection or class membership. A narrower token,
+  including a scoped token reading an export submitted without a scope, receives
+  `403 Forbidden` and must submit a new export using its own scope. This applies
+  to JSON and rendered template output, which cannot be filtered after creation.
+  Existing task access and discovery authorization checks still apply.
 
 ## Submission model
 
