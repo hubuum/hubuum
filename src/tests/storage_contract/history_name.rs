@@ -281,6 +281,41 @@ async fn owner_user(backend: &StorageHandle, fixture: &BackendObjectFixture) -> 
     user
 }
 
+#[rstest]
+#[case::default("limit=10")]
+#[case::revision_ties("sort=revision&limit=10")]
+#[actix_web::test]
+async fn every_backend_name_history_normalizes_storage_ordering(#[case] params: &str) {
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let fixture =
+            create_backend_object_fixture(&backend, &prefix("history_default_sort"), vec![]).await;
+        for _ in 0..2 {
+            let object = create_named(&backend, &fixture, "server01").await;
+            delete(&backend, object.id()).await;
+        }
+        let query = StorageObjectHistoryNameQuery::try_new(
+            fixture.class.id(),
+            "server01".into(),
+            parse_query_parameter(params).unwrap(),
+        )
+        .unwrap()
+        .visibility(StorageHistoryCollectionScope::All, true);
+        let ids = backend
+            .list_object_history_by_name(query)
+            .await
+            .unwrap()
+            .into_parts()
+            .0
+            .into_iter()
+            .map(|row| row.into_parts().1.into_parts().history_entry_id().id())
+            .collect::<Vec<_>>();
+        assert_eq!(ids.len(), 4);
+        assert!(ids.windows(2).all(|pair| pair[0] > pair[1]));
+        delete_backend_object_fixture(&backend, fixture).await;
+    }
+}
+
 fn external_permissions(
     fixture: &BackendObjectFixture,
     name: Option<&str>,

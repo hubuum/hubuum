@@ -1662,23 +1662,14 @@ impl HistoryStorage for MemoryStorage {
 
         let options = query.options();
         let filters = ObjectFilters::new(options.filters())?;
-        let mut sorts = options.sort().to_vec();
-        if !sorts
-            .iter()
-            .any(|sort| sort.field == FilterField::HistoryId)
-        {
-            sorts.push(SortParam {
-                field: FilterField::HistoryId,
-                descending: true,
-            });
-        }
+        let sorts = options.sort();
         let boundary = options
-            .cursor_values(&sorts)
+            .cursor_values(sorts)
             .map_err(|error| StorageError::invalid_input(error.to_string()))?
             .map(|values| {
                 values
                     .iter()
-                    .zip(&sorts)
+                    .zip(sorts.iter())
                     .map(|(value, sort)| {
                         let CursorValue::Integer(value) = value else {
                             return Err(StorageError::invalid_input(

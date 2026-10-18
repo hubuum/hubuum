@@ -249,7 +249,8 @@ objects, export templates, and remote targets. Visibility applies before
 filtering, counting, and paging. Provenance-name resolution is batched.
 
 `list_object_history_by_name` matches the stored class ID and exact historical
-name across identities. `StorageObjectHistoryNameQuery` validates query fields;
+name across identities. `StorageObjectHistoryNameQuery` validates query fields
+and normalizes the default descending history-ID order and missing tie-breaker;
 its collection scope applies to both the historical snapshot and the current
 object in that class. Only `include_deleted` admits identities absent from the
 current class, without requiring a live replacement. Historical names never

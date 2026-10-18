@@ -4,7 +4,7 @@ use hubuum_domain::{
     ClassId, CollectionId, HistoryRecordId, ObjectId, PrincipalId, ResourceId, ResourceRevision,
     TaskId,
 };
-use hubuum_query::{FilterField, QueryOptions};
+use hubuum_query::{FilterField, QueryOptions, SortParam};
 
 use crate::{
     StorageClass, StorageCollection, StorageError, StorageExportTemplate, StorageObject,
@@ -122,7 +122,7 @@ impl StorageObjectHistoryNameQuery {
     pub fn try_new(
         class_id: ClassId,
         name: String,
-        options: QueryOptions,
+        mut options: QueryOptions,
     ) -> Result<Self, StorageValidationError> {
         if name.contains('\0') {
             return Err(StorageValidationError::invalid(
@@ -147,6 +147,16 @@ impl StorageObjectHistoryNameQuery {
             return Err(StorageValidationError::invalid(
                 "History can only be ordered by history_id or revision",
             ));
+        }
+        if !options
+            .sort()
+            .iter()
+            .any(|sort| sort.field == FilterField::HistoryId)
+        {
+            options
+                .sort_mut()
+                .append_tie_breaker(SortParam::new(FilterField::HistoryId, true))
+                .map_err(|error| StorageValidationError::invalid(error.to_string()))?;
         }
         Ok(Self {
             class_id,
