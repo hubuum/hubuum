@@ -131,6 +131,17 @@ diesel::table! {
 }
 
 diesel::table! {
+    computed_field_history (history_id) {
+        history_id -> Int8,
+        class_id -> Int4,
+        valid_from -> Timestamptz,
+        valid_to -> Nullable<Timestamptz>,
+        evaluator_version -> Int2,
+        definitions -> Jsonb,
+    }
+}
+
+diesel::table! {
     credential_approvals (id) {
         id -> Int4,
         actor_id -> Int4,
@@ -1037,6 +1048,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     collections,
     collections_history,
     computed_field_definitions,
+    computed_field_history,
     credential_approvals,
     event_deliveries,
     event_related_collections,

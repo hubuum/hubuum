@@ -68,10 +68,10 @@ transactionally with the corresponding audit event. Native actions and
 analysis are separate optional adapter capabilities; declaration management
 does not depend on either being available.
 
-Full backup version 9 includes logical declarations and their provenance.
+Full backups have included logical declarations and their provenance since version 9.
 Versions 6 through 8 restore with an empty declaration set. Physical optimization
 resources are not portable backup content. The restore target must support
-version 9 before it can restore any new backup, including one with no declarations.
+the current [backup version](backup-restore.md), including for backups with no declarations.
 
 ## Observations and analysis
 

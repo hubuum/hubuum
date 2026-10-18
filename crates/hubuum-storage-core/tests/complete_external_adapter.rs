@@ -1197,6 +1197,12 @@ impl EventRetentionStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl HistoryStorage for CompleteExternalAdapter {
+    async fn get_computed_field_history(
+        &self,
+        query: StorageComputedFieldHistoryQuery,
+    ) -> Result<Option<StorageHistoricalComputedFields>, StorageError> {
+        fixture_result()
+    }
     async fn list_relation_history(
         &self,
         query: StorageRelationHistoryQuery,

@@ -68,6 +68,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(classes::get_object_as_of)
         .service(classes::get_object_history_timeline)
         .service(classes::get_object_history_entry)
+        .service(classes::get_object_computed_as_of)
         .service(classes::get_objects_in_class)
         .service(classes::patch_object_data_in_class)
         .service(classes::patch_object_in_class)

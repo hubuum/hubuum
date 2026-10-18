@@ -2,6 +2,15 @@ use super::super::*;
 
 #[async_trait]
 impl HistoryStorage for PostgresStorage {
+    async fn get_computed_field_history(
+        &self,
+        query: StorageComputedFieldHistoryQuery,
+    ) -> Result<Option<StorageHistoricalComputedFields>, StorageError> {
+        crate::operations::history::computed::get_computed_field_history(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
+    }
+
     async fn list_relation_history(
         &self,
         query: StorageRelationHistoryQuery,

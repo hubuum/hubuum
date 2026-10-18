@@ -333,6 +333,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         classes::get_object_as_of,
         classes::get_object_history_timeline,
         classes::get_object_history_entry,
+        classes::get_object_computed_as_of,
         classes::patch_object_in_class,
         classes::patch_object_in_class_by_name,
         classes::patch_object_data_in_class,

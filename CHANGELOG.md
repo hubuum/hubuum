@@ -9,6 +9,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Historical shared computed values at
+  `GET /api/v1/classes/{class_id}/{object_id}/history/computed/as-of?at=...`,
+  explicitly labeled as recomputation using retained object and definition
+  revisions. Disabled fields, evaluation errors and missing history are explicit;
+  personal historical fields remain unsupported. Apply the computed-definition
+  history migration before starting the server. Existing definitions are observed
+  at migration time; earlier results remain unavailable.
+
 - Class and object relationship history and direct adjacency at an RFC3339
   instant, with historical endpoint context, provenance, authorized cursor
   pagination, and optional totals. Deleted relationships remain restricted to
@@ -42,6 +50,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   are unchanged.
 
 ### Changed
+
+- **Breaking:** full backups now use version 10 to retain shared computed-definition
+  history. Upgrade the restore server before restoring new backups; retain a
+  pre-upgrade backup and matching binaries for rollback. Versions 6
+  through 9 remain accepted, with missing definition history starting at restore.
+- **Breaking storage SDK change:** adapters must implement
+  `HistoryStorage::get_computed_field_history` and the `ComputedFieldHistory`
+  backup section before upgrading. Preserve complete shared definition sets,
+  revision identities and half-open intervals; run the history/restore contract
+  tests. Live materializations remain excluded from authoritative history.
 
 - **Breaking storage SDK change:** `HistoryStorage` adapters must implement
   `list_relation_history(StorageRelationHistoryQuery)` before upgrading. Return
@@ -226,9 +244,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   the new logical backup section before adopting this storage contract. Event
   catalogue consumers with exhaustive `EntityType` matches must also handle
   `QueryUsageDeclaration`.
-- **Breaking:** full backups now use version 9 to include query usage declarations. Upgrade
-  the restore server before restoring a version 9 backup; versions 6, 7, and 8
-  remain readable and restore without declarations.
+- Full backups include query usage declarations and their provenance. Versions
+  6, 7, and 8 remain readable and restore without declarations.
 
 ### Fixed
 

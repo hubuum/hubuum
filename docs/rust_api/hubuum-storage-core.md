@@ -37,6 +37,16 @@ effective-version selection, bounded pagination and optional exact counts.
 Update external adapters before upgrading; returning an empty fallback would
 misrepresent retained history.
 
+`HistoryStorage::get_computed_field_history` is a mandatory SDK addition.
+Implement it before upgrading: return the complete shared set selected by
+`StorageComputedFieldHistoryQuery`, including an observed empty set, or `None`
+when its interval is unavailable. `StorageHistoricalComputedFields` proves the
+class and selected instant. Retain definition IDs/revisions, enablement and
+versioned evaluation semantics, never personal definitions or actor metadata.
+The complete backup contract adds `ComputedFieldHistory`; restore must preserve
+retained intervals and establish missing current sets at the restore boundary.
+Run the shared historical-computation and restore conformance tests.
+
 `HistoryStorage::list_relation_history` is a mandatory SDK addition. Implement
 `StorageRelationHistoryQuery` for both class and object endpoints, changes and
 half-open as-of selection, bounded history-ID pages, and optional candidate

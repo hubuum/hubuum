@@ -29,6 +29,7 @@ use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError, with_stor
 const DATABASE_UTC_NOW_SQL: &str = "clock_timestamp() AT TIME ZONE 'UTC'";
 
 const TRUNCATE_TABLES: &[&str] = &[
+    "computed_field_history",
     "query_usage_resource_owners",
     "schema_repair_reports",
     "schema_impact_findings",
@@ -105,6 +106,7 @@ const SERIAL_ID_TABLES: &[&str] = &[
 ];
 
 const HISTORY_SEQUENCE_TABLES: &[&str] = &[
+    "computed_field_history",
     "collections_history",
     "hubuumclass_history",
     "hubuumclass_relation_history",
@@ -730,6 +732,14 @@ async fn replace_backend_state(
     for table in HISTORY_SEQUENCE_TABLES {
         reset_restore_sequence(connection, table, "history_id").await?;
     }
+    // Deleted shared definitions retain their identities in history. Allocating
+    // from the live table alone would reuse those identities after a restore.
+    diesel::sql_query("SELECT setval(pg_get_serial_sequence('computed_field_definitions', 'id'),
+        COALESCE(max(id), 1), max(id) IS NOT NULL) FROM (
+            SELECT id::bigint FROM computed_field_definitions
+            UNION ALL SELECT (definition->>'id')::bigint
+                FROM computed_field_history CROSS JOIN LATERAL jsonb_array_elements(definitions) definition
+        ) retained").execute(connection).await?;
     Ok(())
 }
 

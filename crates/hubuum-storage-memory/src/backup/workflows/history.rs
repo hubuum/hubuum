@@ -19,6 +19,21 @@ pub(in crate::backup) fn capture_history(
             .map(|row| capture_row(progress, Ok(row.clone())))
             .collect::<Result<_, _>>()?,
     );
+    sections.insert(
+        StorageBackupHistorySection::ComputedFieldHistory,
+        state
+            .computed_history
+            .iter()
+            .map(|record| {
+                capture_row(
+                    progress,
+                    serde_json::to_value(record)
+                        .map_err(|error| StorageError::internal(error.to_string()))
+                        .and_then(row),
+                )
+            })
+            .collect::<Result<_, _>>()?,
+    );
     for entry in &state.history {
         let (section, snapshot) = match &entry.value {
             MemoryHistoryValue::Collection(v) => (
@@ -148,6 +163,30 @@ pub(in crate::backup) fn restore_history(
     state
         .schema_history
         .sort_by_key(|row| row.get("id").and_then(Value::as_i64));
+    state.computed_history = sections[&StorageBackupHistorySection::ComputedFieldHistory]
+        .iter()
+        .map(|row| {
+            serde_json::from_value(row.clone().into_value()).map_err(|error| {
+                StorageError::backend_failure(format!("Invalid computed history: {error}"))
+            })
+        })
+        .collect::<Result<_, _>>()?;
+    state
+        .computed_history
+        .sort_by_key(|record| (record.valid_from(), record.history_entry_id()));
+    if let Some(retained_id) = state
+        .computed_history
+        .iter()
+        .flat_map(|record| record.definitions())
+        .map(|field| field.id().id())
+        .max()
+    {
+        state.next_computed_field_id = state.next_computed_field_id.max(
+            retained_id
+                .checked_add(1)
+                .ok_or_else(|| invalid("computed definition sequence"))?,
+        );
+    }
     state.history.clear();
     for section in [
         StorageBackupHistorySection::CollectionHistory,
@@ -223,7 +262,8 @@ pub(in crate::backup) fn restore_history(
         .filter(|(s, _)| {
             matches!(
                 s,
-                StorageBackupHistorySection::CollectionHistory
+                StorageBackupHistorySection::ComputedFieldHistory
+                    | StorageBackupHistorySection::CollectionHistory
                     | StorageBackupHistorySection::ClassHistory
                     | StorageBackupHistorySection::ObjectHistory
                     | StorageBackupHistorySection::ClassRelationHistory

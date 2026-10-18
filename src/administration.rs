@@ -958,7 +958,7 @@ async fn verify_backup_restore(
             capture_budget,
         )
         .await?;
-        verify_restored_backup_matches(&source, &restored)?;
+        verify_restored_backup_matches(&source, &restored, storage.schema_limits())?;
         Ok::<_, ApiError>(restore_duration)
     }
     .await;

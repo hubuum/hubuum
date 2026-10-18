@@ -55,9 +55,18 @@ async fn every_selectable_backend_preserves_recovery_across_backup_generations(
         let fixture = RecoveryFixture(RestoreContractFixture::new(kind, pool).await.unwrap());
         // The shared runner compares every field (including provenance and revisions),
         // then writes again and restores a second generation in both history modes.
-        let snapshot = fixture.0.capture(false).await.unwrap();
+        let snapshot = fixture.0.capture(true).await.unwrap();
+        let (state, history) = snapshot.into_parts();
+        assert!(!state[&StorageBackupStateSection::QueryUsageDeclarations].is_empty());
         assert!(
-            !snapshot.into_parts().0[&StorageBackupStateSection::QueryUsageDeclarations].is_empty()
+            history.unwrap()[&StorageBackupHistorySection::ComputedFieldHistory]
+                .iter()
+                .any(|row| row
+                    .get("definitions")
+                    .and_then(Value::as_array)
+                    .is_some_and(|fields| fields
+                        .iter()
+                        .any(|field| field["definition"]["key"] == "retired_recovery_field")))
         );
         let result = verify_backup_restore_contract(&fixture, include_history).await;
         fixture

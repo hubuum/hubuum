@@ -58,8 +58,14 @@ pub struct EvaluationLimits {
 
 impl EvaluationLimits {
     pub const fn standard() -> Self {
+        Self::historical_version_one()
+    }
+
+    /// Frozen limits for historical evaluator version 1. Changing these requires
+    /// a new historical evaluator version; retained requests must remain reproducible.
+    pub const fn historical_version_one() -> Self {
         Self {
-            max_input_bytes: MAX_INPUT_BYTES,
+            max_input_bytes: 1_024 * 1_024,
             max_nodes_per_field: 10_000,
             max_work_units: 50_000,
             max_field_output_bytes: 64 * 1_024,

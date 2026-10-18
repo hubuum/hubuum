@@ -1034,6 +1034,9 @@ impl MemoryStorage {
                     StorageComputedFieldProvenance::new(Some(actor_id), Some(actor_id)),
                 );
                 state.computed_fields.insert(id.id(), definition);
+                if visibility == StorageComputedFieldVisibility::Shared {
+                    state.record_computed_history(class_id)?;
+                }
                 Ok(Some(revision))
             }
             StorageImportOperation::ApplyCollectionPermissions { input, overwrite } => {

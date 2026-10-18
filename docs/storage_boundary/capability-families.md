@@ -281,6 +281,14 @@ Application authorization checks current and historical edges and endpoints
 before exposing rows, totals or cursors, including deleted-history restrictions.
 PostgreSQL retains native index-seek and constant-query-count regression coverage.
 
+`get_computed_field_history` selects one complete shared definition set by class
+and instant. Its proof wrapper preserves the half-open interval and exact
+revision identities; absence is distinct from a known empty set. The bounded
+catalog contains at most 32 fields and never personal definitions or actor data.
+Current and historical object/class authorization belongs to the application.
+Adapters record shared changes atomically, preserve history through deletion
+and backup/restore, and do not repair live computation state during reads.
+
 ### `inventory_queries`
 
 Required trait: `InventoryStorage`.

@@ -10,7 +10,7 @@ impl StorageBackupSnapshot {
     /// and timestamps; only temporal validity begins at the restore boundary.
     pub(crate) fn restart_history(self, restored_at: DateTime<Utc>) -> Self {
         if self.history_sections.is_some() {
-            return self;
+            return super::computed::restart_history(self, restored_at);
         }
         // Every history section shares the timestamp precision supported by all adapters.
         let restored_at = DateTime::from_timestamp_micros(restored_at.timestamp_micros())
@@ -59,11 +59,14 @@ impl StorageBackupSnapshot {
             StorageBackupHistorySection::ClassSchemaHistory,
             schema_baselines,
         );
-        Self {
-            schema_limits: self.schema_limits,
-            state_sections: self.state_sections,
-            history_sections: Some(history),
-        }
+        super::computed::restart_history(
+            Self {
+                schema_limits: self.schema_limits,
+                state_sections: self.state_sections,
+                history_sections: Some(history),
+            },
+            restored_at,
+        )
     }
 }
 
@@ -242,6 +245,7 @@ mod tests {
         assert_eq!(
             history.values().map(Vec::len).sum::<usize>(),
             1 + expected_state[&StorageBackupStateSection::ClassSchemaRevisions].len()
+                + expected_state[&StorageBackupStateSection::Classes].len()
         );
 
         let repeated = StorageRestoreDocument::at_restore_boundary(

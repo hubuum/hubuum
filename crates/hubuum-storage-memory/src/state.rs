@@ -146,6 +146,7 @@ impl MemoryState {
             export_templates: BTreeMap::new(),
             remote_targets: BTreeMap::new(),
             computed_fields: BTreeMap::new(),
+            computed_history: Vec::new(),
             query_usage: BTreeMap::new(),
             next_query_usage_id: 1,
             computation_states: BTreeMap::new(),

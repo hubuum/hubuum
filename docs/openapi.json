@@ -9396,6 +9396,104 @@
         ]
       }
     },
+    "/api/v1/classes/{class_id}/{object_id}/history/computed/as-of": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id By Object Id History Computed As Of",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/{object_id}/history/computed/as-of.",
+        "operationId": "getApiV1ClassesByClassIdByObjectIdHistoryComputedAsOf",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Current class identity",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "object_id",
+            "in": "path",
+            "description": "Object identity",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "at",
+            "in": "query",
+            "description": "Required RFC 3339 historical instant",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Historical recomputation using retained shared definitions; never recorded materialization output. Personal fields are unsupported. Missing definition history and unsupported semantics are explicit; field errors have no value.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoricalComputedValues"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current or historical object/class access denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Object history unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/classes/{class_id}/{object_id}/history/entries/{history_id}": {
       "get": {
         "tags": [
@@ -27990,6 +28088,194 @@
           }
         }
       },
+      "HistoricalComputationMode": {
+        "type": "string",
+        "enum": [
+          "historical_recomputation"
+        ]
+      },
+      "HistoricalComputedField": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/HistoricalComputedFieldResult"
+          },
+          {
+            "type": "object",
+            "required": [
+              "definition_id",
+              "revision",
+              "key",
+              "label",
+              "semantics_version"
+            ],
+            "properties": {
+              "definition_id": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "key": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "revision": {
+                "$ref": "#/components/schemas/ResourceRevision"
+              },
+              "semantics_version": {
+                "type": "integer",
+                "format": "int32"
+              }
+            }
+          }
+        ]
+      },
+      "HistoricalComputedFieldResult": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "value",
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "evaluated"
+                ]
+              },
+              "value": {}
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "error",
+              "status"
+            ],
+            "properties": {
+              "error": {
+                "$ref": "#/components/schemas/ComputedFieldErrorResponse"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "error"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "disabled"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "status"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/HistoricalComputedUnavailableReason"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "unavailable"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "HistoricalComputedObjectSource": {
+        "type": "object",
+        "description": "Identity of the stored object input; this response does not return live caches.",
+        "required": [
+          "object_id",
+          "class_id",
+          "history_id",
+          "revision",
+          "valid_from"
+        ],
+        "properties": {
+          "class_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "history_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "object_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
+          "valid_from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "HistoricalComputedUnavailableReason": {
+        "type": "string",
+        "enum": [
+          "definition_history_unavailable",
+          "class_history_unavailable",
+          "unsupported_evaluator_version",
+          "unsupported_definition_semantics"
+        ]
+      },
+      "HistoricalComputedValues": {
+        "type": "object",
+        "required": [
+          "mode",
+          "at",
+          "object",
+          "shared",
+          "personal"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/HistoricalComputationMode"
+          },
+          "object": {
+            "$ref": "#/components/schemas/HistoricalComputedObjectSource"
+          },
+          "personal": {
+            "$ref": "#/components/schemas/HistoricalPersonalFields"
+          },
+          "shared": {
+            "$ref": "#/components/schemas/HistoricalSharedComputedFields"
+          }
+        }
+      },
       "HistoricalEndpointContext": {
         "oneOf": [
           {
@@ -28034,6 +28320,12 @@
         "type": "string",
         "enum": [
           "history_unavailable"
+        ]
+      },
+      "HistoricalPersonalFields": {
+        "type": "string",
+        "enum": [
+          "unsupported"
         ]
       },
       "HistoricalPopulationCoverage": {
@@ -28158,6 +28450,71 @@
             }
           }
         }
+      },
+      "HistoricalSharedComputedFields": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "definition_history_id",
+              "valid_from",
+              "evaluator_version",
+              "fields",
+              "status"
+            ],
+            "properties": {
+              "definition_history_id": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "evaluator_version": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/HistoricalComputedField"
+                }
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "available"
+                ]
+              },
+              "valid_from": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "valid_to": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "status"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/HistoricalComputedUnavailableReason"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "unavailable"
+                ]
+              }
+            }
+          }
+        ]
       },
       "HistoryDirection": {
         "type": "string",

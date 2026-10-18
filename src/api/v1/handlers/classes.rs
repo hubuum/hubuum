@@ -843,6 +843,8 @@ mod computed_objects;
 mod history_endpoints;
 mod history_population;
 pub use history_population::*;
+mod history_computed;
+pub use history_computed::*;
 mod history_relations;
 pub use history_relations::*;
 mod history_name;

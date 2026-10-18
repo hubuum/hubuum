@@ -1493,6 +1493,23 @@ impl EventRetentionStorage for MemoryStorage {
 
 #[async_trait]
 impl HistoryStorage for MemoryStorage {
+    async fn get_computed_field_history(
+        &self,
+        query: StorageComputedFieldHistoryQuery,
+    ) -> Result<Option<StorageHistoricalComputedFields>, StorageError> {
+        let state = self.state.read().await;
+        state
+            .computed_history
+            .iter()
+            .rev()
+            .find(|record| {
+                record.class_id() == query.class_id() && record.is_effective_at(query.at())
+            })
+            .cloned()
+            .map(|record| record.select(query).map_err(invalid_contract_value))
+            .transpose()
+    }
+
     async fn list_relation_history(
         &self,
         query: StorageRelationHistoryQuery,

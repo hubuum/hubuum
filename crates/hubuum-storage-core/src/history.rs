@@ -13,6 +13,8 @@ use crate::{
 
 mod navigation;
 pub use navigation::*;
+mod computed;
+pub use computed::*;
 mod relations;
 pub use relations::*;
 
@@ -669,6 +671,13 @@ impl StorageRemoteTargetHistoryRecord {
 /// Complete temporal-history capability required of every selectable backend.
 #[async_trait]
 pub trait HistoryStorage: Send + Sync {
+    /// The complete shared definition set at this instant, including known empty sets.
+    /// None means retained history is unavailable; never substitute live definitions.
+    async fn get_computed_field_history(
+        &self,
+        query: StorageComputedFieldHistoryQuery,
+    ) -> Result<Option<StorageHistoricalComputedFields>, StorageError>;
+
     /// Raw bounded candidates with endpoint context from the same instant.
     /// The application authorizes current and historical edges/endpoints before
     /// exposing rows, counts or cursors. Adapters hydrate each page in bounded batches.
