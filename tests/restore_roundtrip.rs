@@ -34,6 +34,7 @@ use hubuum_storage_postgres::{PostgresStorage, with_connection, with_transaction
 use rstest::rstest;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
+use tracing::instrument::WithSubscriber;
 use uuid::Uuid;
 
 // These tests replace the whole runner-owned database, so they must not overlap.
@@ -146,6 +147,12 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
             include_history: true,
         },
         StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+    )
+    .with_subscriber(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::ERROR)
+            .with_test_writer()
+            .finish(),
     )
     .await
     .expect("full backup document");
