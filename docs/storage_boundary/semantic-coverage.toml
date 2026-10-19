@@ -425,7 +425,7 @@ scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_sup
 
 [enums.StorageNotification]
 source = "crates/hubuum-storage-core/src/worker_notifications.rs"
-variants = ["EventFanout", "EventDelivery", "TaskQueue"]
+variants = ["EventFanout", "EventDelivery", "TaskQueue", "QueryObservationControl"]
 scenarios = ["crates/hubuum-storage-core/src/worker_notifications.rs::notification_topics_have_stable_bounded_names", "crates/hubuum-storage-postgres/tests/notifications.rs::fanout_trigger_notifies_only_after_commit", "crates/hubuum-storage-postgres/tests/notifications.rs::task_queue_notification_is_delivered_only_after_commit"]
 
 [enums.TaskKind]
