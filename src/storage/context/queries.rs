@@ -4,6 +4,23 @@ use super::*;
 
 #[async_trait]
 impl HistoryStorage for StorageHandle {
+    async fn get_computed_field_history(
+        &self,
+        query: StorageComputedFieldHistoryQuery,
+    ) -> Result<Option<StorageHistoricalComputedFields>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::History,
+            "get_computed_field_history",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.get_computed_field_history(query).await
+                })
+            },
+        )
+        .await
+    }
+
     async fn list_relation_history(
         &self,
         query: StorageRelationHistoryQuery,

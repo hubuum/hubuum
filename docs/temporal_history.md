@@ -58,6 +58,16 @@ When a row is deleted (D operation), a **zero-width tombstone** is created:
 - Both `valid_from` and `valid_to` are set to the deletion timestamp (matching the format seen in line 24 of `up.sql`).
 - This tombstone allows auditing what was deleted and when, while being logically distinct from an UPDATE closure.
 
+## Historical computed fields
+
+[Historical recomputation](computed_fields.md#historical-recomputation) uses the
+object snapshot and the separately versioned complete shared definition set.
+`computed_field_history` retains those sets over half-open intervals, including
+observed empty sets. Definition history survives deletion and contains no
+personal fields or owner/actor identities. It is not an object materialization
+history. Definitions predating migration, omitted by backup or removed by a
+future retention policy remain explicitly unavailable.
+
 ## Lightweight Timeline Navigation
 
 Class and object history can be browsed without fetching every full snapshot:

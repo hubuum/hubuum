@@ -927,6 +927,7 @@ async fn reset_sequences(
              SELECT setval(pg_get_serial_sequence('collections', 'id'), (SELECT max(id) FROM collections), true);\n\
              SELECT setval(pg_get_serial_sequence('hubuumclass', 'id'), (SELECT max(id) FROM hubuumclass), true);\n\
              SELECT setval(pg_get_serial_sequence('hubuumobject', 'id'), (SELECT max(id) FROM hubuumobject), true);\n\
+             SELECT setval(pg_get_serial_sequence('computed_field_history', 'history_id'), (SELECT max(history_id) FROM computed_field_history), true);\n\
              SELECT setval(pg_get_serial_sequence('class_schema_history', 'id'), (SELECT max(id) FROM class_schema_history), true);\n\
              SELECT setval(pg_get_serial_sequence('hubuumclass_relation', 'id'), (SELECT max(id) FROM hubuumclass_relation), true);\n\
              SELECT setval(pg_get_serial_sequence('hubuumobject_relation', 'id'), (SELECT max(id) FROM hubuumobject_relation), true);\n\
@@ -1567,6 +1568,8 @@ mod tests {
                 ))
                 .await?;
         }
+        connection.batch_execute("CREATE TEMP TABLE computed_field_definitions (LIKE public.computed_field_definitions) ON COMMIT DROP;
+            CREATE TEMP TABLE computed_field_history (LIKE public.computed_field_history) ON COMMIT DROP").await?;
         connection
             .batch_execute(
                 "CREATE TEMP TABLE events (before_revision bigint, after_revision bigint,

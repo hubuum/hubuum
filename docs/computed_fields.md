@@ -91,6 +91,54 @@ Stable runtime error codes are:
 - `evaluation_limit_exceeded`
 - `result_too_large`
 
+## Historical recomputation
+
+`GET /api/v1/classes/{class_id}/{object_id}/history/computed/as-of?at=<RFC3339>`
+returns `mode: historical_recomputation`. It evaluates retained object JSON
+with the complete shared definition set effective at that instant. It does not
+return evaluation output or stale/cache state recorded at that time.
+
+The response identifies the object ID, history ID and revision; the selected
+definition-set history ID and validity interval; each definition ID and revision;
+and the evaluator and definition semantics versions. Definition changes are
+tracked independently of object changes, including label edits, disablement,
+deletion and recreation. An observed empty set returns `shared.status: available`
+with `fields: []`.
+
+Each field is `evaluated` with a value (possibly JSON null), `error` with its
+error code, `disabled`, or `unavailable` with a reason. Errors and unavailable
+fields have no `value` member. Missing definition history returns
+`definition_history_unavailable`; missing class history returns
+`class_history_unavailable`. Missing object history returns HTTP 404. Current
+definitions and materializations never fill gaps in retained history.
+
+Evaluator version 1 freezes the limits above and evaluates definitions in
+ascending definition-ID order. Unsupported evaluator versions make enabled
+fields unavailable. An enabled definition with unsupported semantics makes the
+whole enabled set unavailable: skipping that definition could change the shared
+work budget and invent results for the others. JSON Schema is not an evaluator
+input; stored object data is evaluated without revalidation against a schema.
+
+Both current object and class read permissions are checked before accessing
+historical data or definitions, followed by the historical resource checks.
+Token scopes and the configured permission backend apply. Deleted-resource
+history follows the existing unscoped-administrator policy. Responses are
+`Cache-Control: private, no-store`.
+
+Personal historical fields return `personal: unsupported`. Shared history never
+retains personal definitions, owner identities or definition actor identities,
+including after user deletion or anonymization. Reads perform no materialization
+writes, rebuild scheduling, object mutation or object-update events.
+
+Apply the computed-definition history migration before starting the new server.
+It observes existing shared sets at migration time; earlier sets cannot be
+reconstructed. History is authoritative, survives definition/class deletion and
+is included in [full backups](backup-restore.md). History-free and legacy restores
+observe shared sets at the restore boundary without backfilling older dates.
+Automatic pruning of these intervals is not enabled. Any future retention
+policy must keep object and definition availability explicit; gaps yield the
+unavailable states above. Materializations remain rebuildable caches.
+
 ## Managing shared definitions
 
 Shared management is class-bound:

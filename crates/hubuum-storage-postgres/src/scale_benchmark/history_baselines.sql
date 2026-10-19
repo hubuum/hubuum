@@ -34,3 +34,17 @@ BEGIN
     END LOOP;
 END;
 $baseline$;
+-- Bulk loading bypasses triggers. Retain the complete synthetic shared set,
+-- including empty classes, with stable identities and timestamps.
+INSERT INTO computed_field_history (history_id, class_id, valid_from, evaluator_version, definitions)
+SELECT class.id, class.id, class.updated_at AT TIME ZONE 'UTC', 1,
+    COALESCE((SELECT jsonb_agg(jsonb_build_object(
+        'id', field.id, 'class_id', field.class_id, 'revision', field.revision,
+        'definition', jsonb_build_object(
+            'key', field.key, 'label', field.label, 'description', field.description,
+            'operation', field.operation, 'result_type', field.result_type,
+            'enabled', field.enabled, 'semantics_version', field.semantics_version
+        )
+    ) ORDER BY field.id) FROM computed_field_definitions field
+        WHERE field.class_id = class.id AND field.visibility = 'shared'), '[]'::jsonb)
+FROM hubuumclass class ORDER BY class.id;

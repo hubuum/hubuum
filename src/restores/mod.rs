@@ -728,6 +728,7 @@ pub(crate) fn verify_backup_document_with_limits(
 pub(crate) fn verify_restored_backup_matches(
     source: &BackupDocument,
     restored: &BackupDocument,
+    schema_limits: JsonSchemaLimits,
 ) -> Result<(), ApiError> {
     let mut source = source.clone();
     let mut restored = restored.clone();
@@ -739,6 +740,12 @@ pub(crate) fn verify_restored_backup_matches(
             .state
             .sections
             .entry(StorageBackupStateSection::QueryUsageDeclarations)
+            .or_default();
+    }
+    if let Some(history) = &mut source.history {
+        history
+            .sections
+            .entry(StorageBackupHistorySection::ComputedFieldHistory)
             .or_default();
     }
     if let Some(history) = &mut source.history {
@@ -774,6 +781,15 @@ pub(crate) fn verify_restored_backup_matches(
                         "Restored snapshot comparison is missing history section '{section}'"
                     ))
                 })?;
+                if *section == StorageBackupHistorySection::ComputedFieldHistory {
+                    verify_computed_history_baselines(
+                        &source,
+                        source_rows,
+                        restored_rows,
+                        schema_limits,
+                    )?;
+                    continue;
+                }
                 if !matches!(
                     section,
                     StorageBackupHistorySection::TerminalTasks
@@ -886,6 +902,64 @@ pub(crate) fn validation_summary(
     )
     .map_err(|error| ApiError::from(error.into_request_error()))?;
     Ok((summary, snapshot))
+}
+
+#[cfg(feature = "embedded-migrations")]
+fn verify_computed_history_baselines(
+    source: &BackupDocument,
+    source_rows: &[StorageBackupRow],
+    restored_rows: &[StorageBackupRow],
+    schema_limits: JsonSchemaLimits,
+) -> Result<(), ApiError> {
+    if source_rows == restored_rows {
+        return Ok(());
+    }
+    let mismatch = || {
+        ApiError::InternalServerError("Restored computed definition history differs from retained history and required restore baselines".into())
+    };
+    let source_ids = source_rows
+        .iter()
+        .filter_map(|row| row.get("history_entry_id").and_then(Value::as_i64))
+        .collect::<HashSet<_>>();
+    let boundary = restored_rows
+        .iter()
+        .filter(|row| {
+            !row.get("history_entry_id")
+                .and_then(Value::as_i64)
+                .is_some_and(|id| source_ids.contains(&id))
+        })
+        .filter_map(|row| row.get("valid_from").and_then(Value::as_str))
+        .filter_map(|at| DateTime::parse_from_rfc3339(at).ok().map(|at| at.to_utc()))
+        .min()
+        .filter(|at| *at >= source.created_at)
+        .ok_or_else(mismatch)?;
+    let snapshot = StorageBackupSnapshot::try_new_with_limits(
+        source.state.sections.clone(),
+        source
+            .history
+            .as_ref()
+            .map(|history| history.sections.clone()),
+        schema_limits,
+    )
+    .map_err(|_| mismatch())?;
+    let expected = StorageRestoreDocument::at_restore_boundary(
+        StorageRestoreDocumentMetadata::new(
+            source.backup_version,
+            source.created_at,
+            &source.source_version,
+        ),
+        snapshot,
+        boundary,
+    )
+    .into_parts()
+    .1
+    .into_parts()
+    .1
+    .ok_or_else(mismatch)?;
+    if expected[&StorageBackupHistorySection::ComputedFieldHistory] != restored_rows {
+        return Err(mismatch());
+    }
+    Ok(())
 }
 
 /// Validate artifact metadata and application-owned resource schemas. Snapshot
@@ -1763,7 +1837,7 @@ mod tests {
     use serde_json::json;
 
     #[cfg(feature = "embedded-migrations")]
-    use super::verify_restored_backup_matches;
+    use super::{JsonSchemaLimits, verify_restored_backup_matches};
     use super::{
         MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, RESTORE_RECONCILIATION_GRACE_SECONDS,
         RestoreSettings, confirmation_is_stale, normalize_legacy_class_schema_policies,
@@ -2019,6 +2093,7 @@ mod tests {
     #[case::six(6)]
     #[case::seven(7)]
     #[case::eight(8)]
+    #[case::nine(9)]
     #[case::current(CURRENT_BACKUP_VERSION)]
     fn offline_backup_verification_accepts_supported_versions(#[case] version: i32) {
         let mut document = minimally_valid_document();
@@ -2038,6 +2113,29 @@ mod tests {
         document.manifest = BackupManifest::from_sections(&document.state, None);
         let bytes = serde_json::to_vec(&document).unwrap();
         assert!(verify_backup_document(&bytes, bytes.len()).is_ok());
+    }
+
+    #[rstest]
+    #[case::legacy(9, false, true)]
+    #[case::current_missing(10, false, false)]
+    #[case::current_present(10, true, true)]
+    fn backup_version_declares_authoritative_computed_history(
+        #[case] version: i32,
+        #[case] included: bool,
+        #[case] accepted: bool,
+    ) {
+        let mut document = minimally_valid_document();
+        document.backup_version = version;
+        let mut sections = StorageBackupHistorySection::ALL
+            .iter()
+            .copied()
+            .map(|section| (section, Vec::new()))
+            .collect::<BTreeMap<_, _>>();
+        if !included {
+            sections.remove(&StorageBackupHistorySection::ComputedFieldHistory);
+        }
+        document.history = Some(BackupHistory { sections });
+        assert_eq!(document.validate_version().is_ok(), accepted);
     }
 
     #[test]
@@ -2132,7 +2230,7 @@ mod tests {
         }
 
         assert_eq!(
-            verify_restored_backup_matches(&source, &restored).is_ok(),
+            verify_restored_backup_matches(&source, &restored, JsonSchemaLimits::default()).is_ok(),
             accepted
         );
     }
@@ -2165,7 +2263,9 @@ mod tests {
                 .unwrap(),
             );
 
-        assert!(verify_restored_backup_matches(&source, &restored).is_ok());
+        assert!(
+            verify_restored_backup_matches(&source, &restored, JsonSchemaLimits::default()).is_ok()
+        );
     }
 
     #[cfg(feature = "embedded-migrations")]
@@ -2255,7 +2355,7 @@ mod tests {
             );
 
         assert_eq!(
-            verify_restored_backup_matches(&source, &restored).is_ok(),
+            verify_restored_backup_matches(&source, &restored, JsonSchemaLimits::default()).is_ok(),
             accepted
         );
     }
@@ -2280,7 +2380,9 @@ mod tests {
         let mut restored = source.clone();
         normalize_legacy_class_schema_policies(&mut restored);
 
-        assert!(verify_restored_backup_matches(&source, &restored).is_ok());
+        assert!(
+            verify_restored_backup_matches(&source, &restored, JsonSchemaLimits::default()).is_ok()
+        );
     }
 
     #[cfg(feature = "embedded-migrations")]
@@ -2333,7 +2435,7 @@ mod tests {
         );
 
         assert_eq!(
-            verify_restored_backup_matches(&source, &restored).is_ok(),
+            verify_restored_backup_matches(&source, &restored, JsonSchemaLimits::default()).is_ok(),
             accepted
         );
     }
@@ -2350,7 +2452,8 @@ mod tests {
             .unwrap()
             .clear();
 
-        let error = verify_restored_backup_matches(&source, &restored).unwrap_err();
+        let error = verify_restored_backup_matches(&source, &restored, JsonSchemaLimits::default())
+            .unwrap_err();
 
         assert!(error.to_string().contains("logical state"));
     }

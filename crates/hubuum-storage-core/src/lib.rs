@@ -143,10 +143,13 @@ pub use families::{
     WorkflowStorage,
 };
 pub use history::{
-    HistoryStorage, StorageClassHistoryRecord, StorageClassObjectsAsOfQuery,
-    StorageCollectionHistoryRecord, StorageExportTemplateHistoryRecord, StorageHistoricalRelation,
-    StorageHistoryAsOfQuery, StorageHistoryCollectionScope, StorageHistoryEndpointSnapshot,
-    StorageHistoryEntry, StorageHistoryEntryQuery, StorageHistoryListQuery, StorageHistoryMarker,
+    HISTORICAL_COMPUTED_EVALUATOR_VERSION, HistoryStorage, StorageClassHistoryRecord,
+    StorageClassObjectsAsOfQuery, StorageCollectionHistoryRecord, StorageComputedFieldHistory,
+    StorageComputedFieldHistoryBuilder, StorageComputedFieldHistoryQuery,
+    StorageExportTemplateHistoryRecord, StorageHistoricalComputedField,
+    StorageHistoricalComputedFields, StorageHistoricalRelation, StorageHistoryAsOfQuery,
+    StorageHistoryCollectionScope, StorageHistoryEndpointSnapshot, StorageHistoryEntry,
+    StorageHistoryEntryQuery, StorageHistoryListQuery, StorageHistoryMarker,
     StorageHistoryMetadata, StorageHistoryMetadataParts, StorageHistoryNavigationQuery,
     StorageHistoryOperation, StorageHistoryPosition, StorageHistoryPrincipalName,
     StorageHistoryResource, StorageHistorySelection, StorageHistoryWindow,

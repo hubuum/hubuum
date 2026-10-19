@@ -38,7 +38,10 @@ verify_restore_artifact "$test_root/source.json" postgres://fixture/disposable "
             return result, report, commands
 
     def test_supported_predecessors_use_the_candidate_directly(self):
-        for source, candidate in ((6, 7), (6, 8), (7, 8), (6, 9), (7, 9), (8, 9), (9, 9)):
+        for source, candidate in (
+            (6, 7), (6, 8), (7, 8), (6, 9), (7, 9), (8, 9), (9, 9),
+            (6, 10), (7, 10), (8, 10), (9, 10), (10, 10),
+        ):
             with self.subTest(source=source, candidate=candidate):
                 result, report, commands = self.restore(source, candidate)
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -50,7 +53,7 @@ verify_restore_artifact "$test_root/source.json" postgres://fixture/disposable "
                 })
 
     def test_unreviewed_transitions_do_not_attempt_restore(self):
-        for source, candidate in ((5, 9), (9, 8), (8, 10)):
+        for source, candidate in ((5, 9), (9, 8), (5, 10), (10, 9), (9, 11)):
             with self.subTest(source=source, candidate=candidate):
                 result, _, commands = self.restore(source, candidate)
                 self.assertNotEqual(result.returncode, 0)

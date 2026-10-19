@@ -168,6 +168,20 @@ impl ComputedFieldStorage for MemoryStorage {
                 input.key()
             )));
         }
+        if state
+            .computed_fields
+            .values()
+            .filter(|definition| {
+                definition.class_id() == class_id
+                    && definition.visibility() == StorageComputedFieldVisibility::Shared
+            })
+            .count()
+            >= hubuum_computed_fields::MAX_SHARED_DEFINITIONS
+        {
+            return Err(StorageError::invalid_input(
+                "Shared computed definition limit exceeded",
+            ));
+        }
         let id = state.next_computed_field_id;
         state.next_computed_field_id += 1;
         let now = Utc::now();
@@ -194,6 +208,7 @@ impl ComputedFieldStorage for MemoryStorage {
         state
             .computation_states
             .insert(class_id.id(), computation_state.clone());
+        state.record_computed_history(class_id)?;
         let receipt = state.append_simple_event(
             EntityType::ComputedFieldDefinition,
             id,
@@ -252,6 +267,7 @@ impl ComputedFieldStorage for MemoryStorage {
         state
             .computation_states
             .insert(class_id.id(), computation_state.clone());
+        state.record_computed_history(class_id)?;
         let receipt = state.append_simple_event(
             EntityType::ComputedFieldDefinition,
             definition_id.id(),
@@ -305,6 +321,7 @@ impl ComputedFieldStorage for MemoryStorage {
         state
             .computation_states
             .insert(class_id.id(), computation_state.clone());
+        state.record_computed_history(class_id)?;
         let receipt = state.append_simple_event(
             EntityType::ComputedFieldDefinition,
             definition_id.id(),

@@ -61,6 +61,7 @@ pub(crate) const fn history_table(section: StorageBackupHistorySection) -> &'sta
         StorageBackupHistorySection::CollectionHistory => "collections_history",
         StorageBackupHistorySection::ClassHistory => "hubuumclass_history",
         StorageBackupHistorySection::ClassSchemaHistory => "class_schema_history",
+        StorageBackupHistorySection::ComputedFieldHistory => "computed_field_history",
         StorageBackupHistorySection::ClassRelationHistory => "hubuumclass_relation_history",
         StorageBackupHistorySection::ObjectHistory => "hubuumobject_history",
         StorageBackupHistorySection::ObjectRelationHistory => "hubuumobject_relation_history",
@@ -343,6 +344,7 @@ fn history_field_mappings(
 ) -> &'static [(&'static str, &'static str)] {
     match section {
         StorageBackupHistorySection::ClassSchemaHistory => &[("actor_id", "actor_principal_id")],
+        StorageBackupHistorySection::ComputedFieldHistory => &[("history_id", "history_entry_id")],
         StorageBackupHistorySection::ClassRelationHistory => CLASS_RELATION_FIELD_MAPPINGS,
         StorageBackupHistorySection::ObjectHistory => OBJECT_FIELD_MAPPINGS,
         StorageBackupHistorySection::ObjectRelationHistory => OBJECT_RELATION_FIELD_MAPPINGS,
@@ -604,7 +606,8 @@ fn snapshot_key(table: &str) -> Result<&'static str, PostgresStorageError> {
         | "hubuumobject_history"
         | "hubuumobject_relation_history"
         | "export_templates_history"
-        | "remote_targets_history" => "history_id",
+        | "remote_targets_history"
+        | "computed_field_history" => "history_id",
         _ => "id",
     })
 }

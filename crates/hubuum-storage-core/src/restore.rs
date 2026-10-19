@@ -681,6 +681,7 @@ pub struct StorageRestoreDocument {
 #[derive(Clone, PartialEq)]
 enum RestoreHistoryOrigin {
     Preserved,
+    PreserveOnApply,
     Restarted,
     RestartOnApply,
 }
@@ -694,7 +695,7 @@ impl StorageRestoreDocument {
         snapshot: StorageBackupSnapshot,
     ) -> Self {
         let history_origin = if snapshot.includes_history() {
-            RestoreHistoryOrigin::Preserved
+            RestoreHistoryOrigin::PreserveOnApply
         } else {
             RestoreHistoryOrigin::RestartOnApply
         };
@@ -730,12 +731,20 @@ impl StorageRestoreDocument {
     /// temporal baselines prepared for a history-free source.
     #[must_use]
     pub fn source_includes_history(&self) -> bool {
-        self.history_origin == RestoreHistoryOrigin::Preserved
+        matches!(
+            self.history_origin,
+            RestoreHistoryOrigin::Preserved | RestoreHistoryOrigin::PreserveOnApply
+        )
     }
 
     #[must_use]
     pub fn into_parts(self) -> (StorageRestoreDocumentMetadata, StorageBackupSnapshot) {
-        let snapshot = if self.history_origin == RestoreHistoryOrigin::RestartOnApply {
+        // Also establishes newly introduced definition history for legacy
+        // artifacts that preserve other resource history.
+        let snapshot = if matches!(
+            self.history_origin,
+            RestoreHistoryOrigin::RestartOnApply | RestoreHistoryOrigin::PreserveOnApply
+        ) {
             self.snapshot.restart_history(Utc::now())
         } else {
             self.snapshot

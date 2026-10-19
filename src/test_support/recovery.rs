@@ -1,5 +1,7 @@
-use chrono::Utc;
-use hubuum_domain::{ClassRelationId, CollectionId, PrincipalId, ResourceId};
+use chrono::{DateTime, Utc};
+use hubuum_domain::{
+    ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId, PrincipalId, ResourceId,
+};
 use hubuum_storage_core::*;
 use hubuum_storage_postgres::{PostgresFaultController, PostgresFaultPoint, PostgresPool};
 use serde_json::{Value, json};
@@ -22,9 +24,12 @@ use crate::tests::TestScope;
 pub struct RestoreContractFixture {
     kind: StorageBackendKind,
     storage: StorageHandle,
+    actor_id: PrincipalId,
     collection_id: CollectionId,
     class: StorageResolvedClass,
     query_usage_id: ResourceId,
+    retired_class_id: ClassId,
+    retired_definition_at: DateTime<Utc>,
     scope: TestScope,
     mutation: AtomicUsize,
     original: StorageBackupSnapshot,
@@ -41,6 +46,18 @@ impl RestoreContractFixture {
             .await?;
         let scope = TestScope::new();
         let context = EventContext::system();
+        let actor = storage
+            .create_user(StorageUserCreate::new(
+                None,
+                scope.scoped_name("actor"),
+                "recovery-contract-password-hash",
+                None,
+                None,
+                context.clone(),
+            ))
+            .await?
+            .into_value();
+        let actor_id = PrincipalId::new(actor.into_parts().id().id())?;
         let group = storage
             .create_group(
                 StorageGroupCreate::new(
@@ -98,6 +115,50 @@ impl RestoreContractFixture {
             .await
             .unwrap()
             .into_value();
+        // A deleted definition survives only in authoritative history. Every
+        // restore generation must retain it without recreating a live field.
+        let (retired, _) = storage.create_shared_computed_field(StorageSharedComputedFieldCreate::new(
+            class.id(), collection.id(), actor_id,
+            StorageComputedFieldDefinitionInput::new(serde_json::from_value(json!({
+                "key": "retired_recovery_field", "label": "Retired recovery field", "description": "",
+                "operation": {"type":"first_non_null", "paths":["/retained"]},
+                "result_type":"string", "enabled": true
+            })).unwrap()), context.clone()
+        )).await?.into_value().into_parts();
+        let retired_class = storage
+            .class_store()
+            .create_class(
+                StorageClassCreate::builder(
+                    scope.scoped_name("retired_class"),
+                    collection.id(),
+                    "retained identity",
+                )
+                .build(),
+                &context,
+            )
+            .await?
+            .into_value();
+        let retired_class_id = retired_class.id();
+        let retired_definition_at = Utc::now();
+        let retired_class = storage
+            .class_store()
+            .resolve_class(StorageClassSelector::Id(retired_class_id))
+            .await?;
+        storage
+            .class_store()
+            .delete_class(&retired_class, &context)
+            .await?
+            .into_value();
+        storage
+            .delete_shared_computed_field(StorageSharedComputedFieldDelete::new(
+                class.id(),
+                collection.id(),
+                ComputedFieldDefinitionId::from(retired.metadata().id()),
+                actor_id,
+                context.clone(),
+            ))
+            .await?
+            .into_value();
         let query_usage = storage
             .create_query_usage(StorageQueryUsageCreate::new(
                 StorageQueryUsageScope::new(class.id(), collection.id()),
@@ -107,7 +168,7 @@ impl RestoreContractFixture {
                     vec![StorageQueryUsageOperation::Equals],
                 )
                 .unwrap(),
-                EventContext::user(PrincipalId::new(1).unwrap(), None, None),
+                EventContext::user(actor_id, None, None),
             ))
             .await?
             .into_value();
@@ -226,9 +287,12 @@ impl RestoreContractFixture {
             kind,
             original,
             storage,
+            actor_id,
             collection_id: collection.id(),
             class: resolved,
             query_usage_id: query_usage.metadata().id(),
+            retired_class_id,
+            retired_definition_at,
             scope,
             mutation: AtomicUsize::new(0),
         })
@@ -266,7 +330,7 @@ impl RestoreContractFixture {
             .create_task(
                 StorageTaskCreateRequest::builder(
                     payload.task_kind(),
-                    PrincipalId::new(1)?,
+                    self.actor_id,
                     json!({"input": "retained"}),
                     1,
                 )
@@ -353,6 +417,95 @@ impl RestoreContractFixture {
     pub async fn mutate(&self) -> Result<(), ApiError> {
         let iteration = self.mutation.fetch_add(1, Ordering::SeqCst);
         let context = EventContext::system();
+        let retains_class = self
+            .storage
+            .get_computed_field_history(StorageComputedFieldHistoryQuery::new(
+                self.retired_class_id,
+                self.retired_definition_at,
+            ))
+            .await?
+            .is_some();
+        let class = self
+            .storage
+            .class_store()
+            .create_class(
+                StorageClassCreate::builder(
+                    self.scope
+                        .scoped_name(&format!("deleted_class_{iteration}")),
+                    self.collection_id,
+                    "retained identity",
+                )
+                .build(),
+                &context,
+            )
+            .await?
+            .into_value();
+        if retains_class {
+            assert!(
+                class.id() > self.retired_class_id,
+                "restore must not reuse a retained class identity"
+            );
+        }
+        let class = self
+            .storage
+            .class_store()
+            .resolve_class(StorageClassSelector::Id(class.id()))
+            .await?;
+        self.storage
+            .class_store()
+            .delete_class(&class, &context)
+            .await?
+            .into_value();
+        let retained_id = self
+            .storage
+            .get_computed_field_history(StorageComputedFieldHistoryQuery::new(
+                self.class.class().id(),
+                self.retired_definition_at,
+            ))
+            .await?
+            .map(|selected| {
+                selected
+                    .record()
+                    .definitions()
+                    .iter()
+                    .map(|field| field.id().id())
+                    .max()
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+        let (definition, _) = self
+            .storage
+            .create_shared_computed_field(StorageSharedComputedFieldCreate::new(
+                self.class.class().id(),
+                self.collection_id,
+                self.actor_id,
+                StorageComputedFieldDefinitionInput::new(
+                    serde_json::from_value(json!({
+                        "key": "recovered_field", "label": "Recovered field", "description": "",
+                        "operation": {"type":"first_non_null", "paths":["/retained"]},
+                        "result_type":"string", "enabled": true
+                    }))
+                    .unwrap(),
+                ),
+                context.clone(),
+            ))
+            .await?
+            .into_value()
+            .into_parts();
+        assert!(
+            definition.metadata().id().id() > retained_id,
+            "restore must not reuse a retained definition identity"
+        );
+        self.storage
+            .delete_shared_computed_field(StorageSharedComputedFieldDelete::new(
+                self.class.class().id(),
+                self.collection_id,
+                ComputedFieldDefinitionId::from(definition.metadata().id()),
+                self.actor_id,
+                context.clone(),
+            ))
+            .await?
+            .into_value();
         let usage_scope = StorageQueryUsageScope::new(self.class.class().id(), self.collection_id);
         let declaration = self
             .storage
@@ -383,7 +536,7 @@ impl RestoreContractFixture {
             updated.metadata().revision().get(),
             declaration.metadata().revision().get() + 1
         );
-        assert_eq!(updated.created_by(), Some(PrincipalId::new(1).unwrap()));
+        assert_eq!(updated.created_by(), Some(self.actor_id));
         let _ = self
             .storage
             .collection_store()

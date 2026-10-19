@@ -1,6 +1,7 @@
 use hubuum_domain::JsonSchemaLimits;
 mod baseline;
 mod budget;
+mod computed;
 pub use budget::{StorageBackupBudget, StorageBackupCaptureProgress};
 mod query_usage;
 mod revisions;
@@ -91,6 +92,7 @@ backup_sections! {
         CollectionHistory => "collection_history",
         ClassHistory => "class_history",
         ClassSchemaHistory => "class_schema_history",
+        ComputedFieldHistory => "computed_field_history",
         ClassRelationHistory => "class_relation_history",
         ObjectHistory => "object_history",
         ObjectRelationHistory => "object_relation_history",
@@ -328,7 +330,10 @@ impl StorageBackupSnapshot {
             )));
         }
 
-        if let Some(history) = &history_sections {
+        if let Some(history) = &mut history_sections {
+            history
+                .entry(StorageBackupHistorySection::ComputedFieldHistory)
+                .or_default();
             let missing_history = StorageBackupHistorySection::ALL
                 .iter()
                 .find(|section| !history.contains_key(section));
@@ -373,6 +378,7 @@ impl StorageBackupSnapshot {
         revisions::validate_backup_revisions(&snapshot)?;
         schemas::validate(&snapshot)?;
         query_usage::validate(&snapshot)?;
+        computed::validate(&snapshot)?;
         Ok(snapshot)
     }
 

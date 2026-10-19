@@ -58,13 +58,16 @@ authentication tokens, and token scopes. Passwords and tokens must be reset or
 reissued after a restore. Environment-backed secret values are also outside the
 database backup.
 
-Backup version `9` adds class query usage declarations, including their revisions
-and creation/modification attribution. Versions `6` through `8` remain accepted
-and restore with no declarations; legacy event defaults and sink grants are
-backfilled where needed. Collection sink ownership, explicit use grants, delivery
+Backup version `10` adds authoritative shared computed-definition history.
+Upgrade the restore server before using a version `10` backup; retain a
+pre-upgrade backup and matching binaries for rollback. Versions `6`
+through `9` remain accepted. Missing computed-definition history starts at the
+restore boundary, preserving older unavailable intervals. Versions `6` through
+`8` restore with no query usage declarations; legacy event defaults and sink
+grants are backfilled where needed. Collection sink ownership, explicit use grants, delivery
 policy, system subscriptions and terminal test deliveries remain preserved.
 Transient sink admission schedules reset on restore. Older servers cannot read
-version `9`, even when its declaration set is empty. The format preserves
+version `10`, even when its definition history is empty. The format preserves
 authoritative resource revisions, collection authorization-set revisions,
 temporal-history revisions, and event before/after
 revisions. It identifies sections by Hubuum resources rather than database
@@ -97,7 +100,12 @@ inconsistent revisions. Create a new backup after upgrading and before relying
 on restore.
 
 Both shared and personal computed-field definitions are preserved, including
-personal ownership. Class computation state and object materializations remain
+personal ownership. With history included, `computed_field_history` also retains
+complete shared sets, revision identities, enablement and validity intervals,
+including deleted definitions. It excludes personal definitions and actor data;
+restore validates unique identities, bounded definition sets, non-overlapping
+intervals and agreement between open sets and current shared definitions.
+Class computation state and object materializations remain
 excluded as rebuildable caches; restore validates definitions and queues shared
 class rebuild tasks. Personal values are evaluated when their owner reads an
 object. The [functional corpus](https://github.com/hubuum/hubuum/blob/main/test-corpora/README.md#object-data-and-computed-fields)

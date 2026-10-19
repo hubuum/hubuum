@@ -7,7 +7,7 @@
 pub mod computed_lock_protocol;
 
 use chrono::NaiveDateTime;
-use diesel::sql_types::{Bool, Integer, Timestamp};
+use diesel::sql_types::{Bool, Integer, Text, Timestamp};
 use diesel::{
     ExpressionMethods, Insertable, NullableExpressionMethods, OptionalExtension, QueryDsl,
     Queryable, QueryableByName, Selectable, SelectableHelper,
@@ -141,6 +141,29 @@ pub fn integration_test_migration_pool(max_size: u32) -> PostgresPool {
         .build()
         .expect("integration-test migration settings must be valid");
     build_postgres_pool(&settings).expect("integration-test migration pool must be constructed")
+}
+
+/// Remove retained rows manufactured by a test that deliberately corrupts a
+/// computed definition. Ordinary fixture deletion must preserve its history.
+pub async fn delete_corrupt_computed_history_fixture(
+    class_id: ClassId,
+) -> Result<(), PostgresStorageError> {
+    let pool = integration_test_migration_pool(1);
+    crate::with_transaction(&pool, async |connection| {
+        if database_role_tests_enabled() {
+            let roles = integration_test_database_roles();
+            diesel::sql_query("SELECT set_config('role', $1, true)")
+                .bind::<Text, _>(roles.owner().as_str())
+                .execute(connection)
+                .await?;
+        }
+        diesel::sql_query("DELETE FROM computed_field_history WHERE class_id = $1")
+            .bind::<Integer, _>(class_id.id())
+            .execute(connection)
+            .await?;
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
 }
 
 /// Persisted credential evidence needed by request-level authentication tests.

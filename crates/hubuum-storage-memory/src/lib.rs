@@ -400,6 +400,7 @@ struct MemoryState {
     export_templates: BTreeMap<i32, StorageExportTemplate>,
     remote_targets: BTreeMap<i32, StorageRemoteTarget>,
     computed_fields: BTreeMap<i32, StorageComputedFieldDefinition>,
+    computed_history: Vec<StorageComputedFieldHistory>,
     query_usage: BTreeMap<i32, StorageQueryUsageDeclaration>,
     next_query_usage_id: i32,
     computation_states: BTreeMap<i32, StorageClassComputationState>,
@@ -809,6 +810,7 @@ mod support;
 use support::*;
 
 mod backup;
+mod computed_history;
 mod credential_approval;
 mod events;
 mod execution;

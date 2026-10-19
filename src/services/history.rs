@@ -1,4 +1,5 @@
 pub(crate) mod access;
+pub(crate) mod computed;
 pub(crate) mod navigation;
 
 use chrono::{DateTime, Utc};

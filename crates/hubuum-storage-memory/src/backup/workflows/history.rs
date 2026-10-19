@@ -2,6 +2,22 @@ use super::*;
 
 mod tasks;
 
+fn advance_retained_sequence(
+    next: &mut i32,
+    rows: &[StorageBackupRow],
+    column: &str,
+) -> Result<(), StorageError> {
+    for row in rows {
+        *next = (*next).max(
+            Row(row)
+                .integer(column)?
+                .checked_add(1)
+                .ok_or_else(|| invalid("retained resource sequence"))?,
+        );
+    }
+    Ok(())
+}
+
 pub(in crate::backup) fn capture_history(
     state: &MemoryState,
     progress: &mut StorageBackupCaptureProgress,
@@ -17,6 +33,21 @@ pub(in crate::backup) fn capture_history(
             .schema_history
             .iter()
             .map(|row| capture_row(progress, Ok(row.clone())))
+            .collect::<Result<_, _>>()?,
+    );
+    sections.insert(
+        StorageBackupHistorySection::ComputedFieldHistory,
+        state
+            .computed_history
+            .iter()
+            .map(|record| {
+                capture_row(
+                    progress,
+                    serde_json::to_value(record)
+                        .map_err(|error| StorageError::internal(error.to_string()))
+                        .and_then(row),
+                )
+            })
             .collect::<Result<_, _>>()?,
     );
     for entry in &state.history {
@@ -144,10 +175,73 @@ pub(in crate::backup) fn restore_history(
             row.normalize_legacy_history(section);
         }
     }
+    // Restored allocators must include deleted resources retained in history.
+    for (section, next) in [
+        (
+            StorageBackupHistorySection::CollectionHistory,
+            &mut state.next_collection_id,
+        ),
+        (
+            StorageBackupHistorySection::ClassHistory,
+            &mut state.next_class_id,
+        ),
+        (
+            StorageBackupHistorySection::ObjectHistory,
+            &mut state.next_object_id,
+        ),
+        (
+            StorageBackupHistorySection::ClassRelationHistory,
+            &mut state.next_class_relation_id,
+        ),
+        (
+            StorageBackupHistorySection::ObjectRelationHistory,
+            &mut state.next_object_relation_id,
+        ),
+        (
+            StorageBackupHistorySection::ExportTemplateHistory,
+            &mut state.next_export_template_id,
+        ),
+        (
+            StorageBackupHistorySection::RemoteTargetHistory,
+            &mut state.next_remote_target_id,
+        ),
+    ] {
+        advance_retained_sequence(next, &sections[&section], "id")?;
+    }
+    for section in [
+        StorageBackupHistorySection::ClassSchemaHistory,
+        StorageBackupHistorySection::ComputedFieldHistory,
+    ] {
+        advance_retained_sequence(&mut state.next_class_id, &sections[&section], "class_id")?;
+    }
     state.schema_history = sections[&StorageBackupHistorySection::ClassSchemaHistory].clone();
     state
         .schema_history
         .sort_by_key(|row| row.get("id").and_then(Value::as_i64));
+    state.computed_history = sections[&StorageBackupHistorySection::ComputedFieldHistory]
+        .iter()
+        .map(|row| {
+            serde_json::from_value(row.clone().into_value()).map_err(|error| {
+                StorageError::backend_failure(format!("Invalid computed history: {error}"))
+            })
+        })
+        .collect::<Result<_, _>>()?;
+    state
+        .computed_history
+        .sort_by_key(|record| (record.valid_from(), record.history_entry_id()));
+    if let Some(retained_id) = state
+        .computed_history
+        .iter()
+        .flat_map(|record| record.definitions())
+        .map(|field| field.id().id())
+        .max()
+    {
+        state.next_computed_field_id = state.next_computed_field_id.max(
+            retained_id
+                .checked_add(1)
+                .ok_or_else(|| invalid("computed definition sequence"))?,
+        );
+    }
     state.history.clear();
     for section in [
         StorageBackupHistorySection::CollectionHistory,
@@ -223,7 +317,8 @@ pub(in crate::backup) fn restore_history(
         .filter(|(s, _)| {
             matches!(
                 s,
-                StorageBackupHistorySection::CollectionHistory
+                StorageBackupHistorySection::ComputedFieldHistory
+                    | StorageBackupHistorySection::CollectionHistory
                     | StorageBackupHistorySection::ClassHistory
                     | StorageBackupHistorySection::ObjectHistory
                     | StorageBackupHistorySection::ClassRelationHistory

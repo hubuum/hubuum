@@ -2,8 +2,10 @@ use super::*;
 
 use diesel::sql_types::{BigInt, Bool, Integer};
 
+use hubuum_domain::ClassId;
 use hubuum_storage_core::{StorageError, StorageErrorKind};
 use hubuum_storage_postgres::PostgresPool;
+use hubuum_storage_postgres::test_support::delete_corrupt_computed_history_fixture;
 
 async fn load_computed_object_data(
     pool: &PostgresPool,
@@ -178,6 +180,9 @@ async fn computed_materialization_failure_rolls_back_data_history_and_events(
         events_before
     );
     fixture.cleanup().await.unwrap();
+    delete_corrupt_computed_history_fixture(ClassId::new(fixture.class.id).unwrap())
+        .await
+        .unwrap();
 }
 
 #[rstest]

@@ -12,7 +12,7 @@ use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
 
 use super::principal::Principal;
 
-pub const CURRENT_BACKUP_VERSION: i32 = 9;
+pub const CURRENT_BACKUP_VERSION: i32 = 10;
 pub(crate) const BACKUP_MANIFEST_EXCLUSIONS: &[&str] = &[
     "backup_task_outputs (backup artifacts never recursively contain prior backups)",
     "authentication tokens and token scopes (credentials must be reissued after restore)",
@@ -215,6 +215,17 @@ impl fmt::Debug for BackupDocument {
 
 impl BackupDocument {
     pub fn validate_version(&self) -> Result<(), ApiError> {
+        if self.backup_version >= 10
+            && self.history.as_ref().is_some_and(|history| {
+                !history.sections.contains_key(
+                    &hubuum_storage_core::StorageBackupHistorySection::ComputedFieldHistory,
+                )
+            })
+        {
+            return Err(ApiError::BadRequest(
+                "Backup version 10 requires computed_field_history when history is included".into(),
+            ));
+        }
         if self.backup_version >= 9
             && !self.state.sections.contains_key(
                 &hubuum_storage_core::StorageBackupStateSection::QueryUsageDeclarations,
@@ -224,9 +235,9 @@ impl BackupDocument {
                 "Backup version 9 requires query_usage_declarations".into(),
             ));
         }
-        if ![6, 7, 8, CURRENT_BACKUP_VERSION].contains(&self.backup_version) {
+        if ![6, 7, 8, 9, CURRENT_BACKUP_VERSION].contains(&self.backup_version) {
             return Err(ApiError::BadRequest(format!(
-                "Unsupported backup version '{}'; expected 6, 7, 8 or {}",
+                "Unsupported backup version '{}'; expected 6, 7, 8, 9 or {}",
                 self.backup_version, CURRENT_BACKUP_VERSION
             )));
         }

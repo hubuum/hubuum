@@ -478,6 +478,7 @@ impl ClassStorage for MemoryStorage {
         )?;
         state.classes.insert(id, class.clone());
         state.schema_record_class(&class, StorageHistoryOperation::Create, context, policy)?;
+        state.record_computed_history(class.id())?;
         state.append_history(
             MemoryHistoryValue::Class(class.clone()),
             StorageHistoryOperation::Create,
@@ -1536,6 +1537,11 @@ fn delete_class_in_state(
     )?;
     super::query_usage::delete_class_query_usage(state, &current, context)?;
     state.classes.remove(&id.id());
+    state
+        .computed_fields
+        .retain(|_, definition| definition.class_id() != id);
+    state.computation_states.remove(&id.id());
+    state.record_computed_history(id)?;
     let objects = state
         .objects
         .values()
