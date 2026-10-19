@@ -19,9 +19,9 @@ use hubuum_storage_core::capabilities::{
     workflows::*,
 };
 use hubuum_storage_core::{
-    StorageAuthenticationCredential, StorageTaskMetadata, StorageTokenDigest, StorageTokenFormat,
-    StorageTokenHashAlgorithm, StorageTokenHashKeyId, StorageTokenMigrationOutcome,
-    StorageValidationError, TaskMetadataDetails,
+    StorageAuthenticationCredential, StorageQueryObservationControl, StorageTaskMetadata,
+    StorageTokenDigest, StorageTokenFormat, StorageTokenHashAlgorithm, StorageTokenHashKeyId,
+    StorageTokenMigrationOutcome, StorageValidationError, TaskMetadataDetails,
 };
 use uuid::Uuid;
 
@@ -402,6 +402,7 @@ struct MemoryState {
     computed_fields: BTreeMap<i32, StorageComputedFieldDefinition>,
     computed_history: Vec<StorageComputedFieldHistory>,
     query_usage: BTreeMap<i32, StorageQueryUsageDeclaration>,
+    query_observation_control: StorageQueryObservationControl,
     next_query_usage_id: i32,
     computation_states: BTreeMap<i32, StorageClassComputationState>,
     computed_rebuild_tasks: BTreeMap<i32, ClassId>,

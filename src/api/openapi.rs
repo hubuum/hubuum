@@ -101,6 +101,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
         probes::readyz,
         client_config::get_client_config,
         runtime_config::get_running_config,
+        runtime_config::get_query_observations,
+        runtime_config::set_query_observations,
         meta::get_db_state,
         meta::get_object_and_class_count,
         meta::get_task_queue_state,

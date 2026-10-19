@@ -1,11 +1,47 @@
 use super::*;
 use hubuum_storage_core::{
-    QueryUsageStorage, StorageQueryUsageCreate, StorageQueryUsageDeclaration,
-    StorageQueryUsageDelete, StorageQueryUsageReplace, StorageQueryUsageScope,
+    QueryUsageStorage, StorageQueryObservationControl, StorageQueryUsageCreate,
+    StorageQueryUsageDeclaration, StorageQueryUsageDelete, StorageQueryUsageReplace,
+    StorageQueryUsageScope,
 };
 
 #[async_trait]
 impl QueryUsageStorage for StorageHandle {
+    async fn query_observation_control(
+        &self,
+    ) -> Result<StorageQueryObservationControl, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::QueryUsage,
+            "query_observation_control",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.query_observation_control().await
+                })
+            },
+        )
+        .await
+    }
+
+    async fn set_query_observation_control(
+        &self,
+        control: StorageQueryObservationControl,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::QueryUsage,
+            "set_query_observation_control",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.set_query_observation_control(control).await
+                })
+            },
+        )
+        .await?;
+        self.inner.query_observations.invalidate_control().await;
+        Ok(())
+    }
+
     async fn list_query_usage(
         &self,
         request: StorageQueryUsageScope,
@@ -71,6 +107,20 @@ impl QueryUsageStorage for StorageHandle {
 }
 
 impl StorageHandle {
+    /// Administrative reads bypass the collection cache and report shared state.
+    pub(crate) async fn query_observation_configuration(
+        &self,
+    ) -> Result<
+        (
+            StorageQueryObservationSettings,
+            StorageQueryObservationControl,
+        ),
+        StorageError,
+    > {
+        let control = self.query_observation_control().await?;
+        Ok((self.inner.query_observations.settings(control), control))
+    }
+
     pub(crate) async fn analyze_query_usage(
         &self,
         scope: StorageQueryUsageScope,
@@ -83,7 +133,9 @@ impl StorageHandle {
         let request = StorageQueryUsageAnalysisRequest::try_new(
             scope,
             proposed,
-            self.inner.query_observations.snapshot(scope.class_id()),
+            self.inner
+                .query_observations
+                .snapshot_with_control(scope.class_id(), self.query_observation_control().await?),
         )
         .map_err(|error| error.into_request_error())?;
         self.observe_storage_call(self.backend_name(), StorageCapability::QueryUsage, "analyze_query_usage", async {

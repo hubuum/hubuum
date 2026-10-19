@@ -1,12 +1,30 @@
 use super::*;
 use hubuum_storage_core::{
-    QueryUsageAnalysisProvider, QueryUsageStorage, StorageQueryUsageAnalysis,
-    StorageQueryUsageAnalysisRequest, StorageQueryUsageCreate, StorageQueryUsageDeclaration,
-    StorageQueryUsageDelete, StorageQueryUsageReplace, StorageQueryUsageScope,
+    QueryUsageAnalysisProvider, QueryUsageStorage, StorageQueryObservationControl,
+    StorageQueryUsageAnalysis, StorageQueryUsageAnalysisRequest, StorageQueryUsageCreate,
+    StorageQueryUsageDeclaration, StorageQueryUsageDelete, StorageQueryUsageReplace,
+    StorageQueryUsageScope,
 };
 
 #[async_trait]
 impl QueryUsageStorage for PostgresStorage {
+    async fn query_observation_control(
+        &self,
+    ) -> Result<StorageQueryObservationControl, StorageError> {
+        crate::operations::query_usage::query_observation_control(self.runtime())
+            .await
+            .map_err(StorageError::from)
+    }
+
+    async fn set_query_observation_control(
+        &self,
+        control: StorageQueryObservationControl,
+    ) -> Result<(), StorageError> {
+        crate::operations::query_usage::set_query_observation_control(self.runtime(), control)
+            .await
+            .map_err(StorageError::from)
+    }
+
     async fn list_query_usage(
         &self,
         request: StorageQueryUsageScope,

@@ -802,6 +802,118 @@
         ]
       }
     },
+    "/api/v1/admin/query-observations": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Api V1 Admin Query Observations",
+        "description": "Auto-generated documentation for GET /api/v1/admin/query-observations.",
+        "operationId": "getApiV1AdminQueryObservations",
+        "responses": {
+          "200": {
+            "description": "Shared override and effective observation settings for this replica",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryObservationConfig"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Put Api V1 Admin Query Observations",
+        "description": "Auto-generated documentation for PUT /api/v1/admin/query-observations.",
+        "operationId": "putApiV1AdminQueryObservations",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryObservationUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Persisted override; replicas refresh before collection at most once per second",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryObservationConfig"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/backups": {
       "post": {
         "tags": [
@@ -34115,6 +34227,13 @@
             "format": "int32",
             "minimum": 0
           },
+          "runtime_override": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Shared runtime override; null means the process startup setting applies."
+          },
           "sample_every": {
             "type": "integer",
             "format": "int32",
@@ -34197,6 +34316,19 @@
             "type": "string"
           }
         }
+      },
+      "QueryObservationUpdateRequest": {
+        "type": "object",
+        "description": "Enable or disable observation collection across replicas sharing storage.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
       },
       "QueryPatternObservation": {
         "type": "object",

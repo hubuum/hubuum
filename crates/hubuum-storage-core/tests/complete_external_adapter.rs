@@ -6,7 +6,7 @@
 
 #![allow(unused_variables)]
 
-use hubuum_storage_core::StorageExternalSyncFailure;
+use hubuum_storage_core::{StorageExternalSyncFailure, StorageQueryObservationControl};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -2188,6 +2188,18 @@ fn an_external_crate_can_implement_the_complete_backend_contract() {
 
 #[async_trait]
 impl QueryUsageStorage for CompleteExternalAdapter {
+    async fn query_observation_control(
+        &self,
+    ) -> Result<StorageQueryObservationControl, StorageError> {
+        unimplemented!("compile-only adapter")
+    }
+    async fn set_query_observation_control(
+        &self,
+        _control: StorageQueryObservationControl,
+    ) -> Result<(), StorageError> {
+        unimplemented!("compile-only adapter")
+    }
+
     async fn list_query_usage(
         &self,
         _request: StorageQueryUsageScope,

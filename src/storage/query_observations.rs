@@ -6,9 +6,10 @@ use hubuum_query::{
     StructuredQueryExpression, infer_query_scalar_type,
 };
 use hubuum_storage_core::{
-    StorageQueryObservationSettings, StorageQueryObservationSnapshot,
-    StorageQueryPatternObservation, StorageQueryUsageOperation as UsageOperation,
-    StorageQueryUsagePattern, StorageQueryUsageValueType as UsageType,
+    StorageError, StorageQueryObservationControl, StorageQueryObservationSettings,
+    StorageQueryObservationSnapshot, StorageQueryPatternObservation,
+    StorageQueryUsageOperation as UsageOperation, StorageQueryUsagePattern,
+    StorageQueryUsageValueType as UsageType,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -21,6 +22,8 @@ use std::{
 };
 
 type PatternKey = (ClassId, StorageQueryUsagePattern);
+const CONTROL_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+const CONTROL_READ_TIMEOUT: Duration = Duration::from_millis(250);
 struct Entry {
     observation: StorageQueryPatternObservation,
     expires_at: Instant,
@@ -53,6 +56,7 @@ pub(crate) struct QueryObservations {
     started_at: DateTime<Utc>,
     requests: AtomicU64,
     state: Mutex<State>,
+    control: tokio::sync::Mutex<Option<(Instant, bool)>>,
 }
 impl QueryObservations {
     pub(crate) fn new(settings: StorageQueryObservationSettings) -> Self {
@@ -60,12 +64,48 @@ impl QueryObservations {
             settings,
             started_at: Utc::now(),
             requests: AtomicU64::new(0),
+            control: tokio::sync::Mutex::new(None),
             state: Mutex::new(State {
                 entries: HashMap::new(),
                 class_counts: HashMap::new(),
                 drops: 0,
             }),
         }
+    }
+
+    pub(crate) fn settings(
+        &self,
+        control: StorageQueryObservationControl,
+    ) -> StorageQueryObservationSettings {
+        control.resolve(self.settings)
+    }
+
+    pub(crate) async fn invalidate_control(&self) {
+        *self.control.lock().await = None;
+    }
+
+    /// Refresh even while disabled. A failed or slow read pauses collection;
+    /// it must neither keep a stale enablement nor fail the application query.
+    pub(crate) async fn collection_enabled(
+        &self,
+        load: impl Future<Output = Result<StorageQueryObservationControl, StorageError>>,
+    ) -> bool {
+        let mut cache = self.control.lock().await;
+        let now = Instant::now();
+        if let Some((expires_at, enabled)) = *cache
+            && now < expires_at
+        {
+            return enabled;
+        }
+        let enabled = match tokio::time::timeout(CONTROL_READ_TIMEOUT, load).await {
+            Ok(Ok(control)) => self.settings(control).enabled(),
+            _ => {
+                tracing::warn!("Query observation control unavailable; collection paused");
+                false
+            }
+        };
+        *cache = Some((now + CONTROL_REFRESH_INTERVAL, enabled));
+        enabled
     }
 
     pub(crate) async fn observe<T, E>(
@@ -89,11 +129,10 @@ impl QueryObservations {
         query: &QueryOptions,
         explicit_class: Option<ClassId>,
     ) -> Option<QueryObservationTicket> {
-        if !self.settings.enabled()
-            || !self
-                .requests
-                .fetch_add(1, Ordering::Relaxed)
-                .is_multiple_of(u64::from(self.settings.sample_every()))
+        if !self
+            .requests
+            .fetch_add(1, Ordering::Relaxed)
+            .is_multiple_of(u64::from(self.settings.sample_every()))
         {
             return None;
         }
@@ -149,7 +188,11 @@ impl QueryObservations {
         })
     }
 
-    pub(crate) fn snapshot(&self, class_id: ClassId) -> StorageQueryObservationSnapshot {
+    pub(crate) fn snapshot_with_control(
+        &self,
+        class_id: ClassId,
+        control: StorageQueryObservationControl,
+    ) -> StorageQueryObservationSnapshot {
         let mut state = self
             .state
             .lock()
@@ -167,7 +210,17 @@ impl QueryObservations {
                 serde_json::to_string(&value.pattern().value_type()).expect("scalar enum"),
             )
         });
-        StorageQueryObservationSnapshot::new(self.settings, self.started_at, patterns, state.drops)
+        StorageQueryObservationSnapshot::new(
+            self.settings(control),
+            self.started_at,
+            patterns,
+            state.drops,
+        )
+    }
+
+    #[cfg(test)]
+    fn snapshot(&self, class_id: ClassId) -> StorageQueryObservationSnapshot {
+        self.snapshot_with_control(class_id, StorageQueryObservationControl::Startup)
     }
 }
 
@@ -278,6 +331,74 @@ mod tests {
     use hubuum_query::{StructuredQueryField, parse_query_parameter};
     use rstest::rstest;
 
+    #[rstest::rstest]
+    #[case::disabled(false, StorageQueryObservationControl::Startup, false)]
+    #[case::startup(true, StorageQueryObservationControl::Startup, true)]
+    #[case::enable(false, StorageQueryObservationControl::Enabled, true)]
+    #[case::disable(true, StorageQueryObservationControl::Disabled, false)]
+    #[tokio::test]
+    async fn runtime_control_overrides_startup(
+        #[case] startup: bool,
+        #[case] control: StorageQueryObservationControl,
+        #[case] expected: bool,
+    ) {
+        let collector = QueryObservations::new(
+            StorageQueryObservationSettings::try_new(startup, 1, 8, 8, 60, 16).unwrap(),
+        );
+        assert_eq!(
+            collector.collection_enabled(async { Ok(control) }).await,
+            expected
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_control_is_cached_between_queries() {
+        let collector = collector(8, 8, 1);
+        assert!(
+            collector
+                .collection_enabled(async { Ok(StorageQueryObservationControl::Enabled) })
+                .await
+        );
+        assert!(
+            collector
+                .collection_enabled(async { panic!("cache should avoid another storage read") })
+                .await
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::enabled(StorageQueryObservationControl::Enabled, true)]
+    #[case::disabled(StorageQueryObservationControl::Disabled, false)]
+    #[tokio::test]
+    async fn expired_control_refreshes_even_when_disabled(
+        #[case] next: StorageQueryObservationControl,
+        #[case] expected: bool,
+    ) {
+        let collector = collector(8, 8, 1);
+        *collector.control.lock().await =
+            Some((Instant::now() - Duration::from_secs(1), !expected));
+        assert_eq!(
+            collector.collection_enabled(async { Ok(next) }).await,
+            expected
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_control_read_does_not_reuse_stale_enablement() {
+        let collector = collector(8, 8, 1);
+        *collector.control.lock().await = Some((Instant::now() - Duration::from_secs(1), true));
+        assert!(
+            !collector
+                .collection_enabled(async { Err(StorageError::internal("unavailable")) })
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn stalled_control_read_pauses_collection() {
+        let collector = collector(8, 8, 1);
+        assert!(!collector.collection_enabled(std::future::pending()).await);
+    }
     fn collector(max: usize, per_class: usize, sample: u32) -> Arc<QueryObservations> {
         Arc::new(QueryObservations::new(
             StorageQueryObservationSettings::try_new(true, sample, max, per_class, 60, 16).unwrap(),

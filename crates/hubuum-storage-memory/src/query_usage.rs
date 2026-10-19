@@ -116,6 +116,20 @@ pub(super) fn delete_class_query_usage(
 
 #[async_trait]
 impl QueryUsageStorage for MemoryStorage {
+    async fn query_observation_control(
+        &self,
+    ) -> Result<StorageQueryObservationControl, StorageError> {
+        Ok(self.state.read().await.query_observation_control)
+    }
+
+    async fn set_query_observation_control(
+        &self,
+        control: StorageQueryObservationControl,
+    ) -> Result<(), StorageError> {
+        self.state.write().await.query_observation_control = control;
+        Ok(())
+    }
+
     async fn list_query_usage(
         &self,
         scope: StorageQueryUsageScope,

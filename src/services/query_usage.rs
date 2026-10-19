@@ -7,11 +7,33 @@ use hubuum_storage_core::{
 use serde_json::Value;
 
 use crate::{
+    config::running::QueryObservationConfig,
     errors::ApiError,
     events::EventContext,
-    models::query_usage::QueryUsageResponse,
+    models::query_usage::{QueryObservationUpdateRequest, QueryUsageResponse},
     storage::{StorageContext, storage_handle},
 };
+
+pub async fn observation_configuration(
+    context: &impl StorageContext,
+) -> Result<QueryObservationConfig, ApiError> {
+    let (settings, control) = storage_handle(context)
+        .query_observation_configuration()
+        .await?;
+    let mut config = QueryObservationConfig::from(settings);
+    config.runtime_override = control.override_enabled();
+    Ok(config)
+}
+
+pub async fn set_observation_configuration(
+    context: &impl StorageContext,
+    request: QueryObservationUpdateRequest,
+) -> Result<QueryObservationConfig, ApiError> {
+    storage_handle(context)
+        .set_query_observation_control(request.control())
+        .await?;
+    observation_configuration(context).await
+}
 
 fn response(
     value: StorageQueryUsageDeclaration,

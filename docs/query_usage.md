@@ -86,11 +86,40 @@ usable workload evidence is missing or bounded catalog inspection is incomplete.
 A `complete` review can contain zero suggestions. Neither missing observations
 nor zero native scans establishes that a resource is unused.
 
-Collection is disabled by default. Enable it with
-`HUBUUM_QUERY_OBSERVATIONS_ENABLED=true`. Effective settings appear in the
-administrator configuration endpoint. CLI flags use the corresponding lowercase
-hyphenated names; TOML keys use lowercase underscores under
+Collection is disabled by default. `HUBUUM_QUERY_OBSERVATIONS_ENABLED=true`
+sets the startup default. An unscoped human administrator can enable or disable
+collection at runtime through `PUT /api/v1/admin/query-observations`:
+
+```sh
+curl --fail-with-body --request PUT "$HUBUUM_URL/api/v1/admin/query-observations" \
+  --header "Authorization: Bearer $HUBUUM_TOKEN" \
+  --header 'Content-Type: application/json' --data '{"enabled":true}'
+```
+
+Send `{"enabled":false}` to disable collection. The override applies to every
+upgraded API replica connected to the same PostgreSQL database, including replicas
+whose startup default differs. It survives restarts and logical backup restores;
+it is deployment configuration and is not copied into portable backups. Concurrent
+updates use the last committed value. Memory storage shares the setting only
+among handles using the same in-process store; independent memory processes do
+not form a shared deployment.
+
+Replicas refresh the control before collection, caching it for at most one second.
+The next query after expiry refreshes even when collection is disabled. Failed or
+slow control reads pause collection without failing the query. Requests already
+being observed can finish recording after disablement. Disabling retains existing
+observations until their normal expiry and leaves declarations and indexes intact.
+
+`GET /api/v1/admin/query-observations` returns the effective settings for the
+responding replica, including `enabled` and `runtime_override`. A null override
+means its startup default still applies. `GET /api/v1/admin/config` exposes the
+same effective settings. Both reads load the shared setting directly. Sampling
+and capacity limits remain startup settings. CLI flags use the corresponding
+lowercase hyphenated names; TOML keys use lowercase underscores under
 `[query_observations]`.
+
+Apply the query observation control migration before starting the updated server,
+and upgrade all API replicas before relying on the deployment-wide toggle.
 
 | Environment suffix after `HUBUUM_QUERY_OBSERVATIONS_` | Default | Accepted range |
 | --- | --- | --- |
@@ -205,9 +234,9 @@ Use an existing class and ordinary object filters throughout this workflow. The
 examples use class `42`, path `hardware,serial_number`, an unscoped administrator
 `HUBUUM_TOKEN`, and a `HUBUUM_URL` without a trailing slash.
 
-1. **Observe.** Enable `HUBUUM_QUERY_OBSERVATIONS_ENABLED=true` on the API process
-   and restart it. In a disposable rehearsal, also set
-   `HUBUUM_QUERY_OBSERVATIONS_SAMPLE_EVERY=1` and issue at least five successful
+1. **Observe.** Enable collection through the administrator PUT endpoint above.
+   In a disposable rehearsal, set the startup setting
+   `HUBUUM_QUERY_OBSERVATIONS_SAMPLE_EVERY=1`, restart the API process, and issue at least five successful
    requests like this. In production, keep the normal sampling rate and let real
    traffic supply the evidence. Send the analysis request to the same process;
    observations are local to each replica.

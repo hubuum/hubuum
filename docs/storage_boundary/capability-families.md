@@ -157,6 +157,12 @@ backup and restore, reassess them against the active schema, and remove them wit
 their class or collection. Declarations do not change query semantics or promise
 a particular physical index.
 
+Also owns the shared query observation override. Reads and atomic replacements
+must use the same store across replicas. The initial state uses startup defaults;
+an explicit enabled or disabled state overrides them. This deployment setting
+survives logical restores and is excluded from portable backups. Native memory
+instances remain independent process-local stores.
+
 ### `identity_and_authorization_data`
 
 Required traits:

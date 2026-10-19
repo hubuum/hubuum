@@ -148,6 +148,7 @@ impl MemoryState {
             computed_fields: BTreeMap::new(),
             computed_history: Vec::new(),
             query_usage: BTreeMap::new(),
+            query_observation_control: StorageQueryObservationControl::default(),
             next_query_usage_id: 1,
             computation_states: BTreeMap::new(),
             computed_rebuild_tasks: BTreeMap::new(),
