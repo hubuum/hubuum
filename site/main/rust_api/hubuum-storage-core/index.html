@@ -4620,9 +4620,10 @@ interfaces remain private to each adapter.</p>
 Adapters consume <code>StorageObjectHistoryNameQuery</code>, match exact retained class/name
 coordinates across object identities, and apply visibility before counting and
 paging. Live identities require both current and historical collection access;
-missing identities are included only when the application's deleted-history gate
+a class change does not make an identity deleted. Truly missing identities are included only when the application's deleted-history gate
 sets <code>include_deleted</code>. External adapters must implement this method before
-upgrading; a default empty result is not a compatible implementation.</p>
+upgrading; a default empty result is not a compatible implementation. Existing
+adapters must check live existence by object ID independently of its current class.</p>
 <p><code>HistoryStorage::list_class_objects_as_of</code> is a mandatory SDK addition.
 Adapters must implement the complete historical-population contract using
 <code>StorageClassObjectsAsOfQuery</code>, including current and historical authorization,
@@ -4638,7 +4639,9 @@ application authorizes candidates before exposing rows, totals and cursors.
 External adapters must implement this method before upgrading.</p>
 <p>Login issuance requires <code>StorageLogin</code> evidence carried by
 <code>StorageTokenCreate::for_login</code>. Adapters must recheck it atomically against the
-current user while fencing credential changes. External refresh bookkeeping uses
+current user while fencing credential changes. Authentication retains the original
+<code>StorageUser</code> snapshot through issuance; <code>StorageSyncedHuman</code> converts losslessly
+into that snapshot without discarding its validated identity or timestamps. External refresh bookkeeping uses
 <code>record_external_sync_failure</code> with <code>StorageExternalSyncFailure</code>; rejection must
 invalidate cached authority, pending login evidence, and active tokens. See the
 <a href="../../storage_boundary/transactions-and-events/">transaction contract</a>.</p>
