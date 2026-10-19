@@ -39,12 +39,13 @@ pub async fn set_query_observation_control(
 ) -> Result<(), PostgresStorageError> {
     use crate::schema::query_observation_control::dsl as control;
     runtime
-        .with_connection(async |connection| -> Result<_, PostgresStorageError> {
+        .with_transaction(async |connection| -> Result<_, PostgresStorageError> {
             diesel::update(control::query_observation_control)
                 .set(control::enabled.eq(value.override_enabled()))
                 .returning(control::singleton)
                 .get_result::<bool>(connection)
                 .await?;
+            crate::worker_notifications::notify_query_observation_control(connection).await?;
             Ok(())
         })
         .await

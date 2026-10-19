@@ -12,9 +12,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - An administrator API to enable or disable query observation collection at
   runtime across all API replicas sharing PostgreSQL:
   `GET` and `PUT /api/v1/admin/query-observations`. The persisted override takes
-  precedence over startup defaults, refreshes within one second on active replicas,
-  and survives restarts and logical restores. Apply the query observation control
-  migration and upgrade all API replicas before using the shared toggle.
+  precedence over startup defaults, broadcasts changes to running replicas with a
+  one-second recovery poll, and survives restarts and logical restores. New
+  replicas adopt the shared state before serving requests, and config reads apply
+  it to the live collector before reporting `enabled`. Apply the query observation
+  control migration and upgrade all API replicas before using the shared toggle.
 
 - Historical shared computed values at
   `GET /api/v1/classes/{class_id}/{object_id}/history/computed/as-of?at=...`,
@@ -60,6 +62,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - **Breaking storage SDK change:** `QueryUsageStorage` adapters must implement
   `query_observation_control` and `set_query_observation_control` before upgrading.
+  `WorkerNotificationProvider` callbacks now accept boxed closures and must wake
+  consumers after listener registration/reconnection; providers must support the
+  `QueryObservationControl` topic.
   Persist the deployment override independently of observations and portable
   backup content, and share it across instances using the same store.
 

@@ -104,16 +104,22 @@ updates use the last committed value. Memory storage shares the setting only
 among handles using the same in-process store; independent memory processes do
 not form a shared deployment.
 
-Replicas refresh the control before collection, caching it for at most one second.
-The next query after expiry refreshes even when collection is disabled. Failed or
-slow control reads pause collection without failing the query. Requests already
+The update commits the shared value and broadcasts a PostgreSQL notification in
+one transaction. Running replicas reload and apply it on notification, without
+waiting for another query or the next poll. New replicas load it before serving
+requests, and listeners reload it after reconnecting. Each process also refreshes
+every second to recover missed notifications, including while collection is off.
+Delivery is asynchronous: a successful PUT confirms the commit and the responding
+replica's applied state, not an acknowledgement from every replica. Failed or
+slow control reads pause collection without failing ordinary queries. Requests already
 being observed can finish recording after disablement. Disabling retains existing
 observations until their normal expiry and leaves declarations and indexes intact.
 
 `GET /api/v1/admin/query-observations` returns the effective settings for the
 responding replica, including `enabled` and `runtime_override`. A null override
 means its startup default still applies. `GET /api/v1/admin/config` exposes the
-same effective settings. Both reads load the shared setting directly. Sampling
+same effective settings. Both reads reconcile the live collector with the shared
+setting before reporting it, so `enabled` is the state applied on that replica. Sampling
 and capacity limits remain startup settings. CLI flags use the corresponding
 lowercase hyphenated names; TOML keys use lowercase underscores under
 `[query_observations]`.

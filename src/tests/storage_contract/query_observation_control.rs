@@ -82,18 +82,20 @@ async fn api_toggle_changes_collection_on_another_replica(#[case] enabled: bool)
 }
 
 #[rstest::rstest]
-#[case::dedicated("/api/v1/admin/query-observations")]
-#[case::configuration("/api/v1/admin/config")]
+#[case::dedicated_enabled("/api/v1/admin/query-observations", true)]
+#[case::dedicated_disabled("/api/v1/admin/query-observations", false)]
+#[case::configuration_enabled("/api/v1/admin/config", true)]
+#[case::configuration_disabled("/api/v1/admin/config", false)]
 #[actix_web::test]
-async fn admin_reads_show_override_on_a_new_replica(#[case] path: &str) {
+async fn admin_reads_show_override_on_a_new_replica(#[case] path: &str, #[case] enabled: bool) {
     let storage = MemoryStorage::new();
     let writer = replica(&storage, false);
     let user = admin(&writer).await;
     writer
-        .set_query_observation_control(StorageQueryObservationControl::Enabled)
+        .set_query_observation_control(StorageQueryObservationControl::from_override(Some(enabled)))
         .await
         .unwrap();
-    let reader = replica(&storage, false);
+    let reader = replica(&storage, !enabled);
     let app = test::init_service(
         App::new()
             .app_data(context(&reader))
@@ -123,7 +125,7 @@ async fn admin_reads_show_override_on_a_new_replica(#[case] path: &str) {
             config["enabled"].as_bool(),
             config["runtime_override"].as_bool()
         ),
-        (Some(true), Some(true))
+        (Some(enabled), Some(enabled))
     );
 }
 

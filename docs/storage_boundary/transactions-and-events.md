@@ -371,3 +371,11 @@ as token issuance and external synchronization. The operation retains
 `mark_external_sync_attempted` as its telemetry label for compatibility.
 These are synchronization metadata
 and credential invalidation effects, with no independent lifecycle audit event.
+
+## Runtime observation control
+
+`QueryUsageStorage::set_query_observation_control` changes deployment configuration,
+not a domain resource. It atomically replaces the shared override and publishes a
+commit-ordered wake-up on notification-capable adapters. The administrator handler
+logs the actor and enabled state; this operation does not create a domain audit
+event. Logical restores preserve the setting and portable backups exclude it.

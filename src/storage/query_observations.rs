@@ -22,7 +22,7 @@ use std::{
 };
 
 type PatternKey = (ClassId, StorageQueryUsagePattern);
-const CONTROL_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+pub(crate) const CONTROL_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const CONTROL_READ_TIMEOUT: Duration = Duration::from_millis(250);
 struct Entry {
     observation: StorageQueryPatternObservation,
@@ -56,7 +56,7 @@ pub(crate) struct QueryObservations {
     started_at: DateTime<Utc>,
     requests: AtomicU64,
     state: Mutex<State>,
-    control: tokio::sync::Mutex<Option<(Instant, bool)>>,
+    control: tokio::sync::Mutex<Option<(Instant, StorageQueryObservationControl)>>,
 }
 impl QueryObservations {
     pub(crate) fn new(settings: StorageQueryObservationSettings) -> Self {
@@ -90,22 +90,50 @@ impl QueryObservations {
         &self,
         load: impl Future<Output = Result<StorageQueryObservationControl, StorageError>>,
     ) -> bool {
+        let control = self
+            .load_control(load, false)
+            .await
+            .unwrap_or(StorageQueryObservationControl::Disabled);
+        self.settings(control).enabled()
+    }
+
+    pub(crate) async fn refresh_control(
+        &self,
+        load: impl Future<Output = Result<StorageQueryObservationControl, StorageError>>,
+    ) -> Result<StorageQueryObservationControl, StorageError> {
+        self.load_control(load, true).await
+    }
+
+    async fn load_control(
+        &self,
+        load: impl Future<Output = Result<StorageQueryObservationControl, StorageError>>,
+        force: bool,
+    ) -> Result<StorageQueryObservationControl, StorageError> {
+        // Serialize loads so an older refresh cannot replace a newer result.
         let mut cache = self.control.lock().await;
         let now = Instant::now();
-        if let Some((expires_at, enabled)) = *cache
+        if !force
+            && let Some((expires_at, control)) = *cache
             && now < expires_at
         {
-            return enabled;
+            return Ok(control);
         }
-        let enabled = match tokio::time::timeout(CONTROL_READ_TIMEOUT, load).await {
-            Ok(Ok(control)) => self.settings(control).enabled(),
-            _ => {
-                tracing::warn!("Query observation control unavailable; collection paused");
-                false
+        let result = tokio::time::timeout(CONTROL_READ_TIMEOUT, load)
+            .await
+            .unwrap_or_else(|_| {
+                Err(StorageError::internal(
+                    "Query observation control read timed out",
+                ))
+            });
+        let control = match &result {
+            Ok(control) => *control,
+            Err(error) => {
+                tracing::warn!(%error, "Query observation control unavailable; collection paused");
+                StorageQueryObservationControl::Disabled
             }
         };
-        *cache = Some((now + CONTROL_REFRESH_INTERVAL, enabled));
-        enabled
+        *cache = Some((now + CONTROL_REFRESH_INTERVAL, control));
+        result
     }
 
     pub(crate) async fn observe<T, E>(
@@ -351,6 +379,39 @@ mod tests {
         );
     }
 
+    #[rstest]
+    #[case::enable(StorageQueryObservationControl::Enabled, true)]
+    #[case::disable(StorageQueryObservationControl::Disabled, false)]
+    #[tokio::test]
+    async fn administrative_refresh_applies_to_the_live_collector(
+        #[case] control: StorageQueryObservationControl,
+        #[case] enabled: bool,
+    ) {
+        let collector = collector(8, 8, 1);
+        collector
+            .collection_enabled(async {
+                Ok(StorageQueryObservationControl::from_override(Some(
+                    !enabled,
+                )))
+            })
+            .await;
+        assert_eq!(
+            collector
+                .refresh_control(async { Ok(control) })
+                .await
+                .unwrap(),
+            control
+        );
+        assert_eq!(
+            collector
+                .collection_enabled(async {
+                    panic!("administrative refresh must replace the cached recording state")
+                })
+                .await,
+            enabled
+        );
+    }
+
     #[tokio::test]
     async fn runtime_control_is_cached_between_queries() {
         let collector = collector(8, 8, 1);
@@ -375,8 +436,10 @@ mod tests {
         #[case] expected: bool,
     ) {
         let collector = collector(8, 8, 1);
-        *collector.control.lock().await =
-            Some((Instant::now() - Duration::from_secs(1), !expected));
+        *collector.control.lock().await = Some((
+            Instant::now() - Duration::from_secs(1),
+            StorageQueryObservationControl::from_override(Some(!expected)),
+        ));
         assert_eq!(
             collector.collection_enabled(async { Ok(next) }).await,
             expected
@@ -386,7 +449,10 @@ mod tests {
     #[tokio::test]
     async fn failed_control_read_does_not_reuse_stale_enablement() {
         let collector = collector(8, 8, 1);
-        *collector.control.lock().await = Some((Instant::now() - Duration::from_secs(1), true));
+        *collector.control.lock().await = Some((
+            Instant::now() - Duration::from_secs(1),
+            StorageQueryObservationControl::Enabled,
+        ));
         assert!(
             !collector
                 .collection_enabled(async { Err(StorageError::internal("unavailable")) })

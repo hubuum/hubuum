@@ -694,7 +694,8 @@ for observation_input in src/api/v1/handlers/runtime_config.rs src/models/query_
   assert_flag "$observation_output" openapi true
 done
 
-for observation_test in src/tests/storage_contract/query_observation_control.rs \
+for observation_test in src/storage/context/query_observation_control.rs \
+  src/tests/storage_contract/query_observation_control.rs \
   crates/hubuum-storage-postgres/tests/query_observation_control.rs \
   crates/hubuum-storage-postgres/migrations/2026-10-19-000001_query_observation_control/up.sql; do
   observation_output="$(bash "$classifier" "$observation_test")"

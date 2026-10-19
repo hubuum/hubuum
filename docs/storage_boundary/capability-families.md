@@ -550,3 +550,8 @@ When a semantic capability group changes, update all of the following together:
    added or changed.
 8. This document and any sanitized administrator settings affected by the
    change.
+
+Query observation control notifications are wake-up hints for the shared override.
+`WorkerNotificationProvider` accepts a boxed callback so each process can refresh
+its own collector. Providers invoke it on registration/reconnection and changes;
+periodic reads remain the recovery path if notification delivery is interrupted.

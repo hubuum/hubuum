@@ -812,7 +812,7 @@
         "operationId": "getApiV1AdminQueryObservations",
         "responses": {
           "200": {
-            "description": "Shared override and effective observation settings for this replica",
+            "description": "Shared override applied to the responding replica and its effective observation settings",
             "content": {
               "application/json": {
                 "schema": {
@@ -867,7 +867,7 @@
         },
         "responses": {
           "200": {
-            "description": "Persisted override; replicas refresh before collection at most once per second",
+            "description": "Shared override committed and broadcast; applied on this replica, other replicas reconcile asynchronously",
             "content": {
               "application/json": {
                 "schema": {

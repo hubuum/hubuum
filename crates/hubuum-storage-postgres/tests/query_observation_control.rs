@@ -1,16 +1,19 @@
 #![cfg(feature = "integration-test-support")]
 
-use diesel_async::SimpleAsyncConnection;
-use hubuum_storage_core::{QueryUsageStorage, StorageQueryObservationControl};
+use diesel_async::{RunQueryDsl, SimpleAsyncConnection};
+use futures_util::StreamExt;
+use hubuum_storage_core::{QueryUsageStorage, StorageNotification, StorageQueryObservationControl};
 use hubuum_storage_postgres::test_support::{
     database_role_tests_enabled, integration_test_database_roles, integration_test_database_url,
     integration_test_migration_pool, integration_test_pool,
 };
+use hubuum_storage_postgres::worker_notifications::channel_name;
 use hubuum_storage_postgres::{
     PostgresPool, PostgresPoolSettings, PostgresStorage, PostgresStorageError, build_postgres_pool,
     with_transaction,
 };
 use rstest::rstest;
+use std::time::Duration;
 use uuid::Uuid;
 
 const UP: &str = include_str!("../migrations/2026-10-19-000001_query_observation_control/up.sql");
@@ -57,7 +60,7 @@ impl Fixture {
         fixture
     }
 
-    fn replica(&self) -> PostgresStorage {
+    fn pool(&self) -> PostgresPool {
         let url = integration_test_database_url();
         let separator = if url.contains('?') { '&' } else { '?' };
         let settings = PostgresPoolSettings::builder(format!(
@@ -68,7 +71,11 @@ impl Fixture {
         .acquire_timeout_ms(5000)
         .build()
         .unwrap();
-        PostgresStorage::unobserved(build_postgres_pool(&settings).unwrap())
+        build_postgres_pool(&settings).unwrap()
+    }
+
+    fn replica(&self) -> PostgresStorage {
+        PostgresStorage::unobserved(self.pool())
     }
 
     async fn cleanup(self) {
@@ -136,5 +143,48 @@ async fn later_committed_toggle_replaces_previous_value() {
         first.query_observation_control().await.unwrap(),
         StorageQueryObservationControl::Disabled
     );
+    fixture.cleanup().await;
+}
+
+#[rstest]
+#[case::enable(StorageQueryObservationControl::Enabled)]
+#[case::disable(StorageQueryObservationControl::Disabled)]
+#[tokio::test]
+async fn committed_toggle_notifies_every_connected_replica(
+    #[case] control: StorageQueryObservationControl,
+) {
+    let fixture = Fixture::new().await;
+    let first_pool = fixture.pool();
+    let second_pool = fixture.pool();
+    let mut first = first_pool.get().await.unwrap();
+    let mut second = second_pool.get().await.unwrap();
+    let channel = channel_name(StorageNotification::QueryObservationControl);
+    for connection in [&mut first, &mut second] {
+        diesel::sql_query(format!("LISTEN {channel}"))
+            .execute(&mut **connection)
+            .await
+            .unwrap();
+    }
+    let writer = fixture.replica();
+    writer.set_query_observation_control(control).await.unwrap();
+    for connection in [&mut first, &mut second] {
+        let notifications = connection.notifications_stream();
+        futures_util::pin_mut!(notifications);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let notification = notifications.next().await.unwrap().unwrap();
+                if notification.channel == channel {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("each replica must receive the committed control change");
+    }
+    assert_eq!(
+        fixture.replica().query_observation_control().await.unwrap(),
+        control
+    );
+    drop((first, second));
     fixture.cleanup().await;
 }

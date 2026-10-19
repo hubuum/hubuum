@@ -107,7 +107,7 @@ impl QueryUsageStorage for StorageHandle {
 }
 
 impl StorageHandle {
-    /// Administrative reads bypass the collection cache and report shared state.
+    /// Reconcile the live collector before reporting its effective settings.
     pub(crate) async fn query_observation_configuration(
         &self,
     ) -> Result<
@@ -117,7 +117,11 @@ impl StorageHandle {
         ),
         StorageError,
     > {
-        let control = self.query_observation_control().await?;
+        let control = self
+            .inner
+            .query_observations
+            .refresh_control(self.query_observation_control())
+            .await?;
         Ok((self.inner.query_observations.settings(control), control))
     }
 
@@ -130,12 +134,13 @@ impl StorageHandle {
             StorageQueryUsageAnalysis, StorageQueryUsageAnalysisRequest,
             StorageQueryUsageAnalysisStatus,
         };
+        let (_, control) = self.query_observation_configuration().await?;
         let request = StorageQueryUsageAnalysisRequest::try_new(
             scope,
             proposed,
             self.inner
                 .query_observations
-                .snapshot_with_control(scope.class_id(), self.query_observation_control().await?),
+                .snapshot_with_control(scope.class_id(), control),
         )
         .map_err(|error| error.into_request_error())?;
         self.observe_storage_call(self.backend_name(), StorageCapability::QueryUsage, "analyze_query_usage", async {

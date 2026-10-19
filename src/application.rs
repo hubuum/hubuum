@@ -299,6 +299,18 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
                 EXIT_CODE_PERMISSION_BACKEND_ERROR,
             )
         });
+    // Adopt the deployment setting before this process can serve or originate
+    // queries, then follow committed changes even in API-only runtime mode.
+    storage
+        .query_observation_configuration()
+        .await
+        .unwrap_or_else(|error| {
+            fatal_error(
+                &format!("Failed to load query observation control: {error}"),
+                EXIT_CODE_DATABASE_ERROR,
+            )
+        });
+    storage.start_query_observation_control();
     let app_context = AppContext::new(storage, permission_backend);
     let storage_backend = app_context.storage_backend_descriptor();
     if config.metrics_enabled {

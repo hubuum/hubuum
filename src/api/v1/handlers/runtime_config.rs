@@ -37,7 +37,7 @@ pub async fn get_running_config(
     tag = "admin",
     security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "Shared override and effective observation settings for this replica", body = QueryObservationConfig),
+        (status = 200, description = "Shared override applied to the responding replica and its effective observation settings", body = QueryObservationConfig),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse)
     )
@@ -59,7 +59,7 @@ pub async fn get_query_observations(
     security(("bearer_auth" = [])),
     request_body = QueryObservationUpdateRequest,
     responses(
-        (status = 200, description = "Persisted override; replicas refresh before collection at most once per second", body = QueryObservationConfig),
+        (status = 200, description = "Shared override committed and broadcast; applied on this replica, other replicas reconcile asynchronously", body = QueryObservationConfig),
         (status = 400, description = "Invalid request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse)

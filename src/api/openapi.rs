@@ -1622,6 +1622,7 @@ mod tests {
             "/api/v0/meta/login-rate-limit/{id}",
             "/api/v1/config",
             "/api/v1/admin/config",
+            "/api/v1/admin/query-observations",
             "/api/v1/iam/credential-approvals",
             "/api/v1/iam/credential-approvals/{approval_id}",
             "/api/v1/iam/users",

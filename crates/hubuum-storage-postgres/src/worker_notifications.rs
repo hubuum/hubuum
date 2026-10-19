@@ -1,4 +1,4 @@
-//! PostgreSQL LISTEN/NOTIFY support for durable-worker wake-ups.
+//! PostgreSQL LISTEN/NOTIFY support for worker and runtime-control wake-ups.
 //!
 //! The application owns process lifecycle and supplies the shutdown future.
 //! This module owns the PostgreSQL channels, listener connection, retry loop,
@@ -25,12 +25,14 @@ impl NotificationChannel {
     const EVENT_FANOUT: Self = Self("hubuum_events_fanout");
     const EVENT_DELIVERY: Self = Self("hubuum_event_delivery");
     const TASK_QUEUE: Self = Self("hubuum_task_queue");
+    const QUERY_OBSERVATION_CONTROL: Self = Self("hubuum_query_observation_control");
 
     const fn for_topic(topic: StorageNotification) -> Self {
         match topic {
             StorageNotification::EventFanout => Self::EVENT_FANOUT,
             StorageNotification::EventDelivery => Self::EVENT_DELIVERY,
             StorageNotification::TaskQueue => Self::TASK_QUEUE,
+            StorageNotification::QueryObservationControl => Self::QUERY_OBSERVATION_CONTROL,
         }
     }
 
@@ -59,6 +61,12 @@ pub async fn notify_task_queue(
     notify_channel(conn, NotificationChannel::TASK_QUEUE, &task_id.to_string()).await
 }
 
+pub(crate) async fn notify_query_observation_control(
+    conn: &mut PostgresConnection,
+) -> Result<usize, PostgresStorageError> {
+    notify_channel(conn, NotificationChannel::QUERY_OBSERVATION_CONTROL, "").await
+}
+
 async fn notify_channel(
     conn: &mut PostgresConnection,
     channel: NotificationChannel,
@@ -76,15 +84,17 @@ async fn notify_channel(
 ///
 /// Correctness must not depend on this listener: durable workers retain their
 /// polling path. `on_listening` exists so composition and native tests can
-/// observe successful registration without exposing the connection.
-pub async fn listen<F>(
+/// observe successful registration without exposing the connection. The consumer
+/// callback also runs on registration/reconnection to reconcile missed changes.
+pub async fn listen<F, C>(
     pool: PostgresPool,
     topic: StorageNotification,
-    on_notification: fn(),
+    on_notification: C,
     on_listening: fn(),
     shutdown: F,
 ) where
     F: Future<Output = ()>,
+    C: Fn() + Send + Sync,
 {
     let channel = NotificationChannel::for_topic(topic);
     futures_util::pin_mut!(shutdown);
@@ -121,7 +131,8 @@ pub async fn listen<F>(
                     channel = channel.as_str()
                 );
                 on_listening();
-                if poll_notifications(&mut conn, channel, on_notification, shutdown.as_mut()).await
+                on_notification();
+                if poll_notifications(&mut conn, channel, &on_notification, shutdown.as_mut()).await
                 {
                     if let Err(error) = diesel::sql_query(format!("UNLISTEN {}", channel.as_str()))
                         .execute(&mut conn)
@@ -161,14 +172,15 @@ where
     }
 }
 
-async fn poll_notifications<F>(
+async fn poll_notifications<F, C>(
     conn: &mut PostgresConnection,
     channel: NotificationChannel,
-    on_notification: fn(),
+    on_notification: &C,
     mut shutdown: Pin<&mut F>,
 ) -> bool
 where
     F: Future<Output = ()>,
+    C: Fn() + Send + Sync,
 {
     let notifications = conn.notifications_stream();
     futures_util::pin_mut!(notifications);
