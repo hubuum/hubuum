@@ -661,9 +661,7 @@ fn object_name_history_query(
         .into_boxed()
         .filter(history::hubuum_class_id.eq(query.class_id().id()))
         .filter(history::name.eq(query.name().to_owned()));
-    let current_ids = live::hubuumobject
-        .filter(live::hubuum_class_id.eq(query.class_id().id()))
-        .select(live::id);
+    let current_ids = live::hubuumobject.select(live::id);
     if let Some(collection_ids) = visible_collection_ids(query.collection_scope()) {
         let readable_ids = current_ids.filter(live::collection_id.eq_any(collection_ids.clone()));
         let visible = history::id

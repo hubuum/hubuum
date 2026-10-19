@@ -8,7 +8,7 @@ use crate::extractors::{AdminAccess, Authenticated, ManagementAccess};
 use crate::middlewares::rate_limit::{
     LoginAttemptOutcome, begin_login_attempt, client_ip_for_request, finish_login_attempt,
 };
-use crate::models::{LOCAL_IDENTITY_SCOPE, LoginUser, REDACTED_DEBUG_VALUE, Token, UserID};
+use crate::models::{LoginUser, REDACTED_DEBUG_VALUE, Token, UserID};
 use crate::observability::metrics;
 use crate::permissions::AppContext;
 use crate::services::authentication::issue_login_token;
@@ -76,13 +76,9 @@ pub async fn login(
     req: HttpRequest,
     req_input: web::Json<LoginUser>,
 ) -> Result<impl Responder, ApiError> {
-    let login = req_input.into_inner();
-    login.validate()?;
-    let identity_scope = login
-        .identity_scope
-        .clone()
-        .unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string());
-    let name = login.name.clone();
+    let login = req_input.into_inner().validate()?;
+    let identity_scope = login.identity_scope().to_owned();
+    let name = login.name().to_owned();
     let client_ip = client_ip_for_request(&req);
     let client_ip_log = client_ip.map(|ip| ip.to_string());
 

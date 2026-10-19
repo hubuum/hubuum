@@ -26,14 +26,18 @@ fn relation_permission(objects: bool) -> Permissions {
 #[case::ordinary(false)]
 #[case::administrator(true)]
 #[actix_web::test]
-async fn live_relationship_root_rejects_wrong_class_even_for_deleted_history_admin(
+async fn relationship_root_rejects_wrong_class_even_for_deleted_history_admin(
     #[case] admin: bool,
+    #[values(false, true)] deleted: bool,
 ) {
     let _permit = postgres_permit().await;
     for backend in available_backends() {
         let fixture =
             create_backend_relation_fixture(&backend, &prefix("relation_wrong_class")).await;
         let user = user(&backend, &fixture).await;
+        if deleted {
+            super::history_fixtures::delete(&backend, fixture.objects[0].id()).await;
+        }
         let context = AppContext::new(backend.clone(), policy(&fixture, true, None, admin));
         let principal = backend
             .get_authentication_identity(user.principal_id)
@@ -51,6 +55,16 @@ async fn live_relationship_root_rejects_wrong_class_even_for_deleted_history_adm
             },
         )
         .await;
+        let result = match result {
+            Ok(reader) => reader
+                .relationships(
+                    StorageRelationHistorySelection::Changes,
+                    parse_query_parameter("limit=10").unwrap(),
+                )
+                .await
+                .map(|_| ()),
+            Err(error) => Err(error),
+        };
         assert!(matches!(result, Err(ApiError::NotFound(_))));
         delete_backend_user(&backend, user).await;
         cleanup(&backend, fixture).await;
@@ -342,7 +356,8 @@ async fn every_backend_hydrates_endpoint_at_selected_instant(
             fixture.classes[1].name()
         };
         let created = history(&backend, resource).await[0].context_at();
-        rename_endpoint(&backend, &fixture, objects, "renamed-endpoint").await;
+        let new_name = prefix("renamed_endpoint");
+        rename_endpoint(&backend, &fixture, objects, &new_name).await;
         let at = if after_rename { Utc::now() } else { created };
         let row = backend
             .list_relation_history(query(
@@ -359,7 +374,7 @@ async fn every_backend_hydrates_endpoint_at_selected_instant(
         assert_eq!(
             row.to().unwrap().name(),
             if after_rename {
-                "renamed-endpoint"
+                new_name.as_str()
             } else {
                 old_name
             }
@@ -495,14 +510,15 @@ async fn relationship_policy_requires_current_and_historical_endpoint_names(
         } else {
             fixture.classes[1].name()
         };
-        rename_endpoint(&backend, &fixture, objects, "new-name").await;
+        let new_name = prefix("renamed_policy_endpoint");
+        rename_endpoint(&backend, &fixture, objects, &new_name).await;
         let user = user(&backend, &fixture).await;
         let context = AppContext::new(
             backend.clone(),
             policy(
                 &fixture,
                 objects,
-                Some(if current { "new-name" } else { old_name }),
+                Some(if current { new_name.as_str() } else { old_name }),
                 false,
             ),
         );

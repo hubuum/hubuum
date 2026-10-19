@@ -16,7 +16,8 @@ use crate::models::search::{FilterField, SortParam};
 use crate::storage::StorageContext;
 use crate::traits::{CursorPaginated, CursorValue};
 
-use tracing::{error, warn};
+use crate::storage::{StorageUserCreate, StorageUserUpdate};
+use crate::utilities::auth::{HashedPassword, hash_password_async};
 
 pub const MAX_LOGIN_IDENTITY_SCOPE_CHARACTERS: usize = 255;
 pub const MAX_LOGIN_NAME_CHARACTERS: usize = 255;
@@ -311,20 +312,16 @@ pub struct UpdateUser {
 }
 
 impl UpdateUser {
-    pub async fn hash_password(mut self) -> Result<Self, ApiError> {
-        if let Some(password) = self.password.take() {
-            self.password = Some(
-                crate::utilities::auth::hash_password_async(
-                    PlaintextPassword::new(password)
-                        .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-                )
-                .await
-                .map_err(|error| {
-                    ApiError::HashError(format!("Failed to hash password: {error}"))
-                })?,
-            );
-        }
-        Ok(self)
+    pub async fn hash_password(self) -> Result<HashedUserUpdate, ApiError> {
+        let password = match self.password {
+            Some(password) => Some(hash_plaintext(password).await?),
+            None => None,
+        };
+        Ok(HashedUserUpdate {
+            password,
+            proper_name: self.proper_name,
+            email: self.email,
+        })
     }
 
     /// Persist changes with system audit attribution.
@@ -402,14 +399,74 @@ impl NewUser {
         crate::services::identity::create_user(backend, self, context).await
     }
 
-    pub async fn hash_password(mut self) -> Result<Self, ApiError> {
-        self.password = crate::utilities::auth::hash_password_async(
-            PlaintextPassword::new(self.password)
-                .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+    pub async fn hash_password(self) -> Result<HashedNewUser, ApiError> {
+        let password = hash_plaintext(self.password).await?;
+        Ok(HashedNewUser {
+            identity_scope: self.identity_scope,
+            name: self.name,
+            password,
+            proper_name: self.proper_name,
+            email: self.email,
+        })
+    }
+
+    #[cfg(any(test, feature = "integration-test-support"))]
+    pub(crate) fn with_password_hash(self, password: HashedPassword) -> HashedNewUser {
+        HashedNewUser {
+            identity_scope: self.identity_scope,
+            name: self.name,
+            password,
+            proper_name: self.proper_name,
+            email: self.email,
+        }
+    }
+}
+
+async fn hash_plaintext(password: String) -> Result<HashedPassword, ApiError> {
+    hash_password_async(
+        PlaintextPassword::new(password)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+    )
+    .await
+    .map_err(|error| ApiError::HashError(format!("Failed to hash password: {error}")))
+}
+
+pub struct HashedNewUser {
+    identity_scope: Option<String>,
+    name: String,
+    password: HashedPassword,
+    proper_name: Option<String>,
+    email: Option<String>,
+}
+
+impl HashedNewUser {
+    pub(crate) fn into_storage(self, event: EventContext) -> StorageUserCreate {
+        StorageUserCreate::new(
+            self.identity_scope,
+            self.name,
+            self.password.into_encoded(),
+            self.proper_name,
+            self.email,
+            event,
         )
-        .await
-        .map_err(|error| ApiError::HashError(format!("Failed to hash password: {error}")))?;
-        Ok(self)
+    }
+}
+
+pub struct HashedUserUpdate {
+    password: Option<HashedPassword>,
+    proper_name: Option<String>,
+    email: Option<String>,
+}
+
+impl HashedUserUpdate {
+    pub(crate) fn into_storage(self, id: UserID, event: EventContext) -> StorageUserUpdate {
+        StorageUserUpdate::new(
+            id,
+            self.password.map(HashedPassword::into_encoded),
+            self.proper_name,
+            self.email,
+            event,
+        )
     }
 }
 
@@ -467,82 +524,55 @@ pub struct LoginUser {
     pub password: String,
 }
 
+/// Login input whose length and plaintext-password invariants have been checked.
+#[derive(Debug)]
+pub struct ValidatedLogin {
+    identity_scope: String,
+    name: String,
+    password: PlaintextPassword,
+}
+
+impl ValidatedLogin {
+    pub fn identity_scope(&self) -> &str {
+        &self.identity_scope
+    }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub(crate) fn password(&self) -> &PlaintextPassword {
+        &self.password
+    }
+    pub(crate) fn into_password(self) -> PlaintextPassword {
+        self.password
+    }
+}
+
 impl LoginUser {
-    pub fn validate(&self) -> Result<(), ApiError> {
+    pub fn validate(self) -> Result<ValidatedLogin, ApiError> {
         validate_login_field_length(
             "identity_scope",
             self.identity_scope.as_deref().unwrap_or_default(),
             MAX_LOGIN_IDENTITY_SCOPE_CHARACTERS,
         )?;
         validate_login_field_length("name", &self.name, MAX_LOGIN_NAME_CHARACTERS)?;
-        PlaintextPassword::new(self.password.clone())
-            .map(|_| ())
-            .map_err(|error| ApiError::BadRequest(error.to_string()))
+        Ok(ValidatedLogin {
+            identity_scope: self
+                .identity_scope
+                .unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.into()),
+            name: self.name,
+            password: PlaintextPassword::new(self.password)
+                .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+        })
     }
 
-    /// Check if the user exists and the plaintext password in the struct
-    /// matches the hashed password in the database.
+    /// Authenticate a validated local credential without issuing a token.
     pub async fn login<C>(self, backend: &C) -> Result<User, ApiError>
     where
         C: StorageContext,
     {
-        self.validate()?;
-        // We deliberately map "not found" to a generic auth failure (401) rather
-        // than 404 so we do not leak which names exist. Service-account
-        // principals have no users row, so they naturally cannot log in here.
-        let identity_scope = self
-            .identity_scope
-            .as_deref()
-            .unwrap_or(LOCAL_IDENTITY_SCOPE);
-        let user =
-            match crate::services::identity::get_user_by_name(backend, identity_scope, &self.name)
-                .await
-            {
-                Ok(user) => user,
-                Err(_) => {
-                    // Keep unknown-user and wrong-password paths comparable: both execute
-                    // one Argon2 verification before returning the same public error.
-                    let _ =
-                        crate::utilities::auth::verify_dummy_password_async(self.password.clone())
-                            .await;
-                    warn!(message = "Login failed (user not found)", user = self.name);
-                    return Err(auth_failure());
-                }
-            };
-
-        let plaintext_password = &self.password;
-        let Some(hashed_password) = &user.password else {
-            warn!(
-                message = "Login failed (local password missing)",
-                user = self.name
-            );
-            return Err(auth_failure());
-        };
-
-        let plaintext_password = plaintext_password.clone();
-        let hashed_password = hashed_password.clone();
-        let verification =
-            crate::utilities::auth::verify_password_async(plaintext_password, hashed_password)
-                .await;
-
-        match verification {
-            Ok(true) => Ok(user),
-            Ok(false) => {
-                warn!(
-                    message = "Login failed (password mismatch)",
-                    user = self.name
-                );
-                Err(auth_failure())
-            }
-            Err(e) => {
-                error!(
-                    message = "Login failed (password worker error)",
-                    user = self.name,
-                    error = e.to_string()
-                );
-                Err(auth_failure())
-            }
-        }
+        crate::services::authentication::authenticate_local(backend, self.validate()?)
+            .await
+            .map(crate::services::identity::user_from_storage)
     }
 }
 
@@ -597,6 +627,18 @@ mod tests {
         chrono::DateTime::from_timestamp(1_700_000_000, 0)
             .unwrap()
             .naive_utc()
+    }
+
+    #[test]
+    fn validated_login_debug_redacts_plaintext_password() {
+        let login = LoginUser {
+            identity_scope: None,
+            name: "alice".into(),
+            password: "credential-must-not-appear".into(),
+        }
+        .validate()
+        .unwrap();
+        assert!(!format!("{login:?}").contains("credential-must-not-appear"));
     }
 
     #[test]

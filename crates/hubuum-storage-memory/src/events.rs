@@ -1793,11 +1793,7 @@ impl HistoryStorage for MemoryStorage {
             {
                 continue;
             }
-            let visible = match state
-                .objects
-                .get(&record.id().id())
-                .filter(|live| live.class_id() == query.class_id())
-            {
+            let visible = match state.objects.get(&record.id().id()) {
                 Some(live) => {
                     history_scope_allows(query.collection_scope(), live.collection_id())
                         && history_scope_allows(query.collection_scope(), record.collection_id())

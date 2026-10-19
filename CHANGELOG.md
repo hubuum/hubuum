@@ -81,6 +81,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Class- and object-scoped tokens can read authorized history timelines and exact
+  entries on PostgreSQL as well as memory. Full lists and point-in-time reads use
+  the same resource authorization path.
+- Deleted object history, including relationship history, verifies the requested
+  class against retained object history before returning rows or empty results.
+
 - Historical object navigation rejects a live object requested through the wrong
   class, including for administrators with deleted-history access.
 
@@ -98,6 +104,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   behavior and dependency-policy enforcement are unchanged.
 
 ### Security
+
+- **Breaking history authorization correction:** a live object moved to another
+  class is no longer treated as deleted by name-history lookup. Name history and
+  historical class populations require access to both its actual current placement
+  and its historical snapshot, including for external-policy administrators. Review
+  policies that relied on the former administrator exception and grant the intended
+  current `ReadObject` access before upgrading. External storage adapters must test
+  live existence by object ID regardless of current class; no migration is required.
 
 - **Breaking remote-target authorization change:** server-credential bindings require
   an unscoped runtime administrator. Collection grants can share invocation but cannot

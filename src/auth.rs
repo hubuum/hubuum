@@ -3,7 +3,7 @@ use chrono::NaiveDateTime;
 use hubuum_auth_core::AuthenticatedExternalUser;
 use hubuum_auth_core::{AuthProviderError, ExternalIdentityProvider, ExternalUserRefreshRequest};
 use hubuum_auth_ldap::{LdapIdentityProvider, LdapScopeConfig, LdapSecretSource};
-use hubuum_storage_core::StorageExternalSyncFailure;
+use hubuum_storage_core::{StorageExternalSyncFailure, StorageUser};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs::File;
@@ -16,12 +16,12 @@ use tokio::sync::Mutex;
 use tracing::{Instrument, field, info_span};
 
 use crate::errors::ApiError;
-use crate::models::user::{LoginUser, User, auth_failure};
+use crate::models::user::{User, ValidatedLogin, auth_failure};
 use crate::models::{LDAP_PROVIDER_KIND, LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use crate::services::identity::ensure_identity_scope;
 use crate::services::identity::{
     ExternalPrincipalState, get_external_principal_state, record_external_sync_failure,
-    sync_external_user as sync_external_user_from_backend,
+    sync_external_credential as sync_external_user_from_backend,
 };
 
 const DEFAULT_REFRESH_TTL_SECONDS: i64 = 300;
@@ -145,8 +145,8 @@ trait AuthProviderBackend: Send + Sync {
     fn authenticate<'a>(
         &'a self,
         storage: &'a crate::storage::StorageHandle,
-        login: LoginUser,
-    ) -> AuthProviderFuture<'a, User>;
+        login: ValidatedLogin,
+    ) -> AuthProviderFuture<'a, StorageUser>;
 
     fn refresh<'a>(
         &'a self,
@@ -313,9 +313,11 @@ impl AuthProviderBackend for LocalAuthProvider {
     fn authenticate<'a>(
         &'a self,
         storage: &'a crate::storage::StorageHandle,
-        login: LoginUser,
-    ) -> AuthProviderFuture<'a, User> {
-        Box::pin(async move { login.login(storage).await })
+        login: ValidatedLogin,
+    ) -> AuthProviderFuture<'a, StorageUser> {
+        Box::pin(async move {
+            crate::services::authentication::authenticate_local(storage, login).await
+        })
     }
 
     fn refresh<'a>(
@@ -359,12 +361,12 @@ impl AuthProviderBackend for LdapAuthProvider {
     fn authenticate<'a>(
         &'a self,
         storage: &'a crate::storage::StorageHandle,
-        login: LoginUser,
-    ) -> AuthProviderFuture<'a, User> {
+        login: ValidatedLogin,
+    ) -> AuthProviderFuture<'a, StorageUser> {
         Box::pin(async move {
             let authenticated = self
                 .provider
-                .authenticate(&login.name, &login.password)
+                .authenticate(login.name(), login.password().as_str())
                 .await
                 .map_err(login_provider_error)?;
             sync_external_user_from_backend(storage, &self.scope, LDAP_PROVIDER_KIND, authenticated)
@@ -395,11 +397,16 @@ impl AuthProviderBackend for LdapAuthProvider {
 /// Credential reauthentication may inspect the user without issuing a login token.
 pub struct AuthenticatedLogin {
     user: User,
+    credential: StorageUser,
     identity_scope: String,
     provider_kind: String,
 }
 
 impl AuthenticatedLogin {
+    pub(crate) fn credential(&self) -> &StorageUser {
+        &self.credential
+    }
+
     pub fn user(&self) -> &User {
         &self.user
     }
@@ -415,23 +422,18 @@ impl AuthenticatedLogin {
 
 pub async fn login(
     storage: &impl crate::storage::StorageContext,
-    login: LoginUser,
+    login: ValidatedLogin,
 ) -> Result<AuthenticatedLogin, ApiError> {
-    login.validate()?;
     login_with_registry(storage, login, auth_provider_registry()?).await
 }
 
 async fn login_with_registry(
     storage: &impl crate::storage::StorageContext,
-    login: LoginUser,
+    login: ValidatedLogin,
     registry: &AuthProviderRegistry,
 ) -> Result<AuthenticatedLogin, ApiError> {
     let storage = crate::storage::storage_handle(storage);
-    let scope = login
-        .identity_scope
-        .as_deref()
-        .unwrap_or(LOCAL_IDENTITY_SCOPE)
-        .to_string();
+    let scope = login.identity_scope().to_owned();
     let provider = registry.provider(&scope)?;
     let span = info_span!(
         "auth.provider",
@@ -452,8 +454,9 @@ async fn login_with_registry(
             "rejected"
         },
     );
-    result.map(|user| AuthenticatedLogin {
-        user,
+    result.map(|credential| AuthenticatedLogin {
+        user: crate::services::identity::user_from_storage(credential.clone()),
+        credential,
         identity_scope: scope,
         provider_kind: provider.kind.clone(),
     })
@@ -865,6 +868,7 @@ pub(crate) async fn sync_external_user(
         authenticated,
     )
     .await
+    .map(crate::services::identity::user_from_storage)
 }
 
 #[cfg(test)]

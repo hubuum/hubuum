@@ -7,7 +7,9 @@ use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 
 use crate::validation::validate_sync_timestamps;
-use crate::{StorageError, StorageMutationOutcome, StoragePage, StorageValidationError};
+use crate::{
+    StorageError, StorageMutationOutcome, StoragePage, StorageSyncedHuman, StorageValidationError,
+};
 
 /// Named fields returned when a storage user crosses an API boundary.
 pub struct StorageUserParts {
@@ -160,6 +162,21 @@ pub struct StorageUser {
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     anonymized_at: Option<DateTime<Utc>>,
+}
+
+/// Preserve the validated timestamps and identity of a synchronized external user.
+impl From<StorageSyncedHuman> for StorageUser {
+    fn from(human: StorageSyncedHuman) -> Self {
+        Self {
+            id: human.id(),
+            password_hash: None,
+            proper_name: human.proper_name().map(str::to_owned),
+            email: human.email().map(str::to_owned),
+            created_at: human.created_at(),
+            updated_at: human.updated_at(),
+            anonymized_at: human.anonymized_at(),
+        }
+    }
 }
 
 impl StorageUser {

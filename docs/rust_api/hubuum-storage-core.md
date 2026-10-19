@@ -25,9 +25,10 @@ interfaces remain private to each adapter.
 Adapters consume `StorageObjectHistoryNameQuery`, match exact retained class/name
 coordinates across object identities, and apply visibility before counting and
 paging. Live identities require both current and historical collection access;
-missing identities are included only when the application's deleted-history gate
+a class change does not make an identity deleted. Truly missing identities are included only when the application's deleted-history gate
 sets `include_deleted`. External adapters must implement this method before
-upgrading; a default empty result is not a compatible implementation.
+upgrading; a default empty result is not a compatible implementation. Existing
+adapters must check live existence by object ID independently of its current class.
 
 `HistoryStorage::list_class_objects_as_of` is a mandatory SDK addition.
 Adapters must implement the complete historical-population contract using
@@ -46,7 +47,9 @@ External adapters must implement this method before upgrading.
 
 Login issuance requires `StorageLogin` evidence carried by
 `StorageTokenCreate::for_login`. Adapters must recheck it atomically against the
-current user while fencing credential changes. External refresh bookkeeping uses
+current user while fencing credential changes. Authentication retains the original
+`StorageUser` snapshot through issuance; `StorageSyncedHuman` converts losslessly
+into that snapshot without discarding its validated identity or timestamps. External refresh bookkeeping uses
 `record_external_sync_failure` with `StorageExternalSyncFailure`; rejection must
 invalidate cached authority, pending login evidence, and active tokens. See the
 [transaction contract](../storage_boundary/transactions-and-events.md).

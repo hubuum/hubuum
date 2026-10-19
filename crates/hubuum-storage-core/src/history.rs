@@ -112,8 +112,9 @@ impl StorageObjectHistoryListQuery {
 /// Exact historical name selection across object identities within one class.
 ///
 /// Visibility applies to both the stored snapshot and the current object. A
-/// missing current object (or one now in another class) is included only when
-/// `include_deleted` is enabled by the application's deleted-history policy.
+/// missing current object is included only when `include_deleted` is enabled by
+/// the application's deleted-history policy. A moved object remains live and
+/// requires access to its actual current collection.
 #[derive(Clone)]
 pub struct StorageObjectHistoryNameQuery {
     class_id: ClassId,

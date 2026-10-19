@@ -1,10 +1,8 @@
 use chrono::{DateTime, Utc};
-use hubuum_domain::HistoryRecordId;
+use hubuum_domain::{HistoryRecordId, ResourceId};
+use std::future::Future;
 
-use super::access::{
-    authorize_history_page, authorize_history_snapshot, can_read_deleted_history,
-    readable_history_collection_ids,
-};
+use super::access::{DeletedHistoryAccess, HistoryAccess, HistoryIdentity};
 use super::{AppHistoryMetadata, class_from_storage, history_total, object_from_storage};
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
@@ -16,28 +14,26 @@ use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
 use crate::storage::{
     HistoryStorage, StorageHistoryCollectionScope, StorageHistoryEntry, StorageHistoryEntryQuery,
-    StorageHistoryMarker, StorageHistoryNavigationQuery, StorageHistoryPosition,
-    StorageHistoryResource, StorageHistorySelection, StorageHistoryWindow,
-    StorageRelationHistoryQuery, StorageRelationHistoryResource, StorageRelationHistorySelection,
-    storage_handle,
+    StorageHistoryListQuery, StorageHistoryMarker, StorageHistoryNavigationQuery,
+    StorageHistoryPosition, StorageHistoryResource, StorageHistorySelection, StorageHistoryWindow,
+    StorageObjectHistoryListQuery, StorageRelationHistoryQuery, StorageRelationHistoryResource,
+    StorageRelationHistorySelection, storage_handle,
 };
-use crate::traits::AuthzSubject;
+use crate::traits::{AuthzSubject, CursorPaginated};
 use hubuum_storage_core::{
     AuthorizationDataStorage, StorageAuthorizationResource, StorageAuthorizationResourceKey,
     StorageAuthorizationResourcesQuery,
 };
 
 enum HistoryVisibility {
-    DeletedAdministrator,
+    DeletedAdministrator(DeletedHistoryAccess),
     Collections(StorageHistoryCollectionScope),
     Policy,
 }
 
 /// Carries the successful live-resource (or deleted-resource administrator) gate.
-pub(crate) struct HistoryReader<'a, S> {
-    context: &'a AppContext,
-    subject: &'a S,
-    scopes: Option<&'a TokenScope>,
+pub(crate) struct HistoryReader<'a> {
+    access: HistoryAccess<'a>,
     resource: StorageHistoryResource,
     permission: Permissions,
     visibility: HistoryVisibility,
@@ -48,16 +44,22 @@ pub(crate) enum HistoryEntry {
     Object(HubuumObjectHistory),
 }
 
+pub(crate) enum HistoryRows {
+    Class(Vec<HubuumClassHistory>),
+    Object(Vec<HubuumObjectHistory>),
+}
+
 fn unavailable() -> ApiError {
     ApiError::NotFound("History entry unavailable".into())
 }
 
-impl<'a, S: AuthzSubject> HistoryReader<'a, S> {
+impl<'a> HistoryReader<'a> {
     pub(crate) async fn relationships(
         &self,
         selection: StorageRelationHistorySelection,
         options: QueryOptions,
     ) -> Result<(Vec<HistoricalRelation>, i64), ApiError> {
+        self.require_retained_root().await?;
         let resource = match self.resource {
             StorageHistoryResource::Class(id) => StorageRelationHistoryResource::Class(id),
             StorageHistoryResource::Object { object_id, .. } => {
@@ -66,12 +68,12 @@ impl<'a, S: AuthzSubject> HistoryReader<'a, S> {
         };
         let query = StorageRelationHistoryQuery::try_new(resource, selection, options)
             .map_err(|error| error.into_request_error())?;
-        super::relations::list(self.context, self.subject, self.scopes, query).await
+        super::relations::list(&self.access, query).await
     }
 
     pub(crate) async fn authorize(
         context: &'a AppContext,
-        subject: &'a S,
+        subject: &(impl AuthzSubject + ?Sized),
         scopes: Option<&'a TokenScope>,
         resource: StorageHistoryResource,
     ) -> Result<Self, ApiError> {
@@ -121,33 +123,157 @@ impl<'a, S: AuthzSubject> HistoryReader<'a, S> {
             // an administrator must still use the live object's current class.
             _ => return Err(unavailable()),
         };
-        let visibility = if let Some(snapshot) = snapshot {
-            authorize_history_snapshot(context, subject, scopes, permission, snapshot).await?;
-            if context
-                .permission_backend()
-                .supports_storage_visibility_filtering()
-            {
-                let ids =
-                    readable_history_collection_ids(context, subject, scopes, permission).await?;
-                HistoryVisibility::Collections(
-                    super::HistoryCollectionFilter::Visible(&ids).try_into()?,
-                )
-            } else {
-                HistoryVisibility::Policy
+        let access = HistoryAccess::load(context, subject, scopes).await?;
+        let visibility = match access.identity(snapshot) {
+            Some(HistoryIdentity::Live(snapshot)) => {
+                access
+                    .authorize(permission, snapshot.into_resource())
+                    .await?;
+                if access.uses_storage_visibility() {
+                    HistoryVisibility::Collections(access.candidate_collections(permission).await?)
+                } else {
+                    HistoryVisibility::Policy
+                }
             }
-        } else if can_read_deleted_history(context, subject, scopes.is_some()).await? {
-            HistoryVisibility::DeletedAdministrator
-        } else {
-            return Err(unavailable());
+            Some(HistoryIdentity::Deleted(proof)) => HistoryVisibility::DeletedAdministrator(proof),
+            None => return Err(unavailable()),
         };
         Ok(Self {
-            context,
-            subject,
-            scopes,
+            access,
             resource,
             permission,
             visibility,
         })
+    }
+
+    /// Authorization and retained-data availability are separate facts. Point
+    /// readers must be able to report a missing snapshot after the access gate.
+    /// Relationship reads need this check before dropping an object's class ID.
+    async fn require_retained_root(&self) -> Result<(), ApiError> {
+        if !matches!(self.visibility, HistoryVisibility::DeletedAdministrator(_)) {
+            return Ok(());
+        }
+        let options = QueryOptions::new(
+            Vec::new(),
+            HistoryDirection::Older.sorts(),
+            Some(1),
+            None,
+            false,
+        )?;
+        let query = StorageHistoryNavigationQuery::try_new(
+            self.resource,
+            options,
+            StorageHistoryCollectionScope::All,
+        )
+        .map_err(|error| error.into_request_error())?;
+        if storage_handle(self.access.context())
+            .list_history_markers(query)
+            .await?
+            .into_parts()
+            .0
+            .is_empty()
+        {
+            return Err(unavailable());
+        }
+        Ok(())
+    }
+
+    async fn page<T, Fetch, FetchFuture, Snapshot>(
+        &self,
+        options: &QueryOptions,
+        fetch: Fetch,
+        snapshot: Snapshot,
+    ) -> Result<(Vec<T>, i64), ApiError>
+    where
+        T: CursorPaginated,
+        Fetch: Fn(QueryOptions, StorageHistoryCollectionScope) -> FetchFuture,
+        FetchFuture: Future<Output = Result<(Vec<T>, Option<i64>), ApiError>>,
+        Snapshot: Fn(&T) -> HistoryAuthorizationSnapshot,
+    {
+        if matches!(self.visibility, HistoryVisibility::Policy) {
+            self.access
+                .page(
+                    self.permission,
+                    |options| async {
+                        fetch(options, StorageHistoryCollectionScope::All)
+                            .await
+                            .map(|(rows, _)| rows)
+                    },
+                    options,
+                    snapshot,
+                )
+                .await
+        } else {
+            let scope = match &self.visibility {
+                HistoryVisibility::Collections(scope) => scope.clone(),
+                _ => StorageHistoryCollectionScope::All,
+            };
+            let (rows, total) = fetch(prepare_db_pagination::<T>(options)?, scope).await?;
+            if rows.is_empty() {
+                self.require_retained_root().await?;
+            }
+            Ok((rows, history_total(total, options)?))
+        }
+    }
+
+    pub(crate) async fn list(
+        &self,
+        options: &QueryOptions,
+    ) -> Result<(HistoryRows, i64), ApiError> {
+        let storage = storage_handle(self.access.context());
+        match self.resource {
+            StorageHistoryResource::Class(id) => {
+                let (rows, total) = self
+                    .page(
+                        options,
+                        |options, scope| async {
+                            let (rows, total) = storage
+                                .list_class_history(StorageHistoryListQuery::new(
+                                    ResourceId::new(id.id())?,
+                                    options,
+                                    scope,
+                                ))
+                                .await?
+                                .into_parts();
+                            Ok((
+                                rows.into_iter()
+                                    .map(class_from_storage)
+                                    .collect::<Result<_, _>>()?,
+                                total,
+                            ))
+                        },
+                        |row| HistoryAuthorizationSnapshot::from(row),
+                    )
+                    .await?;
+                Ok((HistoryRows::Class(rows), total))
+            }
+            StorageHistoryResource::Object {
+                class_id,
+                object_id,
+            } => {
+                let (rows, total) = self
+                    .page(
+                        options,
+                        |options, scope| async {
+                            let (rows, total) = storage
+                                .list_object_history(StorageObjectHistoryListQuery::new(
+                                    object_id, class_id, options, scope,
+                                ))
+                                .await?
+                                .into_parts();
+                            Ok((
+                                rows.into_iter()
+                                    .map(object_from_storage)
+                                    .collect::<Result<_, _>>()?,
+                                total,
+                            ))
+                        },
+                        |row| HistoryAuthorizationSnapshot::from(row),
+                    )
+                    .await?;
+                Ok((HistoryRows::Object(rows), total))
+            }
+        }
     }
 
     async fn markers(
@@ -156,42 +282,22 @@ impl<'a, S: AuthzSubject> HistoryReader<'a, S> {
         window: StorageHistoryWindow,
         selection: StorageHistorySelection,
     ) -> Result<(Vec<HistoryMarker>, i64), ApiError> {
-        let scope = match &self.visibility {
-            HistoryVisibility::Collections(scope) => scope.clone(),
-            _ => StorageHistoryCollectionScope::All,
-        };
-        let fetch = |options| async {
-            let query =
-                StorageHistoryNavigationQuery::try_new(self.resource, options, scope.clone())
-                    .map_err(|error| ApiError::BadRequest(error.to_string()))?
+        self.page(
+            options,
+            |options, scope| async {
+                let query = StorageHistoryNavigationQuery::try_new(self.resource, options, scope)
+                    .map_err(|error| error.into_request_error())?
                     .window(window)
                     .selection(selection);
-            let (rows, total) = storage_handle(self.context)
-                .list_history_markers(query)
-                .await?
-                .into_parts();
-            Ok::<_, ApiError>((
-                rows.into_iter()
-                    .map(marker_from_storage)
-                    .collect::<Vec<_>>(),
-                total,
-            ))
-        };
-        if matches!(self.visibility, HistoryVisibility::Policy) {
-            authorize_history_page(
-                self.context,
-                self.subject,
-                self.scopes,
-                self.permission,
-                |options| async { fetch(options).await.map(|(rows, _)| rows) },
-                options,
-                |row| HistoryAuthorizationSnapshot::from(row),
-            )
-            .await
-        } else {
-            let (rows, total) = fetch(prepare_db_pagination::<HistoryMarker>(options)?).await?;
-            Ok((rows, history_total(total, options)?))
-        }
+                let (rows, total) = storage_handle(self.access.context())
+                    .list_history_markers(query)
+                    .await?
+                    .into_parts();
+                Ok((rows.into_iter().map(marker_from_storage).collect(), total))
+            },
+            |row| HistoryAuthorizationSnapshot::from(row),
+        )
+        .await
     }
 
     async fn anchor(&self, id: HistoryRecordId) -> Result<HistoryMarker, ApiError> {
@@ -248,35 +354,13 @@ impl<'a, S: AuthzSubject> HistoryReader<'a, S> {
             _ => StorageHistorySelection::All,
         };
         let (rows, total) = self.markers(&options, window, selection).await?;
-        // Unknown/deleted resources do not turn arbitrary IDs into successful empty timelines.
-        if rows.is_empty() && matches!(self.visibility, HistoryVisibility::DeletedAdministrator) {
-            let probe = QueryOptions::new(
-                Vec::new(),
-                HistoryDirection::Older.sorts(),
-                Some(1),
-                None,
-                false,
-            )?;
-            if self
-                .markers(
-                    &probe,
-                    StorageHistoryWindow::default(),
-                    StorageHistorySelection::All,
-                )
-                .await?
-                .0
-                .is_empty()
-            {
-                return Err(unavailable());
-            }
-        }
         Ok((rows, total, options))
     }
 
     pub(crate) async fn as_of(&self, at: DateTime<Utc>) -> Result<HistoryEntry, ApiError> {
         let (entry, snapshot) = match self.resource {
             StorageHistoryResource::Class(id) => {
-                let row = super::class_as_of(id.id(), at, self.context)
+                let row = super::class_as_of(id.id(), at, self.access.context())
                     .await?
                     .ok_or_else(unavailable)?;
                 let snapshot = HistoryAuthorizationSnapshot::from(&row);
@@ -286,22 +370,18 @@ impl<'a, S: AuthzSubject> HistoryReader<'a, S> {
                 class_id,
                 object_id,
             } => {
-                let row = super::object_as_of(object_id.id(), class_id.id(), at, self.context)
-                    .await?
-                    .ok_or_else(unavailable)?;
+                let row =
+                    super::object_as_of(object_id.id(), class_id.id(), at, self.access.context())
+                        .await?
+                        .ok_or_else(unavailable)?;
                 let snapshot = HistoryAuthorizationSnapshot::from(&row);
                 (HistoryEntry::Object(row), snapshot)
             }
         };
-        if !matches!(self.visibility, HistoryVisibility::DeletedAdministrator) {
-            authorize_history_snapshot(
-                self.context,
-                self.subject,
-                self.scopes,
-                self.permission,
-                snapshot,
-            )
-            .await?;
+        if !matches!(self.visibility, HistoryVisibility::DeletedAdministrator(_)) {
+            self.access
+                .authorize(self.permission, snapshot.into_resource())
+                .await?;
         }
         Ok(entry)
     }
@@ -310,7 +390,7 @@ impl<'a, S: AuthzSubject> HistoryReader<'a, S> {
         // Resolve historical visibility using metadata before loading a potentially
         // large snapshot. Missing and inaccessible identities take the same path.
         self.anchor(id).await?;
-        let row = storage_handle(self.context)
+        let row = storage_handle(self.access.context())
             .get_history_entry(StorageHistoryEntryQuery::new(self.resource, id))
             .await?
             .ok_or_else(unavailable)?;

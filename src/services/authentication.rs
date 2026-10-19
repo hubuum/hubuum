@@ -1,5 +1,5 @@
 use chrono::SubsecRound;
-use hubuum_domain::{PrincipalId, UserId};
+use hubuum_domain::PrincipalId;
 use hubuum_events_core::{EventContext, EventSubject};
 use tracing::{Instrument, field, info_span};
 
@@ -7,14 +7,17 @@ use crate::auth::AuthenticatedLogin;
 use crate::errors::ApiError;
 use crate::models::principal::load_principal_by_id;
 use crate::models::token::configured_token_issuance_policy;
+use crate::models::user::{ValidatedLogin, auth_failure};
 use crate::models::{IssuedToken, Token, configured_token_lifetime};
 use crate::permissions::AppContext;
+use crate::storage::UserStorage;
 use crate::storage::{
     AuthenticationStorage, StorageAuthenticatedToken, StorageAuthenticationAttempt, StorageContext,
     StorageLogin, StorageTokenCreate, StorageTokenFormat, StorageTokenMigrationOutcome,
     StorageUser, TokenStorage, storage_handle,
 };
-use crate::utilities::auth::generate_token;
+use crate::utilities::auth::{generate_token, verify_dummy_password_async, verify_password_async};
+use tracing::{error, warn};
 
 /// Commit a login token and immutable event-time subject using the configured
 /// authorization policy, after provider authentication and identity synchronization.
@@ -37,20 +40,8 @@ pub(crate) async fn issue_login_token(
     .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
     let token = generate_token();
     let request = StorageTokenCreate::for_login(
-        StorageLogin::try_new(
-            subject,
-            StorageUser::try_new(
-                UserId::new(user.id)?,
-                user.password.clone(),
-                user.proper_name.clone(),
-                user.email.clone(),
-                user.created_at.and_utc(),
-                user.updated_at.and_utc(),
-                user.anonymized_at.map(|at| at.and_utc()),
-            )
-            .map_err(|error| ApiError::InternalServerError(error.to_string()))?,
-        )
-        .map_err(|_| ApiError::Unauthorized("Authentication failed".into()))?,
+        StorageLogin::try_new(subject, authenticated.credential().clone())
+            .map_err(|_| ApiError::Unauthorized("Authentication failed".into()))?,
         token.storage_digest()?,
         super::identity::token_policy(configured_token_issuance_policy()?),
         event_context,
@@ -167,6 +158,45 @@ impl ExecutionPrincipal {
 impl crate::traits::PrincipalIdAccessor for ExecutionPrincipal {
     fn principal_id(&self) -> i32 {
         self.id()
+    }
+}
+
+/// Keep the adapter's credential snapshot intact while verifying its password.
+pub(crate) async fn authenticate_local(
+    context: &impl StorageContext,
+    login: ValidatedLogin,
+) -> Result<StorageUser, ApiError> {
+    let name = login.name().to_owned();
+    let user = match storage_handle(context)
+        .get_user_by_name(login.identity_scope().to_owned(), name.clone())
+        .await
+    {
+        Ok(user) => user,
+        Err(_) => {
+            // Unknown users still perform one expensive verification.
+            let _ = verify_dummy_password_async(login.into_password()).await;
+            warn!(message = "Login failed (user not found)", user = name);
+            return Err(auth_failure());
+        }
+    };
+    let parts = user.clone().into_parts();
+    let Some(hash) = parts.password_hash() else {
+        warn!(
+            message = "Login failed (local password missing)",
+            user = name
+        );
+        return Err(auth_failure());
+    };
+    match verify_password_async(login.into_password(), hash.to_owned()).await {
+        Ok(true) => Ok(user),
+        Ok(false) => {
+            warn!(message = "Login failed (password mismatch)", user = name);
+            Err(auth_failure())
+        }
+        Err(error) => {
+            error!(message = "Login failed (password worker error)", user = name, error = %error);
+            Err(auth_failure())
+        }
     }
 }
 

@@ -26,6 +26,28 @@ const PASSWORD_WORK_MAX_CONCURRENCY: usize = 4;
 static PASSWORD_WORK_SEMAPHORE: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(PASSWORD_WORK_MAX_CONCURRENCY)));
 
+/// A completed password hash, never a plaintext input to the password worker.
+#[derive(Clone)]
+pub struct HashedPassword(String);
+
+impl HashedPassword {
+    pub fn from_encoded(encoded: String) -> Result<Self, PasswordWorkError> {
+        PasswordHash::new(&encoded)
+            .map_err(|_| PasswordWorkError("Invalid encoded password hash".into()))?;
+        Ok(Self(encoded))
+    }
+
+    pub(crate) fn into_encoded(self) -> String {
+        self.0
+    }
+}
+
+impl fmt::Debug for HashedPassword {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("HashedPassword(<redacted>)")
+    }
+}
+
 #[derive(Debug)]
 pub struct PasswordWorkError(String);
 
@@ -65,9 +87,12 @@ pub fn verify_dummy_password(password: &str) -> Result<bool, argon2::Error> {
     verify_password(password, &DUMMY_PASSWORD_HASH)
 }
 
-pub async fn verify_dummy_password_async(password: String) -> Result<bool, PasswordWorkError> {
+pub async fn verify_dummy_password_async(
+    password: PlaintextPassword,
+) -> Result<bool, PasswordWorkError> {
     run_password_work(move || {
-        verify_dummy_password(&password).map_err(|error| PasswordWorkError(error.to_string()))
+        verify_dummy_password(password.as_str())
+            .map_err(|error| PasswordWorkError(error.to_string()))
     })
     .await
 }
@@ -90,9 +115,13 @@ fn hash_validated_password(
     Ok(password_hash)
 }
 
-pub async fn hash_password_async(password: PlaintextPassword) -> Result<String, PasswordWorkError> {
+pub async fn hash_password_async(
+    password: PlaintextPassword,
+) -> Result<HashedPassword, PasswordWorkError> {
     run_password_work(move || {
-        hash_validated_password(&password).map_err(|error| PasswordWorkError(error.to_string()))
+        hash_validated_password(&password)
+            .map(HashedPassword)
+            .map_err(|error| PasswordWorkError(error.to_string()))
     })
     .await
 }
@@ -134,11 +163,12 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, argon2::Error
 }
 
 pub async fn verify_password_async(
-    password: String,
+    password: PlaintextPassword,
     hash: String,
 ) -> Result<bool, PasswordWorkError> {
     run_password_work(move || {
-        verify_password(&password, &hash).map_err(|error| PasswordWorkError(error.to_string()))
+        verify_password(password.as_str(), &hash)
+            .map_err(|error| PasswordWorkError(error.to_string()))
     })
     .await
 }
@@ -171,6 +201,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn completed_password_hash_debug_is_redacted() {
+        let hash =
+            HashedPassword::from_encoded(hash_password("redacted-password").unwrap()).unwrap();
+        let debug = format!("{hash:?}");
+        assert!(!debug.contains(&hash.into_encoded()));
+    }
+
+    #[test]
+    fn plaintext_cannot_be_loaded_as_a_completed_hash() {
+        assert!(HashedPassword::from_encoded("plaintext".into()).is_err());
+    }
+
+    #[test]
     fn empty_password_never_authenticates_even_against_a_legacy_empty_hash() {
         let hash = Argon2::default().hash_password(b"").unwrap().to_string();
         assert!(!verify_password("", &hash).unwrap());
@@ -190,9 +233,12 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            verify_password_async(candidate.to_string(), hash)
-                .await
-                .unwrap(),
+            verify_password_async(
+                PlaintextPassword::new(candidate.to_string()).unwrap(),
+                hash.into_encoded()
+            )
+            .await
+            .unwrap(),
             expected
         );
     }

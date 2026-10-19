@@ -1,3 +1,5 @@
+pub(crate) mod invocation;
+
 use hubuum_domain::{CollectionId, ResourceId};
 use std::str::FromStr;
 

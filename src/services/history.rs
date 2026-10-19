@@ -20,8 +20,8 @@ use crate::storage::{
     HistoryStorage, StorageClassHistoryRecord, StorageCollectionHistoryRecord, StorageContext,
     StorageExportTemplateHistoryRecord, StorageHistoryAsOfQuery, StorageHistoryCollectionScope,
     StorageHistoryListQuery, StorageHistoryMetadata, StorageHistoryOperation,
-    StorageObjectHistoryAsOfQuery, StorageObjectHistoryListQuery, StorageObjectHistoryRecord,
-    StorageRemoteTargetHistoryRecord, storage_handle,
+    StorageObjectHistoryAsOfQuery, StorageObjectHistoryRecord, StorageRemoteTargetHistoryRecord,
+    storage_handle,
 };
 
 /// Collection visibility applied before history rows are counted or paged.
@@ -336,14 +336,18 @@ history_service!(
     collection_from_storage,
     CollectionHistory
 );
-history_service!(
-    class_history_paginated_with_total_count,
-    class_as_of,
-    list_class_history,
-    get_class_history_as_of,
-    class_from_storage,
-    HubuumClassHistory
-);
+pub async fn class_as_of(
+    class_id: i32,
+    at: DateTime<Utc>,
+    backend: &impl StorageContext,
+) -> Result<Option<HubuumClassHistory>, ApiError> {
+    storage_handle(backend)
+        .get_class_history_as_of(StorageHistoryAsOfQuery::new(ResourceId::new(class_id)?, at))
+        .await?
+        .map(class_from_storage)
+        .transpose()
+}
+
 history_service!(
     export_template_history_paginated_with_total_count,
     export_template_as_of,
@@ -360,30 +364,6 @@ history_service!(
     remote_target_from_storage,
     RemoteTargetHistory
 );
-
-pub async fn object_history_paginated_with_total_count(
-    object_id: i32,
-    class_id: i32,
-    backend: &impl StorageContext,
-    query_options: &QueryOptions,
-    collection_filter: HistoryCollectionFilter<'_>,
-) -> Result<(Vec<HubuumObjectHistory>, i64), ApiError> {
-    let (rows, total_count) = storage_handle(backend)
-        .list_object_history(StorageObjectHistoryListQuery::new(
-            ObjectId::new(object_id)?,
-            ClassId::new(class_id)?,
-            query_options.clone(),
-            collection_filter.try_into()?,
-        ))
-        .await?
-        .into_parts();
-    Ok((
-        rows.into_iter()
-            .map(object_from_storage)
-            .collect::<Result<_, _>>()?,
-        history_total(total_count, query_options)?,
-    ))
-}
 
 pub async fn object_as_of(
     object_id: i32,

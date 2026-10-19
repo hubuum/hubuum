@@ -1,11 +1,9 @@
-use crate::models::remote_target::CredentialBoundDestination;
 use crate::models::token_scope::TokenScope;
 use crate::services::authentication::ExecutionPrincipal;
+use crate::services::remote_targets::invocation::AuthorizedRemoteInvocation;
 use base64::Engine;
 use hubuum_domain::{RemoteTargetId, ResourceId};
-use hubuum_outbound_http::{
-    OutboundHeaders, OutboundHttpError, OutboundMethod, OutboundRequest, validate_outbound_url,
-};
+use hubuum_outbound_http::{OutboundHeaders, OutboundHttpError, validate_outbound_url};
 use hubuum_templates::{MissingDataPolicy, TemplateBatch, TemplateExecution, TemplateLimits};
 #[cfg(feature = "integration-test-support")]
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -22,7 +20,6 @@ use crate::models::{
     NewTaskEventRecord, RemoteAuthConfig, RemoteHeaderTemplates, RemoteHttpMethod,
     RemoteInvocationBodyOverride, RemoteInvocationParameters, RemoteTargetSubjectType,
     RemoteTemplateContext, StoredRemoteCallTaskPayload, TaskResultCounts, TaskStatus,
-    authorize_remote_invocation,
 };
 use crate::observability::metrics;
 use crate::permissions::AuthorizationContext;
@@ -143,14 +140,12 @@ async fn execute_remote_call<C>(
 where
     C: AuthorizationContext,
 {
-    let target =
-        crate::services::remote_targets::get_remote_target(backend, request.target_id.id()).await?;
-    request.validate_target_revision(target.revision)?;
-    let resolved =
-        authorize_remote_invocation(backend, user, scopes, &target, &request.subject).await?;
+    let invocation =
+        AuthorizedRemoteInvocation::from_stored(backend, user, scopes, request).await?;
+    let target = invocation.target();
 
     let context = invocation_context(
-        resolved.context,
+        invocation.template_context(),
         request.parameters.clone(),
         request.body_override.clone(),
     )?;
@@ -170,8 +165,8 @@ where
     let failure_context = RemoteFailureContext {
         task_id: task.id,
         target_id: RemoteTargetId::new(target.id)?,
-        subject_type: resolved.subject_type,
-        subject_id: ResourceId::new(resolved.subject_id)?,
+        subject_type: invocation.subject_type(),
+        subject_id: ResourceId::new(invocation.subject_id())?,
         method: target.method,
     };
     let rendered_destination = match validate_outbound_url(&rendered_url) {
@@ -186,10 +181,7 @@ where
         }
     };
 
-    if target.auth_config.uses_server_credentials() {
-        CredentialBoundDestination::from_template(&target.url_template)?
-            .validate_rendered(&rendered_destination)?;
-    }
+    let rendered_destination = invocation.approve_destination(rendered_destination)?;
     let normalized_rendered_url = rendered_destination.url().to_string();
     let mut headers = rendered_headers;
     apply_auth(&mut headers, &target.auth_config).await?;
@@ -211,24 +203,21 @@ where
             task.lease().clone(),
             StorageRemoteCallArtifactTarget::new(
                 Some(request.target_id),
-                subject_type_to_storage(resolved.subject_type),
-                ResourceId::new(resolved.subject_id)?,
+                subject_type_to_storage(invocation.subject_type()),
+                ResourceId::new(invocation.subject_id())?,
                 Some(http_method_to_storage(target.method)),
                 normalized_rendered_url.clone(),
             ),
         ))
         .await?;
-    let outbound = OutboundRequest::new(
-        outbound_method(target.method),
-        normalized_rendered_url.clone(),
-        std::time::Duration::from_millis(timeout_ms),
-    )
-    .headers(headers)
-    .body(rendered_body)
-    .max_response_bytes(preview_limit)
-    .allow_private_targets(allow_private_targets)
-    .dangerous_accept_invalid_certs(local_test_target)
-    .dangerous_allow_localhost(local_test_target);
+    let outbound = rendered_destination
+        .into_request(std::time::Duration::from_millis(timeout_ms))
+        .headers(headers)
+        .body(rendered_body)
+        .max_response_bytes(preview_limit)
+        .allow_private_targets(allow_private_targets)
+        .dangerous_accept_invalid_certs(local_test_target)
+        .dangerous_allow_localhost(local_test_target);
 
     let response_result = super::control::cancellable(async { Ok(outbound.send().await) }).await?;
 
@@ -262,8 +251,8 @@ where
                             hubuum_domain::RemoteTargetId::new(target.id)
                                 .expect("validated remote target id must be positive"),
                         ),
-                        subject_type_to_storage(resolved.subject_type),
-                        ResourceId::new(resolved.subject_id)?,
+                        subject_type_to_storage(invocation.subject_type()),
+                        ResourceId::new(invocation.subject_id())?,
                         Some(http_method_to_storage(target.method)),
                         response.url(),
                     ),
@@ -606,15 +595,6 @@ async fn resolve_secret(secret: &str) -> Result<hubuum_secrets::ResolvedSecret, 
 
 fn secret_error(_error: hubuum_secrets::SecretError) -> ApiError {
     ApiError::BadRequest("Remote secret is not configured or is unavailable".to_string())
-}
-
-fn outbound_method(method: RemoteHttpMethod) -> OutboundMethod {
-    match method {
-        RemoteHttpMethod::Get => OutboundMethod::Get,
-        RemoteHttpMethod::Post => OutboundMethod::Post,
-        RemoteHttpMethod::Patch => OutboundMethod::Patch,
-        RemoteHttpMethod::Delete => OutboundMethod::Delete,
-    }
 }
 
 fn bounded_timeout_ms(timeout_ms: i32) -> u64 {

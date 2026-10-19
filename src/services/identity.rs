@@ -27,12 +27,11 @@ use crate::storage::{
     StoragePrincipalGroup, StoragePrincipalGroupListQuery, StoragePrincipalTokensRevoke,
     StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountDetails,
     StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
-    StorageServiceAccountUpdate, StorageSyncedHuman, StorageTokenCreate, StorageTokenHashRevoke,
+    StorageServiceAccountUpdate, StorageTokenCreate, StorageTokenHashRevoke,
     StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
     StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUser,
-    StorageUserAnonymize, StorageUserCreate, StorageUserDelete, StorageUserDetails,
-    StorageUserListItem, StorageUserListQuery, StorageUserPasswordUpdate, StorageUserUpdate,
-    TokenStorage, UserStorage, storage_handle,
+    StorageUserAnonymize, StorageUserDelete, StorageUserDetails, StorageUserListItem,
+    StorageUserListQuery, StorageUserPasswordUpdate, TokenStorage, UserStorage, storage_handle,
 };
 
 pub(crate) async fn reset_local_password(
@@ -49,7 +48,7 @@ pub(crate) async fn reset_local_password(
     Ok(storage_handle(context)
         .reset_local_password(StorageLocalPasswordReset::new(
             principal_name,
-            password_hash,
+            password_hash.into_encoded(),
             EventContext::system(),
         ))
         .await?
@@ -179,7 +178,7 @@ fn token_metadata_from_storage(
     })
 }
 
-pub(super) fn user_from_storage(user: StorageUser) -> User {
+pub(crate) fn user_from_storage(user: StorageUser) -> User {
     let user = user.into_parts();
     User {
         id: user.id().id(),
@@ -319,17 +318,10 @@ pub async fn create_user(
 
 pub(crate) async fn create_user_with_password_hash(
     context: &impl StorageContext,
-    request: crate::models::NewUser,
+    request: crate::models::user::HashedNewUser,
     event_context: &EventContext,
 ) -> Result<User, ApiError> {
-    let storage_request = StorageUserCreate::new(
-        request.identity_scope,
-        request.name,
-        request.password,
-        request.proper_name,
-        request.email,
-        event_context.clone(),
-    );
+    let storage_request = request.into_storage(event_context.clone());
     Ok(user_from_storage(
         storage_handle(context)
             .create_user(storage_request)
@@ -345,13 +337,8 @@ pub async fn update_user(
     event_context: &EventContext,
 ) -> Result<User, ApiError> {
     let request = request.hash_password().await?;
-    let storage_request = StorageUserUpdate::new(
-        hubuum_domain::UserId::new(id).expect("validated user id must be positive"),
-        request.password,
-        request.proper_name,
-        request.email,
-        event_context.clone(),
-    );
+    let storage_request =
+        request.into_storage(hubuum_domain::UserId::new(id)?, event_context.clone());
     Ok(user_from_storage(
         storage_handle(context)
             .update_user(storage_request)
@@ -363,13 +350,13 @@ pub async fn update_user(
 pub async fn set_user_password(
     context: &impl StorageContext,
     id: i32,
-    password_hash: String,
+    password_hash: crate::utilities::auth::HashedPassword,
     event_context: &EventContext,
 ) -> Result<usize, ApiError> {
     Ok(storage_handle(context)
         .set_user_password(StorageUserPasswordUpdate::new(
             hubuum_domain::UserId::new(id).expect("validated user id must be positive"),
-            password_hash,
+            password_hash.into_encoded(),
             event_context.clone(),
         ))
         .await?
@@ -896,27 +883,25 @@ fn external_sync_request(
         .build()
 }
 
-fn synced_human_from_storage(human: StorageSyncedHuman) -> crate::models::User {
-    crate::models::User {
-        id: human.id().id(),
-        kind: crate::models::PrincipalKind::Human,
-        password: None,
-        proper_name: human.proper_name().map(str::to_string),
-        email: human.email().map(str::to_string),
-        created_at: human.created_at().naive_utc(),
-        updated_at: human.updated_at().naive_utc(),
-        anonymized_at: human.anonymized_at().map(|timestamp| timestamp.naive_utc()),
-    }
-}
-
 pub async fn sync_external_user(
     context: &impl StorageContext,
     scope_name: &str,
     provider_kind: &str,
     authenticated: AuthenticatedExternalUser,
 ) -> Result<crate::models::User, ApiError> {
+    Ok(user_from_storage(
+        sync_external_credential(context, scope_name, provider_kind, authenticated).await?,
+    ))
+}
+
+pub(crate) async fn sync_external_credential(
+    context: &impl StorageContext,
+    scope_name: &str,
+    provider_kind: &str,
+    authenticated: AuthenticatedExternalUser,
+) -> Result<StorageUser, ApiError> {
     let request = external_sync_request(scope_name, provider_kind, authenticated);
-    Ok(synced_human_from_storage(
+    Ok(StorageUser::from(
         storage_handle(context)
             .sync_external_user(request)
             .await?

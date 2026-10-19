@@ -36,11 +36,9 @@ pub async fn create_approval(
     let input = body.into_inner();
     let operation_kind = input.operation.kind().as_str();
     let login = actor.password_login(&context, input.password).await?;
-    let scope = login
-        .identity_scope
-        .as_deref()
-        .unwrap_or(crate::models::LOCAL_IDENTITY_SCOPE);
-    let Some(permit) = begin_login_attempt(scope, &login.name, client_ip_for_request(&req)).await?
+    let scope = login.identity_scope();
+    let Some(permit) =
+        begin_login_attempt(scope, login.name(), client_ip_for_request(&req)).await?
     else {
         tracing::warn!(
             message = "Credential reauthentication throttled",
