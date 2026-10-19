@@ -1901,6 +1901,7 @@
             "get_collection",
             "get_collection_history_as_of",
             "get_computed_field",
+            "get_computed_field_history",
             "get_computed_field_state",
             "get_credential_approval",
             "get_event_delivery",
@@ -2309,6 +2310,7 @@
             "get_collection",
             "get_collection_history_as_of",
             "get_computed_field",
+            "get_computed_field_history",
             "get_computed_field_state",
             "get_credential_approval",
             "get_event_delivery",
@@ -7345,7 +7347,7 @@
   },
   "documents": {
     "backup": {
-      "version": 9,
+      "version": 10,
       "required_fields": [
         "backup_version",
         "created_at",
@@ -7385,6 +7387,7 @@
         "collection_history",
         "class_history",
         "class_schema_history",
+        "computed_field_history",
         "class_relation_history",
         "object_history",
         "object_relation_history",
@@ -7397,7 +7400,7 @@
         "audit_events",
         "terminal_event_deliveries"
       ],
-      "rejection_policy": "accept backup versions 6 through 9; normalize version 6 event defaults and restore versions 6 through 8 without query usage declarations"
+      "rejection_policy": "accept backup versions 6 through 10; normalize legacy event defaults, missing query usage declarations and missing shared computed definition history; observe new definition history at the restore boundary"
     },
     "import": {
       "version": 2,

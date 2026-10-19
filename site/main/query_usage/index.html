@@ -4675,10 +4675,10 @@ contract. Memory storage records intent in process memory. PostgreSQL stores it
 transactionally with the corresponding audit event. Native actions and
 analysis are separate optional adapter capabilities; declaration management
 does not depend on either being available.</p>
-<p>Full backup version 9 includes logical declarations and their provenance.
+<p>Full backups have included logical declarations and their provenance since version 9.
 Versions 6 through 8 restore with an empty declaration set. Physical optimization
 resources are not portable backup content. The restore target must support
-version 9 before it can restore any new backup, including one with no declarations.</p>
+the current <a href="../backup-restore/">backup version</a>, including for backups with no declarations.</p>
 <h2 id="observations-and-analysis">Observations and analysis<a class="headerlink" href="#observations-and-analysis" title="Permanent link">&para;</a></h2>
 <p><code>POST /api/v1/classes/{class_id}/query-usage/analysis</code> accepts
 <code>{"proposed": []}</code> or up to 32 hypothetical patterns. It requires an unscoped

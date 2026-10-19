@@ -1140,6 +1140,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#historical-computed-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Historical computed fields
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#lightweight-timeline-navigation" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5012,6 +5023,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#historical-computed-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Historical computed fields
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#lightweight-timeline-navigation" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5646,6 +5668,14 @@ or purging a task cannot erase attribution from immutable history.</p>
 - It has <code>op = 'D'</code>.
 - Both <code>valid_from</code> and <code>valid_to</code> are set to the deletion timestamp (matching the format seen in line 24 of <code>up.sql</code>).
 - This tombstone allows auditing what was deleted and when, while being logically distinct from an UPDATE closure.</p>
+<h2 id="historical-computed-fields">Historical computed fields<a class="headerlink" href="#historical-computed-fields" title="Permanent link">&para;</a></h2>
+<p><a href="../computed_fields/#historical-recomputation">Historical recomputation</a> uses the
+object snapshot and the separately versioned complete shared definition set.
+<code>computed_field_history</code> retains those sets over half-open intervals, including
+observed empty sets. Definition history survives deletion and contains no
+personal fields or owner/actor identities. It is not an object materialization
+history. Definitions predating migration, omitted by backup or removed by a
+future retention policy remain explicitly unavailable.</p>
 <h2 id="lightweight-timeline-navigation">Lightweight Timeline Navigation<a class="headerlink" href="#lightweight-timeline-navigation" title="Permanent link">&para;</a></h2>
 <p>Class and object history can be browsed without fetching every full snapshot:</p>
 <table>

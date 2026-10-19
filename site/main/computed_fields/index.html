@@ -1074,6 +1074,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#historical-recomputation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Historical recomputation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#managing-shared-definitions" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4484,6 +4495,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#historical-recomputation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Historical recomputation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#managing-shared-definitions" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4779,6 +4801,46 @@ entire response page.</p>
 <li><code>evaluation_limit_exceeded</code></li>
 <li><code>result_too_large</code></li>
 </ul>
+<h2 id="historical-recomputation">Historical recomputation<a class="headerlink" href="#historical-recomputation" title="Permanent link">&para;</a></h2>
+<p><code>GET /api/v1/classes/{class_id}/{object_id}/history/computed/as-of?at=&lt;RFC3339&gt;</code>
+returns <code>mode: historical_recomputation</code>. It evaluates retained object JSON
+with the complete shared definition set effective at that instant. It does not
+return evaluation output or stale/cache state recorded at that time.</p>
+<p>The response identifies the object ID, history ID and revision; the selected
+definition-set history ID and validity interval; each definition ID and revision;
+and the evaluator and definition semantics versions. Definition changes are
+tracked independently of object changes, including label edits, disablement,
+deletion and recreation. An observed empty set returns <code>shared.status: available</code>
+with <code>fields: []</code>.</p>
+<p>Each field is <code>evaluated</code> with a value (possibly JSON null), <code>error</code> with its
+error code, <code>disabled</code>, or <code>unavailable</code> with a reason. Errors and unavailable
+fields have no <code>value</code> member. Missing definition history returns
+<code>definition_history_unavailable</code>; missing class history returns
+<code>class_history_unavailable</code>. Missing object history returns HTTP 404. Current
+definitions and materializations never fill gaps in retained history.</p>
+<p>Evaluator version 1 freezes the limits above and evaluates definitions in
+ascending definition-ID order. Unsupported evaluator versions make enabled
+fields unavailable. An enabled definition with unsupported semantics makes the
+whole enabled set unavailable: skipping that definition could change the shared
+work budget and invent results for the others. JSON Schema is not an evaluator
+input; stored object data is evaluated without revalidation against a schema.</p>
+<p>Both current object and class read permissions are checked before accessing
+historical data or definitions, followed by the historical resource checks.
+Token scopes and the configured permission backend apply. Deleted-resource
+history follows the existing unscoped-administrator policy. Responses are
+<code>Cache-Control: private, no-store</code>.</p>
+<p>Personal historical fields return <code>personal: unsupported</code>. Shared history never
+retains personal definitions, owner identities or definition actor identities,
+including after user deletion or anonymization. Reads perform no materialization
+writes, rebuild scheduling, object mutation or object-update events.</p>
+<p>Apply the computed-definition history migration before starting the new server.
+It observes existing shared sets at migration time; earlier sets cannot be
+reconstructed. History is authoritative, survives definition/class deletion and
+is included in <a href="../backup-restore/">full backups</a>. History-free and legacy restores
+observe shared sets at the restore boundary without backfilling older dates.
+Automatic pruning of these intervals is not enabled. Any future retention
+policy must keep object and definition availability explicit; gaps yield the
+unavailable states above. Materializations remain rebuildable caches.</p>
 <h2 id="managing-shared-definitions">Managing shared definitions<a class="headerlink" href="#managing-shared-definitions" title="Permanent link">&para;</a></h2>
 <p>Shared management is class-bound:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>GET    /api/v1/classes/{class_id}/computed-fields
