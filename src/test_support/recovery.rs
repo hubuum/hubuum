@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use hubuum_domain::{
-    ClassRelationId, CollectionId, ComputedFieldDefinitionId, PrincipalId, ResourceId,
+    ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId, PrincipalId, ResourceId,
 };
 use hubuum_storage_core::*;
 use hubuum_storage_postgres::{PostgresFaultController, PostgresFaultPoint, PostgresPool};
@@ -28,6 +28,7 @@ pub struct RestoreContractFixture {
     collection_id: CollectionId,
     class: StorageResolvedClass,
     query_usage_id: ResourceId,
+    retired_class_id: ClassId,
     retired_definition_at: DateTime<Utc>,
     scope: TestScope,
     mutation: AtomicUsize,
@@ -124,7 +125,30 @@ impl RestoreContractFixture {
                 "result_type":"string", "enabled": true
             })).unwrap()), context.clone()
         )).await?.into_value().into_parts();
+        let retired_class = storage
+            .class_store()
+            .create_class(
+                StorageClassCreate::builder(
+                    scope.scoped_name("retired_class"),
+                    collection.id(),
+                    "retained identity",
+                )
+                .build(),
+                &context,
+            )
+            .await?
+            .into_value();
+        let retired_class_id = retired_class.id();
         let retired_definition_at = Utc::now();
+        let retired_class = storage
+            .class_store()
+            .resolve_class(StorageClassSelector::Id(retired_class_id))
+            .await?;
+        storage
+            .class_store()
+            .delete_class(&retired_class, &context)
+            .await?
+            .into_value();
         storage
             .delete_shared_computed_field(StorageSharedComputedFieldDelete::new(
                 class.id(),
@@ -267,6 +291,7 @@ impl RestoreContractFixture {
             collection_id: collection.id(),
             class: resolved,
             query_usage_id: query_usage.metadata().id(),
+            retired_class_id,
             retired_definition_at,
             scope,
             mutation: AtomicUsize::new(0),
@@ -392,6 +417,45 @@ impl RestoreContractFixture {
     pub async fn mutate(&self) -> Result<(), ApiError> {
         let iteration = self.mutation.fetch_add(1, Ordering::SeqCst);
         let context = EventContext::system();
+        let retains_class = self
+            .storage
+            .get_computed_field_history(StorageComputedFieldHistoryQuery::new(
+                self.retired_class_id,
+                self.retired_definition_at,
+            ))
+            .await?
+            .is_some();
+        let class = self
+            .storage
+            .class_store()
+            .create_class(
+                StorageClassCreate::builder(
+                    self.scope
+                        .scoped_name(&format!("deleted_class_{iteration}")),
+                    self.collection_id,
+                    "retained identity",
+                )
+                .build(),
+                &context,
+            )
+            .await?
+            .into_value();
+        if retains_class {
+            assert!(
+                class.id() > self.retired_class_id,
+                "restore must not reuse a retained class identity"
+            );
+        }
+        let class = self
+            .storage
+            .class_store()
+            .resolve_class(StorageClassSelector::Id(class.id()))
+            .await?;
+        self.storage
+            .class_store()
+            .delete_class(&class, &context)
+            .await?
+            .into_value();
         let retained_id = self
             .storage
             .get_computed_field_history(StorageComputedFieldHistoryQuery::new(

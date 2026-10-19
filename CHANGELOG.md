@@ -105,6 +105,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Deleted object history, including relationship history, verifies the requested
   class against retained object history before returning rows or empty results.
 
+- Restore preserves resource IDs retained only in history, preventing new
+  resources from reusing deleted identities and corrupting later history backups.
 - Historical object navigation rejects a live object requested through the wrong
   class, including for administrators with deleted-history access.
 

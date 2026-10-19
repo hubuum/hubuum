@@ -2,6 +2,22 @@ use super::*;
 
 mod tasks;
 
+fn advance_retained_sequence(
+    next: &mut i32,
+    rows: &[StorageBackupRow],
+    column: &str,
+) -> Result<(), StorageError> {
+    for row in rows {
+        *next = (*next).max(
+            Row(row)
+                .integer(column)?
+                .checked_add(1)
+                .ok_or_else(|| invalid("retained resource sequence"))?,
+        );
+    }
+    Ok(())
+}
+
 pub(in crate::backup) fn capture_history(
     state: &MemoryState,
     progress: &mut StorageBackupCaptureProgress,
@@ -158,6 +174,45 @@ pub(in crate::backup) fn restore_history(
         for row in rows {
             row.normalize_legacy_history(section);
         }
+    }
+    // Restored allocators must include deleted resources retained in history.
+    for (section, next) in [
+        (
+            StorageBackupHistorySection::CollectionHistory,
+            &mut state.next_collection_id,
+        ),
+        (
+            StorageBackupHistorySection::ClassHistory,
+            &mut state.next_class_id,
+        ),
+        (
+            StorageBackupHistorySection::ObjectHistory,
+            &mut state.next_object_id,
+        ),
+        (
+            StorageBackupHistorySection::ClassRelationHistory,
+            &mut state.next_class_relation_id,
+        ),
+        (
+            StorageBackupHistorySection::ObjectRelationHistory,
+            &mut state.next_object_relation_id,
+        ),
+        (
+            StorageBackupHistorySection::ExportTemplateHistory,
+            &mut state.next_export_template_id,
+        ),
+        (
+            StorageBackupHistorySection::RemoteTargetHistory,
+            &mut state.next_remote_target_id,
+        ),
+    ] {
+        advance_retained_sequence(next, &sections[&section], "id")?;
+    }
+    for section in [
+        StorageBackupHistorySection::ClassSchemaHistory,
+        StorageBackupHistorySection::ComputedFieldHistory,
+    ] {
+        advance_retained_sequence(&mut state.next_class_id, &sections[&section], "class_id")?;
     }
     state.schema_history = sections[&StorageBackupHistorySection::ClassSchemaHistory].clone();
     state
