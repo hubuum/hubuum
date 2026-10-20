@@ -184,10 +184,12 @@ If-Match: "<opaque-etag-from-point-response>"
 POST   /api/v1/iam/me/computed-fields/preview
 ```
 
-Creating, changing, and previewing a personal definition requires `ReadClass`.
-An owner who later loses class access can still list and delete the inaccessible
-definition. Personal definitions are evaluated on read and are never fanned out
-during object writes. User anonymization explicitly removes them.
+Creating, reading, changing, deleting, and previewing a personal definition
+requires current `ReadClass` access. Listings apply the same class authorization
+and token permission and resource scopes before pagination and totals. An owner
+who loses class access must regain it to access retained definitions. Personal
+definitions are evaluated on read and are never fanned out during object writes.
+User anonymization explicitly removes them.
 
 Preview accepts a typed definition and exactly one of an accessible `object_id`
 or explicit sample `data`. Personal preview also requires `class_id`. Preview

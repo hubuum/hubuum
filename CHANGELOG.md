@@ -125,6 +125,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- **Breaking personal computed-field authorization correction:** listings now
+  require current `ReadClass` access and respect token permission and resource
+  scopes, matching the individual-definition endpoint. Hidden definitions are
+  excluded before pagination and totals. Restore the intended class read grants
+  and use a token covering those classes to list retained definitions after
+  upgrading; no database migration is required.
+
 - **Breaking collection hierarchy authorization correction:** each returned child
   or ancestor now requires its own `ReadCollection` authorization and token
   resource scope, preventing metadata disclosure through a readable neighbor.

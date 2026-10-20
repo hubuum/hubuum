@@ -1,4 +1,5 @@
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, web};
+use hubuum_storage_core::StorageAuthorizationResourceKey;
 
 use crate::api::etag::{RevisionedResource, revision_precondition};
 use crate::api::openapi::ApiErrorResponse;
@@ -12,10 +13,14 @@ use crate::models::{
     ComputedFieldDefinitionRequest, ComputedFieldDeleteResponse, ComputedFieldListResponse,
     ComputedFieldMutationResponse, ComputedFieldPreviewRequest, ComputedFieldPreviewResponse,
     ComputedFieldPreviewSource, HubuumClassID, Permissions, PersonalComputedFieldDefinitionRequest,
-    PrincipalID,
+    PrincipalID, TokenScope,
 };
 use crate::pagination::prepare_db_pagination;
-use crate::permissions::AppContext;
+use crate::permissions::visibility::{
+    authorize_all_candidates, filter_authorized_cursor_page_from_storage,
+};
+use crate::permissions::{AppContext, PrincipalRef};
+use crate::services::authorization_resources::load_current_authorization_resources;
 use crate::services::computed_fields::{
     class_computation_state_for, create_personal_definition, create_shared_definition,
     delete_personal_definition, delete_shared_definition, get_computed_definition,
@@ -24,7 +29,7 @@ use crate::services::computed_fields::{
 };
 use crate::storage::with_revision_precondition;
 use crate::traits::SelfAccessors;
-use crate::traits::UserPermissions;
+use crate::traits::{UserPermissions, scope_allows};
 
 fn require_human(requestor: &Authenticated) -> Result<PrincipalID, ApiError> {
     if requestor.principal.is_human() {
@@ -41,6 +46,46 @@ fn computed_field_precondition(
     definition: &ComputedFieldDefinition,
 ) -> Result<Option<crate::api::etag::RevisionPrecondition>, ApiError> {
     revision_precondition(request, definition)
+}
+
+async fn authorize_personal_definitions(
+    context: &AppContext,
+    principal: &PrincipalRef,
+    scopes: Option<&TokenScope>,
+    definitions: Vec<ComputedFieldDefinition>,
+) -> Result<Vec<ComputedFieldDefinition>, ApiError> {
+    let candidates = definitions
+        .into_iter()
+        .map(|definition| {
+            let key =
+                StorageAuthorizationResourceKey::Class(HubuumClassID::new(definition.class_id)?);
+            Ok((definition, key))
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+    let resources =
+        load_current_authorization_resources(context, candidates.iter().map(|(_, key)| *key))
+            .await?;
+    let candidates = candidates
+        .into_iter()
+        .filter_map(|(definition, key)| {
+            resources
+                .get(&key)
+                .cloned()
+                .map(|resource| (definition, resource))
+        })
+        .collect();
+    Ok(authorize_all_candidates(
+        context.permission_backend(),
+        principal,
+        candidates,
+        scopes,
+        vec![Permissions::ReadClass],
+        |(_, resource)| resource.clone(),
+    )
+    .await?
+    .into_iter()
+    .map(|(definition, _)| definition)
+    .collect())
 }
 
 #[utoipa::path(
@@ -404,7 +449,7 @@ pub async fn rebuild_shared_computed_fields(
     security(("bearer_auth" = [])),
     params(("class_id" = Option<i32>, Query, description = "Limit results to one class")),
     responses(
-        (status = 200, description = "Current user's personal computed fields", body = [ComputedFieldDefinition]),
+        (status = 200, description = "Current user's personal computed fields in readable classes; authorization and token scope are applied before pagination and totals", body = [ComputedFieldDefinition]),
         (status = 403, description = "Service accounts are not allowed", body = ApiErrorResponse)
     )
 )]
@@ -430,10 +475,26 @@ pub async fn get_personal_computed_fields(
             ));
         }
     };
-    let search_params = prepare_db_pagination::<ComputedFieldDefinition>(&params)?;
-    let (definitions, total_count) =
-        list_personal_definitions_page(&context, owner_id, class_filter, search_params).await?;
-    ApiResponse::paginated(definitions, total_count, &params)
+    if !scope_allows(requestor.scopes(), &[Permissions::ReadClass]) {
+        prepare_db_pagination::<ComputedFieldDefinition>(&params)?;
+        return ApiResponse::paginated(Vec::new(), 0, &params);
+    }
+    let principal = PrincipalRef::load(&context, &requestor.principal).await?;
+    let page = filter_authorized_cursor_page_from_storage(
+        context.permission_backend(),
+        &params,
+        |candidate_options| async {
+            let (candidates, _) =
+                list_personal_definitions_page(&context, owner_id, class_filter, candidate_options)
+                    .await?;
+            Ok(candidates)
+        },
+        |candidates| {
+            authorize_personal_definitions(&context, &principal, requestor.scopes(), candidates)
+        },
+    )
+    .await?;
+    ApiResponse::paginated(page.rows, page.total_count, &params)
 }
 
 #[utoipa::path(
