@@ -5,21 +5,22 @@ use hubuum_outbound_http::{OutboundMethod, OutboundRequest, OutboundUrlParts};
 use crate::errors::ApiError;
 use crate::models::remote_target::CredentialBoundDestination;
 use crate::models::{
-    Collection, CollectionID, HubuumClassRelationID, Permissions, RemoteHttpMethod,
-    RemoteInvocationSubject, RemoteTarget, RemoteTargetSubjectType, RemoteTemplateContext,
-    StoredRemoteCallTaskPayload, TokenScope,
+    Collection, CollectionID, HubuumClassID, HubuumClassRelationID, HubuumObjectID, Permissions,
+    RemoteHttpMethod, RemoteInvocationSubject, RemoteTarget, RemoteTargetSubjectType,
+    RemoteTemplateContext, StoredRemoteCallTaskPayload, TokenScope,
 };
-use crate::permissions::AuthorizationContext;
-use crate::storage::StorageContext;
+use crate::permissions::{
+    AuthorizationContext, AuthorizationMode, ClassResourceEndpoint, ObjectResourceEndpoint,
+    ResourceRef, authorize_resources,
+};
 use crate::traits::{
-    AuthzSubject, ClassAccessors, CollectionAccessors, ObjectAccessors, SelfAccessors,
-    UserPermissions,
+    AuthzSubject, ClassAccessors, CollectionAccessors, SelfAccessors, UserPermissions,
+    scope_allows_resource,
 };
 
 struct ResolvedRemoteInvocationSubject {
     subject: RemoteInvocationSubject,
     collections: Vec<Collection>,
-    required_read_permission: Permissions,
     context: RemoteTemplateContext,
 }
 
@@ -78,14 +79,14 @@ impl AuthorizedRemoteInvocation {
     where
         C: AuthorizationContext,
     {
-        let target_collection_id = CollectionID::new(target.collection_id)?;
-        crate::can!(
+        authorize_resolved_resource(
             backend,
             actor,
             scopes,
-            [Permissions::ExecuteRemoteTarget],
-            target_collection_id
-        );
+            Permissions::ExecuteRemoteTarget,
+            ResourceRef::remote_target(target.id, target.collection_id, Some(target.name.clone())),
+        )
+        .await?;
 
         if !target.enabled {
             return Err(ApiError::BadRequest(
@@ -93,7 +94,7 @@ impl AuthorizedRemoteInvocation {
             ));
         }
 
-        let resolved = resolve_subject(subject, backend).await?;
+        let resolved = authorize_subject(subject, backend, actor, scopes).await?;
         if !target.allows_subject_type(resolved.subject.subject_type()) {
             return Err(ApiError::BadRequest(format!(
                 "Remote target does not allow '{}' subjects",
@@ -116,16 +117,6 @@ impl AuthorizedRemoteInvocation {
                 "Remote target not found for invocation subject".to_string(),
             ));
         }
-        for collection in &resolved.collections {
-            crate::can!(
-                backend,
-                actor,
-                scopes,
-                [resolved.required_read_permission],
-                collection
-            );
-        }
-
         let destination = if target.auth_config.uses_server_credentials() {
             Some(CredentialBoundDestination::from_template(
                 &target.url_template,
@@ -162,13 +153,22 @@ impl AuthorizedRemoteDestination<'_> {
     }
 }
 
-async fn resolve_subject(
+async fn authorize_subject(
     subject: &RemoteInvocationSubject,
-    backend: &impl StorageContext,
+    backend: &impl AuthorizationContext,
+    actor: &impl AuthzSubject,
+    scopes: Option<&TokenScope>,
 ) -> Result<ResolvedRemoteInvocationSubject, ApiError> {
     match subject {
         RemoteInvocationSubject::Collection { collection_id } => {
             let collection = collection_id.collection(backend).await?;
+            crate::can!(
+                backend,
+                actor,
+                scopes,
+                [Permissions::ReadCollection],
+                collection
+            );
             let context = serde_json::json!({
                 "subject_type": subject.subject_type().as_str(),
                 "subject": collection.clone(),
@@ -177,15 +177,22 @@ async fn resolve_subject(
             Ok(ResolvedRemoteInvocationSubject {
                 subject: subject.clone(),
                 collections: vec![collection],
-                required_read_permission: Permissions::ReadCollection,
                 context: RemoteTemplateContext::new(context)?,
             })
         }
         RemoteInvocationSubject::Class { class_id } => {
             let class = class_id.class(backend).await?;
+            crate::can!(backend, actor, scopes, [Permissions::ReadClass], class);
             let collection = CollectionID::new(class.collection_id)?
                 .collection(backend)
                 .await?;
+            crate::can!(
+                backend,
+                actor,
+                scopes,
+                [Permissions::ReadCollection],
+                collection
+            );
             let context = serde_json::json!({
                 "subject_type": subject.subject_type().as_str(),
                 "subject": class.clone(),
@@ -195,7 +202,6 @@ async fn resolve_subject(
             Ok(ResolvedRemoteInvocationSubject {
                 subject: subject.clone(),
                 collections: vec![collection],
-                required_read_permission: Permissions::ReadClass,
                 context: RemoteTemplateContext::new(context)?,
             })
         }
@@ -208,9 +214,18 @@ async fn resolve_subject(
             if object.hubuum_class_id != class.id {
                 return Err(ApiError::NotFound("Object not found in class".to_string()));
             }
+            crate::can!(backend, actor, scopes, [Permissions::ReadObject], object);
+            crate::can!(backend, actor, scopes, [Permissions::ReadClass], class);
             let collection = CollectionID::new(object.collection_id)?
                 .collection(backend)
                 .await?;
+            crate::can!(
+                backend,
+                actor,
+                scopes,
+                [Permissions::ReadCollection],
+                collection
+            );
             let context = serde_json::json!({
                 "subject_type": subject.subject_type().as_str(),
                 "subject": object.clone(),
@@ -221,16 +236,51 @@ async fn resolve_subject(
             Ok(ResolvedRemoteInvocationSubject {
                 subject: subject.clone(),
                 collections: vec![collection],
-                required_read_permission: Permissions::ReadObject,
                 context: RemoteTemplateContext::new(context)?,
             })
         }
         RemoteInvocationSubject::ClassRelation { relation_id } => {
             let relation = relation_id.instance(backend).await?;
-            let (from_class, to_class) = relation_id.class(backend).await?;
-            let collections = relation_id.collection(backend).await?;
+            let from_class = HubuumClassID::new(relation.from_hubuum_class_id)?
+                .instance(backend)
+                .await?;
+            let to_class = HubuumClassID::new(relation.to_hubuum_class_id)?
+                .instance(backend)
+                .await?;
+            let collections = (
+                from_class.collection(backend).await?,
+                to_class.collection(backend).await?,
+            );
             let subject_collections =
                 unique_collections(vec![collections.0.clone(), collections.1.clone()]);
+            authorize_resolved_resource(
+                backend,
+                actor,
+                scopes,
+                Permissions::ReadClassRelation,
+                ResourceRef::class_relation(
+                    Some(relation.id),
+                    ClassResourceEndpoint::new(from_class.collection_id, from_class.id),
+                    ClassResourceEndpoint::new(to_class.collection_id, to_class.id),
+                ),
+            )
+            .await?;
+            crate::can!(
+                backend,
+                actor,
+                scopes,
+                [Permissions::ReadClass],
+                from_class,
+                to_class
+            );
+            crate::can!(
+                backend,
+                actor,
+                scopes,
+                [Permissions::ReadCollection],
+                collections.0,
+                collections.1
+            );
             let context = serde_json::json!({
                 "subject_type": subject.subject_type().as_str(),
                 "subject": relation.clone(),
@@ -242,19 +292,88 @@ async fn resolve_subject(
             Ok(ResolvedRemoteInvocationSubject {
                 subject: subject.clone(),
                 collections: subject_collections,
-                required_read_permission: Permissions::ReadClassRelation,
                 context: RemoteTemplateContext::new(context)?,
             })
         }
         RemoteInvocationSubject::ObjectRelation { relation_id } => {
             let relation = relation_id.instance(backend).await?;
-            let (from_object, to_object) = relation_id.object(backend).await?;
+            let from_object = HubuumObjectID::new(relation.from_hubuum_object_id)?
+                .instance(backend)
+                .await?;
+            let to_object = HubuumObjectID::new(relation.to_hubuum_object_id)?
+                .instance(backend)
+                .await?;
             let class_relation_id = HubuumClassRelationID::new(relation.class_relation_id)?;
             let class_relation = class_relation_id.instance(backend).await?;
-            let (from_class, to_class) = class_relation_id.class(backend).await?;
-            let collections = relation_id.collection(backend).await?;
+            let from_class = HubuumClassID::new(class_relation.from_hubuum_class_id)?
+                .instance(backend)
+                .await?;
+            let to_class = HubuumClassID::new(class_relation.to_hubuum_class_id)?
+                .instance(backend)
+                .await?;
+            let collections = (
+                from_object.collection(backend).await?,
+                to_object.collection(backend).await?,
+            );
             let subject_collections =
                 unique_collections(vec![collections.0.clone(), collections.1.clone()]);
+            authorize_resolved_resource(
+                backend,
+                actor,
+                scopes,
+                Permissions::ReadObjectRelation,
+                ResourceRef::object_relation(
+                    Some(relation.id),
+                    ObjectResourceEndpoint::new(
+                        from_object.collection_id,
+                        from_object.hubuum_class_id,
+                        from_object.id,
+                    ),
+                    ObjectResourceEndpoint::new(
+                        to_object.collection_id,
+                        to_object.hubuum_class_id,
+                        to_object.id,
+                    ),
+                    relation.class_relation_id,
+                ),
+            )
+            .await?;
+            authorize_resolved_resource(
+                backend,
+                actor,
+                scopes,
+                Permissions::ReadClassRelation,
+                ResourceRef::class_relation(
+                    Some(class_relation.id),
+                    ClassResourceEndpoint::new(from_class.collection_id, from_class.id),
+                    ClassResourceEndpoint::new(to_class.collection_id, to_class.id),
+                ),
+            )
+            .await?;
+            crate::can!(
+                backend,
+                actor,
+                scopes,
+                [Permissions::ReadObject],
+                from_object,
+                to_object
+            );
+            crate::can!(
+                backend,
+                actor,
+                scopes,
+                [Permissions::ReadClass],
+                from_class,
+                to_class
+            );
+            crate::can!(
+                backend,
+                actor,
+                scopes,
+                [Permissions::ReadCollection],
+                collections.0,
+                collections.1
+            );
             let context = serde_json::json!({
                 "subject_type": subject.subject_type().as_str(),
                 "subject": relation.clone(),
@@ -269,9 +388,49 @@ async fn resolve_subject(
             Ok(ResolvedRemoteInvocationSubject {
                 subject: subject.clone(),
                 collections: subject_collections,
-                required_read_permission: Permissions::ReadObjectRelation,
                 context: RemoteTemplateContext::new(context)?,
             })
+        }
+    }
+}
+
+/// Preserve the loaded target or relation identity for external policies and scopes.
+/// Local grants use the collection IDs from that same captured resource.
+async fn authorize_resolved_resource(
+    backend: &impl AuthorizationContext,
+    actor: &impl AuthzSubject,
+    scopes: Option<&TokenScope>,
+    permission: Permissions,
+    resource: ResourceRef,
+) -> Result<(), ApiError> {
+    if !scope_allows_resource(scopes, &resource) {
+        return Err(ApiError::Forbidden("Permission denied".to_string()));
+    }
+    match backend.authorization_mode() {
+        AuthorizationMode::Delegated(policy) => {
+            authorize_resources(
+                policy,
+                backend,
+                actor,
+                scopes,
+                vec![permission],
+                vec![resource],
+            )
+            .await
+        }
+        AuthorizationMode::LocalStorage => {
+            let fields = resource.fields();
+            let collections = fields
+                .collection_id
+                .into_iter()
+                .chain(fields.from_collection_id)
+                .chain(fields.to_collection_id)
+                .map(CollectionID::new)
+                .collect::<Result<Vec<_>, _>>()?;
+            if collections.is_empty() {
+                return Err(ApiError::Forbidden("Permission denied".to_string()));
+            }
+            actor.can(backend, [permission], collections, scopes).await
         }
     }
 }

@@ -22,7 +22,7 @@ mod tests {
     use crate::models::{
         GroupID, HubuumClassRelation, HubuumObjectRelation, NewHubuumClass, NewHubuumClassRelation,
         NewHubuumObject, NewHubuumObjectRelation, Permissions, PermissionsList, RemoteCallResult,
-        RemoteTarget, TaskResponse, TaskStatus,
+        RemoteTarget, RemoteTargetSubjectType, TaskResponse, TaskStatus,
     };
     use crate::tests::TestContext;
     use crate::tests::api_operations::{
@@ -1530,8 +1530,13 @@ mod tests {
         assert_response_status(resp, StatusCode::ACCEPTED).await;
     }
 
+    #[rstest]
+    #[case::relation_read_alone(false)]
+    #[case::complete_context_read(true)]
     #[actix_web::test]
-    async fn invoke_relation_requires_read_on_both_collections() {
+    async fn invoke_relation_requires_context_read_on_both_collections(
+        #[case] can_read_context: bool,
+    ) {
         let context = TestContext::new().await;
         let (
             from_collection_id,
@@ -1572,31 +1577,35 @@ mod tests {
                 GroupID::new(group.id).unwrap(),
                 PermissionsList::new([
                     Permissions::ReadObjectRelation,
+                    Permissions::ReadClassRelation,
+                    Permissions::ReadObject,
+                    Permissions::ReadClass,
+                    Permissions::ReadCollection,
                     Permissions::ExecuteRemoteTarget,
                 ]),
             )
             .await
             .unwrap();
 
-        let resp = post_request(
-            &context.pool,
-            &context.normal_token,
-            &invoke_endpoint(target.id),
-            object_relation_invoke_body(object_relation.id),
-        )
-        .await;
-        assert_response_status(resp, StatusCode::FORBIDDEN).await;
-
         let to_collection = crate::models::CollectionID::new(to_collection_id)
             .unwrap()
             .instance(&context.pool)
             .await
             .unwrap();
+        let mut permissions = vec![Permissions::ReadObjectRelation];
+        if can_read_context {
+            permissions.extend([
+                Permissions::ReadClassRelation,
+                Permissions::ReadObject,
+                Permissions::ReadClass,
+                Permissions::ReadCollection,
+            ]);
+        }
         to_collection
-            .grant_one(
+            .grant_without_events(
                 &context.pool,
                 GroupID::new(group.id).unwrap(),
-                Permissions::ReadObjectRelation,
+                PermissionsList::new(permissions),
             )
             .await
             .unwrap();
@@ -1608,12 +1617,228 @@ mod tests {
             object_relation_invoke_body(object_relation.id),
         )
         .await;
-        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
-        let task: TaskResponse = test::read_body_json(resp).await;
-        assert!(
-            task.details.is_none(),
-            "execute permission must not reveal target discovery metadata"
+        let expected = if can_read_context {
+            StatusCode::ACCEPTED
+        } else {
+            StatusCode::FORBIDDEN
+        };
+        let resp = assert_response_status(resp, expected).await;
+        if can_read_context {
+            let task: TaskResponse = test::read_body_json(resp).await;
+            assert!(
+                task.details.is_none(),
+                "execute permission must not reveal target discovery metadata"
+            );
+        }
+        group.delete_without_events(&context.pool).await.unwrap();
+    }
+
+    #[rstest]
+    #[case::class_collection(RemoteTargetSubjectType::Class, Permissions::ReadCollection)]
+    #[case::object_class(RemoteTargetSubjectType::Object, Permissions::ReadClass)]
+    #[case::object_collection(RemoteTargetSubjectType::Object, Permissions::ReadCollection)]
+    #[case::class_relation_class(RemoteTargetSubjectType::ClassRelation, Permissions::ReadClass)]
+    #[case::class_relation_collection(
+        RemoteTargetSubjectType::ClassRelation,
+        Permissions::ReadCollection
+    )]
+    #[case::object_relation_object(
+        RemoteTargetSubjectType::ObjectRelation,
+        Permissions::ReadObject
+    )]
+    #[case::object_relation_class(RemoteTargetSubjectType::ObjectRelation, Permissions::ReadClass)]
+    #[case::object_relation_class_relation(
+        RemoteTargetSubjectType::ObjectRelation,
+        Permissions::ReadClassRelation
+    )]
+    #[case::object_relation_collection(
+        RemoteTargetSubjectType::ObjectRelation,
+        Permissions::ReadCollection
+    )]
+    #[actix_web::test]
+    async fn invoke_requires_every_template_context_permission(
+        #[case] subject_type: RemoteTargetSubjectType,
+        #[case] missing_permission: Permissions,
+        #[values(false, true)] scoped_administrator: bool,
+    ) {
+        let context = TestContext::new().await;
+        let (from_collection_id, to_collection_id, class_id, class_relation, object_relation) =
+            setup_cross_collection_object_relation(&context, "rt_context_read").await;
+        let response = post_request(
+            &context.pool,
+            &context.admin_token,
+            RT_ENDPOINT,
+            target_payload_with_subjects(
+                from_collection_id,
+                (subject_type == RemoteTargetSubjectType::Object).then_some(class_id),
+                "context-read-target",
+                "https://127.0.0.1/hook",
+                serde_json::json!([subject_type]),
+            ),
+        )
+        .await;
+        let target: RemoteTarget =
+            test::read_body_json(assert_response_status(response, StatusCode::CREATED).await).await;
+        let permissions = [
+            Permissions::ExecuteRemoteTarget,
+            Permissions::ReadCollection,
+            Permissions::ReadClass,
+            Permissions::ReadObject,
+            Permissions::ReadClassRelation,
+            Permissions::ReadObjectRelation,
+        ]
+        .into_iter()
+        .filter(|permission| *permission != missing_permission)
+        .collect::<Vec<_>>();
+        let group = create_test_group(&context.pool).await;
+        group
+            .add_member_without_events(&context.pool, &context.normal_user)
+            .await
+            .unwrap();
+        for collection_id in [from_collection_id, to_collection_id] {
+            crate::models::CollectionID::new(collection_id)
+                .unwrap()
+                .instance(&context.pool)
+                .await
+                .unwrap()
+                .grant_without_events(
+                    &context.pool,
+                    GroupID::new(group.id).unwrap(),
+                    PermissionsList::new(permissions.clone()),
+                )
+                .await
+                .unwrap();
+        }
+        let token = if scoped_administrator {
+            crate::tests::scoped_token(&context.pool, context.admin_user.id, &permissions).await
+        } else {
+            context.normal_token.clone()
+        };
+        let body = match subject_type {
+            RemoteTargetSubjectType::Class => class_invoke_body(class_id),
+            RemoteTargetSubjectType::Object => {
+                object_invoke_body(class_id, object_relation.from_hubuum_object_id)
+            }
+            RemoteTargetSubjectType::ClassRelation => serde_json::json!({
+                "subject": {"type": "class_relation", "relation_id": class_relation.id}
+            }),
+            RemoteTargetSubjectType::ObjectRelation => {
+                object_relation_invoke_body(object_relation.id)
+            }
+            RemoteTargetSubjectType::Collection => unreachable!(),
+        };
+        let response = post_request(&context.pool, &token, &invoke_endpoint(target.id), body).await;
+        assert_response_status(response, StatusCode::FORBIDDEN).await;
+        group.delete_without_events(&context.pool).await.unwrap();
+    }
+
+    #[rstest]
+    #[case::hidden_endpoint(false, true)]
+    #[case::readable_context(true, true)]
+    #[case::different_target(true, false)]
+    #[actix_web::test]
+    async fn invoke_relation_checks_concrete_resources_with_external_policy(
+        #[case] readable_endpoint: bool,
+        #[case] executable_target: bool,
+    ) {
+        use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
+        use crate::permissions::{ResourceFields, ResourceKind};
+
+        let context = TestContext::new().await;
+        let (from_collection_id, to_collection_id, _class_id, class_relation, object_relation) =
+            setup_cross_collection_object_relation(&context, "rt_context_policy").await;
+        let response = post_request(
+            &context.pool,
+            &context.admin_token,
+            RT_ENDPOINT,
+            target_payload_with_subjects(
+                from_collection_id,
+                None,
+                "context-policy-target",
+                "https://127.0.0.1/hook",
+                serde_json::json!(["object_relation"]),
+            ),
+        )
+        .await;
+        let target: RemoteTarget =
+            test::read_body_json(assert_response_status(response, StatusCode::CREATED).await).await;
+        let group = create_test_group(&context.pool).await;
+        group
+            .add_member_without_events(&context.pool, &context.normal_user)
+            .await
+            .unwrap();
+        let policy = Arc::new(MockTreetopBackend::new());
+        let allow = |action, resource_kind, resource_id| {
+            policy.add_rule(MockAllowRule {
+                group_id: group.id,
+                action,
+                resource_kind,
+                resource_id,
+                attrs: ResourceFields::default(),
+            });
+        };
+        allow(
+            Permissions::ExecuteRemoteTarget,
+            ResourceKind::RemoteTarget,
+            Some(if executable_target {
+                target.id
+            } else {
+                target.id + 1
+            }),
         );
+        for id in [from_collection_id, to_collection_id] {
+            allow(
+                Permissions::ReadCollection,
+                ResourceKind::Collection,
+                Some(id),
+            );
+        }
+        for id in [
+            class_relation.from_hubuum_class_id,
+            class_relation.to_hubuum_class_id,
+        ] {
+            allow(Permissions::ReadClass, ResourceKind::Class, Some(id));
+        }
+        allow(
+            Permissions::ReadClassRelation,
+            ResourceKind::ClassRelation,
+            Some(class_relation.id),
+        );
+        allow(
+            Permissions::ReadObjectRelation,
+            ResourceKind::ObjectRelation,
+            Some(object_relation.id),
+        );
+        allow(
+            Permissions::ReadObject,
+            ResourceKind::Object,
+            Some(object_relation.from_hubuum_object_id),
+        );
+        if readable_endpoint {
+            allow(
+                Permissions::ReadObject,
+                ResourceKind::Object,
+                Some(object_relation.to_hubuum_object_id),
+            );
+        }
+        let response = crate::tests::api_operations::post_request_with_permission_backend(
+            &context.pool,
+            &context.normal_token,
+            &invoke_endpoint(target.id),
+            object_relation_invoke_body(object_relation.id),
+            policy,
+        )
+        .await;
+        assert_response_status(
+            response,
+            if readable_endpoint && executable_target {
+                StatusCode::ACCEPTED
+            } else {
+                StatusCode::FORBIDDEN
+            },
+        )
+        .await;
+        group.delete_without_events(&context.pool).await.unwrap();
     }
 
     #[actix_web::test]

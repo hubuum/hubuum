@@ -162,12 +162,15 @@ control target management and invocation:
 | `DeleteRemoteTarget` | Allows deleting targets from the collection. |
 | `ExecuteRemoteTarget` | Allows invoking targets in the collection. |
 
-Invoking a remote target also requires read permission for the selected subject. Collection subjects
-require `ReadCollection`; class subjects require `ReadClass`; object subjects require `ReadObject`;
-class relation subjects require `ReadClassRelation` on both endpoint collections; object relation
-subjects require `ReadObjectRelation` on both endpoint collections. The worker re-checks both subject
-read permission and `ExecuteRemoteTarget` for the submitting user before executing the outbound HTTP
-call. `ReadRemoteTarget` is not required to invoke a target by ID.
+Invoking a remote target also requires read permission for every resource expanded into the
+template context. Class subjects require `ReadClass` and `ReadCollection`; object subjects also
+require `ReadObject`. Class relation subjects require `ReadClassRelation` plus read access to
+both endpoint classes and collections. Object relation subjects additionally require
+`ReadObjectRelation` and `ReadObject` for both endpoint objects. Local relation grants must
+cover both endpoint collections; external policies evaluate the concrete resource identities.
+The worker re-checks the complete context, token scopes, and `ExecuteRemoteTarget` for the
+submitting user before executing the outbound HTTP call. `ReadRemoteTarget` is not required
+to invoke a target by ID.
 
 <!-- Previous walkthrough bookmarks now point to the current group-based example. -->
 <!-- markdownlint-disable MD033 -->

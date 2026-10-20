@@ -22293,7 +22293,7 @@
           "remote-targets"
         ],
         "summary": "Post Api V1 Remote Targets By Target Id Invoke",
-        "description": "Invoke the current target revision using ExecuteRemoteTarget and subject read permission. Credential-owner authority is not required. The worker rejects changed revisions before resolving credentials.",
+        "description": "Invoke the current target revision using ExecuteRemoteTarget and read permission for every resource in the template context, including endpoint objects, classes, class relations, and collections. Token scopes and concrete external-policy decisions apply at submission and worker execution. Credential-owner authority is not required. The worker rejects changed revisions before resolving credentials.",
         "operationId": "postApiV1RemoteTargetsByTargetIdInvoke",
         "parameters": [
           {
