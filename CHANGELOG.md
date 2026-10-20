@@ -125,6 +125,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- **Breaking collection hierarchy authorization correction:** each returned child
+  or ancestor now requires its own `ReadCollection` authorization and token
+  resource scope, preventing metadata disclosure through a readable neighbor.
+  Grant read access and include the desired collections in token scopes to retain
+  their visibility after upgrading; no database migration is required.
+
 - **Breaking history authorization correction:** a live object moved to another
   class is no longer treated as deleted by name-history lookup. Name history and
   historical class populations require access to both its actual current placement

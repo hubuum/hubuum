@@ -10526,7 +10526,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Ancestor collections, nearest parent first",
+            "description": "Readable ancestor collections within token scope, nearest parent first",
             "content": {
               "application/json": {
                 "schema": {
@@ -10588,7 +10588,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Direct child collections",
+            "description": "Readable direct child collections within token scope",
             "content": {
               "application/json": {
                 "schema": {
