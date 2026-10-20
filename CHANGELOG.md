@@ -15,7 +15,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   precedence over startup defaults, broadcasts changes to running replicas with a
   one-second recovery poll, and survives restarts and logical restores. New
   replicas adopt the shared state before serving requests, and config reads apply
-  it to the live collector before reporting `enabled`. Apply the query observation
+  it to the live collector before reporting `enabled`. Control refreshes have a
+  250 ms budget including lock contention, after which queries skip collection.
+  Apply the query observation
   control migration and upgrade all API replicas before using the shared toggle.
 
 - Historical shared computed values at

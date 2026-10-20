@@ -110,8 +110,9 @@ waiting for another query or the next poll. New replicas load it before serving
 requests, and listeners reload it after reconnecting. Each process also refreshes
 every second to recover missed notifications, including while collection is off.
 Delivery is asynchronous: a successful PUT confirms the commit and the responding
-replica's applied state, not an acknowledgement from every replica. Failed or
-slow control reads pause collection without failing ordinary queries. Requests already
+replica's applied state, not an acknowledgement from every replica. Control refreshes
+have a 250 ms budget that includes waiting for another refresh. Failed or slow
+refreshes skip collection without failing ordinary queries. Requests already
 being observed can finish recording after disablement. Disabling retains existing
 observations until their normal expiry and leaves declarations and indexes intact.
 

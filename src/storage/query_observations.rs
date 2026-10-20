@@ -110,7 +110,13 @@ impl QueryObservations {
         force: bool,
     ) -> Result<StorageQueryObservationControl, StorageError> {
         // Serialize loads so an older refresh cannot replace a newer result.
-        let mut cache = self.control.lock().await;
+        // Include queuing in the read budget so refreshes cannot stall queries.
+        let deadline = tokio::time::Instant::now() + CONTROL_READ_TIMEOUT;
+        let timeout_error =
+            || StorageError::internal("Query observation control refresh timed out");
+        let mut cache = tokio::time::timeout_at(deadline, self.control.lock())
+            .await
+            .map_err(|_| timeout_error())?;
         let now = Instant::now();
         if !force
             && let Some((expires_at, control)) = *cache
@@ -118,13 +124,9 @@ impl QueryObservations {
         {
             return Ok(control);
         }
-        let result = tokio::time::timeout(CONTROL_READ_TIMEOUT, load)
+        let result = tokio::time::timeout_at(deadline, load)
             .await
-            .unwrap_or_else(|_| {
-                Err(StorageError::internal(
-                    "Query observation control read timed out",
-                ))
-            });
+            .unwrap_or_else(|_| Err(timeout_error()));
         let control = match &result {
             Ok(control) => *control,
             Err(error) => {
@@ -464,6 +466,39 @@ mod tests {
     async fn stalled_control_read_pauses_collection() {
         let collector = collector(8, 8, 1);
         assert!(!collector.collection_enabled(std::future::pending()).await);
+    }
+
+    #[rstest]
+    #[case::enabled(StorageQueryObservationControl::Enabled)]
+    #[case::disabled(StorageQueryObservationControl::Disabled)]
+    #[tokio::test]
+    async fn queued_refreshes_cannot_extend_the_query_control_timeout(
+        #[case] control: StorageQueryObservationControl,
+    ) {
+        let collector = collector(8, 8, 1);
+        collector
+            .refresh_control(async { Ok(control) })
+            .await
+            .unwrap();
+
+        let mut refreshes = Box::pin(futures::future::join_all(
+            (0..8).map(|_| collector.refresh_control(std::future::pending())),
+        ));
+        // Poll once to hold the lock and queue every refresh before the query.
+        assert!(futures::poll!(&mut refreshes).is_pending());
+
+        let enabled = tokio::time::timeout(CONTROL_READ_TIMEOUT * 2, async {
+            let (_, enabled) = tokio::join!(
+                refreshes,
+                collector.collection_enabled(async {
+                    panic!("a timed-out query must skip collection without another control read")
+                })
+            );
+            enabled
+        })
+        .await
+        .expect("queued refreshes must share the query's bounded wait budget");
+        assert!(!enabled);
     }
     fn collector(max: usize, per_class: usize, sample: u32) -> Arc<QueryObservations> {
         Arc::new(QueryObservations::new(
