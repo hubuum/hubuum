@@ -1733,13 +1733,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case::hidden_endpoint(false, true)]
-    #[case::readable_context(true, true)]
-    #[case::different_target(true, false)]
+    #[case::hidden_endpoint(false)]
+    #[case::readable_context(true)]
     #[actix_web::test]
     async fn invoke_relation_checks_concrete_resources_with_external_policy(
         #[case] readable_endpoint: bool,
-        #[case] executable_target: bool,
     ) {
         use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
         use crate::permissions::{ResourceFields, ResourceKind};
@@ -1779,12 +1777,8 @@ mod tests {
         };
         allow(
             Permissions::ExecuteRemoteTarget,
-            ResourceKind::RemoteTarget,
-            Some(if executable_target {
-                target.id
-            } else {
-                target.id + 1
-            }),
+            ResourceKind::Collection,
+            Some(from_collection_id),
         );
         for id in [from_collection_id, to_collection_id] {
             allow(
@@ -1831,7 +1825,7 @@ mod tests {
         .await;
         assert_response_status(
             response,
-            if readable_endpoint && executable_target {
+            if readable_endpoint {
                 StatusCode::ACCEPTED
             } else {
                 StatusCode::FORBIDDEN

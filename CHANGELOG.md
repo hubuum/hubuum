@@ -138,9 +138,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   concrete resource decisions from external policies. Before upgrading, grant intended
   callers the corresponding `ReadObject`, `ReadClass`, `ReadClassRelation`, and
   `ReadCollection` permissions listed in `docs/remote_targets.md`; queued calls without
-  these permissions fail. Update external `ExecuteRemoteTarget` policies that matched
-  collection probes to authorize the actual target ID and name. No database migration
-  is required.
+  these permissions fail. No database migration is required.
 
 - **Breaking history authorization correction:** a live object moved to another
   class is no longer treated as deleted by name-history lookup. Name history and

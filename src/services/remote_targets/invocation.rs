@@ -79,14 +79,14 @@ impl AuthorizedRemoteInvocation {
     where
         C: AuthorizationContext,
     {
-        authorize_resolved_resource(
+        let target_collection_id = CollectionID::new(target.collection_id)?;
+        crate::can!(
             backend,
             actor,
             scopes,
-            Permissions::ExecuteRemoteTarget,
-            ResourceRef::remote_target(target.id, target.collection_id, Some(target.name.clone())),
-        )
-        .await?;
+            [Permissions::ExecuteRemoteTarget],
+            target_collection_id
+        );
 
         if !target.enabled {
             return Err(ApiError::BadRequest(
@@ -394,7 +394,7 @@ async fn authorize_subject(
     }
 }
 
-/// Preserve the loaded target or relation identity for external policies and scopes.
+/// Preserve the loaded relation identity for external policies and scopes.
 /// Local grants use the collection IDs from that same captured resource.
 async fn authorize_resolved_resource(
     backend: &impl AuthorizationContext,

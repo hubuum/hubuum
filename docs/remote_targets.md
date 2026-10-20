@@ -55,9 +55,9 @@ user before making the outbound call, including token scopes and external policy
 | `class_relation` | `ReadClassRelation` on the relation, `ReadClass` on both endpoint classes, and `ReadCollection` on both collections. |
 | `object_relation` | `ReadObjectRelation` on the relation, `ReadObject` on both endpoint objects, `ReadClassRelation` on its class relation, `ReadClass` on both classes, and `ReadCollection` on both collections. |
 
-Local `ExecuteRemoteTarget` grants are checked on the target collection; external policies
-receive the actual target ID and name. `ReadRemoteTarget` is not required to invoke a target
-by ID. For relation subjects, the target collection must be one of the relation endpoint collections.
+`ExecuteRemoteTarget` is checked on the target collection. `ReadRemoteTarget` is not required to
+invoke a target by ID. For relation subjects, the target collection must be one of the relation
+endpoint collections.
 
 Local relation grants must cover both endpoint collections. External policies receive each
 concrete resource identity and its endpoint attributes. Relation-read permission alone does
