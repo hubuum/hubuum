@@ -13,7 +13,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   runtime across all API replicas sharing PostgreSQL:
   `GET` and `PUT /api/v1/admin/query-observations`. The persisted override takes
   precedence over startup defaults, broadcasts changes to running replicas with a
-  one-second recovery poll, and survives restarts and logical restores. New
+  30-second idle recovery poll, and survives restarts and logical restores. Queries
+  that can contribute observations refresh an expired one-second control cache. New
   replicas adopt the shared state before serving requests, and config reads apply
   it to the live collector before reporting `enabled`. Control refreshes have a
   250 ms budget including lock contention, after which queries skip collection.

@@ -22,7 +22,7 @@ use std::{
 };
 
 type PatternKey = (ClassId, StorageQueryUsagePattern);
-pub(crate) const CONTROL_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+const CONTROL_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const CONTROL_READ_TIMEOUT: Duration = Duration::from_millis(250);
 struct Entry {
     observation: StorageQueryPatternObservation,

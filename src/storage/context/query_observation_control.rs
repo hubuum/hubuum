@@ -5,7 +5,10 @@ use tokio::sync::Notify;
 use super::StorageHandle;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::storage::StorageNotification;
-use crate::storage::query_observations::CONTROL_REFRESH_INTERVAL;
+
+// Notifications handle live changes; query-time refreshes retain a one-second
+// cache. Idle replicas only need a slower recovery poll for missed notifications.
+const CONTROL_RECOVERY_INTERVAL: Duration = Duration::from_secs(30);
 
 impl StorageHandle {
     /// Each process participates, including API-only replicas.
@@ -13,7 +16,7 @@ impl StorageHandle {
         let storage = self.clone();
         spawn_background_worker("query-observation-control", move |shutdown| {
             actix_rt::System::new().block_on(
-                storage.run_query_observation_control(shutdown, CONTROL_REFRESH_INTERVAL),
+                storage.run_query_observation_control(shutdown, CONTROL_RECOVERY_INTERVAL),
             );
         });
     }

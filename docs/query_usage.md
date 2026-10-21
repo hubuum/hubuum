@@ -108,7 +108,10 @@ The update commits the shared value and broadcasts a PostgreSQL notification in
 one transaction. Running replicas reload and apply it on notification, without
 waiting for another query or the next poll. New replicas load it before serving
 requests, and listeners reload it after reconnecting. Each process also refreshes
-every second to recover missed notifications, including while collection is off.
+every 30 seconds to recover missed notifications, including while collection is
+off. Queries that can contribute observations refresh an expired one-second
+control cache before collecting, so idle recovery does not add a database read
+every second on each replica.
 Delivery is asynchronous: a successful PUT confirms the commit and the responding
 replica's applied state, not an acknowledgement from every replica. Control refreshes
 have a 250 ms budget that includes waiting for another refresh. Failed or slow
