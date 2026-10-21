@@ -206,6 +206,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   RUSTSEC-2026-0346, RUSTSEC-2026-0347, RUSTSEC-2026-0348 and
   RUSTSEC-2026-0349.
 
+- Update `rustls-webpki` to 0.103.16 and `webpki-roots` to 1.0.10 in the affected
+  production and fuzz lockfiles to reject distrusted emSign certificate paths
+  ([RUSTSEC-2026-0381](https://rustsec.org/advisories/RUSTSEC-2026-0381),
+  [RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382)).
+
 ## [0.0.19] - 2026-10-13
 
 ### Added
