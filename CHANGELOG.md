@@ -91,6 +91,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking Rust storage SDK:** `AuthenticationStorage` adapters must implement
+  session creation, rotation, revocation, and retention, plus credential creation
+  provenance and source-history operations. Upgrade custom adapters with the SDK,
+  preserving atomic refresh consumption, replay revocation, and family-wide
+  access invalidation.
+
 - **Breaking Rust storage adapter API:** `ClassRelationStorage` implementations must
   implement `update_class_relation_labels`, preserving authorization targets,
   revision preconditions, history, and transactional audit events. Class-relation
