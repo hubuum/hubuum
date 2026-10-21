@@ -5077,7 +5077,7 @@ unsupported implementations do not satisfy the semantic contract. Truly
 optional behavior is composed outside the aggregate. In particular,
 <code>WorkerNotificationProvider</code> may be attached for low-latency wake-ups because
 durable polling remains the correctness path. <code>QueryUsageStorage</code> declaration
-management is mandatory, while <code>QueryUsageAnalysisProvider</code> is optional and
+management and shared observation control are mandatory, while <code>QueryUsageAnalysisProvider</code> is optional and
 read-only. A backend without that provider reports analysis as unavailable;
 query behavior never depends on declarations, observations, or native preparation.
 See <a href="../../query_usage/">query usage</a> for vocabulary and bounded observations.</p>

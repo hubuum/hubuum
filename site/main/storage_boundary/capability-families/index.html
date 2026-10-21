@@ -5288,6 +5288,11 @@ creation, replacement, and deletion. Both adapters preserve declarations across
 backup and restore, reassess them against the active schema, and remove them with
 their class or collection. Declarations do not change query semantics or promise
 a particular physical index.</p>
+<p>Also owns the shared query observation override. Reads and atomic replacements
+must use the same store across replicas. The initial state uses startup defaults;
+an explicit enabled or disabled state overrides them. This deployment setting
+survives logical restores and is excluded from portable backups. Native memory
+instances remain independent process-local stores.</p>
 <h3 id="identity_and_authorization_data"><code>identity_and_authorization_data</code><a class="headerlink" href="#identity_and_authorization_data" title="Permanent link">&para;</a></h3>
 <p>Required traits:</p>
 <ul>
@@ -5643,6 +5648,10 @@ but the application selects and links it at compile time.</p>
 <li>This document and any sanitized administrator settings affected by the
    change.</li>
 </ol>
+<p>Query observation control notifications are wake-up hints for the shared override.
+<code>WorkerNotificationProvider</code> accepts a boxed callback so each process can refresh
+its own collector. Providers invoke it on registration/reconnection and changes;
+periodic reads remain the recovery path if notification delivery is interrupted.</p>
 
 
 

@@ -3857,6 +3857,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#runtime-observation-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Runtime observation control
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4629,6 +4640,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#runtime-observation-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Runtime observation control
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5037,6 +5059,12 @@ as token issuance and external synchronization. The operation retains
 <code>mark_external_sync_attempted</code> as its telemetry label for compatibility.
 These are synchronization metadata
 and credential invalidation effects, with no independent lifecycle audit event.</p>
+<h2 id="runtime-observation-control">Runtime observation control<a class="headerlink" href="#runtime-observation-control" title="Permanent link">&para;</a></h2>
+<p><code>QueryUsageStorage::set_query_observation_control</code> changes deployment configuration,
+not a domain resource. It atomically replaces the shared override and publishes a
+commit-ordered wake-up on notification-capable adapters. The administrator handler
+logs the actor and enabled state; this operation does not create a domain audit
+event. Logical restores preserve the setting and portable backups exclude it.</p>
 
 
 

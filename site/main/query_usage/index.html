@@ -4689,11 +4689,44 @@ never adopts suggestions, changes declarations, or creates native resources.</p>
 usable workload evidence is missing or bounded catalog inspection is incomplete.
 A <code>complete</code> review can contain zero suggestions. Neither missing observations
 nor zero native scans establishes that a resource is unused.</p>
-<p>Collection is disabled by default. Enable it with
-<code>HUBUUM_QUERY_OBSERVATIONS_ENABLED=true</code>. Effective settings appear in the
-administrator configuration endpoint. CLI flags use the corresponding lowercase
-hyphenated names; TOML keys use lowercase underscores under
+<p>Collection is disabled by default. <code>HUBUUM_QUERY_OBSERVATIONS_ENABLED=true</code>
+sets the startup default. An unscoped human administrator can enable or disable
+collection at runtime through <code>PUT /api/v1/admin/query-observations</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>--request<span class="w"> </span>PUT<span class="w"> </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/admin/query-observations"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--header<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span>--data<span class="w"> </span><span class="s1">'{"enabled":true}'</span>
+</code></pre></div>
+<p>Send <code>{"enabled":false}</code> to disable collection. The override applies to every
+upgraded API replica connected to the same PostgreSQL database, including replicas
+whose startup default differs. It survives restarts and logical backup restores;
+it is deployment configuration and is not copied into portable backups. Concurrent
+updates use the last committed value. Memory storage shares the setting only
+among handles using the same in-process store; independent memory processes do
+not form a shared deployment.</p>
+<p>The update commits the shared value and broadcasts a PostgreSQL notification in
+one transaction. Running replicas reload and apply it on notification, without
+waiting for another query or the next poll. New replicas load it before serving
+requests, and listeners reload it after reconnecting. Each process also refreshes
+every 30 seconds to recover missed notifications, including while collection is
+off. Queries that can contribute observations refresh an expired one-second
+control cache before collecting, so idle recovery does not add a database read
+every second on each replica.
+Delivery is asynchronous: a successful PUT confirms the commit and the responding
+replica's applied state, not an acknowledgement from every replica. Control refreshes
+have a 250 ms budget that includes waiting for another refresh. Failed or slow
+refreshes skip collection without failing ordinary queries. Requests already
+being observed can finish recording after disablement. Disabling retains existing
+observations until their normal expiry and leaves declarations and indexes intact.</p>
+<p><code>GET /api/v1/admin/query-observations</code> returns the effective settings for the
+responding replica, including <code>enabled</code> and <code>runtime_override</code>. A null override
+means its startup default still applies. <code>GET /api/v1/admin/config</code> exposes the
+same effective settings. Both reads reconcile the live collector with the shared
+setting before reporting it, so <code>enabled</code> is the state applied on that replica. Sampling
+and capacity limits remain startup settings. CLI flags use the corresponding
+lowercase hyphenated names; TOML keys use lowercase underscores under
 <code>[query_observations]</code>.</p>
+<p>Apply the query observation control migration before starting the updated server,
+and upgrade all API replicas before relying on the deployment-wide toggle.</p>
 <table>
 <thead>
 <tr>
@@ -4770,7 +4803,7 @@ and unsupported path declarations remain recorded without preparation. Hash keys
 have bounded storage, so indexing cannot make valid long text values fail the
 btree index-entry size limit.</p>
 <p>Run a bounded pass outside the server and normal task worker:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>hubuum-admin<span class="w"> </span>--reconcile-query-usage<span class="w"> </span>--database-role-mode<span class="w"> </span>split
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>hubuum-admin<span class="w"> </span>--reconcile-query-usage<span class="w"> </span>--database-role-mode<span class="w"> </span>split
 </code></pre></div>
 <p>Supply the migration credential through the existing secret source and configure
 the owner role as for migrations. The runtime account receives read-only access
@@ -4818,23 +4851,23 @@ never silently discarded.</p>
 examples use class <code>42</code>, path <code>hardware,serial_number</code>, an unscoped administrator
 <code>HUBUUM_TOKEN</code>, and a <code>HUBUUM_URL</code> without a trailing slash.</p>
 <ol>
-<li><strong>Observe.</strong> Enable <code>HUBUUM_QUERY_OBSERVATIONS_ENABLED=true</code> on the API process
-   and restart it. In a disposable rehearsal, also set
-   <code>HUBUUM_QUERY_OBSERVATIONS_SAMPLE_EVERY=1</code> and issue at least five successful
+<li><strong>Observe.</strong> Enable collection through the administrator PUT endpoint above.
+   In a disposable rehearsal, set the startup setting
+   <code>HUBUUM_QUERY_OBSERVATIONS_SAMPLE_EVERY=1</code>, restart the API process, and issue at least five successful
    requests like this. In production, keep the normal sampling rate and let real
    traffic supply the evidence. Send the analysis request to the same process;
    observations are local to each replica.</li>
 </ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>--get<span class="w"> </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/classes/42/"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--data-urlencode<span class="w"> </span><span class="s1">'json_data=hardware,serial_number=SN-example'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>--get<span class="w"> </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/classes/42/"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--data-urlencode<span class="w"> </span><span class="s1">'json_data=hardware,serial_number=SN-example'</span>
 </code></pre></div>
 <ol>
 <li><strong>Analyze.</strong> Review the observations, limitations, and proposed patterns:</li>
 </ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/classes/42/query-usage/analysis"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--header<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span>--data<span class="w"> </span><span class="s1">'{"proposed":[]}'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/classes/42/query-usage/analysis"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>--header<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span>--data<span class="w"> </span><span class="s1">'{"proposed":[]}'</span>
 </code></pre></div>
 <p>A suggestion carries a <code>proposed</code> pattern. Missing evidence returns
    <code>insufficient_evidence</code>; existing coverage or an existing declaration can
@@ -4843,10 +4876,10 @@ examples use class <code>42</code>, path <code>hardware,serial_number</code>, an
 <li><strong>Adopt.</strong> If the suggested workload matches your intent, copy its <code>proposed</code>
    pattern into the ordinary creation request's <code>pattern</code> field:</li>
 </ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/classes/42/query-usage"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>--header<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span>--data<span class="w"> </span><span class="s1">'{"pattern":{"path":"hardware,serial_number","value_type":"string","operations":["equals"]}}'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/classes/42/query-usage"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span>--header<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span>--data<span class="w"> </span><span class="s1">'{"pattern":{"path":"hardware,serial_number","value_type":"string","operations":["equals"]}}'</span>
 </code></pre></div>
 <p>Keep the returned declaration <code>id</code> and <code>revision</code>. The example is appropriate
    only when no declaration already exists for this path and type.</p>
@@ -4854,8 +4887,8 @@ examples use class <code>42</code>, path <code>hardware,serial_number</code>, an
 <li><strong>Reconcile.</strong> With the separate migration credential and owner-role settings
    configured, run a privileged pass outside peak traffic:</li>
 </ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>hubuum-admin<span class="w"> </span>--reconcile-query-usage<span class="w"> </span>--database-role-mode<span class="w"> </span>split<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>--query-usage-class<span class="w"> </span><span class="m">42</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>hubuum-admin<span class="w"> </span>--reconcile-query-usage<span class="w"> </span>--database-role-mode<span class="w"> </span>split<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>--query-usage-class<span class="w"> </span><span class="m">42</span>
 </code></pre></div>
 <p>Inspect <code>deferred</code> and each resource's <code>state</code> and <code>last_error</code> in the JSON
    report. Schedule later passes for pending work and cleanup. The class option
@@ -4876,10 +4909,10 @@ examples use class <code>42</code>, path <code>hardware,serial_number</code>, an
 <li><strong>Withdraw.</strong> Read the current declaration revision before deleting it. For
    example, if the declaration is still <code>id=17</code>, <code>revision=1</code>:</li>
 </ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>--request<span class="w"> </span>DELETE<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/classes/42/query-usage/17?expected_revision=1"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>hubuum-admin<span class="w"> </span>--reconcile-query-usage<span class="w"> </span>--database-role-mode<span class="w"> </span>split
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>--request<span class="w"> </span>DELETE<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/classes/42/query-usage/17?expected_revision=1"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>hubuum-admin<span class="w"> </span>--reconcile-query-usage<span class="w"> </span>--database-role-mode<span class="w"> </span>split
 </code></pre></div>
 <p>A stale revision returns a conflict. After successful withdrawal, inspect the
    executor report: a shared resource remains until its last owner withdraws;
