@@ -15,7 +15,9 @@ use crate::models::{
     UpdateCollectionParent,
 };
 use crate::pagination::{SKIPPED_TOTAL_COUNT, prepare_db_pagination};
-use crate::permissions::visibility::authorize_cursor_page_from_storage;
+use crate::permissions::visibility::{
+    authorize_all_candidates, authorize_cursor_page_from_storage,
+};
 use crate::permissions::{AppContext, PrincipalRef, ResourceRef};
 use crate::services::history::{
     HistoryCollectionFilter, collection_as_of, collection_history_paginated_with_total_count,
@@ -42,6 +44,23 @@ fn collection_precondition(
     resource: &impl RevisionedResource,
 ) -> Result<Option<crate::api::etag::RevisionPrecondition>, ApiError> {
     revision_precondition(request, resource)
+}
+
+async fn visible_hierarchy_collections(
+    context: &AppContext,
+    requestor: &Authenticated,
+    collections: Vec<Collection>,
+) -> Result<Vec<Collection>, ApiError> {
+    let principal = PrincipalRef::load(context, &requestor.principal).await?;
+    authorize_all_candidates(
+        context.permission_backend(),
+        &principal,
+        collections,
+        requestor.scopes(),
+        vec![Permissions::ReadCollection],
+        |collection| ResourceRef::named_collection(collection.id, Some(collection.name.clone())),
+    )
+    .await
 }
 
 #[utoipa::path(
@@ -316,7 +335,7 @@ pub async fn delete_collection(
         ("collection_id" = i32, Path, description = "Collection ID")
     ),
     responses(
-        (status = 200, description = "Direct child collections", body = [Collection]),
+        (status = 200, description = "Readable direct child collections within token scope", body = [Collection]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Collection not found", body = ApiErrorResponse)
     )
@@ -340,6 +359,7 @@ pub async fn get_collection_children(
         .collection_service()
         .children(*collection_id)
         .await?;
+    let children = visible_hierarchy_collections(&context, &requestor, children).await?;
     Ok(ApiResponse::new(children, StatusCode::OK))
 }
 
@@ -352,7 +372,7 @@ pub async fn get_collection_children(
         ("collection_id" = i32, Path, description = "Collection ID")
     ),
     responses(
-        (status = 200, description = "Ancestor collections, nearest parent first", body = [Collection]),
+        (status = 200, description = "Readable ancestor collections within token scope, nearest parent first", body = [Collection]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Collection not found", body = ApiErrorResponse)
     )
@@ -376,6 +396,7 @@ pub async fn get_collection_ancestors(
         .collection_service()
         .ancestors(*collection_id)
         .await?;
+    let ancestors = visible_hierarchy_collections(&context, &requestor, ancestors).await?;
     Ok(ApiResponse::new(ancestors, StatusCode::OK))
 }
 

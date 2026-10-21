@@ -1,26 +1,30 @@
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use crate::api::etag::{IfMatchCondition, RevisionedResource};
     use crate::models::{
         Collection, CollectionID, CollectionPermissionSet, GroupID, GroupPermission, GroupResponse,
-        NewCollectionWithAssignee, NewGroup, Permission, Permissions, UpdateCollection,
-        UpdateGroup,
+        NewCollectionWithAssignee, NewGroup, Permission, Permissions, TokenResourceScope,
+        UpdateCollection, UpdateGroup,
     };
     use crate::storage::with_revision_precondition;
 
     use crate::pagination::{
         NEXT_CURSOR_HEADER, PAGE_LIMIT_HEADER, TOTAL_COUNT_HEADER, page_limits,
     };
+    use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
+    use crate::permissions::{ResourceFields, ResourceKind};
     use crate::tests::api_operations::{
-        delete_request, get_request, patch_request, patch_request_with_headers, post_request,
-        put_request,
+        delete_request, get_request, get_request_with_permission_backend, patch_request,
+        patch_request_with_headers, post_request, put_request,
     };
     use crate::tests::asserts::{
         assert_paginated_collection_total_count, assert_response_status, header_value,
     };
     use crate::tests::{
         CollectionFixture, TestContext, create_test_group, create_test_user, ensure_admin_group,
-        test_context,
+        resource_scoped_token, test_context,
     };
     use crate::traits::{CanDelete, CanSave, CanUpdate, PermissionController};
     use crate::{assert_contains, assert_contains_all};
@@ -35,6 +39,177 @@ mod tests {
         count: usize,
     ) -> Vec<CollectionFixture> {
         context.collection_fixtures(prefix, count).await
+    }
+
+    async fn hierarchy_child(
+        context: &TestContext,
+        parent: &Collection,
+        owner_group_id: i32,
+        label: &str,
+    ) -> Collection {
+        NewCollectionWithAssignee {
+            name: context.scoped_name(label),
+            description: format!("Private metadata for {label}"),
+            group_id: GroupID::new(owner_group_id).unwrap(),
+            parent_collection_id: Some(CollectionID::new(parent.id).unwrap()),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap()
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn collection_ancestors_require_their_own_read_grant(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let parent = context.collection_fixture("private_ancestor").await;
+        let readers = create_test_group(&context.pool).await;
+        readers
+            .add_member_without_events(&context.pool, &context.normal_user)
+            .await
+            .unwrap();
+        let child =
+            hierarchy_child(&context, &parent.collection, readers.id, "readable_child").await;
+
+        let response = get_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{COLLECTION_ENDPOINT}/{}/ancestors", child.id),
+        )
+        .await;
+        let response = assert_response_status(response, http::StatusCode::OK).await;
+        let ancestors: Vec<Collection> = test::read_body_json(response).await;
+        assert!(ancestors.is_empty());
+
+        child.delete_without_events(&context.pool).await.unwrap();
+        readers.delete_without_events(&context.pool).await.unwrap();
+        parent.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[case::children("children")]
+    #[case::ancestors("ancestors")]
+    #[actix_web::test]
+    async fn collection_hierarchy_respects_scoped_administrator_token(
+        #[future(awt)] test_context: TestContext,
+        #[case] direction: &str,
+    ) {
+        let context = test_context;
+        let parent = context.collection_fixture("scoped_hierarchy").await;
+        let child = hierarchy_child(
+            &context,
+            &parent.collection,
+            parent.owner_group.id,
+            "scoped_hierarchy_child",
+        )
+        .await;
+        let target = if direction == "children" {
+            parent.collection.id
+        } else {
+            child.id
+        };
+        let token = resource_scoped_token(
+            &context.pool,
+            context.admin_user.id,
+            vec![TokenResourceScope::Collection(
+                CollectionID::new(target).unwrap(),
+            )],
+        )
+        .await;
+
+        let response = get_request(
+            &context.pool,
+            &token,
+            &format!("{COLLECTION_ENDPOINT}/{target}/{direction}"),
+        )
+        .await;
+        let response = assert_response_status(response, http::StatusCode::OK).await;
+        let collections: Vec<Collection> = test::read_body_json(response).await;
+        assert!(collections.is_empty());
+
+        child.delete_without_events(&context.pool).await.unwrap();
+        parent.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[case::children("children", false)]
+    #[case::ancestors("ancestors", false)]
+    #[case::children_policy_error("children", true)]
+    #[case::ancestors_policy_error("ancestors", true)]
+    #[actix_web::test]
+    async fn collection_hierarchy_filters_with_external_policy(
+        #[future(awt)] test_context: TestContext,
+        #[case] direction: &str,
+        #[case] policy_error: bool,
+    ) {
+        let context = test_context;
+        let parent = context.collection_fixture("external_hierarchy").await;
+        let visible = hierarchy_child(
+            &context,
+            &parent.collection,
+            parent.owner_group.id,
+            "external_hierarchy_visible",
+        )
+        .await;
+        let other_parent = if direction == "children" {
+            &parent.collection
+        } else {
+            &visible
+        };
+        let other = hierarchy_child(
+            &context,
+            other_parent,
+            parent.owner_group.id,
+            "external_hierarchy_other",
+        )
+        .await;
+        let target = if direction == "children" {
+            parent.collection.id
+        } else {
+            other.id
+        };
+        let backend = Arc::new(MockTreetopBackend::new());
+        let target_collection = if direction == "children" {
+            &parent.collection
+        } else {
+            &other
+        };
+        for collection in [target_collection, &visible] {
+            backend.add_rule(MockAllowRule {
+                group_id: parent.owner_group.id,
+                action: Permissions::ReadCollection,
+                resource_kind: ResourceKind::Collection,
+                resource_id: Some(collection.id),
+                attrs: ResourceFields {
+                    name: Some(collection.name.clone()),
+                    ..ResourceFields::default()
+                },
+            });
+        }
+        if policy_error {
+            backend.fail_authorization_after_calls(1);
+        }
+
+        let response = get_request_with_permission_backend(
+            &context.pool,
+            &context.admin_token,
+            &format!("{COLLECTION_ENDPOINT}/{target}/{direction}"),
+            backend,
+        )
+        .await;
+        if policy_error {
+            assert_response_status(response, http::StatusCode::INTERNAL_SERVER_ERROR).await;
+        } else {
+            let response = assert_response_status(response, http::StatusCode::OK).await;
+            let collections: Vec<Collection> = test::read_body_json(response).await;
+            assert_eq!(collections, vec![visible.clone()]);
+        }
+
+        other.delete_without_events(&context.pool).await.unwrap();
+        visible.delete_without_events(&context.pool).await.unwrap();
+        parent.cleanup().await.unwrap();
     }
 
     #[rstest]
