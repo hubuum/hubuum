@@ -17230,7 +17230,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Current user's personal computed fields The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Current user's personal computed fields in readable classes; authorization and token scope are applied before pagination and totals The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
