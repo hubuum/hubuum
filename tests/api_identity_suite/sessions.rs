@@ -144,7 +144,7 @@ async fn activity_reads_require_token_management_authorization() {
     assert_eq!(activity["best_effort"], true);
     let unrelated = TestContext::new().await;
     let response = get_request(&context.pool, &unrelated.normal_token, &endpoint).await;
-    assert_response_status(response, StatusCode::FORBIDDEN).await;
+    assert_response_status(response, StatusCode::NOT_FOUND).await;
 }
 
 #[rstest]

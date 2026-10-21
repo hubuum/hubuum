@@ -17,6 +17,7 @@ use crate::services::auth_sessions;
 use crate::storage::{AuthenticationStorage, storage_handle};
 use actix_web::http::StatusCode;
 use actix_web::{HttpRequest, Responder, get, post, web};
+use hubuum_domain::PrincipalId;
 use hubuum_storage_core::{SessionClientId, SessionRevocation};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -118,9 +119,10 @@ pub async fn login(
     finish_login_attempt(login_permit, LoginAttemptOutcome::Succeeded).await?;
 
     let user = authenticated.user();
+    let principal_id = PrincipalId::new(user.id)?;
     let event_context = RequestProvenance::from_request(&req)
         .map(|provenance| provenance.user_event_context(user.id))
-        .unwrap_or_else(EventContext::system);
+        .unwrap_or_else(|| EventContext::user(principal_id, None, None));
     let token_generation_result = auth_sessions::issue(
         &context,
         &authenticated,
