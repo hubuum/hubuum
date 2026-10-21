@@ -345,6 +345,11 @@ Exactly one of `class_ref` or `class_key` must be set.
 
 ### `class_relations`
 
+Optional `forward_label` and `reverse_label` carry human wording independently of
+template aliases. Labels follow the supplied endpoint order and are swapped with
+aliases and limits when normalized. See [directional labels](relationship_endpoints.md#directional-display-labels)
+for validation and fallback rules.
+
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `ref` | string | no | Client-local reference. |

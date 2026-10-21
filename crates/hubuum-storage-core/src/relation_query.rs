@@ -1,3 +1,4 @@
+use hubuum_domain::RelationLabel;
 use hubuum_query::TraversalBudget;
 use std::fmt;
 
@@ -50,6 +51,8 @@ pub struct StorageClassRelation {
     metadata: StorageRecordMetadata,
     from_class_id: ClassId,
     to_class_id: ClassId,
+    forward_label: Option<RelationLabel>,
+    reverse_label: Option<RelationLabel>,
     forward_template_alias: Option<String>,
     reverse_template_alias: Option<String>,
     from_max_relations: Option<i32>,
@@ -71,11 +74,24 @@ impl StorageClassRelation {
             metadata,
             from_class_id,
             to_class_id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: None,
             reverse_template_alias: None,
             from_max_relations: None,
             to_max_relations: None,
         })
+    }
+
+    #[must_use]
+    pub fn with_labels(
+        mut self,
+        forward: Option<RelationLabel>,
+        reverse: Option<RelationLabel>,
+    ) -> Self {
+        self.forward_label = forward;
+        self.reverse_label = reverse;
+        self
     }
 
     pub fn try_with_template_aliases(
@@ -131,6 +147,16 @@ impl StorageClassRelation {
     }
 
     #[must_use]
+    pub fn forward_label(&self) -> Option<&RelationLabel> {
+        self.forward_label.as_ref()
+    }
+
+    #[must_use]
+    pub fn reverse_label(&self) -> Option<&RelationLabel> {
+        self.reverse_label.as_ref()
+    }
+
+    #[must_use]
     pub fn forward_template_alias(&self) -> Option<&str> {
         self.forward_template_alias.as_deref()
     }
@@ -165,6 +191,8 @@ impl StorageClassRelation {
         Option<i32>,
         Option<i32>,
         ResourceRevision,
+        Option<RelationLabel>,
+        Option<RelationLabel>,
     ) {
         let (id, created_at, updated_at, revision) = self.metadata.into_parts();
         (
@@ -178,6 +206,8 @@ impl StorageClassRelation {
             self.from_max_relations,
             self.to_max_relations,
             revision,
+            self.forward_label,
+            self.reverse_label,
         )
     }
 
@@ -188,6 +218,8 @@ impl StorageClassRelation {
             "id": ClassRelationId::from(self.metadata.id()).id(),
             "from_hubuum_class_id": self.from_class_id.id(),
             "to_hubuum_class_id": self.to_class_id.id(),
+            "forward_label": self.forward_label,
+            "reverse_label": self.reverse_label,
             "forward_template_alias": self.forward_template_alias,
             "reverse_template_alias": self.reverse_template_alias,
             "from_max_relations": self.from_max_relations,

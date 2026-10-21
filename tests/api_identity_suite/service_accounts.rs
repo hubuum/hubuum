@@ -156,6 +156,8 @@ mod tests {
         let class_relation = NewHubuumClassRelation {
             from_hubuum_class_id: classes[0].id,
             to_hubuum_class_id: classes[1].id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: None,
             reverse_template_alias: None,
             from_max_relations: None,
@@ -1569,6 +1571,8 @@ mod tests {
         let class_relation = NewHubuumClassRelation {
             from_hubuum_class_id: classes[0].id,
             to_hubuum_class_id: classes[1].id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: None,
             reverse_template_alias: None,
             from_max_relations: None,
@@ -1690,6 +1694,8 @@ mod tests {
         let class_relation_input = NewHubuumClassRelation {
             from_hubuum_class_id: classes[0].id,
             to_hubuum_class_id: classes[1].id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: None,
             reverse_template_alias: None,
             from_max_relations: None,

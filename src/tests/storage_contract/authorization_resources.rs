@@ -10,6 +10,77 @@ use hubuum_domain::{ExportTemplateId, RemoteTargetId};
 use hubuum_storage_core::StorageAuthorizationResourceKey as K;
 use std::collections::HashMap;
 
+#[rstest::rstest]
+#[case::allowed(true)]
+#[case::denied(false)]
+#[actix_web::test]
+async fn graph_label_batches_respect_filter_limits_and_external_permissions(#[case] allowed: bool) {
+    use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
+    use crate::permissions::{PrincipalRef, ResourceFields, ResourceKind};
+    use crate::services::authorization_resources::object_graph_class_relations;
+
+    let backend = StorageHandle::from_registered_backend(MemoryStorage::new());
+    let root =
+        create_backend_object_fixture(&backend, "graph_labels_root", vec![serde_json::json!({})])
+            .await;
+    let policy = Arc::new(MockTreetopBackend::new());
+    if allowed {
+        policy.add_rule(MockAllowRule {
+            group_id: 1,
+            action: crate::models::Permissions::ReadClassRelation,
+            resource_kind: ResourceKind::ClassRelation,
+            resource_id: None,
+            attrs: ResourceFields::default(),
+        });
+    }
+    let context = AppContext::new(backend.clone(), policy);
+    let mut edges = Vec::new();
+    let mut expected = Vec::new();
+    // Exceed the query parser's 50-value limit so batching is necessary.
+    for index in 0..51 {
+        let leaf = create_backend_object_fixture(
+            &backend,
+            &format!("graph_labels_{index}"),
+            vec![serde_json::json!({})],
+        )
+        .await;
+        let relation = NewHubuumClassRelation {
+            from_hubuum_class_id: root.class.id().id(),
+            to_hubuum_class_id: leaf.class.id().id(),
+            forward_label: None,
+            reverse_label: None,
+            forward_template_alias: None,
+            reverse_template_alias: None,
+            from_max_relations: None,
+            to_max_relations: None,
+        }
+        .save_without_events(&backend)
+        .await
+        .unwrap();
+        expected.push(relation.id);
+        edges.push(
+            NewHubuumObjectRelation {
+                from_hubuum_object_id: root.objects[0].id().id(),
+                to_hubuum_object_id: leaf.objects[0].id().id(),
+                class_relation_id: relation.id,
+            }
+            .save_without_events(&backend)
+            .await
+            .unwrap(),
+        );
+    }
+    let actual = object_graph_class_relations(&context, &PrincipalRef::new(1, [1]), None, &edges)
+        .await
+        .unwrap();
+    assert_eq!(
+        actual
+            .iter()
+            .map(|relation| relation.id)
+            .collect::<Vec<_>>(),
+        if allowed { expected } else { Vec::new() }
+    );
+}
+
 #[actix_web::test]
 async fn batched_authorization_facts_match_individual_resolution_on_every_backend() {
     let _permit = postgres_permit().await;
@@ -29,6 +100,8 @@ async fn batched_authorization_facts_match_individual_resolution_on_every_backen
         let class_relation = NewHubuumClassRelation {
             from_hubuum_class_id: from.class.id().id(),
             to_hubuum_class_id: to.class.id().id(),
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: None,
             reverse_template_alias: None,
             from_max_relations: None,

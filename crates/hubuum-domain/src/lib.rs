@@ -14,6 +14,7 @@ mod json_value;
 mod maintenance;
 mod operational_constraint;
 mod password;
+mod relation_label;
 mod revision;
 mod schema_evolution;
 mod template_alias;
@@ -59,6 +60,7 @@ pub use operational_constraint::{
     RequiredConstraint,
 };
 pub use password::{PasswordValidationError, PlaintextPassword};
+pub use relation_label::{RelationLabel, RelationLabelError};
 pub use revision::{ResourceRevision, ResourceRevisionError};
 pub use schema_evolution::{CompiledSchema, SchemaDiagnostic, SchemaReference, SchemaRevision};
 pub use template_alias::{TemplateAliasError, normalize_template_alias};

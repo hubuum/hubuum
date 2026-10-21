@@ -203,6 +203,8 @@ mod tests {
         let relation_ab = NewHubuumClassRelation {
             from_hubuum_class_id: classes[0].id,
             to_hubuum_class_id: classes[1].id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: None,
             reverse_template_alias: None,
             from_max_relations: None,
@@ -214,6 +216,8 @@ mod tests {
         let relation_bc = NewHubuumClassRelation {
             from_hubuum_class_id: classes[1].id,
             to_hubuum_class_id: classes[2].id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: None,
             reverse_template_alias: None,
             from_max_relations: None,

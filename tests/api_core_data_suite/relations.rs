@@ -14,7 +14,7 @@ mod tests {
         ObjectRelationLimit, Permissions, RelatedClassGraph, RelatedObjectGraph,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
-    use crate::traits::{CanSave, PermissionController, SelfAccessors};
+    use crate::traits::{CanDelete, CanSave, PermissionController, SelfAccessors};
     use crate::{assert_contains_all, assert_contains_same_ids};
     use hubuum_storage_postgres::{PostgresPool, capture_queries, with_transaction};
 
@@ -67,6 +67,8 @@ mod tests {
         let relation = NewHubuumClassRelation {
             from_hubuum_class_id: from_class.id,
             to_hubuum_class_id: to_class.id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: None,
             reverse_template_alias: None,
             from_max_relations: None,
@@ -725,6 +727,8 @@ mod tests {
 
         let content = NewHubuumClassRelationFromClass {
             to_hubuum_class_id: classes[1].id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: None,
             reverse_template_alias: None,
             from_max_relations: None,
@@ -763,6 +767,8 @@ mod tests {
 
         let forward_content = NewHubuumClassRelationFromClass {
             to_hubuum_class_id: classes[1].id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: None,
             reverse_template_alias: None,
             from_max_relations: None,
@@ -770,6 +776,8 @@ mod tests {
         };
         let reverse_content = NewHubuumClassRelationFromClass {
             to_hubuum_class_id: classes[0].id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: None,
             reverse_template_alias: None,
             from_max_relations: None,
@@ -821,6 +829,8 @@ mod tests {
         let content = NewHubuumClassRelation {
             from_hubuum_class_id: classes[1].id,
             to_hubuum_class_id: classes[0].id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: Some("Jack Room".to_string()),
             reverse_template_alias: Some("Room Jacks".to_string()),
             from_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),
@@ -869,6 +879,8 @@ mod tests {
         let relation = NewHubuumClassRelation {
             from_hubuum_class_id: classes[0].id,
             to_hubuum_class_id: classes[1].id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: None,
             reverse_template_alias: None,
             from_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),
@@ -930,6 +942,8 @@ mod tests {
         let relation = NewHubuumClassRelation {
             from_hubuum_class_id: classes[0].id,
             to_hubuum_class_id: classes[1].id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: None,
             reverse_template_alias: None,
             from_max_relations: None,
@@ -988,6 +1002,8 @@ mod tests {
         let relation = NewHubuumClassRelation {
             from_hubuum_class_id: classes[0].id,
             to_hubuum_class_id: classes[1].id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: None,
             reverse_template_alias: None,
             from_max_relations: bounded
@@ -2183,6 +2199,14 @@ mod tests {
         );
         assert_eq!(graph.objects[0].path, vec![objects[0].id]);
         assert_eq!(relation_ids, vec![relation_12.id, relation_15.id]);
+        assert_eq!(
+            graph
+                .class_relations
+                .iter()
+                .map(|relation| relation.id)
+                .collect::<Vec<_>>(),
+            vec![relations[0].id, class_relation_15.id]
+        );
         assert!(!relation_ids.contains(&relation_23.id));
         assert_eq!(
             queries.queries_matching("get_bidirectionally_related_objects"),
@@ -2455,6 +2479,10 @@ mod tests {
         let graph_resp = assert_response_status(graph_resp, StatusCode::OK).await;
         let graph: RelatedObjectGraph = test::read_body_json(graph_resp).await;
 
+        assert!(
+            graph.class_relations.is_empty(),
+            "object-read permission must not expose class-relation definitions"
+        );
         assert_eq!(
             graph
                 .objects
@@ -2481,5 +2509,204 @@ mod tests {
         group.delete_without_events(&context.pool).await.unwrap();
         cleanup(&visible_classes).await;
         cleanup(&hidden_classes).await;
+    }
+    #[rstest]
+    #[case::canonical(false)]
+    #[case::reversed(true)]
+    #[actix_web::test]
+    async fn directional_labels_follow_supplied_classes(
+        #[future(awt)] test_context: TestContext,
+        #[case] reversed: bool,
+    ) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "directional_labels").await;
+        let (from, to) = if reversed {
+            (&classes[1], &classes[0])
+        } else {
+            (&classes[0], &classes[1])
+        };
+        let response = post_request(&context.pool, &context.admin_token, CLASS_RELATIONS_ENDPOINT,
+            &serde_json::json!({"from_hubuum_class_id": from.id, "to_hubuum_class_id": to.id,
+                "forward_label": "is in", "reverse_label": "contains", "forward_template_alias": "rooms"})).await;
+        let response = assert_response_status(response, StatusCode::CREATED).await;
+        let relation: HubuumClassRelation = test::read_body_json(response).await;
+        assert_eq!(relation.label_from(from.id).unwrap(), "is in");
+        assert_eq!(relation.label_from(to.id).unwrap(), "contains");
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[case::blank(serde_json::json!({"forward_label": " "}))]
+    #[case::control(serde_json::json!({"forward_label": "is\nin"}))]
+    #[case::long(serde_json::json!({"reverse_label": "x".repeat(129)}))]
+    #[case::alias(serde_json::json!({"forward_template_alias": "new_alias"}))]
+    #[actix_web::test]
+    async fn label_patch_rejects_invalid_or_uneditable_fields(
+        #[future(awt)] test_context: TestContext,
+        #[case] body: serde_json::Value,
+    ) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "invalid_label").await;
+        let relation = create_relation(&context.pool, &classes[0], &classes[1]).await;
+        let response = crate::tests::api_operations::patch_request(
+            &context.pool,
+            &context.admin_token,
+            &relation_endpoint(relation.id),
+            body,
+        )
+        .await;
+        assert_response_status(response, StatusCode::BAD_REQUEST).await;
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn label_patch_honors_if_match(#[future(awt)] test_context: TestContext) {
+        use crate::tests::api_operations::patch_request_with_headers;
+        use actix_web::http::header::{ETAG, IF_MATCH};
+        let context = test_context;
+        let classes = create_test_classes(&context, "label_etag").await;
+        let relation = create_relation(&context.pool, &classes[0], &classes[1]).await;
+        let url = relation_endpoint(relation.id);
+        let response = get_request(&context.pool, &context.admin_token, &url).await;
+        let etag = response
+            .headers()
+            .get(ETAG)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let response = patch_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            &url,
+            serde_json::json!({"forward_label": "contains"}),
+            vec![(IF_MATCH, etag.clone())],
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        assert_ne!(
+            response.headers().get(ETAG).unwrap().to_str().unwrap(),
+            etag
+        );
+        let response = patch_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            &url,
+            serde_json::json!({"forward_label": "overwritten"}),
+            vec![(IF_MATCH, etag)],
+        )
+        .await;
+        assert_response_status(response, StatusCode::PRECONDITION_FAILED).await;
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[case::read_only(Permissions::ReadClassRelation, StatusCode::FORBIDDEN)]
+    #[case::updater(Permissions::UpdateClassRelation, StatusCode::OK)]
+    #[actix_web::test]
+    async fn label_patch_requires_update_permission(
+        #[future(awt)] test_context: TestContext,
+        #[case] permission: Permissions,
+        #[case] expected: StatusCode,
+    ) {
+        let context = test_context;
+        let user = ensure_normal_user(&context.pool).await;
+        let token = user.create_token(&context.pool).await.unwrap().get_token();
+        let group = create_test_group(&context.pool).await;
+        group
+            .add_member_without_events(&context.pool, &user)
+            .await
+            .unwrap();
+        let classes = create_test_classes(&context, "label_permission").await;
+        let relation = create_relation(&context.pool, &classes[0], &classes[1]).await;
+        let collection = CollectionID::new(classes[0].collection_id)
+            .unwrap()
+            .instance(&context.pool)
+            .await
+            .unwrap();
+        collection
+            .grant_one(&context.pool, GroupID::new(group.id).unwrap(), permission)
+            .await
+            .unwrap();
+        let response = crate::tests::api_operations::patch_request(
+            &context.pool,
+            &token,
+            &relation_endpoint(relation.id),
+            serde_json::json!({"forward_label": "contains"}),
+        )
+        .await;
+        assert_response_status(response, expected).await;
+        cleanup(&classes).await;
+        group.delete_without_events(&context.pool).await.unwrap();
+    }
+    #[rstest]
+    #[actix_web::test]
+    async fn database_normalizes_labels_with_reversed_class_ids(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        use hubuum_storage_postgres::schema::hubuumclass_relation::dsl as relation;
+        let context = test_context;
+        let classes = create_test_classes(&context, "sql_label_order").await;
+        let labels = with_transaction(&context.pool, async |connection| {
+            diesel::insert_into(relation::hubuumclass_relation)
+                .values((
+                    relation::from_hubuum_class_id.eq(classes[1].id),
+                    relation::to_hubuum_class_id.eq(classes[0].id),
+                    relation::forward_label.eq("is in"),
+                    relation::reverse_label.eq("contains"),
+                ))
+                .returning((
+                    relation::from_hubuum_class_id,
+                    relation::forward_label,
+                    relation::reverse_label,
+                ))
+                .get_result::<(i32, Option<String>, Option<String>)>(connection)
+                .await
+                .map_err(ApiError::from)
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            labels,
+            (classes[0].id, Some("contains".into()), Some("is in".into()))
+        );
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[case::empty("")]
+    #[case::leading_nbsp("\u{00a0}contains")]
+    #[case::trailing_narrow_nbsp("contains\u{202f}")]
+    #[case::unicode_control("is\u{0085}in")]
+    #[actix_web::test]
+    async fn database_rejects_invalid_relation_labels(
+        #[future(awt)] test_context: TestContext,
+        #[case] label: &str,
+    ) {
+        use diesel::result::{DatabaseErrorKind, Error};
+        use hubuum_storage_postgres::schema::hubuumclass_relation::dsl as relation;
+        let context = test_context;
+        let classes = create_test_classes(&context, "sql_invalid_label").await;
+        let result = with_transaction(&context.pool, async |connection| {
+            diesel::insert_into(relation::hubuumclass_relation)
+                .values((
+                    relation::from_hubuum_class_id.eq(classes[0].id),
+                    relation::to_hubuum_class_id.eq(classes[1].id),
+                    relation::forward_label.eq(label),
+                ))
+                .execute(connection)
+                .await
+                .map_err(|error| {
+                    assert!(matches!(
+                        error,
+                        Error::DatabaseError(DatabaseErrorKind::CheckViolation, _)
+                    ));
+                    ApiError::from(error)
+                })
+        })
+        .await;
+        assert!(result.is_err());
+        cleanup(&classes).await;
     }
 }

@@ -16,6 +16,7 @@ use crate::storage::{
     StorageResolvedObjectRelation,
 };
 use async_trait::async_trait;
+use hubuum_domain::RelationLabel;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use utoipa::ToSchema;
@@ -86,6 +87,8 @@ pub struct HubuumClassRelation {
     pub id: i32,
     pub from_hubuum_class_id: i32,
     pub to_hubuum_class_id: i32,
+    pub forward_label: Option<RelationLabel>,
+    pub reverse_label: Option<RelationLabel>,
     pub forward_template_alias: Option<String>,
     pub reverse_template_alias: Option<String>,
     pub created_at: chrono::NaiveDateTime,
@@ -104,6 +107,8 @@ pub struct HubuumClassRelation {
 pub struct NewHubuumClassRelation {
     pub from_hubuum_class_id: i32,
     pub to_hubuum_class_id: i32,
+    pub forward_label: Option<RelationLabel>,
+    pub reverse_label: Option<RelationLabel>,
     pub forward_template_alias: Option<String>,
     pub reverse_template_alias: Option<String>,
     /// Maximum relations allowed for each object in `from_hubuum_class_id`.
@@ -120,6 +125,8 @@ pub struct NewHubuumClassRelation {
 #[schema(example = new_hubuum_class_relation_from_class_example)]
 pub struct NewHubuumClassRelationFromClass {
     pub to_hubuum_class_id: i32,
+    pub forward_label: Option<RelationLabel>,
+    pub reverse_label: Option<RelationLabel>,
     pub forward_template_alias: Option<String>,
     pub reverse_template_alias: Option<String>,
     /// Maximum relations allowed for each object in the class from the URL.
@@ -133,7 +140,7 @@ pub struct NewHubuumClassRelationFromClass {
 impl NewHubuumClassRelation {
     /// Validate and normalize a class relation before persistence.
     ///
-    /// Class IDs are stored in ascending order. Directional aliases and limits
+    /// Class IDs are stored in ascending order. Directional labels, aliases, and limits
     /// move with their corresponding class when the supplied order is reversed.
     #[cfg(test)]
     pub(crate) fn normalized(mut self) -> Result<Self, ApiError> {
@@ -160,6 +167,7 @@ impl NewHubuumClassRelation {
                 &mut self.forward_template_alias,
                 &mut self.reverse_template_alias,
             );
+            std::mem::swap(&mut self.forward_label, &mut self.reverse_label);
             std::mem::swap(&mut self.from_max_relations, &mut self.to_max_relations);
         }
 
@@ -176,6 +184,8 @@ impl NewHubuumClassRelationFromClass {
         NewHubuumClassRelation {
             from_hubuum_class_id: from_hubuum_class_id.id(),
             to_hubuum_class_id: self.to_hubuum_class_id,
+            forward_label: self.forward_label,
+            reverse_label: self.reverse_label,
             forward_template_alias: self.forward_template_alias,
             reverse_template_alias: self.reverse_template_alias,
             from_max_relations: self.from_max_relations,
@@ -815,6 +825,8 @@ pub struct RelatedObjectForRootRow {
 pub struct RelatedObjectGraph {
     pub objects: Vec<HubuumObjectWithPath>,
     pub relations: Vec<HubuumObjectRelation>,
+    /// Authorized definitions referenced by the object edges; labels follow class endpoint order.
+    pub class_relations: Vec<HubuumClassRelation>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
@@ -827,6 +839,8 @@ fn new_hubuum_class_relation_example() -> NewHubuumClassRelation {
     NewHubuumClassRelation {
         from_hubuum_class_id: 1,
         to_hubuum_class_id: 2,
+        forward_label: Some(RelationLabel::new("is in".into()).expect("valid example label")),
+        reverse_label: Some(RelationLabel::new("contains".into()).expect("valid example label")),
         forward_template_alias: Some("rooms".to_string()),
         reverse_template_alias: Some("hosts".to_string()),
         from_max_relations: Some(ObjectRelationLimit::new(1).expect("valid example limit")),
@@ -837,6 +851,8 @@ fn new_hubuum_class_relation_example() -> NewHubuumClassRelation {
 fn new_hubuum_class_relation_from_class_example() -> NewHubuumClassRelationFromClass {
     NewHubuumClassRelationFromClass {
         to_hubuum_class_id: 2,
+        forward_label: Some(RelationLabel::new("is in".into()).expect("valid example label")),
+        reverse_label: Some(RelationLabel::new("contains".into()).expect("valid example label")),
         forward_template_alias: Some("rooms".to_string()),
         reverse_template_alias: Some("hosts".to_string()),
         from_max_relations: Some(ObjectRelationLimit::new(1).expect("valid example limit")),
@@ -1014,6 +1030,51 @@ impl fmt::Debug for ResolvedObjectRelationTarget {
     }
 }
 
+/// Change display wording in the canonical endpoint order returned by the API.
+/// Omitted fields retain their value; explicit null clears that direction.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateClassRelationLabels {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_label_update"
+    )]
+    #[schema(value_type = Option<RelationLabel>)]
+    pub forward_label: Option<Option<RelationLabel>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_label_update"
+    )]
+    #[schema(value_type = Option<RelationLabel>)]
+    pub reverse_label: Option<Option<RelationLabel>>,
+}
+
+fn deserialize_label_update<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<RelationLabel>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<RelationLabel>::deserialize(deserializer).map(Some)
+}
+
+impl HubuumClassRelation {
+    /// Wording viewed from one of this relation's class endpoints.
+    pub fn label_from(&self, class_id: i32) -> Result<&str, ApiError> {
+        if class_id == self.from_hubuum_class_id {
+            Ok(RelationLabel::display(self.forward_label.as_ref()))
+        } else if class_id == self.to_hubuum_class_id {
+            Ok(RelationLabel::display(self.reverse_label.as_ref()))
+        } else {
+            Err(ApiError::BadRequest(
+                "Class is not an endpoint of this relation".to_owned(),
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1023,6 +1084,8 @@ mod tests {
         let normalized = NewHubuumClassRelation {
             from_hubuum_class_id: 20,
             to_hubuum_class_id: 10,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: Some("Jack Room".to_string()),
             reverse_template_alias: Some("Room Jacks".to_string()),
             from_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),

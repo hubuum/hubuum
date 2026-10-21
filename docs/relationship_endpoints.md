@@ -21,6 +21,7 @@ For filtering, sorting, and cursor pagination support, see:
 | List | `GET` | `/api/v1/relations/classes` | List class relations visible to the caller |
 | Get | `GET` | `/api/v1/relations/classes/{relation_id}` | Fetch one class relation |
 | Create | `POST` | `/api/v1/relations/classes` | Create a class relation |
+| Edit labels | `PATCH` | `/api/v1/relations/classes/{relation_id}` | Edit directional display wording |
 | Delete | `DELETE` | `/api/v1/relations/classes/{relation_id}` | Delete a class relation |
 
 Class relation create payloads accept `from_max_relations` and
@@ -41,9 +42,61 @@ one room while allowing a room to contain any number of jacks:
 ```
 
 Class relations are stored in canonical class-ID order. If the supplied class
-IDs are reversed during creation, the aliases and limits are reversed with
+IDs are reversed during creation, the labels, aliases, and limits are reversed with
 them, so each setting continues to apply to the class supplied on that side.
 Creating an object relation beyond either limit returns `409 Conflict`.
+
+### Directional display labels
+
+Create payloads (including class-scoped creation and imports) accept optional
+`forward_label` and `reverse_label`. For example, a Host → Room relation can use
+`"is in"` and `"contains"`. Labels follow the supplied classes: canonicalization
+swaps labels, aliases, and limits together. Responses always use ascending class-ID
+order. Labels are 1–128 Unicode characters, without control characters or leading
+or trailing whitespace. Omit a label or use `null` for the neutral display fallback
+**related to**. Labels carry no ownership, cardinality, permission, or inference
+semantics and are stored as authored, without automatic translation.
+
+Edit wording using `PATCH /api/v1/relations/classes/{relation_id}` and the canonical
+orientation returned by `GET`. Editing requires `UpdateClassRelation` on both
+endpoints. Send the returned `ETag` in `If-Match` to reject stale writes with `412`.
+Omitted fields retain their values; explicit `null` clears a direction:
+
+```json
+{
+  "forward_label": "is located in",
+  "reverse_label": null
+}
+```
+
+The operation preserves the relation ID, object links, template aliases, and
+limits. A changed label advances the revision and records history and an updated
+event; a no-op does neither. Labels appear in class-relation JSON exports, import
+inputs, historical snapshots, and logical backups. Apply the directional-label
+migration before upgrading; existing relations retain null labels.
+
+Object relations inherit wording through `class_relation_id`. Choose the direction
+using the viewer object's **class ID**, since object-ID order can differ from
+class-ID order. Object graph responses include a `class_relations` array containing
+only referenced definitions the caller can read; an unavailable definition uses
+the same neutral fallback. Class graph edges already contain their labels.
+Templated reports expose `item.relation_labels.<alias>` beside
+`item.related.<alias>`. Changing wording never changes the alias key. Relation
+lifecycle event summaries use the directional label at the mutation.
+
+### Multiple relationship kinds
+
+This release keeps one class relation per unordered class pair and one object
+relation per unordered object pair. Labels describe the two directions of that
+single relationship; they do not allow separate ordered/access/admin edges for
+the same pair.
+
+Supporting parallel definitions remains a separate coordinated feature. It needs
+portable relation identity, object uniqueness scoped to `class_relation_id`, explicit
+selection for ambiguous pair routes and imports, collision rules for template
+aliases, and traversal that deduplicates generic adjacency while authorizing each
+selected edge. Downgrades would also need an explicit policy for conflicting
+parallel edges. Existing stable IDs provide a foundation for that later work.
 
 ### Object relations
 

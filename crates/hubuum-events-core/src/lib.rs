@@ -728,7 +728,8 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
         E::ExternalIdentitySync => &[A::Succeeded, A::Failed],
         E::Restore | E::Authentication => &[A::Succeeded],
         E::RemoteTarget => &[A::Created, A::Updated, A::Deleted, A::Invoked],
-        E::ClassRelation | E::ObjectRelation => &[A::Created, A::Deleted],
+        E::ClassRelation => &[A::Created, A::Updated, A::Deleted],
+        E::ObjectRelation => &[A::Created, A::Deleted],
         E::UserGroup => &[A::Added, A::Removed],
         E::Permission => &[A::Granted, A::Revoked],
         E::Token => &[A::Created, A::Revoked, A::Purged],
@@ -2251,11 +2252,11 @@ mod tests {
     }
 
     #[test]
-    fn relations_have_no_updated() {
+    fn only_class_relations_support_updated() {
         assert!(is_valid_pair(EntityType::ObjectRelation, Action::Created));
         assert!(is_valid_pair(EntityType::ObjectRelation, Action::Deleted));
         assert!(!is_valid_pair(EntityType::ObjectRelation, Action::Updated));
-        assert!(!is_valid_pair(EntityType::ClassRelation, Action::Updated));
+        assert!(is_valid_pair(EntityType::ClassRelation, Action::Updated));
     }
 
     #[test]

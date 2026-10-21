@@ -938,6 +938,8 @@ mod tests {
             let class_relation = NewHubuumClassRelation {
                 from_hubuum_class_id: class.id,
                 to_hubuum_class_id: objects[1].0.id,
+                forward_label: None,
+                reverse_label: None,
                 forward_template_alias: None,
                 reverse_template_alias: None,
                 from_max_relations: None,

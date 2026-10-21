@@ -217,6 +217,15 @@ impl ClassRelationStorage for CompleteExternalAdapter {
         fixture_result()
     }
 
+    async fn update_class_relation_labels(
+        &self,
+        target: &StorageResolvedClassRelation,
+        labels: StorageClassRelationLabelsUpdate,
+        context: &EventContext,
+    ) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, StorageError> {
+        fixture_result()
+    }
+
     async fn delete_class_relation(
         &self,
         target: &StorageResolvedClassRelation,

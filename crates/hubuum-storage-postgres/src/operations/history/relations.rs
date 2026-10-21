@@ -69,6 +69,10 @@ struct RelationRow {
     #[diesel(sql_type = Nullable<Text>)]
     forward_template_alias: Option<String>,
     #[diesel(sql_type = Nullable<Text>)]
+    forward_label: Option<String>,
+    #[diesel(sql_type = Nullable<Text>)]
+    reverse_label: Option<String>,
+    #[diesel(sql_type = Nullable<Text>)]
     reverse_template_alias: Option<String>,
     #[diesel(sql_type = Nullable<Integer>)]
     from_max_relations: Option<i32>,
@@ -106,6 +110,8 @@ impl RelationRow {
                 })?,
             )
         } else {
+            let forward = crate::operations::relation::parse_label(self.forward_label)?;
+            let reverse = crate::operations::relation::parse_label(self.reverse_label)?;
             StorageHistoricalRelation::Class(
                 StorageClassRelation::try_new(
                     metadata,
@@ -113,7 +119,7 @@ impl RelationRow {
                     ClassId::new(self.to_id)?,
                 )
                 .and_then(|row| {
-                    row.try_with_template_aliases(
+                    row.with_labels(forward, reverse).try_with_template_aliases(
                         self.forward_template_alias,
                         self.reverse_template_alias,
                     )
@@ -194,7 +200,7 @@ impl RelationTables {
                     endpoints: "hubuumclass_history",
                     from: "from_hubuum_class_id",
                     to: "to_hubuum_class_id",
-                    edge_projection: "NULL::int4 AS class_relation_id, forward_template_alias, reverse_template_alias, from_max_relations, to_max_relations",
+                    edge_projection: "NULL::int4 AS class_relation_id, forward_label, reverse_label, forward_template_alias, reverse_template_alias, from_max_relations, to_max_relations",
                     class_projection: "NULL::int4 AS class_id",
                 },
                 id.id(),
@@ -205,7 +211,7 @@ impl RelationTables {
                     endpoints: "hubuumobject_history",
                     from: "from_hubuum_object_id",
                     to: "to_hubuum_object_id",
-                    edge_projection: "class_relation_id, NULL::text AS forward_template_alias, NULL::text AS reverse_template_alias, NULL::int4 AS from_max_relations, NULL::int4 AS to_max_relations",
+                    edge_projection: "class_relation_id, NULL::text AS forward_label, NULL::text AS reverse_label, NULL::text AS forward_template_alias, NULL::text AS reverse_template_alias, NULL::int4 AS from_max_relations, NULL::int4 AS to_max_relations",
                     class_projection: "hubuum_class_id AS class_id",
                 },
                 id.id(),

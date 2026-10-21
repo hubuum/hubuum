@@ -13,8 +13,8 @@ use crate::services::storage_boundary::{
     resolved_class_relation_to_storage,
 };
 use crate::storage::{
-    ClassRelationStorage, StorageClassRelation, StorageClassRelationCreate, StorageError,
-    StorageMutationOutcome,
+    ClassRelationStorage, StorageClassRelation, StorageClassRelationCreate,
+    StorageClassRelationLabelsUpdate, StorageError, StorageMutationOutcome,
 };
 
 /// Compose the canonical prepare/create relation lifecycle for callers that
@@ -82,6 +82,24 @@ impl ClassRelationService {
         let prepared = prepared_class_relation_to_storage(prepared);
         self.storage
             .create_class_relation(prepared, context)
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .and_then(resolved_class_relation_from_storage)
+    }
+
+    pub async fn update_labels(
+        &self,
+        target: &ResolvedClassRelationTarget,
+        labels: StorageClassRelationLabelsUpdate,
+        context: &EventContext,
+    ) -> Result<ResolvedClassRelationTarget, ApiError> {
+        self.storage
+            .update_class_relation_labels(
+                resolved_class_relation_to_storage(target),
+                labels,
+                context,
+            )
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -217,6 +235,8 @@ mod tests {
             NewHubuumClassRelation {
                 from_hubuum_class_id: from_class.id,
                 to_hubuum_class_id: to_class.id,
+                forward_label: None,
+                reverse_label: None,
                 forward_template_alias: None,
                 reverse_template_alias: None,
                 from_max_relations: None,
@@ -247,6 +267,8 @@ mod tests {
             .prepare_create(NewHubuumClassRelation {
                 from_hubuum_class_id: higher.id,
                 to_hubuum_class_id: lower.id,
+                forward_label: None,
+                reverse_label: None,
                 forward_template_alias: Some("Higher Links".to_string()),
                 reverse_template_alias: Some("Lower Links".to_string()),
                 from_max_relations: Some(ObjectRelationLimit::new(1).expect("valid limit")),
