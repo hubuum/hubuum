@@ -4803,9 +4803,9 @@ from an unscoped runtime administrator, who controls the destination and credent
 </tr>
 </tbody>
 </table>
-<p>Invoking a target also requires read permission for the selected subject. The worker re-checks
-subject read permission and <code>ExecuteRemoteTarget</code> for the submitting user before making the
-outbound call.</p>
+<p>Invoking a target also requires read permission for every resource included in its template
+context. The worker re-checks these permissions and <code>ExecuteRemoteTarget</code> for the submitting
+user before making the outbound call, including token scopes and external policy decisions.</p>
 <table>
 <thead>
 <tr>
@@ -4820,29 +4820,32 @@ outbound call.</p>
 </tr>
 <tr>
 <td><code>class</code></td>
-<td><code>ReadClass</code> on the class collection.</td>
+<td><code>ReadClass</code> on the class and <code>ReadCollection</code> on its collection.</td>
 </tr>
 <tr>
 <td><code>object</code></td>
-<td><code>ReadObject</code> on the object collection.</td>
+<td><code>ReadObject</code> on the object, <code>ReadClass</code> on its class, and <code>ReadCollection</code> on its collection.</td>
 </tr>
 <tr>
 <td><code>class_relation</code></td>
-<td><code>ReadClassRelation</code> on both endpoint collections.</td>
+<td><code>ReadClassRelation</code> on the relation, <code>ReadClass</code> on both endpoint classes, and <code>ReadCollection</code> on both collections.</td>
 </tr>
 <tr>
 <td><code>object_relation</code></td>
-<td><code>ReadObjectRelation</code> on both endpoint collections.</td>
+<td><code>ReadObjectRelation</code> on the relation, <code>ReadObject</code> on both endpoint objects, <code>ReadClassRelation</code> on its class relation, <code>ReadClass</code> on both classes, and <code>ReadCollection</code> on both collections.</td>
 </tr>
 </tbody>
 </table>
 <p><code>ExecuteRemoteTarget</code> is checked on the target collection. <code>ReadRemoteTarget</code> is not required to
 invoke a target by ID. For relation subjects, the target collection must be one of the relation
 endpoint collections.</p>
+<p>Local relation grants must cover both endpoint collections. External policies receive each
+concrete resource identity and its endpoint attributes. Relation-read permission alone does
+not allow forwarding endpoint object data or class schemas.</p>
 <h3 id="sharing-credential-bearing-targets">Sharing credential-bearing targets<a class="headerlink" href="#sharing-credential-bearing-targets" title="Permanent link">&para;</a></h3>
 <p>An unscoped runtime administrator creates and approves targets that use <code>bearer_secret</code>,
 <code>basic_secret</code>, or <code>api_key_secret</code>. Grant consumers <code>ExecuteRemoteTarget</code> and the required subject
-read permission to share invocation. Consumers do not need <code>ReadRemoteTarget</code> or access to the
+context read permissions to share invocation. Consumers do not need <code>ReadRemoteTarget</code> or access to the
 resolved secret. Collection ownership and scoped administrator tokens do not grant credential-owner
 authority. Administrator authority follows the configured authorization backend.</p>
 <p>Creating a credential-bearing target requires this separate authority even when <code>enabled</code> is false.

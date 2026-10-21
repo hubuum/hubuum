@@ -17230,7 +17230,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Current user's personal computed fields The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Current user's personal computed fields in readable classes; authorization and token scope are applied before pagination and totals The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
@@ -22405,7 +22405,7 @@
           "remote-targets"
         ],
         "summary": "Post Api V1 Remote Targets By Target Id Invoke",
-        "description": "Invoke the current target revision using ExecuteRemoteTarget and subject read permission. Credential-owner authority is not required. The worker rejects changed revisions before resolving credentials.",
+        "description": "Invoke the current target revision using ExecuteRemoteTarget and read permission for every resource in the template context, including endpoint objects, classes, class relations, and collections. Token scopes and concrete external-policy decisions apply at submission and worker execution. Credential-owner authority is not required. The worker rejects changed revisions before resolving credentials.",
         "operationId": "postApiV1RemoteTargetsByTargetIdInvoke",
         "parameters": [
           {

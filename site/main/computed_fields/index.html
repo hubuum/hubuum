@@ -4875,10 +4875,12 @@ be between <code>1</code> and <code>1000</code>.</p>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>If-Match: "&lt;opaque-etag-from-point-response&gt;"
 <a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>POST   /api/v1/iam/me/computed-fields/preview
 </code></pre></div>
-<p>Creating, changing, and previewing a personal definition requires <code>ReadClass</code>.
-An owner who later loses class access can still list and delete the inaccessible
-definition. Personal definitions are evaluated on read and are never fanned out
-during object writes. User anonymization explicitly removes them.</p>
+<p>Creating, reading, changing, deleting, and previewing a personal definition
+requires current <code>ReadClass</code> access. Listings apply the same class authorization
+and token permission and resource scopes before pagination and totals. An owner
+who loses class access must regain it to access retained definitions. Personal
+definitions are evaluated on read and are never fanned out during object writes.
+User anonymization explicitly removes them.</p>
 <p>Preview accepts a typed definition and exactly one of an accessible <code>object_id</code>
 or explicit sample <code>data</code>. Personal preview also requires <code>class_id</code>. Preview
 does not persist a definition or computed result.</p>

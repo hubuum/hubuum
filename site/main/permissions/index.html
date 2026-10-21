@@ -5101,12 +5101,15 @@ control target management and invocation:</p>
 </tr>
 </tbody>
 </table>
-<p>Invoking a remote target also requires read permission for the selected subject. Collection subjects
-require <code>ReadCollection</code>; class subjects require <code>ReadClass</code>; object subjects require <code>ReadObject</code>;
-class relation subjects require <code>ReadClassRelation</code> on both endpoint collections; object relation
-subjects require <code>ReadObjectRelation</code> on both endpoint collections. The worker re-checks both subject
-read permission and <code>ExecuteRemoteTarget</code> for the submitting user before executing the outbound HTTP
-call. <code>ReadRemoteTarget</code> is not required to invoke a target by ID.</p>
+<p>Invoking a remote target also requires read permission for every resource expanded into the
+template context. Class subjects require <code>ReadClass</code> and <code>ReadCollection</code>; object subjects also
+require <code>ReadObject</code>. Class relation subjects require <code>ReadClassRelation</code> plus read access to
+both endpoint classes and collections. Object relation subjects additionally require
+<code>ReadObjectRelation</code> and <code>ReadObject</code> for both endpoint objects. Local relation grants must
+cover both endpoint collections; external policies evaluate the concrete resource identities.
+The worker re-checks the complete context, token scopes, and <code>ExecuteRemoteTarget</code> for the
+submitting user before executing the outbound HTTP call. <code>ReadRemoteTarget</code> is not required
+to invoke a target by ID.</p>
 <!-- Previous walkthrough bookmarks now point to the current group-based example. -->
 <!-- markdownlint-disable MD033 -->
 <p><span id="example"></span>
