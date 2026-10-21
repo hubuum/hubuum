@@ -5352,6 +5352,10 @@ default environment source, the example maps to
 URLs, embedded credential rejection, DNS resolution and address screening, IP
 pinning, redirect refusal, timeout caps, response-size caps, and sensitive
 response-header redaction.</p>
+<p>Webhook deliveries ignore environment proxy settings (<code>HTTP_PROXY</code>, <code>HTTPS_PROXY</code>,
+<code>ALL_PROXY</code>, and their lowercase variants) so proxies cannot bypass the screened
+destination. Allow direct HTTPS egress to webhook destinations when configuring
+the deployment.</p>
 <h2 id="amqp-sinks">AMQP Sinks<a class="headerlink" href="#amqp-sinks" title="Permanent link">&para;</a></h2>
 <p>AMQP delivery is available when Hubuum is built with the <code>amqp</code> feature. An
 AMQP sink publishes the event envelope as JSON to the exchange in sink

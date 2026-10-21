@@ -5217,6 +5217,9 @@ values are not persisted, and sensitive response headers (<code>Set-Cookie</code
   unless <code>HUBUUM_REMOTE_CALL_ALLOW_PRIVATE_TARGETS</code> is enabled for the deployment</li>
 <li>the screened address is pinned for the connection, so a host cannot rebind to a private address
   between the screening and the request</li>
+<li>environment proxy settings (<code>HTTP_PROXY</code>, <code>HTTPS_PROXY</code>, <code>ALL_PROXY</code>, and their lowercase
+  variants) are ignored because a proxy can resolve the destination independently of screening.
+  Deployments must allow direct HTTPS egress to their integration destinations</li>
 <li>URL, header, and body export templates render with the shared MiniJinja fuel and recursion limits used by
   export templates</li>
 <li>each submitting user can have only a bounded number of queued, validating, or running remote-call
