@@ -2519,7 +2519,8 @@ mod tests {
         #[case] reversed: bool,
     ) {
         let context = test_context;
-        let classes = create_test_classes(&context, "directional_labels").await;
+        let classes =
+            create_test_classes(&context, &context.scoped_name("directional_labels")).await;
         let (from, to) = if reversed {
             (&classes[1], &classes[0])
         } else {
@@ -2546,7 +2547,7 @@ mod tests {
         #[case] body: serde_json::Value,
     ) {
         let context = test_context;
-        let classes = create_test_classes(&context, "invalid_label").await;
+        let classes = create_test_classes(&context, &context.scoped_name("invalid_label")).await;
         let relation = create_relation(&context.pool, &classes[0], &classes[1]).await;
         let response = crate::tests::api_operations::patch_request(
             &context.pool,
@@ -2565,7 +2566,7 @@ mod tests {
         use crate::tests::api_operations::patch_request_with_headers;
         use actix_web::http::header::{ETAG, IF_MATCH};
         let context = test_context;
-        let classes = create_test_classes(&context, "label_etag").await;
+        let classes = create_test_classes(&context, &context.scoped_name("label_etag")).await;
         let relation = create_relation(&context.pool, &classes[0], &classes[1]).await;
         let url = relation_endpoint(relation.id);
         let response = get_request(&context.pool, &context.admin_token, &url).await;
@@ -2618,7 +2619,7 @@ mod tests {
             .add_member_without_events(&context.pool, &user)
             .await
             .unwrap();
-        let classes = create_test_classes(&context, "label_permission").await;
+        let classes = create_test_classes(&context, &context.scoped_name("label_permission")).await;
         let relation = create_relation(&context.pool, &classes[0], &classes[1]).await;
         let collection = CollectionID::new(classes[0].collection_id)
             .unwrap()
@@ -2647,7 +2648,7 @@ mod tests {
     ) {
         use hubuum_storage_postgres::schema::hubuumclass_relation::dsl as relation;
         let context = test_context;
-        let classes = create_test_classes(&context, "sql_label_order").await;
+        let classes = create_test_classes(&context, &context.scoped_name("sql_label_order")).await;
         let labels = with_transaction(&context.pool, async |connection| {
             diesel::insert_into(relation::hubuumclass_relation)
                 .values((
@@ -2686,7 +2687,8 @@ mod tests {
         use diesel::result::{DatabaseErrorKind, Error};
         use hubuum_storage_postgres::schema::hubuumclass_relation::dsl as relation;
         let context = test_context;
-        let classes = create_test_classes(&context, "sql_invalid_label").await;
+        let classes =
+            create_test_classes(&context, &context.scoped_name("sql_invalid_label")).await;
         let result = with_transaction(&context.pool, async |connection| {
             diesel::insert_into(relation::hubuumclass_relation)
                 .values((
