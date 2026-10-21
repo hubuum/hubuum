@@ -361,7 +361,7 @@ pub(crate) async fn object_graph_class_relations(
     for batch in ids.chunks(50) {
         let filter = ParsedQueryParam::from_parts(
             FilterField::Id,
-            SearchOperator::Equals { is_negated: false },
+            SearchOperator::In { is_negated: false },
             batch
                 .iter()
                 .map(ToString::to_string)

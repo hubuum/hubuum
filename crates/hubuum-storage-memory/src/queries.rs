@@ -1007,12 +1007,14 @@ impl RelationQueryStorage for MemoryStorage {
         query: StorageRelationListQuery,
     ) -> Result<StoragePage<StorageClassRelation>, StorageError> {
         let (options, _) = query.into_parts();
+        let filters = ResourceFilters::new(&options)?;
         let rows = self
             .state
             .read()
             .await
             .class_relations
             .values()
+            .filter(|relation| filters.matches(relation.metadata().id().id(), "", ""))
             .cloned()
             .collect();
         page(rows, &options)

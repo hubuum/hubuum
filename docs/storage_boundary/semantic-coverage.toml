@@ -97,9 +97,9 @@ shared_scenarios = ["src/services/objects.rs::object_contract_resolves_explicit_
 
 [traits.ClassRelationStorage]
 source = "crates/hubuum-storage-core/src/relation_lifecycle.rs"
-methods = ["prepare_class_relation", "resolve_class_relation", "create_class_relation", "delete_class_relation"]
-effects = { point_read = ["resolve_class_relation"], validation = ["prepare_class_relation"], audited_mutation = ["create_class_relation", "delete_class_relation"] }
-shared_scenarios = ["src/services/class_relations.rs::class_relation_contract_creates_and_resolves_the_endpoint_aggregate", "src/services/class_relations.rs::class_relation_contract_deletes_the_resolved_relation", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_relation_lifecycle"]
+methods = ["prepare_class_relation", "resolve_class_relation", "create_class_relation", "update_class_relation_labels", "delete_class_relation"]
+effects = { point_read = ["resolve_class_relation"], validation = ["prepare_class_relation"], audited_mutation = ["create_class_relation", "update_class_relation_labels", "delete_class_relation"] }
+shared_scenarios = ["src/services/class_relations.rs::class_relation_contract_creates_and_resolves_the_endpoint_aggregate", "src/services/class_relations.rs::class_relation_contract_deletes_the_resolved_relation", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_relation_lifecycle", "src/tests/storage_contract/history_relations.rs::label_edit_emits_revisioned_before_and_after_event", "src/tests/storage_contract/history_relations.rs::concurrent_label_edits_cannot_lose_an_update"]
 
 [traits.ObjectRelationStorage]
 source = "crates/hubuum-storage-core/src/relation_lifecycle.rs"
