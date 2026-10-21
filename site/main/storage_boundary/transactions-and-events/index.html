@@ -4856,6 +4856,15 @@ does not infer write effects, so choosing the correct effect remains a review
 responsibility. An ordinary resource or configuration mutation is not eligible
 for an exception.</p>
 <ul>
+<li>Best-effort credential provenance and source observations:
+  <code>AuthenticationStorage::record_credential_creation</code> and
+  <code>AuthenticationStorage::observe_credential_source</code> preserve issuance evidence
+  and recent source aggregates without changing token revisions or authorization.
+  Recording failures never reject a successfully validated credential.</li>
+<li>Session and activity retention: <code>AuthenticationStorage::purge_auth_sessions</code>
+  and <code>AuthenticationStorage::purge_credential_sources</code> remove only eligible
+  retained evidence, with bounded batches. Family cleanup waits for its access
+  token rows to complete normal token retention and audit handling.</li>
 <li>Best-effort observation: <code>AuthenticationStorage::authenticate_bearer_token</code>
   may throttle-write token use time. This does not change authorization or
   lifecycle state, and a valid authentication does not fail solely because the

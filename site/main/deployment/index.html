@@ -5116,7 +5116,7 @@ and <code>--frontend-ref</code> when installing.</p>
 <li><code>--web</code> serves the frontend.</li>
 <li><code>--api</code> serves the backend API directly for integrations and API users.</li>
 </ul>
-<p>The frontend is still configured as a BFF-style service. Browser clients can call frontend-owned routes such as <code>/api/v0/auth/login</code>, <code>/api/v1/...</code>, and <code>/api/hubuum/...</code>; the frontend reaches the backend over the private compose network with:</p>
+<p>The frontend is still configured as a BFF-style service. Browser clients call frontend-owned routes such as <code>/_hubuum-bff/auth/login</code> and <code>/_hubuum-bff/hubuum/api/v1/...</code>; the frontend reaches the backend over the private compose network with:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>BACKEND_BASE_URL=http://caddy:8081
 </code></pre></div>
 <p>The private Caddy listener load-balances both ready API replicas. Backend bearer

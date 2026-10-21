@@ -2037,6 +2037,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#interactive-sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Interactive sessions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#credential-creation-and-recent-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Credential creation and recent sources
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#scopes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4735,6 +4757,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#interactive-sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Interactive sessions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#credential-creation-and-recent-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Credential creation and recent sources
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#scopes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5148,7 +5192,7 @@ hash — the raw token is shown exactly once, at creation or renewal.</p>
 </tr>
 <tr>
 <td><code>last_used_at</code></td>
-<td>Advanced on every successful validation</td>
+<td>Approximate last successful validation; writes are throttled to once per 60 seconds</td>
 </tr>
 <tr>
 <td><code>revoked_at</code></td>
@@ -5169,16 +5213,19 @@ hash — the raw token is shown exactly once, at creation or renewal.</p>
 </tbody>
 </table>
 <h3 id="validation">Validation<a class="headerlink" href="#validation" title="Permanent link">&para;</a></h3>
-<p>Validation is a single atomic statement. A token is accepted <strong>only if</strong> it is
+<p>Credential validation reads live database state. A token is accepted <strong>only if</strong> it is
 simultaneously:</p>
 <ol>
 <li>present and not revoked (<code>revoked_at IS NULL</code>),</li>
 <li>unexpired — <code>expires_at &gt; now()</code>, or, for a legacy row where
    <code>expires_at IS NULL</code>, issued within the global window
    <code>HUBUUM_TOKEN_LIFETIME_HOURS</code> (default 24h), and</li>
-<li><strong>not</strong> owned by a disabled service account.</li>
+<li><strong>not</strong> owned by a disabled service account; and</li>
+<li>for a session access token, its family is unrevoked and within both idle and
+   absolute deadlines.</li>
 </ol>
-<p>On success, <code>last_used_at</code> is advanced. Any failure yields <code>401 Unauthorized</code> with a
+<p>On success, <code>last_used_at</code> is advanced at most once per 60 seconds. This update
+and source recording are best-effort; failures do not reject a valid credential. Any failure yields <code>401 Unauthorized</code> with a
 generic message (no distinction between unknown / revoked / expired / disabled).</p>
 <h3 id="revocation">Revocation<a class="headerlink" href="#revocation" title="Permanent link">&para;</a></h3>
 <p>Revocation is a <strong>soft delete</strong>: <code>revoked_at</code> is set and the row remains available
@@ -5206,6 +5253,146 @@ If the event cannot be persisted, the transaction rolls back without deleting
 the token. Audit-event retention is configured independently from token
 retention.</p>
 <hr />
+<h2 id="interactive-sessions">Interactive sessions<a class="headerlink" href="#interactive-sessions" title="Permanent link">&para;</a></h2>
+<p><strong>Breaking upgrade:</strong> all authentication routes now use <code>/api/v1/auth</code>; the old
+<code>/api/v0/auth</code> routes are removed. Stop older API and worker replicas before
+applying the interactive-session migration and role grants, then start matching
+binaries and upgrade the frontend and SDK consumers together. The migration uses
+a 5-second lock timeout and a 60-second statement timeout, including the scan of
+existing tokens. If a timeout aborts it, resolve contention or reduce retained
+expired tokens, then retry during maintenance. Existing
+bearer credentials remain valid until their original expiry or revocation; they
+are not converted to refreshable sessions. Clear existing BFF sessions during the
+frontend upgrade and sign in again. Rolling mixed-version server pools are not
+supported for session issuance or rotation.</p>
+<p>Login accepts <code>client_id</code>, <code>name</code>, <code>password</code>, and optional <code>identity_scope</code>. It
+returns <code>session_id</code>, <code>token_type: "Bearer"</code>, <code>access_token</code>, <code>access_expires_at</code>,
+<code>refresh_token</code>, <code>refresh_expires_at</code>, and <code>absolute_expires_at</code>. All timestamps
+are RFC3339 UTC. Responses and authentication errors use <code>Cache-Control: no-store</code>.</p>
+<p>Send only the access token on ordinary requests. Send the refresh token only to
+<code>POST /api/v1/auth/refresh</code>, in a JSON body with the same <code>client_id</code>. Access
+credentials have the <code>hbt1.</code> prefix; refresh credentials have <code>hbr1.</code>. Each
+credential is stored only as a keyed HMAC digest. The endpoint rejects wrong
+credential types, unknown credentials, expired or revoked sessions, and wrong
+clients with the same generic <code>401</code> response.</p>
+<p>Successful refresh atomically consumes the old refresh token and returns a new
+pair. Earlier access tokens retain their short expiry. Reusing a consumed refresh
+token revokes the entire family, including every derived access token. Concurrent
+refreshes therefore have one winner followed by family revocation; clients must
+serialize refresh. Never retry a refresh whose outcome is uncertain after a
+network failure: discard the local session and authenticate again.</p>
+<p>Session policy is pinned at login:</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>HUBUUM_SESSION_ACCESS_SECONDS</code></td>
+<td>900</td>
+<td>Access lifetime, 15 minutes</td>
+</tr>
+<tr>
+<td><code>HUBUUM_SESSION_IDLE_SECONDS</code></td>
+<td>604800</td>
+<td>Refresh inactivity deadline, 7 days</td>
+</tr>
+<tr>
+<td><code>HUBUUM_SESSION_ABSOLUTE_SECONDS</code></td>
+<td>2592000</td>
+<td>Fixed maximum session lifetime, 30 days</td>
+</tr>
+<tr>
+<td><code>HUBUUM_SESSION_RETENTION_SECONDS</code></td>
+<td>2592000</td>
+<td>Replay evidence retained beyond the absolute deadline, 30 days</td>
+</tr>
+</tbody>
+</table>
+<p>For hourly access-token rotation, set <code>HUBUUM_SESSION_ACCESS_SECONDS=3600</code> and
+restart the server. New logins use the updated policy; existing sessions retain
+their original lifetimes. Each refresh replaces both access and refresh tokens.</p>
+<p>Lifetimes require <code>0 &lt; access &lt;= idle &lt;= absolute &lt;= 31536000</code> seconds; retention
+must be 1–31536000 seconds. Refresh advances idle expiry only as far as the fixed
+absolute deadline. Public client configuration publishes the effective lifetimes.
+Session creation is unscoped, with live principal/group permissions on every API
+request. Login and refresh do not accept permission or resource scopes; use a
+scoped PAT for a deliberately narrower automation credential. Client IDs bind
+rotation to a client identity, but are not client secrets or device authentication.</p>
+<p><code>POST /api/v1/auth/logout</code> revokes the current session family; when called with a
+durable token it revokes that token. <code>POST /api/v1/auth/logout_all</code> revokes all of
+the caller's interactive families and <strong>preserves PATs</strong>. Administrative
+<code>POST /api/v1/auth/logout/uid/{user_id}</code> continues to revoke all credentials,
+including PATs. Explicit revocation of a session access token also revokes its
+family. Session access tokens cannot be renewed as PATs. Password changes and
+resets (including imports), anonymization, deletion, provider deprovisioning, and
+restore invalidate sessions. Ordinary permission changes take effect through
+live authorization without issuing a new pair.</p>
+<p>PAT/service-account issuance still requires a single-use
+<a href="../credential_approvals/">fresh authentication approval</a>. A session access token
+alone is insufficient. SDKs can retain explicit PAT injection and opt into
+refreshable login without storing a password. BFFs keep both secrets exclusively
+in their server-side store, use distributed single-flight refresh with atomic
+pair replacement, and cap cookie/store lifetimes at the effective refresh
+expiry. Browser JavaScript must never receive either credential.</p>
+<p>Refresh issuance, rotation, rejection and replay use bounded authentication
+metrics; successful login, rotation and family revocation emit secret-free audit
+events. Token-key usage includes live refresh credentials and consumed replay
+evidence: keep their keys configured until the relevant families expire or are
+revoked. The retention worker removes family metadata after its retention
+deadline and after its access-token rows have been purged under normal token
+retention. Logical backups exclude session credentials and activity.</p>
+<h2 id="credential-creation-and-recent-sources">Credential creation and recent sources<a class="headerlink" href="#credential-creation-and-recent-sources" title="Permanent link">&para;</a></h2>
+<p><code>GET /api/v1/iam/principals/{principal_id}/tokens/{token_id}/activity</code> uses the
+same management authorization as the retained token endpoint. It returns
+immutable creation provenance, recent distinct sources, and collection coverage.
+Use <code>limit</code> (1–100, default 50) and <code>offset</code> (0–256); <code>next_offset</code> indicates the
+next page. The response is <code>no-store</code> and has no revision/ETag. Recording activity
+does not advance the token's revision or change its ETag.</p>
+<p>Creation identifies the issuing principal, issuance method, server timestamp,
+and observed address. The issuer may differ from the credential owner. Historical
+or non-request issuance has unknown provenance (<code>creation: null</code> or an unavailable
+source); renewal records the new request's source. Rotating access tokens share
+the original session creation and family source history.</p>
+<p>Source identity is the pair of address and address-resolution method:</p>
+<ul>
+<li><code>connection_peer</code>: the directly observed network peer, potentially a proxy/BFF.</li>
+<li><code>trusted_forwarded</code>: selected through the existing trusted-proxy policy.</li>
+<li><code>unavailable</code>: no address was available; no invented client identity.</li>
+</ul>
+<p><code>HUBUUM_TRUST_IP_HEADERS=false</code> uses the peer. With header trust enabled, explicit
+<code>HUBUUM_TRUSTED_PROXIES</code> ranges are preferred; alternatively configure a stable
+<code>HUBUUM_TRUSTED_PROXY_HOPS</code> count. Without either trust mechanism, forwarded values
+are ignored. Resolution walks <code>X-Forwarded-For</code> from the connection peer outward.
+A BFF, sidecar or TLS-passthrough ingress can hide the original browser address;
+source history cannot recover information that the trusted path did not provide.</p>
+<p>Collection defaults to enabled (<code>HUBUUM_CREDENTIAL_ACTIVITY_ENABLED=true</code>), with
+<code>HUBUUM_CREDENTIAL_ACTIVITY_RETENTION_DAYS=30</code> (1–365) and
+<code>HUBUUM_CREDENTIAL_ACTIVITY_SOURCE_CAP=32</code> (1–256). Each new source is recorded
+immediately after successful validation, even within another source's throttle
+interval. Repeated observations of the same source update at most once per 60
+seconds. A later authorization denial or handler error still counts as successful
+credential validation. User-Agent is not collected.</p>
+<p>The rolling window uses approximate last observation, independently of token and
+audit retention. At the cap, existing evidence stays in place; new distinct sources
+are omitted until older rows expire. <code>overflow_since</code> permanently marks the first
+omission for that retained credential/family, so readers must not assume the list
+is complete. Revocation preserves evidence; physical token purge cascades durable
+credential activity, while family activity survives individual access-token
+purges until family cleanup. A purged token URL returns <code>404</code>.</p>
+<p><code>collection_enabled</code>, <code>best_effort</code>, <code>retention_days</code>, <code>source_cap</code> and
+<code>overflow_since</code> describe coverage. Disabling collection prevents new source
+observations and creation addresses; already collected evidence ages out under
+the retention policy. Recording failures produce bounded metrics and safe warnings
+without rejecting otherwise valid authentication. Request spans include the
+stable token ID for operator investigation; token IDs and addresses are never
+metric labels. Shared NAT/VPN exits can make different users appear identical,
+and legitimate IPv6/VPN changes can create new sources. This is evidence of
+observations, not a complete request ledger or proof that use was authorized.</p>
 <h2 id="scopes">Scopes<a class="headerlink" href="#scopes" title="Permanent link">&para;</a></h2>
 <p>A token may be narrowed independently by permission and by resource identity.
 Scopes are a least-privilege mechanism for automation: they can only <em>narrow</em>
@@ -5637,16 +5824,19 @@ the scope pre-filter applies), and only humans with unscoped tokens can reach
 IAM/credential-management surfaces.</p>
 <h3 id="login-validate-logout">Login, validate, logout<a class="headerlink" href="#login-validate-logout" title="Permanent link">&para;</a></h3>
 <ul>
-<li><code>POST /api/v0/auth/login</code> — humans only, <strong>by <code>name</code></strong>. Service accounts have no
+<li><code>POST /api/v1/auth/login</code> — humans only, <strong>by <code>name</code></strong>. Service accounts have no
   password and receive a generic <code>401</code>. Failed attempts are rate-limited by
   <code>name</code> + client IP (see <a href="../login_rate_limiting/">login_rate_limiting.md</a>). A
-  successful response returns the raw token and its authoritative <code>expires_at</code>.
+  successful response returns the session credential pair described below.
+  <code>client_id</code> is required and contains 1–128 ASCII letters, digits, <code>-</code>, <code>.</code>, <code>_</code>,
+  or <code>:</code>.
   Login <code>identity_scope</code> and <code>name</code> values are limited to 255 Unicode characters,
   and passwords to 4096. Larger fields are rejected before rate-limit
   bookkeeping, directory/database lookup, or password verification.</li>
-<li><code>GET /api/v0/auth/validate</code> and current-token logout use <code>Authenticated</code>, so a
+<li><code>GET /api/v1/auth/validate</code> and current-token logout use <code>Authenticated</code>, so a
   valid scoped service-account token validates as valid.</li>
-<li>All-token logout / revoke-all are unscoped human/IAM management operations.</li>
+<li>Session logout-all and administrative revoke-all are unscoped human/IAM
+  management operations with different durable-token semantics described below.</li>
 </ul>
 <hr />
 <h2 id="privilege-separation">Privilege separation<a class="headerlink" href="#privilege-separation" title="Permanent link">&para;</a></h2>

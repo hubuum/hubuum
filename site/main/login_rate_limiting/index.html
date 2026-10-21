@@ -4737,7 +4737,7 @@ knobs, and the admin endpoints for inspecting and releasing throttled scopes.</p
 <p>For the configuration table summary, see <a href="../quick_start/">Configuration reference</a>. This page is the
 in-depth reference.</p>
 <h2 id="threat-model">Threat model<a class="headerlink" href="#threat-model" title="Permanent link">&para;</a></h2>
-<p>The limiter defends against online credential-guessing on the <code>POST /api/v0/auth/login</code>
+<p>The limiter defends against online credential-guessing on the <code>POST /api/v1/auth/login</code>
 endpoint. Two attacks motivated the current design (see advisory GHSA-63j4-jh8h-chch):</p>
 <ol>
 <li><em>Password spraying.</em> One password tried across many account names from a single host. A

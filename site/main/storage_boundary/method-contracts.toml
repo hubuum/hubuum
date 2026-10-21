@@ -1083,3 +1083,20 @@ unsupported_error = "InvalidInput"
 effect = "page_read"
 carrier = "StorageRelationHistoryQuery"
 profile = "relationship_history"
+
+[query_profiles.credential_activity]
+shape = "page"
+filters = ["rolling last-seen retention cutoff"]
+sorts = ["first_seen", "stable source identity"]
+cursor = "bounded offset; concurrently added sources may change the next page"
+visibility = "one token constrained by principal id; session access tokens share their family"
+count = "exact retained-source count in the same snapshot"
+snapshot = "creation, count, source page and overflow share one read snapshot"
+bounds = "StorageActivityQuery offset 0..256 and limit 1..100; policy cap at most 256"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[methods."AuthenticationStorage::credential_activity"]
+effect = "page_read"
+carrier = "StorageActivityQuery"
+profile = "credential_activity"
