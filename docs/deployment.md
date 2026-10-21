@@ -32,19 +32,19 @@ Podman support is intended for rootful installs only.
 ## All-In-One
 
 Download the installer from the server release you are deploying. This example
-pairs server **v0.0.18** with frontend **v0.0.19** and pins the management scripts
+pairs server **v0.0.20** with frontend **v0.0.22** and pins the management scripts
 to the same server release:
 
 ```bash
 curl --fail --location --output install-single-host.sh \
-  https://raw.githubusercontent.com/hubuum/hubuum/v0.0.18/scripts/install-single-host.sh
+  https://raw.githubusercontent.com/hubuum/hubuum/v0.0.20/scripts/install-single-host.sh
 sudo bash ./install-single-host.sh \
   --web hubuum.example.com \
   --api hubuum-api.example.com \
   --email admin@example.com \
-  --script-ref v0.0.18 \
-  --server-tag v0.0.18 \
-  --frontend-tag v0.0.19
+  --script-ref v0.0.20 \
+  --server-tag v0.0.20 \
+  --frontend-tag v0.0.22
 ```
 
 Use the same downloaded installer for the variations below. For an existing
@@ -80,8 +80,8 @@ compatible with the old application version for the duration of the rolling
 update; a migration that blocks application queries can still cause request
 latency even though an HTTP replica remains online.
 
-Whether an upgrade can roll depends on its pending migrations. The v0.0.17 to
-v0.0.18 transition requires downtime. Follow [Updates](#updates); historical
+Whether an upgrade can roll depends on its pending migrations. The v0.0.19 to
+v0.0.20 transition requires downtime. Follow [Updates](#updates); historical
 rolling-upgrade evidence does not make an offline migration safe to roll.
 
 The standby owns its own database pool and application memory. Capacity-plan
@@ -143,8 +143,8 @@ sudo bash ./install-single-host.sh \
   --web hubuum.example.com \
   --api hubuum-api.example.com \
   --email admin@example.com \
-  --server-tag v0.0.18 \
-  --frontend-tag v0.0.19
+  --server-tag v0.0.20 \
+  --frontend-tag v0.0.22
 ```
 
 Per-application tags override `--tag` regardless of argument order. Explicit
@@ -155,8 +155,9 @@ image repository, including a custom registry, and replace its tag or digest.
 The resulting image references are saved as `BACKEND_IMAGE` and
 `FRONTEND_IMAGE` in `.env`. Re-running either script without tag options keeps
 those choices, including installations previously configured to follow `main`.
-`latest` follows stable releases and `main` follows development builds when you
-run an update. A version tag such as `v0.0.18` stays on that version; the scripts
+The server's `latest` tag follows stable releases; the frontend does not publish
+that tag. Both applications publish `main` for development builds. A version tag
+such as `v0.0.20` stays on that version; the scripts
 still pull the tag, so an image republished under the same tag can change. Use a
 full image reference with `@sha256:...` when you need immutable image contents.
 Each selected tag must exist in its image repository. Server and frontend
@@ -210,9 +211,9 @@ The frontend makes shared-host deployments easier by keeping internal/BFF routes
 The installer is self-contained enough to run directly from the repository:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hubuum/hubuum/v0.0.18/scripts/install-single-host.sh \
+curl -fsSL https://raw.githubusercontent.com/hubuum/hubuum/v0.0.20/scripts/install-single-host.sh \
   | sudo bash -s -- \
-      --script-ref v0.0.18 --server-tag v0.0.18 --frontend-tag v0.0.19 \
+      --script-ref v0.0.20 --server-tag v0.0.20 --frontend-tag v0.0.22 \
       --web hubuum.example.com \
       --api hubuum-api.example.com \
       --email admin@example.com
@@ -221,10 +222,10 @@ curl -fsSL https://raw.githubusercontent.com/hubuum/hubuum/v0.0.18/scripts/insta
 Use a branch, tag, commit SHA, or PR ref by changing the raw GitHub URL. Pass the same ref with `--script-ref` so the installed management helpers come from the same source:
 
 ```bash
-REF=v0.0.18
+REF=v0.0.20
 curl -fsSL "https://raw.githubusercontent.com/hubuum/hubuum/${REF}/scripts/install-single-host.sh" \
   | sudo bash -s -- \
-      --script-ref "${REF}" --server-tag v0.0.18 --frontend-tag v0.0.19 \
+      --script-ref "${REF}" --server-tag v0.0.20 --frontend-tag v0.0.22 \
       --web hubuum.example.com \
       --api hubuum-api.example.com \
       --email admin@example.com
@@ -413,14 +414,14 @@ Use the same tag options to override and save the image choices for this and
 future updates:
 
 ```bash
-# Follow each application's latest stable release after checking compatibility.
-sudo ./update-single-host.sh --tag latest
+# Select the compatible server and frontend releases explicitly.
+sudo ./update-single-host.sh --server-tag v0.0.20 --frontend-tag v0.0.22
 
 # Pin only the server; keep the saved frontend choice.
-sudo ./update-single-host.sh --server-tag v0.0.18
+sudo ./update-single-host.sh --server-tag v0.0.20
 
 # Follow server development builds while keeping the frontend on stable releases.
-sudo ./update-single-host.sh --tag main --frontend-tag latest
+sudo ./update-single-host.sh --tag main --frontend-tag v0.0.22
 ```
 
 For image-based installs, the update command pulls the latest configured
@@ -431,6 +432,29 @@ only when their keys are missing. On an established rolling installation, it
 then queries the candidate's `hubuum-admin --migration-mode`. A failed or
 unrecognized preflight stops the update before application processes are stopped.
 The candidate must support this command (0.0.17 or newer).
+
+### Upgrade to v0.0.20
+
+Wait until both server v0.0.20 and the compatible frontend v0.0.22 are published.
+The frontend does not publish a `latest` image tag. Select the two versioned tags
+explicitly; changing only the backend leaves older frontends unable to sign in.
+
+1. Stop all API, worker, and restore-executor writers and take a PostgreSQL
+   snapshot. Retain the previous binaries and credentials for recovery.
+2. Run the installed updater with `--server-tag v0.0.20 --frontend-tag v0.0.22`.
+   It refreshes deployment files from the saved management-script ref and asks
+   the candidate for its migration mode. The interactive-session migration
+   selects the offline path, which stops managed writers before migrations.
+3. Reconcile grants for externally managed split database roles. The managed
+   PostgreSQL stack handles its role setup through the migration helper.
+4. Clear existing BFF sessions and sign in again. Upgrade SDK and CLI consumers
+   to versions that support `/api/v1/auth`; old authentication routes are removed.
+
+The updater does not create the database snapshot. A failed offline migration
+leaves old writers stopped; fix forward or restore the snapshot before restarting
+old binaries. Existing updater scripts from v0.0.19 already support this path.
+To change a pinned management-script ref, rerun the v0.0.20 installer with
+`--script-ref v0.0.20`; image tag options alone do not change that ref.
 
 ### Upgrade from v0.0.17 to v0.0.18
 
@@ -503,8 +527,8 @@ If the installed updater predates these options or automatic configuration
 refresh, use the pinned installer to refresh the scripts and saved configuration:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hubuum/hubuum/v0.0.18/scripts/install-single-host.sh \
-  | sudo bash -s -- --dir /opt/hubuum --script-ref v0.0.18
+curl -fsSL https://raw.githubusercontent.com/hubuum/hubuum/v0.0.20/scripts/install-single-host.sh \
+  | sudo bash -s -- --dir /opt/hubuum --script-ref v0.0.20
 ```
 
 Add per-application tag options to change saved image choices after reviewing
@@ -524,11 +548,11 @@ The installer is idempotent and doubles as an in-place updater. Re-running it ag
 
 ```bash
 # Pull the latest configured images and apply any changed configuration in place.
-curl -fsSL https://raw.githubusercontent.com/hubuum/hubuum/v0.0.18/scripts/install-single-host.sh \
-  | sudo bash -s -- --dir /opt/hubuum --script-ref v0.0.18
+curl -fsSL https://raw.githubusercontent.com/hubuum/hubuum/v0.0.20/scripts/install-single-host.sh \
+  | sudo bash -s -- --dir /opt/hubuum --script-ref v0.0.20
 
 # Change a single setting (for example, pin a new backend image) and reuse the rest.
-sudo ./install-single-host.sh --server-tag v0.0.18 --frontend-tag v0.0.19
+sudo ./install-single-host.sh --server-tag v0.0.20 --frontend-tag v0.0.22
 ```
 
 Any value passed explicitly on the command line overrides the stored one;

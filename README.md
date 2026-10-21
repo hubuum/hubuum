@@ -17,8 +17,8 @@ The website opens the latest released documentation. Select a release version
 or explicitly choose `main` for development documentation, and check
 [client compatibility](docs/integrations/clients.md#choose-compatible-versions).
 
-The latest release is [Hubuum `0.0.19`](https://github.com/hubuum/hubuum/releases/tag/v0.0.19),
-published on October 13, 2026. Hubuum is suitable for evaluation and early deployments,
+The latest release is [Hubuum `0.0.20`](https://github.com/hubuum/hubuum/releases/tag/v0.0.20),
+published on October 22, 2026. Hubuum is suitable for evaluation and early deployments,
 but its API and configuration may change before `1.0.0`. Pin deployments to an explicit
 version instead of using the moving `main` image tag. See [Releases](#releases) for recent
 changes and upgrade guidance.
@@ -39,7 +39,7 @@ Install matching versions of all three together; template rendering and validati
 require the worker executable beside the server and administrator binaries.
 
 ```sh
-docker pull ghcr.io/hubuum/hubuum-server:v0.0.19
+docker pull ghcr.io/hubuum/hubuum-server:v0.0.20
 ```
 
 Run `hubuum-admin --migrate` as a one-shot workload before starting or upgrading the
@@ -305,6 +305,7 @@ Recent published releases:
 
 | Release | Date | Highlights |
 | --- | --- | --- |
+| [0.0.20](https://github.com/hubuum/hubuum/releases/tag/v0.0.20) | 2026-10-22 | Adds rotating interactive sessions, credential provenance and source history, historical object populations, relationships and computed values, directional relation labels, and shared query-observation controls. Requires an offline migration and upgraded clients; introduces backup format 10. |
 | [0.0.19](https://github.com/hubuum/hubuum/releases/tag/v0.0.19) | 2026-10-13 | Adds successful-login notifications, query usage declarations and bounded PostgreSQL index preparation, and relation-aware audit timelines. Improves search performance and memory filtering. Introduces backup format 9 and breaking login, event-reader, and storage SDK requirements. |
 | [0.0.18](https://github.com/hubuum/hubuum/releases/tag/v0.0.18) | 2026-10-06 | Adds collection-owned webhook setup, permitted sink discovery, and explicit shared-sink grants. Binds credentials to destinations, introduces backup format 8, and fixes single-host migration profiles and versioned monitoring links. Requires an offline migration. |
 | [0.0.17](https://github.com/hubuum/hubuum/releases/tag/v0.0.17) | 2026-10-04 | Adds configurable webhooks, system notifications, operator monitoring, and versioned documentation. Requires an offline migration; introduces backup format 7, storage SDK 0.4, and Treetop 0.1. |
@@ -315,7 +316,29 @@ Recent published releases:
 | [0.0.12](https://github.com/hubuum/hubuum/releases/tag/v0.0.12) | 2026-09-08 | Adds OpenTelemetry tracing, mounted-file secrets, token hash key rotation, backup verification, optional split database roles, and isolated template and restore execution. Includes breaking deployment and resource-limit changes. |
 | [0.0.11](https://github.com/hubuum/hubuum/releases/tag/v0.0.11) | 2026-08-30 | Adds the experimental memory storage backend and a coordinated public storage adapter SDK, with bounded authorization queries. |
 
-Before upgrading:
+Before upgrading to `0.0.20`:
+
+- **Schedule downtime.** Stop all old API, worker, and restore-executor writers,
+  take a PostgreSQL snapshot, then apply migrations and database role grants with
+  matching `hubuum-admin`. Start matching server, administrator, and template-worker
+  binaries. The single-host updater detects the offline migration; it does not
+  create the snapshot. Recovery requires restoring that snapshot with old binaries.
+- **Upgrade authentication consumers together.** `/api/v0/auth` is removed. Use
+  `/api/v1/auth` and the new session-aware frontend and SDKs; clear old BFF sessions
+  and sign in again. PATs remain independent of interactive session rotation.
+  Configure access, idle, and absolute lifetimes in the
+  [interactive-session settings](docs/auth_model.md#interactive-sessions).
+- Backups emit format 10; formats 6 through 9 remain accepted. Upgrade the restore
+  executor before creating or restoring new backups. Existing session credentials
+  are never included in logical backups.
+- Review template output when upgrading to MiniJinja 3: sequence/map display and
+  arithmetic now follow Jinja2 more closely. The curated `tojson` filter continues
+  to produce compact JSON. Builds with `permissions-treetop` require Rust 1.93.1
+  or newer and target the Treetop 0.2 client contract.
+- Custom storage adapters must implement the new authentication, credential
+  activity, history, and relation-label capabilities described in [CHANGELOG.md](CHANGELOG.md).
+
+When upgrading from older releases, also follow their requirements:
 
 - Read the target release's upgrade notes in [CHANGELOG.md](CHANGELOG.md).
   Version `0.0.19` disables native HTTP/2 in TLS builds as well. Configure direct
@@ -334,7 +357,7 @@ Before upgrading:
   Older servers cannot read the new event catalog entry. Preserve a pre-upgrade
   backup and matching binaries; downgrade requires a compatible reader or restoring
   that backup, losing later writes. See [login events](docs/events.md#successful-login-notifications).
-- Backups now emit format 9; formats 6, 7, and 8 remain accepted and restore without
+- Version `0.0.19` introduced backup format 9; formats 6, 7, and 8 remain accepted and restore without
   query usage declarations. Upgrade all API, worker, and restore-executor processes
   before producing new backups. Older servers cannot restore format 9.
 - Storage adapters must implement `QueryUsageStorage`, preserve declarations in
@@ -363,7 +386,7 @@ Before upgrading:
 - When upgrading from before `0.0.17`, also apply its webhook-notification
   migration, accept nullable collection IDs in system delivery health, and
   follow its storage SDK and Treetop migration requirements below.
-- Upgrade all eight storage adapter SDK crates together to `0.4.0`, implement
+- Upgrade all nine storage adapter SDK crates together to `0.4.0`, implement
   the new adapter capabilities, and use Utoipa 6 for schema composition. Treetop
   installations must upgrade REST and policy bundles to 0.1 and rebuild/re-sign
   format 2 bundles. See [SDK migration](docs/storage_adapter_sdk.md#upgrading-from-03-to-04)

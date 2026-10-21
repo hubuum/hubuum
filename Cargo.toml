@@ -1,6 +1,6 @@
 [package]
 name = "hubuum"
-version = "0.0.19"
+version = "0.0.20"
 edition = "2024"
 description = "Flexible asset management REST service."
 license = "MIT"
@@ -19,7 +19,6 @@ rust-api = "internal-application"
 
 [workspace]
 default-members = [".", "crates/hubuum-templates"]
-exclude = ["vendor/utoipa-swagger-ui"]
 members = [
     "crates/hubuum-auth-core",
     "crates/hubuum-auth-ldap",
@@ -46,10 +45,6 @@ members = [
     "crates/hubuum-task-core",
     "crates/hubuum-templates",
 ]
-
-[patch.crates-io]
-# Remove once upstream releases the zip 9 build fix (juhaku/utoipa#1645).
-utoipa-swagger-ui = { path = "vendor/utoipa-swagger-ui" }
 
 [dependencies]
 actix-rt = "2"
@@ -144,7 +139,7 @@ prometheus = "0.14"
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 openssl = { version = "0.10.81", optional = true }
 # Treetop's client API is pre-1.0; review each version bump explicitly.
-treetop-client = { version = "0.1.0", optional = true }
+treetop-client = { version = "0.2.0", optional = true }
 toml = "1.1"
 
 [target.'cfg(unix)'.dependencies]
@@ -157,7 +152,7 @@ hubuum-storage-conformance = { path = "crates/hubuum-storage-conformance" }
 hubuum-storage-postgres = { path = "crates/hubuum-storage-postgres", features = ["integration-test-support", "query-capture"] }
 percent-encoding = "2"
 regex = "1"
-rstest = "0.27"
+rstest = "0.28"
 tokio-rustls = "0.26"
 
 [features]

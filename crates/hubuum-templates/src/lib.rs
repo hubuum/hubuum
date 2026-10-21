@@ -71,10 +71,11 @@ pub fn json_value_to_template_value(value: &serde_json::Value) -> Value {
         serde_json::Value::Array(values) => {
             values.iter().map(json_value_to_template_value).collect()
         }
-        serde_json::Value::Object(values) => values
-            .iter()
-            .map(|(key, value)| (key.clone(), json_value_to_template_value(value)))
-            .collect(),
+        serde_json::Value::Object(values) => Value::from_pairs(
+            values
+                .iter()
+                .map(|(key, value)| (key.clone(), json_value_to_template_value(value))),
+        ),
     }
 }
 

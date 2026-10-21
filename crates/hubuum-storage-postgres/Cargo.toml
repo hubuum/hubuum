@@ -58,4 +58,4 @@ embedded-migrations = ["dep:diesel_migrations", "pq-sys/bundled"]
 
 [dev-dependencies]
 hubuum-storage-memory = { path = "../hubuum-storage-memory" }
-rstest = "0.27"
+rstest = "0.28"

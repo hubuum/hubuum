@@ -13,14 +13,14 @@ rust-api = "workspace-internal"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 chrono = "0.4"
-minijinja = { version = "2", features = ["fuel"] }
+minijinja = { version = "3", features = ["fuel", "serde"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 
 tokio = { version = "1", features = ["rt", "process", "io-util", "sync", "time", "macros"] }
 tracing = "0.1"
 
 [dev-dependencies]
-rstest = "0.27"
+rstest = "0.28"
 libc = "0.2"
 tempfile = "3"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }

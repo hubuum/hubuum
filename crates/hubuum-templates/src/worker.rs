@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Read;
 
+use minijinja::syntax::SyntaxConfig;
 use minijinja::value::Value;
 use minijinja::{AutoEscape, Environment, UndefinedBehavior, escape_formatter};
 
@@ -86,7 +87,11 @@ fn render(
 ) -> Result<RenderedTemplate, minijinja::Error> {
     MISSING.with(|values| values.borrow_mut().clear());
     let mut environment = Environment::new();
-    environment.set_keep_trailing_newline(request.keep_trailing_newline);
+    environment.set_syntax(
+        SyntaxConfig::builder()
+            .keep_trailing_newline(request.keep_trailing_newline)
+            .build()?,
+    );
     environment.set_recursion_limit(request.limits.recursion_limit());
     environment.set_fuel(Some(request.limits.fuel()));
     environment.set_undefined_behavior(match request.missing_data {

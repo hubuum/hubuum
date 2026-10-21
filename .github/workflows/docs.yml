@@ -68,9 +68,9 @@ jobs:
     name: Build documentation
     needs: changes
     if: needs.changes.outputs.documentation == 'true'
-    uses: hubuum/.github/.github/workflows/docs-build.yml@c803fa34c35f70c92cca317ef61950d9b8684f08 # shared documentation platform
+    uses: hubuum/.github/.github/workflows/docs-build.yml@5f6c90b3696048f9d092b1aee37c90829f17f0f9 # main
     with:
-      tooling_revision: 'c803fa34c35f70c92cca317ef61950d9b8684f08'
+      tooling_revision: '5f6c90b3696048f9d092b1aee37c90829f17f0f9'
       source_ref: ${{ (github.event_name == 'release' || github.event_name == 'workflow_run') && 'main' || github.sha }}
       versioned: true
       version: ${{ inputs.version || github.event.workflow_run.head_branch || (github.event_name == 'release' && !github.event.release.prerelease && github.event.release.tag_name) || '' }}
@@ -105,7 +105,7 @@ jobs:
       contents: write
       pages: write
       id-token: write
-    uses: hubuum/.github/.github/workflows/docs-publish.yml@c803fa34c35f70c92cca317ef61950d9b8684f08 # shared documentation platform
+    uses: hubuum/.github/.github/workflows/docs-publish.yml@5f6c90b3696048f9d092b1aee37c90829f17f0f9 # main
     with:
-      tooling_revision: 'c803fa34c35f70c92cca317ef61950d9b8684f08'
+      tooling_revision: '5f6c90b3696048f9d092b1aee37c90829f17f0f9'
       source_sha: ${{ needs.build.outputs.source_sha }}
