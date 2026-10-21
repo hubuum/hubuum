@@ -7,6 +7,7 @@ use serde::Deserialize;
 #[derive(Args, Clone, Deserialize)]
 #[serde(default)]
 pub struct QueryObservationOptions {
+    /// Startup default for collection; the shared administrator override takes precedence.
     #[arg(long, env = "HUBUUM_QUERY_OBSERVATIONS_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub(super) query_observations_enabled: bool,
     #[arg(

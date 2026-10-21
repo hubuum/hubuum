@@ -4,7 +4,7 @@ impl WorkerNotificationProvider for PostgresStorage {
     fn listen_for_worker_notifications(
         &self,
         topic: StorageNotification,
-        on_notification: fn(),
+        on_notification: Box<dyn Fn() + Send + Sync>,
         shutdown: StorageNotificationShutdown,
     ) -> StorageNotificationListener {
         let pool = self.notification_listener_pool();

@@ -24,7 +24,7 @@ pub(crate) fn spawn_storage_notification_listener(
         let listener = storage
             .create_worker_notification_listener(
                 topic,
-                on_notification,
+                Box::new(on_notification),
                 Box::pin(async move { shutdown.requested().await }),
             )
             .expect("notification provider remains attached for the handle lifetime");

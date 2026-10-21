@@ -644,6 +644,8 @@ mod tests {
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct QueryObservationConfig {
     pub enabled: bool,
+    /// Shared runtime override; null means the process startup setting applies.
+    pub runtime_override: Option<bool>,
     pub sample_every: u32,
     pub max_patterns: usize,
     pub max_patterns_per_class: usize,
@@ -654,6 +656,7 @@ impl From<hubuum_storage_core::StorageQueryObservationSettings> for QueryObserva
     fn from(value: hubuum_storage_core::StorageQueryObservationSettings) -> Self {
         Self {
             enabled: value.enabled(),
+            runtime_override: None,
             sample_every: value.sample_every(),
             max_patterns: value.max_patterns(),
             max_patterns_per_class: value.max_patterns_per_class(),

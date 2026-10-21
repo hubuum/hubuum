@@ -656,6 +656,13 @@ diesel::table! {
 }
 
 diesel::table! {
+    query_observation_control (singleton) {
+        singleton -> Bool,
+        enabled -> Nullable<Bool>,
+    }
+}
+
+diesel::table! {
     query_usage_declarations (id) {
         id -> Int4,
         class_id -> Int4,
@@ -1079,6 +1086,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     object_schema_evidence,
     permissions,
     principals,
+    query_observation_control,
     query_usage_declarations,
     query_usage_executor_cursor,
     query_usage_resource_owners,

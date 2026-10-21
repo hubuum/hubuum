@@ -1,9 +1,24 @@
 use chrono::{DateTime, Utc};
 use hubuum_domain::{ClassId, PrincipalId, ResourceId, ResourceRevision};
-use hubuum_storage_core::{StorageQueryUsageDeclaration, StorageQueryUsagePattern};
+use hubuum_storage_core::{
+    StorageQueryObservationControl, StorageQueryUsageDeclaration, StorageQueryUsagePattern,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
+
+/// Enable or disable observation collection across replicas sharing storage.
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QueryObservationUpdateRequest {
+    enabled: bool,
+}
+
+impl QueryObservationUpdateRequest {
+    pub fn control(&self) -> StorageQueryObservationControl {
+        StorageQueryObservationControl::from_override(Some(self.enabled))
+    }
+}
 
 #[derive(Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]

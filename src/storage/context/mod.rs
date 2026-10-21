@@ -6,7 +6,9 @@ use hubuum_domain::{
     EventSubscriptionId, ExportTemplateId, GroupId, IdentityScopeId, JsonSchemaLimits, ObjectId,
     PrincipalId, RemoteTargetId, RestoreJobId, ServiceAccountId, TaskId, TokenId, UserId,
 };
-use hubuum_storage_core::{QueryUsageAnalysisProvider, StorageQueryObservationSettings};
+use hubuum_storage_core::{
+    QueryUsageAnalysisProvider, QueryUsageStorage, StorageQueryObservationSettings,
+};
 use hubuum_storage_core::{StorageComputedFieldHistoryQuery, StorageHistoricalComputedFields};
 use hubuum_storage_core::{
     StorageHistoryEntry, StorageHistoryEntryQuery, StorageHistoryMarker,
@@ -27,7 +29,7 @@ use uuid::Uuid;
 use crate::events::{
     EventContext, EventDeliverySettings, EventFanoutSettings, EventRetentionSettings,
 };
-use crate::models::search::QueryOptions;
+use crate::models::search::{FilterField, QueryOptions};
 use crate::models::{MaintenanceState, TokenRetentionSettings};
 use crate::permissions::AppContext;
 use crate::storage::observed::{
@@ -234,6 +236,7 @@ mod identity;
 mod identity_queries;
 mod operational;
 mod queries;
+mod query_observation_control;
 mod query_usage;
 mod relations;
 mod schema_evolution;
@@ -384,6 +387,24 @@ impl StorageHandle {
         class_id: Option<ClassId>,
         operation: impl Future<Output = Result<T, E>>,
     ) -> Result<T, E> {
+        // Queries without JSON predicates cannot contribute observations and
+        // should not acquire a connection just to refresh collection control.
+        if query.structured_filter().is_none()
+            && !query
+                .filters()
+                .iter()
+                .any(|filter| *filter.field() == FilterField::JsonData)
+        {
+            return operation.await;
+        }
+        let enabled = self
+            .inner
+            .query_observations
+            .collection_enabled(self.query_observation_control())
+            .await;
+        if !enabled {
+            return operation.await;
+        }
         self.inner
             .query_observations
             .observe(query, class_id, operation)

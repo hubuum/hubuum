@@ -157,6 +157,12 @@ backup and restore, reassess them against the active schema, and remove them wit
 their class or collection. Declarations do not change query semantics or promise
 a particular physical index.
 
+Also owns the shared query observation override. Reads and atomic replacements
+must use the same store across replicas. The initial state uses startup defaults;
+an explicit enabled or disabled state overrides them. This deployment setting
+survives logical restores and is excluded from portable backups. Native memory
+instances remain independent process-local stores.
+
 ### `identity_and_authorization_data`
 
 Required traits:
@@ -544,3 +550,8 @@ When a semantic capability group changes, update all of the following together:
    added or changed.
 8. This document and any sanitized administrator settings affected by the
    change.
+
+Query observation control notifications are wake-up hints for the shared override.
+`WorkerNotificationProvider` accepts a boxed callback so each process can refresh
+its own collector. Providers invoke it on registration/reconnection and changes;
+periodic reads remain the recovery path if notification delivery is interrupted.

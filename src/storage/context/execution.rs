@@ -34,7 +34,7 @@ impl StorageHandle {
     pub(crate) fn create_worker_notification_listener(
         &self,
         topic: StorageNotification,
-        on_notification: fn(),
+        on_notification: Box<dyn Fn() + Send + Sync>,
         shutdown: StorageNotificationShutdown,
     ) -> Option<StorageNotificationListener> {
         let provider = self.inner.worker_notification_provider.clone()?;

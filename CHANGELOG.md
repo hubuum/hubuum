@@ -9,6 +9,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- An administrator API to enable or disable query observation collection at
+  runtime across all API replicas sharing PostgreSQL:
+  `GET` and `PUT /api/v1/admin/query-observations`. The persisted override takes
+  precedence over startup defaults, broadcasts changes to running replicas with a
+  30-second idle recovery poll, and survives restarts and logical restores. Queries
+  that can contribute observations refresh an expired one-second control cache. New
+  replicas adopt the shared state before serving requests, and config reads apply
+  it to the live collector before reporting `enabled`. Control refreshes have a
+  250 ms budget including lock contention, after which queries skip collection.
+  Apply the query observation
+  control migration and upgrade all API replicas before using the shared toggle.
+
 - Historical shared computed values at
   `GET /api/v1/classes/{class_id}/{object_id}/history/computed/as-of?at=...`,
   explicitly labeled as recomputation using retained object and definition
@@ -50,6 +62,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   are unchanged.
 
 ### Changed
+
+- **Breaking storage SDK change:** `QueryUsageStorage` adapters must implement
+  `query_observation_control` and `set_query_observation_control` before upgrading.
+  `WorkerNotificationProvider` callbacks now accept boxed closures and must wake
+  consumers after listener registration/reconnection; providers must support the
+  `QueryObservationControl` topic.
+  Persist the deployment override independently of observations and portable
+  backup content, and share it across instances using the same store.
 
 - **Breaking:** full backups now use version 10 to retain shared computed-definition
   history. Upgrade the restore server before restoring new backups; retain a
@@ -198,6 +218,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Update the locked rustls dependency to 0.23.46, addressing
   RUSTSEC-2026-0346, RUSTSEC-2026-0347, RUSTSEC-2026-0348 and
   RUSTSEC-2026-0349.
+
+- Update `rustls-webpki` to 0.103.16 and `webpki-roots` to 1.0.10 in the affected
+  production and fuzz lockfiles to reject distrusted emSign certificate paths
+  ([RUSTSEC-2026-0381](https://rustsec.org/advisories/RUSTSEC-2026-0381),
+  [RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382)).
 
 ## [0.0.19] - 2026-10-13
 

@@ -688,6 +688,20 @@ done
 budget_projection="$(bash "$classifier" src/config/running.rs)"
 assert_flag "$budget_projection" openapi true
 
+for observation_input in src/api/v1/handlers/runtime_config.rs src/models/query_usage.rs; do
+  observation_output="$(bash "$classifier" "$observation_input")"
+  assert_flag "$observation_output" rust true
+  assert_flag "$observation_output" openapi true
+done
+
+for observation_test in src/storage/context/query_observation_control.rs \
+  src/tests/storage_contract/query_observation_control.rs \
+  crates/hubuum-storage-postgres/tests/query_observation_control.rs \
+  crates/hubuum-storage-postgres/migrations/2026-10-19-000001_query_observation_control/up.sql; do
+  observation_output="$(bash "$classifier" "$observation_test")"
+  assert_flag "$observation_output" rust true
+done
+
 for approval_path in src/api/v1/handlers/credential_approvals.rs src/models/credential_approval.rs; do
   approval_output="$(bash "$classifier" "$approval_path")"
   assert_flag "$approval_output" code true

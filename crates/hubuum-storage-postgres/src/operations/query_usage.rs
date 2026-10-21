@@ -10,13 +10,46 @@ use hubuum_events_core::{
 };
 use hubuum_storage_core::{
     MAX_QUERY_USAGE_DECLARATIONS, StorageAuditReceipt, StorageMutationOutcome,
-    StorageQueryUsageCreate, StorageQueryUsageDeclaration, StorageQueryUsageDelete,
-    StorageQueryUsageReplace, StorageQueryUsageScope,
+    StorageQueryObservationControl, StorageQueryUsageCreate, StorageQueryUsageDeclaration,
+    StorageQueryUsageDelete, StorageQueryUsageReplace, StorageQueryUsageScope,
 };
 use serde_json::{Value, json};
 
 use super::{class::ClassRow, event_record::append_event};
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
+
+pub async fn query_observation_control(
+    runtime: &PostgresRuntime,
+) -> Result<StorageQueryObservationControl, PostgresStorageError> {
+    use crate::schema::query_observation_control::dsl as control;
+    runtime
+        .with_connection(async |connection| -> Result<_, PostgresStorageError> {
+            let enabled = control::query_observation_control
+                .select(control::enabled)
+                .first::<Option<bool>>(connection)
+                .await?;
+            Ok(StorageQueryObservationControl::from_override(enabled))
+        })
+        .await
+}
+
+pub async fn set_query_observation_control(
+    runtime: &PostgresRuntime,
+    value: StorageQueryObservationControl,
+) -> Result<(), PostgresStorageError> {
+    use crate::schema::query_observation_control::dsl as control;
+    runtime
+        .with_transaction(async |connection| -> Result<_, PostgresStorageError> {
+            diesel::update(control::query_observation_control)
+                .set(control::enabled.eq(value.override_enabled()))
+                .returning(control::singleton)
+                .get_result::<bool>(connection)
+                .await?;
+            crate::worker_notifications::notify_query_observation_control(connection).await?;
+            Ok(())
+        })
+        .await
+}
 
 #[derive(QueryableByName)]
 struct CountRow {

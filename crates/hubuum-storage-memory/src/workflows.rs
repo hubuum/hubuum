@@ -1164,6 +1164,7 @@ impl RestoreStorage for MemoryStorage {
                 .map_err(invalid_contract_value)?,
         )?;
         replacement.credential_approvals = state.credential_approvals.clone();
+        replacement.query_observation_control = state.query_observation_control;
         for (_, approval) in replacement.credential_approvals.values_mut() {
             approval.invalidate(Utc::now());
         }
