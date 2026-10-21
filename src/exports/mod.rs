@@ -133,6 +133,7 @@ struct HydratedTemplateObject {
     path: Vec<i32>,
     path_objects: Vec<HydratedTemplatePathObject>,
     related: BTreeMap<String, Vec<HydratedTemplateObject>>,
+    relation_labels: BTreeMap<String, String>,
     reachable: BTreeMap<String, Vec<HydratedTemplateObject>>,
     paths: BTreeMap<String, Vec<HydratedTemplateObject>>,
 }
@@ -2452,6 +2453,27 @@ fn hydrate_object(
         paths.insert(alias, hydrated_targets);
     }
 
+    let mut relation_labels = BTreeMap::new();
+    for relation in neighborhood.class_relations_by_pair.values() {
+        let adjacent = if relation.from_hubuum_class_id == object.hubuum_class_id {
+            relation.to_hubuum_class_id
+        } else if relation.to_hubuum_class_id == object.hubuum_class_id {
+            relation.from_hubuum_class_id
+        } else {
+            continue;
+        };
+        let alias = relation_alias_for_viewer(
+            relation,
+            object.hubuum_class_id,
+            adjacent,
+            &neighborhood.class_names_by_id,
+        )?;
+        relation_labels.insert(
+            alias,
+            relation.label_from(object.hubuum_class_id)?.to_owned(),
+        );
+    }
+
     Ok(HydratedTemplateObject {
         id: object.id,
         name: object.name.clone(),
@@ -2464,6 +2486,7 @@ fn hydrate_object(
         path: path.clone(),
         path_objects: build_path_objects(neighborhood, &path)?,
         related,
+        relation_labels,
         reachable,
         paths,
     })
@@ -3264,6 +3287,8 @@ mod tests {
         NewHubuumClassRelation {
             from_hubuum_class_id: source_class.id,
             to_hubuum_class_id: hidden_adjacent_class.id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: Some("secret_alias".to_string()),
             reverse_template_alias: Some("secret_reverse_alias".to_string()),
             from_max_relations: None,
@@ -3359,6 +3384,8 @@ mod tests {
         let outbound_class_relation = NewHubuumClassRelation {
             from_hubuum_class_id: endpoint_class.id,
             to_hubuum_class_id: intermediate_class.id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: None,
             reverse_template_alias: None,
             from_max_relations: None,
@@ -3674,6 +3701,8 @@ mod tests {
         let class_relation = NewHubuumClassRelation {
             from_hubuum_class_id: host_class.id,
             to_hubuum_class_id: room_class.id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: Some("rooms".to_string()),
             reverse_template_alias: Some("hosts".to_string()),
             from_max_relations: None,

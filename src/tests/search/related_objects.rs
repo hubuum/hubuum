@@ -71,6 +71,8 @@ async fn relate_classes(
     NewHubuumClassRelation {
         from_hubuum_class_id: left.id,
         to_hubuum_class_id: right.id,
+        forward_label: None,
+        reverse_label: None,
         forward_template_alias: None,
         reverse_template_alias: None,
         from_max_relations: None,

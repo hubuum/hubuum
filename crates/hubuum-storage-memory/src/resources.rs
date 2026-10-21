@@ -1,5 +1,6 @@
 use super::*;
 use crate::execution::enforce_memory_revision_precondition;
+use hubuum_domain::RelationLabel;
 use hubuum_storage_core::StorageValidatedSchemaPolicy;
 
 #[async_trait]
@@ -1016,6 +1017,9 @@ impl ClassRelationStorage for MemoryStorage {
         &self,
         command: StorageClassRelationCreate,
     ) -> Result<StoragePreparedClassRelation, StorageError> {
+        let command = command
+            .normalized()
+            .map_err(|error| StorageError::invalid_input(error.to_string()))?;
         let state = self.state.read().await;
         let from = state
             .classes
@@ -1091,10 +1095,15 @@ impl ClassRelationStorage for MemoryStorage {
         let relation =
             StorageClassRelation::try_new(metadata, command.from_class_id(), command.to_class_id())
                 .and_then(|relation| {
-                    relation.try_with_template_aliases(
-                        command.forward_template_alias().map(ToOwned::to_owned),
-                        command.reverse_template_alias().map(ToOwned::to_owned),
-                    )
+                    relation
+                        .with_labels(
+                            command.forward_label().cloned(),
+                            command.reverse_label().cloned(),
+                        )
+                        .try_with_template_aliases(
+                            command.forward_template_alias().map(ToOwned::to_owned),
+                            command.reverse_template_alias().map(ToOwned::to_owned),
+                        )
                 })
                 .and_then(|relation| {
                     relation.try_with_relation_limits(
@@ -1110,8 +1119,9 @@ impl ClassRelationStorage for MemoryStorage {
         )
         .map_err(|error| StorageError::backend_failure(error.to_string()))?;
         let document = AuditDocument::builder(format!(
-            "Class relation {} -> {} created",
+            "Class relation {} {} {} created",
             relation.from_class_id().id(),
+            RelationLabel::display(relation.forward_label()),
             relation.to_class_id().id()
         ))
         .after(relation.audit_snapshot())
@@ -1147,6 +1157,100 @@ impl ClassRelationStorage for MemoryStorage {
         Ok(StorageMutationOutcome::committed(resolved, receipt))
     }
 
+    async fn update_class_relation_labels(
+        &self,
+        target: &StorageResolvedClassRelation,
+        labels: StorageClassRelationLabelsUpdate,
+        context: &EventContext,
+    ) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, StorageError> {
+        let mut state = self.state.write().await;
+        let id = ClassRelationId::from(target.relation().metadata().id());
+        let current = state
+            .class_relations
+            .get(&id.id())
+            .cloned()
+            .ok_or_else(|| StorageError::not_found("Class relation was not found"))?;
+        enforce_memory_revision_precondition(
+            StorageRevisionTarget::ClassRelation(id),
+            current.metadata().revision(),
+        )?;
+        if current != *target.relation()
+            || state.classes.get(&target.from_class().id().id()) != Some(target.from_class())
+            || state.classes.get(&target.to_class().id().id()) != Some(target.to_class())
+        {
+            return Err(StorageError::conflict(
+                "Class relation no longer matches the resolved target",
+            ));
+        }
+        let changed = labels.apply(current.clone());
+        if changed == current {
+            return Ok(StorageMutationOutcome::unchanged(target.clone()));
+        }
+        let metadata = StorageRecordMetadata::try_new(
+            current.metadata().id(),
+            current.metadata().created_at(),
+            Utc::now(),
+            current
+                .metadata()
+                .revision()
+                .checked_advance()
+                .map_err(|error| StorageError::backend_failure(error.to_string()))?,
+        )
+        .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        let relation =
+            StorageClassRelation::try_new(metadata, current.from_class_id(), current.to_class_id())
+                .and_then(|relation| {
+                    relation
+                        .with_labels(
+                            changed.forward_label().cloned(),
+                            changed.reverse_label().cloned(),
+                        )
+                        .try_with_template_aliases(
+                            current.forward_template_alias().map(ToOwned::to_owned),
+                            current.reverse_template_alias().map(ToOwned::to_owned),
+                        )
+                })
+                .and_then(|relation| {
+                    relation.try_with_relation_limits(
+                        current.from_max_relations(),
+                        current.to_max_relations(),
+                    )
+                })
+                .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        let resolved = StorageResolvedClassRelation::try_new(
+            relation.clone(),
+            target.from_class().clone(),
+            target.to_class().clone(),
+        )
+        .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        let document = AuditDocument::builder(format!("Class relation {} {} {} updated",
+            relation.from_class_id().id(), RelationLabel::display(relation.forward_label()), relation.to_class_id().id()))
+            .before(current.audit_snapshot()).after(relation.audit_snapshot())
+            .metadata(serde_json::json!({"from_class_id": relation.from_class_id().id(), "to_class_id": relation.to_class_id().id(),
+                "related_collection_ids": [target.from_class().collection_id().id(), target.to_class().collection_id().id()]}))
+            .try_build().map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        let receipt = append_memory_event!(
+            state,
+            EntityType::ClassRelation,
+            id.id(),
+            None,
+            None,
+            Action::Updated,
+            context,
+            document,
+            Some(current.metadata().revision()),
+            Some(relation.metadata().revision())
+        )?;
+        crate::backup::record_class_relation_history(
+            &mut state,
+            &relation,
+            StorageHistoryOperation::Update,
+            context,
+        )?;
+        state.class_relations.insert(id.id(), relation);
+        Ok(StorageMutationOutcome::committed(resolved, receipt))
+    }
+
     async fn delete_class_relation(
         &self,
         target: &StorageResolvedClassRelation,
@@ -1165,8 +1269,9 @@ impl ClassRelationStorage for MemoryStorage {
             ));
         }
         let document = AuditDocument::builder(format!(
-            "Class relation {} -> {} deleted",
+            "Class relation {} {} {} deleted",
             current.from_class_id().id(),
+            RelationLabel::display(current.forward_label()),
             current.to_class_id().id()
         ))
         .before(current.audit_snapshot())
@@ -1373,8 +1478,17 @@ impl ObjectRelationStorage for MemoryStorage {
         )
         .map_err(|error| StorageError::backend_failure(error.to_string()))?;
         let document = AuditDocument::builder(format!(
-            "Object relation {} -> {} created",
+            "Object relation {} {} {} created",
             relation.from_object_id().id(),
+            RelationLabel::display(
+                if prepared.from_object().class_id()
+                    == prepared.class_relation().relation().from_class_id()
+                {
+                    prepared.class_relation().relation().forward_label()
+                } else {
+                    prepared.class_relation().relation().reverse_label()
+                }
+            ),
             relation.to_object_id().id()
         ))
         .after(relation.audit_snapshot())
@@ -1431,8 +1545,17 @@ impl ObjectRelationStorage for MemoryStorage {
             ));
         }
         let document = AuditDocument::builder(format!(
-            "Object relation {} -> {} deleted",
+            "Object relation {} {} {} deleted",
             current.from_object_id().id(),
+            RelationLabel::display(
+                if target.from_object().class_id()
+                    == target.class_relation().relation().from_class_id()
+                {
+                    target.class_relation().relation().forward_label()
+                } else {
+                    target.class_relation().relation().reverse_label()
+                }
+            ),
             current.to_object_id().id()
         ))
         .before(current.audit_snapshot())

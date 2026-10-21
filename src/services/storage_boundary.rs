@@ -466,6 +466,7 @@ pub(crate) fn class_relation_to_storage(
         ClassId::new(relation.to_hubuum_class_id)?,
     )
     .map_err(|error| ApiError::InternalServerError(error.to_string()))?
+    .with_labels(relation.forward_label, relation.reverse_label)
     .try_with_template_aliases(
         relation.forward_template_alias,
         relation.reverse_template_alias,
@@ -492,11 +493,15 @@ pub(crate) fn class_relation_from_storage(
         from_max_relations,
         to_max_relations,
         revision,
+        forward_label,
+        reverse_label,
     ) = relation.into_parts();
     Ok(HubuumClassRelation {
         id: id.id(),
         from_hubuum_class_id: from_hubuum_class_id.id(),
         to_hubuum_class_id: to_hubuum_class_id.id(),
+        forward_label,
+        reverse_label,
         forward_template_alias,
         reverse_template_alias,
         created_at: created_at.naive_utc(),
@@ -516,6 +521,7 @@ pub(crate) fn class_relation_create_to_storage(
         ClassId::new(command.from_hubuum_class_id)?,
         ClassId::new(command.to_hubuum_class_id)?,
     )
+    .labels(command.forward_label, command.reverse_label)
     .template_aliases(
         command.forward_template_alias,
         command.reverse_template_alias,
@@ -533,6 +539,8 @@ pub(crate) fn class_relation_create_from_storage(
     Ok(NewHubuumClassRelation {
         from_hubuum_class_id: command.from_class_id().id(),
         to_hubuum_class_id: command.to_class_id().id(),
+        forward_label: command.forward_label().cloned(),
+        reverse_label: command.reverse_label().cloned(),
         forward_template_alias: command.forward_template_alias().map(str::to_string),
         reverse_template_alias: command.reverse_template_alias().map(str::to_string),
         from_max_relations: command

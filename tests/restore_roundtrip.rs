@@ -1,5 +1,6 @@
 mod restore_contract;
 
+use hubuum_domain::RelationLabel;
 use std::time::Duration;
 
 use chrono::Utc;
@@ -100,6 +101,8 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     let class_relation = NewHubuumClassRelation {
         from_hubuum_class_id: first_class.id,
         to_hubuum_class_id: second_class.id,
+        forward_label: Some(RelationLabel::new("contains".into()).unwrap()),
+        reverse_label: Some(RelationLabel::new("is in".into()).unwrap()),
         forward_template_alias: None,
         reverse_template_alias: None,
         from_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),
@@ -304,8 +307,16 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
                 hubuumclass_relation::id,
                 hubuumclass_relation::from_max_relations,
                 hubuumclass_relation::to_max_relations,
+                hubuumclass_relation::forward_label,
+                hubuumclass_relation::reverse_label,
             ))
-            .first::<(i32, Option<i32>, Option<i32>)>(conn)
+            .first::<(
+                i32,
+                Option<i32>,
+                Option<i32>,
+                Option<String>,
+                Option<String>,
+            )>(conn)
             .await
             .optional()?;
         let reachability_exists = hubuumclass_reachability::table
@@ -326,7 +337,13 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
             get_maintenance_state(&pool).await.unwrap(),
         ),
         (
-            Some((class_relation.id, Some(1), None)),
+            Some((
+                class_relation.id,
+                Some(1),
+                None,
+                Some("contains".into()),
+                Some("is in".into())
+            )),
             Some(1),
             "normal".to_string(),
         )

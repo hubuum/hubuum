@@ -685,6 +685,11 @@ for budget_input in src/config/schema_validation.rs src/tests/storage_contract/s
   assert_flag "$budget_output" code true
 done
 
+label_output="$(bash "$classifier" crates/hubuum-domain/src/relation_label.rs)"
+assert_flag "$label_output" code true
+assert_flag "$label_output" rust true
+assert_flag "$label_output" openapi true
+
 budget_projection="$(bash "$classifier" src/config/running.rs)"
 assert_flag "$budget_projection" openapi true
 

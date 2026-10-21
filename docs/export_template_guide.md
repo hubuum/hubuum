@@ -860,3 +860,16 @@ Example template run request:
   }
 }
 ```
+
+## Relationship wording
+
+With relation context enabled, `item.relation_labels` maps each direct relation's
+existing template alias to its display label from that object's class. Missing
+labels read as `related to`. Alias keys remain stable when labels are renamed.
+
+```jinja
+{% for host in items %}
+{{ host.name }} {{ host.relation_labels.rooms }}:
+{% for room in host.related.rooms %}{{ room.name }}{% endfor %}
+{% endfor %}
+```

@@ -1,3 +1,4 @@
+use hubuum_domain::RelationLabel;
 use std::fmt;
 
 use async_trait::async_trait;
@@ -424,6 +425,8 @@ import_dto!(
         from_class_key: Option<StorageImportClassKey>,
         to_class_ref: Option<String>,
         to_class_key: Option<StorageImportClassKey>,
+        forward_label: Option<RelationLabel>,
+        reverse_label: Option<RelationLabel>,
         forward_template_alias: Option<String>,
         reverse_template_alias: Option<String>,
         from_max_relations: Option<i32>,

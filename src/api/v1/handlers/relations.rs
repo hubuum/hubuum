@@ -7,7 +7,7 @@ use crate::models::search::{QueryParamsExt, parse_query_parameter};
 use crate::models::{
     HubuumClassRelation, HubuumClassRelationID, HubuumObjectRelation, HubuumObjectRelationID,
     NewHubuumClassRelation, NewHubuumObjectRelation, ObjectRelationCreateSelector,
-    ObjectRelationSelector, Permissions,
+    ObjectRelationSelector, Permissions, UpdateClassRelationLabels,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::visibility::filter_authorized_cursor_page_from_storage;
@@ -16,14 +16,14 @@ use crate::services::authorization_resources::{
     authorize_class_relation_candidates, authorize_object_relation_candidates,
 };
 use crate::services::relation_queries;
-use crate::storage::with_revision_precondition;
+use crate::storage::{StorageClassRelationLabelsUpdate, with_revision_precondition};
 use crate::traits::scope_allows;
 use actix_web::delete;
 use tracing::debug;
 
 use crate::traits::Search;
 
-use actix_web::{HttpRequest, Responder, get, http::StatusCode, routes, web};
+use actix_web::{HttpRequest, Responder, get, http::StatusCode, patch, routes, web};
 
 #[utoipa::path(
     get,
@@ -204,6 +204,60 @@ async fn create_class_relation(
         .await?;
 
     ApiResponse::revisioned(target.relation().clone(), StatusCode::CREATED)
+}
+
+#[utoipa::path(
+    patch,
+    path = "/api/v1/relations/classes/{relation_id}",
+    tag = "relations",
+    security(("bearer_auth" = [])),
+    params(("relation_id" = i32, Path, description = "Class relation ID")),
+    request_body = UpdateClassRelationLabels,
+    responses(
+        (status = 200, description = "Updated class relation", body = HubuumClassRelation),
+        (status = 400, description = "Invalid label or request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "Relation not found", body = ApiErrorResponse),
+        (status = 409, description = "Relation changed concurrently", body = ApiErrorResponse),
+        (status = 412, description = "Revision precondition failed", body = ApiErrorResponse)
+    )
+)]
+#[patch("classes/{relation_id}")]
+async fn update_class_relation_labels(
+    context: AppContext,
+    requestor: Authenticated,
+    relation_id: web::Path<HubuumClassRelationID>,
+    labels: web::Json<UpdateClassRelationLabels>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    let target = context
+        .class_relation_service()
+        .resolve(relation_id.into_inner())
+        .await?;
+    authorize_resources(
+        context.permission_backend(),
+        &context,
+        &requestor.principal,
+        requestor.scopes(),
+        vec![Permissions::UpdateClassRelation],
+        vec![target.authorization_resource()],
+    )
+    .await?;
+    let precondition = revision_precondition_for_tag(&req, &target.relation().entity_tag()?)?;
+    let labels = labels.into_inner();
+    let event_context = requestor.event_context(&req);
+    let updated = with_revision_precondition(
+        &context,
+        precondition,
+        context.class_relation_service().update_labels(
+            &target,
+            StorageClassRelationLabelsUpdate::new(labels.forward_label, labels.reverse_label),
+            &event_context,
+        ),
+    )
+    .await?;
+    ApiResponse::revisioned(updated.relation().clone(), StatusCode::OK)
 }
 
 #[utoipa::path(

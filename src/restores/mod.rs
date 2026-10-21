@@ -734,6 +734,7 @@ pub(crate) fn verify_restored_backup_matches(
     let mut restored = restored.clone();
     normalize_legacy_event_configuration(&mut source);
     normalize_legacy_class_schema_policies(&mut source);
+    normalize_legacy_relation_labels(&mut source);
     if source.backup_version < 9 {
         // Restore adds this empty section for backups predating declarations.
         source
@@ -971,6 +972,7 @@ pub(crate) fn validate_document_fields(
     document.validate_version()?;
     normalize_legacy_event_configuration(document);
     normalize_legacy_class_schema_policies(document);
+    normalize_legacy_relation_labels(document);
     validate_backup_metadata(document)?;
     let item_counts = validate_backup_manifest(document)?;
     validate_backup_timestamps(document)?;
@@ -1066,6 +1068,26 @@ fn normalize_legacy_class_schema_policies(document: &mut BackupDocument) {
             .sections
             .get_mut(&StorageBackupHistorySection::ClassHistory)
     }));
+}
+
+fn normalize_legacy_relation_labels(document: &mut BackupDocument) {
+    let current = document
+        .state
+        .sections
+        .get_mut(&StorageBackupStateSection::ClassRelations);
+    let history = document.history.as_mut().and_then(|history| {
+        history
+            .sections
+            .get_mut(&StorageBackupHistorySection::ClassRelationHistory)
+    });
+    for row in current.into_iter().chain(history).flatten() {
+        let mut fields = row.fields().clone();
+        for label in ["forward_label", "reverse_label"] {
+            fields.entry(label.to_owned()).or_insert(Value::Null);
+        }
+        *row = StorageBackupRow::try_from_value(Value::Object(fields))
+            .expect("normalizing a backup row preserves its object shape");
+    }
 }
 
 fn validate_backup_class_schemas(
@@ -2353,6 +2375,49 @@ mod tests {
                 )
                 .unwrap(),
             );
+
+        assert_eq!(
+            verify_restored_backup_matches(&source, &restored, JsonSchemaLimits::default()).is_ok(),
+            accepted
+        );
+    }
+
+    #[cfg(feature = "embedded-migrations")]
+    #[rstest]
+    #[case::legacy(json!({}), json!({"forward_label": null, "reverse_label": null}), true)]
+    #[case::forward_retained(json!({"forward_label": "contains"}), json!({"forward_label": "contains", "reverse_label": null}), true)]
+    #[case::reverse_retained(json!({"reverse_label": "is in"}), json!({"forward_label": null, "reverse_label": "is in"}), true)]
+    #[case::lost_label(json!({"forward_label": "contains"}), json!({"forward_label": null, "reverse_label": null}), false)]
+    #[case::invented_label(json!({}), json!({"forward_label": "contains", "reverse_label": null}), false)]
+    #[case::swapped_labels(json!({"forward_label": "contains", "reverse_label": "is in"}), json!({"forward_label": "is in", "reverse_label": "contains"}), false)]
+    #[case::malformed_label(json!({"forward_label": 42}), json!({"forward_label": null, "reverse_label": null}), false)]
+    #[case::unrelated_drift(json!({}), json!({"forward_label": null, "reverse_label": null, "unknown_field": null}), false)]
+    fn restored_backup_comparison_defaults_only_absent_relation_labels(
+        #[values(false, true)] history: bool,
+        #[case] source_fields: serde_json::Value,
+        #[case] restored_fields: serde_json::Value,
+        #[case] accepted: bool,
+    ) {
+        if history {
+            assert_history_comparison(
+                StorageBackupHistorySection::ClassRelationHistory,
+                source_fields,
+                restored_fields,
+                accepted,
+            );
+            return;
+        }
+        let mut source = minimally_valid_document();
+        let mut restored = source.clone();
+        for (document, fields) in [
+            (&mut source, source_fields),
+            (&mut restored, restored_fields),
+        ] {
+            document.state.sections.insert(
+                StorageBackupStateSection::ClassRelations,
+                vec![StorageBackupRow::try_from_value(fields).unwrap()],
+            );
+        }
 
         assert_eq!(
             verify_restored_backup_matches(&source, &restored, JsonSchemaLimits::default()).is_ok(),

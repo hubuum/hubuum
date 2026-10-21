@@ -6,6 +6,7 @@ mod tests {
     use diesel::{ExpressionMethods, QueryDsl};
     use diesel_async::RunQueryDsl;
     use futures::join;
+    use hubuum_domain::RelationLabel;
     use hubuum_storage_postgres::PostgresRevision;
     use rstest::rstest;
     use std::time::Duration;
@@ -142,6 +143,8 @@ mod tests {
                     from_class_key: None,
                     to_class_ref: Some("class:timestamps:1".to_string()),
                     to_class_key: None,
+                    forward_label: None,
+                    reverse_label: None,
                     forward_template_alias: None,
                     reverse_template_alias: None,
                     from_max_relations: None,
@@ -626,6 +629,8 @@ mod tests {
                     from_class_key: None,
                     to_class_ref: Some("class:room".to_string()),
                     to_class_key: None,
+                    forward_label: Some(RelationLabel::new("is in".into()).unwrap()),
+                    reverse_label: Some(RelationLabel::new("contains".into()).unwrap()),
                     forward_template_alias: Some("room".to_string()),
                     reverse_template_alias: Some("jacks".to_string()),
                     from_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),
@@ -650,35 +655,53 @@ mod tests {
         let completed = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
         assert_eq!(completed.progress.success_items, 4);
 
-        let (jack_id, room_id, relation_from, relation_to, from_limit, to_limit) =
-            with_connection(&context.pool, async |conn| {
-                let jack_id = hubuumclass
-                    .filter(class_name.eq(jack_name))
-                    .select(class_id)
-                    .first::<i32>(conn)
-                    .await?;
-                let room_id = hubuumclass
-                    .filter(class_name.eq(room_name))
-                    .select(class_id)
-                    .first::<i32>(conn)
-                    .await?;
-                let relation = hubuumclass_relation
-                    .filter(from_hubuum_class_id.eq(jack_id.min(room_id)))
-                    .filter(to_hubuum_class_id.eq(jack_id.max(room_id)))
-                    .select((
-                        from_hubuum_class_id,
-                        to_hubuum_class_id,
-                        class_relation::from_max_relations,
-                        class_relation::to_max_relations,
-                    ))
-                    .first::<(i32, i32, Option<i32>, Option<i32>)>(conn)
-                    .await?;
-                Ok::<_, diesel::result::Error>((
-                    jack_id, room_id, relation.0, relation.1, relation.2, relation.3,
+        let (
+            jack_id,
+            room_id,
+            relation_from,
+            relation_to,
+            from_limit,
+            to_limit,
+            forward_label,
+            reverse_label,
+        ) = with_connection(&context.pool, async |conn| {
+            let jack_id = hubuumclass
+                .filter(class_name.eq(jack_name))
+                .select(class_id)
+                .first::<i32>(conn)
+                .await?;
+            let room_id = hubuumclass
+                .filter(class_name.eq(room_name))
+                .select(class_id)
+                .first::<i32>(conn)
+                .await?;
+            let relation = hubuumclass_relation
+                .filter(from_hubuum_class_id.eq(jack_id.min(room_id)))
+                .filter(to_hubuum_class_id.eq(jack_id.max(room_id)))
+                .select((
+                    from_hubuum_class_id,
+                    to_hubuum_class_id,
+                    class_relation::from_max_relations,
+                    class_relation::to_max_relations,
+                    class_relation::forward_label,
+                    class_relation::reverse_label,
                 ))
-            })
-            .await
-            .unwrap();
+                .first::<(
+                    i32,
+                    i32,
+                    Option<i32>,
+                    Option<i32>,
+                    Option<String>,
+                    Option<String>,
+                )>(conn)
+                .await?;
+            Ok::<_, diesel::result::Error>((
+                jack_id, room_id, relation.0, relation.1, relation.2, relation.3, relation.4,
+                relation.5,
+            ))
+        })
+        .await
+        .unwrap();
         let (jack_limit, room_limit) = if relation_from == jack_id {
             assert_eq!(relation_to, room_id);
             (from_limit, to_limit)
@@ -687,6 +710,13 @@ mod tests {
             assert_eq!(relation_to, jack_id);
             (to_limit, from_limit)
         };
+        let (jack_label, room_label) = if relation_from == jack_id {
+            (forward_label, reverse_label)
+        } else {
+            (reverse_label, forward_label)
+        };
+        assert_eq!(jack_label.as_deref(), Some("is in"));
+        assert_eq!(room_label.as_deref(), Some("contains"));
         assert_eq!(jack_limit, Some(1));
         assert_eq!(room_limit, None);
     }

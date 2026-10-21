@@ -1,4 +1,4 @@
-use hubuum_domain::PlaintextPassword;
+use hubuum_domain::{PlaintextPassword, RelationLabel};
 use std::fmt;
 
 use chrono::NaiveDateTime;
@@ -434,6 +434,8 @@ pub struct ImportClassRelationInput {
     pub from_class_key: Option<ClassKey>,
     pub to_class_ref: Option<String>,
     pub to_class_key: Option<ClassKey>,
+    pub forward_label: Option<RelationLabel>,
+    pub reverse_label: Option<RelationLabel>,
     pub forward_template_alias: Option<String>,
     pub reverse_template_alias: Option<String>,
     pub from_max_relations: Option<ObjectRelationLimit>,

@@ -156,6 +156,8 @@ async fn class_relation_cross_collection_populates_from_to_collections() {
     let relation = NewHubuumClassRelation {
         from_hubuum_class_id: class_a.id,
         to_hubuum_class_id: class_b.id,
+        forward_label: None,
+        reverse_label: None,
         forward_template_alias: None,
         reverse_template_alias: None,
         from_max_relations: None,
@@ -225,6 +227,8 @@ async fn class_relation_same_collection_populates_collection_id() {
     let relation = NewHubuumClassRelation {
         from_hubuum_class_id: class_a.id,
         to_hubuum_class_id: class_b.id,
+        forward_label: None,
+        reverse_label: None,
         forward_template_alias: None,
         reverse_template_alias: None,
         from_max_relations: None,
@@ -286,6 +290,8 @@ async fn object_relation_cross_collection_populates_all_fields() {
     let class_relation = NewHubuumClassRelation {
         from_hubuum_class_id: class_a.id,
         to_hubuum_class_id: class_b.id,
+        forward_label: None,
+        reverse_label: None,
         forward_template_alias: None,
         reverse_template_alias: None,
         from_max_relations: None,
@@ -406,6 +412,8 @@ async fn local_backend_relation_and_check_denies_partial_permission() {
     let relation = NewHubuumClassRelation {
         from_hubuum_class_id: class_a.id,
         to_hubuum_class_id: class_b.id,
+        forward_label: None,
+        reverse_label: None,
         forward_template_alias: None,
         reverse_template_alias: None,
         from_max_relations: None,

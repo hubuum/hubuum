@@ -1,4 +1,5 @@
 use super::*;
+use crate::services::authorization_resources::object_graph_class_relations;
 
 #[utoipa::path(
     get,
@@ -379,8 +380,18 @@ async fn read_related_object_graph(
         .search_object_relations_between_ids(&context, &object_ids, requestor.scopes())
         .await?;
 
+    let class_relations = if scope_allows(requestor.scopes(), &[Permissions::ReadClassRelation]) {
+        let principal = PrincipalRef::load(&context, user).await?;
+        object_graph_class_relations(&context, &principal, requestor.scopes(), &relations).await?
+    } else {
+        Vec::new()
+    };
     Ok(ApiResponse::new(
-        RelatedObjectGraph { objects, relations },
+        RelatedObjectGraph {
+            objects,
+            relations,
+            class_relations,
+        },
         StatusCode::OK,
     ))
 }

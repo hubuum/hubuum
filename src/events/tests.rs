@@ -421,6 +421,8 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
     let relation = NewHubuumClassRelation {
         from_hubuum_class_id: class_a.id,
         to_hubuum_class_id: class_b.id,
+        forward_label: None,
+        reverse_label: None,
         forward_template_alias: Some("children".to_string()),
         reverse_template_alias: Some("parents".to_string()),
         from_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),
@@ -519,6 +521,8 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
     let class_relation = NewHubuumClassRelation {
         from_hubuum_class_id: class_a.id,
         to_hubuum_class_id: class_b.id,
+        forward_label: None,
+        reverse_label: None,
         forward_template_alias: None,
         reverse_template_alias: None,
         from_max_relations: None,

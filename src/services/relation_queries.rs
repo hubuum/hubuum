@@ -33,11 +33,15 @@ pub(crate) fn class_relation_from_storage(
         from_max_relations,
         to_max_relations,
         revision,
+        forward_label,
+        reverse_label,
     ) = row.into_parts();
     Ok(HubuumClassRelation {
         id: id.id(),
         from_hubuum_class_id: from_hubuum_class_id.id(),
         to_hubuum_class_id: to_hubuum_class_id.id(),
+        forward_label,
+        reverse_label,
         forward_template_alias,
         reverse_template_alias,
         created_at: created_at.naive_utc(),

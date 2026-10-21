@@ -5,6 +5,7 @@ mod tests {
         http::{StatusCode, header},
         test,
     };
+    use hubuum_domain::RelationLabel;
     use rstest::rstest;
     use std::time::Duration;
 
@@ -473,6 +474,8 @@ mod tests {
         NewHubuumClassRelation {
             from_hubuum_class_id: from_class_id,
             to_hubuum_class_id: to_class_id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: None,
             reverse_template_alias: None,
             from_max_relations: None,
@@ -1678,6 +1681,8 @@ mod tests {
         let host_room_relation = NewHubuumClassRelation {
             from_hubuum_class_id: host_class.id,
             to_hubuum_class_id: room_class.id,
+            forward_label: Some(RelationLabel::new("is in".into()).unwrap()),
+            reverse_label: Some(RelationLabel::new("contains".into()).unwrap()),
             forward_template_alias: Some("rooms".to_string()),
             reverse_template_alias: Some("hosts".to_string()),
             from_max_relations: None,
@@ -1689,6 +1694,8 @@ mod tests {
         let room_person_relation = NewHubuumClassRelation {
             from_hubuum_class_id: room_class.id,
             to_hubuum_class_id: person_class.id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: Some("persons".to_string()),
             reverse_template_alias: Some("rooms".to_string()),
             from_max_relations: None,
@@ -1709,7 +1716,7 @@ mod tests {
             ExportScopeKind::RelatedObjects,
             "reachable-template",
             ExportContentType::TextPlain,
-            "{% for host in items %}Host: {{ host.name }} {% for person in host.reachable.persons %}{{ person.name }}{% endfor %}{% endfor %}",
+            "{% for host in items %}Host: {{ host.name }} {{ host.relation_labels.rooms }} {% for person in host.reachable.persons %}{{ person.name }}{% endfor %}{% endfor %}",
         )
         .await;
 
@@ -1739,7 +1746,7 @@ mod tests {
         .await;
         let output_resp = assert_response_status(output_resp, StatusCode::OK).await;
         let rendered = String::from_utf8(test::read_body(output_resp).await.to_vec()).unwrap();
-        assert_eq!(rendered, "Host: host-01 alice");
+        assert_eq!(rendered, "Host: host-01 is in alice");
 
         let events_resp = get_request(
             &context.pool,
@@ -1833,6 +1840,8 @@ mod tests {
         let host_room_relation = NewHubuumClassRelation {
             from_hubuum_class_id: host_class.id,
             to_hubuum_class_id: room_class.id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: Some("rooms".to_string()),
             reverse_template_alias: Some("hosts".to_string()),
             from_max_relations: None,
@@ -1844,6 +1853,8 @@ mod tests {
         let room_person_relation = NewHubuumClassRelation {
             from_hubuum_class_id: room_class.id,
             to_hubuum_class_id: person_class.id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: Some("persons".to_string()),
             reverse_template_alias: Some("rooms".to_string()),
             from_max_relations: None,
@@ -2258,6 +2269,8 @@ mod tests {
         let host_room_relation = NewHubuumClassRelation {
             from_hubuum_class_id: host_class.id,
             to_hubuum_class_id: room_class.id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: Some("rooms".to_string()),
             reverse_template_alias: Some("hosts".to_string()),
             from_max_relations: None,
@@ -2475,6 +2488,8 @@ mod tests {
         let class_relation = NewHubuumClassRelation {
             from_hubuum_class_id: host_class.id,
             to_hubuum_class_id: room_class.id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: Some("rooms".to_string()),
             reverse_template_alias: Some("hosts".to_string()),
             from_max_relations: None,

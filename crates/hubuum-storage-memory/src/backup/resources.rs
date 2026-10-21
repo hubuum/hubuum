@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_domain::RelationLabel;
 
 pub(super) fn collection(r: &Row<'_>) -> Result<StorageCollection, StorageError> {
     StorageCollection::try_new(
@@ -41,6 +42,16 @@ pub(super) fn object(r: &Row<'_>) -> Result<StorageObject, StorageError> {
 }
 
 pub(super) fn class_relation(r: &Row<'_>) -> Result<StorageClassRelation, StorageError> {
+    let forward_label = r
+        .optional_text("forward_label")?
+        .map(RelationLabel::new)
+        .transpose()
+        .map_err(|error| StorageError::invalid_input(error.to_string()))?;
+    let reverse_label = r
+        .optional_text("reverse_label")?
+        .map(RelationLabel::new)
+        .transpose()
+        .map_err(|error| StorageError::invalid_input(error.to_string()))?;
     let forward = r.optional_text("forward_template_alias")?;
     let reverse = r.optional_text("reverse_template_alias")?;
     let from = r.optional_integer("from_max_relations")?;
@@ -50,7 +61,11 @@ pub(super) fn class_relation(r: &Row<'_>) -> Result<StorageClassRelation, Storag
         ClassId::new(r.integer("from_class_id")?).map_err(|_| invalid("from_class_id"))?,
         ClassId::new(r.integer("to_class_id")?).map_err(|_| invalid("to_class_id"))?,
     )
-    .and_then(|value| value.try_with_template_aliases(forward, reverse))
+    .and_then(|value| {
+        value
+            .with_labels(forward_label, reverse_label)
+            .try_with_template_aliases(forward, reverse)
+    })
     .and_then(|value| value.try_with_relation_limits(from, to))
     .map_err(invalid_contract_value)
 }
@@ -339,6 +354,8 @@ pub(super) fn classrelations(
         "id": relation.metadata().id().id(),
         "from_class_id": relation.from_class_id().id(),
         "to_class_id": relation.to_class_id().id(),
+        "forward_label": relation.forward_label(),
+        "reverse_label": relation.reverse_label(),
         "forward_template_alias": relation.forward_template_alias(),
         "reverse_template_alias": relation.reverse_template_alias(),
         "from_max_relations": relation.from_max_relations(),
@@ -362,4 +379,32 @@ pub(super) fn objectrelations(
         "updated_at": relation.metadata().updated_at(),
         "revision": relation.metadata().revision().get(),
     }))
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+
+    #[test]
+    fn class_relation_labels_survive_logical_backup_round_trip() {
+        let now = Utc::now();
+        let relation = StorageClassRelation::try_new(
+            StorageRecordMetadata::try_new(
+                ResourceId::new(1).unwrap(),
+                now,
+                now,
+                ResourceRevision::INITIAL,
+            )
+            .unwrap(),
+            ClassId::new(2).unwrap(),
+            ClassId::new(3).unwrap(),
+        )
+        .unwrap()
+        .with_labels(
+            Some(RelationLabel::new("contains".into()).unwrap()),
+            Some(RelationLabel::new("is in".into()).unwrap()),
+        );
+        let row = classrelations(&relation).unwrap();
+        assert_eq!(class_relation(&Row(&row)).unwrap(), relation);
+    }
 }
