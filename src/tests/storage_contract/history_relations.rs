@@ -1108,3 +1108,275 @@ async fn postgres_relationship_hydration_has_constant_query_count(#[case] object
     assert_eq!(large_queries.connection_checkouts(), 1);
     cleanup(&backend, fixture).await;
 }
+
+#[rstest]
+#[case::set(
+    Some(Some("contains")),
+    Some(Some("is in")),
+    Some("contains"),
+    Some("is in")
+)]
+#[case::clear(Some(None), None, None, Some("initial reverse"))]
+#[case::omit(None, Some(Some("is in")), Some("initial forward"), Some("is in"))]
+#[actix_web::test]
+async fn label_edits_preserve_identity_links_and_history(
+    #[case] forward: Option<Option<&str>>,
+    #[case] reverse: Option<Option<&str>>,
+    #[case] expected_forward: Option<&str>,
+    #[case] expected_reverse: Option<&str>,
+) {
+    use hubuum_domain::RelationLabel;
+    use hubuum_storage_core::StorageClassRelationLabelsUpdate;
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let fixture = create_backend_relation_fixture(&backend, &prefix("label_history")).await;
+        let target = backend
+            .class_relation_store()
+            .resolve_class_relation(fixture.class_relation_id)
+            .await
+            .unwrap();
+        let initial = backend
+            .class_relation_store()
+            .update_class_relation_labels(
+                &target,
+                StorageClassRelationLabelsUpdate::new(
+                    Some(Some(RelationLabel::new("initial forward".into()).unwrap())),
+                    Some(Some(RelationLabel::new("initial reverse".into()).unwrap())),
+                ),
+                &EventContext::system(),
+            )
+            .await
+            .unwrap()
+            .into_value();
+        let update = StorageClassRelationLabelsUpdate::new(
+            forward.map(|value| value.map(|value| RelationLabel::new(value.into()).unwrap())),
+            reverse.map(|value| value.map(|value| RelationLabel::new(value.into()).unwrap())),
+        );
+        let updated = backend
+            .class_relation_store()
+            .update_class_relation_labels(&initial, update, &EventContext::system())
+            .await
+            .unwrap()
+            .into_value();
+        assert_eq!(
+            updated.relation().metadata().id(),
+            target.relation().metadata().id()
+        );
+        assert_eq!(
+            updated.relation().metadata().revision().get(),
+            initial.relation().metadata().revision().get() + 1
+        );
+        assert_eq!(
+            updated
+                .relation()
+                .forward_label()
+                .map(RelationLabel::as_str),
+            expected_forward
+        );
+        assert_eq!(
+            updated
+                .relation()
+                .reverse_label()
+                .map(RelationLabel::as_str),
+            expected_reverse
+        );
+        assert_eq!(
+            updated.relation().forward_template_alias(),
+            target.relation().forward_template_alias()
+        );
+        let object_relation = backend
+            .object_relation_store()
+            .resolve_object_relation(StorageObjectRelationSelector::Id(
+                fixture.object_relation_id,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            object_relation.relation().class_relation_id(),
+            fixture.class_relation_id
+        );
+        let changes = history(&backend, root(&fixture, false)).await;
+        assert_eq!(changes.len(), 3);
+        assert_eq!(
+            changes[1].record().relation(),
+            &StorageHistoricalRelation::Class(initial.relation().clone())
+        );
+        assert_eq!(
+            changes[2].record().relation(),
+            &StorageHistoricalRelation::Class(updated.relation().clone())
+        );
+        cleanup(&backend, fixture).await;
+    }
+}
+
+#[actix_web::test]
+async fn unchanged_labels_do_not_advance_revision_or_history() {
+    use hubuum_storage_core::StorageClassRelationLabelsUpdate;
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let fixture = create_backend_relation_fixture(&backend, &prefix("label_noop")).await;
+        let target = backend
+            .class_relation_store()
+            .resolve_class_relation(fixture.class_relation_id)
+            .await
+            .unwrap();
+        let updated = backend
+            .class_relation_store()
+            .update_class_relation_labels(
+                &target,
+                StorageClassRelationLabelsUpdate::new(Some(None), None),
+                &EventContext::system(),
+            )
+            .await
+            .unwrap()
+            .into_value();
+        assert_eq!(updated.relation(), target.relation());
+        assert_eq!(history(&backend, root(&fixture, false)).await.len(), 1);
+        cleanup(&backend, fixture).await;
+    }
+}
+
+#[actix_web::test]
+async fn stale_label_target_cannot_overwrite_a_newer_edit() {
+    use hubuum_domain::RelationLabel;
+    use hubuum_storage_core::StorageClassRelationLabelsUpdate;
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let fixture = create_backend_relation_fixture(&backend, &prefix("label_stale")).await;
+        let target = backend
+            .class_relation_store()
+            .resolve_class_relation(fixture.class_relation_id)
+            .await
+            .unwrap();
+        backend
+            .class_relation_store()
+            .update_class_relation_labels(
+                &target,
+                StorageClassRelationLabelsUpdate::new(
+                    Some(Some(RelationLabel::new("contains".into()).unwrap())),
+                    None,
+                ),
+                &EventContext::system(),
+            )
+            .await
+            .unwrap()
+            .into_value();
+        let result = backend
+            .class_relation_store()
+            .update_class_relation_labels(
+                &target,
+                StorageClassRelationLabelsUpdate::new(Some(None), None),
+                &EventContext::system(),
+            )
+            .await;
+        assert!(matches!(result, Err(error) if error.kind() == StorageErrorKind::Conflict));
+        cleanup(&backend, fixture).await;
+    }
+}
+
+#[actix_web::test]
+async fn label_edit_emits_revisioned_before_and_after_event() {
+    use hubuum_domain::RelationLabel;
+    use hubuum_storage_core::StorageClassRelationLabelsUpdate;
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let fixture = create_backend_relation_fixture(&backend, &prefix("label_event")).await;
+        let target = backend
+            .class_relation_store()
+            .resolve_class_relation(fixture.class_relation_id)
+            .await
+            .unwrap();
+        let updated = backend
+            .class_relation_store()
+            .update_class_relation_labels(
+                &target,
+                StorageClassRelationLabelsUpdate::new(
+                    Some(Some(RelationLabel::new("contains".into()).unwrap())),
+                    None,
+                ),
+                &EventContext::system(),
+            )
+            .await
+            .unwrap()
+            .into_value();
+        let (events, _) = backend
+            .list_audit_events(StorageAuditEventListQuery::new(
+                vec![fixture.collection.id()],
+                true,
+                StorageAuditEventFilters::new()
+                    .entity_type(Some(EntityType::ClassRelation))
+                    .entity_id(Some(
+                        EventEntityId::new(fixture.class_relation_id.id()).unwrap(),
+                    ))
+                    .action(Some(Action::Updated)),
+                QueryOptions::new(vec![], vec![], Some(10), None, false).unwrap(),
+            ))
+            .await
+            .unwrap()
+            .into_parts();
+        assert_eq!(events.len(), 1);
+        let (event, before_revision, after_revision) =
+            events.into_iter().next().unwrap().into_parts();
+        assert_eq!(event.before(), Some(&target.relation().audit_snapshot()));
+        assert_eq!(event.after(), Some(&updated.relation().audit_snapshot()));
+        assert_eq!(
+            before_revision,
+            Some(target.relation().metadata().revision())
+        );
+        assert_eq!(
+            after_revision,
+            Some(updated.relation().metadata().revision())
+        );
+        assert!(event.summary().contains("contains"));
+        cleanup(&backend, fixture).await;
+    }
+}
+
+#[actix_web::test]
+async fn concurrent_label_edits_cannot_lose_an_update() {
+    use hubuum_domain::RelationLabel;
+    use hubuum_storage_core::StorageClassRelationLabelsUpdate;
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let fixture = create_backend_relation_fixture(&backend, &prefix("label_race")).await;
+        let target = backend
+            .class_relation_store()
+            .resolve_class_relation(fixture.class_relation_id)
+            .await
+            .unwrap();
+        let context = EventContext::system();
+        let store = backend.class_relation_store();
+        let (first, second) = tokio::join!(
+            store.update_class_relation_labels(
+                &target,
+                StorageClassRelationLabelsUpdate::new(
+                    Some(Some(RelationLabel::new("first".into()).unwrap())),
+                    None
+                ),
+                &context
+            ),
+            store.update_class_relation_labels(
+                &target,
+                StorageClassRelationLabelsUpdate::new(
+                    Some(Some(RelationLabel::new("second".into()).unwrap())),
+                    None
+                ),
+                &context
+            )
+        );
+        assert_eq!(
+            [first, second]
+                .into_iter()
+                .map(|result| match result {
+                    Ok(_) => 1,
+                    Err(error) => {
+                        assert_eq!(error.kind(), StorageErrorKind::Conflict);
+                        0
+                    }
+                })
+                .sum::<i32>(),
+            1
+        );
+        cleanup(&backend, fixture).await;
+    }
+}

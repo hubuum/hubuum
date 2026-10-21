@@ -1,3 +1,4 @@
+use hubuum_storage_core::StorageClassRelationLabelsUpdate;
 mod error;
 
 use std::collections::BTreeMap;
@@ -1198,6 +1199,8 @@ impl ClassRelationStorage for MemoryStorageModel {
             id,
             from_hubuum_class_id: command.from_hubuum_class_id,
             to_hubuum_class_id: command.to_hubuum_class_id,
+            forward_label: command.forward_label.clone(),
+            reverse_label: command.reverse_label.clone(),
             forward_template_alias: command.forward_template_alias.clone(),
             reverse_template_alias: command.reverse_template_alias.clone(),
             created_at: now,
@@ -1222,6 +1225,48 @@ impl ClassRelationStorage for MemoryStorageModel {
                 Action::Created,
                 None,
                 Some(ResourceRevision::INITIAL),
+            ),
+        ))
+    }
+
+    async fn update_class_relation_labels(
+        &self,
+        target: &StorageResolvedClassRelation,
+        labels: StorageClassRelationLabelsUpdate,
+        context: &EventContext,
+    ) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, StorageError> {
+        let domain =
+            resolved_class_relation_from_storage(target.clone()).map_err(map_memory_error)?;
+        let mut state = self.state.write().await;
+        let current = state.class_relation_target(&domain)?.clone();
+        let changed = labels.apply(target.relation().clone());
+        if changed == *target.relation() {
+            return Ok(StorageMutationOutcome::unchanged(target.clone()));
+        }
+        let mut relation = current.clone();
+        relation.forward_label = changed.forward_label().cloned();
+        relation.reverse_label = changed.reverse_label().cloned();
+        relation.revision = current
+            .revision
+            .checked_advance()
+            .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        relation.updated_at = Utc::now().naive_utc();
+        let revision = relation.revision;
+        state.class_relations.insert(relation.id, relation.clone());
+        state.record_class_relation_event(relation.id, Action::Updated, context);
+        let resolved = ResolvedClassRelationTarget::new(
+            relation,
+            domain.from_class().clone(),
+            domain.to_class().clone(),
+        )
+        .map_err(map_memory_error)?;
+        Ok(StorageMutationOutcome::committed(
+            resolved_class_relation_to_storage(&resolved).clone(),
+            memory_audit_receipt(
+                EntityType::ClassRelation,
+                Action::Updated,
+                Some(current.revision),
+                Some(revision),
             ),
         ))
     }

@@ -243,6 +243,10 @@ Session policy is pinned at login:
 | `HUBUUM_SESSION_ABSOLUTE_SECONDS` | 2592000 | Fixed maximum session lifetime, 30 days |
 | `HUBUUM_SESSION_RETENTION_SECONDS` | 2592000 | Replay evidence retained beyond the absolute deadline, 30 days |
 
+For hourly access-token rotation, set `HUBUUM_SESSION_ACCESS_SECONDS=3600` and
+restart the server. New logins use the updated policy; existing sessions retain
+their original lifetimes. Each refresh replaces both access and refresh tokens.
+
 Lifetimes require `0 < access <= idle <= absolute <= 31536000` seconds; retention
 must be 1–31536000 seconds. Refresh advances idle expiry only as far as the fixed
 absolute deadline. Public client configuration publishes the effective lifetimes.

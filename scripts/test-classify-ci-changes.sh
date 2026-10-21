@@ -685,6 +685,11 @@ for budget_input in src/config/schema_validation.rs src/tests/storage_contract/s
   assert_flag "$budget_output" code true
 done
 
+label_output="$(bash "$classifier" crates/hubuum-domain/src/relation_label.rs)"
+assert_flag "$label_output" code true
+assert_flag "$label_output" rust true
+assert_flag "$label_output" openapi true
+
 budget_projection="$(bash "$classifier" src/config/running.rs)"
 assert_flag "$budget_projection" openapi true
 
@@ -841,7 +846,7 @@ for session_input in src/services/auth_sessions.rs src/services/credential_activ
   crates/hubuum-storage-core/src/auth_sessions.rs crates/hubuum-storage-core/src/credential_activity.rs \
   crates/hubuum-storage-memory/src/auth_sessions.rs crates/hubuum-storage-memory/src/credential_activity.rs \
   crates/hubuum-storage-postgres/src/operations/auth_sessions.rs crates/hubuum-storage-postgres/src/operations/credential_activity.rs \
-  crates/hubuum-storage-postgres/migrations/2026-10-21-000001_interactive_sessions/up.sql; do
+  crates/hubuum-storage-postgres/migrations/2026-10-21-000002_interactive_sessions/up.sql; do
   session_output="$(bash "$classifier" "$session_input")"
   assert_flag "$session_output" rust true
 done

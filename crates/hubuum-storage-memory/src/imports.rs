@@ -726,10 +726,10 @@ impl MemoryStorage {
                         references,
                     )
                     .await?;
-                let (from_class_id, to_class_id) = ordered_ids(from_class_id, to_class_id);
                 let prepared = self
                     .prepare_class_relation(
                         StorageClassRelationCreate::builder(from_class_id, to_class_id)
+                            .labels(parts.forward_label, parts.reverse_label)
                             .template_aliases(
                                 parts.forward_template_alias,
                                 parts.reverse_template_alias,
@@ -805,10 +805,15 @@ impl MemoryStorage {
                     current.to_class_id(),
                 )
                 .and_then(|relation| {
-                    relation.try_with_template_aliases(
-                        current.forward_template_alias().map(ToOwned::to_owned),
-                        current.reverse_template_alias().map(ToOwned::to_owned),
-                    )
+                    relation
+                        .with_labels(
+                            current.forward_label().cloned(),
+                            current.reverse_label().cloned(),
+                        )
+                        .try_with_template_aliases(
+                            current.forward_template_alias().map(ToOwned::to_owned),
+                            current.reverse_template_alias().map(ToOwned::to_owned),
+                        )
                 })
                 .and_then(|relation| {
                     relation.try_with_relation_limits(

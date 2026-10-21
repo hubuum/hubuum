@@ -1,5 +1,7 @@
 use async_trait::async_trait;
-use hubuum_domain::{ClassId, ClassRelationId, ObjectId, ObjectRelationId};
+use hubuum_domain::{
+    ClassId, ClassRelationId, ObjectId, ObjectRelationId, RelationLabel, normalize_template_alias,
+};
 use hubuum_events_core::EventContext;
 
 use crate::{
@@ -12,6 +14,8 @@ use crate::{
 pub struct StorageClassRelationCreate {
     from_class_id: ClassId,
     to_class_id: ClassId,
+    forward_label: Option<RelationLabel>,
+    reverse_label: Option<RelationLabel>,
     forward_template_alias: Option<String>,
     reverse_template_alias: Option<String>,
     from_max_relations: Option<i32>,
@@ -28,12 +32,44 @@ impl StorageClassRelationCreate {
             command: Self {
                 from_class_id,
                 to_class_id,
+                forward_label: None,
+                reverse_label: None,
                 forward_template_alias: None,
                 reverse_template_alias: None,
                 from_max_relations: None,
                 to_max_relations: None,
             },
         }
+    }
+
+    pub fn normalized(mut self) -> Result<Self, StorageValidationError> {
+        if self.from_class_id == self.to_class_id {
+            return Err(StorageValidationError::invalid(
+                "class relation endpoints must be distinct",
+            ));
+        }
+        self.forward_template_alias = self
+            .forward_template_alias
+            .as_deref()
+            .map(normalize_template_alias)
+            .transpose()
+            .map_err(|error| StorageValidationError::invalid(error.into_message()))?;
+        self.reverse_template_alias = self
+            .reverse_template_alias
+            .as_deref()
+            .map(normalize_template_alias)
+            .transpose()
+            .map_err(|error| StorageValidationError::invalid(error.into_message()))?;
+        if self.from_class_id > self.to_class_id {
+            std::mem::swap(&mut self.from_class_id, &mut self.to_class_id);
+            std::mem::swap(&mut self.forward_label, &mut self.reverse_label);
+            std::mem::swap(
+                &mut self.forward_template_alias,
+                &mut self.reverse_template_alias,
+            );
+            std::mem::swap(&mut self.from_max_relations, &mut self.to_max_relations);
+        }
+        Ok(self)
     }
 
     #[must_use]
@@ -44,6 +80,16 @@ impl StorageClassRelationCreate {
     #[must_use]
     pub const fn to_class_id(&self) -> ClassId {
         self.to_class_id
+    }
+
+    #[must_use]
+    pub fn forward_label(&self) -> Option<&RelationLabel> {
+        self.forward_label.as_ref()
+    }
+
+    #[must_use]
+    pub fn reverse_label(&self) -> Option<&RelationLabel> {
+        self.reverse_label.as_ref()
     }
 
     #[must_use]
@@ -72,6 +118,17 @@ pub struct StorageClassRelationCreateBuilder {
 }
 
 impl StorageClassRelationCreateBuilder {
+    #[must_use]
+    pub fn labels(
+        mut self,
+        forward: Option<RelationLabel>,
+        reverse: Option<RelationLabel>,
+    ) -> Self {
+        self.command.forward_label = forward;
+        self.command.reverse_label = reverse;
+        self
+    }
+
     #[must_use]
     pub fn template_aliases(mut self, forward: Option<String>, reverse: Option<String>) -> Self {
         self.command.forward_template_alias = forward;
@@ -453,6 +510,13 @@ pub trait ClassRelationStorage: Send + Sync {
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, StorageError>;
 
+    async fn update_class_relation_labels(
+        &self,
+        target: &StorageResolvedClassRelation,
+        labels: StorageClassRelationLabelsUpdate,
+        context: &EventContext,
+    ) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, StorageError>;
+
     async fn delete_class_relation(
         &self,
         target: &StorageResolvedClassRelation,
@@ -487,4 +551,34 @@ pub trait ObjectRelationStorage: Send + Sync {
         target: &StorageResolvedObjectRelation,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<()>, StorageError>;
+}
+
+/// Partial display-label update. `None` preserves a direction; `Some(None)` clears it.
+#[derive(Clone, Debug, Default)]
+pub struct StorageClassRelationLabelsUpdate {
+    forward: Option<Option<RelationLabel>>,
+    reverse: Option<Option<RelationLabel>>,
+}
+
+impl StorageClassRelationLabelsUpdate {
+    #[must_use]
+    pub fn new(
+        forward: Option<Option<RelationLabel>>,
+        reverse: Option<Option<RelationLabel>>,
+    ) -> Self {
+        Self { forward, reverse }
+    }
+
+    #[must_use]
+    pub fn apply(&self, relation: StorageClassRelation) -> StorageClassRelation {
+        let forward = self
+            .forward
+            .clone()
+            .unwrap_or_else(|| relation.forward_label().cloned());
+        let reverse = self
+            .reverse
+            .clone()
+            .unwrap_or_else(|| relation.reverse_label().cloned());
+        relation.with_labels(forward, reverse)
+    }
 }

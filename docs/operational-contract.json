@@ -2106,6 +2106,7 @@
             "tick_restore_coordinator",
             "token_key_usage",
             "update_class",
+            "update_class_relation_labels",
             "update_collection",
             "update_event_sink",
             "update_event_subscription",
@@ -2526,6 +2527,7 @@
             "tick_restore_coordinator",
             "token_key_usage",
             "update_class",
+            "update_class_relation_labels",
             "update_collection",
             "update_event_sink",
             "update_event_subscription",
@@ -7376,6 +7378,7 @@
         "name": "class_relation",
         "actions": [
           "created",
+          "updated",
           "deleted"
         ]
       },

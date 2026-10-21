@@ -1,4 +1,5 @@
 use super::super::*;
+use hubuum_storage_core::StorageClassRelationLabelsUpdate;
 
 #[async_trait]
 impl CollectionStorage for PostgresStorage {
@@ -165,6 +166,22 @@ impl ClassRelationStorage for PostgresStorage {
         crate::operations::relation::create_class_relation(self.runtime(), prepared, context)
             .await
             .map_err(StorageError::from)
+    }
+
+    async fn update_class_relation_labels(
+        &self,
+        target: &StorageResolvedClassRelation,
+        labels: StorageClassRelationLabelsUpdate,
+        context: &EventContext,
+    ) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, StorageError> {
+        crate::operations::relation::update_class_relation_labels(
+            self.runtime(),
+            target,
+            labels,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn delete_class_relation(

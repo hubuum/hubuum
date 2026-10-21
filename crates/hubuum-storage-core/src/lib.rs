@@ -261,10 +261,10 @@ pub use page::{
 pub use record::StorageRecordMetadata;
 pub use relation_lifecycle::{
     ClassRelationStorage, ObjectRelationStorage, StorageClassRelationCreate,
-    StorageClassRelationCreateBuilder, StorageObjectRelationCreate,
-    StorageObjectRelationCreateSelector, StorageObjectRelationEndpoint,
-    StorageObjectRelationSelector, StoragePreparedClassRelation, StoragePreparedObjectRelation,
-    StorageResolvedClassRelation, StorageResolvedObjectRelation,
+    StorageClassRelationCreateBuilder, StorageClassRelationLabelsUpdate,
+    StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
+    StorageObjectRelationEndpoint, StorageObjectRelationSelector, StoragePreparedClassRelation,
+    StoragePreparedObjectRelation, StorageResolvedClassRelation, StorageResolvedObjectRelation,
 };
 pub use relation_query::{
     RelationQueryStorage, StorageBidirectionalRelatedObjectsQuery, StorageClassGraphRow,

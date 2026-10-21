@@ -21333,6 +21333,130 @@
             "bearer_auth": []
           }
         ]
+      },
+      "patch": {
+        "tags": [
+          "relations"
+        ],
+        "summary": "Patch Api V1 Relations Classes By Relation Id",
+        "description": "Auto-generated documentation for PATCH /api/v1/relations/classes/{relation_id}.",
+        "operationId": "patchApiV1RelationsClassesByRelationId",
+        "parameters": [
+          {
+            "name": "relation_id",
+            "in": "path",
+            "description": "Class relation ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateClassRelationLabels"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated class relation",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumClassRelation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid label or request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Relation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Relation changed concurrently",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Revision precondition failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
       }
     },
     "/api/v1/relations/objects": {
@@ -30082,6 +30206,16 @@
             "type": "string",
             "format": "date-time"
           },
+          "forward_label": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "forward_template_alias": {
             "type": [
               "string",
@@ -30106,6 +30240,16 @@
           "id": {
             "type": "integer",
             "format": "int32"
+          },
+          "reverse_label": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "reverse_template_alias": {
             "type": [
@@ -30577,6 +30721,16 @@
               }
             ]
           },
+          "forward_label": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "forward_template_alias": {
             "type": [
               "string",
@@ -30613,6 +30767,16 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "reverse_label": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationLabel"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "reverse_template_alias": {
@@ -32864,6 +33028,16 @@
           "to_hubuum_class_id"
         ],
         "properties": {
+          "forward_label": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "forward_template_alias": {
             "type": [
               "string",
@@ -32885,6 +33059,16 @@
               }
             ]
           },
+          "reverse_label": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "reverse_template_alias": {
             "type": [
               "string",
@@ -32908,9 +33092,11 @@
           }
         },
         "example": {
+          "forward_label": "is in",
           "forward_template_alias": "rooms",
           "from_hubuum_class_id": 1,
           "from_max_relations": 1,
+          "reverse_label": "contains",
           "reverse_template_alias": "hosts",
           "to_hubuum_class_id": 2,
           "to_max_relations": null
@@ -32923,6 +33109,16 @@
           "to_hubuum_class_id"
         ],
         "properties": {
+          "forward_label": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "forward_template_alias": {
             "type": [
               "string",
@@ -32940,6 +33136,16 @@
               }
             ]
           },
+          "reverse_label": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "reverse_template_alias": {
             "type": [
               "string",
@@ -32963,8 +33169,10 @@
           }
         },
         "example": {
+          "forward_label": "is in",
           "forward_template_alias": "rooms",
           "from_max_relations": 1,
+          "reverse_label": "contains",
           "reverse_template_alias": "hosts",
           "to_hubuum_class_id": 2,
           "to_max_relations": null
@@ -35095,9 +35303,17 @@
         "type": "object",
         "required": [
           "objects",
-          "relations"
+          "relations",
+          "class_relations"
         ],
         "properties": {
+          "class_relations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HubuumClassRelation"
+            },
+            "description": "Authorized definitions referenced by the object edges; labels follow class endpoint order."
+          },
           "objects": {
             "type": "array",
             "items": {
@@ -35111,6 +35327,12 @@
             }
           }
         }
+      },
+      "RelationLabel": {
+        "type": "string",
+        "description": "Optional human-facing relationship wording, independent of template aliases.",
+        "maxLength": 128,
+        "minLength": 1
       },
       "ReleaseRateLimitResponse": {
         "type": "object",
@@ -39365,6 +39587,33 @@
             "type": "string"
           }
         }
+      },
+      "UpdateClassRelationLabels": {
+        "type": "object",
+        "description": "Change display wording in the canonical endpoint order returned by the API.\nOmitted fields retain their value; explicit null clears that direction.",
+        "properties": {
+          "forward_label": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reverse_label": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
       },
       "UpdateCollection": {
         "type": "object",

@@ -270,6 +270,8 @@ mod tests {
                 .prepare_create(NewHubuumClassRelation {
                     from_hubuum_class_id: from_class.id,
                     to_hubuum_class_id: to_class.id,
+                    forward_label: None,
+                    reverse_label: None,
                     forward_template_alias: None,
                     reverse_template_alias: None,
                     from_max_relations: from_limit,

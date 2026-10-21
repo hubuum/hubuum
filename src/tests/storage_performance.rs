@@ -67,6 +67,8 @@ async fn object_relation_budget_fixture(
     let class_relation = NewHubuumClassRelation {
         from_hubuum_class_id: class_one.id,
         to_hubuum_class_id: class_two.id,
+        forward_label: None,
+        reverse_label: None,
         forward_template_alias: None,
         reverse_template_alias: None,
         from_max_relations: None,
@@ -136,6 +138,8 @@ impl StructuredSearchPerformanceFixture {
                 NewHubuumClassRelation {
                     from_hubuum_class_id: endpoints[0].id,
                     to_hubuum_class_id: endpoints[1].id,
+                    forward_label: None,
+                    reverse_label: None,
                     forward_template_alias: None,
                     reverse_template_alias: None,
                     from_max_relations: None,
@@ -608,6 +612,8 @@ async fn class_relation_storage_query_budget_point_resolution_is_fixed() {
     let relation = NewHubuumClassRelation {
         from_hubuum_class_id: from_class.id,
         to_hubuum_class_id: to_class.id,
+        forward_label: None,
+        reverse_label: None,
         forward_template_alias: None,
         reverse_template_alias: None,
         from_max_relations: None,
@@ -669,6 +675,8 @@ async fn class_relation_storage_query_budget_create_with_event_is_fixed() {
         .prepare_create(NewHubuumClassRelation {
             from_hubuum_class_id: from_class.id,
             to_hubuum_class_id: to_class.id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: None,
             reverse_template_alias: None,
             from_max_relations: None,
@@ -729,6 +737,8 @@ async fn class_relation_storage_query_budget_delete_with_event_is_fixed() {
         .prepare_create(NewHubuumClassRelation {
             from_hubuum_class_id: from_class.id,
             to_hubuum_class_id: to_class.id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: None,
             reverse_template_alias: None,
             from_max_relations: None,
@@ -1567,6 +1577,8 @@ async fn object_relation_create_has_a_fixed_query_and_checkout_budget() {
     let class_relation = NewHubuumClassRelation {
         from_hubuum_class_id: class_one.id,
         to_hubuum_class_id: class_two.id,
+        forward_label: None,
+        reverse_label: None,
         forward_template_alias: Some("seconds".to_string()),
         reverse_template_alias: Some("firsts".to_string()),
         from_max_relations: None,
@@ -1942,6 +1954,8 @@ async fn dense_graph_exploration_is_bounded_before_output_pagination(
         let relation = NewHubuumClassRelation {
             from_hubuum_class_id: classes[layer].id,
             to_hubuum_class_id: classes[layer + 1].id,
+            forward_label: None,
+            reverse_label: None,
             forward_template_alias: None,
             reverse_template_alias: None,
             from_max_relations: None,

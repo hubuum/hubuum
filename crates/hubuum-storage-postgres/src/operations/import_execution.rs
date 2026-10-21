@@ -2,6 +2,7 @@
 use super::task_execution::{claimed_task, live_claimed_task};
 use hubuum_domain::JsonSchemaLimits;
 use hubuum_domain::PlaintextPassword;
+use hubuum_domain::RelationLabel;
 use hubuum_storage_core::{
     FencedImportItem, FencedImportPlan, FencedImportResults, StorageImportResult, StorageTaskLease,
 };
@@ -2263,6 +2264,7 @@ async fn create_class_relation(
     assert_import_create_condition(parts.condition)?;
     let command = normalize_class_relation_create(
         StorageClassRelationCreate::builder(from.id(), to.id())
+            .labels(parts.forward_label, parts.reverse_label)
             .template_aliases(parts.forward_template_alias, parts.reverse_template_alias)
             .relation_limits(parts.from_max_relations, parts.to_max_relations)
             .build(),
@@ -2276,6 +2278,10 @@ async fn create_class_relation(
                         .eq(command.from_class_id().id()),
                     crate::schema::hubuumclass_relation::to_hubuum_class_id
                         .eq(command.to_class_id().id()),
+                    crate::schema::hubuumclass_relation::forward_label
+                        .eq(command.forward_label().map(RelationLabel::as_str)),
+                    crate::schema::hubuumclass_relation::reverse_label
+                        .eq(command.reverse_label().map(RelationLabel::as_str)),
                     crate::schema::hubuumclass_relation::forward_template_alias
                         .eq(command.forward_template_alias()),
                     crate::schema::hubuumclass_relation::reverse_template_alias
@@ -2297,6 +2303,10 @@ async fn create_class_relation(
                         .eq(command.from_class_id().id()),
                     crate::schema::hubuumclass_relation::to_hubuum_class_id
                         .eq(command.to_class_id().id()),
+                    crate::schema::hubuumclass_relation::forward_label
+                        .eq(command.forward_label().map(RelationLabel::as_str)),
+                    crate::schema::hubuumclass_relation::reverse_label
+                        .eq(command.reverse_label().map(RelationLabel::as_str)),
                     crate::schema::hubuumclass_relation::forward_template_alias
                         .eq(command.forward_template_alias()),
                     crate::schema::hubuumclass_relation::reverse_template_alias

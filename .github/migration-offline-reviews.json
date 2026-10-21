@@ -20,7 +20,7 @@
       "drop_constraints": {}
     },
     {
-      "migration": "crates/hubuum-storage-postgres/migrations/2026-10-21-000001_interactive_sessions/up.sql",
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-10-21-000002_interactive_sessions/up.sql",
       "sha256": "1a9a9c34deb0dd039d95d789c4743e3b1f7e0cf6ae7ee2413365a266ed718c85",
       "reason": "Older API and worker replicas do not enforce interactive credential kinds, family revocation, and refresh rotation. The authentication contract requires a coordinated upgrade.",
       "upgrade_action": "Stop older API and worker replicas, apply the session/activity migration and role grants, then start matching binaries and upgrade frontend/SDK consumers. Clear existing BFF sessions and sign in again. See docs/auth_model.md#interactive-sessions.",

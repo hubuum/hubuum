@@ -4,20 +4,22 @@ use chrono::NaiveDateTime;
 use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{Insertable, Queryable, Selectable};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::{ClassId, ClassRelationId, ObjectId, normalize_template_alias};
+use hubuum_domain::{ClassId, ClassRelationId, ObjectId, RelationLabel};
 use hubuum_events_core::{Action, AuditDocument, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
-    StorageClassRelation, StorageClassRelationCreate, StorageMutationOutcome, StorageObject,
-    StorageObjectRelation, StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
-    StorageObjectRelationEndpoint, StorageObjectRelationSelector, StoragePreparedClassRelation,
-    StoragePreparedObjectRelation, StorageResolvedClassRelation, StorageResolvedObjectRelation,
+    StorageClassRelation, StorageClassRelationCreate, StorageClassRelationLabelsUpdate,
+    StorageMutationOutcome, StorageObject, StorageObjectRelation, StorageObjectRelationCreate,
+    StorageObjectRelationCreateSelector, StorageObjectRelationEndpoint,
+    StorageObjectRelationSelector, StoragePreparedClassRelation, StoragePreparedObjectRelation,
+    StorageResolvedClassRelation, StorageResolvedObjectRelation,
 };
 use serde_json::json;
 
 use crate::operations::class::ClassRow;
 use crate::operations::event_record::append_event;
 use crate::operations::object::ObjectRow;
-use crate::revision::record_metadata;
+use crate::revision::{RevisionOwner, record_metadata};
+use crate::runtime::assert_locked_revision_precondition;
 use crate::{PostgresConnection, PostgresRevision, PostgresRuntime, PostgresStorageError};
 
 #[derive(Clone, Queryable, Selectable)]
@@ -33,6 +35,8 @@ pub(crate) struct ClassRelationRow {
     from_max_relations: Option<i32>,
     to_max_relations: Option<i32>,
     revision: PostgresRevision,
+    forward_label: Option<String>,
+    reverse_label: Option<String>,
 }
 
 impl ClassRelationRow {
@@ -45,6 +49,10 @@ impl ClassRelationRow {
                 ClassId::new(self.to_hubuum_class_id)?,
             ),
         )?;
+        let relation = relation.with_labels(
+            parse_label(self.forward_label)?,
+            parse_label(self.reverse_label)?,
+        );
         let relation = crate::validate_persisted(
             "class relation template aliases",
             relation.try_with_template_aliases(
@@ -63,6 +71,8 @@ impl ClassRelationRow {
             "id": self.id,
             "from_hubuum_class_id": self.from_hubuum_class_id,
             "to_hubuum_class_id": self.to_hubuum_class_id,
+            "forward_label": self.forward_label,
+            "reverse_label": self.reverse_label,
             "forward_template_alias": self.forward_template_alias,
             "reverse_template_alias": self.reverse_template_alias,
             "from_max_relations": self.from_max_relations,
@@ -79,6 +89,8 @@ impl ClassRelationRow {
 struct NewClassRelationRow<'command> {
     from_hubuum_class_id: i32,
     to_hubuum_class_id: i32,
+    forward_label: Option<&'command str>,
+    reverse_label: Option<&'command str>,
     forward_template_alias: Option<&'command str>,
     reverse_template_alias: Option<&'command str>,
     from_max_relations: Option<i32>,
@@ -90,6 +102,8 @@ impl<'command> From<&'command StorageClassRelationCreate> for NewClassRelationRo
         Self {
             from_hubuum_class_id: command.from_class_id().id(),
             to_hubuum_class_id: command.to_class_id().id(),
+            forward_label: command.forward_label().map(RelationLabel::as_str),
+            reverse_label: command.reverse_label().map(RelationLabel::as_str),
             forward_template_alias: command.forward_template_alias(),
             reverse_template_alias: command.reverse_template_alias(),
             from_max_relations: command.from_max_relations(),
@@ -261,6 +275,75 @@ pub(crate) async fn create_class_relation_on(
         )?,
         audit,
     ))
+}
+
+/// Update only wording on the exact aggregate authorized by the caller.
+pub async fn update_class_relation_labels(
+    runtime: &PostgresRuntime,
+    target: &StorageResolvedClassRelation,
+    labels: StorageClassRelationLabelsUpdate,
+    context: &EventContext,
+) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, PostgresStorageError> {
+    let target = target.clone();
+    let context = context.clone();
+    runtime
+        .with_transaction(async move |connection| {
+            update_class_relation_labels_on(connection, &target, labels, &context).await
+        })
+        .await
+}
+
+pub(crate) async fn update_class_relation_labels_on(
+    connection: &mut PostgresConnection,
+    target: &StorageResolvedClassRelation,
+    labels: StorageClassRelationLabelsUpdate,
+    context: &EventContext,
+) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, PostgresStorageError> {
+    let before = lock_class_relation(connection, target.relation().metadata().id().id()).await?;
+    let owner_key = RevisionOwner::ClassRelation.key(before.id);
+    assert_locked_revision_precondition(connection, &owner_key, before.revision).await?;
+    let from_class = lock_class(connection, before.from_hubuum_class_id).await?;
+    let to_class = lock_class(connection, before.to_hubuum_class_id).await?;
+    let current = before.clone().into_storage()?;
+    if current != *target.relation()
+        || from_class.clone().into_storage()? != *target.from_class()
+        || to_class.clone().into_storage()? != *target.to_class()
+    {
+        return Err(PostgresStorageError::conflict(
+            "Class relation no longer matches the resolved target",
+        ));
+    }
+    let updated = labels.apply(current.clone());
+    if updated == current {
+        return Ok(StorageMutationOutcome::unchanged(target.clone()));
+    }
+    use crate::schema::hubuumclass_relation::dsl as relation;
+    let after = diesel::update(relation::hubuumclass_relation.filter(relation::id.eq(before.id)))
+        .set((
+            relation::forward_label.eq(updated.forward_label().map(RelationLabel::as_str)),
+            relation::reverse_label.eq(updated.reverse_label().map(RelationLabel::as_str)),
+        ))
+        .get_result::<ClassRelationRow>(connection)
+        .await?;
+    let event = class_relation_event(
+        &after,
+        Action::Updated,
+        context,
+        &from_class,
+        &to_class,
+        Some(before.snapshot()),
+        Some(after.snapshot()),
+    )?;
+    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    let resolved = crate::validate_persisted(
+        "updated class relation",
+        StorageResolvedClassRelation::try_new(
+            after.into_storage()?,
+            from_class.into_storage()?,
+            to_class.into_storage()?,
+        ),
+    )?;
+    Ok(StorageMutationOutcome::committed(resolved, audit))
 }
 
 /// Delete the exact class-relation aggregate that was authorized.
@@ -494,8 +577,8 @@ pub(crate) async fn create_object_relation_on(
         relation,
         Action::Created,
         context,
-        &from_object,
-        &to_object,
+        (&from_object, &to_object),
+        prepared.class_relation().relation(),
         None,
         Some(relation.snapshot()),
     )?;
@@ -556,8 +639,8 @@ pub(crate) async fn delete_object_relation_on(
         relation,
         Action::Deleted,
         context,
-        &from_object,
-        &to_object,
+        (&from_object, &to_object),
+        target.class_relation().relation(),
         Some(relation.snapshot()),
         None,
     )?;
@@ -568,30 +651,11 @@ pub(crate) async fn delete_object_relation_on(
 pub(crate) fn normalize_class_relation_create(
     command: StorageClassRelationCreate,
 ) -> Result<StorageClassRelationCreate, PostgresStorageError> {
-    if command.from_class_id() == command.to_class_id() {
-        return Err(PostgresStorageError::invalid_input(
-            "from_hubuum_class_id and to_hubuum_class_id cannot be the same",
-        ));
-    }
     validate_relation_limit(command.from_max_relations(), "from_max_relations")?;
     validate_relation_limit(command.to_max_relations(), "to_max_relations")?;
-    let mut from_class_id = command.from_class_id();
-    let mut to_class_id = command.to_class_id();
-    let mut forward_alias = normalize_alias(command.forward_template_alias())?;
-    let mut reverse_alias = normalize_alias(command.reverse_template_alias())?;
-    let mut from_limit = command.from_max_relations();
-    let mut to_limit = command.to_max_relations();
-    if from_class_id > to_class_id {
-        std::mem::swap(&mut from_class_id, &mut to_class_id);
-        std::mem::swap(&mut forward_alias, &mut reverse_alias);
-        std::mem::swap(&mut from_limit, &mut to_limit);
-    }
-    Ok(
-        StorageClassRelationCreate::builder(from_class_id, to_class_id)
-            .template_aliases(forward_alias, reverse_alias)
-            .relation_limits(from_limit, to_limit)
-            .build(),
-    )
+    command
+        .normalized()
+        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
 }
 
 fn normalize_object_relation_create(
@@ -609,13 +673,6 @@ fn normalize_object_relation_create(
         to_object_id,
         command.class_relation_id(),
     ))
-}
-
-fn normalize_alias(value: Option<&str>) -> Result<Option<String>, PostgresStorageError> {
-    value
-        .map(normalize_template_alias)
-        .transpose()
-        .map_err(|error| PostgresStorageError::invalid_input(error.into_message()))
 }
 
 fn validate_relation_limit(value: Option<i32>, field: &str) -> Result<(), PostgresStorageError> {
@@ -1007,8 +1064,9 @@ fn class_relation_event(
 ) -> Result<NewEvent, PostgresStorageError> {
     let document = AuditDocument::try_new(
         format!(
-            "Class relation {} -> {} {}",
+            "Class relation {} {} {} {}",
             relation.from_hubuum_class_id,
+            relation.forward_label.as_deref().unwrap_or("related to"),
             relation.to_hubuum_class_id,
             action_verb(action)
         ),
@@ -1038,15 +1096,23 @@ fn object_relation_event(
     relation: ObjectRelationRow,
     action: Action,
     context: &EventContext,
-    from_object: &ObjectRow,
-    to_object: &ObjectRow,
+    endpoints: (&ObjectRow, &ObjectRow),
+    class_relation: &StorageClassRelation,
     before: Option<serde_json::Value>,
     after: Option<serde_json::Value>,
 ) -> Result<NewEvent, PostgresStorageError> {
+    let (from_object, to_object) = endpoints;
     let document = AuditDocument::try_new(
         format!(
-            "Object relation {} -> {} {}",
+            "Object relation {} {} {} {}",
             relation.from_hubuum_object_id,
+            RelationLabel::display(
+                if from_object.hubuum_class_id == class_relation.from_class_id().id() {
+                    class_relation.forward_label()
+                } else {
+                    class_relation.reverse_label()
+                }
+            ),
             relation.to_hubuum_object_id,
             action_verb(action)
         ),
@@ -1079,6 +1145,7 @@ const fn action_verb(action: Action) -> &'static str {
     match action {
         Action::Created => "created",
         Action::Deleted => "deleted",
+        Action::Updated => "updated",
         _ => "changed",
     }
 }
@@ -1093,6 +1160,15 @@ fn validate_positive_id(value: i32, noun: &str) -> Result<(), PostgresStorageErr
     }
 }
 
+pub(crate) fn parse_label(
+    value: Option<String>,
+) -> Result<Option<RelationLabel>, PostgresStorageError> {
+    value
+        .map(RelationLabel::new)
+        .transpose()
+        .map_err(|error| PostgresStorageError::invalid_persisted_value("relation label", error))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1101,6 +1177,10 @@ mod tests {
     fn class_relation_normalization_keeps_directional_values_with_their_classes() {
         let command =
             StorageClassRelationCreate::builder(ClassId::new(9).unwrap(), ClassId::new(3).unwrap())
+                .labels(
+                    Some(RelationLabel::new("forward wording".into()).unwrap()),
+                    Some(RelationLabel::new("reverse wording".into()).unwrap()),
+                )
                 .template_aliases(
                     Some("Forward Name".to_string()),
                     Some("ReverseName".to_string()),
@@ -1112,6 +1192,14 @@ mod tests {
 
         assert_eq!(normalized.from_class_id(), ClassId::new(3).unwrap());
         assert_eq!(normalized.to_class_id(), ClassId::new(9).unwrap());
+        assert_eq!(
+            normalized.forward_label().unwrap().as_str(),
+            "reverse wording"
+        );
+        assert_eq!(
+            normalized.reverse_label().unwrap().as_str(),
+            "forward wording"
+        );
         assert_eq!(normalized.forward_template_alias(), Some("reverse_name"));
         assert_eq!(normalized.reverse_template_alias(), Some("forward_name"));
         assert_eq!(normalized.from_max_relations(), Some(7));

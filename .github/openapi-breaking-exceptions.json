@@ -217,14 +217,14 @@
       "id": "v0.0.19-nonempty-bounded-passwords",
       "baseline": "v0.0.19",
       "expires": "2027-01-31",
-      "reason": "Authentication rejects empty passwords and applies the existing 4096-character login bound to plaintext writes. Credential-approval operations embed the same tightened create/update password schemas; those operations remain supported.",
+      "reason": "Authentication rejects empty passwords and applies the existing 4096-character login bound to plaintext writes. Credential-approval operations embed the same tightened create/update password schemas; those operations remain supported. Oasdiff also reports the import-credentials variant as replaced because its class-relation import schema adds optional directional labels. All operation variants are unchanged, and removing those two optional properties reproduces the baseline class-relation import schema exactly.",
       "migration": "reset any existing empty-password credentials before upgrading; they cannot log in afterward.",
       "changelog_entry": "Reject empty plaintext passwords at creation, update, reset, import, and login",
       "fingerprints": [
         "69d449b066bd",
         "7994d5e46cb8",
         "79fc3f3c525d",
-        "8f0a6f708c82",
+        "342208a1f4f4",
         "b4a1f53e34e7"
       ]
     },

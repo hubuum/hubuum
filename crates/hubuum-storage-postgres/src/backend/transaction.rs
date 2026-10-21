@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use hubuum_domain::{ClassId, ClassRelationId, CollectionId, ObjectId};
 use hubuum_events_core::EventContext;
+use hubuum_storage_core::StorageClassRelationLabelsUpdate;
 use hubuum_storage_core::{
     ClassRelationStorage, ClassStorage, CollectionStorage, ObjectRelationStorage, ObjectStorage,
     StorageClass, StorageClassCreate, StorageClassRelationCreate, StorageClassSelector,
@@ -260,6 +261,23 @@ impl ClassRelationStorage for PostgresTransaction<'_> {
         crate::operations::relation::create_class_relation_on(&mut connection, prepared, context)
             .await
             .map_err(StorageError::from)
+    }
+
+    async fn update_class_relation_labels(
+        &self,
+        target: &StorageResolvedClassRelation,
+        labels: StorageClassRelationLabelsUpdate,
+        context: &EventContext,
+    ) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, StorageError> {
+        let mut connection = self.connection.lock().await;
+        crate::operations::relation::update_class_relation_labels_on(
+            &mut connection,
+            target,
+            labels,
+            context,
+        )
+        .await
+        .map_err(StorageError::from)
     }
 
     async fn delete_class_relation(

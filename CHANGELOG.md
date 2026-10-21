@@ -29,6 +29,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   resolution follows the existing trust policy. Activity does not change token
   ETags, and authenticated request spans include the stable token ID.
 
+- Optional directional class-relation labels and authorized, revision-aware
+  `PATCH /api/v1/relations/classes/{relation_id}` editing. Wording follows class
+  direction, survives imports, exports, history, and backups, and is available in
+  graphs, report templates, and relation events. Unspecified wording falls back
+  to `related to`; editing preserves IDs, object links, aliases, and limits.
+  Apply the directional-label migration before upgrading. Pair uniqueness is
+  unchanged; multiple relationship kinds remain a separate design.
+
 - An administrator API to enable or disable query observation collection at
   runtime across all API replicas sharing PostgreSQL:
   `GET` and `PUT /api/v1/admin/query-observations`. The persisted override takes
@@ -82,6 +90,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   are unchanged.
 
 ### Changed
+
+- **Breaking Rust storage adapter API:** `ClassRelationStorage` implementations must
+  implement `update_class_relation_labels`, preserving authorization targets,
+  revision preconditions, history, and transactional audit events. Class-relation
+  decomposition and import DTOs now include typed optional directional labels;
+  update downstream adapters and DTO construction when upgrading the storage SDK.
 
 - **Breaking storage SDK change:** `QueryUsageStorage` adapters must implement
   `query_observation_control` and `set_query_observation_control` before upgrading.

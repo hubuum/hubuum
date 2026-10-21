@@ -886,6 +886,8 @@ async fn equivalent_external_lists_page_before_authorization(
                     let relation = NewHubuumClassRelation {
                         from_hubuum_class_id: source.id,
                         to_hubuum_class_id: class.id,
+                        forward_label: None,
+                        reverse_label: None,
                         forward_template_alias: None,
                         reverse_template_alias: None,
                         from_max_relations: None,

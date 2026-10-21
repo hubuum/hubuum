@@ -1,14 +1,15 @@
 use crate::permissions::ClassResourceEndpoint;
 use crate::permissions::ObjectResourceEndpoint;
 use hubuum_domain::ResourceId;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SearchOperator};
 use crate::models::{HubuumClassRelation, HubuumObjectRelation, Permissions, TokenScope};
 use crate::permissions::visibility::authorize_all_candidates;
-use crate::permissions::{PermissionBackend, PrincipalRef, ResourceRef};
+use crate::permissions::{AppContext, PermissionBackend, PrincipalRef, ResourceRef};
 use crate::services::catalog;
+use crate::services::relation_queries::{self, RelationAccess};
 
 use crate::storage::{
     AuthorizationDataStorage, StorageAuthorizationObjectResource, StorageAuthorizationResourceIds,
@@ -339,4 +340,52 @@ pub(crate) async fn load_current_authorization_resources(
             (key, resource)
         })
         .collect())
+}
+
+/// Resolve only definitions referenced by the visible object edges. Dense class
+/// graphs must not expand the work or disclose unrelated relation definitions.
+pub(crate) async fn object_graph_class_relations(
+    context: &AppContext,
+    principal: &PrincipalRef,
+    scope: Option<&TokenScope>,
+    relations: &[HubuumObjectRelation],
+) -> Result<Vec<HubuumClassRelation>, ApiError> {
+    let ids = relations
+        .iter()
+        .map(|relation| relation.class_relation_id)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let mut result = Vec::new();
+    // Equality filters accept at most 50 values, including internal queries.
+    for batch in ids.chunks(50) {
+        let filter = ParsedQueryParam::from_parts(
+            FilterField::Id,
+            SearchOperator::In { is_negated: false },
+            batch
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
+        )?;
+        let options = QueryOptions::new(vec![filter], vec![], Some(batch.len()), None, false)?;
+        let (candidates, _) = relation_queries::list_class_relations(
+            context,
+            RelationAccess::new(principal.user_id, true, None),
+            options,
+        )
+        .await?;
+        result.extend(
+            authorize_class_relation_candidates(
+                context,
+                context.permission_backend(),
+                principal,
+                scope,
+                vec![Permissions::ReadClassRelation],
+                candidates,
+            )
+            .await?,
+        );
+    }
+    Ok(result)
 }

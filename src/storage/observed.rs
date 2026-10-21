@@ -1,3 +1,4 @@
+use hubuum_storage_core::StorageClassRelationLabelsUpdate;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Instant;
@@ -526,6 +527,21 @@ where
             StorageCapability::ClassRelation,
             "create_class_relation",
             self.inner.create_class_relation(prepared, context),
+        )
+        .await
+    }
+
+    async fn update_class_relation_labels(
+        &self,
+        target: &StorageResolvedClassRelation,
+        labels: StorageClassRelationLabelsUpdate,
+        context: &EventContext,
+    ) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, StorageError> {
+        self.call(
+            StorageCapability::ClassRelation,
+            "update_class_relation_labels",
+            self.inner
+                .update_class_relation_labels(target, labels, context),
         )
         .await
     }

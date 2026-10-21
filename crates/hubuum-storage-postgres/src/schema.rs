@@ -494,6 +494,10 @@ diesel::table! {
         from_max_relations -> Nullable<Int4>,
         to_max_relations -> Nullable<Int4>,
         revision -> Int8,
+        #[max_length = 128]
+        forward_label -> Nullable<Varchar>,
+        #[max_length = 128]
+        reverse_label -> Nullable<Varchar>,
     }
 }
 
@@ -517,6 +521,10 @@ diesel::table! {
         from_max_relations -> Nullable<Int4>,
         to_max_relations -> Nullable<Int4>,
         revision -> Int8,
+        #[max_length = 128]
+        forward_label -> Nullable<Varchar>,
+        #[max_length = 128]
+        reverse_label -> Nullable<Varchar>,
     }
 }
 

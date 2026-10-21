@@ -81,6 +81,8 @@ async fn hydration_fixture(
     let class_relation = NewHubuumClassRelation {
         from_hubuum_class_id: hosts.id,
         to_hubuum_class_id: sites.id,
+        forward_label: None,
+        reverse_label: None,
         forward_template_alias: None,
         reverse_template_alias: None,
         from_max_relations: None,
@@ -965,6 +967,8 @@ async fn not_related_means_no_visible_related_target_matches() {
     let class_relation = NewHubuumClassRelation {
         from_hubuum_class_id: host_class.id,
         to_hubuum_class_id: room_class.id,
+        forward_label: None,
+        reverse_label: None,
         forward_template_alias: None,
         reverse_template_alias: None,
         from_max_relations: None,
@@ -1094,6 +1098,8 @@ async fn external_policy_structured_search_only_uses_visible_paths() {
     let class_relation = NewHubuumClassRelation {
         from_hubuum_class_id: host_class.id,
         to_hubuum_class_id: room_class.id,
+        forward_label: None,
+        reverse_label: None,
         forward_template_alias: None,
         reverse_template_alias: None,
         from_max_relations: None,

@@ -469,6 +469,8 @@ fn class_relation_to_storage(
             from_class_key: input.from_class_key.map(class_key_to_storage),
             to_class_ref: input.to_class_ref,
             to_class_key: input.to_class_key.map(class_key_to_storage),
+            forward_label: input.forward_label,
+            reverse_label: input.reverse_label,
             forward_template_alias: input.forward_template_alias,
             reverse_template_alias: input.reverse_template_alias,
             from_max_relations: input.from_max_relations.map(ObjectRelationLimit::value),
