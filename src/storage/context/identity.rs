@@ -1,9 +1,147 @@
 use super::*;
 use hubuum_storage_core::StorageExternalSyncFailure;
+use hubuum_storage_core::{
+    CredentialActivityPolicy, ObservedSource, StorageActivityQuery, StorageCredentialActivity,
+    StorageCredentialCreation,
+};
+use hubuum_storage_core::{
+    RefreshCredential, SessionRevocation, StorageSessionCreate, StorageSessionIssued,
+    StorageSessionRotate, StorageSessionRotation,
+};
 use hubuum_storage_core::{StorageAuthorizationResource, StorageAuthorizationResourcesQuery};
 
 #[async_trait]
 impl AuthenticationStorage for StorageHandle {
+    async fn record_credential_creation(
+        &self,
+        token: TokenId,
+        creation: StorageCredentialCreation,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "record_credential_creation",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .record_credential_creation(token, creation)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn observe_credential_source(
+        &self,
+        token: TokenId,
+        source: ObservedSource,
+        policy: CredentialActivityPolicy,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "observe_credential_source",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .observe_credential_source(token, source, policy)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn credential_activity(
+        &self,
+        query: StorageActivityQuery,
+    ) -> Result<StorageCredentialActivity, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "credential_activity",
+            async { dispatch_backend!(self, |backend| backend.credential_activity(query).await) },
+        )
+        .await
+    }
+    async fn purge_credential_sources(
+        &self,
+        policy: CredentialActivityPolicy,
+        limit: usize,
+    ) -> Result<usize, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "purge_credential_sources",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .purge_credential_sources(policy, limit)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn create_auth_session(
+        &self,
+        request: StorageSessionCreate,
+    ) -> Result<StorageMutationOutcome<StorageSessionIssued>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "create_auth_session",
+            async { dispatch_backend!(self, |backend| backend.create_auth_session(request).await) },
+        )
+        .await
+    }
+    async fn refresh_principal(
+        &self,
+        credential: RefreshCredential,
+    ) -> Result<PrincipalId, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "refresh_principal",
+            async {
+                dispatch_backend!(self, |backend| backend.refresh_principal(credential).await)
+            },
+        )
+        .await
+    }
+    async fn rotate_auth_session(
+        &self,
+        request: StorageSessionRotate,
+    ) -> Result<StorageMutationOutcome<StorageSessionRotation>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "rotate_auth_session",
+            async { dispatch_backend!(self, |backend| backend.rotate_auth_session(request).await) },
+        )
+        .await
+    }
+    async fn revoke_auth_sessions(
+        &self,
+        target: SessionRevocation,
+        context: EventContext,
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "revoke_auth_sessions",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .revoke_auth_sessions(target, context)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn purge_auth_sessions(&self, limit: usize) -> Result<usize, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "purge_auth_sessions",
+            async { dispatch_backend!(self, |backend| backend.purge_auth_sessions(limit).await) },
+        )
+        .await
+    }
+
     async fn authenticate_bearer_token(
         &self,
         attempt: StorageAuthenticationAttempt,

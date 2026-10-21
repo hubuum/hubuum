@@ -13,7 +13,7 @@ use crate::{DatabaseRoleNames, PostgresStorageError, database_role_reconciliatio
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 
 // Keep this set aligned with the hash-pinned offline migration reviews.
-const OFFLINE_MIGRATIONS: &[&str] = &["20261001000001", "20261005000001"];
+const OFFLINE_MIGRATIONS: &[&str] = &["20261001000001", "20261005000001", "20261021000002"];
 
 /// Whether pending migrations permit the previous API to remain online.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -266,13 +266,21 @@ mod tests {
     #[case::fresh(vec![], MigrationMode::Offline)]
     #[case::previous(vec!["20260919000001"], MigrationMode::Offline)]
     #[case::before_collection_sinks(vec!["20260919000001", "20261001000001"], MigrationMode::Offline)]
-    #[case::current(vec!["20260919000001", "20261001000001", "20261005000001"], MigrationMode::Rolling)]
+    #[case::before_interactive_sessions(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001"], MigrationMode::Offline)]
+    #[case::current(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002"], MigrationMode::Rolling)]
     fn pending_offline_migrations_determine_mode(
         #[case] applied: Vec<&str>,
         #[case] expected: MigrationMode,
     ) {
         let applied = applied.into_iter().map(str::to_owned).collect::<Vec<_>>();
-        let known = ["20260919000001", "20261001000001", "20261005000001"].map(str::to_owned);
+        let known = [
+            "20260919000001",
+            "20261001000001",
+            "20261005000001",
+            "20261021000001",
+            "20261021000002",
+        ]
+        .map(str::to_owned);
         assert_eq!(
             migration_mode_for_versions(&applied, &known).unwrap(),
             expected

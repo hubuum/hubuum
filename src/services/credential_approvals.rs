@@ -226,7 +226,9 @@ pub async fn mint_token(
     context: &AppContext,
     approved: ApprovedCredentialOperation,
     event_context: &EventContext,
+    source: hubuum_storage_core::ObservedSource,
 ) -> Result<crate::models::IssuedToken, ApiError> {
+    let issuance_method = super::credential_activity::issuance_method(&approved.operation);
     let raw = crate::utilities::auth::generate_token();
     let policy = identity::token_policy(crate::models::token::configured_token_issuance_policy()?);
     let audit = approved.claim.clone();
@@ -276,6 +278,17 @@ pub async fn mint_token(
         }
     };
     let metadata = observe_consumption(result, &audit)?.into_value();
+    super::credential_activity::creation(
+        context,
+        metadata.id(),
+        hubuum_storage_core::StorageCredentialCreation::new(
+            event_context.actor_user_id(),
+            issuance_method,
+            source,
+            metadata.issued(),
+        ),
+    )
+    .await;
     let expiry = metadata
         .expires_at()
         .ok_or_else(|| ApiError::InternalServerError("Issued token expiry missing".into()))?;

@@ -30,8 +30,10 @@ fn bearer_token(req: &ServiceRequest) -> Option<Token> {
 }
 
 fn is_public_path(path: &str) -> bool {
-    matches!(path, "/healthz" | "/readyz" | "/api/v0/auth/login")
-        || (path.starts_with("/api/v1/restores/") && path.ends_with("/status"))
+    matches!(
+        path,
+        "/healthz" | "/readyz" | "/api/v1/auth/login" | "/api/v1/auth/refresh"
+    ) || (path.starts_with("/api/v1/restores/") && path.ends_with("/status"))
         || path.starts_with("/api-doc/")
         || path == "/swagger-ui"
         || path.starts_with("/swagger-ui/")
@@ -43,7 +45,16 @@ async fn resolve_auth(req: &ServiceRequest, backend: &AppContext) -> ResolvedAut
         None => return ResolvedAuth::Missing,
     };
     match crate::services::authentication::authenticate_bearer_token(backend, &token).await {
-        Ok(token_meta) => ResolvedAuth::Authenticated { token, token_meta },
+        Ok(token_meta) => {
+            tracing::Span::current().record("token_id", token_meta.id().id());
+            crate::services::credential_activity::observe(
+                backend,
+                token_meta.id(),
+                crate::services::credential_activity::request_source(req.request()),
+            )
+            .await;
+            ResolvedAuth::Authenticated { token, token_meta }
+        }
         Err(error) => ResolvedAuth::Invalid { token, error },
     }
 }
@@ -84,14 +95,15 @@ mod tests {
         for path in [
             "/healthz",
             "/readyz",
-            "/api/v0/auth/login",
+            "/api/v1/auth/login",
+            "/api/v1/auth/refresh",
             "/api-doc/openapi.json",
             "/swagger-ui",
             "/swagger-ui/index.html",
         ] {
             assert!(is_public_path(path), "expected {path} to be public");
         }
-        assert!(!is_public_path("/api/v0/auth/logout"));
+        assert!(!is_public_path("/api/v1/auth/logout"));
         assert!(!is_public_path("/api/v1/classes"));
     }
 }

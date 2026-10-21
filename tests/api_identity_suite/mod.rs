@@ -8,3 +8,5 @@ mod service_accounts;
 mod users;
 
 mod credential_approvals;
+
+mod sessions;

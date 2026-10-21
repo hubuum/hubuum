@@ -221,12 +221,28 @@
       "migration": "reset any existing empty-password credentials before upgrading; they cannot log in afterward.",
       "changelog_entry": "Reject empty plaintext passwords at creation, update, reset, import, and login",
       "fingerprints": [
-        "010207fd41bb",
         "69d449b066bd",
         "7994d5e46cb8",
         "79fc3f3c525d",
         "342208a1f4f4",
         "b4a1f53e34e7"
+      ]
+    },
+    {
+      "id": "interactive-session-auth-v1",
+      "baseline": "v0.0.19",
+      "expires": "2027-01-31",
+      "reason": "Interactive sessions deliberately replace legacy human authentication with client-bound, short-lived access and single-use refresh credentials; old server clients are unsupported.",
+      "migration": "Apply the session migration, upgrade all server replicas and frontend/SDK consumers together, clear existing BFF sessions, and sign in again.",
+      "changelog_entry": "**Breaking:** interactive human login now uses `/api/v1/auth/login` with a",
+      "fingerprints": [
+        "10cdb197d317",
+        "2683f57cc412",
+        "52a123706f39",
+        "979170b2f9e1",
+        "bc5935e5df48",
+        "c6a2b668b159",
+        "fb31899083ff"
       ]
     }
   ]

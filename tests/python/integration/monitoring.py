@@ -6,6 +6,7 @@ health checks, metrics, recording rules and alert durations remain real.
 """
 
 from pathlib import Path
+from datetime import datetime, timezone
 import argparse
 import base64
 import http.cookiejar
@@ -86,6 +87,7 @@ class Installation:
         self.project = 'hubuum-monitoring-' + uuid.uuid4().hex[:12]
         self.image, self.mode = image, mode
         self.token = None
+        self.session = None
         self.context = None
         self.report = {'mode': mode, 'image': image, 'project': self.project}
         self.owned_volumes = set()
@@ -125,6 +127,7 @@ class Installation:
         adapter = '''#!/usr/bin/env python3
 import os, re, shutil, sys
 from pathlib import Path
+from datetime import datetime, timezone
 args = sys.argv[1:]
 if Path(sys.argv[0]).name == 'curl':
     prefix = 'https://raw.githubusercontent.com/hubuum/hubuum/main/observability/'
@@ -181,6 +184,15 @@ os.execv(ENGINE, [ENGINE, *args])
             key = 'PROMETHEUS_PASSWORD' if auth == 'prometheus' else 'GRAFANA_ADMIN_PASSWORD'
             auth = 'Basic ' + base64.b64encode(('admin:' + self.values()[key]).encode()).decode()
         elif auth == 'api':
+            if self.session and (datetime.fromisoformat(self.session['access_expires_at'])
+                                 - datetime.now(timezone.utc)).total_seconds() < 30:
+                current, self.session = self.session, None
+                self.token = None
+                code, renewed = self.request('/api/v1/auth/refresh', payload={
+                    'client_id': 'hubuum-monitoring-test', 'refresh_token': current['refresh_token'],
+                })
+                require(code == 200, 'Hubuum session refresh failed')
+                self.session, self.token = renewed, renewed['access_token']
             auth = 'Bearer ' + self.token
         if auth:
             headers['Authorization'] = auth
@@ -271,9 +283,10 @@ os.execv(ENGINE, [ENGINE, *args])
         output = self.compose('exec', '-T', 'hubuum-api', 'hubuum-admin', '--reset-password', 'admin')
         match = re.search(r'Password for user admin reset to: (\S+)', output)
         require(match, 'Could not obtain the temporary Hubuum administrator password')
-        code, session = self.request('/api/v0/auth/login', payload={'name': 'admin', 'password': match[1]})
+        code, session = self.request('/api/v1/auth/login', payload={'client_id': 'hubuum-monitoring-test', 'name': 'admin', 'password': match[1]})
         require(code == 200, 'Hubuum login failed')
-        self.token = session['token']
+        self.session = session
+        self.token = session['access_token']
         self.report['authentication'] = 'anonymous/incorrect passwords rejected; native secure Grafana session works'
 
     def task(self, path, payload):

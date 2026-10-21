@@ -37,7 +37,8 @@ use crate::traits::{AuthzSubject, GroupAccessors, PrincipalIdApplicationExt};
 use std::collections::BTreeMap;
 
 pub fn config(cfg: &mut web::ServiceConfig) {
-    cfg.service(create_token)
+    cfg.service(token_activity)
+        .service(create_token)
         .service(list_tokens)
         .service(get_token)
         .service(renew_token)
@@ -199,7 +200,13 @@ pub async fn create_token(
     )
     .await?;
     let event_context = requestor.event_context(&req);
-    let issued = credential_approvals::mint_token(&context, approved, &event_context).await?;
+    let issued = credential_approvals::mint_token(
+        &context,
+        approved,
+        &event_context,
+        crate::services::credential_activity::request_source(&req),
+    )
+    .await?;
 
     Ok(ApiResponse::new_no_store(
         LoginResponse::from_issued(&issued),
@@ -326,7 +333,13 @@ pub async fn renew_token(
         },
     )
     .await?;
-    let issued = credential_approvals::mint_token(&context, approved, &event_context).await?;
+    let issued = credential_approvals::mint_token(
+        &context,
+        approved,
+        &event_context,
+        crate::services::credential_activity::request_source(&req),
+    )
+    .await?;
 
     Ok(ApiResponse::new_no_store(
         LoginResponse::from_issued(&issued),
@@ -621,4 +634,40 @@ pub async fn delete_principal_settings(
     )
     .await?;
     Ok(ApiResponse::no_content_with_etag(reset.entity_tag()?))
+}
+
+#[utoipa::path(get, path = "/api/v1/iam/principals/{principal_id}/tokens/{token_id}/activity", tag = "principals", security(("bearer_auth" = [])),
+    params(("principal_id" = i32, Path, description = "Credential owner"), ("token_id" = i32, Path, description = "Retained token"),
+    ("offset" = Option<usize>, Query, description = "Source offset, 0-256"), ("limit" = Option<usize>, Query, description = "Page size, 1-100; default 50")),
+    responses((status = 200, description = "Best-effort creation and recent-source evidence", body = crate::models::credential_activity::CredentialActivityResponse),
+    (status = 400, description = "Invalid pagination", body = ApiErrorResponse), (status = 404, description = "Credential not found or not visible", body = ApiErrorResponse)))]
+#[get("/{principal_id}/tokens/{token_id}/activity")]
+pub async fn token_activity(
+    context: AppContext,
+    requestor: ManagementAccess,
+    path: web::Path<TokenPath>,
+    query: web::Query<crate::models::credential_activity::ActivityPageQuery>,
+) -> Result<impl Responder, ApiError> {
+    use crate::storage::{AuthenticationStorage, storage_handle};
+    let path = path.into_inner();
+    let principal = path.principal_id.principal(&context).await?;
+    ensure_can_manage_principal(&context, &requestor, &principal).await?;
+    let policy = crate::config::get_config()?.credential_activity_policy()?;
+    let request = hubuum_storage_core::StorageActivityQuery::try_new(
+        path.principal_id,
+        path.token_id,
+        query.offset,
+        query.limit,
+        policy,
+    )
+    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let activity = storage_handle(&context)
+        .credential_activity(request)
+        .await?;
+    Ok(ApiResponse::new_no_store(
+        crate::models::credential_activity::CredentialActivityResponse::new(
+            activity, &query, policy,
+        ),
+        StatusCode::OK,
+    ))
 }

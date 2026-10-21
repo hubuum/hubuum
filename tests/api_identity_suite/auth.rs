@@ -3,7 +3,8 @@ mod tests {
     use std::time::Duration;
 
     use crate::middlewares::ProxyTrust;
-    use crate::models::user::{LoginUser, MAX_LOGIN_NAME_CHARACTERS};
+    use crate::models::auth_session::SessionLoginRequest as LoginUser;
+    use crate::models::user::MAX_LOGIN_NAME_CHARACTERS;
     use crate::test_support::TestActiveTokens;
     use crate::test_support::{
         LOGIN_RATE_LIMIT_TEST_LOCK, integration_test_config, postgres_test_pool,
@@ -18,12 +19,12 @@ mod tests {
     use hubuum_storage_postgres::diesel_async_prelude::*;
     use hubuum_storage_postgres::{PostgresStorageError, with_connection};
 
-    const LOGIN_ENDPOINT: &str = "/api/v0/auth/login";
-    const AUTH_PROVIDERS_ENDPOINT: &str = "/api/v0/auth/providers";
-    const LOGOUT_ENDPOINT: &str = "/api/v0/auth/logout";
-    const LOGOUT_ALL_FOR_OTHER_USER_ENDPOINT: &str = "/api/v0/auth/logout/uid/";
-    const LOGOUT_SPECIFIC_TOKEN: &str = "/api/v0/auth/logout/token";
-    const VALIDATE_TOKEN_ENDPOINT: &str = "/api/v0/auth/validate";
+    const LOGIN_ENDPOINT: &str = "/api/v1/auth/login";
+    const AUTH_PROVIDERS_ENDPOINT: &str = "/api/v1/auth/providers";
+    const LOGOUT_ENDPOINT: &str = "/api/v1/auth/logout";
+    const LOGOUT_ALL_FOR_OTHER_USER_ENDPOINT: &str = "/api/v1/auth/logout/uid/";
+    const LOGOUT_SPECIFIC_TOKEN: &str = "/api/v1/auth/logout/token";
+    const VALIDATE_TOKEN_ENDPOINT: &str = "/api/v1/auth/validate";
 
     async fn lock_auth_test_state() -> TestMutexGuard {
         lock_test_mutex(&LOGIN_RATE_LIMIT_TEST_LOCK).await
@@ -44,6 +45,7 @@ mod tests {
         )
         .await;
         let credentials = LoginUser {
+            client_id: "test".into(),
             identity_scope: None,
             name: scope.scoped_name("canceled-login"),
             password: "unused-password".to_string(),
@@ -98,7 +100,7 @@ mod tests {
             .await;
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let body: crate::api::handlers::auth::AuthProvidersResponse =
+        let body: crate::api::v1::handlers::auth::AuthProvidersResponse =
             test::read_body_json(resp).await;
         assert_eq!(
             body.providers.as_slice().first().map(String::as_str),
@@ -131,6 +133,7 @@ mod tests {
 
         // Test wrong password
         let login_info = web::Form(LoginUser {
+            client_id: "test".into(),
             identity_scope: None,
             name: new_user.name(&pool).await.unwrap(),
             password: "wrongpassword".to_string(),
@@ -151,6 +154,7 @@ mod tests {
         );
 
         let login_info_ok = web::Form(LoginUser {
+            client_id: "test".into(),
             identity_scope: None,
             name: new_user.name(&pool).await.unwrap(),
             password: "testpassword".to_string(),
@@ -189,15 +193,17 @@ mod tests {
         let body_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
         assert!(
-            body_json.get("token").is_some(),
+            body_json.get("access_token").is_some(),
             "Response does not contain token"
         );
-        let returned_expiry =
-            serde_json::from_value::<chrono::NaiveDateTime>(body_json["expires_at"].clone())
-                .expect("login response should contain a valid expiry");
+        let returned_expiry = serde_json::from_value::<chrono::DateTime<chrono::Utc>>(
+            body_json["access_expires_at"].clone(),
+        )
+        .expect("login response should contain a valid expiry")
+        .naive_utc();
 
         let token_value = body_json
-            .get("token")
+            .get("access_token")
             .unwrap()
             .as_str()
             .unwrap()
@@ -221,7 +227,7 @@ mod tests {
         assert_eq!(stored_token.1, Some(returned_expiry));
         assert_eq!(
             returned_expiry,
-            stored_token.0 + chrono::Duration::hours(config.token_lifetime_hours)
+            stored_token.0 + chrono::Duration::seconds(config.session_access_seconds)
         );
 
         // Validate token via endpoint.
@@ -257,6 +263,7 @@ mod tests {
         .await;
 
         let login_info = web::Form(LoginUser {
+            client_id: "test".into(),
             identity_scope: None,
             name: "nosuchuser".to_string(),
             password: "nosuchpassword".to_string(),
@@ -358,6 +365,7 @@ mod tests {
         )
         .await;
         let login = LoginUser {
+            client_id: "test".into(),
             identity_scope: None,
             name: "a".repeat(MAX_LOGIN_NAME_CHARACTERS + 1),
             password: "password".to_string(),
@@ -641,6 +649,7 @@ mod tests {
 
         for _ in 0..max_attempts {
             let login_info = web::Form(LoginUser {
+                client_id: "test".into(),
                 identity_scope: None,
                 name: "forwarded-ip-user".to_string(),
                 password: "wrongpassword".to_string(),
@@ -660,6 +669,7 @@ mod tests {
         // The throttled bucket is keyed to the resolved client 198.51.100.10; a different
         // genuine client behind the same proxy is not affected.
         let other_client_login = web::Form(LoginUser {
+            client_id: "test".into(),
             identity_scope: None,
             name: "forwarded-ip-user".to_string(),
             password: "wrongpassword".to_string(),
@@ -705,6 +715,7 @@ mod tests {
 
         for attempt in 0..max_attempts {
             let login_info = web::Form(LoginUser {
+                client_id: "test".into(),
                 identity_scope: None,
                 name: "spoof-victim".to_string(),
                 password: "wrongpassword".to_string(),
@@ -722,6 +733,7 @@ mod tests {
         }
 
         let login_info = web::Form(LoginUser {
+            client_id: "test".into(),
             identity_scope: None,
             name: "spoof-victim".to_string(),
             password: "wrongpassword".to_string(),
@@ -768,6 +780,7 @@ mod tests {
         // Each distinct username keeps its own (user, ip) bucket at a single failure.
         for attempt in 0..per_ip {
             let login_info = web::Form(LoginUser {
+                client_id: "test".into(),
                 identity_scope: None,
                 name: format!("spray-user-{attempt}"),
                 password: "wrongpassword".to_string(),
@@ -786,6 +799,7 @@ mod tests {
 
         // A brand-new username from the same source IP is now throttled by the per-IP cap.
         let login_info = web::Form(LoginUser {
+            client_id: "test".into(),
             identity_scope: None,
             name: "spray-user-final".to_string(),
             password: "wrongpassword".to_string(),
@@ -822,6 +836,7 @@ mod tests {
 
         for _ in 0..max_attempts {
             let login_info = web::Form(LoginUser {
+                client_id: "test".into(),
                 identity_scope: None,
                 name: "throttle-user".to_string(),
                 password: "wrongpassword".to_string(),
@@ -837,6 +852,7 @@ mod tests {
         }
 
         let login_info = web::Form(LoginUser {
+            client_id: "test".into(),
             identity_scope: None,
             name: "throttle-user".to_string(),
             password: "wrongpassword".to_string(),
@@ -851,6 +867,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
 
         let other_user_login = web::Form(LoginUser {
+            client_id: "test".into(),
             identity_scope: None,
             name: "other-throttle-user".to_string(),
             password: "wrongpassword".to_string(),

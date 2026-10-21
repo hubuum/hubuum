@@ -1,3 +1,4 @@
+mod auth_sessions;
 use hubuum_storage_core::{EventSinkGrantAction, StorageAuditSubject, StorageEventSinkGrantChange};
 mod authentication;
 mod authorization_resources;

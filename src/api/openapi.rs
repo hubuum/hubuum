@@ -1,4 +1,5 @@
-use crate::api::handlers::{auth, meta, probes};
+use crate::api::handlers::{meta, probes};
+use crate::api::v1::handlers::auth;
 use crate::api::v1::handlers::collection_event_sinks;
 use crate::api::v1::handlers::history::HistoryResponse;
 use crate::api::v1::handlers::{
@@ -15,6 +16,9 @@ use crate::config::running::{
     TlsConfig,
 };
 use crate::events::EventResponse;
+use crate::models::auth_session::{
+    RefreshToken, SessionLoginRequest, SessionRefreshRequest, SessionResponse,
+};
 use crate::models::task::TaskDiscoveryTarget;
 use crate::models::task::{
     RebuildTaskDetails, RemoteCallTaskDetails, RetainedBackupDetails, RetainedExportDetails,
@@ -111,6 +115,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         meta::clear_login_rate_limit,
         auth::get_auth_providers,
         auth::login,
+        auth::refresh,
         auth::logout,
         auth::logout_all,
         auth::logout_token,
@@ -140,6 +145,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         credential_approvals::create_approval,
         credential_approvals::get_approval,
         principals::create_token,
+        principals::token_activity,
         principals::list_tokens,
         principals::get_token,
         principals::renew_token,
@@ -359,6 +365,10 @@ use utoipa::{Modify, OpenApi, ToSchema};
             MessageResponse,
             probes::ProbeResponse,
             LoginResponse,
+            crate::models::credential_activity::CredentialActivityResponse,
+            crate::models::credential_activity::CredentialSourceResponse,
+            crate::models::credential_activity::CredentialCreationResponse,
+            SessionLoginRequest, SessionRefreshRequest, SessionResponse, RefreshToken,
             CountsResponse,
             meta::DbStateResponse,
             meta::TaskQueueStateResponse,
@@ -1611,13 +1621,14 @@ mod tests {
         let expected_paths = [
             "/healthz",
             "/readyz",
-            "/api/v0/auth/login",
-            "/api/v0/auth/providers",
-            "/api/v0/auth/logout",
-            "/api/v0/auth/logout_all",
-            "/api/v0/auth/logout/token",
-            "/api/v0/auth/logout/uid/{user_id}",
-            "/api/v0/auth/validate",
+            "/api/v1/auth/login",
+            "/api/v1/auth/refresh",
+            "/api/v1/auth/providers",
+            "/api/v1/auth/logout",
+            "/api/v1/auth/logout_all",
+            "/api/v1/auth/logout/token",
+            "/api/v1/auth/logout/uid/{user_id}",
+            "/api/v1/auth/validate",
             "/api/v0/meta/db",
             "/api/v0/meta/counts",
             "/api/v0/meta/tasks",
@@ -1650,6 +1661,7 @@ mod tests {
             "/api/v1/iam/me/settings",
             "/api/v1/iam/principals/{principal_id}/tokens",
             "/api/v1/iam/principals/{principal_id}/tokens/{token_id}",
+            "/api/v1/iam/principals/{principal_id}/tokens/{token_id}/activity",
             "/api/v1/iam/principals/{principal_id}/tokens/{token_id}/renew",
             "/api/v1/iam/principals/{principal_id}/tokens/{token_id}/revoke",
             "/api/v1/iam/principals/{principal_id}/groups",
@@ -2119,7 +2131,7 @@ mod tests {
         assert!(json.pointer("/paths/~1api~1v1~1iam~1users/get").is_some());
         assert!(json.pointer("/paths/~1api~1v1~1iam~1users/post").is_some());
         assert!(
-            json.pointer("/paths/~1api~1v0~1auth~1login/post/responses/429")
+            json.pointer("/paths/~1api~1v1~1auth~1login/post/responses/429")
                 .is_some()
         );
         assert!(json.pointer("/paths/~1api~1v1~1exports/post").is_some());
@@ -2369,8 +2381,10 @@ mod tests {
 
                 let is_public_probe =
                     matches!(path.as_str(), "/healthz" | "/readyz") && method == "get";
-                let is_login = path == "/api/v0/auth/login" && method == "post";
-                let is_provider_discovery = path == "/api/v0/auth/providers" && method == "get";
+                let is_login =
+                    matches!(path.as_str(), "/api/v1/auth/login" | "/api/v1/auth/refresh")
+                        && method == "post";
+                let is_provider_discovery = path == "/api/v1/auth/providers" && method == "get";
                 let is_client_config = path == "/api/v1/config" && method == "get";
                 let is_restore_status =
                     path == "/api/v1/restores/{restore_id}/status" && method == "get";

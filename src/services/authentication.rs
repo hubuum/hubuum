@@ -1,31 +1,28 @@
 use chrono::SubsecRound;
 use hubuum_domain::PrincipalId;
-use hubuum_events_core::{EventContext, EventSubject};
+use hubuum_events_core::EventSubject;
 use tracing::{Instrument, field, info_span};
 
 use crate::auth::AuthenticatedLogin;
 use crate::errors::ApiError;
 use crate::models::principal::load_principal_by_id;
-use crate::models::token::configured_token_issuance_policy;
 use crate::models::user::{ValidatedLogin, auth_failure};
-use crate::models::{IssuedToken, Token, configured_token_lifetime};
+use crate::models::{Token, configured_token_lifetime};
 use crate::permissions::AppContext;
 use crate::storage::UserStorage;
 use crate::storage::{
     AuthenticationStorage, StorageAuthenticatedToken, StorageAuthenticationAttempt, StorageContext,
-    StorageLogin, StorageTokenCreate, StorageTokenFormat, StorageTokenMigrationOutcome,
-    StorageUser, TokenStorage, storage_handle,
+    StorageLogin, StorageTokenFormat, StorageTokenMigrationOutcome, StorageUser, storage_handle,
 };
-use crate::utilities::auth::{generate_token, verify_dummy_password_async, verify_password_async};
+use crate::utilities::auth::{verify_dummy_password_async, verify_password_async};
 use tracing::{error, warn};
 
 /// Commit a login token and immutable event-time subject using the configured
 /// authorization policy, after provider authentication and identity synchronization.
-pub(crate) async fn issue_login_token(
+pub(crate) async fn login_evidence(
     context: &AppContext,
     authenticated: &AuthenticatedLogin,
-    event_context: &EventContext,
-) -> Result<IssuedToken, ApiError> {
+) -> Result<StorageLogin, ApiError> {
     let user = authenticated.user();
     let principal = load_principal_by_id(context, user.id).await?;
     let is_admin = context.is_admin(user).await?;
@@ -38,24 +35,8 @@ pub(crate) async fn issue_login_token(
         is_admin,
     )
     .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
-    let token = generate_token();
-    let request = StorageTokenCreate::for_login(
-        StorageLogin::try_new(subject, authenticated.credential().clone())
-            .map_err(|_| ApiError::Unauthorized("Authentication failed".into()))?,
-        token.storage_digest()?,
-        super::identity::token_policy(configured_token_issuance_policy()?),
-        event_context,
-    );
-    let metadata = storage_handle(context)
-        .create_token(request)
-        .await?
-        .into_value();
-    let expires_at = metadata.expires_at().ok_or_else(|| {
-        ApiError::InternalServerError(
-            "newly issued token is missing its persisted expiry".to_string(),
-        )
-    })?;
-    Ok(IssuedToken::new(token, expires_at.naive_utc()))
+    StorageLogin::try_new(subject, authenticated.credential().clone())
+        .map_err(|_| ApiError::Unauthorized("Authentication failed".into()))
 }
 
 /// Validate one presented bearer token through the selected complete storage
@@ -198,6 +179,26 @@ pub(crate) async fn authenticate_local(
             Err(auth_failure())
         }
     }
+}
+
+#[cfg(test)]
+pub(crate) async fn issue_login_token(
+    context: &AppContext,
+    authenticated: &AuthenticatedLogin,
+    event_context: &hubuum_events_core::EventContext,
+) -> Result<crate::models::IssuedToken, ApiError> {
+    let response = super::auth_sessions::issue(
+        context,
+        authenticated,
+        hubuum_storage_core::SessionClientId::try_new("test").unwrap(),
+        event_context.clone(),
+        hubuum_storage_core::ObservedSource::Unavailable,
+    )
+    .await?;
+    Ok(crate::models::IssuedToken::new(
+        Token(response.access_token),
+        response.access_expires_at.naive_utc(),
+    ))
 }
 
 #[cfg(test)]

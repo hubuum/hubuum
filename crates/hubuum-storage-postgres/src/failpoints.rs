@@ -24,6 +24,7 @@ use crate::{PostgresConnection, PostgresStorageError};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PostgresFaultPoint {
     AuthenticationBeforeActivityUpdate,
+    CredentialActivityBeforeWrite,
     CollectionCreateAfterRecords,
     ComputedRepairBeforeLocks,
     EventDeliveryAfterClaim,
@@ -48,6 +49,7 @@ impl PostgresFaultPoint {
     const fn as_str(self) -> &'static str {
         match self {
             Self::AuthenticationBeforeActivityUpdate => "authentication_before_activity_update",
+            Self::CredentialActivityBeforeWrite => "credential_activity_before_write",
             Self::CollectionCreateAfterRecords => "collection_create_after_records",
             Self::ComputedRepairBeforeLocks => "computed_repair_before_locks",
             Self::EventDeliveryAfterClaim => "event_delivery_after_claim",

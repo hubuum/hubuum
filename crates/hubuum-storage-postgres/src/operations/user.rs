@@ -685,6 +685,7 @@ async fn revoke_all_tokens(
     connection: &mut PostgresConnection,
     principal_id: i32,
 ) -> Result<usize, PostgresStorageError> {
+    super::auth_sessions::revoke_principal(connection, principal_id).await?;
     diesel::update(
         crate::schema::tokens::table
             .filter(crate::schema::tokens::principal_id.eq(principal_id))

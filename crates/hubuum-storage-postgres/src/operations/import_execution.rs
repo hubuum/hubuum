@@ -1809,7 +1809,8 @@ async fn upsert_principal(
                 })
                 .unwrap_or_else(|| imported_timestamps(None));
             if let Some(existing) = existing {
-                if supplied_password.is_some() {
+                if supplied_password.is_some() || anonymized_at.is_some() {
+                    super::auth_sessions::revoke_principal(connection, principal_id).await?;
                     diesel::update(
                         crate::schema::tokens::table
                             .filter(crate::schema::tokens::principal_id.eq(principal_id))

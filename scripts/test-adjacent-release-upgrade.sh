@@ -884,9 +884,9 @@ password_output="$(
 restored_admin_password="${password_output##*reset to: }"
 [[ -n "$restored_admin_password" && "$restored_admin_password" != "$password_output" ]]
 admin_token=""
-api_request restored-api POST /api/v0/auth/login \
-  "{\"name\":\"admin\",\"password\":\"$restored_admin_password\"}"
-admin_token="$(jq --exit-status --raw-output '.token' <<< "$api_body")"
+api_request restored-api POST /api/v1/auth/login \
+  "{\"client_id\":\"upgrade-test\",\"name\":\"admin\",\"password\":\"$restored_admin_password\"}"
+admin_token="$(jq --exit-status --raw-output '.access_token' <<< "$api_body")"
 restored_authentication=true
 
 api_request restored-api GET "/api/v1/collections/$collection_id"

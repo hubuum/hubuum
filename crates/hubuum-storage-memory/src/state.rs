@@ -134,6 +134,8 @@ impl MemoryState {
             membership_sources: Vec::new(),
             authorization_revisions: BTreeMap::new(),
             tokens: BTreeMap::new(),
+            sessions: BTreeMap::new(),
+            credential_activity: BTreeMap::new(),
             credential_approvals: BTreeMap::new(),
             credential_approval_digests: BTreeMap::new(),
             next_credential_approval_id: 1,

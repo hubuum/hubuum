@@ -62,6 +62,11 @@ pub struct ClientAuthenticationConfig {
     /// explicit expiry.
     #[schema(minimum = 1)]
     pub default_token_lifetime_hours: i64,
+    pub session_access_seconds: i64,
+    pub session_idle_seconds: i64,
+    pub session_absolute_seconds: i64,
+    pub session_retention_seconds: i64,
+
     /// Largest lifetime accepted for an explicitly requested token expiry.
     #[schema(minimum = 1)]
     pub max_token_lifetime_hours: i64,
@@ -208,6 +213,15 @@ pub struct RemoteCallConfig {
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct AuthenticationConfig {
     pub token_lifetime_hours: i64,
+    pub credential_activity_retention_days: i64,
+    pub credential_activity_source_cap: usize,
+    pub credential_activity_enabled: bool,
+
+    pub session_access_seconds: i64,
+    pub session_idle_seconds: i64,
+    pub session_absolute_seconds: i64,
+    pub session_retention_seconds: i64,
+
     pub max_token_lifetime_hours: i64,
     pub token_retention_purge_enabled: bool,
     pub token_retention_days: i64,
@@ -308,6 +322,11 @@ impl From<&RunningConfig> for ClientConfig {
             },
             authentication: ClientAuthenticationConfig {
                 default_token_lifetime_hours: config.authentication.token_lifetime_hours,
+                session_access_seconds: config.authentication.session_access_seconds,
+                session_idle_seconds: config.authentication.session_idle_seconds,
+                session_absolute_seconds: config.authentication.session_absolute_seconds,
+                session_retention_seconds: config.authentication.session_retention_seconds,
+
                 max_token_lifetime_hours: config.authentication.max_token_lifetime_hours,
             },
         }
@@ -456,6 +475,15 @@ impl RunningConfig {
             },
             authentication: AuthenticationConfig {
                 token_lifetime_hours: config.token_lifetime_hours,
+                credential_activity_retention_days: config.credential_activity_retention_days,
+                credential_activity_source_cap: config.credential_activity_source_cap,
+                credential_activity_enabled: config.credential_activity_enabled,
+
+                session_access_seconds: config.session_access_seconds,
+                session_idle_seconds: config.session_idle_seconds,
+                session_absolute_seconds: config.session_absolute_seconds,
+                session_retention_seconds: config.session_retention_seconds,
+
                 max_token_lifetime_hours: config.max_token_lifetime_hours,
                 token_retention_purge_enabled: config.token_retention_purge_enabled,
                 token_retention_days: config.token_retention_days,

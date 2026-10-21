@@ -16,365 +16,6 @@
     }
   ],
   "paths": {
-    "/api/v0/auth/login": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Post Api V0 Auth Login",
-        "description": "Auto-generated documentation for POST /api/v0/auth/login.",
-        "operationId": "postApiV0AuthLogin",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LoginUser"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Token and authoritative expiry issued",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "no-store"
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LoginResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Password is empty or login fields exceed their supported lengths",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too many login attempts",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal server error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v0/auth/logout": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Post Api V0 Auth Logout",
-        "description": "Auto-generated documentation for POST /api/v0/auth/logout.",
-        "operationId": "postApiV0AuthLogout",
-        "responses": {
-          "200": {
-            "description": "Token revoked",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MessageResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal server error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v0/auth/logout/token": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Post Api V0 Auth Logout Token",
-        "description": "Auto-generated documentation for POST /api/v0/auth/logout/token.",
-        "operationId": "postApiV0AuthLogoutToken",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LogoutTokenRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Token revoked",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MessageResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal server error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v0/auth/logout/uid/{user_id}": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Post Api V0 Auth Logout Uid By User Id",
-        "description": "Auto-generated documentation for POST /api/v0/auth/logout/uid/{user_id}.",
-        "operationId": "postApiV0AuthLogoutUidByUserId",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "path",
-            "description": "User ID to revoke all tokens for",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "All tokens revoked for user",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MessageResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal server error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v0/auth/logout_all": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Post Api V0 Auth Logout All",
-        "description": "Auto-generated documentation for POST /api/v0/auth/logout_all.",
-        "operationId": "postApiV0AuthLogoutAll",
-        "responses": {
-          "200": {
-            "description": "All tokens revoked for current user",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MessageResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal server error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
-    "/api/v0/auth/providers": {
-      "get": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Get Api V0 Auth Providers",
-        "description": "Auto-generated documentation for GET /api/v0/auth/providers.",
-        "operationId": "getApiV0AuthProviders",
-        "responses": {
-          "200": {
-            "description": "Configured authentication provider names",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AuthProvidersResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal server error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v0/auth/validate": {
-      "get": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Get Api V0 Auth Validate",
-        "description": "Auto-generated documentation for GET /api/v0/auth/validate.",
-        "operationId": "getApiV0AuthValidate",
-        "responses": {
-          "200": {
-            "description": "Token is valid",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MessageResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
     "/api/v0/meta/counts": {
       "get": {
         "tags": [
@@ -898,6 +539,407 @@
           },
           "403": {
             "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Api V1 Auth Login",
+        "description": "Auto-generated documentation for POST /api/v1/auth/login.",
+        "operationId": "postApiV1AuthLogin",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Token and authoritative expiry issued",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Password is empty or login fields exceed their supported lengths",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many login attempts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Api V1 Auth Logout",
+        "description": "Auto-generated documentation for POST /api/v1/auth/logout.",
+        "operationId": "postApiV1AuthLogout",
+        "responses": {
+          "200": {
+            "description": "Token revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/logout/token": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Api V1 Auth Logout Token",
+        "description": "Auto-generated documentation for POST /api/v1/auth/logout/token.",
+        "operationId": "postApiV1AuthLogoutToken",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LogoutTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Token revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/logout/uid/{user_id}": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Api V1 Auth Logout Uid By User Id",
+        "description": "Auto-generated documentation for POST /api/v1/auth/logout/uid/{user_id}.",
+        "operationId": "postApiV1AuthLogoutUidByUserId",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "User ID to revoke all tokens for",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "All tokens revoked for user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/logout_all": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Api V1 Auth Logout All",
+        "description": "Auto-generated documentation for POST /api/v1/auth/logout_all.",
+        "operationId": "postApiV1AuthLogoutAll",
+        "responses": {
+          "200": {
+            "description": "All interactive sessions revoked; durable credentials retained",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/providers": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Get Api V1 Auth Providers",
+        "description": "Auto-generated documentation for GET /api/v1/auth/providers.",
+        "operationId": "getApiV1AuthProviders",
+        "responses": {
+          "200": {
+            "description": "Configured authentication provider names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthProvidersResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/refresh": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Api V1 Auth Refresh",
+        "description": "Auto-generated documentation for POST /api/v1/auth/refresh.",
+        "operationId": "postApiV1AuthRefresh",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionRefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Rotated access and refresh credentials; no-store",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/validate": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Get Api V1 Auth Validate",
+        "description": "Auto-generated documentation for GET /api/v1/auth/validate.",
+        "operationId": "getApiV1AuthValidate",
+        "responses": {
+          "200": {
+            "description": "Token is valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
             "content": {
               "application/json": {
                 "schema": {
@@ -19085,6 +19127,95 @@
         ]
       }
     },
+    "/api/v1/iam/principals/{principal_id}/tokens/{token_id}/activity": {
+      "get": {
+        "tags": [
+          "principals"
+        ],
+        "summary": "Get Api V1 Iam Principals By Principal Id Tokens By Token Id Activity",
+        "description": "Auto-generated documentation for GET /api/v1/iam/principals/{principal_id}/tokens/{token_id}/activity.",
+        "operationId": "getApiV1IamPrincipalsByPrincipalIdTokensByTokenIdActivity",
+        "parameters": [
+          {
+            "name": "principal_id",
+            "in": "path",
+            "description": "Credential owner",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "token_id",
+            "in": "path",
+            "description": "Retained token",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Source offset, 0-256",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-100; default 50",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Best-effort creation and recent-source evidence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialActivityResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid pagination",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Credential not found or not visible",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/iam/principals/{principal_id}/tokens/{token_id}/renew": {
       "post": {
         "tags": [
@@ -24694,6 +24825,13 @@
         "type": "object",
         "required": [
           "token_lifetime_hours",
+          "credential_activity_retention_days",
+          "credential_activity_source_cap",
+          "credential_activity_enabled",
+          "session_access_seconds",
+          "session_idle_seconds",
+          "session_absolute_seconds",
+          "session_retention_seconds",
           "max_token_lifetime_hours",
           "token_retention_purge_enabled",
           "token_retention_days",
@@ -24722,6 +24860,17 @@
               "null"
             ]
           },
+          "credential_activity_enabled": {
+            "type": "boolean"
+          },
+          "credential_activity_retention_days": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "credential_activity_source_cap": {
+            "type": "integer",
+            "minimum": 0
+          },
           "login_rate_limit": {
             "$ref": "#/components/schemas/LoginRateLimitConfig"
           },
@@ -24740,6 +24889,22 @@
           },
           "require_stable_token_hash_key": {
             "type": "boolean"
+          },
+          "session_absolute_seconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session_access_seconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session_idle_seconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session_retention_seconds": {
+            "type": "integer",
+            "format": "int64"
           },
           "stable_token_hash_key_configured": {
             "type": "boolean"
@@ -25067,6 +25232,10 @@
         "type": "object",
         "required": [
           "default_token_lifetime_hours",
+          "session_access_seconds",
+          "session_idle_seconds",
+          "session_absolute_seconds",
+          "session_retention_seconds",
           "max_token_lifetime_hours"
         ],
         "properties": {
@@ -25081,6 +25250,22 @@
             "format": "int64",
             "description": "Largest lifetime accepted for an explicitly requested token expiry.",
             "minimum": 1
+          },
+          "session_absolute_seconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session_access_seconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session_idle_seconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session_retention_seconds": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -25747,6 +25932,87 @@
           "total_objects": 42
         }
       },
+      "CredentialActivityResponse": {
+        "type": "object",
+        "required": [
+          "sources",
+          "total",
+          "offset",
+          "limit",
+          "collection_enabled",
+          "best_effort",
+          "retention_days",
+          "source_cap"
+        ],
+        "properties": {
+          "best_effort": {
+            "type": "boolean"
+          },
+          "collection_enabled": {
+            "type": "boolean"
+          },
+          "creation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CredentialCreationResponse",
+                "description": "Null for historical credentials or unavailable issuance evidence."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "next_offset": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "overflow_since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Non-null means at least one distinct source was omitted after reaching the cap."
+          },
+          "retention_days": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Present when observations are shared by the rotating session family."
+          },
+          "source_cap": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CredentialSourceResponse"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "CredentialApprovalRecord": {
         "type": "object",
         "required": [
@@ -25858,6 +26124,39 @@
       "CredentialApprovalSecret": {
         "type": "string",
         "pattern": "^hca1\\.[0-9a-f]{64}$"
+      },
+      "CredentialCreationResponse": {
+        "type": "object",
+        "required": [
+          "issuance_method",
+          "issued_at",
+          "address_method"
+        ],
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "address_method": {
+            "type": "string"
+          },
+          "issuance_method": {
+            "type": "string"
+          },
+          "issued_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "issuer_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
       },
       "CredentialOperation": {
         "oneOf": [
@@ -25990,6 +26289,33 @@
             }
           }
         ]
+      },
+      "CredentialSourceResponse": {
+        "type": "object",
+        "required": [
+          "address_method",
+          "first_seen",
+          "last_seen"
+        ],
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "address_method": {
+            "type": "string"
+          },
+          "first_seen": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_seen": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       },
       "CurrentTokenMetadata": {
         "type": "object",
@@ -34949,6 +35275,9 @@
           }
         }
       },
+      "RefreshToken": {
+        "type": "string"
+      },
       "RelatedClassGraph": {
         "type": "object",
         "required": [
@@ -37236,6 +37565,87 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "SessionLoginRequest": {
+        "type": "object",
+        "required": [
+          "client_id",
+          "name",
+          "password"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "identity_scope": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SessionRefreshRequest": {
+        "type": "object",
+        "required": [
+          "client_id",
+          "refresh_token"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "refresh_token": {
+            "$ref": "#/components/schemas/RefreshToken"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SessionResponse": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "token_type",
+          "access_token",
+          "access_expires_at",
+          "refresh_token",
+          "refresh_expires_at",
+          "absolute_expires_at"
+        ],
+        "properties": {
+          "absolute_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "access_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "access_token": {
+            "type": "string"
+          },
+          "refresh_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "refresh_token": {
+            "$ref": "#/components/schemas/RefreshToken"
+          },
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "token_type": {
+            "type": "string"
           }
         }
       },

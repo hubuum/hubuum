@@ -7,21 +7,27 @@ and response shapes; substitute your URL and values in your HTTP client.
 
 ## Sign in
 
-Authentication uses the existing `/api/v0/auth` routes. Resource operations use
+Authentication uses versioned `/api/v1/auth` routes. Resource operations use
 `/api/v1`. Log in with the account's `name`, not a `username` field:
 
 ```http
-POST /api/v0/auth/login
+POST /api/v1/auth/login
 Content-Type: application/json
 
 {
+  "client_id": "getting-started",
   "name": "alice",
   "password": "<your-password>"
 }
 ```
 
-A successful response includes `token` and `expires_at`. Keep the token private
-and send it as `Authorization: Bearer <token>` on subsequent requests. For an
+A successful response includes `access_token`, `access_expires_at`, `refresh_token`,
+`refresh_expires_at`, and `absolute_expires_at`. Keep both credentials private
+and send only `access_token` as `Authorization: Bearer <token>` on subsequent
+requests. Before access expiry, exchange `refresh_token` once at
+`POST /api/v1/auth/refresh` with the same `client_id`; atomically retain the new
+pair. See [session lifetimes and replay handling](../auth_model.md#interactive-sessions).
+For an
 external identity provider, supply the appropriate `identity_scope`; see
 [external authentication](../external_auth.md).
 

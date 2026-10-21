@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::events::{CorrelationId, RequestProvenance};
 use crate::observability::{metrics, tracing as telemetry};
 
-use super::client_allowlist::{ProxyTrust, extract_client_ip};
+use super::client_allowlist::{ProxyTrust, extract_client_source};
 
 const CORRELATION_ID: HeaderName = HeaderName::from_static("x-correlation-id");
 const REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
@@ -153,7 +153,9 @@ where
             .match_pattern()
             .map(Cow::Owned)
             .unwrap_or_else(|| route_group(&path));
-        let client_ip = extract_client_ip(&req, &self.proxy_trust);
+        let source = extract_client_source(&req, &self.proxy_trust);
+        let client_ip = source.address();
+        req.extensions_mut().insert(source);
         let client_ip_s = client_ip.map(|ip| ip.to_string());
         let span = span!(
             Level::INFO,
@@ -166,6 +168,7 @@ where
             auth.principal.kind = "anonymous",
             request_id = %request_id_s,
             correlation_id = field::Empty,
+            token_id = field::Empty,
             principal_id = field::Empty
         );
         let (remote_parent, invalid_trace_reason) =

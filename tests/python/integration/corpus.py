@@ -1,6 +1,7 @@
 """Generate, inspect and rehearse the committed functional corpus (stdlib only)."""
 
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 import argparse
 import copy
@@ -143,9 +144,19 @@ class Api:
         self.base = base
         self.token = token
         self.password = None
+        self.session = None
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def request(self, method, path, body=None, expected=(200,), headers=None):
+        if self.session and path != "/api/v1/auth/refresh":
+            expires = datetime.fromisoformat(self.session["access_expires_at"])
+            if (expires - datetime.now(timezone.utc)).total_seconds() < 30:
+                current, self.session = self.session, None
+                self.token = ""
+                self.session = self.post("/api/v1/auth/refresh", {
+                    "client_id": "hubuum-corpus", "refresh_token": current["refresh_token"],
+                })
+                self.token = self.session["access_token"]
         request_headers = {"Content-Type": "application/json"}
         if self.token:
             request_headers["Authorization"] = f"Bearer {self.token}"
@@ -325,9 +336,15 @@ class Deployment:
         require(match is not None, "Administrator command did not return a reset password")
         login = Api(api.base)
         login.password = match.group(1)
-        login.token = login.post("/api/v0/auth/login", {
-            "name": username, "password": match.group(1),
-        })["token"]
+        body = {"client_id": "hubuum-corpus", "name": username, "password": match.group(1)}
+        session = login.post("/api/v1/auth/login", body, expected=(200, 404))
+        if session and "access_token" in session:
+            login.session = session
+            login.token = session["access_token"]
+        else:
+            login.token = login.post("/api/v0/auth/login", {
+                "name": username, "password": match.group(1),
+            })["token"]
         return login
 
     def backup(self, database, destination):

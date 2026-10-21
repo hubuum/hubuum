@@ -18,9 +18,9 @@ async fn login(context: &TestContext, user: &User, password: &str) -> Value {
     let response = post_request(
         &context.pool,
         "",
-        "/api/v0/auth/login",
+        "/api/v1/auth/login",
         &json!({
-            "name": user.name(&context.pool).await.unwrap(), "password": password
+            "client_id": "test", "name": user.name(&context.pool).await.unwrap(), "password": password
         }),
     )
     .await;
@@ -70,9 +70,9 @@ async fn login_snapshots_selected_admin_policy(
     };
     let app = test::init_service(App::new().app_data(selected).configure(crate::api::config)).await;
     let response = test::TestRequest::post()
-        .uri("/api/v0/auth/login")
+        .uri("/api/v1/auth/login")
         .set_json(json!({
-            "name": user.name(&context.pool).await.unwrap(),
+            "client_id": "test", "name": user.name(&context.pool).await.unwrap(),
             "password": if local_admin { "testadminpassword" } else { "testpassword" }
         }))
         .send_request(&app)
@@ -103,12 +103,12 @@ async fn authentication_without_login_issuance_does_not_emit_success(#[case] reu
         get_request(
             &context.pool,
             &context.normal_token,
-            "/api/v0/auth/validate",
+            "/api/v1/auth/validate",
         )
         .await
     } else {
-        post_request(&context.pool, "", "/api/v0/auth/login", &json!({
-            "name": context.normal_user.name(&context.pool).await.unwrap(), "password": "wrong-password"
+        post_request(&context.pool, "", "/api/v1/auth/login", &json!({
+            "client_id": "test", "name": context.normal_user.name(&context.pool).await.unwrap(), "password": "wrong-password"
         })).await
     };
     assert_response_status(
@@ -272,7 +272,7 @@ async fn login_notification_matches_event_time_status_and_supports_preview_and_q
             !notification
                 .payload()
                 .to_string()
-                .contains(body["token"].as_str().unwrap())
+                .contains(body["access_token"].as_str().unwrap())
         );
     }
     let response = post_request(
@@ -296,7 +296,7 @@ async fn login_notification_matches_event_time_status_and_supports_preview_and_q
     for secret in [
         password,
         user.password.as_deref().unwrap(),
-        body["token"].as_str().unwrap(),
+        body["access_token"].as_str().unwrap(),
     ] {
         assert!(!serialized.contains(secret));
     }

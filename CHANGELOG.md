@@ -9,6 +9,26 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- **Breaking:** interactive human login now uses `/api/v1/auth/login` with a
+  required `client_id` and returns short-lived access plus single-use rotating
+  refresh credentials. All `/api/v0/auth` routes are removed. Apply the session
+  migration, upgrade all server replicas and frontend/SDK consumers together,
+  clear existing BFF sessions, and sign in again. Refresh replay revokes the
+  whole family; idle and fixed absolute deadlines apply. Existing PAT/service
+  credentials remain valid and require fresh authentication approval to mint.
+  `/api/v1/auth/logout_all` now preserves PATs while revoking human sessions;
+  administrative user-wide revocation still revokes every credential. Session
+  access tokens cannot be renewed into PATs. Stop older API and worker replicas
+  before migration and apply role grants before starting matching binaries. The
+  migration bounds lock waits to 5 seconds and statements to 60 seconds; retry
+  aborted upgrades during maintenance after resolving contention or retention.
+- Credential creation provenance and paginated recent source history at
+  `/api/v1/iam/principals/{principal_id}/tokens/{token_id}/activity`, aggregated
+  across interactive rotations. Collection defaults to a rolling 30-day window
+  and 32 sources, with explicit overflow and best-effort coverage. Proxy source
+  resolution follows the existing trust policy. Activity does not change token
+  ETags, and authenticated request spans include the stable token ID.
+
 - Optional directional class-relation labels and authorized, revision-aware
   `PATCH /api/v1/relations/classes/{relation_id}` editing. Wording follows class
   direction, survives imports, exports, history, and backups, and is available in
@@ -70,6 +90,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   are unchanged.
 
 ### Changed
+
+- **Breaking Rust storage SDK:** `AuthenticationStorage` adapters must implement
+  session creation, rotation, revocation, and retention, plus credential creation
+  provenance and source-history operations. Upgrade custom adapters with the SDK,
+  preserving atomic refresh consumption, replay revocation, and family-wide
+  access invalidation.
 
 - **Breaking Rust storage adapter API:** `ClassRelationStorage` implementations must
   implement `update_class_relation_labels`, preserving authorization targets,
@@ -158,6 +184,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   behavior and dependency-policy enforcement are unchanged.
 
 ### Security
+
+- Update bundled TLS roots to `webpki-root-certs` 1.0.10 for RUSTSEC-2026-0383.
 
 - **Breaking personal computed-field authorization correction:** listings now
   require current `ReadClass` access and respect token permission and resource

@@ -8,8 +8,10 @@ use crate::errors::ApiError;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::TokenRetentionSettings;
 use crate::restores::MaintenanceActivityGuard;
+use crate::storage::{
+    AuthenticationStorage, StorageContext, StorageHandle, TokenRetentionStorage, storage_handle,
+};
 use crate::storage::{StorageCallSite, with_storage_call_site};
-use crate::storage::{StorageContext, StorageHandle, TokenRetentionStorage, storage_handle};
 
 static TOKEN_RETENTION_WORKER: std::sync::Once = std::sync::Once::new();
 
@@ -69,7 +71,13 @@ async fn token_retention_worker_loop(
             result = with_storage_call_site(
                 &pool,
                 StorageCallSite::TokenRetention,
-                process_token_retention_batch(&pool, config.settings),
+                async {
+                    let _activity = MaintenanceActivityGuard::begin();
+                    let policy = crate::config::get_config()?.credential_activity_policy()?;
+                    let sources = pool.purge_credential_sources(policy, config.settings.batch_size().get()).await?;
+                    let sessions = pool.purge_auth_sessions(config.settings.batch_size().get()).await?;
+                    process_token_retention_batch(&pool, config.settings).await.map(|tokens| tokens + sessions + sources)
+                },
             ) => result,
         };
         if retention_worker_should_continue(&result) {

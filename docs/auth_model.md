@@ -145,7 +145,7 @@ hash — the raw token is shown exactly once, at creation or renewal.
 | `name`, `description` | Optional, human-facing labels |
 | `issued` | Creation time |
 | `expires_at` | Authoritative expiry; newly issued tokens always store a value |
-| `last_used_at` | Advanced on every successful validation |
+| `last_used_at` | Approximate last successful validation; writes are throttled to once per 60 seconds |
 | `revoked_at` | Soft-revoke marker |
 | `active` | Server-derived authentication status using the same expiry and revocation rule as validation |
 | `expired` | Server-derived effective-expiry status, independent of revocation |
@@ -153,16 +153,19 @@ hash — the raw token is shown exactly once, at creation or renewal.
 
 ### Validation
 
-Validation is a single atomic statement. A token is accepted **only if** it is
+Credential validation reads live database state. A token is accepted **only if** it is
 simultaneously:
 
 1. present and not revoked (`revoked_at IS NULL`),
 2. unexpired — `expires_at > now()`, or, for a legacy row where
    `expires_at IS NULL`, issued within the global window
    `HUBUUM_TOKEN_LIFETIME_HOURS` (default 24h), and
-3. **not** owned by a disabled service account.
+3. **not** owned by a disabled service account; and
+4. for a session access token, its family is unrevoked and within both idle and
+   absolute deadlines.
 
-On success, `last_used_at` is advanced. Any failure yields `401 Unauthorized` with a
+On success, `last_used_at` is advanced at most once per 60 seconds. This update
+and source recording are best-effort; failures do not reject a valid credential. Any failure yields `401 Unauthorized` with a
 generic message (no distinction between unknown / revoked / expired / disabled).
 
 ### Revocation
@@ -197,6 +200,140 @@ the token. Audit-event retention is configured independently from token
 retention.
 
 ---
+
+## Interactive sessions
+
+**Breaking upgrade:** all authentication routes now use `/api/v1/auth`; the old
+`/api/v0/auth` routes are removed. Stop older API and worker replicas before
+applying the interactive-session migration and role grants, then start matching
+binaries and upgrade the frontend and SDK consumers together. The migration uses
+a 5-second lock timeout and a 60-second statement timeout, including the scan of
+existing tokens. If a timeout aborts it, resolve contention or reduce retained
+expired tokens, then retry during maintenance. Existing
+bearer credentials remain valid until their original expiry or revocation; they
+are not converted to refreshable sessions. Clear existing BFF sessions during the
+frontend upgrade and sign in again. Rolling mixed-version server pools are not
+supported for session issuance or rotation.
+
+Login accepts `client_id`, `name`, `password`, and optional `identity_scope`. It
+returns `session_id`, `token_type: "Bearer"`, `access_token`, `access_expires_at`,
+`refresh_token`, `refresh_expires_at`, and `absolute_expires_at`. All timestamps
+are RFC3339 UTC. Responses and authentication errors use `Cache-Control: no-store`.
+
+Send only the access token on ordinary requests. Send the refresh token only to
+`POST /api/v1/auth/refresh`, in a JSON body with the same `client_id`. Access
+credentials have the `hbt1.` prefix; refresh credentials have `hbr1.`. Each
+credential is stored only as a keyed HMAC digest. The endpoint rejects wrong
+credential types, unknown credentials, expired or revoked sessions, and wrong
+clients with the same generic `401` response.
+
+Successful refresh atomically consumes the old refresh token and returns a new
+pair. Earlier access tokens retain their short expiry. Reusing a consumed refresh
+token revokes the entire family, including every derived access token. Concurrent
+refreshes therefore have one winner followed by family revocation; clients must
+serialize refresh. Never retry a refresh whose outcome is uncertain after a
+network failure: discard the local session and authenticate again.
+
+Session policy is pinned at login:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `HUBUUM_SESSION_ACCESS_SECONDS` | 900 | Access lifetime, 15 minutes |
+| `HUBUUM_SESSION_IDLE_SECONDS` | 604800 | Refresh inactivity deadline, 7 days |
+| `HUBUUM_SESSION_ABSOLUTE_SECONDS` | 2592000 | Fixed maximum session lifetime, 30 days |
+| `HUBUUM_SESSION_RETENTION_SECONDS` | 2592000 | Replay evidence retained beyond the absolute deadline, 30 days |
+
+For hourly access-token rotation, set `HUBUUM_SESSION_ACCESS_SECONDS=3600` and
+restart the server. New logins use the updated policy; existing sessions retain
+their original lifetimes. Each refresh replaces both access and refresh tokens.
+
+Lifetimes require `0 < access <= idle <= absolute <= 31536000` seconds; retention
+must be 1–31536000 seconds. Refresh advances idle expiry only as far as the fixed
+absolute deadline. Public client configuration publishes the effective lifetimes.
+Session creation is unscoped, with live principal/group permissions on every API
+request. Login and refresh do not accept permission or resource scopes; use a
+scoped PAT for a deliberately narrower automation credential. Client IDs bind
+rotation to a client identity, but are not client secrets or device authentication.
+
+`POST /api/v1/auth/logout` revokes the current session family; when called with a
+durable token it revokes that token. `POST /api/v1/auth/logout_all` revokes all of
+the caller's interactive families and **preserves PATs**. Administrative
+`POST /api/v1/auth/logout/uid/{user_id}` continues to revoke all credentials,
+including PATs. Explicit revocation of a session access token also revokes its
+family. Session access tokens cannot be renewed as PATs. Password changes and
+resets (including imports), anonymization, deletion, provider deprovisioning, and
+restore invalidate sessions. Ordinary permission changes take effect through
+live authorization without issuing a new pair.
+
+PAT/service-account issuance still requires a single-use
+[fresh authentication approval](credential_approvals.md). A session access token
+alone is insufficient. SDKs can retain explicit PAT injection and opt into
+refreshable login without storing a password. BFFs keep both secrets exclusively
+in their server-side store, use distributed single-flight refresh with atomic
+pair replacement, and cap cookie/store lifetimes at the effective refresh
+expiry. Browser JavaScript must never receive either credential.
+
+Refresh issuance, rotation, rejection and replay use bounded authentication
+metrics; successful login, rotation and family revocation emit secret-free audit
+events. Token-key usage includes live refresh credentials and consumed replay
+evidence: keep their keys configured until the relevant families expire or are
+revoked. The retention worker removes family metadata after its retention
+deadline and after its access-token rows have been purged under normal token
+retention. Logical backups exclude session credentials and activity.
+
+## Credential creation and recent sources
+
+`GET /api/v1/iam/principals/{principal_id}/tokens/{token_id}/activity` uses the
+same management authorization as the retained token endpoint. It returns
+immutable creation provenance, recent distinct sources, and collection coverage.
+Use `limit` (1–100, default 50) and `offset` (0–256); `next_offset` indicates the
+next page. The response is `no-store` and has no revision/ETag. Recording activity
+does not advance the token's revision or change its ETag.
+
+Creation identifies the issuing principal, issuance method, server timestamp,
+and observed address. The issuer may differ from the credential owner. Historical
+or non-request issuance has unknown provenance (`creation: null` or an unavailable
+source); renewal records the new request's source. Rotating access tokens share
+the original session creation and family source history.
+
+Source identity is the pair of address and address-resolution method:
+
+- `connection_peer`: the directly observed network peer, potentially a proxy/BFF.
+- `trusted_forwarded`: selected through the existing trusted-proxy policy.
+- `unavailable`: no address was available; no invented client identity.
+
+`HUBUUM_TRUST_IP_HEADERS=false` uses the peer. With header trust enabled, explicit
+`HUBUUM_TRUSTED_PROXIES` ranges are preferred; alternatively configure a stable
+`HUBUUM_TRUSTED_PROXY_HOPS` count. Without either trust mechanism, forwarded values
+are ignored. Resolution walks `X-Forwarded-For` from the connection peer outward.
+A BFF, sidecar or TLS-passthrough ingress can hide the original browser address;
+source history cannot recover information that the trusted path did not provide.
+
+Collection defaults to enabled (`HUBUUM_CREDENTIAL_ACTIVITY_ENABLED=true`), with
+`HUBUUM_CREDENTIAL_ACTIVITY_RETENTION_DAYS=30` (1–365) and
+`HUBUUM_CREDENTIAL_ACTIVITY_SOURCE_CAP=32` (1–256). Each new source is recorded
+immediately after successful validation, even within another source's throttle
+interval. Repeated observations of the same source update at most once per 60
+seconds. A later authorization denial or handler error still counts as successful
+credential validation. User-Agent is not collected.
+
+The rolling window uses approximate last observation, independently of token and
+audit retention. At the cap, existing evidence stays in place; new distinct sources
+are omitted until older rows expire. `overflow_since` permanently marks the first
+omission for that retained credential/family, so readers must not assume the list
+is complete. Revocation preserves evidence; physical token purge cascades durable
+credential activity, while family activity survives individual access-token
+purges until family cleanup. A purged token URL returns `404`.
+
+`collection_enabled`, `best_effort`, `retention_days`, `source_cap` and
+`overflow_since` describe coverage. Disabling collection prevents new source
+observations and creation addresses; already collected evidence ages out under
+the retention policy. Recording failures produce bounded metrics and safe warnings
+without rejecting otherwise valid authentication. Request spans include the
+stable token ID for operator investigation; token IDs and addresses are never
+metric labels. Shared NAT/VPN exits can make different users appear identical,
+and legitimate IPv6/VPN changes can create new sources. This is evidence of
+observations, not a complete request ledger or proof that use was authorized.
 
 ## Scopes
 
@@ -533,16 +670,19 @@ IAM/credential-management surfaces.
 
 ### Login, validate, logout
 
-- `POST /api/v0/auth/login` — humans only, **by `name`**. Service accounts have no
+- `POST /api/v1/auth/login` — humans only, **by `name`**. Service accounts have no
   password and receive a generic `401`. Failed attempts are rate-limited by
   `name` + client IP (see [login_rate_limiting.md](login_rate_limiting.md)). A
-  successful response returns the raw token and its authoritative `expires_at`.
+  successful response returns the session credential pair described below.
+  `client_id` is required and contains 1–128 ASCII letters, digits, `-`, `.`, `_`,
+  or `:`.
   Login `identity_scope` and `name` values are limited to 255 Unicode characters,
   and passwords to 4096. Larger fields are rejected before rate-limit
   bookkeeping, directory/database lookup, or password verification.
-- `GET /api/v0/auth/validate` and current-token logout use `Authenticated`, so a
+- `GET /api/v1/auth/validate` and current-token logout use `Authenticated`, so a
   valid scoped service-account token validates as valid.
-- All-token logout / revoke-all are unscoped human/IAM management operations.
+- Session logout-all and administrative revoke-all are unscoped human/IAM
+  management operations with different durable-token semantics described below.
 
 ---
 

@@ -19,7 +19,7 @@ or collect API credentials.
 
 ## Authentication and versioned routes
 
-Human login and provider discovery remain under `/api/v0/auth`. Resource and
+Human login and provider discovery use `/api/v1/auth`. Resource and
 administration routes are under `/api/v1`. Send bearer tokens to the server in
 the `Authorization` header. See [first requests](../getting-started/first-requests.md)
 and the [authentication model](../auth_model.md).
