@@ -159,6 +159,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   current `ReadObject` access before upgrading. External storage adapters must test
   live existence by object ID regardless of current class; no migration is required.
 
+- **Breaking:** outbound remote calls and webhook deliveries ignore environment
+  proxy settings so every connection uses its screened, pinned destination.
+  Proxies could previously resolve the host again and bypass private-address
+  restrictions. Deployments that rely on `HTTP_PROXY`, `HTTPS_PROXY`, or
+  `ALL_PROXY` (including lowercase variants) must allow direct HTTPS egress to
+  their integration destinations before upgrading.
+
 - **Breaking remote-target authorization change:** server-credential bindings require
   an unscoped runtime administrator. Collection grants can share invocation but cannot
   create, redirect, alter or re-enable those bindings. Binding edits disable a target

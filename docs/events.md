@@ -451,6 +451,11 @@ URLs, embedded credential rejection, DNS resolution and address screening, IP
 pinning, redirect refusal, timeout caps, response-size caps, and sensitive
 response-header redaction.
 
+Webhook deliveries ignore environment proxy settings (`HTTP_PROXY`, `HTTPS_PROXY`,
+`ALL_PROXY`, and their lowercase variants) so proxies cannot bypass the screened
+destination. Allow direct HTTPS egress to webhook destinations when configuring
+the deployment.
+
 ## AMQP Sinks
 
 AMQP delivery is available when Hubuum is built with the `amqp` feature. An

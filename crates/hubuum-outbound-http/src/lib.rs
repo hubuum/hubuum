@@ -639,6 +639,8 @@ fn cached_client(
     };
     cached_client_or_insert_with(key, || {
         let mut builder = reqwest::Client::builder()
+            // Proxies resolve destinations independently and bypass our pinned addresses.
+            .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .resolve_to_addrs(host, addresses);
         if accept_invalid_certs {
@@ -772,6 +774,10 @@ fn map_reqwest_error(error: reqwest::Error) -> OutboundHttpError {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
+    use std::net::TcpListener;
+    use std::process::Command;
+
     use opentelemetry::trace::{
         SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState,
     };
@@ -780,6 +786,82 @@ mod tests {
     use super::*;
 
     static CLIENT_CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn outbound_requests_ignore_proxy_environment() {
+        const SCREENED_ADDRESS_ENV: &str = "OUTBOUND_HTTP_TEST_SCREENED_ADDRESS";
+        if let Ok(address) = std::env::var(SCREENED_ADDRESS_ENV) {
+            let address: SocketAddr = address.parse().unwrap();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let result = runtime.block_on(execute_with_screen(
+                OutboundRequest::new(
+                    OutboundMethod::Get,
+                    format!(
+                        "https://proxy-screening.example.invalid:{}/",
+                        address.port()
+                    ),
+                    Duration::from_secs(2),
+                ),
+                |_, _, _, _| async move { Ok(vec![address]) },
+            ));
+            // Neither listener completes TLS; the deadline ends the request.
+            assert!(
+                matches!(result, Err(OutboundHttpError::Timeout)),
+                "{result:?}"
+            );
+            return;
+        }
+
+        let screened = TcpListener::bind("127.0.0.1:0").unwrap();
+        let proxy = TcpListener::bind("127.0.0.1:0").unwrap();
+        screened.set_nonblocking(true).unwrap();
+        proxy.set_nonblocking(true).unwrap();
+        let proxy_url = format!("http://{}", proxy.local_addr().unwrap());
+
+        // Set proxy variables only in a child so parallel tests keep their environment.
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::outbound_requests_ignore_proxy_environment",
+                "--nocapture",
+            ])
+            .env(
+                SCREENED_ADDRESS_ENV,
+                screened.local_addr().unwrap().to_string(),
+            )
+            .envs(
+                [
+                    "HTTP_PROXY",
+                    "http_proxy",
+                    "HTTPS_PROXY",
+                    "https_proxy",
+                    "ALL_PROXY",
+                    "all_proxy",
+                ]
+                .map(|name| (name, proxy_url.as_str())),
+            )
+            .env("NO_PROXY", "")
+            .env("no_proxy", "")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "child failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            matches!(proxy.accept(), Err(error) if error.kind() == io::ErrorKind::WouldBlock),
+            "outbound request connected to an environment proxy instead of its screened address",
+        );
+        assert!(
+            screened.accept().is_ok(),
+            "outbound request did not connect to its screened address",
+        );
+    }
 
     #[tokio::test(start_paused = true)]
     async fn request_deadline_includes_dns_screening() {

@@ -432,6 +432,9 @@ Outbound calls are constrained to mitigate server-side request forgery (SSRF):
   unless `HUBUUM_REMOTE_CALL_ALLOW_PRIVATE_TARGETS` is enabled for the deployment
 - the screened address is pinned for the connection, so a host cannot rebind to a private address
   between the screening and the request
+- environment proxy settings (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and their lowercase
+  variants) are ignored because a proxy can resolve the destination independently of screening.
+  Deployments must allow direct HTTPS egress to their integration destinations
 - URL, header, and body export templates render with the shared MiniJinja fuel and recursion limits used by
   export templates
 - each submitting user can have only a bounded number of queued, validating, or running remote-call
