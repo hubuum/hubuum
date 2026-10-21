@@ -7,10 +7,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
-### Security
-
-- Update bundled TLS roots to `webpki-root-certs` 1.0.10 for RUSTSEC-2026-0383.
-
 ### Added
 
 - **Breaking:** interactive human login now uses `/api/v1/auth/login` with a
@@ -165,6 +161,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   behavior and dependency-policy enforcement are unchanged.
 
 ### Security
+
+- Update bundled TLS roots to `webpki-root-certs` 1.0.10 for RUSTSEC-2026-0383.
 
 - **Breaking personal computed-field authorization correction:** listings now
   require current `ReadClass` access and respect token permission and resource

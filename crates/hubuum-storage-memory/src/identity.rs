@@ -890,6 +890,7 @@ impl ServiceAccountStorage for MemoryStorage {
         state
             .tokens
             .retain(|_, token| token.principal_id.id() != id.id());
+        state.cleanup_credential_activity();
         for task in state.tasks.values_mut() {
             task.control.forget_actor(
                 PrincipalId::new(id.id())
@@ -1467,6 +1468,7 @@ impl UserStorage for MemoryStorage {
         state
             .tokens
             .retain(|_, token| token.principal_id.id() != id.id());
+        state.cleanup_credential_activity();
         let receipt = state.append_simple_event(
             EntityType::User,
             id.id(),
@@ -1493,6 +1495,16 @@ impl UserStorage for MemoryStorage {
             return Ok(StorageMutationOutcome::unchanged(()));
         }
         let now = Utc::now();
+        state.invalidate_principal_sessions(id.id());
+        for token in state.tokens.values_mut() {
+            if token.principal_id.id() == id.id() && token.revoked_at.is_none() {
+                token.revision = token
+                    .revision
+                    .checked_advance()
+                    .map_err(|error| StorageError::internal(error.to_string()))?;
+                token.revoked_at = Some(now);
+            }
+        }
         let anonymous_name = format!("anonymized-{}", id.id());
         let user = StorageUser::try_new(id, None, None, None, parts.created_at(), now, Some(now))
             .map_err(invalid_contract_value)?;
@@ -2951,7 +2963,6 @@ fn update_user_in_state(
     }
     let password_changed = password_hash.is_some();
     if password_changed {
-        state.invalidate_principal_sessions(id.id());
         state.invalidate_principal_sessions(id.id());
         for token in state.tokens.values_mut() {
             if token.principal_id.id() == id.id() && token.revoked_at.is_none() {

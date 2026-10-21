@@ -597,9 +597,10 @@ async fn denied_ranked_search_bounds_database_and_policy_round_trips(
     assert_eq!(batches.iter().sum::<usize>(), 300);
     assert!(batches.len() <= 10, "policy round trips: {batches:?}");
     // Class pages include snapshot transaction control statements and their
-    // collection expansion; the budget includes those database round trips.
+    // collection expansion. First-source authentication adds a fixed 11 queries
+    // for its independent best-effort transaction, regardless of candidate count.
     assert!(
-        queries.total_queries() <= 50,
+        queries.total_queries() <= 61,
         "database round trips: {queries:?}"
     );
     fixture.cleanup().await.unwrap();

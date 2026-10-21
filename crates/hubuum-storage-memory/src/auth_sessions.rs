@@ -307,6 +307,7 @@ impl MemoryState {
                 }
             }
         }
+        self.cleanup_credential_activity();
         ids.len()
     }
 }

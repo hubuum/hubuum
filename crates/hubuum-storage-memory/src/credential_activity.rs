@@ -11,6 +11,30 @@ pub(super) struct MemoryActivity {
     overflow_since: Option<DateTime<Utc>>,
 }
 impl MemoryState {
+    pub(super) fn cleanup_credential_activity(&mut self) {
+        let tokens = &self.tokens;
+        let sessions = &self.sessions;
+        let principals = &self.principals;
+        self.credential_activity.retain(|owner, activity| {
+            if let Some(creation) = &activity.creation
+                && creation
+                    .issuer()
+                    .is_some_and(|issuer| !principals.contains_key(&issuer.id()))
+            {
+                activity.creation = Some(StorageCredentialCreation::new(
+                    None,
+                    creation.method(),
+                    creation.source(),
+                    creation.issued_at(),
+                ));
+            }
+            match owner {
+                ActivityOwner::Token(id) => tokens.contains_key(id),
+                ActivityOwner::Session(id) => sessions.contains_key(id),
+            }
+        });
+    }
+
     fn activity_owner(&self, token: TokenId) -> Result<ActivityOwner, StorageError> {
         if !self.tokens.contains_key(&token.id()) {
             return Err(StorageError::not_found("Credential not found"));
