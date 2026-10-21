@@ -319,7 +319,7 @@ pub async fn delete_remote_target(
 #[utoipa::path(
     post,
     path = "/api/v1/remote-targets/{target_id}/invoke",
-    description = "Invoke the current target revision using ExecuteRemoteTarget and subject read permission. Credential-owner authority is not required. The worker rejects changed revisions before resolving credentials.",
+    description = "Invoke the current target revision using ExecuteRemoteTarget and read permission for every resource in the template context, including endpoint objects, classes, class relations, and collections. Token scopes and concrete external-policy decisions apply at submission and worker execution. Credential-owner authority is not required. The worker rejects changed revisions before resolving credentials.",
     tag = "remote-targets",
     security(("bearer_auth" = [])),
     params(

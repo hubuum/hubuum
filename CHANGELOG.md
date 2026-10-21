@@ -151,6 +151,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Grant read access and include the desired collections in token scopes to retain
   their visibility after upgrading; no database migration is required.
 
+- **Breaking remote invocation authorization correction:** remote templates require read
+  access to every expanded resource, including endpoint object data, class schemas, class
+  relations, and parent collections. Relation-read permission alone can no longer forward
+  unreadable endpoint data. Submission and worker execution enforce token scopes and
+  concrete resource decisions from external policies. Before upgrading, grant intended
+  callers the corresponding `ReadObject`, `ReadClass`, `ReadClassRelation`, and
+  `ReadCollection` permissions listed in `docs/remote_targets.md`; queued calls without
+  these permissions fail. No database migration is required.
+
 - **Breaking history authorization correction:** a live object moved to another
   class is no longer treated as deleted by name-history lookup. Name history and
   historical class populations require access to both its actual current placement
