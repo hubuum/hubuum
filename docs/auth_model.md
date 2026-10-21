@@ -204,8 +204,12 @@ retention.
 ## Interactive sessions
 
 **Breaking upgrade:** all authentication routes now use `/api/v1/auth`; the old
-`/api/v0/auth` routes are removed. Apply the interactive-session migration and
-upgrade all server replicas, the frontend, and SDK consumers together. Existing
+`/api/v0/auth` routes are removed. Stop older API and worker replicas before
+applying the interactive-session migration and role grants, then start matching
+binaries and upgrade the frontend and SDK consumers together. The migration uses
+a 5-second lock timeout and a 60-second statement timeout, including the scan of
+existing tokens. If a timeout aborts it, resolve contention or reduce retained
+expired tokens, then retry during maintenance. Existing
 bearer credentials remain valid until their original expiry or revocation; they
 are not converted to refreshable sessions. Clear existing BFF sessions during the
 frontend upgrade and sign in again. Rolling mixed-version server pools are not

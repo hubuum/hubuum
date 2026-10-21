@@ -1,3 +1,7 @@
+-- Apply with older API and worker replicas stopped. Bound the existing-token scan.
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '60s';
+
 -- Operational credentials are deliberately excluded from logical backups.
 CREATE TABLE auth_sessions (
     id UUID PRIMARY KEY,
@@ -17,8 +21,8 @@ CREATE TABLE auth_sessions (
     CHECK (absolute_expires_at < retain_until),
     CHECK ((revoked_at IS NULL) = (revocation_reason IS NULL))
 );
-CREATE INDEX auth_sessions_principal ON auth_sessions (principal_id, id);
-CREATE INDEX auth_sessions_retention ON auth_sessions (retain_until, id);
+CREATE INDEX auth_sessions_principal ON auth_sessions (principal_id, id); -- hubuum-compat: bounded-transactional-index
+CREATE INDEX auth_sessions_retention ON auth_sessions (retain_until, id); -- hubuum-compat: bounded-transactional-index
 
 CREATE TABLE refresh_tokens (
     id UUID PRIMARY KEY,
@@ -31,16 +35,18 @@ CREATE TABLE refresh_tokens (
     reuse_detected_at TIMESTAMP,
     CHECK (expires_at > issued_at)
 );
-CREATE INDEX refresh_tokens_session ON refresh_tokens (session_id);
+CREATE INDEX refresh_tokens_session ON refresh_tokens (session_id); -- hubuum-compat: bounded-transactional-index
 
 ALTER TABLE tokens ADD COLUMN auth_session_id UUID;
 ALTER TABLE tokens ADD COLUMN credential_kind TEXT NOT NULL DEFAULT 'legacy'
     CHECK (credential_kind IN ('legacy', 'personal_access', 'service_account', 'session_access'));
 ALTER TABLE tokens ADD CONSTRAINT tokens_session_kind
-    CHECK ((credential_kind = 'session_access') = (auth_session_id IS NOT NULL));
+    CHECK ((credential_kind = 'session_access') = (auth_session_id IS NOT NULL)) NOT VALID;
 ALTER TABLE tokens ADD CONSTRAINT tokens_session_owner
-    FOREIGN KEY (auth_session_id, principal_id) REFERENCES auth_sessions(id, principal_id) ON DELETE CASCADE;
-CREATE INDEX tokens_auth_session ON tokens (auth_session_id) WHERE auth_session_id IS NOT NULL;
+    FOREIGN KEY (auth_session_id, principal_id) REFERENCES auth_sessions(id, principal_id) ON DELETE CASCADE NOT VALID;
+ALTER TABLE tokens VALIDATE CONSTRAINT tokens_session_kind;
+ALTER TABLE tokens VALIDATE CONSTRAINT tokens_session_owner;
+CREATE INDEX tokens_auth_session ON tokens (auth_session_id) WHERE auth_session_id IS NOT NULL; -- hubuum-compat: bounded-transactional-index
 
 -- One owner per durable credential or interactive family. Rotation retains history.
 CREATE TABLE credential_activity (
@@ -68,4 +74,4 @@ CREATE TABLE credential_sources (
     CHECK (first_seen <= last_seen),
     CHECK ((address_method='unavailable') = (address=''))
 );
-CREATE INDEX credential_sources_retention ON credential_sources(last_seen,id);
+CREATE INDEX credential_sources_retention ON credential_sources(last_seen,id); -- hubuum-compat: bounded-transactional-index

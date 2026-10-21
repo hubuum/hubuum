@@ -18,7 +18,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   credentials remain valid and require fresh authentication approval to mint.
   `/api/v1/auth/logout_all` now preserves PATs while revoking human sessions;
   administrative user-wide revocation still revokes every credential. Session
-  access tokens cannot be renewed into PATs.
+  access tokens cannot be renewed into PATs. Stop older API and worker replicas
+  before migration and apply role grants before starting matching binaries. The
+  migration bounds lock waits to 5 seconds and statements to 60 seconds; retry
+  aborted upgrades during maintenance after resolving contention or retention.
 - Credential creation provenance and paginated recent source history at
   `/api/v1/iam/principals/{principal_id}/tokens/{token_id}/activity`, aggregated
   across interactive rotations. Collection defaults to a rolling 30-day window
