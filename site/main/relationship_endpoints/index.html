@@ -1246,6 +1246,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#directional-display-labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Directional display labels
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multiple-relationship-kinds" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Multiple relationship kinds
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#object-relations" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4508,6 +4530,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#directional-display-labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Directional display labels
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multiple-relationship-kinds" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Multiple relationship kinds
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#object-relations" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4706,6 +4750,12 @@ location per server and any number of servers per location.</p>
 <td>Create a class relation</td>
 </tr>
 <tr>
+<td>Edit labels</td>
+<td><code>PATCH</code></td>
+<td><code>/api/v1/relations/classes/{relation_id}</code></td>
+<td>Edit directional display wording</td>
+</tr>
+<tr>
 <td>Delete</td>
 <td><code>DELETE</code></td>
 <td><code>/api/v1/relations/classes/{relation_id}</code></td>
@@ -4728,9 +4778,51 @@ one room while allowing a room to contain any number of jacks:</p>
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="p">}</span>
 </code></pre></div>
 <p>Class relations are stored in canonical class-ID order. If the supplied class
-IDs are reversed during creation, the aliases and limits are reversed with
+IDs are reversed during creation, the labels, aliases, and limits are reversed with
 them, so each setting continues to apply to the class supplied on that side.
 Creating an object relation beyond either limit returns <code>409 Conflict</code>.</p>
+<h3 id="directional-display-labels">Directional display labels<a class="headerlink" href="#directional-display-labels" title="Permanent link">&para;</a></h3>
+<p>Create payloads (including class-scoped creation and imports) accept optional
+<code>forward_label</code> and <code>reverse_label</code>. For example, a Host → Room relation can use
+<code>"is in"</code> and <code>"contains"</code>. Labels follow the supplied classes: canonicalization
+swaps labels, aliases, and limits together. Responses always use ascending class-ID
+order. Labels are 1–128 Unicode characters, without control characters or leading
+or trailing whitespace. Omit a label or use <code>null</code> for the neutral display fallback
+<strong>related to</strong>. Labels carry no ownership, cardinality, permission, or inference
+semantics and are stored as authored, without automatic translation.</p>
+<p>Edit wording using <code>PATCH /api/v1/relations/classes/{relation_id}</code> and the canonical
+orientation returned by <code>GET</code>. Editing requires <code>UpdateClassRelation</code> on both
+endpoints. Send the returned <code>ETag</code> in <code>If-Match</code> to reject stale writes with <code>412</code>.
+Omitted fields retain their values; explicit <code>null</code> clears a direction:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">"forward_label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"is located in"</span><span class="p">,</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">"reverse_label"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="p">}</span>
+</code></pre></div>
+<p>The operation preserves the relation ID, object links, template aliases, and
+limits. A changed label advances the revision and records history and an updated
+event; a no-op does neither. Labels appear in class-relation JSON exports, import
+inputs, historical snapshots, and logical backups. Apply the directional-label
+migration before upgrading; existing relations retain null labels.</p>
+<p>Object relations inherit wording through <code>class_relation_id</code>. Choose the direction
+using the viewer object's <strong>class ID</strong>, since object-ID order can differ from
+class-ID order. Object graph responses include a <code>class_relations</code> array containing
+only referenced definitions the caller can read; an unavailable definition uses
+the same neutral fallback. Class graph edges already contain their labels.
+Templated reports expose <code>item.relation_labels.&lt;alias&gt;</code> beside
+<code>item.related.&lt;alias&gt;</code>. Changing wording never changes the alias key. Relation
+lifecycle event summaries use the directional label at the mutation.</p>
+<h3 id="multiple-relationship-kinds">Multiple relationship kinds<a class="headerlink" href="#multiple-relationship-kinds" title="Permanent link">&para;</a></h3>
+<p>This release keeps one class relation per unordered class pair and one object
+relation per unordered object pair. Labels describe the two directions of that
+single relationship; they do not allow separate ordered/access/admin edges for
+the same pair.</p>
+<p>Supporting parallel definitions remains a separate coordinated feature. It needs
+portable relation identity, object uniqueness scoped to <code>class_relation_id</code>, explicit
+selection for ambiguous pair routes and imports, collision rules for template
+aliases, and traversal that deduplicates generic adjacency while authorizing each
+selected edge. Downgrades would also need an explicit policy for conflicting
+parallel edges. Existing stable IDs provide a foundation for that later work.</p>
 <h3 id="object-relations">Object relations<a class="headerlink" href="#object-relations" title="Permanent link">&para;</a></h3>
 <table>
 <thead>

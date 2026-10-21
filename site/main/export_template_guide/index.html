@@ -1712,6 +1712,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#relationship-wording" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Relationship wording
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4914,6 +4925,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#relationship-wording" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Relationship wording
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5675,6 +5697,15 @@ for fields that may contain commas, quotes, or newlines.</p>
 <a id="__codelineno-43-5" name="__codelineno-43-5" href="#__codelineno-43-5"></a><span class="w">    </span><span class="nt">"max_items"</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span>
 <a id="__codelineno-43-6" name="__codelineno-43-6" href="#__codelineno-43-6"></a><span class="w">  </span><span class="p">}</span>
 <a id="__codelineno-43-7" name="__codelineno-43-7" href="#__codelineno-43-7"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="relationship-wording">Relationship wording<a class="headerlink" href="#relationship-wording" title="Permanent link">&para;</a></h2>
+<p>With relation context enabled, <code>item.relation_labels</code> maps each direct relation's
+existing template alias to its display label from that object's class. Missing
+labels read as <code>related to</code>. Alias keys remain stable when labels are renamed.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-44-1" name="__codelineno-44-1" href="#__codelineno-44-1"></a><span class="cp">{%</span> <span class="k">for</span> <span class="nv">host</span> <span class="k">in</span> <span class="nv">items</span> <span class="cp">%}</span>
+<a id="__codelineno-44-2" name="__codelineno-44-2" href="#__codelineno-44-2"></a><span class="cp">{{</span> <span class="nv">host.name</span> <span class="cp">}}</span><span class="x"> </span><span class="cp">{{</span> <span class="nv">host.relation_labels.rooms</span> <span class="cp">}}</span><span class="x">:</span>
+<a id="__codelineno-44-3" name="__codelineno-44-3" href="#__codelineno-44-3"></a><span class="cp">{%</span> <span class="k">for</span> <span class="nv">room</span> <span class="k">in</span> <span class="nv">host.related.rooms</span> <span class="cp">%}{{</span> <span class="nv">room.name</span> <span class="cp">}}{%</span> <span class="k">endfor</span> <span class="cp">%}</span>
+<a id="__codelineno-44-4" name="__codelineno-44-4" href="#__codelineno-44-4"></a><span class="cp">{%</span> <span class="k">endfor</span> <span class="cp">%}</span>
 </code></pre></div>
 
 
