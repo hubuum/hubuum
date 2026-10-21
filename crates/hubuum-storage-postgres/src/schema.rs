@@ -1,6 +1,24 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    auth_sessions (id) {
+        id -> Uuid,
+        principal_id -> Int4,
+        #[max_length = 128]
+        client_id -> Varchar,
+        authenticated_at -> Timestamp,
+        last_refreshed_at -> Timestamp,
+        access_seconds -> Int8,
+        idle_seconds -> Int8,
+        absolute_expires_at -> Timestamp,
+        idle_expires_at -> Timestamp,
+        retain_until -> Timestamp,
+        revoked_at -> Nullable<Timestamp>,
+        revocation_reason -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
     backup_task_outputs (id) {
         id -> Int4,
         task_id -> Int4,
@@ -142,6 +160,20 @@ diesel::table! {
 }
 
 diesel::table! {
+    credential_activity (id) {
+        id -> Int8,
+        token_id -> Nullable<Int4>,
+        session_id -> Nullable<Uuid>,
+        issuer_id -> Nullable<Int4>,
+        issuance_method -> Nullable<Text>,
+        issued_at -> Nullable<Timestamp>,
+        creation_address -> Nullable<Text>,
+        creation_method -> Nullable<Text>,
+        overflow_since -> Nullable<Timestamp>,
+    }
+}
+
+diesel::table! {
     credential_approvals (id) {
         id -> Int4,
         actor_id -> Int4,
@@ -155,6 +187,17 @@ diesel::table! {
         authenticated_at -> Timestamp,
         expires_at -> Timestamp,
         consumed_at -> Nullable<Timestamp>,
+    }
+}
+
+diesel::table! {
+    credential_sources (id) {
+        id -> Int8,
+        activity_id -> Int8,
+        address -> Text,
+        address_method -> Text,
+        first_seen -> Timestamp,
+        last_seen -> Timestamp,
     }
 }
 
@@ -702,6 +745,20 @@ diesel::table! {
 }
 
 diesel::table! {
+    refresh_tokens (id) {
+        id -> Uuid,
+        session_id -> Uuid,
+        digest -> Text,
+        #[max_length = 32]
+        hash_key_id -> Varchar,
+        issued_at -> Timestamp,
+        expires_at -> Timestamp,
+        consumed_at -> Nullable<Timestamp>,
+        reuse_detected_at -> Nullable<Timestamp>,
+    }
+}
+
+diesel::table! {
     remote_call_results (id) {
         id -> Int4,
         task_id -> Int4,
@@ -968,6 +1025,8 @@ diesel::table! {
         token_hash_algorithm -> Int2,
         #[max_length = 32]
         token_hash_key_id -> Nullable<Varchar>,
+        auth_session_id -> Nullable<Uuid>,
+        credential_kind -> Text,
     }
 }
 
@@ -984,6 +1043,7 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(auth_sessions -> users (principal_id));
 diesel::joinable!(backup_task_outputs -> tasks (task_id));
 diesel::joinable!(class_computation_state -> hubuumclass (class_id));
 diesel::joinable!(class_computation_state -> tasks (active_task_id));
@@ -992,6 +1052,10 @@ diesel::joinable!(class_schema_state -> hubuumclass (class_id));
 diesel::joinable!(collection_authorization_state -> collections (collection_id));
 diesel::joinable!(computed_field_definitions -> hubuumclass (class_id));
 diesel::joinable!(computed_field_definitions -> users (owner_user_id));
+diesel::joinable!(credential_activity -> auth_sessions (session_id));
+diesel::joinable!(credential_activity -> principals (issuer_id));
+diesel::joinable!(credential_activity -> tokens (token_id));
+diesel::joinable!(credential_sources -> credential_activity (activity_id));
 diesel::joinable!(event_deliveries -> event_subscriptions (subscription_id));
 diesel::joinable!(event_deliveries -> events (event_id));
 diesel::joinable!(event_related_collections -> events (event_id));
@@ -1024,6 +1088,7 @@ diesel::joinable!(principals -> identity_scopes (identity_scope_id));
 diesel::joinable!(query_usage_declarations -> hubuumclass (class_id));
 diesel::joinable!(query_usage_resource_owners -> query_usage_declarations (declaration_id));
 diesel::joinable!(query_usage_resource_owners -> query_usage_resources (resource_id));
+diesel::joinable!(refresh_tokens -> auth_sessions (session_id));
 diesel::joinable!(remote_call_results -> remote_targets (target_id));
 diesel::joinable!(remote_call_results -> tasks (task_id));
 diesel::joinable!(remote_targets -> collections (collection_id));
@@ -1045,6 +1110,7 @@ diesel::joinable!(token_scopes -> tokens (token_id));
 diesel::joinable!(tokens -> principals (principal_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    auth_sessions,
     backup_task_outputs,
     class_computation_state,
     class_schema_history,
@@ -1056,7 +1122,9 @@ diesel::allow_tables_to_appear_in_same_query!(
     collections_history,
     computed_field_definitions,
     computed_field_history,
+    credential_activity,
     credential_approvals,
+    credential_sources,
     event_deliveries,
     event_related_collections,
     event_retention_batches,
@@ -1091,6 +1159,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     query_usage_executor_cursor,
     query_usage_resource_owners,
     query_usage_resources,
+    refresh_tokens,
     remote_call_results,
     remote_targets,
     remote_targets_history,

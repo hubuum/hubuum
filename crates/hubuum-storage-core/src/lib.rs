@@ -4,6 +4,11 @@
 //! asynchronous-runtime dependencies. Application services and adapters share
 //! these values without reversing the dependency from storage into the server.
 
+mod credential_activity;
+pub use credential_activity::*;
+mod auth_sessions;
+pub use auth_sessions::*;
+
 mod authorization;
 mod authorization_resources;
 mod backend;

@@ -9,14 +9,14 @@ enum AccessLevel {
 
 #[derive(Serialize)]
 enum TestDataForEndpoint {
-    LoginUser(crate::models::user::LoginUser),
+    LoginUser(crate::models::auth_session::SessionLoginRequest),
 }
 
 #[actix_web::test]
 async fn test_endpoint_access() {
     use crate::config::get_config;
     use crate::config::running::RunningConfig;
-    use crate::models::user::LoginUser;
+    use crate::models::auth_session::SessionLoginRequest as LoginUser;
     use crate::tests::postgres_test_pool;
     use actix_web::{App, http::Method, test, web::Data};
 
@@ -43,23 +43,24 @@ async fn test_endpoint_access() {
     let endpoints = vec![
         ("/api/v1/config", Method::GET, AccessLevel::Open, None),
         (
-            "/api/v0/auth/providers",
+            "/api/v1/auth/providers",
             Method::GET,
             AccessLevel::Open,
             None,
         ),
-        ("/api/v0/auth/logout", Method::POST, AccessLevel::User, None),
+        ("/api/v1/auth/logout", Method::POST, AccessLevel::User, None),
         (
-            "/api/v0/auth/logout_all",
+            "/api/v1/auth/logout_all",
             Method::POST,
             AccessLevel::User,
             None,
         ),
         (
-            "/api/v0/auth/login",
+            "/api/v1/auth/login",
             Method::POST,
             AccessLevel::Open,
             Some(TestDataForEndpoint::LoginUser(LoginUser {
+                client_id: "test".into(),
                 identity_scope: None,
                 name: normal_user.name(&pool).await.unwrap(),
                 password: "testpassword".to_string(),

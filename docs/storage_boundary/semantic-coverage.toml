@@ -17,6 +17,8 @@
 [context_free_mutations]
 best_effort_observation = [
     "AuthenticationStorage::authenticate_bearer_token",
+    "AuthenticationStorage::record_credential_creation",
+    "AuthenticationStorage::observe_credential_source",
 ]
 bootstrap_and_provider_reconciliation = [
     "LocalIdentityCredentialStorage::bootstrap_default_admin",
@@ -56,7 +58,7 @@ event_coordination = [
     "EventRetentionStorage::claim_event_retention_batch",
     "EventRetentionStorage::complete_event_retention_batch",
 ]
-retention = ["TokenRetentionStorage::purge_expired_tokens"]
+retention = ["TokenRetentionStorage::purge_expired_tokens", "AuthenticationStorage::purge_credential_sources", "AuthenticationStorage::purge_auth_sessions"]
 maintenance = [
     "QueryUsageStorage::set_query_observation_control",
     "RestoreStorage::stage_restore",
@@ -109,9 +111,9 @@ shared_scenarios = ["src/services/object_relations.rs::object_relation_contract_
 
 [traits.AuthenticationStorage]
 source = "crates/hubuum-storage-core/src/identity.rs"
-methods = ["authenticate_bearer_token", "get_authentication_identity", "get_authentication_token_scope"]
-effects = { observation = ["authenticate_bearer_token"], point_read = ["get_authentication_identity", "get_authentication_token_scope"] }
-shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_authentication_projections"]
+methods = ["authenticate_bearer_token", "get_authentication_identity", "get_authentication_token_scope", "record_credential_creation", "observe_credential_source", "credential_activity", "purge_credential_sources", "create_auth_session", "refresh_principal", "rotate_auth_session", "revoke_auth_sessions", "purge_auth_sessions"]
+effects = { observation = ["authenticate_bearer_token", "record_credential_creation", "observe_credential_source"], point_read = ["get_authentication_identity", "get_authentication_token_scope", "refresh_principal"], page_read = ["credential_activity"], workflow_mutation = ["purge_credential_sources", "purge_auth_sessions"], audited_mutation = ["create_auth_session", "rotate_auth_session", "revoke_auth_sessions"] }
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_authentication_projections", "src/tests/storage_contract/auth_sessions.rs::rotation_preserves_deadline_and_replay_revokes_every_access_token", "src/tests/storage_contract/auth_sessions.rs::source_history_survives_rotation_and_normal_activity_resuming", "src/tests/storage_contract/auth_sessions.rs::creation_provenance_is_immutable_and_does_not_advance_token_revision", "src/tests/storage_contract/auth_sessions.rs::retention_preserves_replay_detection_for_live_families", "src/tests/storage_contract/auth_sessions.rs::activity_retention_preserves_recent_sources", "src/tests/storage_contract/auth_sessions.rs::principal_deletion_removes_refresh_lookup", "src/tests/storage_contract/auth_sessions.rs::logout_all_preserves_durable_credentials"]
 
 [traits.LocalIdentityCredentialStorage]
 source = "crates/hubuum-storage-core/src/identity_operations.rs"

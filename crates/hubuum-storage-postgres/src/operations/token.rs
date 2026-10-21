@@ -398,7 +398,11 @@ pub async fn token_key_usage(
                  MAX(last_used_at) AS latest_validation, \
                  MIN(expires_at) AS earliest_expiry, \
                  MAX(expires_at) AS latest_expiry \
-                 FROM tokens GROUP BY token_hash_key_id ORDER BY token_hash_key_id NULLS FIRST",
+                 FROM (SELECT token_hash_key_id, revoked_at, expires_at, issued, last_used_at FROM tokens \
+                 UNION ALL SELECT r.hash_key_id, s.revoked_at, \
+                 LEAST(s.idle_expires_at,s.absolute_expires_at), r.issued_at, r.consumed_at \
+                 FROM refresh_tokens r JOIN auth_sessions s ON r.session_id=s.id) credentials \
+                 GROUP BY token_hash_key_id ORDER BY token_hash_key_id NULLS FIRST",
             )
             .bind::<Timestamp, _>(observed_at)
             .bind::<Timestamp, _>(legacy_valid_after)
@@ -467,6 +471,17 @@ pub async fn renew_token(
                     .select(TokenRow::as_select())
                     .first::<TokenRow>(connection)
                     .await?;
+                let is_session = crate::schema::tokens::table
+                    .find(source.id)
+                    .select(crate::schema::tokens::auth_session_id)
+                    .first::<Option<uuid::Uuid>>(connection)
+                    .await?
+                    .is_some();
+                if is_session {
+                    return Err(PostgresStorageError::invalid_input(
+                        "Interactive access tokens must be renewed through session refresh",
+                    ));
+                }
                 if source.revoked_at.is_some() {
                     return Err(PostgresStorageError::conflict(
                         "Revoked tokens cannot be renewed",
@@ -577,6 +592,22 @@ pub async fn revoke_token(
     runtime
         .with_transaction(
             async move |connection| -> Result<StorageMutationOutcome<usize>, PostgresStorageError> {
+                crate::schema::principals::table
+                    .find(principal_id)
+                    .for_update()
+                    .select(crate::schema::principals::id)
+                    .first::<i32>(connection)
+                    .await?;
+                if let Some(audit) = super::auth_sessions::revoke_access(
+                    connection,
+                    token_id,
+                    principal_id,
+                    &event_context,
+                )
+                .await?
+                {
+                    return Ok(StorageMutationOutcome::committed(1, audit));
+                }
                 let before = crate::schema::tokens::table
                     .filter(crate::schema::tokens::id.eq(token_id))
                     .filter(crate::schema::tokens::principal_id.eq(principal_id))
@@ -664,7 +695,6 @@ pub async fn revoke_token_by_hash(
                     crate::schema::tokens::token_hash_algorithm,
                     crate::schema::tokens::token_hash_key_id,
                 ))
-                .for_update()
                 .load::<(i32, String, i16, i16, Option<String>)>(connection)
                 .await?
                 .into_iter()
@@ -703,6 +733,31 @@ pub async fn revoke_token_by_hash(
                 .first::<TokenRow>(connection)
                 .await?;
             if principal_id.is_some_and(|principal_id| principal_id != before.principal_id) {
+                return Ok(StorageMutationOutcome::unchanged(0));
+            }
+            crate::schema::principals::table
+                .find(before.principal_id)
+                .for_update()
+                .select(crate::schema::principals::id)
+                .first::<i32>(connection)
+                .await?;
+            if let Some(audit) = super::auth_sessions::revoke_access(
+                connection,
+                token_id,
+                before.principal_id,
+                &event_context,
+            )
+            .await?
+            {
+                return Ok(StorageMutationOutcome::committed(1, audit));
+            }
+            let before = crate::schema::tokens::table
+                .find(token_id)
+                .for_update()
+                .select(TokenRow::as_select())
+                .first::<TokenRow>(connection)
+                .await?;
+            if before.revoked_at.is_some() {
                 return Ok(StorageMutationOutcome::unchanged(0));
             }
             let scope = load_token_scope(
@@ -748,6 +803,13 @@ pub async fn revoke_all_principal_tokens(
     validate_positive_id(principal_id, "principal id")?;
     runtime
         .with_transaction(async move |connection| {
+            crate::schema::principals::table
+                .find(principal_id)
+                .for_update()
+                .select(crate::schema::principals::id)
+                .first::<i32>(connection)
+                .await?;
+            super::auth_sessions::revoke_principal(connection, principal_id).await?;
             let before = crate::schema::tokens::table
                 .filter(crate::schema::tokens::principal_id.eq(principal_id))
                 .filter(crate::schema::tokens::revoked_at.is_null())
@@ -819,6 +881,7 @@ pub async fn revoke_all_principal_tokens_on_connection(
     connection: &mut PostgresConnection,
     principal_id: i32,
 ) -> Result<usize, PostgresStorageError> {
+    super::auth_sessions::revoke_principal(connection, principal_id).await?;
     diesel::update(
         crate::schema::tokens::table
             .filter(crate::schema::tokens::principal_id.eq(principal_id))
@@ -958,8 +1021,18 @@ async fn create_token_row(
     }
     validate_resource_ids(connection, &collection_ids, &class_ids, &object_ids).await?;
 
+    let service_account = diesel::select(diesel::dsl::exists(
+        crate::schema::service_accounts::table.find(principal_id),
+    ))
+    .get_result::<bool>(connection)
+    .await?;
     let token = diesel::insert_into(crate::schema::tokens::table)
         .values((
+            crate::schema::tokens::credential_kind.eq(if service_account {
+                "service_account"
+            } else {
+                "personal_access"
+            }),
             crate::schema::tokens::token.eq(token_hash),
             crate::schema::tokens::principal_id.eq(principal_id),
             crate::schema::tokens::name.eq(&name),

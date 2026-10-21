@@ -1560,15 +1560,26 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             .map(|status| status.as_str().to_string())
             .collect(),
         ("hubuum_task_oldest_age_seconds", "state") => strings(&["queued", "active"]),
-        ("hubuum_token_authentications_total", "format") => {
-            strings(&["legacy", "version1", "versioned_unknown"])
-        }
+        ("hubuum_token_authentications_total", "format") => strings(&[
+            "legacy",
+            "version1",
+            "versioned_unknown",
+            "session",
+            "activity",
+        ]),
         ("hubuum_token_authentications_total", "key_state") => {
             strings(&["active", "previous", "legacy", "unknown"])
         }
-        ("hubuum_token_authentications_total", "outcome") => {
-            strings(&["success", "migrated", "migration_conflict", "rejected"])
-        }
+        ("hubuum_token_authentications_total", "outcome") => strings(&[
+            "success",
+            "migrated",
+            "migration_conflict",
+            "rejected",
+            "issued",
+            "refreshed",
+            "replayed",
+            "recording_failed",
+        ]),
         ("hubuum_token_hash_key_info", "mode") => strings(&["stable", "ephemeral"]),
         ("hubuum_token_hash_keys", "state") => strings(&["active", "previous"]),
         ("hubuum_token_hash_stored", "key_state") => {

@@ -386,6 +386,9 @@ struct MemoryState {
     membership_sources: Vec<StorageBackupRow>,
     authorization_revisions: BTreeMap<i32, ResourceRevision>,
     tokens: BTreeMap<i32, MemoryTokenRecord>,
+    sessions: BTreeMap<Uuid, auth_sessions::MemorySession>,
+    credential_activity:
+        BTreeMap<credential_activity::ActivityOwner, credential_activity::MemoryActivity>,
     credential_approvals:
         BTreeMap<i32, (StorageCredentialClaim, StorageCredentialApprovalMetadata)>,
     credential_approval_digests: BTreeMap<String, i32>,
@@ -810,8 +813,10 @@ pub mod regex_compiler;
 mod support;
 use support::*;
 
+mod auth_sessions;
 mod backup;
 mod computed_history;
+mod credential_activity;
 mod credential_approval;
 mod events;
 mod execution;

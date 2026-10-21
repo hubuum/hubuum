@@ -1849,6 +1849,7 @@
             "complete_event_retention_batch",
             "complete_task",
             "count_enabled_event_sinks",
+            "create_auth_session",
             "create_class",
             "create_class_relation",
             "create_collection",
@@ -1867,6 +1868,7 @@
             "create_task",
             "create_token",
             "create_user",
+            "credential_activity",
             "delete_class",
             "delete_class_relation",
             "delete_collection",
@@ -2040,6 +2042,7 @@
             "mark_event_delivery_succeeded",
             "mark_external_sync_attempted",
             "move_collection",
+            "observe_credential_source",
             "patch_object_data",
             "poll_task_execution",
             "preflight_import",
@@ -2047,14 +2050,18 @@
             "prepare_object_relation",
             "process_event_fanout_batch",
             "process_schema_work",
+            "purge_auth_sessions",
+            "purge_credential_sources",
             "purge_expired_backup_outputs",
             "purge_expired_export_outputs",
             "purge_expired_tokens",
             "query_observation_control",
             "record_claimed_import_results",
+            "record_credential_creation",
             "record_import_results",
             "record_remote_target_invocation",
             "recover_expired_task_leases",
+            "refresh_principal",
             "release_event_delivery_for_retry",
             "remove_group_member",
             "remove_restore_instance",
@@ -2080,9 +2087,11 @@
             "resume_terminal_restore",
             "revoke_all_local_collection_grants",
             "revoke_all_principal_tokens",
+            "revoke_auth_sessions",
             "revoke_local_collection_grant",
             "revoke_token",
             "revoke_token_by_hash",
+            "rotate_auth_session",
             "save_schema_repair_report",
             "schema_compliance_counts",
             "search_classes",
@@ -2260,6 +2269,7 @@
             "complete_event_retention_batch",
             "complete_task",
             "count_enabled_event_sinks",
+            "create_auth_session",
             "create_class",
             "create_class_relation",
             "create_collection",
@@ -2278,6 +2288,7 @@
             "create_task",
             "create_token",
             "create_user",
+            "credential_activity",
             "delete_class",
             "delete_class_relation",
             "delete_collection",
@@ -2451,6 +2462,7 @@
             "mark_event_delivery_succeeded",
             "mark_external_sync_attempted",
             "move_collection",
+            "observe_credential_source",
             "patch_object_data",
             "poll_task_execution",
             "preflight_import",
@@ -2458,14 +2470,18 @@
             "prepare_object_relation",
             "process_event_fanout_batch",
             "process_schema_work",
+            "purge_auth_sessions",
+            "purge_credential_sources",
             "purge_expired_backup_outputs",
             "purge_expired_export_outputs",
             "purge_expired_tokens",
             "query_observation_control",
             "record_claimed_import_results",
+            "record_credential_creation",
             "record_import_results",
             "record_remote_target_invocation",
             "recover_expired_task_leases",
+            "refresh_principal",
             "release_event_delivery_for_retry",
             "remove_group_member",
             "remove_restore_instance",
@@ -2491,9 +2507,11 @@
             "resume_terminal_restore",
             "revoke_all_local_collection_grants",
             "revoke_all_principal_tokens",
+            "revoke_auth_sessions",
             "revoke_local_collection_grant",
             "revoke_token",
             "revoke_token_by_hash",
+            "rotate_auth_session",
             "save_schema_repair_report",
             "schema_compliance_counts",
             "search_classes",
@@ -3140,7 +3158,9 @@
           "values": [
             "legacy",
             "version1",
-            "versioned_unknown"
+            "versioned_unknown",
+            "session",
+            "activity"
           ]
         },
         {
@@ -3160,7 +3180,11 @@
             "success",
             "migrated",
             "migration_conflict",
-            "rejected"
+            "rejected",
+            "issued",
+            "refreshed",
+            "replayed",
+            "recording_failed"
           ]
         }
       ],
@@ -3766,6 +3790,72 @@
       "allowed_values": [],
       "minimum": 1,
       "maximum": 1000,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_CREDENTIAL_ACTIVITY_ENABLED",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "boolean",
+      "default_is_set": true,
+      "default": [
+        "true"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_CREDENTIAL_ACTIVITY_RETENTION_DAYS",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "30"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 365,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_CREDENTIAL_ACTIVITY_SOURCE_CAP",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "32"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 256,
       "runtime_roles": [
         "all",
         "api",
@@ -5667,6 +5757,94 @@
       "dynamic_prefix": false
     },
     {
+      "name": "HUBUUM_SESSION_ABSOLUTE_SECONDS",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "2592000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 31536000,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_SESSION_ACCESS_SECONDS",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "900"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 31536000,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_SESSION_IDLE_SECONDS",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "604800"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 31536000,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_SESSION_RETENTION_SECONDS",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "2592000"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 31536000,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
       "name": "HUBUUM_STORAGE_BACKEND",
       "owner": "database",
       "exposure": "public",
@@ -7249,6 +7427,8 @@
       {
         "name": "authentication",
         "actions": [
+          "updated",
+          "revoked",
           "succeeded"
         ]
       },
@@ -9297,6 +9477,139 @@
           },
           "default": [
             "10"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "credential_activity_retention_days",
+          "long": "credential-activity-retention-days",
+          "short": null,
+          "environment": "HUBUUM_CREDENTIAL_ACTIVITY_RETENTION_DAYS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "30"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "credential_activity_source_cap",
+          "long": "credential-activity-source-cap",
+          "short": null,
+          "environment": "HUBUUM_CREDENTIAL_ACTIVITY_SOURCE_CAP",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "32"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "credential_activity_enabled",
+          "long": "credential-activity-enabled",
+          "short": null,
+          "environment": "HUBUUM_CREDENTIAL_ACTIVITY_ENABLED",
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "true"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "session_access_seconds",
+          "long": "session-access-seconds",
+          "short": null,
+          "environment": "HUBUUM_SESSION_ACCESS_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "900"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "session_idle_seconds",
+          "long": "session-idle-seconds",
+          "short": null,
+          "environment": "HUBUUM_SESSION_IDLE_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "604800"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "session_absolute_seconds",
+          "long": "session-absolute-seconds",
+          "short": null,
+          "environment": "HUBUUM_SESSION_ABSOLUTE_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "2592000"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "session_retention_seconds",
+          "long": "session-retention-seconds",
+          "short": null,
+          "environment": "HUBUUM_SESSION_RETENTION_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "2592000"
           ],
           "dynamic_default": null,
           "allowed_values": [],

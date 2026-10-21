@@ -175,7 +175,7 @@ All-in-one installs expose both public hostnames:
 - `--web` serves the frontend.
 - `--api` serves the backend API directly for integrations and API users.
 
-The frontend is still configured as a BFF-style service. Browser clients can call frontend-owned routes such as `/api/v0/auth/login`, `/api/v1/...`, and `/api/hubuum/...`; the frontend reaches the backend over the private compose network with:
+The frontend is still configured as a BFF-style service. Browser clients call frontend-owned routes such as `/_hubuum-bff/auth/login` and `/_hubuum-bff/hubuum/api/v1/...`; the frontend reaches the backend over the private compose network with:
 
 ```env
 BACKEND_BASE_URL=http://caddy:8081

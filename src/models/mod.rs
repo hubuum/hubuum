@@ -85,3 +85,7 @@ mod collection_event_sink;
 pub use collection_event_sink::{CollectionEventSink, EventSinkRouting};
 
 pub mod query_usage;
+
+pub mod auth_session;
+
+pub mod credential_activity;

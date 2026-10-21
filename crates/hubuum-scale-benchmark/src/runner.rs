@@ -98,6 +98,8 @@ impl ManagedServer {
             .env("HUBUUM_TOKEN_RETENTION_PURGE_ENABLED", "false")
             .env("HUBUUM_LOGIN_RATE_LIMIT_BACKEND", "memory")
             .env("HUBUUM_LOGIN_RATE_LIMIT_ENABLED", "false")
+            // Keep refresh traffic out of the query benchmark's measured requests.
+            .env("HUBUUM_SESSION_ACCESS_SECONDS", "86400")
             .env("HUBUUM_TOKEN_HASH_KEY", TOKEN_HASH_KEY)
             .stdout(Stdio::from(log.try_clone()?))
             .stderr(Stdio::from(log));
@@ -441,8 +443,9 @@ async fn login_principals(
     let mut tokens = BTreeMap::new();
     for principal in principals {
         let response = client
-            .post(format!("{base_url}/api/v0/auth/login"))
+            .post(format!("{base_url}/api/v1/auth/login"))
             .json(&json!({
+                "client_id": "hubuum-scale-benchmark",
                 "name": principal.username(),
                 "password": principal.password()
             }))
@@ -457,7 +460,7 @@ async fn login_principals(
         }
         let body = response.json::<Value>().await?;
         let token = body
-            .get("token")
+            .get("access_token")
             .and_then(Value::as_str)
             .ok_or_else(|| invalid_data("login response did not contain a token"))?;
         tokens.insert(principal.role().to_string(), token.to_string());

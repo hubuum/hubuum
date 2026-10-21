@@ -25,10 +25,11 @@ mod tests {
     use crate::errors::ApiError;
     use crate::events::{Action, EntityType, EventContext};
     use crate::models::Collection;
+    use crate::models::auth_session::SessionLoginRequest as LoginUser;
     use crate::models::collection::{group_can_on, user_can_on_any};
     use crate::models::principal::{PrincipalKind, load_principal_by_id};
     use crate::models::token::Token;
-    use crate::models::user::{LoginUser, NewUser};
+    use crate::models::user::NewUser;
     use crate::models::{
         CollectionID, GroupID, GroupResponse, HubuumClassID, HubuumClassRelation, HubuumObject,
         HubuumObjectID, HubuumObjectRelation, MAX_TOKEN_RESOURCE_SCOPES, NewHubuumClass,
@@ -58,7 +59,7 @@ mod tests {
     use crate::utilities::auth::generate_random_password;
     use hubuum_storage_postgres::{PostgresPool, with_connection, with_transaction};
 
-    const LOGIN_ENDPOINT: &str = "/api/v0/auth/login";
+    const LOGIN_ENDPOINT: &str = "/api/v1/auth/login";
     const ME_ENDPOINT: &str = "/api/v1/iam/me";
     const PRINCIPALS_ENDPOINT: &str = "/api/v1/iam/principals";
 
@@ -241,6 +242,7 @@ mod tests {
         .await;
 
         let login = web::Form(LoginUser {
+            client_id: "test".into(),
             identity_scope: None,
             name: sa_name,
             password: "irrelevant".to_string(),

@@ -181,6 +181,13 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_REMOTE_CALL_MAX_RESPONSE_BYTES", RemoteCalls),
     option!("HUBUUM_REMOTE_CALL_ALLOW_PRIVATE_TARGETS", RemoteCalls),
     option!("HUBUUM_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER", RemoteCalls),
+    option!("HUBUUM_CREDENTIAL_ACTIVITY_ENABLED", Authentication),
+    option!("HUBUUM_CREDENTIAL_ACTIVITY_RETENTION_DAYS", Authentication),
+    option!("HUBUUM_CREDENTIAL_ACTIVITY_SOURCE_CAP", Authentication),
+    option!("HUBUUM_SESSION_ACCESS_SECONDS", Authentication),
+    option!("HUBUUM_SESSION_IDLE_SECONDS", Authentication),
+    option!("HUBUUM_SESSION_ABSOLUTE_SECONDS", Authentication),
+    option!("HUBUUM_SESSION_RETENTION_SECONDS", Authentication),
     option!("HUBUUM_TOKEN_LIFETIME_HOURS", Authentication),
     option!("HUBUUM_MAX_TOKEN_LIFETIME_HOURS", Authentication),
     option!("HUBUUM_TOKEN_RETENTION_PURGE_ENABLED", Authentication),
@@ -573,6 +580,36 @@ pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
         db_pool_acquire_timeout_ms
     ),
     configuration_bound!("HUBUUM_DB_POOL_SIZE", db_pool_size),
+    configuration_bound!(
+        "HUBUUM_CREDENTIAL_ACTIVITY_RETENTION_DAYS",
+        credential_activity_retention_days,
+        maximum = 365
+    ),
+    configuration_bound!(
+        "HUBUUM_CREDENTIAL_ACTIVITY_SOURCE_CAP",
+        credential_activity_source_cap,
+        maximum = 256
+    ),
+    configuration_bound!(
+        "HUBUUM_SESSION_ACCESS_SECONDS",
+        session_access_seconds,
+        maximum = 31536000
+    ),
+    configuration_bound!(
+        "HUBUUM_SESSION_IDLE_SECONDS",
+        session_idle_seconds,
+        maximum = 31536000
+    ),
+    configuration_bound!(
+        "HUBUUM_SESSION_ABSOLUTE_SECONDS",
+        session_absolute_seconds,
+        maximum = 31536000
+    ),
+    configuration_bound!(
+        "HUBUUM_SESSION_RETENTION_SECONDS",
+        session_retention_seconds,
+        maximum = 31536000
+    ),
     configuration_bound!(
         "HUBUUM_TOKEN_LIFETIME_HOURS",
         token_lifetime_hours,

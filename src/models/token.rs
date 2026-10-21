@@ -481,6 +481,9 @@ impl Token {
         &self,
         ring: &TokenHashKeyRing,
     ) -> Result<TokenCredentialPlan, ApiError> {
+        if self.0.starts_with("hbr") {
+            return Err(invalid_bearer_token());
+        }
         if self.0.starts_with("hbt") {
             let mut parts = self.0.split('.');
             let version = parts.next();
@@ -542,14 +545,14 @@ impl Token {
     }
 }
 
-fn is_valid_token_secret(value: &str) -> bool {
+pub(crate) fn is_valid_token_secret(value: &str) -> bool {
     value.len() == 128
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn digest_with_key(
+pub(crate) fn digest_with_key(
     raw_token: &str,
     key: &[u8],
     format: StorageTokenFormat,

@@ -4,6 +4,79 @@ use hubuum_storage_core::{StorageAuthorizationResource, StorageAuthorizationReso
 
 #[async_trait]
 impl AuthenticationStorage for MemoryStorage {
+    async fn record_credential_creation(
+        &self,
+        token: TokenId,
+        creation: StorageCredentialCreation,
+    ) -> Result<(), StorageError> {
+        self.state.write().await.record_creation(token, creation)
+    }
+    async fn observe_credential_source(
+        &self,
+        token: TokenId,
+        source: ObservedSource,
+        policy: CredentialActivityPolicy,
+    ) -> Result<(), StorageError> {
+        self.state
+            .write()
+            .await
+            .observe_source(token, source, policy)
+    }
+    async fn credential_activity(
+        &self,
+        query: StorageActivityQuery,
+    ) -> Result<StorageCredentialActivity, StorageError> {
+        self.state.read().await.read_activity(query)
+    }
+    async fn purge_credential_sources(
+        &self,
+        policy: CredentialActivityPolicy,
+        limit: usize,
+    ) -> Result<usize, StorageError> {
+        Ok(self.state.write().await.purge_sources(policy, limit))
+    }
+
+    async fn create_auth_session(
+        &self,
+        request: StorageSessionCreate,
+    ) -> Result<StorageMutationOutcome<StorageSessionIssued>, StorageError> {
+        let mut live = self.state.write().await;
+        let mut staged = live.clone();
+        let result = staged.create_session(request)?;
+        *live = staged;
+        Ok(result)
+    }
+    async fn refresh_principal(
+        &self,
+        credential: RefreshCredential,
+    ) -> Result<PrincipalId, StorageError> {
+        self.state.read().await.refresh_owner(&credential)
+    }
+    async fn rotate_auth_session(
+        &self,
+        request: StorageSessionRotate,
+    ) -> Result<StorageMutationOutcome<StorageSessionRotation>, StorageError> {
+        let mut live = self.state.write().await;
+        let mut staged = live.clone();
+        let result = staged.rotate_session(request)?;
+        *live = staged;
+        Ok(result)
+    }
+    async fn revoke_auth_sessions(
+        &self,
+        target: SessionRevocation,
+        context: EventContext,
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+        let mut live = self.state.write().await;
+        let mut staged = live.clone();
+        let result = staged.revoke_sessions(target, context)?;
+        *live = staged;
+        Ok(result)
+    }
+    async fn purge_auth_sessions(&self, limit: usize) -> Result<usize, StorageError> {
+        Ok(self.state.write().await.purge_sessions(limit))
+    }
+
     async fn authenticate_bearer_token(
         &self,
         attempt: StorageAuthenticationAttempt,
@@ -37,7 +110,7 @@ impl AuthenticationStorage for MemoryStorage {
             .cloned()
             .ok_or_else(|| StorageError::internal("authenticated token disappeared"))?;
         let metadata = token.metadata(observation)?;
-        if !metadata.is_active() {
+        if !metadata.is_active() || !state.session_allows_token(token_id, observed_at) {
             return Err(StorageError::authentication_required(
                 "Bearer token is expired or revoked",
             ));
@@ -242,6 +315,7 @@ impl LocalIdentityCredentialStorage for MemoryStorage {
                 now,
             )?,
         );
+        state.invalidate_principal_sessions(user_id);
         for token in state.tokens.values_mut() {
             if token.principal_id.id() == user_id && token.revoked_at.is_none() {
                 token.revoked_at = Some(now);
@@ -759,6 +833,7 @@ impl ServiceAccountStorage for MemoryStorage {
         )
         .map_err(invalid_contract_value)?;
         state.service_accounts.insert(id.id(), disabled.clone());
+        state.invalidate_principal_sessions(id.id());
         for token in state.tokens.values_mut() {
             if token.principal_id.id() == id.id() && token.revoked_at.is_none() {
                 token.revoked_at = Some(now);
@@ -907,6 +982,7 @@ impl ExternalIdentityStorage for MemoryStorage {
             )
             .map_err(invalid_contract_value)?;
             record.last_sync_success_at = None;
+            state.invalidate_principal_sessions(principal_id.id());
             for token in state
                 .tokens
                 .values_mut()
@@ -1357,6 +1433,7 @@ impl UserStorage for MemoryStorage {
         let now = Utc::now();
         let mut state = self.state.write().await;
         let mut revoked = 0_usize;
+        state.invalidate_principal_sessions(id.id());
         for token in state.tokens.values_mut() {
             if token.principal_id.id() == id.id() && token.revoked_at.is_none() {
                 token.revoked_at = Some(now);
@@ -1381,6 +1458,9 @@ impl UserStorage for MemoryStorage {
             task.control.forget_actor(actor);
         }
         state.principals.remove(&id.id());
+        state
+            .sessions
+            .retain(|_, session| session.principal_id().id() != id.id());
         state
             .memberships
             .retain(|(principal_id, _), _| *principal_id != id.id());
@@ -1525,6 +1605,24 @@ impl TokenStorage for MemoryStorage {
             };
             item.latest_expiry = item.latest_expiry.max(token.expires_at);
         }
+        for session in state.sessions.values() {
+            let expiry = session.idle.min(session.absolute);
+            for (digest, _, _) in session.refresh.values() {
+                let item = usage.entry(digest.key_id().cloned()).or_default();
+                if session.revoked {
+                    item.revoked += 1;
+                } else if expiry <= observation.into_parts().0 {
+                    item.expired += 1;
+                } else {
+                    item.active += 1;
+                }
+                item.earliest_expiry = Some(
+                    item.earliest_expiry
+                        .map_or(expiry, |current| current.min(expiry)),
+                );
+                item.latest_expiry = item.latest_expiry.max(Some(expiry));
+            }
+        }
         usage
             .into_iter()
             .map(|(key_id, usage)| {
@@ -1573,6 +1671,11 @@ impl TokenStorage for MemoryStorage {
             .cloned()
             .filter(|source| source.principal_id == principal_id)
             .ok_or_else(|| StorageError::not_found("Source token not found"))?;
+        if staged.session_for_token(source_id).is_some() {
+            return Err(StorageError::invalid_input(
+                "Interactive access tokens must be renewed through session refresh",
+            ));
+        }
         if source.revoked_at.is_some() {
             return Err(StorageError::conflict("Revoked tokens cannot be renewed"));
         }
@@ -1658,6 +1761,13 @@ impl TokenStorage for MemoryStorage {
         if token.revoked_at.is_some() {
             return Ok(StorageMutationOutcome::unchanged(0));
         }
+        if state.session_for_token(token_id).is_some() {
+            return state.revoke_sessions(SessionRevocation::Current(token_id), context);
+        }
+        let token = state
+            .tokens
+            .get_mut(&token_id.id())
+            .expect("validated token exists");
         token.revoked_at = Some(Utc::now());
         token.revision = token
             .revision
@@ -1715,6 +1825,7 @@ impl TokenStorage for MemoryStorage {
         let mut state = self.state.write().await;
         let now = Utc::now();
         let mut revoked = Vec::new();
+        state.invalidate_principal_sessions(principal_id.id());
         for token in state.tokens.values_mut() {
             if token.principal_id == principal_id && token.revoked_at.is_none() {
                 token.revoked_at = Some(now);
@@ -2840,6 +2951,8 @@ fn update_user_in_state(
     }
     let password_changed = password_hash.is_some();
     if password_changed {
+        state.invalidate_principal_sessions(id.id());
+        state.invalidate_principal_sessions(id.id());
         for token in state.tokens.values_mut() {
             if token.principal_id.id() == id.id() && token.revoked_at.is_none() {
                 token.revoked_at = Some(Utc::now());
@@ -2889,7 +3002,7 @@ fn update_user_in_state(
     ))
 }
 
-fn create_token_in_state(
+pub(super) fn create_token_in_state(
     state: &mut MemoryState,
     mut request: StorageTokenCreate,
 ) -> Result<StorageMutationOutcome<StorageTokenMetadata>, StorageError> {

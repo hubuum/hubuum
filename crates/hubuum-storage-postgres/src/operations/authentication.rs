@@ -99,7 +99,7 @@ pub fn active_token_predicate(
 ) -> Box<dyn BoxableExpression<schema::tokens::table, Pg, SqlType = Nullable<Bool>>> {
     use crate::schema::tokens::dsl::{expires_at, issued, revoked_at};
     Box::new(
-        revoked_at.is_null().and(
+        revoked_at.is_null().and(diesel::dsl::sql::<diesel::sql_types::Bool>("(tokens.auth_session_id IS NULL OR EXISTS (SELECT 1 FROM auth_sessions s WHERE s.id=tokens.auth_session_id AND s.revoked_at IS NULL AND s.idle_expires_at > clock_timestamp() AT TIME ZONE 'UTC' AND s.absolute_expires_at > clock_timestamp() AT TIME ZONE 'UTC'))")).and(
             expires_at
                 .gt(observed_at)
                 .or(expires_at.is_null().and(issued.gt(legacy_valid_after))),

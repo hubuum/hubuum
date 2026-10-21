@@ -726,7 +726,8 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
         E::EventSubscription | E::ComputedFieldDefinition => &[A::Created, A::Updated, A::Deleted],
         E::EventSink => &[A::Created, A::Updated, A::Deleted, A::Invoked],
         E::ExternalIdentitySync => &[A::Succeeded, A::Failed],
-        E::Restore | E::Authentication => &[A::Succeeded],
+        E::Restore => &[A::Succeeded],
+        E::Authentication => &[A::Updated, A::Revoked, A::Succeeded],
         E::RemoteTarget => &[A::Created, A::Updated, A::Deleted, A::Invoked],
         E::ClassRelation | E::ObjectRelation => &[A::Created, A::Deleted],
         E::UserGroup => &[A::Added, A::Removed],
@@ -2471,7 +2472,7 @@ mod tests {
         );
         assert_eq!(
             valid_actions(EntityType::Authentication),
-            &[Action::Succeeded]
+            &[Action::Updated, Action::Revoked, Action::Succeeded]
         );
     }
 

@@ -9,7 +9,7 @@ in-depth reference.
 
 ## Threat model
 
-The limiter defends against online credential-guessing on the `POST /api/v0/auth/login`
+The limiter defends against online credential-guessing on the `POST /api/v1/auth/login`
 endpoint. Two attacks motivated the current design (see advisory GHSA-63j4-jh8h-chch):
 
 1. *Password spraying.* One password tried across many account names from a single host. A

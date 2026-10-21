@@ -1,19 +1,23 @@
 use std::fmt;
 
-use crate::api::openapi::{ApiErrorResponse, LoginResponse, MessageResponse};
+use crate::api::openapi::{ApiErrorResponse, MessageResponse};
 use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
 use crate::events::{EventContext, RequestProvenance};
+use crate::extractors::AccessEventContext;
 use crate::extractors::{AdminAccess, Authenticated, ManagementAccess};
 use crate::middlewares::rate_limit::{
     LoginAttemptOutcome, begin_login_attempt, client_ip_for_request, finish_login_attempt,
 };
-use crate::models::{LoginUser, REDACTED_DEBUG_VALUE, Token, UserID};
+use crate::models::auth_session::{SessionLoginRequest, SessionRefreshRequest, SessionResponse};
+use crate::models::{REDACTED_DEBUG_VALUE, Token, UserID};
 use crate::observability::metrics;
 use crate::permissions::AppContext;
-use crate::services::authentication::issue_login_token;
+use crate::services::auth_sessions;
+use crate::storage::{AuthenticationStorage, storage_handle};
 use actix_web::http::StatusCode;
 use actix_web::{HttpRequest, Responder, get, post, web};
+use hubuum_storage_core::{SessionClientId, SessionRevocation};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 use utoipa::ToSchema;
@@ -43,7 +47,7 @@ pub struct AuthProvidersResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/v0/auth/providers",
+    path = "/api/v1/auth/providers",
     tag = "auth",
     responses(
         (status = 200, description = "Configured authentication provider names", body = AuthProvidersResponse),
@@ -59,11 +63,11 @@ pub async fn get_auth_providers() -> Result<impl Responder, ApiError> {
 
 #[utoipa::path(
     post,
-    path = "/api/v0/auth/login",
+    path = "/api/v1/auth/login",
     tag = "auth",
-    request_body = LoginUser,
+    request_body = SessionLoginRequest,
     responses(
-        (status = 200, description = "Token and authoritative expiry issued", body = LoginResponse, headers(("Cache-Control" = String, description = "no-store"))),
+        (status = 200, description = "Token and authoritative expiry issued", body = SessionResponse, headers(("Cache-Control" = String, description = "no-store"))),
         (status = 400, description = "Password is empty or login fields exceed their supported lengths", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 429, description = "Too many login attempts", body = ApiErrorResponse),
@@ -74,9 +78,10 @@ pub async fn get_auth_providers() -> Result<impl Responder, ApiError> {
 pub async fn login(
     context: AppContext,
     req: HttpRequest,
-    req_input: web::Json<LoginUser>,
+    req_input: web::Json<SessionLoginRequest>,
 ) -> Result<impl Responder, ApiError> {
-    let login = req_input.into_inner().validate()?;
+    let (client, login) = req_input.into_inner().into_login()?;
+    let login = login.validate()?;
     let identity_scope = login.identity_scope().to_owned();
     let name = login.name().to_owned();
     let client_ip = client_ip_for_request(&req);
@@ -116,7 +121,14 @@ pub async fn login(
     let event_context = RequestProvenance::from_request(&req)
         .map(|provenance| provenance.user_event_context(user.id))
         .unwrap_or_else(EventContext::system);
-    let token_generation_result = issue_login_token(&context, &authenticated, &event_context).await;
+    let token_generation_result = auth_sessions::issue(
+        &context,
+        &authenticated,
+        client,
+        event_context,
+        crate::services::credential_activity::request_source(&req),
+    )
+    .await;
 
     let token = match token_generation_result {
         Ok(token) => token,
@@ -140,15 +152,12 @@ pub async fn login(
     debug!(message = "Login successful", name = name, user_id = user.id,);
     metrics::login_attempt("success");
 
-    Ok(ApiResponse::new_no_store(
-        LoginResponse::from_issued(&token),
-        StatusCode::OK,
-    ))
+    Ok(ApiResponse::new_no_store(token, StatusCode::OK))
 }
 
 #[utoipa::path(
     post,
-    path = "/api/v0/auth/logout",
+    path = "/api/v1/auth/logout",
     tag = "auth",
     security(("bearer_auth" = [])),
     responses(
@@ -162,11 +171,9 @@ pub async fn logout(
     context: AppContext,
     requestor: Authenticated,
 ) -> Result<impl Responder, ApiError> {
-    let token = requestor.token;
-
     debug!(message = "token logout requested");
 
-    let result = token.delete(&context).await;
+    let result = requestor.token.delete(&context).await;
 
     match result {
         Ok(_) => Ok(ApiResponse::message("Logout successful.")),
@@ -181,11 +188,11 @@ pub async fn logout(
 
 #[utoipa::path(
     post,
-    path = "/api/v0/auth/logout_all",
+    path = "/api/v1/auth/logout_all",
     tag = "auth",
     security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "All tokens revoked for current user", body = MessageResponse),
+        (status = 200, description = "All interactive sessions revoked; durable credentials retained", body = MessageResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 500, description = "Internal server error", body = ApiErrorResponse)
     )
@@ -194,16 +201,22 @@ pub async fn logout(
 pub async fn logout_all(
     context: AppContext,
     user_access: ManagementAccess,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     debug!(
         message = "Logging out all tokens for {}.",
         user_access.user.id
     );
 
-    let delete_result = user_access.user.delete_all_tokens(&context).await;
+    let delete_result = storage_handle(&context)
+        .revoke_auth_sessions(
+            SessionRevocation::All(crate::models::PrincipalID::new(user_access.user.id)?),
+            user_access.event_context(&req),
+        )
+        .await;
 
     match delete_result {
-        Ok(_) => Ok(ApiResponse::message("Logout of all tokens successful.")),
+        Ok(_) => Ok(ApiResponse::message("Logout of all sessions successful.")),
         Err(e) => {
             warn!(
                 message = "Logout of all tokens failed",
@@ -219,7 +232,7 @@ pub async fn logout_all(
 
 #[utoipa::path(
     post,
-    path = "/api/v0/auth/logout/token",
+    path = "/api/v1/auth/logout/token",
     tag = "auth",
     security(("bearer_auth" = [])),
     request_body = LogoutTokenRequest,
@@ -257,7 +270,7 @@ pub async fn logout_token(
 
 #[utoipa::path(
     post,
-    path = "/api/v0/auth/logout/uid/{user_id}",
+    path = "/api/v1/auth/logout/uid/{user_id}",
     tag = "auth",
     security(("bearer_auth" = [])),
     params(
@@ -309,7 +322,7 @@ pub async fn logout_other(
 
 #[utoipa::path(
     get,
-    path = "/api/v0/auth/validate",
+    path = "/api/v1/auth/validate",
     tag = "auth",
     security(("bearer_auth" = [])),
     responses(
@@ -344,4 +357,51 @@ mod tests {
         assert!(!debug.contains(raw_token));
         assert!(debug.contains(REDACTED_DEBUG_VALUE));
     }
+}
+
+#[utoipa::path(post, path = "/api/v1/auth/refresh", tag = "auth", request_body = SessionRefreshRequest,
+    responses((status = 200, description = "Rotated access and refresh credentials; no-store", body = SessionResponse),
+    (status = 401, description = "Authentication failed", body = ApiErrorResponse)))]
+#[post("/refresh")]
+pub async fn refresh(
+    context: AppContext,
+    req: HttpRequest,
+    input: web::Json<SessionRefreshRequest>,
+) -> Result<impl Responder, ApiError> {
+    let input = input.into_inner();
+    let client = SessionClientId::try_new(input.client_id)
+        .map_err(|_| crate::models::auth_session::authentication_failed())?;
+    let event_context = RequestProvenance::from_request(&req);
+    let response = auth_sessions::refresh(
+        &context,
+        input.refresh_token,
+        client,
+        event_context,
+        crate::services::credential_activity::request_source(&req),
+    )
+    .await?;
+    Ok(ApiResponse::new_no_store(response, StatusCode::OK))
+}
+
+pub fn config(cfg: &mut web::ServiceConfig) {
+    cfg.service(get_auth_providers)
+        .service(login)
+        .service(logout)
+        .service(logout_all)
+        .service(logout_other)
+        .service(logout_token)
+        .service(validate_token)
+        .service(refresh);
+}
+
+pub async fn no_store(
+    req: actix_web::dev::ServiceRequest,
+    next: actix_web::middleware::Next<impl actix_web::body::MessageBody>,
+) -> Result<actix_web::dev::ServiceResponse<impl actix_web::body::MessageBody>, actix_web::Error> {
+    let mut response = next.call(req).await?;
+    response.headers_mut().insert(
+        actix_web::http::header::CACHE_CONTROL,
+        actix_web::http::header::HeaderValue::from_static("no-store"),
+    );
+    Ok(response)
 }

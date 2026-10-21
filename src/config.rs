@@ -916,6 +916,54 @@ pub struct AppConfig {
     #[clap(long, env = "HUBUUM_DB_POOL_SIZE", default_value_t = 10)]
     pub db_pool_size: u32,
 
+    /// Credential source collection policy.
+    #[clap(
+        long,
+        env = "HUBUUM_CREDENTIAL_ACTIVITY_RETENTION_DAYS",
+        default_value_t = 30
+    )]
+    pub credential_activity_retention_days: i64,
+
+    /// Credential source collection policy.
+    #[clap(
+        long,
+        env = "HUBUUM_CREDENTIAL_ACTIVITY_SOURCE_CAP",
+        default_value_t = 32
+    )]
+    pub credential_activity_source_cap: usize,
+
+    /// Credential source collection policy.
+    #[clap(
+        long,
+        env = "HUBUUM_CREDENTIAL_ACTIVITY_ENABLED",
+        default_value_t = true
+    )]
+    pub credential_activity_enabled: bool,
+
+    /// Interactive session policy, in seconds.
+    #[clap(long, env = "HUBUUM_SESSION_ACCESS_SECONDS", default_value_t = 900)]
+    pub session_access_seconds: i64,
+
+    /// Interactive session policy, in seconds.
+    #[clap(long, env = "HUBUUM_SESSION_IDLE_SECONDS", default_value_t = 604800)]
+    pub session_idle_seconds: i64,
+
+    /// Interactive session policy, in seconds.
+    #[clap(
+        long,
+        env = "HUBUUM_SESSION_ABSOLUTE_SECONDS",
+        default_value_t = 2592000
+    )]
+    pub session_absolute_seconds: i64,
+
+    /// Interactive session policy, in seconds.
+    #[clap(
+        long,
+        env = "HUBUUM_SESSION_RETENTION_SECONDS",
+        default_value_t = 2592000
+    )]
+    pub session_retention_seconds: i64,
+
     /// Token lifetime in hours
     #[clap(
         long,
@@ -1267,6 +1315,26 @@ impl AppConfig {
         )?)
     }
 
+    pub fn credential_activity_policy(
+        &self,
+    ) -> Result<hubuum_storage_core::CredentialActivityPolicy, ApiError> {
+        hubuum_storage_core::CredentialActivityPolicy::try_new(
+            self.credential_activity_enabled,
+            self.credential_activity_retention_days,
+            self.credential_activity_source_cap,
+        )
+        .map_err(|e| ApiError::BadRequest(e.to_string()))
+    }
+    pub fn session_policy(&self) -> Result<hubuum_storage_core::SessionPolicy, ApiError> {
+        hubuum_storage_core::SessionPolicy::try_new(
+            self.session_access_seconds,
+            self.session_idle_seconds,
+            self.session_absolute_seconds,
+            self.session_retention_seconds,
+        )
+        .map_err(|e| ApiError::BadRequest(e.to_string()))
+    }
+
     pub fn token_retention_settings(&self) -> Result<TokenRetentionSettings, ApiError> {
         Ok(TokenRetentionSettings::builder()
             .retention_days(self.token_retention_days)
@@ -1528,6 +1596,8 @@ impl AppConfig {
         }
 
         self.token_issuance_policy()?;
+        self.credential_activity_policy()?;
+        self.session_policy()?;
         self.token_retention_settings()?;
 
         if self.token_retention_purge_interval_seconds == 0 {
@@ -2228,6 +2298,33 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         db_pool_size: env_or_default("HUBUUM_DB_POOL_SIZE", "2")
             .parse()
             .unwrap_or(5),
+        credential_activity_retention_days: env_or_default(
+            "HUBUUM_CREDENTIAL_ACTIVITY_RETENTION_DAYS",
+            "30",
+        )
+        .parse()
+        .unwrap_or(30),
+        credential_activity_source_cap: env_or_default(
+            "HUBUUM_CREDENTIAL_ACTIVITY_SOURCE_CAP",
+            "32",
+        )
+        .parse()
+        .unwrap_or(32),
+        credential_activity_enabled: env_or_default("HUBUUM_CREDENTIAL_ACTIVITY_ENABLED", "true")
+            .parse()
+            .unwrap_or(true),
+        session_access_seconds: env_or_default("HUBUUM_SESSION_ACCESS_SECONDS", "900")
+            .parse()
+            .unwrap_or(0),
+        session_idle_seconds: env_or_default("HUBUUM_SESSION_IDLE_SECONDS", "604800")
+            .parse()
+            .unwrap_or(0),
+        session_absolute_seconds: env_or_default("HUBUUM_SESSION_ABSOLUTE_SECONDS", "2592000")
+            .parse()
+            .unwrap_or(0),
+        session_retention_seconds: env_or_default("HUBUUM_SESSION_RETENTION_SECONDS", "2592000")
+            .parse()
+            .unwrap_or(0),
         token_lifetime_hours: env_or_default("HUBUUM_TOKEN_LIFETIME_HOURS", "24")
             .parse()
             .unwrap_or(DEFAULT_TOKEN_LIFETIME_HOURS),

@@ -20,6 +20,27 @@ pub mod users;
 
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(
+        web::scope("/auth")
+            .app_data(
+                web::JsonConfig::default()
+                    .limit(64 * 1024)
+                    .error_handler(|_, req| {
+                        if req.path().ends_with("/refresh") {
+                            crate::models::auth_session::authentication_failed().into()
+                        } else {
+                            crate::errors::ApiError::BadRequest(
+                                "Invalid authentication request".into(),
+                            )
+                            .into()
+                        }
+                    }),
+            )
+            .wrap(actix_web::middleware::from_fn(
+                crate::api::v1::handlers::auth::no_store,
+            ))
+            .configure(crate::api::v1::handlers::auth::config),
+    )
+    .service(
         web::scope("/iam/credential-approvals")
             .app_data(
                 web::JsonConfig::default()

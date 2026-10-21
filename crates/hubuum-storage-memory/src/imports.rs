@@ -1566,7 +1566,8 @@ impl MemoryStorage {
                 anonymized_at,
             } => {
                 let user_id = UserId::new(id.id()).expect("principal id is a valid user id");
-                if password.is_some() && existing.is_some() {
+                if (password.is_some() || anonymized_at.is_some()) && existing.is_some() {
+                    state.invalidate_principal_sessions(id.id());
                     for token in state.tokens.values_mut() {
                         if token.principal_id == id && token.revoked_at.is_none() {
                             token.revoked_at = Some(now);

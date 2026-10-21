@@ -1,9 +1,93 @@
 use super::super::*;
 use hubuum_storage_core::StorageExternalSyncFailure;
+use hubuum_storage_core::{
+    CredentialActivityPolicy, ObservedSource, StorageActivityQuery, StorageCredentialActivity,
+    StorageCredentialCreation,
+};
+use hubuum_storage_core::{
+    RefreshCredential, SessionRevocation, StorageSessionCreate, StorageSessionIssued,
+    StorageSessionRotate, StorageSessionRotation,
+};
 use hubuum_storage_core::{StorageAuthorizationResource, StorageAuthorizationResourcesQuery};
 
 #[async_trait]
 impl AuthenticationStorage for PostgresStorage {
+    async fn record_credential_creation(
+        &self,
+        token: TokenId,
+        creation: StorageCredentialCreation,
+    ) -> Result<(), StorageError> {
+        crate::operations::credential_activity::creation(self.runtime(), token, creation)
+            .await
+            .map_err(StorageError::from)
+    }
+    async fn observe_credential_source(
+        &self,
+        token: TokenId,
+        source: ObservedSource,
+        policy: CredentialActivityPolicy,
+    ) -> Result<(), StorageError> {
+        crate::operations::credential_activity::observe(self.runtime(), token, source, policy)
+            .await
+            .map_err(StorageError::from)
+    }
+    async fn credential_activity(
+        &self,
+        query: StorageActivityQuery,
+    ) -> Result<StorageCredentialActivity, StorageError> {
+        crate::operations::credential_activity::read(self.runtime(), query)
+            .await
+            .map_err(StorageError::from)
+    }
+    async fn purge_credential_sources(
+        &self,
+        policy: CredentialActivityPolicy,
+        limit: usize,
+    ) -> Result<usize, StorageError> {
+        crate::operations::credential_activity::purge(self.runtime(), policy, limit)
+            .await
+            .map_err(StorageError::from)
+    }
+
+    async fn create_auth_session(
+        &self,
+        request: StorageSessionCreate,
+    ) -> Result<StorageMutationOutcome<StorageSessionIssued>, StorageError> {
+        crate::operations::auth_sessions::create(self.runtime(), request)
+            .await
+            .map_err(StorageError::from)
+    }
+    async fn refresh_principal(
+        &self,
+        credential: RefreshCredential,
+    ) -> Result<PrincipalId, StorageError> {
+        crate::operations::auth_sessions::refresh_principal(self.runtime(), credential)
+            .await
+            .map_err(StorageError::from)
+    }
+    async fn rotate_auth_session(
+        &self,
+        request: StorageSessionRotate,
+    ) -> Result<StorageMutationOutcome<StorageSessionRotation>, StorageError> {
+        crate::operations::auth_sessions::rotate(self.runtime(), request)
+            .await
+            .map_err(StorageError::from)
+    }
+    async fn revoke_auth_sessions(
+        &self,
+        target: SessionRevocation,
+        context: EventContext,
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+        crate::operations::auth_sessions::revoke(self.runtime(), target, context)
+            .await
+            .map_err(StorageError::from)
+    }
+    async fn purge_auth_sessions(&self, limit: usize) -> Result<usize, StorageError> {
+        crate::operations::auth_sessions::purge(self.runtime(), limit)
+            .await
+            .map_err(StorageError::from)
+    }
+
     async fn authenticate_bearer_token(
         &self,
         attempt: StorageAuthenticationAttempt,

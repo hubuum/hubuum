@@ -261,6 +261,70 @@ impl ObjectRelationStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl AuthenticationStorage for CompleteExternalAdapter {
+    async fn record_credential_creation(
+        &self,
+        token: TokenId,
+        creation: hubuum_storage_core::StorageCredentialCreation,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn observe_credential_source(
+        &self,
+        token: TokenId,
+        source: hubuum_storage_core::ObservedSource,
+        policy: hubuum_storage_core::CredentialActivityPolicy,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn credential_activity(
+        &self,
+        query: hubuum_storage_core::StorageActivityQuery,
+    ) -> Result<hubuum_storage_core::StorageCredentialActivity, StorageError> {
+        fixture_result()
+    }
+    async fn purge_credential_sources(
+        &self,
+        policy: hubuum_storage_core::CredentialActivityPolicy,
+        limit: usize,
+    ) -> Result<usize, StorageError> {
+        fixture_result()
+    }
+
+    async fn create_auth_session(
+        &self,
+        request: hubuum_storage_core::StorageSessionCreate,
+    ) -> Result<
+        hubuum_storage_core::StorageMutationOutcome<hubuum_storage_core::StorageSessionIssued>,
+        StorageError,
+    > {
+        fixture_result()
+    }
+    async fn refresh_principal(
+        &self,
+        credential: hubuum_storage_core::RefreshCredential,
+    ) -> Result<PrincipalId, StorageError> {
+        fixture_result()
+    }
+    async fn rotate_auth_session(
+        &self,
+        request: hubuum_storage_core::StorageSessionRotate,
+    ) -> Result<
+        hubuum_storage_core::StorageMutationOutcome<hubuum_storage_core::StorageSessionRotation>,
+        StorageError,
+    > {
+        fixture_result()
+    }
+    async fn revoke_auth_sessions(
+        &self,
+        target: hubuum_storage_core::SessionRevocation,
+        context: hubuum_events_core::EventContext,
+    ) -> Result<hubuum_storage_core::StorageMutationOutcome<usize>, StorageError> {
+        fixture_result()
+    }
+    async fn purge_auth_sessions(&self, limit: usize) -> Result<usize, StorageError> {
+        fixture_result()
+    }
+
     async fn authenticate_bearer_token(
         &self,
         attempt: StorageAuthenticationAttempt,

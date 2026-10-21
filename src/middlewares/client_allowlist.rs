@@ -4,6 +4,7 @@ use actix_web::{
     http::header::HeaderMap,
 };
 use futures_util::future::{self, LocalBoxFuture, Ready};
+use hubuum_storage_core::ObservedSource;
 use ipnet::IpNet;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Once;
@@ -190,47 +191,48 @@ fn resolve_client_ip(
     forwarded_for: &[IpAddr],
     policy: &ProxyTrust,
 ) -> Option<IpAddr> {
+    resolve_client_source(peer, forwarded_for, policy).address()
+}
+
+pub fn extract_client_source(req: &ServiceRequest, policy: &ProxyTrust) -> ObservedSource {
+    resolve_client_source(
+        req.peer_addr().map(|addr| addr.ip()),
+        &collect_forwarded_for(req.headers()),
+        policy,
+    )
+}
+
+fn resolve_client_source(
+    peer: Option<IpAddr>,
+    forwarded_for: &[IpAddr],
+    policy: &ProxyTrust,
+) -> ObservedSource {
+    let Some(peer) = peer else {
+        return ObservedSource::Unavailable;
+    };
     if !policy.trust_headers {
-        return peer;
+        return ObservedSource::ConnectionPeer(peer);
     }
-
-    // Forwarded headers are only meaningful relative to the connection peer: it is the one
-    // hop we observe directly and the anchor from which trusted proxies are skipped. With
-    // no peer the entire chain is attacker-controlled, so fail closed.
-    let peer = peer?;
-
-    // Chain from most trustworthy (peer / closest proxy) to least (claimed client).
-    let mut chain: Vec<IpAddr> = Vec::with_capacity(forwarded_for.len() + 1);
-    chain.push(peer);
-    chain.extend(forwarded_for.iter().rev().copied());
-
-    if !policy.trusted_proxies.is_empty() {
-        if let Some(client) = chain
+    let chain: Vec<_> = std::iter::once(peer)
+        .chain(forwarded_for.iter().rev().copied())
+        .collect();
+    let index = if !policy.trusted_proxies.is_empty() {
+        chain
             .iter()
-            .find(|ip| !ip_in_nets(**ip, &policy.trusted_proxies))
-        {
-            return Some(*client);
-        }
-        // Every hop is a trusted proxy; treat the furthest (claimed client) as client.
-        return chain.last().copied();
+            .position(|ip| !ip_in_nets(*ip, &policy.trusted_proxies))
+            .unwrap_or(chain.len() - 1)
+    } else if policy.hops > 0 {
+        policy.hops.min(chain.len() - 1)
+    } else {
+        static WARN_UNCONFIGURED_TRUST: Once = Once::new();
+        WARN_UNCONFIGURED_TRUST.call_once(|| warn!(message = "trust_ip_headers is enabled but neither trusted_proxies nor trusted_proxy_hops is set; ignoring forwarded headers and using peer address"));
+        0
+    };
+    if index == 0 {
+        ObservedSource::ConnectionPeer(peer)
+    } else {
+        ObservedSource::TrustedForwarded(chain[index])
     }
-
-    if policy.hops > 0 {
-        let index = policy.hops.min(chain.len() - 1);
-        return Some(chain[index]);
-    }
-
-    // trust_headers is set but no trust mechanism is configured: ignore forwarded
-    // headers and use the connection peer so spoofed values cannot take effect. This is
-    // a static misconfiguration, so warn once per process rather than on every request to
-    // avoid flooding logs under load.
-    static WARN_UNCONFIGURED_TRUST: Once = Once::new();
-    WARN_UNCONFIGURED_TRUST.call_once(|| {
-        warn!(
-            message = "trust_ip_headers is enabled but neither trusted_proxies nor trusted_proxy_hops is set; ignoring forwarded headers and using peer address"
-        );
-    });
-    Some(peer)
 }
 
 /// Whether the given IP falls inside any of the provided networks.
@@ -268,6 +270,40 @@ fn parse_socket(raw: &str) -> Option<IpAddr> {
 mod resolve_tests {
     use super::*;
     use std::str::FromStr;
+
+    #[rstest::rstest]
+    #[case::peer(false, 0, Some("192.0.2.1"), "192.0.2.1", "connection_peer")]
+    #[case::untrusted(true, 0, Some("192.0.2.1"), "192.0.2.1", "connection_peer")]
+    #[case::forwarded(true, 1, Some("192.0.2.1"), "198.51.100.1", "trusted_forwarded")]
+    #[case::same_address_forwarded(
+        true,
+        1,
+        Some("198.51.100.1"),
+        "198.51.100.1",
+        "trusted_forwarded"
+    )]
+    #[case::unavailable(true, 1, None, "", "unavailable")]
+    fn source_provenance_preserves_resolution_method(
+        #[case] trust: bool,
+        #[case] hops: usize,
+        #[case] peer: Option<&str>,
+        #[case] expected: &str,
+        #[case] method: &str,
+    ) {
+        let result = resolve_client_source(
+            peer.map(ip),
+            &[ip("198.51.100.1")],
+            &ProxyTrust::new(trust, vec![], hops),
+        );
+        assert_eq!(result.method(), method);
+        assert_eq!(
+            result
+                .address()
+                .map(|ip| ip.to_string())
+                .unwrap_or_default(),
+            expected
+        );
+    }
 
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()

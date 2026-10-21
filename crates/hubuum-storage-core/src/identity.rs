@@ -688,6 +688,46 @@ impl StorageAuthenticationTokenScope {
 /// only the projections required to build application authentication state.
 #[async_trait]
 pub trait AuthenticationStorage: Send + Sync {
+    async fn record_credential_creation(
+        &self,
+        token: TokenId,
+        creation: crate::StorageCredentialCreation,
+    ) -> Result<(), StorageError>;
+    async fn observe_credential_source(
+        &self,
+        token: TokenId,
+        source: crate::ObservedSource,
+        policy: crate::CredentialActivityPolicy,
+    ) -> Result<(), StorageError>;
+    async fn credential_activity(
+        &self,
+        query: crate::StorageActivityQuery,
+    ) -> Result<crate::StorageCredentialActivity, StorageError>;
+    async fn purge_credential_sources(
+        &self,
+        policy: crate::CredentialActivityPolicy,
+        limit: usize,
+    ) -> Result<usize, StorageError>;
+
+    async fn create_auth_session(
+        &self,
+        request: crate::StorageSessionCreate,
+    ) -> Result<crate::StorageMutationOutcome<crate::StorageSessionIssued>, StorageError>;
+    async fn refresh_principal(
+        &self,
+        credential: crate::RefreshCredential,
+    ) -> Result<PrincipalId, StorageError>;
+    async fn rotate_auth_session(
+        &self,
+        request: crate::StorageSessionRotate,
+    ) -> Result<crate::StorageMutationOutcome<crate::StorageSessionRotation>, StorageError>;
+    async fn revoke_auth_sessions(
+        &self,
+        target: crate::SessionRevocation,
+        context: hubuum_events_core::EventContext,
+    ) -> Result<crate::StorageMutationOutcome<usize>, StorageError>;
+    async fn purge_auth_sessions(&self, limit: usize) -> Result<usize, StorageError>;
+
     /// Validate one presented bearer credential and return its minimal
     /// authentication projection.
     ///

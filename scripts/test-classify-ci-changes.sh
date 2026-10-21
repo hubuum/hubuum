@@ -828,3 +828,20 @@ for history_input in src/services/history/access.rs src/services/history/navigat
   assert_flag "$history_output" rust true
   assert_flag "$history_output" treetop_conformance true
 done
+
+# Interactive auth and activity schemas must regenerate the public contract.
+for session_schema in src/api/v1/handlers/auth.rs src/models/auth_session.rs src/models/credential_activity.rs; do
+  session_output="$(bash "$classifier" "$session_schema")"
+  assert_flag "$session_output" rust true
+  assert_flag "$session_output" openapi true
+  assert_flag "$session_output" container true
+done
+for session_input in src/services/auth_sessions.rs src/services/credential_activity.rs \
+  src/tests/storage_contract/auth_sessions.rs tests/api_identity_suite/sessions.rs \
+  crates/hubuum-storage-core/src/auth_sessions.rs crates/hubuum-storage-core/src/credential_activity.rs \
+  crates/hubuum-storage-memory/src/auth_sessions.rs crates/hubuum-storage-memory/src/credential_activity.rs \
+  crates/hubuum-storage-postgres/src/operations/auth_sessions.rs crates/hubuum-storage-postgres/src/operations/credential_activity.rs \
+  crates/hubuum-storage-postgres/migrations/2026-10-21-000001_interactive_sessions/up.sql; do
+  session_output="$(bash "$classifier" "$session_input")"
+  assert_flag "$session_output" rust true
+done

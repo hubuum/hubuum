@@ -7,7 +7,28 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Security
+
+- Update bundled TLS roots to `webpki-root-certs` 1.0.10 for RUSTSEC-2026-0383.
+
 ### Added
+
+- **Breaking:** interactive human login now uses `/api/v1/auth/login` with a
+  required `client_id` and returns short-lived access plus single-use rotating
+  refresh credentials. All `/api/v0/auth` routes are removed. Apply the session
+  migration, upgrade all server replicas and frontend/SDK consumers together,
+  clear existing BFF sessions, and sign in again. Refresh replay revokes the
+  whole family; idle and fixed absolute deadlines apply. Existing PAT/service
+  credentials remain valid and require fresh authentication approval to mint.
+  `/api/v1/auth/logout_all` now preserves PATs while revoking human sessions;
+  administrative user-wide revocation still revokes every credential. Session
+  access tokens cannot be renewed into PATs.
+- Credential creation provenance and paginated recent source history at
+  `/api/v1/iam/principals/{principal_id}/tokens/{token_id}/activity`, aggregated
+  across interactive rotations. Collection defaults to a rolling 30-day window
+  and 32 sources, with explicit overflow and best-effort coverage. Proxy source
+  resolution follows the existing trust policy. Activity does not change token
+  ETags, and authenticated request spans include the stable token ID.
 
 - An administrator API to enable or disable query observation collection at
   runtime across all API replicas sharing PostgreSQL:
