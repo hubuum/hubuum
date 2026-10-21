@@ -1160,6 +1160,15 @@ fn validate_positive_id(value: i32, noun: &str) -> Result<(), PostgresStorageErr
     }
 }
 
+pub(crate) fn parse_label(
+    value: Option<String>,
+) -> Result<Option<RelationLabel>, PostgresStorageError> {
+    value
+        .map(RelationLabel::new)
+        .transpose()
+        .map_err(|error| PostgresStorageError::invalid_persisted_value("relation label", error))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1228,13 +1237,4 @@ mod tests {
             .is_err()
         );
     }
-}
-
-pub(crate) fn parse_label(
-    value: Option<String>,
-) -> Result<Option<RelationLabel>, PostgresStorageError> {
-    value
-        .map(RelationLabel::new)
-        .transpose()
-        .map_err(|error| PostgresStorageError::invalid_persisted_value("relation label", error))
 }

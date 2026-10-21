@@ -14,7 +14,7 @@ mod tests {
         ObjectRelationLimit, Permissions, RelatedClassGraph, RelatedObjectGraph,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
-    use crate::traits::{CanDelete, CanSave, PermissionController, SelfAccessors};
+    use crate::traits::{CanSave, PermissionController, SelfAccessors};
     use crate::{assert_contains_all, assert_contains_same_ids};
     use hubuum_storage_postgres::{PostgresPool, capture_queries, with_transaction};
 
@@ -2663,7 +2663,6 @@ mod tests {
                 ))
                 .get_result::<(i32, Option<String>, Option<String>)>(connection)
                 .await
-                .map_err(ApiError::from)
         })
         .await
         .unwrap();
@@ -2697,12 +2696,11 @@ mod tests {
                 ))
                 .execute(connection)
                 .await
-                .map_err(|error| {
+                .inspect_err(|error| {
                     assert!(matches!(
                         error,
                         Error::DatabaseError(DatabaseErrorKind::CheckViolation, _)
                     ));
-                    ApiError::from(error)
                 })
         })
         .await;
