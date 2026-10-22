@@ -70,6 +70,57 @@ service_url() { printf '%s' "$fixture_url"; }
                 thread.join(timeout=5)
         return result, requests
 
+    def test_session_login_uses_the_returned_access_token(self):
+        result, requests = self.request(
+            'login_admin previous-api "$admin_password"\napi_request previous-api GET /probe',
+            {}, [(200, {"access_token": "session-access", "refresh_token": "session-refresh"}),
+                 (200, {})],
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(requests[0]["path"], "/api/v1/auth/login")
+        self.assertEqual(requests[0]["body"], {
+            "client_id": "upgrade-test", "name": "admin", "password": "fixture-password",
+        })
+        self.assertNotIn("authorization", requests[0]["headers"])
+        self.assertEqual(requests[1]["headers"]["authorization"], "Bearer session-access")
+        self.assertNotIn("session-access", result.stdout + result.stderr)
+        self.assertNotIn("session-refresh", result.stdout + result.stderr)
+
+    def test_absent_session_endpoint_uses_legacy_login(self):
+        result, requests = self.request(
+            'login_admin previous-api "$admin_password"\napi_request previous-api GET /probe',
+            {}, [(404, {}), (200, {"token": "legacy-access"}), (200, {})],
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([request["path"] for request in requests[:2]],
+                         ["/api/v1/auth/login", "/api/v0/auth/login"])
+        self.assertEqual(requests[1]["body"], {
+            "name": "admin", "password": "fixture-password",
+        })
+        self.assertTrue(all("authorization" not in request["headers"]
+                            for request in requests[:2]))
+        self.assertEqual(requests[2]["headers"]["authorization"], "Bearer legacy-access")
+
+    def test_rejected_session_login_never_uses_legacy_login(self):
+        for status in (401, 403, 429, 503):
+            with self.subTest(status=status):
+                result, requests = self.request('login_admin previous-api "$admin_password"',
+                                                {}, [(status, {"error": "rejected"})])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(len(requests), 1)
+
+    def test_malformed_login_credentials_are_rejected(self):
+        for legacy in (False, True):
+            for token in (None, "", 7):
+                with self.subTest(legacy=legacy, token=token):
+                    field = "token" if legacy else "access_token"
+                    responses = ([(404, {})] if legacy else []) + [(200, {field: token})]
+                    result, requests = self.request(
+                        'login_admin previous-api "$admin_password"', {}, responses,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(len(requests), len(responses))
+
     def test_user_creation_preserves_the_approved_request_and_bearer(self):
         result, requests = self.request('create_user previous-api "$4"', USER,
                                         [(201, APPROVAL), (201, {"id": 7})])

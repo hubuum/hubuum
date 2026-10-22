@@ -49,6 +49,26 @@ api_request() {
   fi
 }
 
+login_admin() {
+  local service="$1"
+  local password="$2"
+  local payload token_field
+
+  admin_token=""
+  payload="$(jq --null-input --arg password "$password" \
+    '{client_id: "upgrade-test", name: "admin", password: $password}')" || return
+  api_request "$service" POST /api/v1/auth/login "$payload" "" "" true || return
+  token_field="access_token"
+  if [[ "$api_status" == 404 ]]; then
+    # Only an absent session endpoint permits the older released login contract.
+    payload="$(jq 'del(.client_id)' <<< "$payload")" || return
+    api_request "$service" POST /api/v0/auth/login "$payload" || return
+    token_field="token"
+  fi
+  admin_token="$(jq --exit-status --raw-output --arg field "$token_field" \
+    '.[$field] | strings | select(length > 0)' <<< "$api_body")"
+}
+
 credential_request() {
   local service="$1"
   local path="$2"
