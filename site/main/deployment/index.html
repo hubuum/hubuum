@@ -1895,6 +1895,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#upgrade-to-v0020" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrade to v0.0.20
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#upgrade-from-v0017-to-v0018" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4811,6 +4822,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#upgrade-to-v0020" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrade to v0.0.20
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#upgrade-from-v0017-to-v0018" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5000,17 +5022,17 @@ login throttling, see <a href="../distributed_deployment/">Distributed Deploymen
 <p>Podman support is intended for rootful installs only.</p>
 <h2 id="all-in-one">All-In-One<a class="headerlink" href="#all-in-one" title="Permanent link">&para;</a></h2>
 <p>Download the installer from the server release you are deploying. This example
-pairs server <strong>v0.0.18</strong> with frontend <strong>v0.0.19</strong> and pins the management scripts
+pairs server <strong>v0.0.20</strong> with frontend <strong>v0.0.22</strong> and pins the management scripts
 to the same server release:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>--fail<span class="w"> </span>--location<span class="w"> </span>--output<span class="w"> </span>install-single-host.sh<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>https://raw.githubusercontent.com/hubuum/hubuum/v0.0.18/scripts/install-single-host.sh
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>https://raw.githubusercontent.com/hubuum/hubuum/v0.0.20/scripts/install-single-host.sh
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>sudo<span class="w"> </span>bash<span class="w"> </span>./install-single-host.sh<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>--web<span class="w"> </span>hubuum.example.com<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span>--api<span class="w"> </span>hubuum-api.example.com<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span>--email<span class="w"> </span>admin@example.com<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span>--script-ref<span class="w"> </span>v0.0.18<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span>--server-tag<span class="w"> </span>v0.0.18<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">  </span>--frontend-tag<span class="w"> </span>v0.0.19
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span>--script-ref<span class="w"> </span>v0.0.20<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span>--server-tag<span class="w"> </span>v0.0.20<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">  </span>--frontend-tag<span class="w"> </span>v0.0.22
 </code></pre></div>
 <p>Use the same downloaded installer for the variations below. For an existing
 installation, read <a href="#updates">Updates</a> before running an installer or updater.</p>
@@ -5038,8 +5060,8 @@ also pauses while the primary is replaced. Database migrations must remain
 compatible with the old application version for the duration of the rolling
 update; a migration that blocks application queries can still cause request
 latency even though an HTTP replica remains online.</p>
-<p>Whether an upgrade can roll depends on its pending migrations. The v0.0.17 to
-v0.0.18 transition requires downtime. Follow <a href="#updates">Updates</a>; historical
+<p>Whether an upgrade can roll depends on its pending migrations. The v0.0.19 to
+v0.0.20 transition requires downtime. Follow <a href="#updates">Updates</a>; historical
 rolling-upgrade evidence does not make an offline migration safe to roll.</p>
 <p>The standby owns its own database pool and application memory. Capacity-plan
 external PostgreSQL servers for both API pools, the primary's task-lease
@@ -5089,8 +5111,8 @@ independently. <code>--backend-tag</code> is an alias for <code>--server-tag</co
 <a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">  </span>--web<span class="w"> </span>hubuum.example.com<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">  </span>--api<span class="w"> </span>hubuum-api.example.com<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">  </span>--email<span class="w"> </span>admin@example.com<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">  </span>--server-tag<span class="w"> </span>v0.0.18<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">  </span>--frontend-tag<span class="w"> </span>v0.0.19
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">  </span>--server-tag<span class="w"> </span>v0.0.20<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">  </span>--frontend-tag<span class="w"> </span>v0.0.22
 </code></pre></div>
 <p>Per-application tags override <code>--tag</code> regardless of argument order. Explicit
 <code>--backend-image</code> and <code>--frontend-image</code> references take precedence over tag
@@ -5099,8 +5121,9 @@ image repository, including a custom registry, and replace its tag or digest.</p
 <p>The resulting image references are saved as <code>BACKEND_IMAGE</code> and
 <code>FRONTEND_IMAGE</code> in <code>.env</code>. Re-running either script without tag options keeps
 those choices, including installations previously configured to follow <code>main</code>.
-<code>latest</code> follows stable releases and <code>main</code> follows development builds when you
-run an update. A version tag such as <code>v0.0.18</code> stays on that version; the scripts
+The server's <code>latest</code> tag follows stable releases; the frontend does not publish
+that tag. Both applications publish <code>main</code> for development builds. A version tag
+such as <code>v0.0.20</code> stays on that version; the scripts
 still pull the tag, so an image republished under the same tag can change. Use a
 full image reference with <code>@sha256:...</code> when you need immutable image contents.
 Each selected tag must exist in its image repository. Server and frontend
@@ -5139,18 +5162,18 @@ still publicly available on the API hostname.</p>
 <p>The frontend makes shared-host deployments easier by keeping internal/BFF routes under <code>/_hubuum-bff/...</code>, which does not collide with direct backend routes like <code>/api/v1/...</code>.</p>
 <h2 id="curl-install">Curl Install<a class="headerlink" href="#curl-install" title="Permanent link">&para;</a></h2>
 <p>The installer is self-contained enough to run directly from the repository:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/hubuum/hubuum/v0.0.18/scripts/install-single-host.sh<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/hubuum/hubuum/v0.0.20/scripts/install-single-host.sh<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>sudo<span class="w"> </span>bash<span class="w"> </span>-s<span class="w"> </span>--<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">      </span>--script-ref<span class="w"> </span>v0.0.18<span class="w"> </span>--server-tag<span class="w"> </span>v0.0.18<span class="w"> </span>--frontend-tag<span class="w"> </span>v0.0.19<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">      </span>--script-ref<span class="w"> </span>v0.0.20<span class="w"> </span>--server-tag<span class="w"> </span>v0.0.20<span class="w"> </span>--frontend-tag<span class="w"> </span>v0.0.22<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">      </span>--web<span class="w"> </span>hubuum.example.com<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">      </span>--api<span class="w"> </span>hubuum-api.example.com<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">      </span>--email<span class="w"> </span>admin@example.com
 </code></pre></div>
 <p>Use a branch, tag, commit SHA, or PR ref by changing the raw GitHub URL. Pass the same ref with <code>--script-ref</code> so the installed management helpers come from the same source:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nv">REF</span><span class="o">=</span>v0.0.18
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nv">REF</span><span class="o">=</span>v0.0.20
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>curl<span class="w"> </span>-fsSL<span class="w"> </span><span class="s2">"https://raw.githubusercontent.com/hubuum/hubuum/</span><span class="si">${</span><span class="nv">REF</span><span class="si">}</span><span class="s2">/scripts/install-single-host.sh"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>sudo<span class="w"> </span>bash<span class="w"> </span>-s<span class="w"> </span>--<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">      </span>--script-ref<span class="w"> </span><span class="s2">"</span><span class="si">${</span><span class="nv">REF</span><span class="si">}</span><span class="s2">"</span><span class="w"> </span>--server-tag<span class="w"> </span>v0.0.18<span class="w"> </span>--frontend-tag<span class="w"> </span>v0.0.19<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">      </span>--script-ref<span class="w"> </span><span class="s2">"</span><span class="si">${</span><span class="nv">REF</span><span class="si">}</span><span class="s2">"</span><span class="w"> </span>--server-tag<span class="w"> </span>v0.0.20<span class="w"> </span>--frontend-tag<span class="w"> </span>v0.0.22<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span>--web<span class="w"> </span>hubuum.example.com<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">      </span>--api<span class="w"> </span>hubuum-api.example.com<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">      </span>--email<span class="w"> </span>admin@example.com
@@ -5290,14 +5313,14 @@ and regenerates <code>compose.yml</code> and <code>Caddyfile</code> from the cur
 </code></pre></div>
 <p>Use the same tag options to override and save the image choices for this and
 future updates:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1"># Follow each application's latest stable release after checking compatibility.</span>
-<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>sudo<span class="w"> </span>./update-single-host.sh<span class="w"> </span>--tag<span class="w"> </span>latest
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1"># Select the compatible server and frontend releases explicitly.</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>sudo<span class="w"> </span>./update-single-host.sh<span class="w"> </span>--server-tag<span class="w"> </span>v0.0.20<span class="w"> </span>--frontend-tag<span class="w"> </span>v0.0.22
 <a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>
 <a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="c1"># Pin only the server; keep the saved frontend choice.</span>
-<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>sudo<span class="w"> </span>./update-single-host.sh<span class="w"> </span>--server-tag<span class="w"> </span>v0.0.18
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>sudo<span class="w"> </span>./update-single-host.sh<span class="w"> </span>--server-tag<span class="w"> </span>v0.0.20
 <a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>
 <a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="c1"># Follow server development builds while keeping the frontend on stable releases.</span>
-<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>sudo<span class="w"> </span>./update-single-host.sh<span class="w"> </span>--tag<span class="w"> </span>main<span class="w"> </span>--frontend-tag<span class="w"> </span>latest
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>sudo<span class="w"> </span>./update-single-host.sh<span class="w"> </span>--tag<span class="w"> </span>main<span class="w"> </span>--frontend-tag<span class="w"> </span>v0.0.22
 </code></pre></div>
 <p>For image-based installs, the update command pulls the latest configured
 images. For source-build installs, it fetches the source checkouts and rebuilds
@@ -5307,6 +5330,27 @@ only when their keys are missing. On an established rolling installation, it
 then queries the candidate's <code>hubuum-admin --migration-mode</code>. A failed or
 unrecognized preflight stops the update before application processes are stopped.
 The candidate must support this command (0.0.17 or newer).</p>
+<h3 id="upgrade-to-v0020">Upgrade to v0.0.20<a class="headerlink" href="#upgrade-to-v0020" title="Permanent link">&para;</a></h3>
+<p>Wait until both server v0.0.20 and the compatible frontend v0.0.22 are published.
+The frontend does not publish a <code>latest</code> image tag. Select the two versioned tags
+explicitly; changing only the backend leaves older frontends unable to sign in.</p>
+<ol>
+<li>Stop all API, worker, and restore-executor writers and take a PostgreSQL
+   snapshot. Retain the previous binaries and credentials for recovery.</li>
+<li>Run the installed updater with <code>--server-tag v0.0.20 --frontend-tag v0.0.22</code>.
+   It refreshes deployment files from the saved management-script ref and asks
+   the candidate for its migration mode. The interactive-session migration
+   selects the offline path, which stops managed writers before migrations.</li>
+<li>Reconcile grants for externally managed split database roles. The managed
+   PostgreSQL stack handles its role setup through the migration helper.</li>
+<li>Clear existing BFF sessions and sign in again. Upgrade SDK and CLI consumers
+   to versions that support <code>/api/v1/auth</code>; old authentication routes are removed.</li>
+</ol>
+<p>The updater does not create the database snapshot. A failed offline migration
+leaves old writers stopped; fix forward or restore the snapshot before restarting
+old binaries. Existing updater scripts from v0.0.19 already support this path.
+To change a pinned management-script ref, rerun the v0.0.20 installer with
+<code>--script-ref v0.0.20</code>; image tag options alone do not change that ref.</p>
 <h3 id="upgrade-from-v0017-to-v0018">Upgrade from v0.0.17 to v0.0.18<a class="headerlink" href="#upgrade-from-v0017-to-v0018" title="Permanent link">&para;</a></h3>
 <p>Schedule downtime for <code>2026-10-05-000001_collection_event_sinks</code>:</p>
 <ol>
@@ -5367,8 +5411,8 @@ management helpers and generate the current Compose and Caddy configuration,
 including standby services for installations that predate rolling updates.</p>
 <p>If the installed updater predates these options or automatic configuration
 refresh, use the pinned installer to refresh the scripts and saved configuration:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/hubuum/hubuum/v0.0.18/scripts/install-single-host.sh<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>sudo<span class="w"> </span>bash<span class="w"> </span>-s<span class="w"> </span>--<span class="w"> </span>--dir<span class="w"> </span>/opt/hubuum<span class="w"> </span>--script-ref<span class="w"> </span>v0.0.18
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/hubuum/hubuum/v0.0.20/scripts/install-single-host.sh<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>sudo<span class="w"> </span>bash<span class="w"> </span>-s<span class="w"> </span>--<span class="w"> </span>--dir<span class="w"> </span>/opt/hubuum<span class="w"> </span>--script-ref<span class="w"> </span>v0.0.20
 </code></pre></div>
 <p>Add per-application tag options to change saved image choices after reviewing
 the upgrade requirements. The refreshed updater reads management scripts from
@@ -5382,11 +5426,11 @@ offline migration.</p>
 <h3 id="re-running-the-installer-to-update">Re-running The Installer To Update<a class="headerlink" href="#re-running-the-installer-to-update" title="Permanent link">&para;</a></h3>
 <p>The installer is idempotent and doubles as an in-place updater. Re-running it against an existing install directory reuses the configuration recorded in <code>.env</code> (mode, hostnames, email, images, refs, ports, network subnet, container engine, and systemd service name) and preserves generated secrets and the managed database, so you only need to pass the arguments you want to change:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="c1"># Pull the latest configured images and apply any changed configuration in place.</span>
-<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/hubuum/hubuum/v0.0.18/scripts/install-single-host.sh<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>sudo<span class="w"> </span>bash<span class="w"> </span>-s<span class="w"> </span>--<span class="w"> </span>--dir<span class="w"> </span>/opt/hubuum<span class="w"> </span>--script-ref<span class="w"> </span>v0.0.18
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/hubuum/hubuum/v0.0.20/scripts/install-single-host.sh<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>sudo<span class="w"> </span>bash<span class="w"> </span>-s<span class="w"> </span>--<span class="w"> </span>--dir<span class="w"> </span>/opt/hubuum<span class="w"> </span>--script-ref<span class="w"> </span>v0.0.20
 <a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>
 <a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="c1"># Change a single setting (for example, pin a new backend image) and reuse the rest.</span>
-<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>sudo<span class="w"> </span>./install-single-host.sh<span class="w"> </span>--server-tag<span class="w"> </span>v0.0.18<span class="w"> </span>--frontend-tag<span class="w"> </span>v0.0.19
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>sudo<span class="w"> </span>./install-single-host.sh<span class="w"> </span>--server-tag<span class="w"> </span>v0.0.20<span class="w"> </span>--frontend-tag<span class="w"> </span>v0.0.22
 </code></pre></div>
 <p>Any value passed explicitly on the command line overrides the stored one;
 everything else is taken from the existing <code>.env</code>. Migration preflight selects

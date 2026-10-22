@@ -4554,9 +4554,9 @@ typed synchronous and asynchronous clients. The distribution is named
 <code>hubuum-client</code> and its import package is <code>hubuum_client</code>.</p>
 <ul>
 <li><a href="https://hubuum.github.io/hubuum-client-python/">Versioned installation, guides, and API reference</a>.</li>
-<li><a href="https://hubuum.github.io/hubuum-client-python/v0.0.11/client/">Client configuration</a>.</li>
-<li><a href="https://hubuum.github.io/hubuum-client-python/v0.0.11/querying/">Queries</a>.</li>
-<li><a href="https://hubuum.github.io/hubuum-client-python/v0.0.11/api/">API guide</a>.</li>
+<li><a href="https://hubuum.github.io/hubuum-client-python/client/">Client configuration</a>.</li>
+<li><a href="https://hubuum.github.io/hubuum-client-python/querying/">Queries</a>.</li>
+<li><a href="https://hubuum.github.io/hubuum-client-python/api/">API guide</a>.</li>
 </ul>
 <h2 id="choose-compatible-versions">Choose compatible versions<a class="headerlink" href="#choose-compatible-versions" title="Permanent link">&para;</a></h2>
 <p>Do not infer compatibility from matching version numbers or from a <code>latest</code>
@@ -4571,24 +4571,25 @@ tag. Each companion project declares its server targets independently:</p>
 <tbody>
 <tr>
 <td>Rust client</td>
-<td><a href="https://hubuum.github.io/hubuum-client-rust/v0.14.1/compatibility/">Compatibility matrix</a></td>
+<td><a href="https://hubuum.github.io/hubuum-client-rust/compatibility/">Compatibility matrix</a></td>
 </tr>
 <tr>
 <td>Python client</td>
-<td><a href="https://hubuum.github.io/hubuum-client-python/v0.0.11/compatibility/">Compatibility matrix</a></td>
+<td><a href="https://hubuum.github.io/hubuum-client-python/compatibility/">Compatibility matrix</a></td>
 </tr>
 <tr>
 <td>CLI</td>
-<td><a href="https://hubuum.github.io/hubuum-cli/v0.0.14/compatibility/">Compatibility matrix</a></td>
+<td><a href="https://hubuum.github.io/hubuum-cli/compatibility/">Compatibility matrix</a></td>
 </tr>
 <tr>
 <td>Frontend</td>
-<td><a href="https://hubuum.github.io/hubuum-frontend/v0.0.19/compatibility/">Compatibility matrix</a></td>
+<td><a href="https://hubuum.github.io/hubuum-frontend/compatibility/">Compatibility matrix</a></td>
 </tr>
 </tbody>
 </table>
-<p>These records target server v0.0.18. Select the matching edition for an older
-installation. Verify the workflows you rely on, especially credential
+<p>Server v0.0.20 requires session-aware releases for interactive login. Consult
+each current compatibility record before upgrading; older published clients may
+still target an earlier server. Select the matching edition for an older installation. Verify the workflows you rely on, especially credential
 approvals, imports, schema changes, and backup formats. The server's
 <a href="../../integration-coverage/">integration coverage</a> explains which contracts
 currently have real-system evidence.</p>
