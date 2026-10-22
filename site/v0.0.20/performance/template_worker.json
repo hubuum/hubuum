@@ -1,0 +1,79 @@
+{
+  "captured_on": "2026-09-05",
+  "source_commit": "22743cca1bf5de204fd52c761afac614244f36a4",
+  "environment": {
+    "cpu": "Apple M2 Pro",
+    "logical_cpus": 12,
+    "memory_gib": 32,
+    "os": "macOS 26.6.2 arm64",
+    "rust": "1.98.0",
+    "template_schema_profile": "release, optimized",
+    "caveat": "Shared developer host; builds and other tests can contend. No baseline or production capacity claim."
+  },
+  "template_schema": [
+    {
+      "elapsed_us": 282556,
+      "scenario": "template_schema_cold_start"
+    },
+    {
+      "concurrency": 1,
+      "elapsed_ms": 82,
+      "p50_us": 8253,
+      "p95_us": 9370,
+      "peak_worker_rust_heap_bytes": 1960075,
+      "renders": 10,
+      "scenario": "template_schema_concurrency"
+    },
+    {
+      "concurrency": 4,
+      "elapsed_ms": 88,
+      "p50_us": 8777,
+      "p95_us": 9534,
+      "peak_worker_rust_heap_bytes": 1960075,
+      "renders": 40,
+      "scenario": "template_schema_concurrency"
+    },
+    {
+      "concurrency": 8,
+      "elapsed_ms": 166,
+      "p50_us": 16046,
+      "p95_us": 18045,
+      "peak_worker_rust_heap_bytes": 1960075,
+      "renders": 80,
+      "scenario": "template_schema_concurrency"
+    }
+  ],
+  "template_schema_previous_synchronous": [
+    {
+      "elapsed_us": 493237,
+      "scenario": "template_schema_cold_start"
+    },
+    {
+      "concurrency": 1,
+      "elapsed_ms": 87,
+      "p50_us": 7997,
+      "p95_us": 8082,
+      "peak_worker_rust_heap_bytes": 1960075,
+      "renders": 10,
+      "scenario": "template_schema_concurrency"
+    },
+    {
+      "concurrency": 4,
+      "elapsed_ms": 89,
+      "p50_us": 8042,
+      "p95_us": 8446,
+      "peak_worker_rust_heap_bytes": 1960075,
+      "renders": 40,
+      "scenario": "template_schema_concurrency"
+    },
+    {
+      "concurrency": 8,
+      "elapsed_ms": 173,
+      "p50_us": 16161,
+      "p95_us": 24197,
+      "peak_worker_rust_heap_bytes": 1960075,
+      "renders": 80,
+      "scenario": "template_schema_concurrency"
+    }
+  ]
+}
