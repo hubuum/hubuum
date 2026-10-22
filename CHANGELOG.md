@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.20] - 2026-10-22
+
 ### Added
 
 - **Breaking:** interactive human login now uses `/api/v1/auth/login` with a
@@ -90,6 +92,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   are unchanged.
 
 ### Changed
+
+- Refresh application, development, and validation dependencies and immutable
+  GitHub Actions pins. Replace the temporary vendored Swagger UI patch with the
+  upstream 10.0.2 fix. Keep SDK dependencies compatible with Rust 1.88.
+- **Breaking template behavior:** upgrade to MiniJinja 3. Review templates relying
+  on sequence/map display or arithmetic semantics; these now follow Jinja2 more
+  closely. JSON object contexts, compact `tojson`, and trailing-newline settings
+  are preserved.
+- **Breaking source-build requirement:** the optional `permissions-treetop`
+  feature now uses Treetop client 0.2 and requires Rust 1.93.1 or newer. Upgrade
+  source toolchains before building that feature.
 
 - **Breaking Rust storage SDK:** `AuthenticationStorage` adapters must implement
   session creation, rotation, revocation, and retention, plus credential creation

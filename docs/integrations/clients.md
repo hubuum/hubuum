@@ -52,9 +52,9 @@ typed synchronous and asynchronous clients. The distribution is named
 `hubuum-client` and its import package is `hubuum_client`.
 
 - [Versioned installation, guides, and API reference](https://hubuum.github.io/hubuum-client-python/).
-- [Client configuration](https://hubuum.github.io/hubuum-client-python/v0.0.11/client/).
-- [Queries](https://hubuum.github.io/hubuum-client-python/v0.0.11/querying/).
-- [API guide](https://hubuum.github.io/hubuum-client-python/v0.0.11/api/).
+- [Client configuration](https://hubuum.github.io/hubuum-client-python/client/).
+- [Queries](https://hubuum.github.io/hubuum-client-python/querying/).
+- [API guide](https://hubuum.github.io/hubuum-client-python/api/).
 
 ## Choose compatible versions
 
@@ -63,13 +63,14 @@ tag. Each companion project declares its server targets independently:
 
 | Project | Compatibility and release evidence |
 | --- | --- |
-| Rust client | [Compatibility matrix](https://hubuum.github.io/hubuum-client-rust/v0.14.1/compatibility/) |
-| Python client | [Compatibility matrix](https://hubuum.github.io/hubuum-client-python/v0.0.11/compatibility/) |
-| CLI | [Compatibility matrix](https://hubuum.github.io/hubuum-cli/v0.0.14/compatibility/) |
-| Frontend | [Compatibility matrix](https://hubuum.github.io/hubuum-frontend/v0.0.19/compatibility/) |
+| Rust client | [Compatibility matrix](https://hubuum.github.io/hubuum-client-rust/compatibility/) |
+| Python client | [Compatibility matrix](https://hubuum.github.io/hubuum-client-python/compatibility/) |
+| CLI | [Compatibility matrix](https://hubuum.github.io/hubuum-cli/compatibility/) |
+| Frontend | [Compatibility matrix](https://hubuum.github.io/hubuum-frontend/compatibility/) |
 
-These records target server v0.0.18. Select the matching edition for an older
-installation. Verify the workflows you rely on, especially credential
+Server v0.0.20 requires session-aware releases for interactive login. Consult
+each current compatibility record before upgrading; older published clients may
+still target an earlier server. Select the matching edition for an older installation. Verify the workflows you rely on, especially credential
 approvals, imports, schema changes, and backup formats. The server's
 [integration coverage](../integration-coverage.md) explains which contracts
 currently have real-system evidence.

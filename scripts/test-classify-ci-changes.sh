@@ -768,7 +768,7 @@ for notification_path in crates/hubuum-event-sink-webhook/Cargo.toml crates/hubu
   assert_flag "$notification_output" container true
 done
 
-# The temporary Swagger UI dependency is compiled in the production cache stage.
+# Removed vendor paths still receive conservative validation in deletion diffs.
 for vendor_input in vendor/utoipa-swagger-ui/Cargo.toml \
   vendor/utoipa-swagger-ui/build.rs vendor/utoipa-swagger-ui/src/lib.rs \
   vendor/utoipa-swagger-ui/README.upstream.txt; do

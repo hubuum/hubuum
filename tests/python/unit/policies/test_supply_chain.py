@@ -25,13 +25,13 @@ SEMVER_CHECKS_VERSION = POLICY.parse_tool_manifest(
 DIGEST = "a" * 64
 VALID_VALUES = {
     "CARGO_DENY_VERSION": "0.20.2",
-    "CARGO_SEMVER_CHECKS_VERSION": "0.50.0",
-    "DIESEL_CLI_VERSION": "2.3.13",
+    "CARGO_SEMVER_CHECKS_VERSION": "0.51.0",
+    "DIESEL_CLI_VERSION": "2.3.14",
     "POSTGRES_WINDOWS_VERSION": "18.6-3",
     "POSTGRES_WINDOWS_SHA256": DIGEST,
-    "SYFT_IMAGE": f"anchore/syft:v1.54.0@sha256:{DIGEST}",
-    "TRIVY_IMAGE": f"aquasec/trivy:0.75.0@sha256:{DIGEST}",
-    "COSIGN_VERSION": "v3.1.3",
+    "SYFT_IMAGE": f"anchore/syft:v1.55.0@sha256:{DIGEST}",
+    "TRIVY_IMAGE": f"aquasec/trivy:0.76.1@sha256:{DIGEST}",
+    "COSIGN_VERSION": "v3.1.4",
 }
 
 
@@ -50,7 +50,7 @@ class ToolManifestTests(unittest.TestCase):
         POLICY.validate_tool_values(VALID_VALUES.copy())
 
     def test_duplicate_keys_are_rejected(self) -> None:
-        content = "COSIGN_VERSION=v3.1.2\nCOSIGN_VERSION=v3.1.3\n"
+        content = "COSIGN_VERSION=v3.1.2\nCOSIGN_VERSION=v3.1.4\n"
         self.assert_policy_error(lambda: self.parse(content))
 
     def test_shell_active_image_value_is_rejected(self) -> None:
@@ -92,11 +92,11 @@ class DieselVersionTests(unittest.TestCase):
 
     def test_current_multiline_description_is_parsed(self) -> None:
         result = self.parse(
-            "diesel \n Version: 2.3.13\n Supported Backends: postgres\n"
+            "diesel \n Version: 2.3.14\n Supported Backends: postgres\n"
         )
 
         self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout, "2.3.13\n")
+        self.assertEqual(result.stdout, "2.3.14\n")
 
     def test_legacy_single_line_description_is_parsed(self) -> None:
         result = self.parse("diesel 2.2.12\n")
@@ -105,7 +105,7 @@ class DieselVersionTests(unittest.TestCase):
         self.assertEqual(result.stdout, "2.2.12\n")
 
     def test_ambiguous_description_is_rejected(self) -> None:
-        result = self.parse("diesel 2.3.10\n Version: 2.3.13\n")
+        result = self.parse("diesel 2.3.10\n Version: 2.3.14\n")
 
         self.assertNotEqual(result.returncode, 0)
 

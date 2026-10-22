@@ -29,4 +29,4 @@ sha2 = "0.11"
 uuid = "1"
 
 [dev-dependencies]
-rstest = "0.27"
+rstest = "0.28"
