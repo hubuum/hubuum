@@ -742,9 +742,7 @@ password_output="$(
 )"
 admin_password="${password_output##*reset to: }"
 [[ -n "$admin_password" && "$admin_password" != "$password_output" ]]
-api_request previous-api POST /api/v0/auth/login \
-  "{\"name\":\"admin\",\"password\":\"$admin_password\"}"
-admin_token="$(jq --exit-status --raw-output '.token' <<< "$api_body")"
+login_admin previous-api "$admin_password"
 
 phase="seed-previous-release"
 seed_previous_release
@@ -883,10 +881,7 @@ password_output="$(
 )"
 restored_admin_password="${password_output##*reset to: }"
 [[ -n "$restored_admin_password" && "$restored_admin_password" != "$password_output" ]]
-admin_token=""
-api_request restored-api POST /api/v1/auth/login \
-  "{\"client_id\":\"upgrade-test\",\"name\":\"admin\",\"password\":\"$restored_admin_password\"}"
-admin_token="$(jq --exit-status --raw-output '.access_token' <<< "$api_body")"
+login_admin restored-api "$restored_admin_password"
 restored_authentication=true
 
 api_request restored-api GET "/api/v1/collections/$collection_id"
