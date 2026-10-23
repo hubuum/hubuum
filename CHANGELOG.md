@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- The storage SDK includes `hubuum-budget`, a standard-library crate for typed
+  byte limits, cumulative accounting, and bounded writers. Backup and template
+  output share its enforcement while preserving their existing limits and errors.
+
 ### Security
 
 - Update `ctutils` to 0.4.4 in the application and fuzz lockfiles to address

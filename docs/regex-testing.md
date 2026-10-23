@@ -6,8 +6,9 @@ original source. See the [query guide](querying.md) and
 [crate policy](rust_api/hubuum-regex.md) for the language contract.
 
 This page records the regex portions of [#259](https://github.com/hubuum/hubuum/issues/259)
-and [#410](https://github.com/hubuum/hubuum/issues/410). The wider fuzzing,
-resilience, dynamic-policy, and shared-budget work remains in those issues.
+and [#410](https://github.com/hubuum/hubuum/issues/410). The wider fuzzing and
+resilience work remains in #259; shared byte accounting and operation policy
+selection are documented in [operation budgets](operation_budgets.md).
 
 ## Limits inventory
 
@@ -45,12 +46,13 @@ inside its regex matcher.
 ### Accounting decision
 
 Keep the fixed acceptance checks in `hubuum-regex` and execution policy in the
-adapters/executors. No generic budget crate is introduced by this work: the
-language's structural cost and a database statement deadline are different units
+adapters/executors. Regex accounting does not use the shared byte-budget crate:
+the language's structural cost and a database statement deadline are different units
 with different enforcement mechanisms. A reusable writer or work counter should
 be extracted only when actual consumers share its accounting and exhaustion
 semantics. Dynamic policy selection, task-wide accounting, and cancellation
-guarantees remain separate work in #410.
+guarantees remain with their operation owners; the
+[shared-budget decision](operation_budgets.md) preserves this separation.
 
 ## Test layers
 

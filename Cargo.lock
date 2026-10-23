@@ -2071,6 +2071,7 @@ dependencies = [
  "hmac 0.13.0",
  "hubuum-auth-core",
  "hubuum-auth-ldap",
+ "hubuum-budget",
  "hubuum-computed-fields",
  "hubuum-domain",
  "hubuum-event-sink-amqp",
@@ -2143,6 +2144,13 @@ dependencies = [
  "tokio",
  "unicode-normalization",
  "url",
+]
+
+[[package]]
+name = "hubuum-budget"
+version = "0.4.0"
+dependencies = [
+ "rstest",
 ]
 
 [[package]]
@@ -2376,6 +2384,7 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "chrono",
+ "hubuum-budget",
  "hubuum-computed-fields",
  "hubuum-domain",
  "hubuum-events-core",
@@ -2458,6 +2467,7 @@ version = "0.0.1"
 dependencies = [
  "chrono",
  "gungraun",
+ "hubuum-budget",
  "libc",
  "minijinja",
  "rstest",

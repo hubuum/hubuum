@@ -640,6 +640,16 @@ async_worker_telemetry="$(bash "$classifier" crates/hubuum-templates/tests/telem
 assert_flag "$async_worker_telemetry" code true
 
 # Batch protocol regressions and the shared-context benchmark must stay selected.
+for budget_input in crates/hubuum-budget/Cargo.toml crates/hubuum-budget/src/lib.rs; do
+  budget_output="$(bash "$classifier" "$budget_input")"
+  assert_flag "$budget_output" rust true
+  assert_flag "$budget_output" container true
+  assert_flag "$budget_output" benchmarks true
+done
+budget_benchmark="$(bash "$classifier" benches/operation_budgets_criterion.rs)"
+assert_flag "$budget_benchmark" rust true
+assert_flag "$budget_benchmark" benchmarks true
+
 batch_tests="$(bash "$classifier" crates/hubuum-templates/tests/batching.rs)"
 assert_flag "$batch_tests" code true
 assert_flag "$batch_tests" container true

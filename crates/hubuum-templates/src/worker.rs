@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Read;
 
+use hubuum_budget::{ByteBudget, ByteLimit};
 use minijinja::syntax::SyntaxConfig;
 use minijinja::value::Value;
 use minijinja::{AutoEscape, Environment, UndefinedBehavior, escape_formatter};
@@ -12,8 +13,7 @@ use crate::isolation::{
     RenderedTemplate, WorkerFailure, WorkerRequest, WorkerTemplate,
 };
 use crate::{
-    MissingValue, SizeLimitedWriter, TemplateAutoEscape, json_value_to_template_value,
-    register_curated_helpers,
+    MissingValue, TemplateAutoEscape, json_value_to_template_value, register_curated_helpers,
 };
 
 thread_local! {
@@ -60,18 +60,15 @@ fn render_batch(request: WorkerRequest<'_>) -> Result<Vec<RenderedTemplate>, Wor
     // Convert the shared context once. MiniJinja values share immutable context
     // storage; each render still receives a separate environment and state.
     let context = json_value_to_template_value(&request.context);
-    let mut remaining_output = request.max_output_bytes;
+    let mut output_budget = ByteLimit::new(request.max_output_bytes).start();
     let mut remaining_warnings = 1024;
     let mut outputs = Vec::with_capacity(request.templates.len());
     for (template_index, template) in request.templates.into_iter().enumerate() {
-        let mut output =
-            render(template, &request.operation, &context, remaining_output).map_err(|error| {
-                WorkerFailure {
-                    template_index,
-                    message: error.to_string(),
-                }
+        let mut output = render(template, &request.operation, &context, &mut output_budget)
+            .map_err(|error| WorkerFailure {
+                template_index,
+                message: error.to_string(),
             })?;
-        remaining_output -= output.output_bytes();
         output.truncate_missing_values(remaining_warnings);
         remaining_warnings -= output.missing_value_count();
         outputs.push(output);
@@ -83,7 +80,7 @@ fn render(
     request: WorkerTemplate<'_>,
     operation: &Operation,
     context: &Value,
-    remaining_output: usize,
+    output_budget: &mut ByteBudget,
 ) -> Result<RenderedTemplate, minijinja::Error> {
     MISSING.with(|values| values.borrow_mut().clear());
     let mut environment = Environment::new();
@@ -133,14 +130,20 @@ fn render(
     if matches!(operation, Operation::Syntax) {
         return Ok(RenderedTemplate::new(String::new(), vec![]));
     }
-    let mut writer = SizeLimitedWriter::new(request.max_output_bytes.min(remaining_output));
+    let buffer = Vec::with_capacity(
+        request
+            .max_output_bytes
+            .min(output_budget.remaining())
+            .min(1024),
+    );
+    let mut writer = output_budget.writer(buffer, ByteLimit::new(request.max_output_bytes));
     let rendered = environment
         .get_template(&request.name)?
         .render_captured_to(context.clone(), &mut writer);
-    if writer.exceeded() {
+    if writer.budget().exceeded() {
         return Err(minijinja::Error::new(
             minijinja::ErrorKind::InvalidOperation,
-            if remaining_output < request.max_output_bytes {
+            if writer.parent_exceeded() {
                 "template batch output limit exceeded"
             } else {
                 "template output limit exceeded"
@@ -148,7 +151,7 @@ fn render(
         ));
     }
     rendered?;
-    let output = writer.into_string().map_err(|_| {
+    let output = String::from_utf8(writer.into_inner()).map_err(|_| {
         minijinja::Error::new(
             minijinja::ErrorKind::InvalidOperation,
             "invalid template output",

@@ -8,6 +8,7 @@ The statically linked storage adapter SDK consists of these crates:
 
 | Crate | Supported purpose | Supported features |
 | --- | --- | --- |
+| `hubuum-budget` | Immutable byte policies, cumulative accounting, and bounded writers | Default only |
 | `hubuum-computed-fields` | Validated computed-field definitions and deterministic evaluation | Default only |
 | `hubuum-schema-diagnostics` | Generic bounded diagnostics for `jsonschema` errors | Default; `openapi` |
 | `hubuum-domain` | Validated identifiers, revisions, JSON Patch, and domain values | Default; `openapi` |
@@ -37,11 +38,12 @@ hubuum-storage-core
     |       +-------------------------- hubuum-domain
     +---------------------------------- hubuum-computed-fields
 
+hubuum-storage-core --> hubuum-budget
 hubuum-domain --> hubuum-schema-diagnostics
 hubuum-query --> hubuum-regex
 ```
 
-Every in-graph dependency uses an exact version requirement. The nine packages
+Every in-graph dependency uses an exact version requirement. The ten packages
 share one version and are released together. The root application and
 `hubuum-storage-postgres` are not part of the supported SDK. PostgreSQL remains
 the in-repository reference implementation, while an external adapter depends
@@ -57,7 +59,7 @@ The SDK remains `experimental-public` during the `0.x` series:
 
 - a patch release is source compatible with its minor line;
 - a minor release may make a documented breaking change;
-- all nine crates still advance together, even when only one crate changes; and
+- all ten crates still advance together, even when only one crate changes; and
 - adapter manifests use an exact requirement for `hubuum-storage-core` and the
   matching `hubuum-storage-conformance` release.
 
@@ -152,7 +154,7 @@ versions, and the safest available migration.
 
 SDK releases are distinct from server `vX.Y.Z` releases. Maintainers:
 
-1. choose one version for all nine packages and update every exact in-graph
+1. choose one version for all ten packages and update every exact in-graph
    dependency plus `Cargo.lock`;
 2. record supported additions, changes, deprecations, and every breaking
    migration in `CHANGELOG.md`;
@@ -161,12 +163,12 @@ SDK releases are distinct from server `vX.Y.Z` releases. Maintainers:
 4. run the Rust API policy, package, rustdoc, SemVer, formatting, lint, and full
    repository suites;
 5. publish in dependency order, waiting for crates.io index visibility between
-   layers: `hubuum-schema-diagnostics`, `hubuum-computed-fields`, `hubuum-regex`,
+   layers: `hubuum-budget`, `hubuum-schema-diagnostics`, `hubuum-computed-fields`, `hubuum-regex`,
    and `hubuum-task-core` first; `hubuum-domain` and `hubuum-query` second;
    `hubuum-events-core` third; `hubuum-storage-core` fourth; and
    `hubuum-storage-conformance` last; and
 6. create an annotated `storage-sdk-vX.Y.Z` tag and release notes only after all
-   nine immutable crate versions are visible.
+   ten immutable crate versions are visible.
 
 The local publication checks are:
 
@@ -175,6 +177,7 @@ python3 scripts/check-rust-api-policy.py
 python3 tests/python/run.py unit policies.test_rust_api
 cargo package --locked \
   --package hubuum-computed-fields \
+  --package hubuum-budget \
   --package hubuum-schema-diagnostics \
   --package hubuum-domain \
   --package hubuum-events-core \
@@ -321,7 +324,7 @@ rollback, expiry, origin revocation, and request binding. See the
 
 ## Upgrading from 0.3 to 0.4
 
-Update all nine SDK dependencies to exactly 0.4.0 together. Subscription
+Update all ten SDK dependencies to exactly 0.4.0 together. Subscription
 requests, projections and lookups now carry `EventSubscriptionScope`, which
 preserves either a collection ID or system scope. Use `scope().collection_id()`
 when an optional collection is required. `TaskKind` is shared through
