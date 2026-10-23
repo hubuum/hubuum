@@ -1,6 +1,7 @@
 # Release optimization profiles
 
-The release profile uses one codegen unit and fat LTO. This experiment varies
+Release builds now use `opt-level = 3`, one codegen unit, and fat LTO. The
+measured tradeoff below supports that choice. This experiment varies
 only `opt-level`, comparing the previous `z` size optimization with level `3`.
 It does not change compiler, features, corpus, allocator, TLS selection, LTO or
 codegen units between variants.
@@ -67,7 +68,7 @@ Performance conclusions should be based on a repeat measurement after builds
 finish, with the machine otherwise idle. Keep raw reports beside the recorded
 decision so the choice can be re-evaluated after compiler or dependency changes.
 
-## Decision and measured artifact cost
+## Decision
 
 Use `opt-level = 3` for release builds, retaining one codegen unit and fat LTO.
 The measured CPU workloads consistently benefit, with the largest improvement
@@ -82,6 +83,42 @@ jobs. Both variants used default features plus `tls-rustls,tls-openssl,embedded-
 The production Docker image used its pinned Alpine toolchain, which reports Rust
 1.99.1; container variants share that compiler, while host variants share 1.98.0.
 Do not compare host and container bytes as if their target/toolchain were equal.
+
+### Runtime repeats
+
+The [complete machine-readable report](release_profiles.json) retains both quiet
+repeats, confidence intervals, medians, throughput, process resources, source and
+executable hashes, and the earlier contended run. The table uses the second quiet
+repeat's mean. Both repeats improved every workload; the profile order was
+`z`, `3` first and `3`, `z` second. They ran sequentially on CPU 15 after the
+experiment's builds and test suites finished; existing host services remained
+running. Each case used 50 samples, a two-second warm-up, and five seconds of
+measurement.
+
+| Workload | `z` mean, µs | `3` mean, µs | Mean latency change |
+| --- | --- | --- | --- |
+| JSON encode, 1,024 objects | 1518.098 | 524.964 | -65.4% |
+| JSON decode, 1,024 objects | 3782.039 | 2896.218 | -23.4% |
+| Schema validation, 256 values | 27.710 | 19.801 | -28.5% |
+| Unified search parsing | 1.242 | 0.923 | -25.6% |
+| Filter parsing | 1.377 | 0.788 | -42.8% |
+| Warm template, 128 rows | 69.724 | 54.929 | -21.2% |
+
+These repeats execute the exact Cargo-reported benchmark binaries, avoiding
+recompilation between measurements. To repeat this step after the driver has
+built them, select each target's `executable` from its `*-build.log` JSON and
+set `profile_target` to that profile's Cargo target directory. Then run:
+
+```bash
+CARGO_TARGET_DIR="$profile_target" taskset -c 15 "$benchmark_executable" \
+  --bench --sample-size 50 --warm-up-time 2 --measurement-time 5 --noplot
+```
+
+Use the same available CPU for both profiles on another machine. Reversing the
+profile order checks for order effects; neither the absolute timings nor these
+ratios are universal guarantees.
+
+### Artifact and build cost
 
 | Artifact | `z` bytes | `3` bytes | Change |
 | --- | --- | --- | --- |
