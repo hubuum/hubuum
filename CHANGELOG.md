@@ -7,6 +7,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Security
+
+- Update `ctutils` to 0.4.4 in the application and fuzz lockfiles to address
+  RUSTSEC-2026-0385 (non-constant-time mask generation and `u128` comparisons).
+
 ### Changed
 
 - **Breaking (scale fixtures):** bundled large and huge profiles advance to

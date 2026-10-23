@@ -462,3 +462,29 @@ is necessary to measure the current envelope, and neither is implied by a larger
 byte setting. Preserve the production capture limits and report measurements
 before selecting a format change. Backup capture already streams rows from
 PostgreSQL, but the admitted document and restore graph are still materialized.
+
+## CI Policy
+
+Scale jobs are expensive and never run because `ci:full`, `ci:benchmarks`, or
+an ordinary benchmark-path change requested them. Pull requests opt in with
+these labels:
+
+- `ci:scale-large` runs the large profile under standard and extended limits.
+- `ci:scale-huge` runs the huge profile under standard and extended limits.
+
+Applying both labels runs both profiles. The workflow can also be dispatched
+manually with explicit profile and limit selections. A weekly schedule runs the
+large profile and a monthly schedule runs the huge profile. Superseded runs are
+cancelled. Each profile and limit combination has a distinct job summary and
+artifact name. It holds one binary, workload, backend, seed, and limit mode
+fixed; measures a fresh baseline; then measures each calibrated object and
+object-relation growth point against its own fresh database. A final job
+consolidates exact corpus sizes, search and relation latency/throughput,
+traversal pagination, and database/index costs into one updatable `Scale Growth
+Report` comment with a link to the workflow and its sanitized 14-day artifacts.
+The report explicitly leaves code-regression detection to `rust-pr-bench`.
+
+Generator code, profile and workload specifications, and the scale workflow
+have an explicit `scale_benchmark` classification in
+`scripts/classify-ci-changes.sh`. Update its regression test when moving or
+adding inputs.
