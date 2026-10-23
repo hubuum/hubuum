@@ -108,3 +108,50 @@ instrumentation calls. Rejection constructs a typed `io::Error`; the public
 template wrapper remaps it to preserve its existing message, adding an error
 construction on that failure path. Record compiler, machine, features and
 measured latency alongside results when evaluating overhead.
+
+### Measured overhead
+
+The [raw report](performance/operation_budgets.json) records two sequential
+repeats, confidence intervals, medians, process resources, compiler information,
+source hashes, and the exact benchmark executable hash. These runs used Rust
+1.98.0 / LLVM 22.1.8, default features, and the existing `opt-level = z` release
+profile with fat LTO and one codegen unit. The host was an Intel Xeon Silver 4216
+(16 cores, 32 logical CPUs), approximately 62 GiB RAM, running Linux x86-64.
+The executable was pinned to CPU 15 after this experiment's builds and database
+tests finished; existing host services remained running, and load averages are
+recorded in the report. Each case used 50 samples, two seconds of warm-up, and
+five seconds of measurement.
+
+Each operation writes 128 fragments of 21 bytes, or 2,688 bytes total. The batch
+case divides them among four sequential children. The second repeat supplies
+the absolute means below; both repeats' changes are shown to expose variation.
+
+| Workload | Previous mean, µs | Shared mean, µs | Second repeat change | First repeat change |
+| --- | --- | --- | --- | --- |
+| Backup buffer | 1.873 | 2.568 | +37.1% | +30.8% |
+| Template buffer | 1.759 | 2.097 | +19.2% | +11.8% |
+| Four sequential batch children | 1.688 | 1.559 | -7.7% | +4.3% |
+
+The backup writer costs approximately 0.6–0.7 µs more per 128-fragment operation
+across these repeats; template output costs approximately 0.2–0.3 µs more.
+Batch changes span both signs, so these measurements do not establish a batch
+speedup. The shared counting sink takes approximately 0.85–0.90 µs for the same
+fragments and retains no output buffer; it has no previous-writer comparison.
+These are writer microbenchmarks, not whole backup/export or template latencies.
+The pilot accepts the measured overhead for common partial-write semantics and
+typed parent/child enforcement; it does not claim zero cost.
+
+Successful writes retain the same `Vec` preallocation and growth behavior as the
+previous implementation; benchmark assertions compare output and final capacity.
+The shared counter itself adds fixed-size stack state, without a new allocation
+or instrumentation call. Rejection/error construction is outside these timed
+success cases. This is a code-level allocation assessment, not an allocator
+profile. End-to-end latency and allocation behavior still depend on each caller.
+
+To retain the measured optimization profile when reproducing after a release
+profile change, run:
+
+```sh
+CARGO_PROFILE_RELEASE_OPT_LEVEL=z cargo bench --bench operation_budgets_criterion \
+  -- --sample-size 50 --warm-up-time 2 --measurement-time 5 --noplot
+```
