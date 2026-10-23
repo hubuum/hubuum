@@ -12,6 +12,9 @@ For deterministic large and huge datasets, stateful mixed workloads, and
 backup/restore lifecycle measurements, use the
 [scale operational benchmark suite](scale_benchmarks.md).
 
+For deterministic CPU workloads and executable/container size comparisons,
+see the [release optimization experiment](performance/release_profiles.md).
+
 ## Connection Budget
 
 Start with the PostgreSQL connection budget for one Hubuum instance:

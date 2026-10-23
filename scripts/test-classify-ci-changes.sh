@@ -631,6 +631,19 @@ async_worker_telemetry="$(bash "$classifier" crates/hubuum-templates/tests/telem
 assert_flag "$async_worker_telemetry" code true
 
 # Batch protocol regressions and the shared-context benchmark must stay selected.
+for profile_input in scripts/compare-release-profiles.py tests/python/unit/tooling/test_release_profiles.py; do
+  profile_output="$(bash "$classifier" "$profile_input")"
+  assert_flag "$profile_output" rust true
+  assert_flag "$profile_output" benchmarks true
+  assert_flag "$profile_output" container true
+  assert_flag "$profile_output" artifacts true
+done
+for profile_benchmark in serialization schema search template; do
+  profile_output="$(bash "$classifier" "benches/release_${profile_benchmark}_criterion.rs")"
+  assert_flag "$profile_output" rust true
+  assert_flag "$profile_output" benchmarks true
+done
+
 batch_tests="$(bash "$classifier" crates/hubuum-templates/tests/batching.rs)"
 assert_flag "$batch_tests" code true
 assert_flag "$batch_tests" container true
