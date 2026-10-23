@@ -1,5 +1,5 @@
 schema_version = 1
-profile_version = 1
+profile_version = 2
 name = "huge"
 seed = 36520260901
 
@@ -63,6 +63,9 @@ adversarial_component_size = 8
 maximum_graph_depth = 7
 
 [provisioning]
+lifecycle_max_resident_bytes = 6442450944
+lifecycle_stage_timeout_seconds = 1800
+backup_max_capture_rows = 16000000
 backup_max_output_bytes = 1073741824
 restore_max_upload_bytes = 1073741824
 db_statement_timeout_ms = 0

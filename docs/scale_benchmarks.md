@@ -55,6 +55,13 @@ measurement if the loaded rows or required skews do not match that manifest.
 Generation is set-based and deterministic; increasing the seed changes the
 logical corpus while preserving the declared shape.
 
+The bundled large and huge specifications now use profile version 2. This is a
+breaking fixture-identity change: version-1 manifests do not match those bundled
+specifications. Recreate the disposable dataset and manifest with the matching
+version-2 profile, or continue using an archived version-1 specification through
+`--profile-spec`. Older custom profile files remain readable; omitted lifecycle
+settings receive their documented defaults.
+
 ## Build and Prepare
 
 Build the shared runner and the real production binaries:
@@ -339,10 +346,12 @@ materializing the full document. Fixture revision/history invariants are checked
 independently before workloads, including when backup generation is over its ceiling.
 Otherwise the runner creates a backup and invokes `hubuum-admin --verify-backup`. Supplying `--restore-test-database-url` additionally restores
 into a separately created empty database and performs semantic verification.
-The large profile retains the ordinary 256 MiB ceiling; the huge profile
-declares an elevated 1 GiB provisioning envelope. Both values are recorded in
-the manifest and applied to the server and administrator processes, along with
-the profile's database statement timeout. Bulk loading seeds
+Profile version 2 declares a 1 GiB backup/restore document ceiling for both
+profiles. The large profile allows 4,000,000 enumerated rows and huge allows
+16,000,000, including live rows and history. These explicit provisioning policies
+are recorded in the manifest and passed to the server and administrator.
+Production defaults remain 256 MiB and 1,000,000 rows. Custom profile files can
+select a different envelope; omitted row limits retain the production default. Bulk loading seeds
 one open temporal baseline for every live resource and preserves the additional
 revisions in the history overlay. Audit revision fields retain matching snapshots.
 Administrator failures report the failing stage, exit status, and diagnostic
@@ -351,7 +360,7 @@ output with configured connection strings and token keys redacted.
 Lifecycle results distinguish a successful offline verification, a successful
 isolated restore, an unsupported backup, an artifact that exceeds the ordinary
 256 MiB ceiling, and a verification or restore failure. The measured size is
-recorded and an over-limit generated document is removed instead of uploaded;
+recorded and every generated document is removed after the drill, including failures;
 the runner does not silently exempt scale artifacts from production limits.
 The preflight is a size check, not proof of backup validity; generation and
 verification still run for every corpus admitted by the preflight.
@@ -363,17 +372,98 @@ operational sections and framing, so it cannot guarantee admission. A capture
 limit failure produces no artifact and is reported as a backup-stage failure
 with the resource-limit diagnostic; it must not be claimed as successful
 verification or restore. The default work ceiling is 1,000,000 enumerated rows.
-The large and huge profiles retain their existing declared byte ceilings; this
-change does not assert that either corpus fits those ceilings or completes a
-restore. Continued lifecycle-envelope work is tracked in
-[#366](https://github.com/hubuum/hubuum/issues/366).
+A corpus may still exceed either explicit ceiling; preflight reports that limitation
+without claiming verification or restore.
 
-The adapter regression `backup_rows_can_exceed_one_postgres_json_array` retains
-coverage above PostgreSQL's single JSON-array limit under an explicit 512 MiB
-budget. Small-budget capture regressions instrument database row evaluation and
-logical retained bytes to prove early termination. These tests exercise the
-resource enforcement mechanism; they do not replace a large-profile lifecycle
-assessment or peak-RSS measurement.
+### Resource envelope and lifecycle-only runs
+
+Each administrator stage has a 1,800-second deadline and a sampled 6 GiB total
+resident-memory limit for the process and its descendants. Reports record
+elapsed milliseconds, sampled peak resident bytes, and the termination reason.
+The supervisor checks every 25 ms, kills the administrator process group on Unix
+when a bound is exceeded, and reaps the administrator. It also terminates remaining
+descendants when the administrator exits normally or fails, before reaping its
+leader so the process-group ID cannot be reused during cleanup. Sampling permits overshoot and can miss short
+peaks; use an OS/container memory limit for a hard host-resource boundary. A
+memory termination is reported as `<stage>_exceeds_memory_envelope`, an explicit
+unsupported-envelope result like the document-size ceiling. It does not count
+as a data-correctness failure in comparative assessment and never claims a
+successful verification or restore. Deadlines, diagnostic overflow, and other
+execution/verification failures still fail correctness assessment. Windows can
+terminate the direct child but does not provide the Unix process-group guarantee.
+
+Only one backup document is staged at a time in an exclusively created directory.
+Its logical bytes are bounded during capture and serialization; atomic rename
+uses one temporary file rather than a second full copy. Provision at least the
+configured document ceiling plus 2 MiB for diagnostics, headroom for sampling
+overshoot, filesystem overhead,
+and free space for the database and its WAL separately. Diagnostic files have a
+sampled 1 MiB cap each and bounded reads. The runner removes its private backup
+directory and diagnostic captures on both success and handled failure. Abrupt
+termination of the runner itself can leave its administrator and directory;
+stop the administrator process group before removing the directory and retrying.
+CI uploads only report JSON/Markdown, excludes artifact directories,
+and retains reports for 14 days. It never uploads generated backup contents.
+
+After `load`, run only the fixture validation and backup lifecycle:
+
+```bash
+target/release/hubuum-scale-benchmark lifecycle \
+  --profile large \
+  --database-url postgres://localhost/hubuum_scale_local \
+  --admin-binary target/release/hubuum-admin \
+  --restore-test-database-url postgres://localhost/hubuum_scale_restore \
+  --output target/scale/lifecycle.json \
+  --artifact-directory target/scale/lifecycle-artifacts
+```
+
+The source must be the disposable loaded fixture; the restore database must be
+empty. The command writes the manifest, provisioning policy and lifecycle report
+and exits unsuccessfully unless offline verification (and the requested restore)
+completed. It does not silently accept a size limitation as a completed drill.
+
+### Measured large-profile limitation
+
+On 23 October 2026, the version-2 large fixture (seed `36520260901`, 250,000
+objects and 1,000,000 object relations, plus temporal histories and operational
+overlays) was loaded and verified against PostgreSQL 18.6. Its temporal-state
+lower bound was **837,811,676 bytes**, already above the ordinary 256 MiB ceiling.
+Both runs admitted 1 GiB of document bytes and 4,000,000 scanned rows:
+
+| Process memory ceiling | Preflight | Backup before termination | Sampled peak RSS | Result |
+| --- | --- | --- | --- | --- |
+| 6 GiB (bundled profile) | 232.772 s | 28.711 s | 6,487,523,328 bytes | Memory envelope exceeded |
+| 12 GiB (explicit custom profile) | 204.672 s | 57.656 s | 12,920,004,608 bytes | Memory envelope exceeded |
+
+The administrator was killed and reaped and the private artifact directories
+were removed in both runs. Neither produced a completed backup document;
+verification and restore were not attempted. These peaks include sampling
+overshoot. The fixture ran on Linux x86-64, an Intel Xeon Silver 4216 (16 cores,
+32 threads), 62 GiB RAM, with a Rust 1.98.0 release administrator using `opt-level=z`,
+fat LTO, both TLS features and embedded migrations. Other validation builds were
+running, so timings are diagnostic observations, not performance baselines.
+
+The default large corpus therefore **does not have a completed lifecycle within
+the measured 6 GiB or 12 GiB process envelopes**. Keep that explicit limitation;
+raising the byte limit is not evidence of memory safety or restore support.
+The existing materialized backup representation needs further retained-memory
+reduction or a streaming/versioned design before claiming this corpus works on
+ordinary CI runners. The huge profile has no successful measured lifecycle here.
+To select a different provisioned envelope, copy the TOML profile, edit
+`lifecycle_max_resident_bytes`, and pass `--profile large --profile-spec <file>`.
+The harness enforces and records that choice; it does not certify it in advance.
+
+### Format decision
+
+Use the existing compact versioned JSON backup and an explicitly provisioned
+extended ceiling. Compression could reduce artifact/disk bytes but would not
+reduce the decoded row graph retained by verification/restore. A streaming format
+would require incremental validation, transaction-safe restoration, bounded
+cross-section reference checks and new compatibility/version handling. Neither
+is necessary to measure the current envelope, and neither is implied by a larger
+byte setting. Preserve the production capture limits and report measurements
+before selecting a format change. Backup capture already streams rows from
+PostgreSQL, but the admitted document and restore graph are still materialized.
 
 ## CI Policy
 

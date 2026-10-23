@@ -345,10 +345,27 @@ pub struct InvariantSpec {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ProvisioningLimits {
+    #[serde(default = "default_lifecycle_memory")]
+    pub lifecycle_max_resident_bytes: u64,
+    #[serde(default = "default_lifecycle_timeout")]
+    pub lifecycle_stage_timeout_seconds: u64,
+    #[serde(default = "default_capture_rows")]
+    pub backup_max_capture_rows: u64,
     pub backup_max_output_bytes: u64,
     pub restore_max_upload_bytes: u64,
     pub db_statement_timeout_ms: u64,
     pub db_pool_size: u64,
+}
+
+fn default_lifecycle_memory() -> u64 {
+    6 * 1024 * 1024 * 1024
+}
+fn default_lifecycle_timeout() -> u64 {
+    1800
+}
+
+fn default_capture_rows() -> u64 {
+    1_000_000
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -499,7 +516,10 @@ impl ScaleProfile {
                 "scale profiles require at least 1,000 principals and hundreds of groups",
             ));
         }
-        if self.provisioning.backup_max_output_bytes == 0
+        if self.provisioning.lifecycle_max_resident_bytes == 0
+            || self.provisioning.lifecycle_stage_timeout_seconds == 0
+            || self.provisioning.backup_max_capture_rows == 0
+            || self.provisioning.backup_max_output_bytes == 0
             || self.provisioning.restore_max_upload_bytes == 0
             || self.provisioning.db_pool_size == 0
             || self.provisioning.db_pool_size > u64::from(u32::MAX)
@@ -1866,8 +1886,17 @@ pub struct ResourceReport {
     pub pool_metric_deltas: BTreeMap<String, f64>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct LifecycleStageResources {
+    pub elapsed_ms: u64,
+    pub peak_resident_bytes: u64,
+    pub termination: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct LifecycleReport {
+    #[serde(default)]
+    pub stages: BTreeMap<String, LifecycleStageResources>,
     pub dataset_generation_ms: u64,
     pub dataset_loading_ms: u64,
     #[serde(default)]
@@ -3963,9 +3992,36 @@ mod tests {
         );
         assert!(
             huge.provisioning.restore_max_upload_bytes
-                > large.provisioning.restore_max_upload_bytes
+                >= large.provisioning.restore_max_upload_bytes
         );
         assert!(huge.manifest().unwrap().semantic_digest != first.semantic_digest);
+    }
+
+    #[test]
+    fn older_profile_files_keep_default_capture_and_process_limits() {
+        let value = serde_json::json!({"backup_max_output_bytes": 256,
+            "restore_max_upload_bytes": 256, "db_statement_timeout_ms": 0, "db_pool_size": 20});
+        let limits: ProvisioningLimits = serde_json::from_value(value).unwrap();
+        assert_eq!(limits.backup_max_capture_rows, 1_000_000);
+        assert_eq!(
+            limits.lifecycle_max_resident_bytes,
+            default_lifecycle_memory()
+        );
+        assert_eq!(
+            limits.lifecycle_stage_timeout_seconds,
+            default_lifecycle_timeout()
+        );
+    }
+
+    #[test]
+    fn large_capture_budget_covers_live_and_open_history_rows() {
+        let profile = ScaleProfile::bundled(ProfileName::Large).unwrap();
+        let state_rows = profile.totals.objects
+            + profile.totals.object_relations
+            + profile.totals.classes
+            + profile.totals.class_relations;
+        assert!(profile.provisioning.backup_max_capture_rows > 2 * state_rows);
+        assert!(profile.provisioning.backup_max_output_bytes > 477_540_456);
     }
 
     #[test]
@@ -4316,6 +4372,7 @@ mod tests {
             LifecycleReport {
                 dataset_generation_ms: 1,
                 dataset_loading_ms: 2,
+                stages: BTreeMap::new(),
                 backup_preflight_ms: None,
                 backup_size_lower_bound_bytes: None,
                 backup_generation_ms: None,
