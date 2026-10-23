@@ -487,6 +487,7 @@ scale_benchmark_output="$(bash "$classifier" \
   scale-benchmarks/sensitivity-v1.toml \
   scale-benchmarks/workloads/v1.toml \
   crates/hubuum-scale-benchmark/src/runner.rs \
+  crates/hubuum-scale-benchmark/src/lifecycle_process.rs \
   crates/hubuum-scale-core/src/lib.rs \
   crates/hubuum-storage-postgres/src/scale_benchmark.rs \
   crates/hubuum-storage-postgres/src/scale_benchmark/history_baselines.sql)"
@@ -496,6 +497,14 @@ assert_flag "$scale_benchmark_output" runtime_benchmark false
 assert_flag "$scale_benchmark_output" scale_benchmark true
 assert_flag "$scale_benchmark_output" container false
 assert_flag "$scale_benchmark_output" artifacts false
+
+for scale_manifest in crates/hubuum-scale-benchmark/Cargo.toml crates/hubuum-scale-core/Cargo.toml; do
+  scale_manifest_output="$(bash "$classifier" "$scale_manifest")"
+  assert_flag "$scale_manifest_output" scale_benchmark true
+  assert_flag "$scale_manifest_output" rust true
+  assert_flag "$scale_manifest_output" container true
+  assert_flag "$scale_manifest_output" artifacts true
+done
 
 python3 - "$repo_root/.github/workflows/scale-benchmarks.yml" <<'PY'
 import sys

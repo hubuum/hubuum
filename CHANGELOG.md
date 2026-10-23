@@ -7,6 +7,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- Scale backup drills declare byte, row-work, resident-memory, and stage-time
+  budgets. The large profile uses a 1 GiB document ceiling and four million
+  scanned rows. A lifecycle-only command records per-stage memory and timing,
+  bounds administrator execution, and removes temporary backup documents.
+  The measured large corpus exceeds both 6 GiB and 12 GiB process envelopes;
+  reports distinguish that limitation from completed verification or restore.
+  Production backup and restore defaults remain unchanged.
+
 ## [0.0.20] - 2026-10-22
 
 ### Added
