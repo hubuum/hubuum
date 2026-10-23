@@ -10,10 +10,11 @@ use hubuum_scale_core::{
 };
 use hubuum_storage_postgres::scale_benchmark::PostgresScaleBackend;
 
+mod lifecycle_process;
 mod metrics;
 mod runner;
 
-use runner::{MeasureOptions, measure_scale_benchmark};
+use runner::{LifecycleOptions, MeasureOptions, measure_scale_benchmark, run_lifecycle};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Result<T> = std::result::Result<T, Error>;
@@ -29,6 +30,8 @@ struct Cli {
 enum Command {
     /// Write the deterministic semantic manifest without loading a backend.
     Manifest(ManifestArgs),
+    /// Verify the loaded fixture and measure only its backup/restore lifecycle.
+    Lifecycle(LifecycleArgs),
     /// Load one fresh selected backend and verify every invariant.
     Load(LoadArgs),
     /// Measure an already loaded database through a production server process.
@@ -88,6 +91,22 @@ struct ManifestArgs {
     profile: ProfileArgs,
     #[arg(long)]
     output: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct LifecycleArgs {
+    #[command(flatten)]
+    profile: ProfileArgs,
+    #[arg(long)]
+    database_url: String,
+    #[arg(long)]
+    admin_binary: PathBuf,
+    #[arg(long)]
+    restore_test_database_url: Option<String>,
+    #[arg(long)]
+    output: PathBuf,
+    #[arg(long)]
+    artifact_directory: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -222,6 +241,7 @@ struct CompareBackendsArgs {
 async fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Manifest(args) => manifest(args),
+        Command::Lifecycle(args) => lifecycle(args).await,
         Command::Load(args) => load(args).await,
         Command::Measure(args) => measure(args).await,
         Command::Run(args) => run(args).await,
@@ -243,6 +263,45 @@ fn manifest(args: ManifestArgs) -> Result<()> {
         manifest.semantic_digest,
         args.output.display()
     );
+    Ok(())
+}
+
+async fn lifecycle(args: LifecycleArgs) -> Result<()> {
+    let profile = load_profile(&args.profile)?;
+    let manifest = profile.manifest()?;
+    let backend = postgres_backend(&args.database_url, &profile)?;
+    backend.verify_dataset(&profile, &manifest).await?;
+    fs::create_dir_all(&args.artifact_directory)?;
+    let options = LifecycleOptions {
+        admin_binary: Some(args.admin_binary),
+        restore_test_database_url: args.restore_test_database_url,
+        artifact_directory: args.artifact_directory,
+    };
+    let report = run_lifecycle(
+        &backend,
+        &options,
+        &profile,
+        &backend.server_environment(),
+        0,
+        0,
+    )
+    .await;
+    write_json(
+        &args.output,
+        &serde_json::json!({"manifest": manifest,
+        "provisioning": profile.provisioning, "lifecycle": report}),
+    )?;
+    if !matches!(
+        report.outcome.as_str(),
+        "backup_verified_offline" | "backup_verified_and_restored"
+    ) {
+        return Err(io_error(format!(
+            "lifecycle did not complete: {} (see {})",
+            report.outcome,
+            args.output.display()
+        )));
+    }
+    println!("{}", report.outcome);
     Ok(())
 }
 

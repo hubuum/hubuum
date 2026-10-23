@@ -7,15 +7,16 @@ use std::time::{Duration, Instant};
 use futures_util::{StreamExt, stream};
 use hubuum_scale_core::{
     BackendResourceReport, BenchmarkPrincipal, CorrectnessReport, DatasetManifest,
-    LatencyDistribution, LifecycleReport, LimitMode, ResourceReport, Result, RuntimeIdentity,
-    ScaleAxis, ScaleBenchmarkBackend, ScaleBenchmarkReport, ScaleProfile, ScenarioReport,
-    WorkloadScenario, WorkloadSpec, invalid_data,
+    LatencyDistribution, LifecycleReport, LifecycleStageResources, LimitMode, ResourceReport,
+    Result, RuntimeIdentity, ScaleAxis, ScaleBenchmarkBackend, ScaleBenchmarkReport, ScaleProfile,
+    ScenarioReport, WorkloadScenario, WorkloadSpec, invalid_data,
 };
 use reqwest::{Client, StatusCode, Url, header};
 use serde_json::{Value, json};
 use sysinfo::System;
 use tokio::time::sleep;
 
+use crate::lifecycle_process::{self, ProcessLimits};
 use crate::metrics::MetricSnapshot;
 
 const TOKEN_HASH_KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -32,6 +33,22 @@ pub struct MeasureOptions {
     pub scale_axis: Option<ScaleAxis>,
     pub run_lifecycle: bool,
     pub startup_timeout: Duration,
+}
+
+pub struct LifecycleOptions {
+    pub admin_binary: Option<PathBuf>,
+    pub restore_test_database_url: Option<String>,
+    pub artifact_directory: PathBuf,
+}
+
+impl From<&MeasureOptions> for LifecycleOptions {
+    fn from(options: &MeasureOptions) -> Self {
+        Self {
+            admin_binary: options.admin_binary.clone(),
+            restore_test_database_url: options.restore_test_database_url.clone(),
+            artifact_directory: options.artifact_directory.clone(),
+        }
+    }
 }
 
 struct ManagedServer {
@@ -82,6 +99,10 @@ impl ManagedServer {
             .env(
                 "HUBUUM_EXPORT_MAX_OUTPUT_BYTES",
                 limits.maximum_export_output_bytes.to_string(),
+            )
+            .env(
+                "HUBUUM_BACKUP_MAX_CAPTURE_ROWS",
+                profile.provisioning.backup_max_capture_rows.to_string(),
             )
             .env(
                 "HUBUUM_BACKUP_MAX_OUTPUT_BYTES",
@@ -351,7 +372,7 @@ pub async fn measure_scale_benchmark<B: ScaleBenchmarkBackend>(
     let lifecycle = if options.run_lifecycle {
         run_lifecycle(
             backend,
-            &options,
+            &LifecycleOptions::from(&options),
             &profile,
             &backend_environment,
             generation_ms,
@@ -362,6 +383,7 @@ pub async fn measure_scale_benchmark<B: ScaleBenchmarkBackend>(
         LifecycleReport {
             dataset_generation_ms: generation_ms,
             dataset_loading_ms: loading_ms,
+            stages: BTreeMap::new(),
             backup_preflight_ms: None,
             backup_size_lower_bound_bytes: None,
             backup_generation_ms: None,
@@ -382,6 +404,8 @@ pub async fn measure_scale_benchmark<B: ScaleBenchmarkBackend>(
     if matches!(
         lifecycle.outcome.as_str(),
         "admin_binary_not_supplied"
+            | "invalid_lifecycle_limits"
+            | "backup_artifact_already_exists"
             | "backup_failed"
             | "backup_size_preflight_failed"
             | "offline_verification_failed"
@@ -1133,9 +1157,9 @@ fn resource_report(
     })
 }
 
-async fn run_lifecycle<B: ScaleBenchmarkBackend>(
+pub async fn run_lifecycle<B: ScaleBenchmarkBackend>(
     backend: &B,
-    options: &MeasureOptions,
+    options: &LifecycleOptions,
     profile: &ScaleProfile,
     backend_environment: &BTreeMap<String, String>,
     generation_ms: u64,
@@ -1148,6 +1172,7 @@ async fn run_lifecycle<B: ScaleBenchmarkBackend>(
     let mut report = LifecycleReport {
         dataset_generation_ms: generation_ms,
         dataset_loading_ms: loading_ms,
+        stages: BTreeMap::new(),
         backup_preflight_ms: None,
         backup_size_lower_bound_bytes: None,
         backup_generation_ms: None,
@@ -1188,15 +1213,35 @@ async fn run_lifecycle<B: ScaleBenchmarkBackend>(
         return report;
     }
 
-    let backup_path = options.artifact_directory.join("dataset-backup.json");
+    let limits = match ProcessLimits::new(
+        profile.provisioning.lifecycle_max_resident_bytes,
+        profile.provisioning.lifecycle_stage_timeout_seconds,
+    ) {
+        Ok(limits) => limits,
+        Err(_) => {
+            report.outcome = "invalid_lifecycle_limits".into();
+            return report;
+        }
+    };
+    let backup_directory = options.artifact_directory.join("lifecycle-backup");
+    if fs::create_dir(&backup_directory).is_err() {
+        report.outcome = "backup_artifact_already_exists".into();
+        return report;
+    }
+    let _artifact = TemporaryBackup(&backup_directory);
+    let backup_path = backup_directory.join("dataset-backup.json");
     let started = Instant::now();
-    let backup = admin_command(admin_binary, profile, backend_environment)
-        .arg("--backup")
-        .arg(&backup_path)
-        .output();
+    let (backup, usage) = lifecycle_process::run(
+        admin_command(admin_binary, profile, backend_environment)
+            .arg("--backup")
+            .arg(&backup_path),
+        &options.artifact_directory.join("backup-process"),
+        &limits,
+    );
+    report.stages.insert("backup".into(), usage);
     report.backup_generation_ms = Some(elapsed_ms(started));
     if lifecycle_output("backup", backup, options, backend_environment).is_none() {
-        report.outcome = "backup_failed".to_string();
+        report.outcome = lifecycle_stage_failure("backup", &report.stages["backup"]);
         return report;
     }
     report.backup_artifact_bytes = fs::metadata(&backup_path).ok().map(|meta| meta.len());
@@ -1210,11 +1255,15 @@ async fn run_lifecycle<B: ScaleBenchmarkBackend>(
     }
 
     let started = Instant::now();
-    let offline = admin_command(admin_binary, profile, backend_environment)
-        .arg("--json")
-        .arg("--verify-backup")
-        .arg(&backup_path)
-        .output();
+    let (offline, usage) = lifecycle_process::run(
+        admin_command(admin_binary, profile, backend_environment)
+            .arg("--json")
+            .arg("--verify-backup")
+            .arg(&backup_path),
+        &options.artifact_directory.join("verify-process"),
+        &limits,
+    );
+    report.stages.insert("offline_verification".into(), usage);
     report.offline_verification_ms = Some(elapsed_ms(started));
     let Some(offline) = lifecycle_output(
         "offline verification",
@@ -1222,7 +1271,10 @@ async fn run_lifecycle<B: ScaleBenchmarkBackend>(
         options,
         backend_environment,
     ) else {
-        report.outcome = "offline_verification_failed".to_string();
+        report.outcome = lifecycle_stage_failure(
+            "offline_verification",
+            &report.stages["offline_verification"],
+        );
         return report;
     };
     if let Ok(value) = serde_json::from_slice::<Value>(&offline.stdout) {
@@ -1235,17 +1287,22 @@ async fn run_lifecycle<B: ScaleBenchmarkBackend>(
     };
 
     let started = Instant::now();
-    let restore = admin_command(admin_binary, profile, backend_environment)
-        .arg("--json")
-        .arg("--verify-backup")
-        .arg(&backup_path)
-        .arg("--restore-test-database-url")
-        .arg(restore_database_url)
-        .output();
+    let (restore, usage) = lifecycle_process::run(
+        admin_command(admin_binary, profile, backend_environment)
+            .arg("--json")
+            .arg("--verify-backup")
+            .arg(&backup_path)
+            .arg("--restore-test-database-url")
+            .arg(restore_database_url),
+        &options.artifact_directory.join("restore-process"),
+        &limits,
+    );
+    report.stages.insert("isolated_restore".into(), usage);
     let restore_and_verification_ms = elapsed_ms(started);
     let Some(restore) = lifecycle_output("isolated restore", restore, options, backend_environment)
     else {
-        report.outcome = "isolated_restore_failed".to_string();
+        report.outcome =
+            lifecycle_stage_failure("isolated_restore", &report.stages["isolated_restore"]);
         return report;
     };
     if let Ok(value) = serde_json::from_slice::<Value>(&restore.stdout) {
@@ -1260,10 +1317,27 @@ async fn run_lifecycle<B: ScaleBenchmarkBackend>(
     report
 }
 
+struct TemporaryBackup<'a>(&'a Path);
+impl Drop for TemporaryBackup<'_> {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(self.0);
+    }
+}
+
+fn lifecycle_stage_failure(stage: &str, resources: &LifecycleStageResources) -> String {
+    if resources.termination.as_deref() == Some("resident_memory_limit") {
+        // Like the document-size ceiling, a measured memory ceiling describes
+        // an unsupported envelope. Never claim verification or restore success.
+        format!("{stage}_exceeds_memory_envelope")
+    } else {
+        format!("{stage}_failed")
+    }
+}
+
 fn lifecycle_output(
     stage: &str,
     result: std::io::Result<Output>,
-    options: &MeasureOptions,
+    options: &LifecycleOptions,
     backend_environment: &BTreeMap<String, String>,
 ) -> Option<Output> {
     let message = match result {
@@ -1274,7 +1348,7 @@ fn lifecycle_output(
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         ),
-        Err(error) => format!("{stage} could not start: {error}"),
+        Err(error) => format!("{stage} execution failed: {error}"),
     };
     let secrets = backend_environment
         .values()
@@ -1307,6 +1381,10 @@ fn admin_command(
         .env(
             "HUBUUM_DB_STATEMENT_TIMEOUT_MS",
             profile.provisioning.db_statement_timeout_ms.to_string(),
+        )
+        .env(
+            "HUBUUM_BACKUP_MAX_CAPTURE_ROWS",
+            profile.provisioning.backup_max_capture_rows.to_string(),
         )
         .env(
             "HUBUUM_BACKUP_MAX_OUTPUT_BYTES",
@@ -1392,6 +1470,23 @@ fn elapsed_ms(started: Instant) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::memory(Some("resident_memory_limit"), "backup_exceeds_memory_envelope")]
+    #[case::deadline(Some("deadline"), "backup_failed")]
+    #[case::diagnostics(Some("diagnostic_size_limit"), "backup_failed")]
+    #[case::ordinary(None, "backup_failed")]
+    fn only_memory_exhaustion_is_an_envelope_limitation(
+        #[case] termination: Option<&str>,
+        #[case] expected: &str,
+    ) {
+        let resources = LifecycleStageResources {
+            termination: termination.map(str::to_string),
+            ..Default::default()
+        };
+        assert_eq!(lifecycle_stage_failure("backup", &resources), expected);
+    }
 
     #[test]
     fn lifecycle_diagnostics_redact_connection_secrets() {

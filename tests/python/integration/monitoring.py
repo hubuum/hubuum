@@ -365,13 +365,16 @@ os.execv(ENGINE, [ENGINE, *args])
 
     def panels(self):
         panels = []
+        # Query settled history so a scrape ingested between the direct and
+        # proxied requests cannot change the result at their shared timestamp.
+        at = time.time() - 60
         for path in sorted((ROOT / 'observability/dashboards').glob('*.json')):
             dashboard = json.loads(path.read_text())
             code, installed = self.request('/grafana/api/dashboards/uid/' + dashboard['uid'], 'grafana')
             require(code == 200 and len(installed['dashboard']['panels']) == len(dashboard['panels']), f'{path.name} was not provisioned')
             for panel in dashboard['panels']:
                 for target in panel.get('targets', []):
-                    expression, at = target['expr'].replace('$deployment', 'localhost'), time.time()
+                    expression = target['expr'].replace('$deployment', 'localhost')
                     direct = self.query(expression, at)
                     via = self.query(expression, at, grafana=True)
                     require(canonical(direct) == canonical(via), f'Grafana panel differs: {panel["title"]}')
