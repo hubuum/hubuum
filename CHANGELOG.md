@@ -20,6 +20,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (storage SDK):** advance the coordinated SDK train to `0.5.0`.
+  Class-relation commands retain validated aliases and limits; relation
+  decomposition uses named fields, and session issuance carries validated
+  deadlines. External adapters must update all ten SDK crates together and
+  migrate constructors and accessors as described in the
+  [0.5 migration guide](docs/storage_adapter_sdk.md#upgrading-from-04-to-05).
+  No database migration is required.
 - **Breaking (scale fixtures):** bundled large and huge profiles advance to
   version 2. Recreate disposable datasets and manifests with the matching new
   profile, or retain an archived version-1 specification with `--profile-spec`.

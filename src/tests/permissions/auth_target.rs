@@ -6,6 +6,7 @@
 
 #![cfg(test)]
 
+use hubuum_domain::ClassId;
 use std::sync::Arc;
 
 use actix_web::test as actix_test;
@@ -154,8 +155,8 @@ async fn class_relation_cross_collection_populates_from_to_collections() {
     .expect("class_b creation failed");
 
     let relation = NewHubuumClassRelation {
-        from_hubuum_class_id: class_a.id,
-        to_hubuum_class_id: class_b.id,
+        from_hubuum_class_id: ClassId::new(class_a.id).expect("positive fixture class id"),
+        to_hubuum_class_id: ClassId::new(class_b.id).expect("positive fixture class id"),
         forward_label: None,
         reverse_label: None,
         forward_template_alias: None,
@@ -173,7 +174,7 @@ async fn class_relation_cross_collection_populates_from_to_collections() {
         .expect("to_resource_ref failed");
 
     assert_eq!(resource_ref.kind(), ResourceKind::ClassRelation);
-    assert_eq!(resource_ref.id(), Some(relation.id));
+    assert_eq!(resource_ref.id(), Some(relation.id.id()));
     assert_eq!(
         resource_ref.fields().from_collection_id,
         Some(fixture_a.collection.id)
@@ -189,11 +190,11 @@ async fn class_relation_cross_collection_populates_from_to_collections() {
     );
     assert_eq!(
         resource_ref.fields().from_class_id,
-        Some(relation.from_hubuum_class_id)
+        Some(relation.from_hubuum_class_id.id())
     );
     assert_eq!(
         resource_ref.fields().to_class_id,
-        Some(relation.to_hubuum_class_id)
+        Some(relation.to_hubuum_class_id.id())
     );
 }
 
@@ -225,8 +226,8 @@ async fn class_relation_same_collection_populates_collection_id() {
     .expect("class_b creation failed");
 
     let relation = NewHubuumClassRelation {
-        from_hubuum_class_id: class_a.id,
-        to_hubuum_class_id: class_b.id,
+        from_hubuum_class_id: ClassId::new(class_a.id).expect("positive fixture class id"),
+        to_hubuum_class_id: ClassId::new(class_b.id).expect("positive fixture class id"),
         forward_label: None,
         reverse_label: None,
         forward_template_alias: None,
@@ -288,8 +289,8 @@ async fn object_relation_cross_collection_populates_all_fields() {
     .expect("class_b creation failed");
 
     let class_relation = NewHubuumClassRelation {
-        from_hubuum_class_id: class_a.id,
-        to_hubuum_class_id: class_b.id,
+        from_hubuum_class_id: ClassId::new(class_a.id).expect("positive fixture class id"),
+        to_hubuum_class_id: ClassId::new(class_b.id).expect("positive fixture class id"),
         forward_label: None,
         reverse_label: None,
         forward_template_alias: None,
@@ -326,7 +327,7 @@ async fn object_relation_cross_collection_populates_all_fields() {
     let object_relation = NewHubuumObjectRelation {
         from_hubuum_object_id: object_a.id,
         to_hubuum_object_id: object_b.id,
-        class_relation_id: class_relation.id,
+        class_relation_id: class_relation.id.id(),
     }
     .save_without_events(&pool)
     .await
@@ -410,8 +411,8 @@ async fn local_backend_relation_and_check_denies_partial_permission() {
     .expect("class_b creation failed");
 
     let relation = NewHubuumClassRelation {
-        from_hubuum_class_id: class_a.id,
-        to_hubuum_class_id: class_b.id,
+        from_hubuum_class_id: ClassId::new(class_a.id).expect("positive fixture class id"),
+        to_hubuum_class_id: ClassId::new(class_b.id).expect("positive fixture class id"),
         forward_label: None,
         reverse_label: None,
         forward_template_alias: None,

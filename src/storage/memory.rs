@@ -290,11 +290,11 @@ impl MemoryState {
         let command = prepared.command();
         let from_class = self
             .classes
-            .get(&command.from_hubuum_class_id)
+            .get(&command.from_hubuum_class_id.id())
             .ok_or_else(|| StorageError::not_found("From class was not found"))?;
         let to_class = self
             .classes
-            .get(&command.to_hubuum_class_id)
+            .get(&command.to_hubuum_class_id.id())
             .ok_or_else(|| StorageError::not_found("To class was not found"))?;
         if from_class != prepared.from_class() || to_class != prepared.to_class() {
             return Err(StorageError::not_found(
@@ -308,16 +308,15 @@ impl MemoryState {
         &self,
         target: &ResolvedClassRelationTarget,
     ) -> Result<&HubuumClassRelation, StorageError> {
-        let relation_id =
-            HubuumClassRelationID::new(target.relation().id).map_err(map_memory_error)?;
+        let relation_id = target.relation().id;
         let current = self.class_relation(relation_id)?;
         let from_class = self
             .classes
-            .get(&current.from_hubuum_class_id)
+            .get(&current.from_hubuum_class_id.id())
             .ok_or_else(|| StorageError::not_found("From class was not found"))?;
         let to_class = self
             .classes
-            .get(&current.to_hubuum_class_id)
+            .get(&current.to_hubuum_class_id.id())
             .ok_or_else(|| StorageError::not_found("To class was not found"))?;
         if current != target.relation()
             || from_class != target.from_class()
@@ -330,7 +329,7 @@ impl MemoryState {
         Ok(current)
     }
 
-    fn class_relation_pair_in_use(&self, from_class_id: i32, to_class_id: i32) -> bool {
+    fn class_relation_pair_in_use(&self, from_class_id: ClassId, to_class_id: ClassId) -> bool {
         self.class_relations.values().any(|relation| {
             relation.from_hubuum_class_id == from_class_id
                 && relation.to_hubuum_class_id == to_class_id
@@ -343,12 +342,12 @@ impl MemoryState {
     ) -> Result<ResolvedClassRelationTarget, StorageError> {
         let from_class = self
             .classes
-            .get(&relation.from_hubuum_class_id)
+            .get(&relation.from_hubuum_class_id.id())
             .cloned()
             .ok_or_else(|| StorageError::not_found("From class was not found"))?;
         let to_class = self
             .classes
-            .get(&relation.to_hubuum_class_id)
+            .get(&relation.to_hubuum_class_id.id())
             .cloned()
             .ok_or_else(|| StorageError::not_found("To class was not found"))?;
         ResolvedClassRelationTarget::new(relation.clone(), from_class, to_class)
@@ -365,8 +364,8 @@ impl MemoryState {
         self.class_relations
             .values()
             .find(|relation| {
-                relation.from_hubuum_class_id == lower_class_id
-                    && relation.to_hubuum_class_id == higher_class_id
+                relation.from_hubuum_class_id.id() == lower_class_id
+                    && relation.to_hubuum_class_id.id() == higher_class_id
             })
             .ok_or_else(|| {
                 StorageError::not_found(format!(
@@ -775,8 +774,8 @@ impl CollectionStorage for MemoryStorageModel {
             .objects
             .retain(|_, object| object.collection_id != id.id());
         state.class_relations.retain(|_, relation| {
-            !deleted_class_ids.contains(&relation.from_hubuum_class_id)
-                && !deleted_class_ids.contains(&relation.to_hubuum_class_id)
+            !deleted_class_ids.contains(&relation.from_hubuum_class_id.id())
+                && !deleted_class_ids.contains(&relation.to_hubuum_class_id.id())
         });
         let remaining_object_ids = state.objects.keys().copied().collect::<Vec<_>>();
         let remaining_class_relation_ids =
@@ -1082,7 +1081,8 @@ impl ClassStorage for MemoryStorageModel {
             .objects
             .retain(|_, object| object.hubuum_class_id != class.id);
         state.class_relations.retain(|_, relation| {
-            relation.from_hubuum_class_id != class.id && relation.to_hubuum_class_id != class.id
+            relation.from_hubuum_class_id.id() != class.id
+                && relation.to_hubuum_class_id.id() != class.id
         });
         let remaining_object_ids = state.objects.keys().copied().collect::<Vec<_>>();
         let remaining_class_relation_ids =
@@ -1138,12 +1138,12 @@ impl ClassRelationStorage for MemoryStorageModel {
         let state = self.state.read().await;
         let from_class = state
             .classes
-            .get(&command.from_hubuum_class_id)
+            .get(&command.from_hubuum_class_id.id())
             .cloned()
             .ok_or_else(|| StorageError::not_found("From class was not found"))?;
         let to_class = state
             .classes
-            .get(&command.to_hubuum_class_id)
+            .get(&command.to_hubuum_class_id.id())
             .cloned()
             .ok_or_else(|| StorageError::not_found("To class was not found"))?;
         let prepared =
@@ -1160,12 +1160,12 @@ impl ClassRelationStorage for MemoryStorageModel {
         let relation = state.class_relation(id)?.clone();
         let from_class = state
             .classes
-            .get(&relation.from_hubuum_class_id)
+            .get(&relation.from_hubuum_class_id.id())
             .cloned()
             .ok_or_else(|| StorageError::not_found("From class was not found"))?;
         let to_class = state
             .classes
-            .get(&relation.to_hubuum_class_id)
+            .get(&relation.to_hubuum_class_id.id())
             .cloned()
             .ok_or_else(|| StorageError::not_found("To class was not found"))?;
         let target = ResolvedClassRelationTarget::new(relation, from_class, to_class)
@@ -1196,7 +1196,7 @@ impl ClassRelationStorage for MemoryStorageModel {
         state.next_class_relation_id += 1;
         let now = Utc::now().naive_utc();
         let relation = HubuumClassRelation {
-            id,
+            id: HubuumClassRelationID::new(id).map_err(map_memory_error)?,
             from_hubuum_class_id: command.from_hubuum_class_id,
             to_hubuum_class_id: command.to_hubuum_class_id,
             forward_label: command.forward_label.clone(),
@@ -1252,8 +1252,10 @@ impl ClassRelationStorage for MemoryStorageModel {
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
         relation.updated_at = Utc::now().naive_utc();
         let revision = relation.revision;
-        state.class_relations.insert(relation.id, relation.clone());
-        state.record_class_relation_event(relation.id, Action::Updated, context);
+        state
+            .class_relations
+            .insert(relation.id.id(), relation.clone());
+        state.record_class_relation_event(relation.id.id(), Action::Updated, context);
         let resolved = ResolvedClassRelationTarget::new(
             relation,
             domain.from_class().clone(),
@@ -1280,11 +1282,11 @@ impl ClassRelationStorage for MemoryStorageModel {
             resolved_class_relation_from_storage(target.clone()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
         let relation_id = state.class_relation_target(&target)?.id;
-        state.class_relations.remove(&relation_id);
+        state.class_relations.remove(&relation_id.id());
         state
             .object_relations
-            .retain(|_, relation| relation.class_relation_id != relation_id);
-        state.record_class_relation_event(relation_id, Action::Deleted, context);
+            .retain(|_, relation| relation.class_relation_id != relation_id.id());
+        state.record_class_relation_event(relation_id.id(), Action::Deleted, context);
         Ok(StorageMutationOutcome::committed(
             (),
             memory_audit_receipt(
@@ -1344,7 +1346,7 @@ impl ObjectRelationStorage for MemoryStorageModel {
                 let command = NewHubuumObjectRelation {
                     from_hubuum_object_id: route_from_object.id,
                     to_hubuum_object_id: route_to_object.id,
-                    class_relation_id: class_relation.relation().id,
+                    class_relation_id: class_relation.relation().id.id(),
                 }
                 .normalized()
                 .map_err(map_memory_error)?;
@@ -1434,13 +1436,13 @@ impl ObjectRelationStorage for MemoryStorageModel {
 
         let class_relation = prepared.class_relation().relation();
         for object in [prepared.from_object(), prepared.to_object()] {
-            let limit = if object.hubuum_class_id == class_relation.from_hubuum_class_id {
+            let limit = if object.hubuum_class_id == class_relation.from_hubuum_class_id.id() {
                 class_relation.from_max_relations
             } else {
                 class_relation.to_max_relations
             };
             if let Some(limit) = limit
-                && state.object_relation_count(class_relation.id, object.id)
+                && state.object_relation_count(class_relation.id.id(), object.id)
                     >= limit.value() as usize
             {
                 return Err(StorageError::conflict(format!(

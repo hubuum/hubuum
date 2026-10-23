@@ -16,12 +16,10 @@ use crate::storage::{
     StorageResolvedObjectRelation,
 };
 use async_trait::async_trait;
-use hubuum_domain::RelationLabel;
+use hubuum_domain::{RelationLabel, TemplateAlias};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use utoipa::ToSchema;
-use utoipa::openapi::schema::{Schema, Type};
-use utoipa::openapi::{KnownFormat, ObjectBuilder, RefOr, SchemaFormat};
 
 use crate::errors::ApiError;
 use crate::models::{
@@ -30,67 +28,25 @@ use crate::models::{
 };
 use crate::permissions::{AuthzTarget, ResourceRef};
 use crate::traits::SelfAccessors;
-#[cfg(test)]
-use crate::utilities::aliases::normalize_template_alias;
 
 pub use hubuum_domain::ClassRelationId as HubuumClassRelationID;
 
-/// Maximum number of object relations allowed for one object on one side of a
-/// class relation.
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-pub struct ObjectRelationLimit(i32);
-
-impl ObjectRelationLimit {
-    /// Create a positive object-relation limit.
-    pub fn new(value: i32) -> Result<Self, ApiError> {
-        if value <= 0 {
-            return Err(ApiError::BadRequest(format!(
-                "Invalid object relation limit '{value}': must be a positive integer"
-            )));
-        }
-        Ok(Self(value))
-    }
-
-    /// Return the underlying positive limit.
-    pub fn value(self) -> i32 {
-        self.0
-    }
-}
-
-impl<'de> Deserialize<'de> for ObjectRelationLimit {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = i32::deserialize(deserializer)?;
-        Self::new(value).map_err(serde::de::Error::custom)
-    }
-}
-
-impl utoipa::PartialSchema for ObjectRelationLimit {
-    fn schema() -> RefOr<Schema> {
-        ObjectBuilder::new()
-            .schema_type(Type::Integer)
-            .format(Some(SchemaFormat::KnownFormat(KnownFormat::Int32)))
-            .minimum(Some(1))
-            .description(Some(
-                "Maximum number of object relations allowed for one object on one side of a class relation.",
-            ))
-            .into()
-    }
-}
-
-impl ToSchema for ObjectRelationLimit {}
+pub use hubuum_domain::ObjectRelationLimit;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, ToSchema)]
 pub struct HubuumClassRelation {
-    pub id: i32,
-    pub from_hubuum_class_id: i32,
-    pub to_hubuum_class_id: i32,
+    #[schema(value_type = i32)]
+    pub id: HubuumClassRelationID,
+    #[schema(value_type = i32)]
+    pub from_hubuum_class_id: HubuumClassID,
+    #[schema(value_type = i32)]
+    pub to_hubuum_class_id: HubuumClassID,
     pub forward_label: Option<RelationLabel>,
     pub reverse_label: Option<RelationLabel>,
-    pub forward_template_alias: Option<String>,
-    pub reverse_template_alias: Option<String>,
+    #[schema(value_type = Option<String>)]
+    pub forward_template_alias: Option<TemplateAlias>,
+    #[schema(value_type = Option<String>)]
+    pub reverse_template_alias: Option<TemplateAlias>,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
     /// Maximum relations allowed for each object in `from_hubuum_class_id`.
@@ -105,12 +61,17 @@ pub struct HubuumClassRelation {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(example = new_hubuum_class_relation_example)]
 pub struct NewHubuumClassRelation {
-    pub from_hubuum_class_id: i32,
-    pub to_hubuum_class_id: i32,
+    // Preserve the published wire schema; the Rust types enforce existing validation.
+    #[schema(value_type = i32)]
+    pub from_hubuum_class_id: HubuumClassID,
+    #[schema(value_type = i32)]
+    pub to_hubuum_class_id: HubuumClassID,
     pub forward_label: Option<RelationLabel>,
     pub reverse_label: Option<RelationLabel>,
-    pub forward_template_alias: Option<String>,
-    pub reverse_template_alias: Option<String>,
+    #[schema(value_type = Option<String>)]
+    pub forward_template_alias: Option<TemplateAlias>,
+    #[schema(value_type = Option<String>)]
+    pub reverse_template_alias: Option<TemplateAlias>,
     /// Maximum relations allowed for each object in `from_hubuum_class_id`.
     /// Omit or set to `null` for unlimited.
     pub from_max_relations: Option<ObjectRelationLimit>,
@@ -124,11 +85,14 @@ pub struct NewHubuumClassRelation {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(example = new_hubuum_class_relation_from_class_example)]
 pub struct NewHubuumClassRelationFromClass {
-    pub to_hubuum_class_id: i32,
+    #[schema(value_type = i32)]
+    pub to_hubuum_class_id: HubuumClassID,
     pub forward_label: Option<RelationLabel>,
     pub reverse_label: Option<RelationLabel>,
-    pub forward_template_alias: Option<String>,
-    pub reverse_template_alias: Option<String>,
+    #[schema(value_type = Option<String>)]
+    pub forward_template_alias: Option<TemplateAlias>,
+    #[schema(value_type = Option<String>)]
+    pub reverse_template_alias: Option<TemplateAlias>,
     /// Maximum relations allowed for each object in the class from the URL.
     /// Omit or set to `null` for unlimited.
     pub from_max_relations: Option<ObjectRelationLimit>,
@@ -149,17 +113,6 @@ impl NewHubuumClassRelation {
                 "from_hubuum_class_id and to_hubuum_class_id cannot be the same".to_string(),
             ));
         }
-
-        self.forward_template_alias = self
-            .forward_template_alias
-            .as_deref()
-            .map(normalize_template_alias)
-            .transpose()?;
-        self.reverse_template_alias = self
-            .reverse_template_alias
-            .as_deref()
-            .map(normalize_template_alias)
-            .transpose()?;
 
         if self.from_hubuum_class_id > self.to_hubuum_class_id {
             std::mem::swap(&mut self.from_hubuum_class_id, &mut self.to_hubuum_class_id);
@@ -182,7 +135,7 @@ impl NewHubuumClassRelationFromClass {
         from_hubuum_class_id: HubuumClassID,
     ) -> NewHubuumClassRelation {
         NewHubuumClassRelation {
-            from_hubuum_class_id: from_hubuum_class_id.id(),
+            from_hubuum_class_id,
             to_hubuum_class_id: self.to_hubuum_class_id,
             forward_label: self.forward_label,
             reverse_label: self.reverse_label,
@@ -240,8 +193,8 @@ impl PreparedClassRelation {
         to_class: HubuumClass,
     ) -> Result<Self, ApiError> {
         let command = command.normalized()?;
-        if command.from_hubuum_class_id != from_class.id
-            || command.to_hubuum_class_id != to_class.id
+        if command.from_hubuum_class_id.id() != from_class.id
+            || command.to_hubuum_class_id.id() != to_class.id
         {
             return Err(ApiError::InternalServerError(
                 "prepared class relation endpoints do not match its normalized command".to_string(),
@@ -309,8 +262,8 @@ impl ResolvedClassRelationTarget {
         from_class: HubuumClass,
         to_class: HubuumClass,
     ) -> Result<Self, ApiError> {
-        if relation.from_hubuum_class_id != from_class.id
-            || relation.to_hubuum_class_id != to_class.id
+        if relation.from_hubuum_class_id.id() != from_class.id
+            || relation.to_hubuum_class_id.id() != to_class.id
         {
             return Err(ApiError::InternalServerError(format!(
                 "class relation {} endpoints do not match the resolved classes",
@@ -349,7 +302,7 @@ impl ResolvedClassRelationTarget {
 
     pub(crate) fn authorization_resource(&self) -> ResourceRef {
         class_relation_authorization_resource(
-            Some(self.relation.id),
+            Some(self.relation.id.id()),
             &self.from_class,
             &self.to_class,
         )
@@ -505,7 +458,7 @@ fn validate_object_relation_membership(
 ) -> Result<(), ApiError> {
     if command.from_hubuum_object_id != from_object.id
         || command.to_hubuum_object_id != to_object.id
-        || command.class_relation_id != class_relation.relation().id
+        || command.class_relation_id != class_relation.relation().id.id()
     {
         return Err(ApiError::InternalServerError(
             "object relation aggregate does not match its command".to_string(),
@@ -600,7 +553,7 @@ impl PreparedObjectRelation {
     pub(crate) fn authorization_resource(&self) -> ResourceRef {
         object_relation_authorization_resource(
             None,
-            self.class_relation.relation().id,
+            self.class_relation.relation().id.id(),
             &self.from_object,
             &self.to_object,
         )
@@ -837,12 +790,12 @@ pub struct RelatedClassGraph {
 
 fn new_hubuum_class_relation_example() -> NewHubuumClassRelation {
     NewHubuumClassRelation {
-        from_hubuum_class_id: 1,
-        to_hubuum_class_id: 2,
+        from_hubuum_class_id: HubuumClassID::new(1).expect("positive example id"),
+        to_hubuum_class_id: HubuumClassID::new(2).expect("positive example id"),
         forward_label: Some(RelationLabel::new("is in".into()).expect("valid example label")),
         reverse_label: Some(RelationLabel::new("contains".into()).expect("valid example label")),
-        forward_template_alias: Some("rooms".to_string()),
-        reverse_template_alias: Some("hosts".to_string()),
+        forward_template_alias: Some(TemplateAlias::new("rooms").expect("valid example alias")),
+        reverse_template_alias: Some(TemplateAlias::new("hosts").expect("valid example alias")),
         from_max_relations: Some(ObjectRelationLimit::new(1).expect("valid example limit")),
         to_max_relations: None,
     }
@@ -850,11 +803,11 @@ fn new_hubuum_class_relation_example() -> NewHubuumClassRelation {
 
 fn new_hubuum_class_relation_from_class_example() -> NewHubuumClassRelationFromClass {
     NewHubuumClassRelationFromClass {
-        to_hubuum_class_id: 2,
+        to_hubuum_class_id: HubuumClassID::new(2).expect("positive example id"),
         forward_label: Some(RelationLabel::new("is in".into()).expect("valid example label")),
         reverse_label: Some(RelationLabel::new("contains".into()).expect("valid example label")),
-        forward_template_alias: Some("rooms".to_string()),
-        reverse_template_alias: Some("hosts".to_string()),
+        forward_template_alias: Some(TemplateAlias::new("rooms").expect("valid example alias")),
+        reverse_template_alias: Some(TemplateAlias::new("hosts").expect("valid example alias")),
         from_max_relations: Some(ObjectRelationLimit::new(1).expect("valid example limit")),
         to_max_relations: None,
     }
@@ -874,17 +827,13 @@ impl AuthzTarget for HubuumClassRelation {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
-        let from_class = HubuumClassID::new(self.from_hubuum_class_id)?
-            .instance(pool)
-            .await?;
-        let to_class = HubuumClassID::new(self.to_hubuum_class_id)?
-            .instance(pool)
-            .await?;
+        let from_class = self.from_hubuum_class_id.instance(pool).await?;
+        let to_class = self.to_hubuum_class_id.instance(pool).await?;
 
         Ok(ResourceRef::class_relation(
-            Some(self.id),
-            ClassResourceEndpoint::new(from_class.collection_id, self.from_hubuum_class_id),
-            ClassResourceEndpoint::new(to_class.collection_id, self.to_hubuum_class_id),
+            Some(self.id.id()),
+            ClassResourceEndpoint::new(from_class.collection_id, self.from_hubuum_class_id.id()),
+            ClassResourceEndpoint::new(to_class.collection_id, self.to_hubuum_class_id.id()),
         ))
     }
 }
@@ -895,12 +844,8 @@ impl AuthzTarget for NewHubuumClassRelation {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
-        let from_class = HubuumClassID::new(self.from_hubuum_class_id)?
-            .instance(pool)
-            .await?;
-        let to_class = HubuumClassID::new(self.to_hubuum_class_id)?
-            .instance(pool)
-            .await?;
+        let from_class = self.from_hubuum_class_id.instance(pool).await?;
+        let to_class = self.to_hubuum_class_id.instance(pool).await?;
         Ok(ResourceRef::class_relation(
             None,
             ClassResourceEndpoint::new(from_class.collection_id, from_class.id),
@@ -1063,9 +1008,9 @@ where
 impl HubuumClassRelation {
     /// Wording viewed from one of this relation's class endpoints.
     pub fn label_from(&self, class_id: i32) -> Result<&str, ApiError> {
-        if class_id == self.from_hubuum_class_id {
+        if class_id == self.from_hubuum_class_id.id() {
             Ok(RelationLabel::display(self.forward_label.as_ref()))
-        } else if class_id == self.to_hubuum_class_id {
+        } else if class_id == self.to_hubuum_class_id.id() {
             Ok(RelationLabel::display(self.reverse_label.as_ref()))
         } else {
             Err(ApiError::BadRequest(
@@ -1082,26 +1027,36 @@ mod tests {
     #[test]
     fn class_relation_normalization_keeps_directional_settings_with_their_classes() {
         let normalized = NewHubuumClassRelation {
-            from_hubuum_class_id: 20,
-            to_hubuum_class_id: 10,
+            from_hubuum_class_id: HubuumClassID::new(20).expect("positive fixture class id"),
+            to_hubuum_class_id: HubuumClassID::new(10).expect("positive fixture class id"),
             forward_label: None,
             reverse_label: None,
-            forward_template_alias: Some("Jack Room".to_string()),
-            reverse_template_alias: Some("Room Jacks".to_string()),
+            forward_template_alias: Some(
+                TemplateAlias::try_from("Jack Room".to_string()).expect("valid fixture alias"),
+            ),
+            reverse_template_alias: Some(
+                TemplateAlias::try_from("Room Jacks".to_string()).expect("valid fixture alias"),
+            ),
             from_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),
             to_max_relations: Some(ObjectRelationLimit::new(2).unwrap()),
         }
         .normalized()
         .expect("class relation should normalize");
 
-        assert_eq!(normalized.from_hubuum_class_id, 10);
-        assert_eq!(normalized.to_hubuum_class_id, 20);
+        assert_eq!(normalized.from_hubuum_class_id.id(), 10);
+        assert_eq!(normalized.to_hubuum_class_id.id(), 20);
         assert_eq!(
-            normalized.forward_template_alias.as_deref(),
+            normalized
+                .forward_template_alias
+                .as_ref()
+                .map(TemplateAlias::as_str),
             Some("room_jacks")
         );
         assert_eq!(
-            normalized.reverse_template_alias.as_deref(),
+            normalized
+                .reverse_template_alias
+                .as_ref()
+                .map(TemplateAlias::as_str),
             Some("jack_room")
         );
         assert_eq!(

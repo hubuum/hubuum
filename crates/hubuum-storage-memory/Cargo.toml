@@ -12,15 +12,15 @@ publish = false
 rust-api = "workspace-internal"
 
 [dependencies]
-hubuum-regex = { version = "=0.4.0", path = "../hubuum-regex" }
+hubuum-regex = { version = "=0.5.0", path = "../hubuum-regex" }
 async-trait = "0.1"
 bigdecimal = "0.4"
 chrono = "0.4"
-hubuum-computed-fields = { version = "=0.4.0", path = "../hubuum-computed-fields" }
-hubuum-domain = { version = "0.4.0", path = "../hubuum-domain" }
-hubuum-events-core = { version = "0.4.0", path = "../hubuum-events-core" }
-hubuum-query = { version = "0.4.0", path = "../hubuum-query" }
-hubuum-storage-core = { version = "0.4.0", path = "../hubuum-storage-core" }
+hubuum-computed-fields = { version = "=0.5.0", path = "../hubuum-computed-fields" }
+hubuum-domain = { version = "0.5.0", path = "../hubuum-domain" }
+hubuum-events-core = { version = "0.5.0", path = "../hubuum-events-core" }
+hubuum-query = { version = "0.5.0", path = "../hubuum-query" }
+hubuum-storage-core = { version = "0.5.0", path = "../hubuum-storage-core" }
 json-patch = "4"
 ipnet = "2.12"
 regex = "1"

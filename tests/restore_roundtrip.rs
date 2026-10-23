@@ -1,4 +1,5 @@
 mod restore_contract;
+use hubuum_domain::ClassId;
 
 use hubuum_domain::RelationLabel;
 use std::time::Duration;
@@ -99,8 +100,8 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     .await
     .expect("second class");
     let class_relation = NewHubuumClassRelation {
-        from_hubuum_class_id: first_class.id,
-        to_hubuum_class_id: second_class.id,
+        from_hubuum_class_id: ClassId::new(first_class.id).unwrap(),
+        to_hubuum_class_id: ClassId::new(second_class.id).unwrap(),
         forward_label: Some(RelationLabel::new("contains".into()).unwrap()),
         reverse_label: Some(RelationLabel::new("is in".into()).unwrap()),
         forward_template_alias: None,
@@ -302,7 +303,7 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     );
     let (relation_exists, reachability_exists) = with_connection(&pool, async |conn| {
         let relation_exists = hubuumclass_relation::table
-            .filter(hubuumclass_relation::id.eq(class_relation.id))
+            .filter(hubuumclass_relation::id.eq(class_relation.id.id()))
             .select((
                 hubuumclass_relation::id,
                 hubuumclass_relation::from_max_relations,
@@ -338,7 +339,7 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
         ),
         (
             Some((
-                class_relation.id,
+                class_relation.id.id(),
                 Some(1),
                 None,
                 Some("contains".into()),

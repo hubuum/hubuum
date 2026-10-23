@@ -4,12 +4,12 @@ use crate::models::{
     HubuumClassRelation, HubuumObject, HubuumObjectRelation, NewCollectionWithAssignee, NewGroup,
     NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
     ObjectDataPatchDocument, ObjectRelationCreateSelector, ObjectRelationCreateSelectorKind,
-    ObjectRelationEndpoint, ObjectRelationLimit, ObjectRelationSelector,
-    ObjectRelationSelectorKind, ObjectSelector, ObjectSelectorKind, PreparedClassRelation,
-    PreparedObjectRelation, Principal, PrincipalGroup, PrincipalSettings, PrincipalSettingsPatch,
-    PrincipalSettingsResponse, ResolvedClassRelationTarget, ResolvedClassTarget,
-    ResolvedObjectRelationTarget, ResolvedObjectTarget, TokenResourceScope, TokenScope,
-    UpdateCollection, UpdateGroup, UpdateHubuumClass, UpdateHubuumObject,
+    ObjectRelationEndpoint, ObjectRelationSelector, ObjectRelationSelectorKind, ObjectSelector,
+    ObjectSelectorKind, PreparedClassRelation, PreparedObjectRelation, Principal, PrincipalGroup,
+    PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsResponse,
+    ResolvedClassRelationTarget, ResolvedClassTarget, ResolvedObjectRelationTarget,
+    ResolvedObjectTarget, TokenResourceScope, TokenScope, UpdateCollection, UpdateGroup,
+    UpdateHubuumClass, UpdateHubuumObject,
 };
 use crate::permissions::permission_to_storage;
 use crate::storage::{
@@ -454,63 +454,45 @@ pub(crate) fn object_patch_to_storage(
 pub(crate) fn class_relation_to_storage(
     relation: HubuumClassRelation,
 ) -> Result<StorageClassRelation, ApiError> {
-    StorageClassRelation::try_new(
+    Ok(StorageClassRelation::try_new(
         StorageRecordMetadata::try_new(
-            ResourceId::new(relation.id)?,
+            ResourceId::new(relation.id.id())?,
             relation.created_at.and_utc(),
             relation.updated_at.and_utc(),
             relation.revision,
         )
         .map_err(|error| ApiError::InternalServerError(error.to_string()))?,
-        ClassId::new(relation.from_hubuum_class_id)?,
-        ClassId::new(relation.to_hubuum_class_id)?,
+        relation.from_hubuum_class_id,
+        relation.to_hubuum_class_id,
     )
     .map_err(|error| ApiError::InternalServerError(error.to_string()))?
     .with_labels(relation.forward_label, relation.reverse_label)
-    .try_with_template_aliases(
+    .with_relation_details(
         relation.forward_template_alias,
         relation.reverse_template_alias,
-    )
-    .map_err(|error| ApiError::InternalServerError(error.to_string()))?
-    .try_with_relation_limits(
-        relation.from_max_relations.map(ObjectRelationLimit::value),
-        relation.to_max_relations.map(ObjectRelationLimit::value),
-    )
-    .map_err(|error| ApiError::InternalServerError(error.to_string()))
+        relation.from_max_relations,
+        relation.to_max_relations,
+    ))
 }
 
 pub(crate) fn class_relation_from_storage(
     relation: StorageClassRelation,
 ) -> Result<HubuumClassRelation, ApiError> {
-    let (
-        id,
-        from_hubuum_class_id,
-        to_hubuum_class_id,
-        forward_template_alias,
-        reverse_template_alias,
-        created_at,
-        updated_at,
-        from_max_relations,
-        to_max_relations,
-        revision,
-        forward_label,
-        reverse_label,
-    ) = relation.into_parts();
+    let parts = relation.into_parts();
+    let metadata = parts.metadata();
     Ok(HubuumClassRelation {
-        id: id.id(),
-        from_hubuum_class_id: from_hubuum_class_id.id(),
-        to_hubuum_class_id: to_hubuum_class_id.id(),
-        forward_label,
-        reverse_label,
-        forward_template_alias,
-        reverse_template_alias,
-        created_at: created_at.naive_utc(),
-        updated_at: updated_at.naive_utc(),
-        from_max_relations: from_max_relations
-            .map(ObjectRelationLimit::new)
-            .transpose()?,
-        to_max_relations: to_max_relations.map(ObjectRelationLimit::new).transpose()?,
-        revision,
+        id: parts.id(),
+        from_hubuum_class_id: parts.from_class_id(),
+        to_hubuum_class_id: parts.to_class_id(),
+        forward_label: parts.forward_label().cloned(),
+        reverse_label: parts.reverse_label().cloned(),
+        forward_template_alias: parts.forward_alias().cloned(),
+        reverse_template_alias: parts.reverse_alias().cloned(),
+        created_at: metadata.created_at().naive_utc(),
+        updated_at: metadata.updated_at().naive_utc(),
+        from_max_relations: parts.from_limit(),
+        to_max_relations: parts.to_limit(),
+        revision: metadata.revision(),
     })
 }
 
@@ -518,18 +500,15 @@ pub(crate) fn class_relation_create_to_storage(
     command: NewHubuumClassRelation,
 ) -> Result<StorageClassRelationCreate, ApiError> {
     Ok(StorageClassRelationCreate::builder(
-        ClassId::new(command.from_hubuum_class_id)?,
-        ClassId::new(command.to_hubuum_class_id)?,
+        command.from_hubuum_class_id,
+        command.to_hubuum_class_id,
     )
     .labels(command.forward_label, command.reverse_label)
     .template_aliases(
         command.forward_template_alias,
         command.reverse_template_alias,
     )
-    .relation_limits(
-        command.from_max_relations.map(ObjectRelationLimit::value),
-        command.to_max_relations.map(ObjectRelationLimit::value),
-    )
+    .relation_limits(command.from_max_relations, command.to_max_relations)
     .build())
 }
 
@@ -537,20 +516,14 @@ pub(crate) fn class_relation_create_from_storage(
     command: &StorageClassRelationCreate,
 ) -> Result<NewHubuumClassRelation, ApiError> {
     Ok(NewHubuumClassRelation {
-        from_hubuum_class_id: command.from_class_id().id(),
-        to_hubuum_class_id: command.to_class_id().id(),
+        from_hubuum_class_id: command.from_class_id(),
+        to_hubuum_class_id: command.to_class_id(),
         forward_label: command.forward_label().cloned(),
         reverse_label: command.reverse_label().cloned(),
-        forward_template_alias: command.forward_template_alias().map(str::to_string),
-        reverse_template_alias: command.reverse_template_alias().map(str::to_string),
-        from_max_relations: command
-            .from_max_relations()
-            .map(ObjectRelationLimit::new)
-            .transpose()?,
-        to_max_relations: command
-            .to_max_relations()
-            .map(ObjectRelationLimit::new)
-            .transpose()?,
+        forward_template_alias: command.forward_template_alias().cloned(),
+        reverse_template_alias: command.reverse_template_alias().cloned(),
+        from_max_relations: command.from_max_relations(),
+        to_max_relations: command.to_max_relations(),
     })
 }
 

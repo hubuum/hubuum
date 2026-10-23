@@ -45,9 +45,9 @@ pub(crate) use self::db::{
 };
 pub use self::event::event_worker_wakeup;
 pub use self::export::{
-    ExportMetricOutcome, ExportMetricPhase, export_completed, export_output_cleanup_deleted,
-    export_output_cleanup_failed, export_output_cleanup_run, export_phase_duration,
-    export_phase_timer, export_truncated, export_warnings,
+    ExportMetricOutcome, ExportMetricPhase, ExportPhaseTimer, export_completed,
+    export_output_cleanup_deleted, export_output_cleanup_failed, export_output_cleanup_run,
+    export_phase_duration, export_phase_timer, export_truncated, export_warnings,
 };
 pub use self::http::{
     api_error, extraction_failure, http_request_finished, http_request_started,

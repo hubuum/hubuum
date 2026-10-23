@@ -18,7 +18,6 @@ use crate::config::{
     DEFAULT_TASK_RECOVERY_INTERVAL_SECONDS, get_config,
 };
 use crate::errors::ApiError;
-use crate::exports::execute_export_task;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::{NewTaskEventRecord, TaskKind, TaskStatus};
 use crate::observability::{metrics, tracing as telemetry};
@@ -27,6 +26,7 @@ use crate::permissions::LocalPermissionBackend;
 use crate::permissions::{AppContext, require_unscoped_runtime_admin};
 use crate::restores::{MaintenanceActivityGuard, current_maintenance_state};
 use crate::services::authentication::ExecutionPrincipal;
+use crate::services::exports::execute_export_task;
 use crate::services::tasks::{
     ClaimedTask, claim_next_task, fail_task, purge_expired_backup_outputs,
     purge_expired_export_outputs, recover_expired_task_leases, renew_task_lease,

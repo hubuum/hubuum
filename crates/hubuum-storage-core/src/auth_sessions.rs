@@ -42,11 +42,95 @@ impl AuthSessionId {
     }
 }
 
+/// Validated sliding lifetimes shared by persisted and newly created sessions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SessionLifetimes {
+    access_seconds: i64,
+    idle_seconds: i64,
+}
+
+impl SessionLifetimes {
+    pub fn try_new(access_seconds: i64, idle_seconds: i64) -> Result<Self, StorageValidationError> {
+        if access_seconds < 1 || access_seconds > idle_seconds || idle_seconds > 31_536_000 {
+            return Err(StorageValidationError::invalid(
+                "session lifetimes require 0 < access <= idle <= 31536000 seconds",
+            ));
+        }
+        Ok(Self {
+            access_seconds,
+            idle_seconds,
+        })
+    }
+
+    pub fn deadlines(
+        self,
+        issued: DateTime<Utc>,
+        absolute: DateTime<Utc>,
+    ) -> Result<SessionDeadlines, StorageValidationError> {
+        let advance = |seconds| {
+            issued
+                .checked_add_signed(Duration::seconds(seconds))
+                .map(|deadline| deadline.min(absolute))
+                .ok_or_else(|| StorageValidationError::invalid("session expiry is out of range"))
+        };
+        SessionDeadlines::try_new(
+            issued,
+            advance(self.access_seconds)?,
+            advance(self.idle_seconds)?,
+            absolute,
+        )
+    }
+}
+
+/// Correlated timestamps for one issuance; the absolute deadline belongs to the family.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SessionDeadlines {
+    issued_at: DateTime<Utc>,
+    access_expires_at: DateTime<Utc>,
+    refresh_expires_at: DateTime<Utc>,
+    absolute_expires_at: DateTime<Utc>,
+}
+
+impl SessionDeadlines {
+    pub fn try_new(
+        issued_at: DateTime<Utc>,
+        access_expires_at: DateTime<Utc>,
+        refresh_expires_at: DateTime<Utc>,
+        absolute_expires_at: DateTime<Utc>,
+    ) -> Result<Self, StorageValidationError> {
+        if issued_at >= access_expires_at
+            || access_expires_at > refresh_expires_at
+            || refresh_expires_at > absolute_expires_at
+        {
+            return Err(StorageValidationError::invalid(
+                "session deadlines require issued < access <= refresh <= absolute",
+            ));
+        }
+        Ok(Self {
+            issued_at,
+            access_expires_at,
+            refresh_expires_at,
+            absolute_expires_at,
+        })
+    }
+    pub fn issued_at(self) -> DateTime<Utc> {
+        self.issued_at
+    }
+    pub fn access_expires_at(self) -> DateTime<Utc> {
+        self.access_expires_at
+    }
+    pub fn refresh_expires_at(self) -> DateTime<Utc> {
+        self.refresh_expires_at
+    }
+    pub fn absolute_expires_at(self) -> DateTime<Utc> {
+        self.absolute_expires_at
+    }
+}
+
 /// Policy pinned at login. Refresh never changes the original lifetimes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SessionPolicy {
-    access_seconds: i64,
-    idle_seconds: i64,
+    lifetimes: SessionLifetimes,
     absolute_seconds: i64,
     retention_seconds: i64,
 }
@@ -68,17 +152,16 @@ impl SessionPolicy {
             ));
         }
         Ok(Self {
-            access_seconds,
-            idle_seconds,
+            lifetimes: SessionLifetimes::try_new(access_seconds, idle_seconds)?,
             absolute_seconds,
             retention_seconds,
         })
     }
     pub fn access_seconds(self) -> i64 {
-        self.access_seconds
+        self.lifetimes.access_seconds
     }
     pub fn idle_seconds(self) -> i64 {
-        self.idle_seconds
+        self.lifetimes.idle_seconds
     }
     pub fn absolute_seconds(self) -> i64 {
         self.absolute_seconds
@@ -90,15 +173,8 @@ impl SessionPolicy {
         self,
         now: DateTime<Utc>,
         absolute: DateTime<Utc>,
-    ) -> Result<(DateTime<Utc>, DateTime<Utc>), StorageValidationError> {
-        let advance = |seconds| {
-            now.checked_add_signed(Duration::seconds(seconds))
-                .ok_or_else(|| StorageValidationError::invalid("session expiry is out of range"))
-        };
-        Ok((
-            advance(self.access_seconds)?.min(absolute),
-            advance(self.idle_seconds)?.min(absolute),
-        ))
+    ) -> Result<SessionDeadlines, StorageValidationError> {
+        self.lifetimes.deadlines(now, absolute)
     }
 }
 
@@ -226,29 +302,20 @@ pub struct StorageSessionIssued {
     session_id: AuthSessionId,
     principal_id: PrincipalId,
     access_id: TokenId,
-    issued_at: DateTime<Utc>,
-    access_expires_at: DateTime<Utc>,
-    refresh_expires_at: DateTime<Utc>,
-    absolute_expires_at: DateTime<Utc>,
+    deadlines: SessionDeadlines,
 }
 impl StorageSessionIssued {
     pub fn new(
         session_id: AuthSessionId,
         principal_id: PrincipalId,
         access_id: TokenId,
-        issued_at: DateTime<Utc>,
-        access_expires_at: DateTime<Utc>,
-        refresh_expires_at: DateTime<Utc>,
-        absolute_expires_at: DateTime<Utc>,
+        deadlines: SessionDeadlines,
     ) -> Self {
         Self {
             session_id,
             principal_id,
             access_id,
-            issued_at,
-            access_expires_at,
-            refresh_expires_at,
-            absolute_expires_at,
+            deadlines,
         }
     }
     pub fn session_id(&self) -> AuthSessionId {
@@ -261,16 +328,16 @@ impl StorageSessionIssued {
         self.access_id
     }
     pub fn issued_at(&self) -> DateTime<Utc> {
-        self.issued_at
+        self.deadlines.issued_at()
     }
     pub fn access_expires_at(&self) -> DateTime<Utc> {
-        self.access_expires_at
+        self.deadlines.access_expires_at()
     }
     pub fn refresh_expires_at(&self) -> DateTime<Utc> {
-        self.refresh_expires_at
+        self.deadlines.refresh_expires_at()
     }
     pub fn absolute_expires_at(&self) -> DateTime<Utc> {
-        self.absolute_expires_at
+        self.deadlines.absolute_expires_at()
     }
 }
 
@@ -286,4 +353,58 @@ pub enum StorageSessionRotation {
 pub enum SessionRevocation {
     Current(TokenId),
     All(PrincipalId),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case(0, 2, 3)]
+    #[case(3, 2, 4)]
+    #[case(1, 3, 2)]
+    fn rejects_inconsistent_deadlines(
+        #[case] access: i64,
+        #[case] refresh: i64,
+        #[case] absolute: i64,
+    ) {
+        let now = DateTime::UNIX_EPOCH;
+        assert!(
+            SessionDeadlines::try_new(
+                now,
+                now + Duration::seconds(access),
+                now + Duration::seconds(refresh),
+                now + Duration::seconds(absolute)
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn sliding_deadlines_never_extend_the_family() {
+        let now = DateTime::UNIX_EPOCH;
+        let absolute = now + Duration::seconds(5);
+        let deadlines = SessionLifetimes::try_new(10, 20)
+            .unwrap()
+            .deadlines(now, absolute)
+            .unwrap();
+        assert_eq!(
+            (
+                deadlines.access_expires_at(),
+                deadlines.refresh_expires_at()
+            ),
+            (absolute, absolute)
+        );
+    }
+
+    #[test]
+    fn expired_family_cannot_issue_credentials() {
+        assert!(
+            SessionLifetimes::try_new(10, 20)
+                .unwrap()
+                .deadlines(DateTime::UNIX_EPOCH, DateTime::UNIX_EPOCH)
+                .is_err()
+        );
+    }
 }

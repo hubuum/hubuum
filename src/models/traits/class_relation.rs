@@ -126,7 +126,7 @@ impl InstanceAdapter<HubuumClassRelation> for HubuumClassRelationID {
 }
 impl IdAccessor for HubuumClassRelation {
     fn accessor_id(&self) -> i32 {
-        self.id
+        self.id.id()
     }
 }
 
@@ -145,14 +145,10 @@ impl DeleteAdapter for HubuumClassRelation {
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(), ApiError> {
         let storage = storage_handle(pool).class_relation_store();
-        resolve_and_delete_class_relation(
-            storage.as_ref(),
-            HubuumClassRelationID::new(self.id)?,
-            &EventContext::system(),
-        )
-        .await
-        .map_err(ApiError::from)
-        .map(|outcome| outcome.into_value())
+        resolve_and_delete_class_relation(storage.as_ref(), self.id, &EventContext::system())
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 
     async fn delete_adapter(
@@ -161,14 +157,10 @@ impl DeleteAdapter for HubuumClassRelation {
         context: &EventContext,
     ) -> Result<(), ApiError> {
         let storage = storage_handle(pool).class_relation_store();
-        resolve_and_delete_class_relation(
-            storage.as_ref(),
-            HubuumClassRelationID::new(self.id)?,
-            context,
-        )
-        .await
-        .map_err(ApiError::from)
-        .map(|outcome| outcome.into_value())
+        resolve_and_delete_class_relation(storage.as_ref(), self.id, context)
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
     }
 }
 
@@ -343,7 +335,7 @@ impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(Collection, Collection), ApiError> {
-        let target = resolve_class_relation(pool, HubuumClassRelationID::new(self.id)?).await?;
+        let target = resolve_class_relation(pool, self.id).await?;
         relation_collections(
             pool,
             target.from_class().collection_id,
@@ -371,7 +363,7 @@ impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)>
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<(HubuumClass, HubuumClass), ApiError> {
-        let target = resolve_class_relation(pool, HubuumClassRelationID::new(self.id)?).await?;
+        let target = resolve_class_relation(pool, self.id).await?;
         Ok((target.from_class().clone(), target.to_class().clone()))
     }
 
@@ -379,10 +371,7 @@ impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)>
         &self,
         _pool: &impl crate::storage::StorageContext,
     ) -> Result<(HubuumClassID, HubuumClassID), ApiError> {
-        Ok((
-            HubuumClassID::new(self.from_hubuum_class_id)?,
-            HubuumClassID::new(self.to_hubuum_class_id)?,
-        ))
+        Ok((self.from_hubuum_class_id, self.to_hubuum_class_id))
     }
 }
 
@@ -438,10 +427,7 @@ impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)>
         &self,
         _pool: &impl crate::storage::StorageContext,
     ) -> Result<(HubuumClassID, HubuumClassID), ApiError> {
-        Ok((
-            HubuumClassID::new(self.from_hubuum_class_id)?,
-            HubuumClassID::new(self.to_hubuum_class_id)?,
-        ))
+        Ok((self.from_hubuum_class_id, self.to_hubuum_class_id))
     }
 }
 
@@ -594,9 +580,9 @@ impl CursorPaginated for HubuumClassRelation {
 
     fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
         Ok(match field {
-            FilterField::Id => CursorValue::Integer(self.id as i64),
-            FilterField::ClassFrom => CursorValue::Integer(self.from_hubuum_class_id as i64),
-            FilterField::ClassTo => CursorValue::Integer(self.to_hubuum_class_id as i64),
+            FilterField::Id => CursorValue::Integer(self.id.id() as i64),
+            FilterField::ClassFrom => CursorValue::Integer(self.from_hubuum_class_id.id() as i64),
+            FilterField::ClassTo => CursorValue::Integer(self.to_hubuum_class_id.id() as i64),
             FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
             FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
             FilterField::Revision => CursorValue::Integer(self.revision.get()),

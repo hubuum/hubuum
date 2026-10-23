@@ -123,7 +123,9 @@ async fn session_access_alone_cannot_mint_durable_credentials() {
 async fn activity_reads_require_token_management_authorization() {
     let context = TestContext::new().await;
     let session = login(&context).await;
-    let access = crate::models::Token(session["access_token"].as_str().unwrap().to_owned());
+    let access =
+        crate::models::Token::try_from(session["access_token"].as_str().unwrap().to_owned())
+            .unwrap();
     let metadata = crate::services::authentication::authenticate_bearer_token(
         &crate::tests::app_context(&context.pool),
         &access,

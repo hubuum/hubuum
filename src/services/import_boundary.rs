@@ -11,8 +11,7 @@ use crate::models::{
     ImportComputedFieldVisibility, ImportEventSinkInput, ImportEventSubscriptionInput,
     ImportExportTemplateInput, ImportMembershipSourceInput, ImportMode, ImportObjectInput,
     ImportObjectRelationInput, ImportPermissionPolicy, ImportPrincipalSubtype,
-    ImportRemoteTargetInput, ImportWriteCondition, ObjectKey, ObjectRelationLimit, PrincipalKey,
-    RestoreTimestamps,
+    ImportRemoteTargetInput, ImportWriteCondition, ObjectKey, PrincipalKey, RestoreTimestamps,
 };
 use crate::permissions::permission_to_storage;
 use crate::storage::ApplicationImportOperation;
@@ -473,8 +472,8 @@ fn class_relation_to_storage(
             reverse_label: input.reverse_label,
             forward_template_alias: input.forward_template_alias,
             reverse_template_alias: input.reverse_template_alias,
-            from_max_relations: input.from_max_relations.map(ObjectRelationLimit::value),
-            to_max_relations: input.to_max_relations.map(ObjectRelationLimit::value),
+            from_max_relations: input.from_max_relations,
+            to_max_relations: input.to_max_relations,
             condition: condition_to_storage(input.condition)?,
             timestamps: timestamps_to_storage(input.timestamps)?,
         },

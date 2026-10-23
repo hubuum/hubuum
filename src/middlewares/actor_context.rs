@@ -26,7 +26,9 @@ pub(crate) enum ResolvedAuth {
 
 fn bearer_token(req: &ServiceRequest) -> Option<Token> {
     let header = req.headers().get("Authorization")?.to_str().ok()?;
-    header.strip_prefix("Bearer ").map(|s| Token(s.to_string()))
+    header
+        .strip_prefix("Bearer ")
+        .and_then(|s| Token::try_from(s.to_string()).ok())
 }
 
 fn is_public_path(path: &str) -> bool {

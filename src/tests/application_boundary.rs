@@ -760,6 +760,14 @@ fn rust_files(directory: &Path) -> Vec<PathBuf> {
 }
 
 #[cfg(test)]
+fn is_test_module(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| name == "tests.rs")
+        || path
+            .components()
+            .any(|component| component.as_os_str() == "tests")
+}
+
+#[cfg(test)]
 fn read_rust_module_tree(directory: &Path) -> String {
     rust_files(directory)
         .into_iter()
@@ -1139,7 +1147,7 @@ fn application_consumers_do_not_import_database_implementation_details() {
         "src/events/fanout.rs",
         "src/events/retention.rs",
         "src/errors.rs",
-        "src/exports/mod.rs",
+        "src/services/exports/mod.rs",
         "src/restores/mod.rs",
         "src/tasks/helpers.rs",
         "src/tasks/execution.rs",
@@ -1157,11 +1165,11 @@ fn application_consumers_do_not_import_database_implementation_details() {
     }
 
     let mut violations = Vec::new();
-    for path in paths {
+    for path in paths.into_iter().filter(|path| !is_test_module(path)) {
         let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         let source = if path.starts_with(root.join("src/services"))
-            || path == root.join("src/exports/mod.rs")
+            || path == root.join("src/services/exports/mod.rs")
         {
             source.split("#[cfg(test)]").next().unwrap_or(&source)
         } else {
@@ -1871,7 +1879,7 @@ fn task_execution_consumers_do_not_import_postgres_task_state_helpers() {
     let root = repository_root();
     for file in [
         "src/backups/mod.rs",
-        "src/exports/mod.rs",
+        "src/services/exports/mod.rs",
         "src/tasks/execution.rs",
         "src/tasks/remote_call.rs",
         "src/tasks/worker.rs",
@@ -1903,11 +1911,9 @@ fn task_execution_consumers_do_not_import_postgres_task_state_helpers() {
 #[test]
 fn export_consumers_use_only_backend_neutral_query_and_authorization_contracts() {
     let root = repository_root();
-    for file in [
-        "src/exports/mod.rs",
-        "src/services/authorization_resources.rs",
-    ] {
-        let path = root.join(file);
+    let mut paths = rust_files(&root.join("src/services/exports"));
+    paths.push(root.join("src/services/authorization_resources.rs"));
+    for path in paths.into_iter().filter(|path| !is_test_module(path)) {
         let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         let production = source.split("#[cfg(test)]").next().unwrap_or(&source);
@@ -1930,12 +1936,12 @@ fn export_consumers_use_only_backend_neutral_query_and_authorization_contracts()
 #[test]
 fn export_template_consumers_use_only_the_backend_neutral_lifecycle_contract() {
     let root = repository_root();
-    for file in [
-        "src/models/export_template.rs",
-        "src/api/v1/handlers/export_templates.rs",
-        "src/exports/mod.rs",
-    ] {
-        let path = root.join(file);
+    let mut paths = rust_files(&root.join("src/services/exports"));
+    paths.extend([
+        root.join("src/models/export_template.rs"),
+        root.join("src/api/v1/handlers/export_templates.rs"),
+    ]);
+    for path in paths.into_iter().filter(|path| !is_test_module(path)) {
         let source = read_source(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
         let production = source.split("#[cfg(test)]").next().unwrap_or(&source);

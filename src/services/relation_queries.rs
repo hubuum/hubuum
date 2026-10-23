@@ -2,16 +2,15 @@ use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::models::{
     ClassGraphRow, ExportIncludeRelatedDirection, ExportIncludeRelatedQuery,
-    ExportIncludeRelatedSort, HubuumClassRelation, HubuumObjectRelation, ObjectRelationLimit,
-    RelatedObjectForRootRow, RelatedObjectGraphRow, RelatedObjectIncludeRow, ResourceRevision,
-    TokenScope,
+    ExportIncludeRelatedSort, HubuumClassRelation, HubuumObjectRelation, RelatedObjectForRootRow,
+    RelatedObjectGraphRow, RelatedObjectIncludeRow, ResourceRevision, TokenScope,
 };
 use crate::services::storage_boundary::visibility;
 use crate::storage::{
     RelationQueryStorage, StorageBidirectionalRelatedObjectsQuery, StorageClassGraphRow,
-    StorageClassRelation, StorageContext, StorageGraphClass, StorageGraphObject,
-    StorageObjectGraphRow, StorageObjectRelation, StorageObjectRelationsTouchingIdsQuery,
-    StorageRelatedDirection, StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
+    StorageContext, StorageGraphClass, StorageGraphObject, StorageObjectGraphRow,
+    StorageObjectRelation, StorageObjectRelationsTouchingIdsQuery, StorageRelatedDirection,
+    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
     StorageRelatedObjectsForRootsQuery, StorageRelatedSort, StorageRelationGraphQuery,
     StorageRelationIdsQuery, StorageRelationListQuery, StorageRelationTouchingQuery,
     storage_handle,
@@ -19,40 +18,7 @@ use crate::storage::{
 use hubuum_domain::{ClassId, ClassRelationId, ObjectId, ObjectRelationId, ResourceId};
 use hubuum_query::{MAX_TRAVERSAL_WORK_ROWS, TraversalBudget};
 
-pub(crate) fn class_relation_from_storage(
-    row: StorageClassRelation,
-) -> Result<HubuumClassRelation, ApiError> {
-    let (
-        id,
-        from_hubuum_class_id,
-        to_hubuum_class_id,
-        forward_template_alias,
-        reverse_template_alias,
-        created_at,
-        updated_at,
-        from_max_relations,
-        to_max_relations,
-        revision,
-        forward_label,
-        reverse_label,
-    ) = row.into_parts();
-    Ok(HubuumClassRelation {
-        id: id.id(),
-        from_hubuum_class_id: from_hubuum_class_id.id(),
-        to_hubuum_class_id: to_hubuum_class_id.id(),
-        forward_label,
-        reverse_label,
-        forward_template_alias,
-        reverse_template_alias,
-        created_at: created_at.naive_utc(),
-        updated_at: updated_at.naive_utc(),
-        from_max_relations: from_max_relations
-            .map(ObjectRelationLimit::new)
-            .transpose()?,
-        to_max_relations: to_max_relations.map(ObjectRelationLimit::new).transpose()?,
-        revision,
-    })
-}
+pub(crate) use crate::services::storage_boundary::class_relation_from_storage;
 
 pub(crate) fn object_relation_from_storage(
     row: StorageObjectRelation,

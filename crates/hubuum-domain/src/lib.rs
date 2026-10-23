@@ -63,7 +63,7 @@ pub use password::{PasswordValidationError, PlaintextPassword};
 pub use relation_label::{RelationLabel, RelationLabelError};
 pub use revision::{ResourceRevision, ResourceRevisionError};
 pub use schema_evolution::{CompiledSchema, SchemaDiagnostic, SchemaReference, SchemaRevision};
-pub use template_alias::{TemplateAliasError, normalize_template_alias};
+pub use template_alias::{TemplateAlias, TemplateAliasError, normalize_template_alias};
 pub use token::{
     MAX_TOKEN_RESOURCE_SCOPES, MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE, TOKEN_LIFETIME_CONSTRAINT,
     TokenIssuancePolicy, TokenLifetime, TokenPolicyError, TokenRetentionBatchSize,
@@ -76,3 +76,6 @@ pub use task_kind::TaskKind;
 
 mod event_delivery_policy;
 pub use event_delivery_policy::{EventDeliveryPolicy, EventDeliveryPurpose};
+
+mod relation_limit;
+pub use relation_limit::{ObjectRelationLimit, RelationLimitError};

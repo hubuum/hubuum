@@ -49,10 +49,12 @@ impl MemoryState {
         login: bool,
     ) -> Result<(StorageSessionIssued, StorageAuditReceipts), StorageError> {
         let now = Utc::now();
-        let (access_expiry, refresh_expiry) = session
+        let deadlines = session
             .policy
             .deadlines(now, session.absolute)
             .map_err(invalid_contract_value)?;
+        let access_expiry = deadlines.access_expires_at();
+        let refresh_expiry = deadlines.refresh_expires_at();
         if self
             .sessions
             .values()
@@ -98,10 +100,7 @@ impl MemoryState {
                 AuthSessionId::new(id),
                 session.principal_id(),
                 token.id(),
-                now,
-                access_expiry,
-                refresh_expiry,
-                session.absolute,
+                deadlines,
             ),
             audits,
         ))

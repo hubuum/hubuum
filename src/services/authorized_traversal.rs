@@ -116,7 +116,7 @@ impl AuthorizedGraph {
                 (
                     relations
                         .iter()
-                        .map(|r| edge(r.from_hubuum_class_id, r.to_hubuum_class_id))
+                        .map(|r| edge(r.from_hubuum_class_id.id(), r.to_hubuum_class_id.id()))
                         .collect(),
                     resources,
                 )
@@ -420,7 +420,7 @@ pub(crate) async fn list_class_relations_between_ids<
         .await?;
         let paths = candidates
             .iter()
-            .map(|r| vec![r.from_hubuum_class_id, r.to_hubuum_class_id])
+            .map(|r| vec![r.from_hubuum_class_id.id(), r.to_hubuum_class_id.id()])
             .collect::<Vec<_>>();
         let graph = AuthorizedGraph::load(
             context,

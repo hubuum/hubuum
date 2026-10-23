@@ -3,6 +3,7 @@
 //! These are deliberately model/storage-level checks rather than HTTP tests:
 //! authentication and routing should not hide an extra pool checkout or an
 //! N+1 introduced while storage capabilities are extracted.
+use hubuum_domain::{ClassId, TemplateAlias};
 
 use diesel::sql_types::{Integer, Json, Text};
 use hubuum_domain::PrincipalId;
@@ -12,9 +13,9 @@ use crate::events::{EventContext, MutationProvenance};
 use crate::models::collection::effective_group_on;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    ClassSelector, CollectionID, GroupID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
-    HubuumObjectRelationID, NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation,
-    NewHubuumObject, NewHubuumObjectRelation, ObjectAggregateCursorBudget, ObjectAggregateRequest,
+    ClassSelector, CollectionID, GroupID, HubuumClassID, HubuumObjectID, HubuumObjectRelationID,
+    NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
+    NewHubuumObjectRelation, ObjectAggregateCursorBudget, ObjectAggregateRequest,
     ObjectAggregateTarget, ObjectRelationCreateSelector, ObjectRelationSelector, ObjectSelector,
     Permissions, STRUCTURED_SEARCH_VERSION, StorageObjectAggregateAuthorization,
     StructuredClassSelector, StructuredRelatedPredicate, StructuredSearchExpression,
@@ -65,8 +66,8 @@ async fn object_relation_budget_fixture(
     .await
     .expect("second class should save");
     let class_relation = NewHubuumClassRelation {
-        from_hubuum_class_id: class_one.id,
-        to_hubuum_class_id: class_two.id,
+        from_hubuum_class_id: HubuumClassID::new(class_one.id).expect("positive fixture class id"),
+        to_hubuum_class_id: HubuumClassID::new(class_two.id).expect("positive fixture class id"),
         forward_label: None,
         reverse_label: None,
         forward_template_alias: None,
@@ -100,7 +101,7 @@ async fn object_relation_budget_fixture(
     let selector = ObjectRelationCreateSelector::explicit(NewHubuumObjectRelation {
         from_hubuum_object_id: object_one.id,
         to_hubuum_object_id: object_two.id,
-        class_relation_id: class_relation.id,
+        class_relation_id: class_relation.id.id(),
     });
     (fixture, services, selector)
 }
@@ -136,8 +137,10 @@ impl StructuredSearchPerformanceFixture {
         for endpoints in classes.windows(2) {
             class_relations.push(
                 NewHubuumClassRelation {
-                    from_hubuum_class_id: endpoints[0].id,
-                    to_hubuum_class_id: endpoints[1].id,
+                    from_hubuum_class_id: HubuumClassID::new(endpoints[0].id)
+                        .expect("positive fixture class id"),
+                    to_hubuum_class_id: HubuumClassID::new(endpoints[1].id)
+                        .expect("positive fixture class id"),
                     forward_label: None,
                     reverse_label: None,
                     forward_template_alias: None,
@@ -179,7 +182,7 @@ impl StructuredSearchPerformanceFixture {
                 NewHubuumObjectRelation {
                     from_hubuum_object_id: endpoints[0].id,
                     to_hubuum_object_id: endpoints[1].id,
-                    class_relation_id: class_relations[depth].id,
+                    class_relation_id: class_relations[depth].id.id(),
                 }
                 .save_without_events(&scope.pool)
                 .await
@@ -610,8 +613,8 @@ async fn class_relation_storage_query_budget_point_resolution_is_fixed() {
     .await
     .expect("to class fixture should save");
     let relation = NewHubuumClassRelation {
-        from_hubuum_class_id: from_class.id,
-        to_hubuum_class_id: to_class.id,
+        from_hubuum_class_id: ClassId::new(from_class.id).unwrap(),
+        to_hubuum_class_id: ClassId::new(to_class.id).unwrap(),
         forward_label: None,
         reverse_label: None,
         forward_template_alias: None,
@@ -623,12 +626,7 @@ async fn class_relation_storage_query_budget_point_resolution_is_fixed() {
     .await
     .expect("relation fixture should save");
 
-    let (loaded, queries) = capture_queries(
-        services
-            .class_relations()
-            .resolve(HubuumClassRelationID::new(relation.id).expect("valid class relation id")),
-    )
-    .await;
+    let (loaded, queries) = capture_queries(services.class_relations().resolve(relation.id)).await;
     assert_eq!(
         loaded.expect("relation should resolve").relation(),
         &relation
@@ -673,8 +671,8 @@ async fn class_relation_storage_query_budget_create_with_event_is_fixed() {
     let prepared = services
         .class_relations()
         .prepare_create(NewHubuumClassRelation {
-            from_hubuum_class_id: from_class.id,
-            to_hubuum_class_id: to_class.id,
+            from_hubuum_class_id: ClassId::new(from_class.id).unwrap(),
+            to_hubuum_class_id: ClassId::new(to_class.id).unwrap(),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -735,8 +733,8 @@ async fn class_relation_storage_query_budget_delete_with_event_is_fixed() {
     let prepared = services
         .class_relations()
         .prepare_create(NewHubuumClassRelation {
-            from_hubuum_class_id: from_class.id,
-            to_hubuum_class_id: to_class.id,
+            from_hubuum_class_id: ClassId::new(from_class.id).unwrap(),
+            to_hubuum_class_id: ClassId::new(to_class.id).unwrap(),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -1575,12 +1573,12 @@ async fn object_relation_create_has_a_fixed_query_and_checkout_budget() {
     .await
     .expect("second class should save");
     let class_relation = NewHubuumClassRelation {
-        from_hubuum_class_id: class_one.id,
-        to_hubuum_class_id: class_two.id,
+        from_hubuum_class_id: ClassId::new(class_one.id).unwrap(),
+        to_hubuum_class_id: ClassId::new(class_two.id).unwrap(),
         forward_label: None,
         reverse_label: None,
-        forward_template_alias: Some("seconds".to_string()),
-        reverse_template_alias: Some("firsts".to_string()),
+        forward_template_alias: Some(TemplateAlias::new("seconds").unwrap()),
+        reverse_template_alias: Some(TemplateAlias::new("firsts").unwrap()),
         from_max_relations: None,
         to_max_relations: None,
     }
@@ -1611,7 +1609,7 @@ async fn object_relation_create_has_a_fixed_query_and_checkout_budget() {
     let relation = NewHubuumObjectRelation {
         from_hubuum_object_id: object_one.id,
         to_hubuum_object_id: object_two.id,
-        class_relation_id: class_relation.id,
+        class_relation_id: class_relation.id.id(),
     };
     let (saved, queries) =
         capture_queries(relation.save(&scope.pool, &EventContext::system())).await;
@@ -1952,8 +1950,10 @@ async fn dense_graph_exploration_is_bounded_before_output_pagination(
     let mut edges = 0;
     for layer in 0..3 {
         let relation = NewHubuumClassRelation {
-            from_hubuum_class_id: classes[layer].id,
-            to_hubuum_class_id: classes[layer + 1].id,
+            from_hubuum_class_id: HubuumClassID::new(classes[layer].id)
+                .expect("positive fixture class id"),
+            to_hubuum_class_id: HubuumClassID::new(classes[layer + 1].id)
+                .expect("positive fixture class id"),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -1969,7 +1969,7 @@ async fn dense_graph_exploration_is_bounded_before_output_pagination(
                 NewHubuumObjectRelation {
                     from_hubuum_object_id: from.id,
                     to_hubuum_object_id: to.id,
-                    class_relation_id: relation.id,
+                    class_relation_id: relation.id.id(),
                 }
                 .save_without_events(&scope.pool)
                 .await

@@ -156,7 +156,7 @@ pub(crate) use hubuum_storage_core::{
 };
 pub(crate) use hubuum_storage_core::{
     BackupSnapshotStorage, StorageBackupBudget, StorageBackupHistorySection, StorageBackupOutput,
-    StorageBackupOutputSummary, StorageBackupRow, StorageBackupSnapshot, StorageBackupStateSection,
+    StorageBackupOutputSummary, StorageBackupSnapshot, StorageBackupStateSection,
     StorageBackupTaskArtifact, StorageExportOutput, StorageExportOutputSummary,
     StorageExportTaskArtifact, StorageExportTaskArtifactContent, StorageImportTaskResult,
 };
@@ -194,3 +194,6 @@ pub use registry::StorageBackendKind;
 pub use hubuum_storage_core::{
     StorageCredentialApprovalCreate, StorageCredentialApprovalMetadata, StorageCredentialClaim,
 };
+
+#[cfg(any(test, feature = "embedded-migrations"))]
+pub(crate) use hubuum_storage_core::StorageBackupRow;

@@ -1,3 +1,4 @@
+use hubuum_domain::TemplateAlias;
 use hubuum_domain::{PlaintextPassword, RelationLabel};
 use std::fmt;
 
@@ -9,7 +10,7 @@ use utoipa::ToSchema;
 use crate::errors::ApiError;
 use crate::models::event_subscription::{validate_sink_parts, validate_subscription_parts};
 use crate::models::export_template::{ExportTemplateImportRef, validate_import_export_template};
-use crate::models::remote_target::validate_target_parts;
+use crate::models::remote_target::RemoteTargetDefinition;
 use crate::models::{
     ComputedResultType, EventSinkKind, ExportContentType, ExportInclude, ExportLimits,
     ExportMissingDataPolicy, ExportRelationContext, ExportScopeKind, ExportTemplateKind,
@@ -436,8 +437,10 @@ pub struct ImportClassRelationInput {
     pub to_class_key: Option<ClassKey>,
     pub forward_label: Option<RelationLabel>,
     pub reverse_label: Option<RelationLabel>,
-    pub forward_template_alias: Option<String>,
-    pub reverse_template_alias: Option<String>,
+    #[schema(value_type = Option<String>)]
+    pub forward_template_alias: Option<TemplateAlias>,
+    #[schema(value_type = Option<String>)]
+    pub reverse_template_alias: Option<TemplateAlias>,
     pub from_max_relations: Option<ObjectRelationLimit>,
     pub to_max_relations: Option<ObjectRelationLimit>,
     pub condition: Option<ImportWriteCondition>,
@@ -911,15 +914,16 @@ impl ImportRequest {
             template.validate().await?;
         }
         for target in &self.graph.remote_targets {
-            validate_target_parts(
-                (target.class_ref.is_some() || target.class_key.is_some()).then_some(1),
-                &target.url_template,
-                &target.headers_template,
-                target.body_template.as_deref(),
-                &target.auth_config,
-                &target.allowed_subject_types,
-                target.timeout_ms,
-            )
+            RemoteTargetDefinition {
+                class_id: (target.class_ref.is_some() || target.class_key.is_some()).then_some(1),
+                url_template: &target.url_template,
+                headers_template: &target.headers_template,
+                body_template: target.body_template.as_deref(),
+                auth_config: &target.auth_config,
+                allowed_subject_types: &target.allowed_subject_types,
+                timeout_ms: target.timeout_ms,
+            }
+            .validate()
             .await?;
         }
         for sink in &self.graph.event_sinks {

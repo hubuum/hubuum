@@ -1094,24 +1094,17 @@ impl ClassRelationStorage for MemoryStorage {
         .map_err(|error| StorageError::backend_failure(error.to_string()))?;
         let relation =
             StorageClassRelation::try_new(metadata, command.from_class_id(), command.to_class_id())
-                .and_then(|relation| {
-                    relation
-                        .with_labels(
-                            command.forward_label().cloned(),
-                            command.reverse_label().cloned(),
-                        )
-                        .try_with_template_aliases(
-                            command.forward_template_alias().map(ToOwned::to_owned),
-                            command.reverse_template_alias().map(ToOwned::to_owned),
-                        )
-                })
-                .and_then(|relation| {
-                    relation.try_with_relation_limits(
-                        command.from_max_relations(),
-                        command.to_max_relations(),
-                    )
-                })
-                .map_err(|error| StorageError::invalid_input(error.to_string()))?;
+                .map_err(|error| StorageError::invalid_input(error.to_string()))?
+                .with_labels(
+                    command.forward_label().cloned(),
+                    command.reverse_label().cloned(),
+                )
+                .with_relation_details(
+                    command.forward_template_alias().cloned(),
+                    command.reverse_template_alias().cloned(),
+                    command.from_max_relations(),
+                    command.to_max_relations(),
+                );
         let resolved = StorageResolvedClassRelation::try_new(
             relation.clone(),
             prepared.from_class().clone(),
@@ -1197,26 +1190,14 @@ impl ClassRelationStorage for MemoryStorage {
                 .map_err(|error| StorageError::backend_failure(error.to_string()))?,
         )
         .map_err(|error| StorageError::backend_failure(error.to_string()))?;
-        let relation =
-            StorageClassRelation::try_new(metadata, current.from_class_id(), current.to_class_id())
-                .and_then(|relation| {
-                    relation
-                        .with_labels(
-                            changed.forward_label().cloned(),
-                            changed.reverse_label().cloned(),
-                        )
-                        .try_with_template_aliases(
-                            current.forward_template_alias().map(ToOwned::to_owned),
-                            current.reverse_template_alias().map(ToOwned::to_owned),
-                        )
-                })
-                .and_then(|relation| {
-                    relation.try_with_relation_limits(
-                        current.from_max_relations(),
-                        current.to_max_relations(),
-                    )
-                })
-                .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        let relation = current
+            .clone()
+            .try_with_metadata(metadata)
+            .map_err(|error| StorageError::backend_failure(error.to_string()))?
+            .with_labels(
+                changed.forward_label().cloned(),
+                changed.reverse_label().cloned(),
+            );
         let resolved = StorageResolvedClassRelation::try_new(
             relation.clone(),
             target.from_class().clone(),

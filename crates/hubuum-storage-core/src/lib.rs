@@ -268,9 +268,10 @@ pub use relation_lifecycle::{
 };
 pub use relation_query::{
     RelationQueryStorage, StorageBidirectionalRelatedObjectsQuery, StorageClassGraphRow,
-    StorageClassRelation, StorageGraphClass, StorageGraphObject, StorageGraphResource,
-    StorageObjectGraphRow, StorageObjectRelation, StorageObjectRelationsTouchingIdsQuery,
-    StorageRelatedDirection, StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
+    StorageClassRelation, StorageClassRelationParts, StorageGraphClass, StorageGraphObject,
+    StorageGraphResource, StorageObjectGraphRow, StorageObjectRelation,
+    StorageObjectRelationsTouchingIdsQuery, StorageRelatedDirection,
+    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
     StorageRelatedObjectsForRootsQuery, StorageRelatedSort, StorageRelationGraphQuery,
     StorageRelationIdsQuery, StorageRelationListQuery, StorageRelationTouchingQuery,
 };

@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.4`.
+Status: accepted; current experimental release train is `0.5`.
 
 ## Supported Crate Graph
 
@@ -353,3 +353,31 @@ and terminal test deliveries; transient admission state resets on restore.
 The built-in PostgreSQL and memory backends share application contract tests in
 `src/tests/storage_contract/webhook_notifications.rs`; retain adapter-specific
 locking and lease-loss tests when implementing these guarantees.
+
+## Upgrading from 0.4 to 0.5
+
+Update all ten SDK dependencies to exactly `0.5.0` together. This is a breaking
+Rust source release; HTTP resource representations and database schemas retain
+their existing formats.
+
+Class-relation creation and import inputs now carry `TemplateAlias` and
+`ObjectRelationLimit` from `hubuum-domain`. Construct aliases with
+`TemplateAlias::new` at input boundaries, or `from_canonical` when reading
+persisted canonical values. Construct limits with `ObjectRelationLimit::new`.
+Keep these values typed through command preparation and persistence. Use
+`StorageClassRelation::with_relation_details` to retain existing proofs;
+raw database rows may use the fallible `try_with_*` constructors.
+`StorageClassRelation::into_parts` now returns `StorageClassRelationParts` with
+named accessors instead of a positional tuple.
+
+`SessionPolicy::deadlines` returns `SessionDeadlines`, which guarantees
+`issued < access <= refresh <= absolute`. `StorageSessionIssued::new` takes
+this value after its three identifiers. Use `SessionLifetimes::try_new` and
+`deadlines` for rotation with persisted policy and the fixed family deadline.
+Retain the adapter's transaction, replay detection, and concurrency fencing.
+
+Restore upload validation can use `StorageBackupSnapshot::try_new_for_restore`
+to obtain a validated snapshot. Shared resource checks and legacy normalization
+now live in storage-core; application artifact metadata and manifest checks
+remain the caller's responsibility. Adapters still enforce cross-row and
+transactional restore invariants.

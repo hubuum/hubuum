@@ -7,8 +7,8 @@ use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::search::QueryOptions;
 use crate::models::{
-    NewRemoteTarget, RemoteHttpMethod, RemoteTarget, RemoteTargetSubjectType, UpdateRemoteTarget,
-    validate_target_parts,
+    NewRemoteTarget, RemoteHttpMethod, RemoteTarget, RemoteTargetDefinition,
+    RemoteTargetSubjectType, UpdateRemoteTarget,
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 
@@ -62,30 +62,32 @@ pub(crate) async fn create_remote_target(
     input: NewRemoteTarget,
     event_context: EventContext,
 ) -> Result<RemoteTarget, ApiError> {
-    validate_target_parts(
-        input.class_id.map(|class_id| class_id.id()),
-        &input.url_template,
-        &input.headers_template,
-        input.body_template.as_deref(),
-        &input.auth_config,
-        &input.allowed_subject_types,
-        input.timeout_ms,
-    )
+    let validated = RemoteTargetDefinition {
+        class_id: input.class_id.map(|class_id| class_id.id()),
+        url_template: &input.url_template,
+        headers_template: &input.headers_template,
+        body_template: input.body_template.as_deref(),
+        auth_config: &input.auth_config,
+        allowed_subject_types: &input.allowed_subject_types,
+        timeout_ms: input.timeout_ms,
+    }
+    .validate()
     .await?;
+    let definition_input = validated.input();
     let definition = StorageRemoteTargetDefinition::new(
         input.description,
         StorageRemoteTargetTransport::try_new(
             http_method_to_storage(input.method),
-            input.url_template,
-            input.headers_template,
-            input.body_template,
-            serde_json::to_value(input.auth_config)?,
-            input.timeout_ms,
+            validated.templates().url().to_owned(),
+            validated.templates().headers().to_value(),
+            validated.templates().body().map(str::to_owned),
+            serde_json::to_value(definition_input.auth_config)?,
+            definition_input.timeout_ms,
         )
         .map_err(|error| ApiError::from(error.into_request_error()))?,
         StorageRemoteTargetPolicy::try_new(
             input.class_id,
-            subject_types_to_storage(input.allowed_subject_types),
+            subject_types_to_storage(definition_input.allowed_subject_types.to_vec()),
             input.enabled,
         )
         .map_err(|error| ApiError::from(error.into_request_error()))?,
@@ -140,16 +142,18 @@ pub(crate) async fn update_remote_target(
         Some(None) => None,
         None => existing.class_id,
     };
-    validate_target_parts(
-        effective_class_id,
-        effective_url_template,
-        effective_headers_template,
-        effective_body_template,
-        effective_auth_config,
-        effective_allowed_subject_types,
-        update.timeout_ms.unwrap_or(existing.timeout_ms),
-    )
+    let validated = RemoteTargetDefinition {
+        class_id: effective_class_id,
+        url_template: effective_url_template,
+        headers_template: effective_headers_template,
+        body_template: effective_body_template,
+        auth_config: effective_auth_config,
+        allowed_subject_types: effective_allowed_subject_types,
+        timeout_ms: update.timeout_ms.unwrap_or(existing.timeout_ms),
+    }
+    .validate()
     .await?;
+    let definition_input = validated.input();
 
     let patch = StorageRemoteTargetPatch::new()
         .with_collection_id(update.collection_id)
@@ -157,11 +161,37 @@ pub(crate) async fn update_remote_target(
         .with_name(update.name)
         .with_description(update.description)
         .with_method(update.method.map(http_method_to_storage))
-        .with_url_template(update.url_template)
-        .with_headers_template(update.headers_template)
-        .with_body_template(update.body_template)
-        .with_auth_config(update.auth_config.map(serde_json::to_value).transpose()?)
-        .with_allowed_subject_types(update.allowed_subject_types.map(subject_types_to_storage))
+        .with_url_template(
+            update
+                .url_template
+                .as_ref()
+                .map(|_| validated.templates().url().to_owned()),
+        )
+        .with_headers_template(
+            update
+                .headers_template
+                .as_ref()
+                .map(|_| validated.templates().headers().to_value()),
+        )
+        .with_body_template(
+            update
+                .body_template
+                .as_ref()
+                .map(|_| validated.templates().body().map(str::to_owned)),
+        )
+        .with_auth_config(
+            update
+                .auth_config
+                .as_ref()
+                .map(|_| serde_json::to_value(definition_input.auth_config))
+                .transpose()?,
+        )
+        .with_allowed_subject_types(
+            update
+                .allowed_subject_types
+                .as_ref()
+                .map(|_| subject_types_to_storage(definition_input.allowed_subject_types.to_vec())),
+        )
         .with_timeout_ms(update.timeout_ms)
         .with_enabled(enabled);
     let target = storage_handle(backend)

@@ -1,4 +1,5 @@
 //! PostgreSQL implementation of class- and object-relation lifecycles.
+use hubuum_domain::{ObjectRelationLimit, TemplateAlias};
 
 use chrono::NaiveDateTime;
 use diesel::prelude::{ExpressionMethods, QueryDsl};
@@ -104,10 +105,10 @@ impl<'command> From<&'command StorageClassRelationCreate> for NewClassRelationRo
             to_hubuum_class_id: command.to_class_id().id(),
             forward_label: command.forward_label().map(RelationLabel::as_str),
             reverse_label: command.reverse_label().map(RelationLabel::as_str),
-            forward_template_alias: command.forward_template_alias(),
-            reverse_template_alias: command.reverse_template_alias(),
-            from_max_relations: command.from_max_relations(),
-            to_max_relations: command.to_max_relations(),
+            forward_template_alias: command.forward_template_alias().map(TemplateAlias::as_str),
+            reverse_template_alias: command.reverse_template_alias().map(TemplateAlias::as_str),
+            from_max_relations: command.from_max_relations().map(ObjectRelationLimit::value),
+            to_max_relations: command.to_max_relations().map(ObjectRelationLimit::value),
         }
     }
 }
@@ -651,8 +652,6 @@ pub(crate) async fn delete_object_relation_on(
 pub(crate) fn normalize_class_relation_create(
     command: StorageClassRelationCreate,
 ) -> Result<StorageClassRelationCreate, PostgresStorageError> {
-    validate_relation_limit(command.from_max_relations(), "from_max_relations")?;
-    validate_relation_limit(command.to_max_relations(), "to_max_relations")?;
     command
         .normalized()
         .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))
@@ -673,16 +672,6 @@ fn normalize_object_relation_create(
         to_object_id,
         command.class_relation_id(),
     ))
-}
-
-fn validate_relation_limit(value: Option<i32>, field: &str) -> Result<(), PostgresStorageError> {
-    if value.is_none_or(|value| value > 0) {
-        Ok(())
-    } else {
-        Err(PostgresStorageError::invalid_input(format!(
-            "{field} must be greater than zero"
-        )))
-    }
 }
 
 fn validate_object_relation_create_selector(
@@ -1182,10 +1171,13 @@ mod tests {
                     Some(RelationLabel::new("reverse wording".into()).unwrap()),
                 )
                 .template_aliases(
-                    Some("Forward Name".to_string()),
-                    Some("ReverseName".to_string()),
+                    Some(TemplateAlias::new("Forward Name").unwrap()),
+                    Some(TemplateAlias::new("ReverseName").unwrap()),
                 )
-                .relation_limits(Some(4), Some(7))
+                .relation_limits(
+                    Some(ObjectRelationLimit::new(4).unwrap()),
+                    Some(ObjectRelationLimit::new(7).unwrap()),
+                )
                 .build();
 
         let normalized = normalize_class_relation_create(command).unwrap();
@@ -1200,10 +1192,30 @@ mod tests {
             normalized.reverse_label().unwrap().as_str(),
             "forward wording"
         );
-        assert_eq!(normalized.forward_template_alias(), Some("reverse_name"));
-        assert_eq!(normalized.reverse_template_alias(), Some("forward_name"));
-        assert_eq!(normalized.from_max_relations(), Some(7));
-        assert_eq!(normalized.to_max_relations(), Some(4));
+        assert_eq!(
+            normalized
+                .forward_template_alias()
+                .map(TemplateAlias::as_str),
+            Some("reverse_name")
+        );
+        assert_eq!(
+            normalized
+                .reverse_template_alias()
+                .map(TemplateAlias::as_str),
+            Some("forward_name")
+        );
+        assert_eq!(
+            normalized
+                .from_max_relations()
+                .map(ObjectRelationLimit::value),
+            Some(7)
+        );
+        assert_eq!(
+            normalized
+                .to_max_relations()
+                .map(ObjectRelationLimit::value),
+            Some(4)
+        );
     }
 
     #[test]
@@ -1220,21 +1232,6 @@ mod tests {
         assert_eq!(
             normalized.class_relation_id(),
             ClassRelationId::new(2).unwrap()
-        );
-    }
-
-    #[test]
-    fn relation_commands_reject_non_positive_limits() {
-        assert!(
-            normalize_class_relation_create(
-                StorageClassRelationCreate::builder(
-                    ClassId::new(1).unwrap(),
-                    ClassId::new(2).unwrap(),
-                )
-                .relation_limits(Some(0), None)
-                .build(),
-            )
-            .is_err()
         );
     }
 }

@@ -1,4 +1,5 @@
 use hubuum_domain::RelationLabel;
+use hubuum_domain::{ObjectRelationLimit, TemplateAlias};
 use std::fmt;
 
 use async_trait::async_trait;
@@ -427,10 +428,10 @@ import_dto!(
         to_class_key: Option<StorageImportClassKey>,
         forward_label: Option<RelationLabel>,
         reverse_label: Option<RelationLabel>,
-        forward_template_alias: Option<String>,
-        reverse_template_alias: Option<String>,
-        from_max_relations: Option<i32>,
-        to_max_relations: Option<i32>,
+        forward_template_alias: Option<TemplateAlias>,
+        reverse_template_alias: Option<TemplateAlias>,
+        from_max_relations: Option<ObjectRelationLimit>,
+        to_max_relations: Option<ObjectRelationLimit>,
         condition: Option<StorageImportWriteCondition>,
         timestamps: Option<StorageImportTimestamps>,
     }

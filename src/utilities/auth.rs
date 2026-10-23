@@ -182,16 +182,20 @@ pub fn generate_random_password(length: usize) -> String {
         .collect()
 }
 
-pub fn generate_token() -> Token {
+pub(crate) fn generate_token_secret() -> String {
     let raw = generate_random_password(64);
     let mut hasher = Sha512::new();
     hasher.update(raw);
     let result = hasher.finalize();
-    let secret = result
+    result
         .iter()
         .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    Token::issued(secret).expect("token hash key-ring configuration must be valid at startup")
+        .collect::<String>()
+}
+
+pub fn generate_token() -> Token {
+    Token::issued(generate_token_secret())
+        .expect("token hash key-ring configuration must be valid at startup")
 }
 
 #[cfg(test)]
