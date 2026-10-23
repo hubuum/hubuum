@@ -1,7 +1,7 @@
 # Release optimization profiles
 
 The release profile uses one codegen unit and fat LTO. This experiment varies
-only `opt-level`, comparing the existing `z` size optimization with level `3`.
+only `opt-level`, comparing the previous `z` size optimization with level `3`.
 It does not change compiler, features, corpus, allocator, TLS selection, LTO or
 codegen units between variants.
 
@@ -66,3 +66,42 @@ optimization is wrong merely because its name suggests a throughput tradeoff.
 Performance conclusions should be based on a repeat measurement after builds
 finish, with the machine otherwise idle. Keep raw reports beside the recorded
 decision so the choice can be re-evaluated after compiler or dependency changes.
+
+## Decision and measured artifact cost
+
+Use `opt-level = 3` for release builds, retaining one codegen unit and fat LTO.
+The measured CPU workloads consistently benefit, with the largest improvement
+in JSON encoding. The additional artifact size and build resources are accepted
+for that execution-speed benefit. This does not establish an HTTP throughput
+percentage: database I/O, authorization, and worker startup are outside these
+library cases. No configuration or database migration is required.
+
+The host measurements used Rust 1.98.0 / LLVM 22.1.8 on an Intel Xeon Silver 4216
+(16 cores, 32 logical CPUs), approximately 62 GiB RAM, Linux x86-64, and six Cargo
+jobs. Both variants used default features plus `tls-rustls,tls-openssl,embedded-migrations`.
+The production Docker image used its pinned Alpine toolchain, which reports Rust
+1.99.1; container variants share that compiler, while host variants share 1.98.0.
+Do not compare host and container bytes as if their target/toolchain were equal.
+
+| Artifact | `z` bytes | `3` bytes | Change |
+| --- | --- | --- | --- |
+| Stripped host `hubuum-server` | 45,742,200 | 69,140,824 | +51.2% |
+| Stripped host `hubuum-admin` | 12,595,040 | 20,614,080 | +63.7% |
+| Stripped host `hubuum-template-worker` | 1,249,400 | 1,824,024 | +46.0% |
+| Production image, uncompressed | 87,260,858 | 119,140,027 | +36.5% |
+
+Cold Cargo target directories produced the following build observations. Other
+builds and database tests were active during these runs, so wall times are not
+an isolated estimate of the optimization level's build-time penalty. The raw
+report also retains user/system CPU, benchmark compilation, process RSS,
+unstripped sizes, image identifiers, and container-client build measurements.
+
+| Host production build | `z` | `3` |
+| --- | --- | --- |
+| Wall seconds | 998.17 | 2247.71 |
+| User + system CPU seconds | 1699.38 | 3109.34 |
+| Maximum individual-child RSS bytes | 4,665,016,320 | 6,279,503,872 |
+
+Size-focused downstream builds can explicitly select the previous profile with
+`CARGO_PROFILE_RELEASE_OPT_LEVEL=z`; this is a build choice, not a runtime setting.
+Re-evaluate the tradeoff after substantial compiler, dependency, or corpus changes.

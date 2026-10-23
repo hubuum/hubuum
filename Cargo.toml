@@ -203,7 +203,7 @@ integration-test-support = [
 [profile.release]
 codegen-units = 1
 lto = "fat"
-opt-level = "z"
+opt-level = 3
 
 [lib]
 name = "hubuum"
