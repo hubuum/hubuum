@@ -559,11 +559,8 @@ pub(crate) fn validation_summary(
 ) -> Result<(RestoreValidationSummary, StorageBackupSnapshot), ApiError> {
     let summary = validate_document_metadata(document)?;
     let snapshot = StorageBackupSnapshot::try_new_for_restore(
-        document.state.sections.clone(),
-        document
-            .history
-            .as_ref()
-            .map(|history| history.sections.clone()),
+        &document.state.sections,
+        document.history.as_ref().map(|history| &history.sections),
         schema_limits,
     )
     .map_err(|error| ApiError::from(error.into_request_error()))?;

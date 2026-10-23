@@ -265,14 +265,15 @@ impl StorageBackupSnapshot {
         normalization::normalize_legacy_relation_labels(backup_version, state, history);
     }
 
-    /// Validate an uploaded backup completely before restore orchestration can consume it.
+    /// Validate restore resource semantics before constructing a snapshot.
     pub fn try_new_for_restore(
-        state: StorageBackupStateSections,
-        history: Option<StorageBackupHistorySections>,
+        state: &StorageBackupStateSections,
+        history: Option<&StorageBackupHistorySections>,
         schema_limits: JsonSchemaLimits,
     ) -> Result<Self, StorageValidationError> {
-        resources::validate_sections(&state, history.as_ref(), schema_limits)?;
-        Self::try_new_with_limits(state, history, schema_limits)
+        // Reject invalid uploads before allocating a second copy of their rows.
+        resources::validate_sections(state, history, schema_limits)?;
+        Self::try_new_with_limits(state.clone(), history.cloned(), schema_limits)
     }
 
     #[must_use]

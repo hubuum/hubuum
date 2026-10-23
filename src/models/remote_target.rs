@@ -722,7 +722,7 @@ impl RemoteTarget {
 }
 
 /// Validated remote header names, string sources and count, shared by target
-/// validation and execution. Values remain borrowed until batch serialization.
+/// validation and execution. Owned sources travel with the validated target.
 pub(crate) struct RemoteHeaderTemplates {
     templates: Vec<(String, String)>,
 }
