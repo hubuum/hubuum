@@ -11,6 +11,7 @@ publish = false
 rust-api = "workspace-internal"
 
 [dependencies]
+hubuum-budget = { path = "../hubuum-budget" }
 serde = { version = "1", features = ["derive"] }
 chrono = "0.4"
 minijinja = { version = "3", features = ["fuel", "serde"] }

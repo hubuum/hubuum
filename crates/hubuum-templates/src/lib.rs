@@ -14,6 +14,7 @@
 
 mod isolation;
 mod worker;
+use hubuum_budget::{ByteLimit, LimitedWriter};
 pub use isolation::{
     MAX_WORKER_HEAP_BYTES, MissingDataPolicy, RenderedTemplate, TemplateBatch, TemplateExecution,
     WorkerEvent, set_worker_event_handler, shutdown_template_workers,
@@ -109,41 +110,36 @@ fn json_number_to_template_value(value: &serde_json::Number) -> Value {
 /// would exceed the cap returns an `io::Error` and marks the writer as exceeded,
 /// allowing callers to map that condition into their own error type.
 pub struct SizeLimitedWriter {
-    max_bytes: usize,
-    buffer: Vec<u8>,
-    exceeded: bool,
+    writer: LimitedWriter<Vec<u8>>,
 }
 
 impl SizeLimitedWriter {
     pub fn new(max_bytes: usize) -> Self {
         Self {
-            max_bytes,
             // Template renderers emit many small fragments. Avoid repeated early
             // reallocations without reserving the entire output budget.
-            buffer: Vec::with_capacity(max_bytes.min(1024)),
-            exceeded: false,
+            writer: LimitedWriter::new(
+                Vec::with_capacity(max_bytes.min(1024)),
+                ByteLimit::new(max_bytes),
+            ),
         }
     }
 
     pub fn exceeded(&self) -> bool {
-        self.exceeded
+        self.writer.budget().exceeded()
     }
 
     pub fn into_string(self) -> Result<String, std::string::FromUtf8Error> {
-        String::from_utf8(self.buffer)
+        String::from_utf8(self.writer.into_inner())
     }
 }
 
 impl Write for SizeLimitedWriter {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.buffer.len().saturating_add(buf.len()) > self.max_bytes {
-            self.exceeded = true;
-            return Err(io::Error::other("template output limit exceeded"));
-        }
-
-        self.buffer.extend_from_slice(buf);
-        Ok(buf.len())
+        self.writer
+            .write(buf)
+            .map_err(|_| io::Error::other("template output limit exceeded"))
     }
 
     #[inline]

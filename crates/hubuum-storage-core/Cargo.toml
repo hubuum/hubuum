@@ -15,6 +15,7 @@ policy-document = "docs/rust_api/hubuum-storage-core.md"
 release-train = "storage-sdk"
 
 [dependencies]
+hubuum-budget = { version = "=0.4.0", path = "../hubuum-budget" }
 async-trait = "0.1"
 base64 = "0.23"
 chrono = "0.4"
