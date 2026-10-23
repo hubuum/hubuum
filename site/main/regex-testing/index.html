@@ -16,7 +16,7 @@
         <link rel="prev" href="../testing/">
       
       
-        <link rel="next" href="../contributing/documentation/">
+        <link rel="next" href="../operation_budgets/">
       
       
         
@@ -3343,6 +3343,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../operation_budgets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Operation budgets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../contributing/documentation/" class="md-nav__link">
         
   
@@ -3413,10 +3440,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_10" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_11" >
         
           
-          <label class="md-nav__link" for="__nav_6_10" id="__nav_6_10_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_11" id="__nav_6_11_label" tabindex="">
             
   
   
@@ -3434,8 +3461,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_10_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_10">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_11_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_11">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3584,10 +3611,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_11" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_12" >
         
           
-          <label class="md-nav__link" for="__nav_6_11" id="__nav_6_11_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_12" id="__nav_6_12_label" tabindex="">
             
   
   
@@ -3605,8 +3632,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_11_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_11">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_12_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_12">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3863,10 +3890,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_12" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_13" >
         
           
-          <label class="md-nav__link" for="__nav_6_12" id="__nav_6_12_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_13" id="__nav_6_13_label" tabindex="">
             
   
   
@@ -3884,8 +3911,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_12_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_12">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_13_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_13">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -3909,6 +3936,33 @@
     
   
   Package boundaries
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust_api/hubuum-budget/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Budgets
 
     
   </span>
@@ -4196,10 +4250,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_13" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_14" >
         
           
-          <label class="md-nav__link" for="__nav_6_13" id="__nav_6_13_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_14" id="__nav_6_14_label" tabindex="">
             
   
   
@@ -4217,8 +4271,8 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_13_label" aria-expanded="false">
-            <label class="md-nav__title" for="__nav_6_13">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_14_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_14">
               <span class="md-nav__icon md-icon"></span>
               
   
@@ -4542,8 +4596,9 @@ adapters compile its private-fielded <code>Pattern</code>; they do not reinterpr
 original source. See the <a href="../querying/">query guide</a> and
 <a href="../rust_api/hubuum-regex/">crate policy</a> for the language contract.</p>
 <p>This page records the regex portions of <a href="https://github.com/hubuum/hubuum/issues/259">#259</a>
-and <a href="https://github.com/hubuum/hubuum/issues/410">#410</a>. The wider fuzzing,
-resilience, dynamic-policy, and shared-budget work remains in those issues.</p>
+and <a href="https://github.com/hubuum/hubuum/issues/410">#410</a>. The wider fuzzing and
+resilience work remains in #259; shared byte accounting and operation policy
+selection are documented in <a href="../operation_budgets/">operation budgets</a>.</p>
 <h2 id="limits-inventory">Limits inventory<a class="headerlink" href="#limits-inventory" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -4624,12 +4679,13 @@ Carrying an execution scope through memory does not add interruption points
 inside its regex matcher.</p>
 <h3 id="accounting-decision">Accounting decision<a class="headerlink" href="#accounting-decision" title="Permanent link">&para;</a></h3>
 <p>Keep the fixed acceptance checks in <code>hubuum-regex</code> and execution policy in the
-adapters/executors. No generic budget crate is introduced by this work: the
-language's structural cost and a database statement deadline are different units
+adapters/executors. Regex accounting does not use the shared byte-budget crate:
+the language's structural cost and a database statement deadline are different units
 with different enforcement mechanisms. A reusable writer or work counter should
 be extracted only when actual consumers share its accounting and exhaustion
 semantics. Dynamic policy selection, task-wide accounting, and cancellation
-guarantees remain separate work in #410.</p>
+guarantees remain with their operation owners; the
+<a href="../operation_budgets/">shared-budget decision</a> preserves this separation.</p>
 <h2 id="test-layers">Test layers<a class="headerlink" href="#test-layers" title="Permanent link">&para;</a></h2>
 <ul>
 <li>The crate-owned <code>conformance</code> corpus specifies accepted patterns and expected
@@ -4781,13 +4837,13 @@ describes replay and minimization in more detail.</p>
         
         
           
-          <a href="../contributing/documentation/" class="md-footer__link md-footer__link--next" aria-label="Next: Documentation">
+          <a href="../operation_budgets/" class="md-footer__link md-footer__link--next" aria-label="Next: Operation budgets">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Documentation
+                Operation budgets
               </div>
             </div>
             <div class="md-footer__button md-icon">

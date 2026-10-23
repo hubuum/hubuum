@@ -229,6 +229,9 @@
         <loc>https://hubuum.github.io/hubuum/main/regex-testing/</loc>
       </url>
       <url>
+        <loc>https://hubuum.github.io/hubuum/main/operation_budgets/</loc>
+      </url>
+      <url>
         <loc>https://hubuum.github.io/hubuum/main/contributing/documentation/</loc>
       </url>
       <url>
@@ -272,6 +275,9 @@
       </url>
       <url>
         <loc>https://hubuum.github.io/hubuum/main/rust_api_boundary/</loc>
+      </url>
+      <url>
+        <loc>https://hubuum.github.io/hubuum/main/rust_api/hubuum-budget/</loc>
       </url>
       <url>
         <loc>https://hubuum.github.io/hubuum/main/rust_api/hubuum-computed-fields/</loc>
