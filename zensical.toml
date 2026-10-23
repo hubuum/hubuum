@@ -115,6 +115,7 @@ nav = [
     { "Development setup" = "development.md" },
     { "Testing" = "testing.md" },
     { "Regex fuzzing & limits" = "regex-testing.md" },
+    { "Operation budgets" = "operation_budgets.md" },
     { "Documentation" = "contributing/documentation.md" },
     { "Documentation review & roadmap" = "contributing/documentation-review.md" },
     { "Architecture" = [
@@ -135,6 +136,7 @@ nav = [
     ] },
     { "Rust API policies" = [
       { "Package boundaries" = "rust_api_boundary.md" },
+      { "Budgets" = "rust_api/hubuum-budget.md" },
       { "Computed fields" = "rust_api/hubuum-computed-fields.md" },
       { "Domain" = "rust_api/hubuum-domain.md" },
       { "Events" = "rust_api/hubuum-events-core.md" },
