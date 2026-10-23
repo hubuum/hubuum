@@ -204,6 +204,14 @@ for path in "$@"; do
       benchmarks=true
       runtime_benchmark=true
       ;;
+    crates/hubuum-scale-benchmark/Cargo.toml | crates/hubuum-scale-core/Cargo.toml)
+      code=true
+      rust=true
+      benchmarks=true
+      scale_benchmark=true
+      container=true
+      artifacts=true
+      ;;
     .github/workflows/scale-benchmarks.yml | scale-benchmarks/* | \
       crates/hubuum-scale-benchmark/* | crates/hubuum-scale-core/* | \
       crates/hubuum-storage-postgres/src/scale_benchmark.rs | \

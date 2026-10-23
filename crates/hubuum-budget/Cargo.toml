@@ -1,0 +1,18 @@
+[package]
+name = "hubuum-budget"
+version = "0.4.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Explicit byte accounting and bounded writers for Hubuum operations."
+license = "MIT"
+repository = "https://github.com/hubuum/hubuum"
+readme = "../../docs/rust_api/hubuum-budget.md"
+publish = true
+
+[package.metadata.hubuum]
+rust-api = "experimental-public"
+policy-document = "docs/rust_api/hubuum-budget.md"
+release-train = "storage-sdk"
+
+[dev-dependencies]
+rstest = "0.28"

@@ -431,6 +431,20 @@ assert_flag "$benchmark_output" runtime_benchmark true
 assert_flag "$benchmark_output" artifacts false
 assert_flag "$benchmark_output" scale_benchmark false
 
+# Release-profile measurement tools and workloads are build inputs.
+for profile_input in scripts/compare-release-profiles.py tests/python/unit/tooling/test_release_profiles.py; do
+  profile_output="$(bash "$classifier" "$profile_input")"
+  assert_flag "$profile_output" rust true
+  assert_flag "$profile_output" benchmarks true
+  assert_flag "$profile_output" container true
+  assert_flag "$profile_output" artifacts true
+done
+for profile_benchmark in serialization schema search template; do
+  profile_output="$(bash "$classifier" "benches/release_${profile_benchmark}_criterion.rs")"
+  assert_flag "$profile_output" rust true
+  assert_flag "$profile_output" benchmarks true
+done
+
 python3 - "$repo_root/.github/workflows/benchmarks.yml" <<'PY'
 import re
 import sys
@@ -487,6 +501,7 @@ scale_benchmark_output="$(bash "$classifier" \
   scale-benchmarks/sensitivity-v1.toml \
   scale-benchmarks/workloads/v1.toml \
   crates/hubuum-scale-benchmark/src/runner.rs \
+  crates/hubuum-scale-benchmark/src/lifecycle_process.rs \
   crates/hubuum-scale-core/src/lib.rs \
   crates/hubuum-storage-postgres/src/scale_benchmark.rs \
   crates/hubuum-storage-postgres/src/scale_benchmark/history_baselines.sql)"
@@ -496,6 +511,14 @@ assert_flag "$scale_benchmark_output" runtime_benchmark false
 assert_flag "$scale_benchmark_output" scale_benchmark true
 assert_flag "$scale_benchmark_output" container false
 assert_flag "$scale_benchmark_output" artifacts false
+
+for scale_manifest in crates/hubuum-scale-benchmark/Cargo.toml crates/hubuum-scale-core/Cargo.toml; do
+  scale_manifest_output="$(bash "$classifier" "$scale_manifest")"
+  assert_flag "$scale_manifest_output" scale_benchmark true
+  assert_flag "$scale_manifest_output" rust true
+  assert_flag "$scale_manifest_output" container true
+  assert_flag "$scale_manifest_output" artifacts true
+done
 
 python3 - "$repo_root/.github/workflows/scale-benchmarks.yml" <<'PY'
 import sys
@@ -630,20 +653,17 @@ assert_flag "$async_worker_metrics" code true
 async_worker_telemetry="$(bash "$classifier" crates/hubuum-templates/tests/telemetry.rs)"
 assert_flag "$async_worker_telemetry" code true
 
-# Batch protocol regressions and the shared-context benchmark must stay selected.
-for profile_input in scripts/compare-release-profiles.py tests/python/unit/tooling/test_release_profiles.py; do
-  profile_output="$(bash "$classifier" "$profile_input")"
-  assert_flag "$profile_output" rust true
-  assert_flag "$profile_output" benchmarks true
-  assert_flag "$profile_output" container true
-  assert_flag "$profile_output" artifacts true
+for budget_input in crates/hubuum-budget/Cargo.toml crates/hubuum-budget/src/lib.rs; do
+  budget_output="$(bash "$classifier" "$budget_input")"
+  assert_flag "$budget_output" rust true
+  assert_flag "$budget_output" container true
+  assert_flag "$budget_output" benchmarks true
 done
-for profile_benchmark in serialization schema search template; do
-  profile_output="$(bash "$classifier" "benches/release_${profile_benchmark}_criterion.rs")"
-  assert_flag "$profile_output" rust true
-  assert_flag "$profile_output" benchmarks true
-done
+budget_benchmark="$(bash "$classifier" benches/operation_budgets_criterion.rs)"
+assert_flag "$budget_benchmark" rust true
+assert_flag "$budget_benchmark" benchmarks true
 
+# Batch protocol regressions and the shared-context benchmark must stay selected.
 batch_tests="$(bash "$classifier" crates/hubuum-templates/tests/batching.rs)"
 assert_flag "$batch_tests" code true
 assert_flag "$batch_tests" container true

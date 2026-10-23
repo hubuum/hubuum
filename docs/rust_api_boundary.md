@@ -78,6 +78,7 @@ manifest.
 | `hubuum` | Internal application |
 | `hubuum-auth-core` | Workspace-internal |
 | `hubuum-auth-ldap` | Workspace-internal |
+| `hubuum-budget` | Experimental public |
 | `hubuum-computed-fields` | Experimental public |
 | `hubuum-domain` | Experimental public |
 | `hubuum-event-rendering` | Workspace-internal |

@@ -1185,9 +1185,9 @@ dependencies = [
 
 [[package]]
 name = "ctutils"
-version = "0.4.3"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03bb0e1cc970d482d121d9a1744999169b69a07470b3d644a7894e53fcaf4574"
+checksum = "12218662ccac37d9714f2191252553d67585b97df8c839cbe49e0bde278dc865"
 dependencies = [
  "cmov",
 ]
@@ -2071,6 +2071,7 @@ dependencies = [
  "hmac 0.13.0",
  "hubuum-auth-core",
  "hubuum-auth-ldap",
+ "hubuum-budget",
  "hubuum-computed-fields",
  "hubuum-domain",
  "hubuum-event-sink-amqp",
@@ -2144,6 +2145,13 @@ dependencies = [
  "tokio",
  "unicode-normalization",
  "url",
+]
+
+[[package]]
+name = "hubuum-budget"
+version = "0.4.0"
+dependencies = [
+ "rstest",
 ]
 
 [[package]]
@@ -2318,7 +2326,9 @@ dependencies = [
  "futures-util",
  "hubuum-scale-core",
  "hubuum-storage-postgres",
+ "libc",
  "reqwest",
+ "rstest",
  "serde",
  "serde_json",
  "sysinfo",
@@ -2375,6 +2385,7 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "chrono",
+ "hubuum-budget",
  "hubuum-computed-fields",
  "hubuum-domain",
  "hubuum-events-core",
@@ -2457,6 +2468,7 @@ version = "0.0.1"
 dependencies = [
  "chrono",
  "gungraun",
+ "hubuum-budget",
  "libc",
  "minijinja",
  "rstest",

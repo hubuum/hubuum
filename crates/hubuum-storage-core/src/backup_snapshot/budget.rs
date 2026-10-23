@@ -1,5 +1,6 @@
-use std::io::{self, Write};
+use std::io;
 
+use hubuum_budget::{ByteLimit, LimitedWriter};
 use serde::Serialize;
 
 use crate::{StorageBackupRow, StorageError, StorageValidationError};
@@ -8,7 +9,7 @@ use crate::{StorageBackupRow, StorageError, StorageValidationError};
 /// logical rows and the final artifact; rows bound enumeration work separately.
 #[derive(Clone, Copy, Debug)]
 pub struct StorageBackupBudget {
-    max_bytes: usize,
+    max_bytes: ByteLimit,
     max_rows: usize,
 }
 
@@ -20,14 +21,14 @@ impl StorageBackupBudget {
             ));
         }
         Ok(Self {
-            max_bytes,
+            max_bytes: ByteLimit::new(max_bytes),
             max_rows,
         })
     }
 
     #[must_use]
     pub const fn max_bytes(self) -> usize {
-        self.max_bytes
+        self.max_bytes.bytes()
     }
 
     #[must_use]
@@ -40,16 +41,16 @@ impl StorageBackupBudget {
     pub fn serialize<T: Serialize>(self, value: &T) -> Result<Vec<u8>, StorageError> {
         let mut writer = LimitedWriter::new(Vec::new(), self.max_bytes);
         serde_json::to_writer(&mut writer, value).map_err(|error| {
-            if writer.exceeded {
+            if writer.budget().exceeded() {
                 StorageError::input_too_large(format!(
                     "Backup output exceeds the configured {} byte limit",
-                    self.max_bytes
+                    self.max_bytes()
                 ))
             } else {
                 StorageError::internal(format!("Backup serialization failed: {error}"))
             }
         })?;
-        Ok(writer.inner)
+        Ok(writer.into_inner())
     }
 }
 
@@ -83,27 +84,27 @@ impl StorageBackupCaptureProgress {
     }
 
     pub fn retain_row(&mut self, row: &StorageBackupRow) -> Result<(), StorageError> {
-        let mut writer = LimitedWriter::new(io::sink(), self.remaining_bytes());
+        let mut writer = LimitedWriter::new(io::sink(), ByteLimit::new(self.remaining_bytes()));
         serde_json::to_writer(&mut writer, row).map_err(|error| {
-            if writer.exceeded {
+            if writer.budget().exceeded() {
                 self.limit_error("logical byte")
             } else {
                 StorageError::internal(format!("Backup row serialization failed: {error}"))
             }
         })?;
-        self.retained_bytes += writer.written;
+        self.retained_bytes += writer.budget().used();
         self.retained_rows += 1;
         Ok(())
     }
 
     #[must_use]
     pub const fn remaining_bytes(&self) -> usize {
-        self.budget.max_bytes - self.retained_bytes
+        self.budget.max_bytes() - self.retained_bytes
     }
 
     #[must_use]
     pub const fn max_bytes(&self) -> usize {
-        self.budget.max_bytes
+        self.budget.max_bytes()
     }
 
     #[must_use]
@@ -125,47 +126,12 @@ impl StorageBackupCaptureProgress {
     pub fn limit_error(&self, resource: &str) -> StorageError {
         StorageError::input_too_large(format!(
             "Backup exceeds the configured {resource} limit ({} bytes, {} rows); scanned_rows={}, retained_rows={}, retained_bytes={}",
-            self.budget.max_bytes,
+            self.budget.max_bytes(),
             self.budget.max_rows,
             self.scanned_rows,
             self.retained_rows,
             self.retained_bytes
         ))
-    }
-}
-
-struct LimitedWriter<W> {
-    inner: W,
-    remaining: usize,
-    written: usize,
-    exceeded: bool,
-}
-
-impl<W> LimitedWriter<W> {
-    fn new(inner: W, remaining: usize) -> Self {
-        Self {
-            inner,
-            remaining,
-            written: 0,
-            exceeded: false,
-        }
-    }
-}
-
-impl<W: Write> Write for LimitedWriter<W> {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if bytes.len() > self.remaining {
-            self.exceeded = true;
-            return Err(io::Error::other("backup byte limit exceeded"));
-        }
-        let count = self.inner.write(bytes)?;
-        self.remaining -= count;
-        self.written += count;
-        Ok(count)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
     }
 }
 

@@ -81,9 +81,6 @@ pub struct RenderedTemplate {
     peak_heap_bytes: usize,
 }
 impl RenderedTemplate {
-    pub(crate) fn output_bytes(&self) -> usize {
-        self.output.len()
-    }
     pub(crate) fn truncate_missing_values(&mut self, limit: usize) {
         self.missing.truncate(limit);
     }

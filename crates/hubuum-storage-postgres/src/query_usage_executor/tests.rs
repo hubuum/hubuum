@@ -15,7 +15,9 @@ use hubuum_storage_core::{
 };
 use rstest::rstest;
 use serde_json::json;
+use std::time::Duration;
 use tokio::sync::Mutex;
+use tokio::time::{sleep, timeout};
 
 // Native resources are database-wide; these tests serialize only their executor
 // operations while other adapter contracts retain ordinary parallel coverage.
@@ -175,12 +177,23 @@ async fn shared_resource_survives_until_the_last_owner_withdraws() {
     second.withdraw(&b).await;
     let pending = first.resource().await.unwrap();
     assert_eq!(pending.state, "cleanup");
-    first
-        .executor
-        .reconcile(Some(first.scope.class_id()))
-        .await
-        .unwrap();
-    assert!(first.resource().await.is_none());
+    // Parallel adapter tests can hold table locks beyond the executor's 100 ms
+    // DDL budget. Cleanup follows the executor's documented retry contract.
+    timeout(Duration::from_secs(10), async {
+        loop {
+            first
+                .executor
+                .reconcile(Some(first.scope.class_id()))
+                .await
+                .unwrap();
+            if first.resource().await.is_none() {
+                break;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("last-owner cleanup should complete after transient table-lock contention");
     second.cleanup().await;
     first.cleanup().await;
 }

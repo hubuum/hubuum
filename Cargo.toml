@@ -20,6 +20,7 @@ rust-api = "internal-application"
 [workspace]
 default-members = [".", "crates/hubuum-templates"]
 members = [
+    "crates/hubuum-budget",
     "crates/hubuum-auth-core",
     "crates/hubuum-auth-ldap",
     "crates/hubuum-computed-fields",
@@ -146,11 +147,12 @@ toml = "1.1"
 libc = "0.2"
 
 [dev-dependencies]
-minijinja = { version = "3", features = ["fuel", "serde"] }
+hubuum-budget = { path = "crates/hubuum-budget" }
 criterion = "0.8.2"
 gungraun = "0.20.0"
 hubuum-storage-conformance = { path = "crates/hubuum-storage-conformance" }
 hubuum-storage-postgres = { path = "crates/hubuum-storage-postgres", features = ["integration-test-support", "query-capture"] }
+minijinja = { version = "3", features = ["fuel", "serde"] }
 percent-encoding = "2"
 regex = "1"
 rstest = "0.28"
@@ -265,6 +267,10 @@ required-features = ["integration-test-support"]
 name = "admin_cli"
 path = "tests/admin_cli.rs"
 required-features = ["integration-test-support"]
+
+[[bench]]
+name = "operation_budgets_criterion"
+harness = false
 
 [[bench]]
 name = "json_predicate_construction_callgrind"

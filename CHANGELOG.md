@@ -7,8 +7,30 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- The storage SDK includes `hubuum-budget`, a standard-library crate for typed
+  byte limits, cumulative accounting, and bounded writers. Backup and template
+  output share its enforcement while preserving their existing limits and errors.
+
+### Security
+
+- Update `ctutils` to 0.4.4 in the application and fuzz lockfiles to address
+  RUSTSEC-2026-0385 (non-constant-time mask generation and `u128` comparisons).
+
 ### Changed
 
+- **Breaking (scale fixtures):** bundled large and huge profiles advance to
+  version 2. Recreate disposable datasets and manifests with the matching new
+  profile, or retain an archived version-1 specification with `--profile-spec`.
+  Older custom profile files remain readable.
+- Scale backup drills declare byte, row-work, resident-memory, and stage-time
+  budgets. The large profile uses a 1 GiB document ceiling and four million
+  scanned rows. A lifecycle-only command records per-stage memory and timing,
+  bounds administrator execution, and removes temporary backup documents.
+  The measured large corpus exceeds both 6 GiB and 12 GiB process envelopes;
+  reports distinguish that limitation from completed verification or restore.
+  Production backup and restore defaults remain unchanged.
 - Release builds use speed-oriented optimization (`opt-level = 3`) with the
   existing fat LTO and single codegen unit. Representative serialization, schema
   validation, query parsing, and template workloads improve at the cost of larger

@@ -21,3 +21,9 @@ serde = "1"
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+rstest = "0.28"

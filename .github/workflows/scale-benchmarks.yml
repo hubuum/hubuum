@@ -261,12 +261,15 @@ jobs:
             --output "$REPORT_ROOT/sensitivity.json" \
             --markdown-output "$REPORT_ROOT/sensitivity.md" \
             >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload sanitized reports and lifecycle artifacts
+      - name: Upload sanitized reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: scale-${{ matrix.backend }}-${{ matrix.profile }}-${{ matrix.mode }}
-          path: ${{ env.REPORT_ROOT }}
+          path: |
+            ${{ env.REPORT_ROOT }}/**/*.json
+            ${{ env.REPORT_ROOT }}/**/*.md
+            !${{ env.REPORT_ROOT }}/**/*artifacts/**
           retention-days: 14
 
   report:

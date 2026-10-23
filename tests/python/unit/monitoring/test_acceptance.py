@@ -5,10 +5,45 @@ import ipaddress
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 from unittest.mock import Mock, patch
 import unittest
 
 from integration.monitoring import Installation, fixture_environment, network_subnets
+
+
+class PanelComparisonTests(unittest.TestCase):
+    def test_comparison_uses_settled_samples_and_still_rejects_proxy_differences(self):
+        for proxy_differs in (False, True):
+            with self.subTest(proxy_differs=proxy_differs), tempfile.TemporaryDirectory() as directory:
+                dashboards = Path(directory) / 'observability/dashboards'
+                dashboards.mkdir(parents=True)
+                panel = {'title': 'Process CPU', 'targets': [{'expr': 'rate(cpu[5m])'}]}
+                (dashboards / 'fixture.json').write_text(json.dumps({'uid': 'fixture', 'panels': [panel]}))
+                installation = Installation.__new__(Installation)
+                installation.report = {}
+                installation.request = Mock(side_effect=[
+                    (200, {'dashboard': {'panels': [panel]}}),
+                    (200, {'data': {'groups': []}}),
+                ])
+
+                def query(expression, at=None, grafana=False):
+                    if expression.startswith('probe_success'):
+                        return []
+                    # A scrape started at 995 is ingested between requests at
+                    # time 1000. Older samples are stable on both query paths.
+                    changed = grafana and (proxy_differs or at >= 995)
+                    return [{'metric': {'instance': 'fixture'}, 'value': [at, '2' if changed else '1']}]
+
+                installation.query = query
+                with patch('integration.monitoring.ROOT', Path(directory)), \
+                        patch('integration.monitoring.time.time', return_value=1000):
+                    if proxy_differs:
+                        with self.assertRaisesRegex(AssertionError, 'Grafana panel differs'):
+                            installation.panels()
+                    else:
+                        installation.panels()
+                        self.assertEqual(installation.report['panels'][0]['series'], 1)
 
 
 class NetworkInspectionTests(unittest.TestCase):
