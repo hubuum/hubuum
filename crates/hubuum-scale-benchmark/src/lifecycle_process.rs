@@ -2,11 +2,13 @@
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use hubuum_scale_core::LifecycleStageResources;
+#[cfg(unix)]
+use libc::{P_PID, SIGKILL, WEXITED, WNOHANG, WNOWAIT, id_t, killpg, siginfo_t, waitid};
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
 const MAX_DIAGNOSTIC_BYTES: u64 = 1024 * 1024;
@@ -35,6 +37,46 @@ struct ManagedChild {
     running: bool,
 }
 
+impl ManagedChild {
+    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        #[cfg(unix)]
+        {
+            use std::mem::MaybeUninit;
+
+            // Observe exit without reaping the leader. Its PID must remain
+            // reserved until the whole process group has been terminated.
+            let mut info = MaybeUninit::<siginfo_t>::zeroed();
+            let result = unsafe {
+                waitid(
+                    P_PID,
+                    self.child.id() as id_t,
+                    info.as_mut_ptr(),
+                    WEXITED | WNOHANG | WNOWAIT,
+                )
+            };
+            if result == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            if unsafe { info.assume_init().si_pid() } == 0 {
+                return Ok(None);
+            }
+            // The administrator may exit before its descendants, including on
+            // ordinary failures. Clean them up while the group ID is pinned.
+            unsafe {
+                killpg(self.child.id() as i32, SIGKILL);
+            }
+        }
+        #[cfg(unix)]
+        let status = Some(self.child.wait()?);
+        #[cfg(not(unix))]
+        let status = self.child.try_wait()?;
+        if status.is_some() {
+            self.running = false;
+        }
+        Ok(status)
+    }
+}
+
 impl Drop for ManagedChild {
     fn drop(&mut self) {
         if !self.running {
@@ -44,7 +86,7 @@ impl Drop for ManagedChild {
         // process group prevents cancellation from leaving them behind on Unix.
         #[cfg(unix)]
         unsafe {
-            libc::killpg(self.child.id() as i32, libc::SIGKILL);
+            killpg(self.child.id() as i32, SIGKILL);
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -137,9 +179,7 @@ fn run_inner(
                 "lifecycle process stopped: {reason}"
             )));
         }
-        if let Some(status) = child.child.try_wait()? {
-            // The PID has been reaped; do not address its process group again.
-            child.running = false;
+        if let Some(status) = child.try_wait()? {
             let read = |path| -> io::Result<Vec<u8>> {
                 let mut bytes = Vec::new();
                 File::open(path)?
@@ -163,6 +203,8 @@ fn run_inner(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
+    use rstest::rstest;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     fn directory() -> std::path::PathBuf {
@@ -172,6 +214,25 @@ mod tests {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn assert_descendant_terminated(pid: &str) {
+        let started = Instant::now();
+        loop {
+            let state = fs::read_to_string(format!("/proc/{pid}/stat"));
+            if state.is_err() || state.unwrap().split_whitespace().nth(2) == Some("Z") {
+                return;
+            }
+            if started.elapsed() >= Duration::from_secs(2) {
+                // Clean up even if this assertion catches a regression.
+                unsafe {
+                    libc::kill(pid.parse().unwrap(), libc::SIGKILL);
+                }
+                panic!("administrator exit must not leave a running descendant");
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]
@@ -211,11 +272,32 @@ mod tests {
         assert!(!path.exists());
         let pid = fs::read_to_string(&pid_file).unwrap();
         fs::remove_file(pid_file).unwrap();
-        let child_state = fs::read_to_string(format!("/proc/{pid}/stat"));
-        assert!(
-            child_state.is_err() || child_state.unwrap().split_whitespace().nth(2) == Some("Z"),
-            "the administrator's descendant must also be terminated"
+        assert_descendant_terminated(&pid);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[rstest]
+    #[case::success(0)]
+    #[case::failure(1)]
+    fn administrator_exit_terminates_remaining_descendants(#[case] exit_code: i32) {
+        let path = directory();
+        let pid_file = path.with_extension("pid");
+        let mut command = Command::new("/bin/sh");
+        command.env("CHILD_PID_FILE", &pid_file);
+        command.env("EXIT_CODE", exit_code.to_string());
+        command.args([
+            "-c",
+            "sleep 30 & printf '%s' \"$!\" > \"$CHILD_PID_FILE\"; exit \"$EXIT_CODE\"",
+        ]);
+        let (output, _) = run(
+            &mut command,
+            &path,
+            &ProcessLimits::new(128 * 1024 * 1024, 10).unwrap(),
         );
+        assert_eq!(output.unwrap().status.code(), Some(exit_code));
+        let pid = fs::read_to_string(&pid_file).unwrap();
+        fs::remove_file(pid_file).unwrap();
+        assert_descendant_terminated(&pid);
     }
 
     #[test]

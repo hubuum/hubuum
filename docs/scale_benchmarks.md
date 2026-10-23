@@ -380,8 +380,10 @@ without claiming verification or restore.
 Each administrator stage has a 1,800-second deadline and a sampled 6 GiB total
 resident-memory limit for the process and its descendants. Reports record
 elapsed milliseconds, sampled peak resident bytes, and the termination reason.
-The supervisor checks every 25 ms and kills/reaps the administrator process group
-on Unix when a bound is exceeded. Sampling permits overshoot and can miss short
+The supervisor checks every 25 ms, kills the administrator process group on Unix
+when a bound is exceeded, and reaps the administrator. It also terminates remaining
+descendants when the administrator exits normally or fails, before reaping its
+leader so the process-group ID cannot be reused during cleanup. Sampling permits overshoot and can miss short
 peaks; use an OS/container memory limit for a hard host-resource boundary. A
 memory termination is reported as `<stage>_exceeds_memory_envelope`, an explicit
 unsupported-envelope result like the document-size ceiling. It does not count
