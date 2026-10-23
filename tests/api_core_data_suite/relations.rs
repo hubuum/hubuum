@@ -312,7 +312,7 @@ mod tests {
         let limited_relations: Vec<HubuumClassRelation> = test::read_body_json(resp).await;
 
         assert_eq!(limited_relations.len(), 2);
-        assert_eq!(limited_relations[0].id, relations[0].id.id());
+        assert_eq!(limited_relations[0].id, relations[0].id);
         assert_eq!(limited_relations[1].id, relations[1].id);
 
         cleanup(&classes).await;
@@ -1442,7 +1442,7 @@ mod tests {
         assert_eq!(sorted_relations.len(), object_relations.len());
         assert_eq!(sorted_relations[0].id, object_relations[2].id);
         assert_eq!(sorted_relations[1].id, object_relations[1].id);
-        assert_eq!(sorted_relations[2].id, object_relations[0].id.id());
+        assert_eq!(sorted_relations[2].id, object_relations[0].id);
 
         let limited_url = format!(
             "{OBJECT_RELATIONS_ENDPOINT}?class_relation={class_relation_ids}&sort=id&limit=2"
@@ -1451,7 +1451,7 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let limited_relations: Vec<HubuumObjectRelation> = test::read_body_json(resp).await;
         assert_eq!(limited_relations.len(), 2);
-        assert_eq!(limited_relations[0].id, object_relations[0].id.id());
+        assert_eq!(limited_relations[0].id, object_relations[0].id);
         assert_eq!(limited_relations[1].id, object_relations[1].id);
 
         cleanup(&classes).await;
