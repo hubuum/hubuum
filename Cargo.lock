@@ -2092,6 +2092,7 @@ dependencies = [
  "ipnet",
  "json-patch",
  "libc",
+ "minijinja",
  "openssl",
  "opentelemetry",
  "opentelemetry-otlp",

@@ -191,6 +191,13 @@ for path in "$@"; do
       .env.example | .env.*.example | .agents/* | .codex/* | \
       .github/ISSUE_TEMPLATE/* | .github/PULL_REQUEST_TEMPLATE*)
       ;;
+    scripts/compare-release-profiles.py | tests/python/unit/tooling/test_release_profiles.py)
+      code=true
+      rust=true
+      benchmarks=true
+      container=true
+      artifacts=true
+      ;;
     .github/workflows/benchmarks.yml | scripts/benchmark-lanes.py | tests/python/unit/tooling/test_benchmark_lanes.py)
       code=true
       rust=true

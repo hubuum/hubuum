@@ -152,6 +152,7 @@ criterion = "0.8.2"
 gungraun = "0.20.0"
 hubuum-storage-conformance = { path = "crates/hubuum-storage-conformance" }
 hubuum-storage-postgres = { path = "crates/hubuum-storage-postgres", features = ["integration-test-support", "query-capture"] }
+minijinja = { version = "3", features = ["fuel", "serde"] }
 percent-encoding = "2"
 regex = "1"
 rstest = "0.28"
@@ -204,7 +205,7 @@ integration-test-support = [
 [profile.release]
 codegen-units = 1
 lto = "fat"
-opt-level = "z"
+opt-level = 3
 
 [lib]
 name = "hubuum"
@@ -328,4 +329,20 @@ required-features = ["runtime-limit-bench"]
 
 [[bench]]
 name = "schema_validation_criterion"
+harness = false
+
+[[bench]]
+name = "release_serialization_criterion"
+harness = false
+
+[[bench]]
+name = "release_schema_criterion"
+harness = false
+
+[[bench]]
+name = "release_search_criterion"
+harness = false
+
+[[bench]]
+name = "release_template_criterion"
 harness = false

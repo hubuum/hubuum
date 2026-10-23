@@ -31,6 +31,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   The measured large corpus exceeds both 6 GiB and 12 GiB process envelopes;
   reports distinguish that limitation from completed verification or restore.
   Production backup and restore defaults remain unchanged.
+- Release builds use speed-oriented optimization (`opt-level = 3`) with the
+  existing fat LTO and single codegen unit. Representative serialization, schema
+  validation, query parsing, and template workloads improve at the cost of larger
+  executables and containers and more expensive builds. See the
+  [release-profile measurements](docs/performance/release_profiles.md). No
+  configuration or database migration is required.
 
 ## [0.0.20] - 2026-10-22
 

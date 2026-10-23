@@ -151,6 +151,7 @@ nav = [
       { "Release process" = "releasing.md" },
       { "Operational contracts" = "operational_contracts.md" },
       { "Scale benchmarks" = "scale_benchmarks.md" },
+      { "Release profiles" = "performance/release_profiles.md" },
       { "Runtime measurements" = "performance/runtime_hardening.md" },
       { "Template measurements" = "performance/template_worker.md" },
       { "Treetop conformance fixture" = "treetop/test-fixture.md" },
