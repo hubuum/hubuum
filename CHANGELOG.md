@@ -9,6 +9,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (scale fixtures):** bundled large and huge profiles advance to
+  version 2. Recreate disposable datasets and manifests with the matching new
+  profile, or retain an archived version-1 specification with `--profile-spec`.
+  Older custom profile files remain readable.
 - Scale backup drills declare byte, row-work, resident-memory, and stage-time
   budgets. The large profile uses a 1 GiB document ceiling and four million
   scanned rows. A lifecycle-only command records per-stage memory and timing,

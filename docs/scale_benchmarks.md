@@ -55,6 +55,13 @@ measurement if the loaded rows or required skews do not match that manifest.
 Generation is set-based and deterministic; increasing the seed changes the
 logical corpus while preserving the declared shape.
 
+The bundled large and huge specifications now use profile version 2. This is a
+breaking fixture-identity change: version-1 manifests do not match those bundled
+specifications. Recreate the disposable dataset and manifest with the matching
+version-2 profile, or continue using an archived version-1 specification through
+`--profile-spec`. Older custom profile files remain readable; omitted lifecycle
+settings receive their documented defaults.
+
 ## Build and Prepare
 
 Build the shared runner and the real production binaries:
