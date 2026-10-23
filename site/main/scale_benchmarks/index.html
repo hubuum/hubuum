@@ -4315,6 +4315,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Backup and Restore Lifecycle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#resource-envelope-and-lifecycle-only-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Resource envelope and lifecycle-only runs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#measured-large-profile-limitation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Measured large-profile limitation
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#format-decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Format decision
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4550,6 +4589,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Backup and Restore Lifecycle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#resource-envelope-and-lifecycle-only-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Resource envelope and lifecycle-only runs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#measured-large-profile-limitation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Measured large-profile limitation
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#format-decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Format decision
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4716,6 +4794,12 @@ IDs, and logical corpus SHA-256 are written to the manifest. A run stops before
 measurement if the loaded rows or required skews do not match that manifest.
 Generation is set-based and deterministic; increasing the seed changes the
 logical corpus while preserving the declared shape.</p>
+<p>The bundled large and huge specifications now use profile version 2. This is a
+breaking fixture-identity change: version-1 manifests do not match those bundled
+specifications. Recreate the disposable dataset and manifest with the matching
+version-2 profile, or continue using an archived version-1 specification through
+<code>--profile-spec</code>. Older custom profile files remain readable; omitted lifecycle
+settings receive their documented defaults.</p>
 <h2 id="build-and-prepare">Build and Prepare<a class="headerlink" href="#build-and-prepare" title="Permanent link">&para;</a></h2>
 <p>Build the shared runner and the real production binaries:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>cargo<span class="w"> </span>build<span class="w"> </span>--locked<span class="w"> </span>--release<span class="w"> </span>--package<span class="w"> </span>hubuum-scale-benchmark
@@ -5061,10 +5145,12 @@ materializing the full document. Fixture revision/history invariants are checked
 independently before workloads, including when backup generation is over its ceiling.
 Otherwise the runner creates a backup and invokes <code>hubuum-admin --verify-backup</code>. Supplying <code>--restore-test-database-url</code> additionally restores
 into a separately created empty database and performs semantic verification.
-The large profile retains the ordinary 256 MiB ceiling; the huge profile
-declares an elevated 1 GiB provisioning envelope. Both values are recorded in
-the manifest and applied to the server and administrator processes, along with
-the profile's database statement timeout. Bulk loading seeds
+Profile version 2 declares a 1 GiB backup/restore document ceiling for both
+profiles. The large profile allows 4,000,000 enumerated rows and huge allows
+16,000,000, including live rows and history. These explicit provisioning policies
+are recorded in the manifest and passed to the server and administrator.
+Production defaults remain 256 MiB and 1,000,000 rows. Custom profile files can
+select a different envelope; omitted row limits retain the production default. Bulk loading seeds
 one open temporal baseline for every live resource and preserves the additional
 revisions in the history overlay. Audit revision fields retain matching snapshots.
 Administrator failures report the failing stage, exit status, and diagnostic
@@ -5072,7 +5158,7 @@ output with configured connection strings and token keys redacted.</p>
 <p>Lifecycle results distinguish a successful offline verification, a successful
 isolated restore, an unsupported backup, an artifact that exceeds the ordinary
 256 MiB ceiling, and a verification or restore failure. The measured size is
-recorded and an over-limit generated document is removed instead of uploaded;
+recorded and every generated document is removed after the drill, including failures;
 the runner does not silently exempt scale artifacts from production limits.
 The preflight is a size check, not proof of backup validity; generation and
 verification still run for every corpus admitted by the preflight.
@@ -5083,16 +5169,107 @@ operational sections and framing, so it cannot guarantee admission. A capture
 limit failure produces no artifact and is reported as a backup-stage failure
 with the resource-limit diagnostic; it must not be claimed as successful
 verification or restore. The default work ceiling is 1,000,000 enumerated rows.
-The large and huge profiles retain their existing declared byte ceilings; this
-change does not assert that either corpus fits those ceilings or completes a
-restore. Continued lifecycle-envelope work is tracked in
-<a href="https://github.com/hubuum/hubuum/issues/366">#366</a>.</p>
-<p>The adapter regression <code>backup_rows_can_exceed_one_postgres_json_array</code> retains
-coverage above PostgreSQL's single JSON-array limit under an explicit 512 MiB
-budget. Small-budget capture regressions instrument database row evaluation and
-logical retained bytes to prove early termination. These tests exercise the
-resource enforcement mechanism; they do not replace a large-profile lifecycle
-assessment or peak-RSS measurement.</p>
+A corpus may still exceed either explicit ceiling; preflight reports that limitation
+without claiming verification or restore.</p>
+<h3 id="resource-envelope-and-lifecycle-only-runs">Resource envelope and lifecycle-only runs<a class="headerlink" href="#resource-envelope-and-lifecycle-only-runs" title="Permanent link">&para;</a></h3>
+<p>Each administrator stage has a 1,800-second deadline and a sampled 6 GiB total
+resident-memory limit for the process and its descendants. Reports record
+elapsed milliseconds, sampled peak resident bytes, and the termination reason.
+The supervisor checks every 25 ms, kills the administrator process group on Unix
+when a bound is exceeded, and reaps the administrator. It also terminates remaining
+descendants when the administrator exits normally or fails, before reaping its
+leader so the process-group ID cannot be reused during cleanup. Sampling permits overshoot and can miss short
+peaks; use an OS/container memory limit for a hard host-resource boundary. A
+memory termination is reported as <code>&lt;stage&gt;_exceeds_memory_envelope</code>, an explicit
+unsupported-envelope result like the document-size ceiling. It does not count
+as a data-correctness failure in comparative assessment and never claims a
+successful verification or restore. Deadlines, diagnostic overflow, and other
+execution/verification failures still fail correctness assessment. Windows can
+terminate the direct child but does not provide the Unix process-group guarantee.</p>
+<p>Only one backup document is staged at a time in an exclusively created directory.
+Its logical bytes are bounded during capture and serialization; atomic rename
+uses one temporary file rather than a second full copy. Provision at least the
+configured document ceiling plus 2 MiB for diagnostics, headroom for sampling
+overshoot, filesystem overhead,
+and free space for the database and its WAL separately. Diagnostic files have a
+sampled 1 MiB cap each and bounded reads. The runner removes its private backup
+directory and diagnostic captures on both success and handled failure. Abrupt
+termination of the runner itself can leave its administrator and directory;
+stop the administrator process group before removing the directory and retrying.
+CI uploads only report JSON/Markdown, excludes artifact directories,
+and retains reports for 14 days. It never uploads generated backup contents.</p>
+<p>After <code>load</code>, run only the fixture validation and backup lifecycle:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>target/release/hubuum-scale-benchmark<span class="w"> </span>lifecycle<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>--profile<span class="w"> </span>large<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>--database-url<span class="w"> </span>postgres://localhost/hubuum_scale_local<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span>--admin-binary<span class="w"> </span>target/release/hubuum-admin<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span>--restore-test-database-url<span class="w"> </span>postgres://localhost/hubuum_scale_restore<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">  </span>--output<span class="w"> </span>target/scale/lifecycle.json<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">  </span>--artifact-directory<span class="w"> </span>target/scale/lifecycle-artifacts
+</code></pre></div>
+<p>The source must be the disposable loaded fixture; the restore database must be
+empty. The command writes the manifest, provisioning policy and lifecycle report
+and exits unsuccessfully unless offline verification (and the requested restore)
+completed. It does not silently accept a size limitation as a completed drill.</p>
+<h3 id="measured-large-profile-limitation">Measured large-profile limitation<a class="headerlink" href="#measured-large-profile-limitation" title="Permanent link">&para;</a></h3>
+<p>On 23 October 2026, the version-2 large fixture (seed <code>36520260901</code>, 250,000
+objects and 1,000,000 object relations, plus temporal histories and operational
+overlays) was loaded and verified against PostgreSQL 18.6. Its temporal-state
+lower bound was <strong>837,811,676 bytes</strong>, already above the ordinary 256 MiB ceiling.
+Both runs admitted 1 GiB of document bytes and 4,000,000 scanned rows:</p>
+<table>
+<thead>
+<tr>
+<th>Process memory ceiling</th>
+<th>Preflight</th>
+<th>Backup before termination</th>
+<th>Sampled peak RSS</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>6 GiB (bundled profile)</td>
+<td>232.772 s</td>
+<td>28.711 s</td>
+<td>6,487,523,328 bytes</td>
+<td>Memory envelope exceeded</td>
+</tr>
+<tr>
+<td>12 GiB (explicit custom profile)</td>
+<td>204.672 s</td>
+<td>57.656 s</td>
+<td>12,920,004,608 bytes</td>
+<td>Memory envelope exceeded</td>
+</tr>
+</tbody>
+</table>
+<p>The administrator was killed and reaped and the private artifact directories
+were removed in both runs. Neither produced a completed backup document;
+verification and restore were not attempted. These peaks include sampling
+overshoot. The fixture ran on Linux x86-64, an Intel Xeon Silver 4216 (16 cores,
+32 threads), 62 GiB RAM, with a Rust 1.98.0 release administrator using <code>opt-level=z</code>,
+fat LTO, both TLS features and embedded migrations. Other validation builds were
+running, so timings are diagnostic observations, not performance baselines.</p>
+<p>The default large corpus therefore <strong>does not have a completed lifecycle within
+the measured 6 GiB or 12 GiB process envelopes</strong>. Keep that explicit limitation;
+raising the byte limit is not evidence of memory safety or restore support.
+The existing materialized backup representation needs further retained-memory
+reduction or a streaming/versioned design before claiming this corpus works on
+ordinary CI runners. The huge profile has no successful measured lifecycle here.
+To select a different provisioned envelope, copy the TOML profile, edit
+<code>lifecycle_max_resident_bytes</code>, and pass <code>--profile large --profile-spec &lt;file&gt;</code>.
+The harness enforces and records that choice; it does not certify it in advance.</p>
+<h3 id="format-decision">Format decision<a class="headerlink" href="#format-decision" title="Permanent link">&para;</a></h3>
+<p>Use the existing compact versioned JSON backup and an explicitly provisioned
+extended ceiling. Compression could reduce artifact/disk bytes but would not
+reduce the decoded row graph retained by verification/restore. A streaming format
+would require incremental validation, transaction-safe restoration, bounded
+cross-section reference checks and new compatibility/version handling. Neither
+is necessary to measure the current envelope, and neither is implied by a larger
+byte setting. Preserve the production capture limits and report measurements
+before selecting a format change. Backup capture already streams rows from
+PostgreSQL, but the admitted document and restore graph are still materialized.</p>
 <h2 id="ci-policy">CI Policy<a class="headerlink" href="#ci-policy" title="Permanent link">&para;</a></h2>
 <p>Scale jobs are expensive and never run because <code>ci:full</code>, <code>ci:benchmarks</code>, or
 an ordinary benchmark-path change requested them. Pull requests opt in with
