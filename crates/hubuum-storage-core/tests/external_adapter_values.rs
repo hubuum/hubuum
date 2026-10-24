@@ -328,7 +328,7 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let _ = StorageRestoreCompletion::try_new;
     let _ = StorageRestoreCoordinatorSnapshot::new;
     let _ = StorageRestoreDrainState::try_new;
-    let _ = StorageRestoreJob::try_new(restore_summary.clone(), Vec::new(), "0".repeat(64));
+    let _ = StorageRestoreArtifactJob::try_new(restore_summary.clone(), None, "0".repeat(64));
     let _ = StorageRestoreStatus::try_new(restore_summary, "0".repeat(64), serde_json::json!({}));
     let _ = service_account.clone();
     let _ = StorageServiceAccountDetails::new(

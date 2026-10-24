@@ -973,23 +973,26 @@ impl TaskExecutionStorage for MemoryStorage {
 
 #[async_trait]
 impl BackupSnapshotStorage for MemoryStorage {
-    async fn capture_backup_snapshot(
+    async fn capture_backup_replay(
         &self,
         include_history: bool,
         budget: StorageBackupBudget,
-    ) -> Result<StorageBackupSnapshot, StorageError> {
+    ) -> Result<StorageBackupReplay, StorageError> {
         let state = self.state.read().await.clone();
-        crate::backup::capture(&state, include_history, self.schema_limits, budget)
+        StorageBackupReplay::from_snapshot(
+            crate::backup::capture(&state, include_history, self.schema_limits, budget)?,
+            budget,
+        )
     }
 }
 
 #[async_trait]
 impl RestoreStorage for MemoryStorage {
-    async fn stage_restore(
+    async fn stage_restore_artifact(
         &self,
-        request: StorageRestoreStageCreate,
-    ) -> Result<StorageRestoreJob, StorageError> {
-        let (initiator, document, artifact, capability_hash, validation_summary, expires_at) =
+        request: StorageRestoreStageArtifact,
+    ) -> Result<StorageRestoreStatus, StorageError> {
+        let (initiator, artifact, capability_hash, validation_summary, expires_at) =
             request.into_parts();
         let mut state = self.state.write().await;
         let id = RestoreJobId::new(state.next_restore_job_id)
@@ -1002,27 +1005,32 @@ impl RestoreStorage for MemoryStorage {
             id,
             StorageRestoreJobStatus::Validated,
             initiator,
-            artifact,
+            artifact.summary().clone(),
             None,
             timestamps,
         )
         .map_err(invalid_contract_value)?;
-        let job = StorageRestoreJob::try_new(summary, document, capability_hash)
-            .map_err(invalid_contract_value)?;
+        let job = StorageRestoreArtifactJob::try_new(
+            summary.clone(),
+            Some(artifact),
+            capability_hash.clone(),
+        )
+        .map_err(invalid_contract_value)?;
         state.restore_jobs.insert(
             id.id(),
             MemoryRestoreRecord {
                 job: job.clone(),
-                validation_summary,
+                validation_summary: validation_summary.clone(),
             },
         );
-        Ok(job)
+        StorageRestoreStatus::try_new(summary, capability_hash, validation_summary)
+            .map_err(invalid_contract_value)
     }
 
-    async fn get_restore_job(
+    async fn get_restore_artifact(
         &self,
         job_id: RestoreJobId,
-    ) -> Result<StorageRestoreJob, StorageError> {
+    ) -> Result<StorageRestoreArtifactJob, StorageError> {
         self.state
             .read()
             .await
@@ -1132,11 +1140,11 @@ impl RestoreStorage for MemoryStorage {
         Ok(confirmed_at)
     }
 
-    async fn apply_restore(
+    async fn apply_restore_replay(
         &self,
-        request: StorageRestoreApply,
+        request: StorageRestoreReplayApply,
     ) -> Result<StorageRestoreCompletion, StorageError> {
-        let (job_id, document) = request.into_parts();
+        let (job_id, metadata, snapshot, source_includes_history) = request.into_parts();
         let mut state = self.state.write().await;
         if state.maintenance_state != MaintenanceState::Draining
             || state.maintenance_restore_job_id != Some(job_id)
@@ -1156,12 +1164,10 @@ impl RestoreStorage for MemoryStorage {
             return Err(StorageError::conflict("The restore job is not confirmed"));
         }
         let started_at = Utc::now();
-        let source_includes_history = document.source_includes_history();
-        let (metadata, snapshot) = document.into_parts();
         let mut replacement = crate::backup::restore(
             snapshot
-                .with_schema_limits(self.schema_limits)
-                .map_err(invalid_contract_value)?,
+                .with_schema_limits(self.schema_limits)?
+                .materialize()?,
         )?;
         replacement.credential_approvals = state.credential_approvals.clone();
         replacement.query_observation_control = state.query_observation_control;

@@ -279,7 +279,7 @@ revisions, collection authorization coverage, live/open-history agreement, and
 event revision consistency. A history-inclusive capture must fail on missing
 or contradictory temporal state; capture must never manufacture history.
 
-`StorageRestoreDocument::at_restore_boundary` prepares the complete logical replacement.
+`StorageRestoreReplayApply::at_restore_boundary` prepares the complete logical replacement.
 With retained history, it preserves the supplied snapshots. Without history,
 it establishes one current system-attributed snapshot for each live temporal
 resource, retaining its ID, revision, data, and resource timestamps. Temporal
@@ -287,12 +287,22 @@ validity starts at the supplied restore boundary, represented at microsecond
 precision. Its `create` operation marks entry into the new retained timeline.
 Task, audit, and delivery history remains empty until the restore-success event.
 
-`RestoreStorage::apply_restore` must persist these prepared rows atomically with
+`RestoreStorage::apply_restore_replay` must persist these prepared rows atomically with
 the state replacement, derived-state reset/rebuild scheduling, success event,
 and terminal receipt. Adapters map logical rows to their native representation;
 they do not reconstruct the history policy. Failure must expose none of the
 replacement state or provenance. A successful restore must permit another
 history-inclusive backup and restore, including after normal mutations.
+
+The mandatory replay capabilities preserve this contract. A `StorageBackupReplay`
+is a private validated spool, and `StorageRestoreReplayApply` prepares baselines
+before the transaction. `stage_restore_artifact` atomically persists exact bytes
+and metadata; `get_restore_artifact` must verify length and digest and distinguish
+an erased terminal stage from a missing active artifact. PostgreSQL uses durable
+bounded chunks and validates contiguous ordinals on recovery. Every adapter
+implements the replay methods directly, with no materializing fallback.
+Common diagnostics wrap every adapter. The memory backend materializes rows only
+for its own in-memory replacement state and retains the same atomicity contract.
 
 Every selectable backend must pass the shared
 `hubuum-storage-conformance::verify_backup_restore_contract` runner, exercised

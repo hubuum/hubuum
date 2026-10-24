@@ -71,13 +71,21 @@ with the state change; a genuine no-op returns `Unchanged`. Imports and
 restores use explicit `ImportStorage` and `RestoreStorage` capabilities and do
 not weaken ordinary mutation signatures.
 
-Backup snapshots validate revision and temporal-history consistency at their
-fallible constructor. Restore documents consume that validated source and
-prepare a complete replacement, including fresh current temporal snapshots
-for a history-free source. `StorageRestoreDocument::new` retains its existing
-signature; `at_restore_boundary` accepts an explicit boundary timestamp.
-Adapters must persist the prepared history even when `source_includes_history`
-is false.
+Backup capture and restore use mandatory replay capabilities:
+`capture_backup_replay`, `stage_restore_artifact`, `get_restore_artifact`, and
+`apply_restore_replay`. The former materialized methods and their staging/apply
+DTOs have been removed; there are no compatibility defaults. External adapters
+must implement these methods directly as part of the 0.5 SDK migration.
+
+`StorageBackupReplay` and `StorageRestoreArtifact` own private immutable temporary
+files with independent, fallible readers. `StorageRestoreReplayApply::at_restore_boundary`
+prepares complete temporal baselines before destructive application. Adapters
+persist those exact rows, including when `source_includes_history` is false,
+and preserve fencing, rollback, provenance, and artifact identity checks.
+PostgreSQL implements bounded capture, durable chunked staging, and row replay.
+The memory adapter implements the same lifecycle contract and materializes rows
+only when constructing its in-memory state; it does not offer a bounded-memory
+storage backend.
 
 Endpoint-set relation queries expose an optional `max_results()` bound.
 Adapters must apply that bound before materializing rows, after endpoint

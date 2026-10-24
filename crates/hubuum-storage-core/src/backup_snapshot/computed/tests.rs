@@ -1,4 +1,5 @@
 use super::*;
+use crate::StorageBackupSnapshot;
 use chrono::Duration;
 use rstest::rstest;
 
@@ -26,7 +27,7 @@ fn restore_observes_shared_definitions_only_at_restore_boundary(#[case] legacy: 
     let at = Utc::now();
     let mut source = snapshot();
     if legacy {
-        source = source.restart_history(at - Duration::days(1));
+        source = source.prepare_for_test(at - Duration::days(1));
         source
             .history_sections
             .as_mut()
@@ -35,7 +36,7 @@ fn restore_observes_shared_definitions_only_at_restore_boundary(#[case] legacy: 
             .unwrap()
             .clear();
     }
-    let restored = source.restart_history(at);
+    let restored = source.prepare_for_test(at);
     let records = records(&restored).unwrap();
     assert_eq!(records.len(), 1);
     assert!(!records[0].is_effective_at(at - Duration::seconds(1)));
@@ -51,7 +52,7 @@ fn restore_observes_shared_definitions_only_at_restore_boundary(#[case] legacy: 
 #[case::actor_metadata("actor")]
 #[case::exhausted_sequence("sequence")]
 fn backup_rejects_inconsistent_computed_history(#[case] fault: &str) {
-    let mut snapshot = snapshot().restart_history(Utc::now());
+    let mut snapshot = snapshot().prepare_for_test(Utc::now());
     let rows = snapshot
         .history_sections
         .as_mut()
@@ -81,16 +82,16 @@ fn backup_rejects_inconsistent_computed_history(#[case] fault: &str) {
 
 #[test]
 fn retained_computed_history_survives_restore_without_rebasing() {
-    let original = snapshot().restart_history(Utc::now());
+    let original = snapshot().prepare_for_test(Utc::now());
     let history = original.history_sections.clone();
-    let restored = original.restart_history(Utc::now() + Duration::days(1));
+    let restored = original.prepare_for_test(Utc::now() + Duration::days(1));
     assert!(history == restored.history_sections);
 }
 
 #[test]
 fn restored_history_preserves_missing_intervals_instead_of_backfilling() {
     let at = Utc::now();
-    let mut source = snapshot().restart_history(at);
+    let mut source = snapshot().prepare_for_test(at);
     let rows = source
         .history_sections
         .as_mut()
@@ -101,7 +102,7 @@ fn restored_history_preserves_missing_intervals_instead_of_backfilling() {
         serde_json::from_value(rows[0].clone().into_value()).unwrap();
     record.close_at(at + Duration::seconds(1)).unwrap();
     rows[0] = StorageBackupRow::try_from_value(serde_json::to_value(record).unwrap()).unwrap();
-    let restored = source.restart_history(at + Duration::days(1));
+    let restored = source.prepare_for_test(at + Duration::days(1));
     let records = records(&restored).unwrap();
     assert!(
         !records

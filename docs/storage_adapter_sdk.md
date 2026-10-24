@@ -254,7 +254,7 @@ in class imports. Map the three new logical schema state sections and schema
 history section for backup format 6, validate them before restore replacement,
 and recreate revalidation work without restoring active leases or impact proofs.
 
-`BackupSnapshotStorage::capture_backup_snapshot` now requires a validated
+`BackupSnapshotStorage::capture_backup_replay` requires a validated
 `StorageBackupBudget` in addition to the history selection. Pass deployment
 limits through unchanged and enforce both logical bytes and enumerated-row work
 before retaining snapshot rows. `StorageBackupCaptureProgress` supplies checked
@@ -265,6 +265,19 @@ that captures an unbounded document and checks its size afterward.
 Use `verify_backup_budget_rejected` from `hubuum-storage-conformance` with
 fixtures exceeding each limit, and retain native probes proving early database
 or iterator termination and bounded retained state.
+
+The materialized `capture_backup_snapshot`, `stage_restore`, `get_restore_job`,
+and `apply_restore` methods have been removed. Implement `capture_backup_replay`,
+`stage_restore_artifact`, `get_restore_artifact`, and `apply_restore_replay`
+directly; these are mandatory and have no materializing fallback. Replace
+`StorageRestoreStageCreate`, `StorageRestoreJob`, `StorageRestoreDocument`, and
+`StorageRestoreApply` with `StorageRestoreStageArtifact`,
+`StorageRestoreArtifactJob`, and `StorageRestoreReplayApply` as appropriate.
+Use `StorageRestoreArtifact::from_reader` for exact-byte staging and
+`StorageRestoreReplayApply::at_restore_boundary` to prepare baseline history.
+Replay I/O failures must abort the same transaction as ordinary write failures.
+Provide writable temporary storage through `TMPDIR`; see
+[backup spool storage](deployment.md#backup-spool-storage).
 
 Run the portable conformance suite and native transaction, lease, concurrency,
 and query-budget tests. The shared implementation scenarios and exact method
@@ -376,8 +389,9 @@ this value after its three identifiers. Use `SessionLifetimes::try_new` and
 `deadlines` for rotation with persisted policy and the fixed family deadline.
 Retain the adapter's transaction, replay detection, and concurrency fencing.
 
-Restore upload validation can use `StorageBackupSnapshot::try_new_for_restore`
-to obtain a validated snapshot. Shared resource checks and legacy normalization
+Restore upload validation uses `StorageBackupReplayBuilder::finish_for_restore`
+to obtain a validated replay. The older materialized validation constructors and
+normalization helpers are removed; apply destination schema limits to the replay. Shared resource checks and legacy normalization
 now live in storage-core; application artifact metadata and manifest checks
 remain the caller's responsibility. Adapters still enforce cross-row and
 transactional restore invariants.

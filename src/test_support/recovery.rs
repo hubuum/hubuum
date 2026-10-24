@@ -7,7 +7,6 @@ use hubuum_storage_postgres::{PostgresFaultController, PostgresFaultPoint, Postg
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::backups::create_backup_document;
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::{
@@ -20,6 +19,20 @@ use crate::restores::{
 };
 use crate::storage::{StorageBackendKind, StorageHandle};
 use crate::tests::TestScope;
+
+/// Build an editable envelope for fixtures from the production replay capture.
+pub async fn capture_backup_document(
+    backend: &impl crate::storage::StorageContext,
+    request: &BackupRequest,
+    budget: StorageBackupBudget,
+) -> Result<BackupDocument, ApiError> {
+    let replay = crate::restores::replay::capture(backend, request.include_history, budget).await?;
+    let (state, history) = replay.snapshot.materialize()?.into_parts();
+    let mut document = replay.metadata;
+    document.state = BackupState { sections: state };
+    document.history = history.map(|sections| BackupHistory { sections });
+    Ok(document)
+}
 
 pub struct RestoreContractFixture {
     kind: StorageBackendKind,
@@ -39,11 +52,12 @@ impl RestoreContractFixture {
     pub async fn new(kind: StorageBackendKind, pool: PostgresPool) -> Result<Self, ApiError> {
         let storage = super::restore_contract_storage(kind, pool);
         let original = storage
-            .capture_backup_snapshot(
+            .capture_backup_replay(
                 true,
                 StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
             )
-            .await?;
+            .await?
+            .materialize()?;
         let scope = TestScope::new();
         let context = EventContext::system();
         let actor = storage
@@ -304,7 +318,7 @@ impl RestoreContractFixture {
         restore_snapshot(&self.storage, self.original.clone()).await
     }
     pub async fn capture(&self, include_history: bool) -> Result<StorageBackupSnapshot, ApiError> {
-        let document = create_backup_document(
+        let document = capture_backup_document(
             &self.storage,
             &BackupRequest { include_history },
             StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
@@ -376,21 +390,22 @@ impl RestoreContractFixture {
                 StorageBackupSnapshot::try_new(state, history).unwrap()
             }
         };
-        let request = StorageRestoreApply::new(
+        let request = StorageRestoreReplayApply::at_restore_boundary(
             job_id,
-            StorageRestoreDocument::at_restore_boundary(
-                StorageRestoreDocumentMetadata::new(CURRENT_BACKUP_VERSION, Utc::now(), "test"),
+            StorageRestoreDocumentMetadata::new(CURRENT_BACKUP_VERSION, Utc::now(), "test"),
+            StorageBackupReplay::from_snapshot(
                 snapshot,
-                Utc::now(),
-            ),
-        );
+                StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+            )?,
+            Utc::now(),
+        )?;
         let result = match self.kind {
             StorageBackendKind::Postgres => {
                 PostgresFaultController::failing(PostgresFaultPoint::TransactionBeforeCommit)
-                    .run(self.storage.apply_restore(request))
+                    .run(self.storage.apply_restore_replay(request))
                     .await
             }
-            StorageBackendKind::Memory => self.storage.apply_restore(request).await,
+            StorageBackendKind::Memory => self.storage.apply_restore_replay(request).await,
         };
         let error = result
             .as_ref()
@@ -620,7 +635,7 @@ async fn stage_and_confirm_snapshot(
         &settings,
         RestoreStageRequest::new(
             RestoreInitiator::new(None, "test", "recovery-contract")?,
-            bytes,
+            StorageRestoreArtifact::from_reader(bytes.as_slice(), bytes.len())?,
         )?,
     )
     .await?;

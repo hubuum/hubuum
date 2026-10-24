@@ -206,13 +206,16 @@ async fn configured_schema_limits_survive_backup_history_validation(
         .unwrap();
     let snapshot = fixture
         .backend
-        .capture_backup_snapshot(
+        .capture_backup_replay(
             true,
             StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(snapshot.schema_limits(), limits);
+    assert_eq!(
+        snapshot.clone().materialize().unwrap().schema_limits(),
+        limits
+    );
     // Retained PostgreSQL history also participates in other suite backups.
     // Keep these rows readable under the suite defaults; the independent memory
     // restore regression exercises a document above the default schema ceiling.

@@ -1,4 +1,8 @@
-use std::collections::{BTreeMap, HashSet};
+use hubuum_storage_core::{
+    StorageBackupBudget, StorageBackupCaptureProgress, StorageBackupHistorySection,
+    StorageBackupReplay, StorageBackupRow, StorageBackupStateSection,
+};
+use std::collections::HashSet;
 
 use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use diesel::QueryableByName;
@@ -10,11 +14,6 @@ use diesel::sql_types::{Nullable, Text};
 use diesel_async::RunQueryDsl;
 #[cfg(feature = "scale-benchmark-support")]
 use futures_util::TryStreamExt;
-use hubuum_storage_core::{
-    StorageBackupBudget, StorageBackupCaptureProgress, StorageBackupHistorySection,
-    StorageBackupHistorySections, StorageBackupRow, StorageBackupSnapshot,
-    StorageBackupStateSection, StorageBackupStateSections,
-};
 use serde_json::{Map, Value};
 
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
@@ -612,13 +611,14 @@ fn snapshot_key(table: &str) -> Result<&'static str, PostgresStorageError> {
     })
 }
 
-async fn load_capture_rows(
+async fn stream_capture_rows(
     conn: &mut PostgresConnection,
     table: &str,
     filter: SnapshotFilter,
     progress: &mut StorageBackupCaptureProgress,
     logicalize: impl Fn(&mut Value) -> Result<(), PostgresStorageError>,
-) -> Result<Vec<StorageBackupRow>, PostgresStorageError> {
+    mut retain: impl FnMut(StorageBackupRow) -> Result<(), PostgresStorageError>,
+) -> Result<(), PostgresStorageError> {
     let key = snapshot_key(table)?;
     let predicate = filter.sql(table)?.unwrap_or("TRUE");
     // Evaluate eligibility per source row so excluded rows also consume work.
@@ -634,7 +634,6 @@ async fn load_capture_rows(
     ))
     .execute(conn)
     .await?;
-    let mut retained = Vec::new();
     loop {
         crate::runtime::task_execution_checkpoint()?;
         // FETCH 1 prevents the driver/server from running an unbounded SELECT
@@ -663,12 +662,12 @@ async fn load_capture_rows(
         progress
             .retain_row(&row)
             .map_err(PostgresStorageError::from)?;
-        retained.push(row);
+        retain(row)?;
     }
     diesel::sql_query("CLOSE hubuum_backup_rows")
         .execute(conn)
         .await?;
-    Ok(retained)
+    Ok(())
 }
 
 /// A strict lower bound: omit document framing and operational sections, and
@@ -726,85 +725,71 @@ pub(crate) async fn backup_size_lower_bound(
     Ok(bytes)
 }
 
-async fn snapshot_state(
-    conn: &mut PostgresConnection,
-    progress: &mut StorageBackupCaptureProgress,
-) -> Result<StorageBackupStateSections, PostgresStorageError> {
-    let mut sections = BTreeMap::new();
-    for section in StorageBackupStateSection::ALL.iter().copied() {
-        crate::runtime::task_execution_checkpoint()?;
-        let rows = load_capture_rows(
-            conn,
-            state_table(section),
-            SnapshotFilter::All,
-            progress,
-            |row| state_row_to_logical(section, row),
-        )
-        .await?;
-        sections.insert(section, rows);
-    }
-    Ok(sections)
-}
-
-async fn snapshot_history(
-    conn: &mut PostgresConnection,
-    progress: &mut StorageBackupCaptureProgress,
-) -> Result<StorageBackupHistorySections, PostgresStorageError> {
-    let mut sections = BTreeMap::new();
-    for section in StorageBackupHistorySection::ALL.iter().copied() {
-        crate::runtime::task_execution_checkpoint()?;
-        let filter = match section {
-            StorageBackupHistorySection::TerminalTasks => SnapshotFilter::TerminalTasks,
-            StorageBackupHistorySection::ImportResults
-            | StorageBackupHistorySection::ExportOutputs
-            | StorageBackupHistorySection::RemoteCallResults => SnapshotFilter::TerminalTaskResults,
-            StorageBackupHistorySection::AuditEvents => SnapshotFilter::HistoryEvents,
-            StorageBackupHistorySection::TerminalEventDeliveries => {
-                SnapshotFilter::TerminalDeliveries
-            }
-            _ => SnapshotFilter::All,
-        };
-        let rows = load_capture_rows(conn, history_table(section), filter, progress, |row| {
-            if section == StorageBackupHistorySection::AuditEvents
-                && let Some(object) = row.as_object_mut()
-                && object.get("dispatched_at").is_none_or(Value::is_null)
-            {
-                object.insert(
-                    "dispatched_at".to_string(),
-                    object.get("occurred_at").cloned().unwrap_or(Value::Null),
-                );
-            }
-            history_row_to_logical(section, row)
-        })
-        .await?;
-        sections.insert(section, rows);
-    }
-    Ok(sections)
-}
-
-pub async fn capture_backup_snapshot(
+pub async fn capture_backup_replay(
     runtime: &PostgresRuntime,
     include_history: bool,
     budget: StorageBackupBudget,
-) -> Result<StorageBackupSnapshot, PostgresStorageError> {
-    let schema_limits = runtime.schema_limits();
+) -> Result<StorageBackupReplay, PostgresStorageError> {
+    use hubuum_storage_core::StorageBackupReplayBuilder;
     runtime
         .with_read_only_snapshot(async |conn| -> Result<_, PostgresStorageError> {
-            // Favor indexed primary-key traversal and first-row latency.
             diesel::sql_query("SET LOCAL enable_sort = off")
                 .execute(conn)
                 .await?;
+            let mut builder =
+                StorageBackupReplayBuilder::new(budget, runtime.schema_limits(), include_history)?;
             let mut progress = StorageBackupCaptureProgress::new(budget);
-            let state = snapshot_state(conn, &mut progress).await?;
-            let history = if include_history {
-                Some(snapshot_history(conn, &mut progress).await?)
-            } else {
-                None
-            };
-            crate::validate_persisted(
-                "backup snapshot",
-                StorageBackupSnapshot::try_new_with_limits(state, history, schema_limits),
-            )
+            for &section in StorageBackupStateSection::ALL {
+                builder.begin_state(section)?;
+                stream_capture_rows(
+                    conn,
+                    state_table(section),
+                    SnapshotFilter::All,
+                    &mut progress,
+                    |row| state_row_to_logical(section, row),
+                    |row| builder.push(row).map_err(Into::into),
+                )
+                .await?;
+            }
+            if include_history {
+                for &section in StorageBackupHistorySection::ALL {
+                    builder.begin_history(section)?;
+                    let filter = match section {
+                        StorageBackupHistorySection::TerminalTasks => SnapshotFilter::TerminalTasks,
+                        StorageBackupHistorySection::ImportResults
+                        | StorageBackupHistorySection::ExportOutputs
+                        | StorageBackupHistorySection::RemoteCallResults => {
+                            SnapshotFilter::TerminalTaskResults
+                        }
+                        StorageBackupHistorySection::AuditEvents => SnapshotFilter::HistoryEvents,
+                        StorageBackupHistorySection::TerminalEventDeliveries => {
+                            SnapshotFilter::TerminalDeliveries
+                        }
+                        _ => SnapshotFilter::All,
+                    };
+                    stream_capture_rows(
+                        conn,
+                        history_table(section),
+                        filter,
+                        &mut progress,
+                        |row| {
+                            if section == StorageBackupHistorySection::AuditEvents
+                                && let Some(object) = row.as_object_mut()
+                                && object.get("dispatched_at").is_none_or(Value::is_null)
+                            {
+                                object.insert(
+                                    "dispatched_at".into(),
+                                    object.get("occurred_at").cloned().unwrap_or(Value::Null),
+                                );
+                            }
+                            history_row_to_logical(section, row)
+                        },
+                        |row| builder.push(row).map_err(Into::into),
+                    )
+                    .await?;
+                }
+            }
+            builder.finish().map_err(Into::into)
         })
         .await
 }
@@ -872,25 +857,27 @@ mod tests {
                 let mut progress = StorageBackupCaptureProgress::new(
                     StorageBackupBudget::new(512 * 1024 * 1024, 5000).unwrap(),
                 );
-                let rows = super::load_capture_rows(
+                let mut row_count = 0;
+                let mut payload_bytes = 0;
+                super::stream_capture_rows(
                     connection,
                     "hubuumobject",
                     SnapshotFilter::All,
                     &mut progress,
                     |_| Ok(()),
-                )
-                .await?;
-                let payload_bytes: usize = rows
-                    .iter()
-                    .map(|row| {
-                        row.get("data")
+                    |row| {
+                        row_count += 1;
+                        payload_bytes += row
+                            .get("data")
                             .unwrap()
                             .as_str()
                             .expect("text payload")
-                            .len()
-                    })
-                    .sum();
-                assert_eq!((rows.len(), payload_bytes), (4096, 4096 * 65536));
+                            .len();
+                        Ok(())
+                    },
+                )
+                .await?;
+                assert_eq!((row_count, payload_bytes), (4096, 4096 * 65536));
                 Ok(())
             },
         )

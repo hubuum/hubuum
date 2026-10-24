@@ -999,8 +999,8 @@ fi
 cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
     entrypoint: /usr/local/bin/hubuum-admin
     read_only: true
-    tmpfs:
-      - /tmp:size=16m,mode=1777
+    volumes:
+      - backup_spool:/tmp
     cap_drop:
       - ALL
     security_opt:
@@ -1050,8 +1050,8 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
       timeout: 3s
       retries: 3
     read_only: true
-    tmpfs:
-      - /tmp:size=16m,mode=1777
+    volumes:
+      - backup_spool:/tmp
     cap_drop:
       - ALL
     security_opt:
@@ -1092,8 +1092,6 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
     container_name: hubuum-api
     restart: unless-stopped
     read_only: true
-    tmpfs:
-      - /tmp:size=16m,mode=1777
     cap_drop:
       - ALL
     security_opt:
@@ -1132,6 +1130,7 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
       HUBUUM_AUTH_CONFIG_PATH: ${HUBUUM_AUTH_CONFIG_PATH}
       HUBUUM_METRICS_ENABLED: ${HUBUUM_METRICS_ENABLED:-true}
     volumes:
+      - backup_spool:/tmp
       - type: bind
         source: "${HUBUUM_AUTH_CONFIG_HOST_PATH}"
         target: "${HUBUUM_AUTH_CONFIG_PATH}"
@@ -1252,6 +1251,7 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
       - hubuum_net
 
 volumes:
+  backup_spool:
 EOF
 
 if [[ "$DATABASE_MANAGED" == "true" ]]; then

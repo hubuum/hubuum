@@ -1,5 +1,8 @@
 use super::*;
-use hubuum_storage_core::{FencedImportPlan, FencedImportResults};
+use hubuum_storage_core::{
+    FencedImportPlan, FencedImportResults, StorageRestoreArtifactJob, StorageRestoreReplayApply,
+    StorageRestoreStageArtifact,
+};
 
 #[async_trait]
 impl ExportTemplateStorage for StorageHandle {
@@ -550,28 +553,32 @@ impl ImportStorage for StorageHandle {
 
 #[async_trait]
 impl RestoreStorage for StorageHandle {
-    async fn stage_restore(
+    async fn stage_restore_artifact(
         &self,
-        request: StorageRestoreStageCreate,
-    ) -> Result<StorageRestoreJob, StorageError> {
+        request: StorageRestoreStageArtifact,
+    ) -> Result<StorageRestoreStatus, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Restore,
-            "stage_restore",
-            async { dispatch_backend!(self, |backend| backend.stage_restore(request).await) },
+            "stage_restore_artifact",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .stage_restore_artifact(request)
+                    .await)
+            },
         )
         .await
     }
 
-    async fn get_restore_job(
+    async fn get_restore_artifact(
         &self,
         job_id: RestoreJobId,
-    ) -> Result<StorageRestoreJob, StorageError> {
+    ) -> Result<StorageRestoreArtifactJob, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Restore,
-            "get_restore_job",
-            async { dispatch_backend!(self, |backend| backend.get_restore_job(job_id).await) },
+            "get_restore_artifact",
+            async { dispatch_backend!(self, |backend| backend.get_restore_artifact(job_id).await) },
         )
         .await
     }
@@ -622,15 +629,17 @@ impl RestoreStorage for StorageHandle {
         .await
     }
 
-    async fn apply_restore(
+    async fn apply_restore_replay(
         &self,
-        request: StorageRestoreApply,
+        request: StorageRestoreReplayApply,
     ) -> Result<StorageRestoreCompletion, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Restore,
-            "apply_restore",
-            async { dispatch_backend!(self, |backend| backend.apply_restore(request).await) },
+            "apply_restore_replay",
+            async {
+                dispatch_backend!(self, |backend| backend.apply_restore_replay(request).await)
+            },
         )
         .await
     }

@@ -339,9 +339,9 @@ pub(super) fn transition_restore_record(
         StorageRestoreJobSummary::try_new(id, status, initiator, artifact, error, timestamps)
             .map_err(invalid_contract_value)?;
     if erase_document {
-        document.clear();
+        document = None;
     }
-    let job = StorageRestoreJob::try_new(summary, document, capability_hash)
+    let job = StorageRestoreArtifactJob::try_new(summary, document, capability_hash)
         .map_err(invalid_contract_value)?;
     Ok(MemoryRestoreRecord {
         job,

@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use hubuum_storage_core::{
-    BackupSnapshotStorage, StorageBackupBudget, StorageBackupHistorySection, StorageBackupSnapshot,
-    StorageErrorKind, StorageRestoreDocument, StorageRestoreDocumentMetadata,
+    BackupSnapshotStorage, StorageBackupBudget, StorageBackupHistorySection, StorageBackupReplay,
+    StorageBackupSnapshot, StorageErrorKind,
 };
 
 use crate::FixtureError;
@@ -15,7 +15,7 @@ pub async fn verify_backup_budget_rejected(
     backend: &impl BackupSnapshotStorage,
     budget: StorageBackupBudget,
 ) -> Result<(), FixtureError> {
-    match backend.capture_backup_snapshot(true, budget).await {
+    match backend.capture_backup_replay(true, budget).await {
         Err(error) if error.kind() == StorageErrorKind::InputTooLarge => Ok(()),
         Err(error) => Err(error.into()),
         Ok(_) => Err("Backup capture accepted a fixture exceeding its budget".into()),
@@ -144,13 +144,12 @@ fn require_restored(
                 std::io::Error::other("Restored root collection has no temporal baseline")
             })?
             .parse()?;
-        let expected = StorageRestoreDocument::at_restore_boundary(
-            StorageRestoreDocumentMetadata::new(5, boundary, "conformance"),
+        let expected = StorageBackupReplay::from_snapshot(
             StorageBackupSnapshot::try_new(source_state, None)?,
-            boundary,
-        )
-        .into_parts()
-        .1;
+            StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000)?,
+        )?
+        .at_restore_boundary(boundary)?
+        .materialize()?;
         // This also requires empty old task/delivery history and system-owned
         // baselines with unchanged resource fields for all temporal types.
         require_restored(&expected, restored)?;

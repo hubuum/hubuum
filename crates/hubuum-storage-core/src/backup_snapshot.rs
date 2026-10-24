@@ -5,10 +5,13 @@ mod computed;
 pub use budget::{StorageBackupBudget, StorageBackupCaptureProgress};
 mod normalization;
 mod query_usage;
+mod replay;
 mod resources;
 mod revisions;
 mod schemas;
 mod task_discovery;
+mod view;
+pub use replay::{StorageBackupReplay, StorageBackupReplayBuilder, StorageBackupReplayRows};
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -241,57 +244,11 @@ impl PartialEq for StorageBackupSnapshot {
 }
 
 impl StorageBackupSnapshot {
-    pub fn normalize_legacy_event_configuration(
-        backup_version: i32,
-        state: &mut StorageBackupStateSections,
-        history: Option<&mut StorageBackupHistorySections>,
-    ) {
-        normalization::normalize_legacy_event_configuration(backup_version, state, history);
-    }
-
-    pub fn normalize_legacy_class_schema_policies(
-        backup_version: i32,
-        state: &mut StorageBackupStateSections,
-        history: Option<&mut StorageBackupHistorySections>,
-    ) {
-        normalization::normalize_legacy_class_schema_policies(backup_version, state, history);
-    }
-
-    pub fn normalize_legacy_relation_labels(
-        backup_version: i32,
-        state: &mut StorageBackupStateSections,
-        history: Option<&mut StorageBackupHistorySections>,
-    ) {
-        normalization::normalize_legacy_relation_labels(backup_version, state, history);
-    }
-
-    /// Validate restore resource semantics before constructing a snapshot.
-    pub fn try_new_for_restore(
-        state: &StorageBackupStateSections,
-        history: Option<&StorageBackupHistorySections>,
-        schema_limits: JsonSchemaLimits,
-    ) -> Result<Self, StorageValidationError> {
-        // Reject invalid uploads before allocating a second copy of their rows.
-        resources::validate_sections(state, history, schema_limits)?;
-        Self::try_new_with_limits(state.clone(), history.cloned(), schema_limits)
-    }
-
     #[must_use]
     pub const fn schema_limits(&self) -> JsonSchemaLimits {
         self.schema_limits
     }
 
-    /// Validate the schema proof under a restore destination's deployment budgets.
-    pub fn with_schema_limits(
-        mut self,
-        limits: JsonSchemaLimits,
-    ) -> Result<Self, StorageValidationError> {
-        if self.schema_limits != limits {
-            self.schema_limits = limits;
-            schemas::validate(&self)?;
-        }
-        Ok(self)
-    }
     #[must_use]
     pub const fn includes_history(&self) -> bool {
         self.history_sections.is_some()
@@ -310,7 +267,7 @@ impl StorageBackupSnapshot {
 
     /// Canonicalize the additive event-sink ownership and grant representation.
     /// An explicit grant section, even an empty one, is never backfilled.
-    pub fn normalize_legacy_event_sink_access(state_sections: &mut StorageBackupStateSections) {
+    fn normalize_legacy_event_sink_access(state_sections: &mut StorageBackupStateSections) {
         // Older backups predate explicit sink grants. Match the database upgrade:
         // preserve only relationships already represented by subscriptions.
         if !state_sections.contains_key(&StorageBackupStateSection::EventSinkCollectionGrants) {
@@ -347,22 +304,6 @@ impl StorageBackupSnapshot {
                     .or_insert(Value::Null);
             }
         }
-    }
-
-    /// Validate restore resource semantics without copying the snapshot's JSON rows.
-    pub fn validate_resource_sections(
-        state: &StorageBackupStateSections,
-        history: Option<&StorageBackupHistorySections>,
-        schema_limits: JsonSchemaLimits,
-    ) -> Result<(), StorageValidationError> {
-        resources::validate_sections(state, history, schema_limits)
-    }
-
-    /// Validate definitions in a state section, including personal definitions and ownership.
-    pub fn validate_computed_definitions(
-        state: &StorageBackupStateSections,
-    ) -> Result<(), StorageValidationError> {
-        resources::validate_definitions(state)
     }
 
     pub fn try_new_with_limits(
@@ -428,10 +369,11 @@ impl StorageBackupSnapshot {
             state_sections,
             history_sections,
         };
-        revisions::validate_backup_revisions(&snapshot)?;
-        schemas::validate(&snapshot)?;
-        query_usage::validate(&snapshot)?;
-        computed::validate(&snapshot)?;
+        revisions::validate_backup_revisions(&snapshot)
+            .map_err(view::ReadError::into_validation)?;
+        schemas::validate(&snapshot).map_err(view::ReadError::into_validation)?;
+        query_usage::validate(&snapshot).map_err(view::ReadError::into_validation)?;
+        computed::validate(&snapshot).map_err(view::ReadError::into_validation)?;
         Ok(snapshot)
     }
 
@@ -480,11 +422,12 @@ impl fmt::Debug for StorageBackupSnapshot {
 /// on exhaustion; capturing everything before checking the budget is invalid.
 #[async_trait]
 pub trait BackupSnapshotStorage: Send + Sync {
-    async fn capture_backup_snapshot(
+    /// Capture validated rows into a replayable source from one consistent view.
+    async fn capture_backup_replay(
         &self,
         include_history: bool,
         budget: StorageBackupBudget,
-    ) -> Result<StorageBackupSnapshot, StorageError>;
+    ) -> Result<StorageBackupReplay, StorageError>;
 }
 
 #[cfg(test)]
@@ -510,6 +453,21 @@ pub(crate) fn with_test_schema_sections(
         })).unwrap());
     }
     state
+}
+
+#[cfg(test)]
+impl StorageBackupSnapshot {
+    pub(crate) fn prepare_for_test(self, at: chrono::DateTime<chrono::Utc>) -> Self {
+        StorageBackupReplay::from_snapshot(
+            self,
+            StorageBackupBudget::new(16 * 1024 * 1024, 10000).unwrap(),
+        )
+        .unwrap()
+        .at_restore_boundary(at)
+        .unwrap()
+        .materialize()
+        .unwrap()
+    }
 }
 
 #[cfg(test)]

@@ -1277,7 +1277,7 @@ pub async fn run_lifecycle<B: ScaleBenchmarkBackend>(
         );
         return report;
     };
-    if let Ok(value) = serde_json::from_slice::<Value>(&offline.stdout) {
+    if let Some(value) = verification_report(&offline.stdout) {
         report.backup_logical_rows = find_u64(&value, "total_items");
         report.backup_section_counts = find_u64_map(&value, "section_counts");
     }
@@ -1305,14 +1305,14 @@ pub async fn run_lifecycle<B: ScaleBenchmarkBackend>(
             lifecycle_stage_failure("isolated_restore", &report.stages["isolated_restore"]);
         return report;
     };
-    if let Ok(value) = serde_json::from_slice::<Value>(&restore.stdout) {
+    if let Some(value) = verification_report(&restore.stdout) {
         report.restore_ms = find_u64(&value, "restore_duration_ms");
     }
-    report.semantic_verification_ms =
-        Some(restore_and_verification_ms.saturating_sub(report.restore_ms.unwrap_or_default()));
-    // The isolated verifier checks restored state against the source backup.
-    // A successful result therefore has no pending computed-data rebuild.
-    report.computed_rebuild_ms = Some(0);
+    report.semantic_verification_ms = report
+        .restore_ms
+        .map(|restore_ms| restore_and_verification_ms.saturating_sub(restore_ms));
+    // Restore queues computed-data rebuilds; this verifier does not run their
+    // workers, so the rebuild duration remains unmeasured.
     report.outcome = "backup_verified_and_restored".to_string();
     report
 }
@@ -1409,6 +1409,17 @@ fn find_u64(value: &Value, key: &str) -> Option<u64> {
     }
 }
 
+fn verification_report(stdout: &[u8]) -> Option<Value> {
+    // Backend setup can emit structured logs before the administrator report.
+    serde_json::Deserializer::from_slice(stdout)
+        .into_iter::<Value>()
+        .filter_map(|value| value.ok())
+        .find(|value| {
+            value.get("report_version").and_then(Value::as_u64) == Some(1)
+                && value.get("result").and_then(Value::as_str) == Some("passed")
+        })
+}
+
 fn find_u64_map(value: &Value, key: &str) -> BTreeMap<String, u64> {
     match value {
         Value::Object(map) => map
@@ -1471,6 +1482,22 @@ fn elapsed_ms(started: Instant) -> u64 {
 mod tests {
     use super::*;
     use rstest::rstest;
+
+    #[rstest]
+    #[case::report_only("")]
+    #[case::leading_log("{\"message\":\"storage configured\",\"restore_duration_ms\":999}\n")]
+    fn verification_report_retains_timing_after_structured_logs(#[case] prefix: &str) {
+        let output = format!(
+            "{prefix}{{\"report_version\":1,\"result\":\"passed\",\"restore_test\":{{\"restore_duration_ms\":42}}}}"
+        );
+        let report = verification_report(output.as_bytes()).unwrap();
+        assert_eq!(find_u64(&report, "restore_duration_ms"), Some(42));
+    }
+
+    #[test]
+    fn verification_report_does_not_mistake_logs_for_a_report() {
+        assert!(verification_report(br#"{"message":"storage configured"}"#).is_none());
+    }
 
     #[rstest]
     #[case::memory(Some("resident_memory_limit"), "backup_exceeds_memory_envelope")]
