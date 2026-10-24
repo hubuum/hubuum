@@ -92,3 +92,57 @@ pub fn normalize_legacy_relation_labels(
             .expect("normalizing a backup row preserves its object shape");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn format_six_notifications_restore_with_legacy_defaults() {
+        let mut state = BTreeMap::from([(
+            StorageBackupStateSection::EventSinks,
+            vec![StorageBackupRow::try_from_value(json!({"id": 1, "kind": "webhook"})).unwrap()],
+        )]);
+        let mut history = BTreeMap::from([(
+            StorageBackupHistorySection::TerminalEventDeliveries,
+            vec![
+                StorageBackupRow::try_from_value(json!({"id": 1, "status": "succeeded"})).unwrap(),
+            ],
+        )]);
+        normalize_legacy_event_configuration(6, &mut state, Some(&mut history));
+        assert_eq!(
+            state[&StorageBackupStateSection::EventSinks][0].fields()["delivery_policy"],
+            json!({"min_interval_ms": null}),
+        );
+        let delivery = &history[&StorageBackupHistorySection::TerminalEventDeliveries][0];
+        assert_eq!(delivery.fields()["purpose"], "event");
+        assert_eq!(delivery.fields()["deferred_reason"], json!(null));
+    }
+
+    #[rstest]
+    #[case::current(false)]
+    #[case::history(true)]
+    fn legacy_class_without_schema_disables_validation(#[case] historical: bool) {
+        let row = StorageBackupRow::try_from_value(json!({
+            "id": 2, "json_schema": null, "validate_schema": true
+        }))
+        .unwrap();
+        let mut state = BTreeMap::new();
+        let mut history = BTreeMap::new();
+        if historical {
+            history.insert(StorageBackupHistorySection::ClassHistory, vec![row]);
+        } else {
+            state.insert(StorageBackupStateSection::Classes, vec![row]);
+        }
+        normalize_legacy_class_schema_policies(10, &mut state, Some(&mut history));
+        let class = if historical {
+            &history[&StorageBackupHistorySection::ClassHistory][0]
+        } else {
+            &state[&StorageBackupStateSection::Classes][0]
+        };
+        assert_eq!(class.get("validate_schema"), Some(&json!(false)));
+    }
+}

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use hubuum_scale_core::LifecycleStageResources;
 #[cfg(unix)]
 use libc::{P_PID, SIGKILL, WEXITED, WNOHANG, WNOWAIT, id_t, killpg, siginfo_t, waitid};
-use sysinfo::{Pid, ProcessesToUpdate, System};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
 const MAX_DIAGNOSTIC_BYTES: u64 = 1024 * 1024;
 
@@ -143,7 +143,14 @@ fn run_inner(
     let root = Pid::from_u32(child.child.id());
     let mut system = System::new();
     loop {
-        system.refresh_processes(ProcessesToUpdate::All, true);
+        // Linux tasks share their process's address space. Listing them as
+        // descendants counts the same RSS once per thread (including Tokio's
+        // worker threads), causing false memory-limit terminations.
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing().with_memory().without_tasks(),
+        );
         let mut descendants = vec![root];
         let mut index = 0;
         while index < descendants.len() {
@@ -306,6 +313,70 @@ mod tests {
         let mut command = Command::new("/bin/sh");
         command.args(["-c", "sleep 30"]);
         let (output, usage) = run(&mut command, &path, &ProcessLimits::new(1, 10).unwrap());
+        assert!(output.is_err());
+        assert_eq!(usage.termination.as_deref(), Some("resident_memory_limit"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn shared_thread_memory_is_counted_once() {
+        const FIXTURE: &str = "LIFECYCLE_TEST_THREAD_MEMORY_FIXTURE";
+        if std::env::var_os(FIXTURE).is_some() {
+            let allocation = vec![1_u8; 64 * 1024 * 1024];
+            let threads = (0..8)
+                .map(|_| thread::spawn(|| thread::sleep(Duration::from_millis(750))))
+                .collect::<Vec<_>>();
+            for thread in threads {
+                thread.join().unwrap();
+            }
+            std::hint::black_box(allocation);
+            return;
+        }
+        let path = directory();
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "lifecycle_process::tests::shared_thread_memory_is_counted_once",
+            ])
+            .env(FIXTURE, "1");
+        let (output, usage) = run(
+            &mut command,
+            &path,
+            &ProcessLimits::new(192 * 1024 * 1024, 10).unwrap(),
+        );
+        assert!(output.unwrap().status.success(), "{usage:?}");
+        assert!(usage.peak_resident_bytes >= 64 * 1024 * 1024, "{usage:?}");
+        assert!(usage.peak_resident_bytes < 192 * 1024 * 1024, "{usage:?}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn separate_child_memory_is_counted() {
+        const FIXTURE: &str = "LIFECYCLE_TEST_CHILD_MEMORY_FIXTURE";
+        const TEST: &str = "lifecycle_process::tests::separate_child_memory_is_counted";
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command.args(["--exact", TEST]);
+        match std::env::var(FIXTURE).as_deref() {
+            Ok("allocate") => {
+                let allocation = vec![1_u8; 64 * 1024 * 1024];
+                thread::sleep(Duration::from_secs(5));
+                std::hint::black_box(allocation);
+                return;
+            }
+            Ok("spawn") => {
+                let mut child = command.env(FIXTURE, "allocate").spawn().unwrap();
+                assert!(child.wait().unwrap().success());
+                return;
+            }
+            _ => {}
+        }
+        let path = directory();
+        let (output, usage) = run(
+            command.env(FIXTURE, "spawn"),
+            &path,
+            &ProcessLimits::new(48 * 1024 * 1024, 10).unwrap(),
+        );
         assert!(output.is_err());
         assert_eq!(usage.termination.as_deref(), Some("resident_memory_limit"));
     }

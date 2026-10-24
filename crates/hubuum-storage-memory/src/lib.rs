@@ -155,7 +155,7 @@ struct MemoryHistoryEntry {
 
 #[derive(Clone)]
 struct MemoryRestoreRecord {
-    job: StorageRestoreJob,
+    job: StorageRestoreArtifactJob,
     validation_summary: serde_json::Value,
 }
 

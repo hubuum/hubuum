@@ -4,10 +4,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{MaintenanceState, PrincipalId, RestoreJobId};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::{StorageBackupSnapshot, StorageError, StorageValidationError};
+use crate::{StorageError, StorageValidationError};
 
 fn validate_sha256(value: &str, description: &'static str) -> Result<(), StorageValidationError> {
     if value.len() != 64
@@ -18,30 +17,6 @@ fn validate_sha256(value: &str, description: &'static str) -> Result<(), Storage
         return Err(StorageValidationError::invalid(format!(
             "{description} must contain exactly 64 lowercase hexadecimal characters"
         )));
-    }
-    Ok(())
-}
-
-fn validate_document_identity(
-    document: &[u8],
-    artifact: &StorageRestoreArtifactSummary,
-) -> Result<(), StorageValidationError> {
-    let byte_size = i64::try_from(document.len()).map_err(|_| {
-        StorageValidationError::too_large("Restore document exceeds the supported byte-size range")
-    })?;
-    if byte_size != artifact.byte_size {
-        return Err(StorageValidationError::invalid(
-            "Restore artifact byte size must match the document length",
-        ));
-    }
-    let sha256 = Sha256::digest(document)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    if sha256 != artifact.sha256 {
-        return Err(StorageValidationError::invalid(
-            "Restore artifact SHA-256 digest must match the document",
-        ));
     }
     Ok(())
 }
@@ -405,6 +380,10 @@ impl StorageRestoreJobSummary {
     }
 
     #[must_use]
+    pub const fn artifact(&self) -> &StorageRestoreArtifactSummary {
+        &self.artifact
+    }
+
     pub const fn timestamps(&self) -> StorageRestoreTimestamps {
         self.timestamps
     }
@@ -445,28 +424,23 @@ impl fmt::Debug for StorageRestoreJobSummary {
     }
 }
 
-/// Command for staging an already validated backup artifact.
-#[derive(Clone, PartialEq)]
-pub struct StorageRestoreStageCreate {
+/// Validated staging request carrying exact immutable bytes without a heap copy.
+#[derive(Clone)]
+pub struct StorageRestoreStageArtifact {
     initiator: StorageRestoreInitiator,
-    document: Vec<u8>,
-    artifact: StorageRestoreArtifactSummary,
+    artifact: crate::StorageRestoreArtifact,
     capability_hash: String,
     validation_summary: Value,
     expires_at: DateTime<Utc>,
 }
-
-impl StorageRestoreStageCreate {
+impl StorageRestoreStageArtifact {
     pub fn try_new(
         initiator: StorageRestoreInitiator,
-        document: Vec<u8>,
-        artifact: StorageRestoreArtifactSummary,
-        capability_hash: impl Into<String>,
+        artifact: crate::StorageRestoreArtifact,
+        capability_hash: String,
         validation_summary: Value,
         expires_at: DateTime<Utc>,
     ) -> Result<Self, StorageValidationError> {
-        validate_document_identity(&document, &artifact)?;
-        let capability_hash = capability_hash.into();
         validate_sha256(&capability_hash, "Restore capability hash")?;
         if !validation_summary.is_object() {
             return Err(StorageValidationError::invalid(
@@ -475,28 +449,23 @@ impl StorageRestoreStageCreate {
         }
         Ok(Self {
             initiator,
-            document,
             artifact,
             capability_hash,
             validation_summary,
             expires_at,
         })
     }
-
-    #[must_use]
     pub fn into_parts(
         self,
     ) -> (
         StorageRestoreInitiator,
-        Vec<u8>,
-        StorageRestoreArtifactSummary,
+        crate::StorageRestoreArtifact,
         String,
         Value,
         DateTime<Utc>,
     ) {
         (
             self.initiator,
-            self.document,
             self.artifact,
             self.capability_hash,
             self.validation_summary,
@@ -505,80 +474,70 @@ impl StorageRestoreStageCreate {
     }
 }
 
-impl fmt::Debug for StorageRestoreStageCreate {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("StorageRestoreStageCreate")
-            .field("initiator", &self.initiator)
-            .field("document_bytes", &self.document.len())
-            .field("artifact", &self.artifact)
-            .field("expires_at", &self.expires_at)
-            .field("secrets", &"[redacted]")
-            .finish()
-    }
-}
-
-/// Full staged restore projection used only by confirmation and recovery.
-#[derive(Clone, PartialEq, Eq)]
-pub struct StorageRestoreJob {
+/// A staged artifact, or an explicitly erased terminal stage.
+#[derive(Clone)]
+pub struct StorageRestoreArtifactJob {
     summary: StorageRestoreJobSummary,
-    document: Vec<u8>,
+    artifact: Option<crate::StorageRestoreArtifact>,
     capability_hash: String,
 }
-
-impl StorageRestoreJob {
+impl StorageRestoreArtifactJob {
+    pub fn summary(&self) -> &StorageRestoreJobSummary {
+        &self.summary
+    }
+    pub fn capability_hash(&self) -> &str {
+        &self.capability_hash
+    }
     pub fn try_new(
         summary: StorageRestoreJobSummary,
-        document: Vec<u8>,
-        capability_hash: impl Into<String>,
+        artifact: Option<crate::StorageRestoreArtifact>,
+        capability_hash: String,
     ) -> Result<Self, StorageValidationError> {
-        if matches!(
+        validate_sha256(&capability_hash, "Restore capability hash")?;
+        let terminal = matches!(
             summary.status,
             StorageRestoreJobStatus::Succeeded
                 | StorageRestoreJobStatus::Failed
                 | StorageRestoreJobStatus::Expired
-        ) {
-            if !document.is_empty() {
-                return Err(StorageValidationError::invalid(
-                    "terminal restore jobs whose artifact was erased must have an empty document",
-                ));
-            }
-        } else {
-            validate_document_identity(&document, &summary.artifact)?;
+        );
+        if terminal != artifact.is_none()
+            || artifact
+                .as_ref()
+                .is_some_and(|a| a.summary() != &summary.artifact)
+        {
+            return Err(StorageValidationError::invalid(
+                "Restore artifact does not match its staged identity or status",
+            ));
         }
-        let capability_hash = capability_hash.into();
-        validate_sha256(&capability_hash, "Restore capability hash")?;
         Ok(Self {
             summary,
-            document,
+            artifact,
             capability_hash,
         })
     }
-
-    #[must_use]
-    pub const fn summary(&self) -> &StorageRestoreJobSummary {
-        &self.summary
-    }
-
-    #[must_use]
-    pub fn capability_hash(&self) -> &str {
-        &self.capability_hash
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (StorageRestoreJobSummary, Vec<u8>, String) {
-        (self.summary, self.document, self.capability_hash)
+    pub fn into_parts(
+        self,
+    ) -> (
+        StorageRestoreJobSummary,
+        Option<crate::StorageRestoreArtifact>,
+        String,
+    ) {
+        (self.summary, self.artifact, self.capability_hash)
     }
 }
 
-impl fmt::Debug for StorageRestoreJob {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("StorageRestoreJob")
+impl fmt::Debug for StorageRestoreStageArtifact {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StorageRestoreStageArtifact")
+            .field("artifact", &self.artifact)
+            .finish_non_exhaustive()
+    }
+}
+impl fmt::Debug for StorageRestoreArtifactJob {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StorageRestoreArtifactJob")
             .field("summary", &self.summary)
-            .field("document_bytes", &self.document.len())
-            .field("capability", &"[redacted]")
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -591,6 +550,9 @@ pub struct StorageRestoreStatus {
 }
 
 impl StorageRestoreStatus {
+    pub fn summary(&self) -> &StorageRestoreJobSummary {
+        &self.summary
+    }
     pub fn try_new(
         summary: StorageRestoreJobSummary,
         capability_hash: impl Into<String>,
@@ -670,114 +632,43 @@ impl fmt::Debug for StorageRestoreDocumentMetadata {
     }
 }
 
-/// Validated canonical sections submitted to the destructive backend apply.
-#[derive(Clone, PartialEq)]
-pub struct StorageRestoreDocument {
-    metadata: StorageRestoreDocumentMetadata,
-    snapshot: StorageBackupSnapshot,
-    history_origin: RestoreHistoryOrigin,
-}
-
-#[derive(Clone, PartialEq)]
-enum RestoreHistoryOrigin {
-    Preserved,
-    PreserveOnApply,
-    Restarted,
-    RestartOnApply,
-}
-
-impl StorageRestoreDocument {
-    /// Carry a validated source, preparing missing history when consumed by
-    /// the adapter. Use `at_restore_boundary` to specify that boundary explicitly.
-    #[must_use]
-    pub const fn new(
-        metadata: StorageRestoreDocumentMetadata,
-        snapshot: StorageBackupSnapshot,
-    ) -> Self {
-        let history_origin = if snapshot.includes_history() {
-            RestoreHistoryOrigin::PreserveOnApply
-        } else {
-            RestoreHistoryOrigin::RestartOnApply
-        };
-        Self {
-            metadata,
-            snapshot,
-            history_origin,
-        }
-    }
-
-    /// Prepare complete logical state and temporal history before adapter apply.
-    /// A history-free source starts a new timeline at `restored_at`, preserving
-    /// resource revisions. Adapters must persist these exact prepared rows.
-    #[must_use]
-    pub fn at_restore_boundary(
-        metadata: StorageRestoreDocumentMetadata,
-        snapshot: StorageBackupSnapshot,
-        restored_at: DateTime<Utc>,
-    ) -> Self {
-        let history_origin = if snapshot.includes_history() {
-            RestoreHistoryOrigin::Preserved
-        } else {
-            RestoreHistoryOrigin::Restarted
-        };
-        Self {
-            metadata,
-            snapshot: snapshot.restart_history(restored_at),
-            history_origin,
-        }
-    }
-
-    /// Whether the source artifact retained history, independent of the new
-    /// temporal baselines prepared for a history-free source.
-    #[must_use]
-    pub fn source_includes_history(&self) -> bool {
-        matches!(
-            self.history_origin,
-            RestoreHistoryOrigin::Preserved | RestoreHistoryOrigin::PreserveOnApply
-        )
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (StorageRestoreDocumentMetadata, StorageBackupSnapshot) {
-        // Also establishes newly introduced definition history for legacy
-        // artifacts that preserve other resource history.
-        let snapshot = if matches!(
-            self.history_origin,
-            RestoreHistoryOrigin::RestartOnApply | RestoreHistoryOrigin::PreserveOnApply
-        ) {
-            self.snapshot.restart_history(Utc::now())
-        } else {
-            self.snapshot
-        };
-        (self.metadata, snapshot)
-    }
-}
-
-impl fmt::Debug for StorageRestoreDocument {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("StorageRestoreDocument")
-            .field("metadata", &self.metadata)
-            .field("snapshot", &self.snapshot)
-            .finish()
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct StorageRestoreApply {
+/// A validated, replayable restore prepared before entering the fenced transaction.
+#[derive(Clone, Debug)]
+pub struct StorageRestoreReplayApply {
     job_id: RestoreJobId,
-    document: StorageRestoreDocument,
+    metadata: StorageRestoreDocumentMetadata,
+    snapshot: crate::StorageBackupReplay,
+    source_includes_history: bool,
 }
-
-impl StorageRestoreApply {
-    #[must_use]
-    pub const fn new(job_id: RestoreJobId, document: StorageRestoreDocument) -> Self {
-        Self { job_id, document }
+impl StorageRestoreReplayApply {
+    pub fn at_restore_boundary(
+        job_id: RestoreJobId,
+        metadata: StorageRestoreDocumentMetadata,
+        snapshot: crate::StorageBackupReplay,
+        at: DateTime<Utc>,
+    ) -> Result<Self, StorageError> {
+        let source_includes_history = snapshot.includes_history();
+        Ok(Self {
+            job_id,
+            metadata,
+            snapshot: snapshot.at_restore_boundary(at)?,
+            source_includes_history,
+        })
     }
-
-    #[must_use]
-    pub fn into_parts(self) -> (RestoreJobId, StorageRestoreDocument) {
-        (self.job_id, self.document)
+    pub fn into_parts(
+        self,
+    ) -> (
+        RestoreJobId,
+        StorageRestoreDocumentMetadata,
+        crate::StorageBackupReplay,
+        bool,
+    ) {
+        (
+            self.job_id,
+            self.metadata,
+            self.snapshot,
+            self.source_includes_history,
+        )
     }
 }
 
@@ -968,22 +859,18 @@ impl StorageRestoreDrainState {
 #[async_trait]
 pub trait RestoreStorage: Send + Sync {
     /// Durably stage a validated artifact and its capability proof.
-    ///
-    /// The returned job must reflect the backend's canonical timestamps and
-    /// identifiers. Artifact bytes and capability material are sensitive and
-    /// must not be emitted through logs or diagnostics.
-    async fn stage_restore(
+    /// Return canonical identifiers and timestamps without exposing artifact bytes.
+    async fn stage_restore_artifact(
         &self,
-        request: StorageRestoreStageCreate,
-    ) -> Result<StorageRestoreJob, StorageError>;
+        request: StorageRestoreStageArtifact,
+    ) -> Result<StorageRestoreStatus, StorageError>;
 
-    /// Load the complete staged artifact for confirmation or recovery.
-    ///
-    /// Missing jobs must be reported as [`crate::StorageErrorKind::NotFound`].
-    async fn get_restore_job(
+    /// Load exact staged bytes for confirmation or recovery through a replayable reader.
+    /// Missing jobs must report [`crate::StorageErrorKind::NotFound`].
+    async fn get_restore_artifact(
         &self,
         job_id: RestoreJobId,
-    ) -> Result<StorageRestoreJob, StorageError>;
+    ) -> Result<StorageRestoreArtifactJob, StorageError>;
 
     /// Load a document-free status projection for capability-authenticated reads.
     ///
@@ -1019,9 +906,11 @@ pub trait RestoreStorage: Send + Sync {
     /// must preserve their revisions and validity boundaries without producing
     /// additional resource mutation events. A subsequent history-inclusive
     /// snapshot must satisfy the same logical validation contract.
-    async fn apply_restore(
+    /// Apply replayable rows. Resident backends may materialize their state;
+    /// persistent backends replay the rows while preserving the same fencing.
+    async fn apply_restore_replay(
         &self,
-        request: StorageRestoreApply,
+        request: StorageRestoreReplayApply,
     ) -> Result<StorageRestoreCompletion, StorageError>;
 
     /// Atomically fail an active job, erase its document, and resume operation.
@@ -1113,51 +1002,56 @@ mod tests {
     #[test]
     fn restore_dtos_redact_documents_capabilities_and_identity() {
         let document_bytes = b"secret-document".to_vec();
-        let artifact_digest = Sha256::digest(&document_bytes)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        let request = StorageRestoreStageCreate::try_new(
+        let request = StorageRestoreStageArtifact::try_new(
             StorageRestoreInitiator::try_new(
                 PrincipalId::new(3).ok(),
                 "secret-scope",
                 "secret-name",
             )
             .unwrap(),
-            document_bytes,
-            StorageRestoreArtifactSummary::try_new(15, artifact_digest).unwrap(),
+            crate::StorageRestoreArtifact::from_reader(
+                document_bytes.as_slice(),
+                document_bytes.len(),
+            )
+            .unwrap(),
             "a".repeat(64),
             serde_json::json!({"secret-validation": true}),
             timestamp(),
         )
         .unwrap();
-        let document = StorageRestoreDocument::at_restore_boundary(
+        let document = StorageRestoreReplayApply::at_restore_boundary(
+            RestoreJobId::new(1).unwrap(),
             StorageRestoreDocumentMetadata::new(5, timestamp(), "secret-version"),
-            StorageBackupSnapshot::try_new(
-                crate::backup_snapshot::with_test_schema_sections(
-                    StorageBackupStateSection::ALL
-                        .iter()
-                        .copied()
-                        .map(|section| {
-                            let rows = if section == StorageBackupStateSection::Classes {
-                                vec![
+            crate::StorageBackupReplay::from_snapshot(
+                crate::StorageBackupSnapshot::try_new(
+                    crate::backup_snapshot::with_test_schema_sections(
+                        StorageBackupStateSection::ALL
+                            .iter()
+                            .copied()
+                            .map(|section| {
+                                let rows = if section == StorageBackupStateSection::Classes {
+                                    vec![
                                 StorageBackupRow::try_from_value(
                                     serde_json::json!({"id": 1, "revision": 7, "secret-row": true}),
                                 )
                                 .expect("object backup row"),
                             ]
-                            } else {
-                                Vec::new()
-                            };
-                            (section, rows)
-                        })
-                        .collect(),
-                ),
-                None,
+                                } else {
+                                    Vec::new()
+                                };
+                                (section, rows)
+                            })
+                            .collect(),
+                    ),
+                    None,
+                )
+                .expect("complete backup snapshot"),
+                crate::StorageBackupBudget::new(16 * 1024 * 1024, 10000).unwrap(),
             )
-            .expect("complete backup snapshot"),
+            .unwrap(),
             timestamp(),
-        );
+        )
+        .unwrap();
 
         let debug = format!("{request:?} {document:?}");
         for secret in [

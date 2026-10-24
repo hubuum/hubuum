@@ -1,76 +1,9 @@
 use chrono::{DateTime, SecondsFormat, Utc};
-use serde_json::{Value, json};
+use serde_json::json;
 
-use super::revisions::REVISION_HISTORY_SECTIONS;
-use super::{StorageBackupHistorySection, StorageBackupRow, StorageBackupSnapshot};
+use super::StorageBackupRow;
 
-impl StorageBackupSnapshot {
-    /// Establish the first observed version in a newly restored timeline.
-    /// Existing history is preserved. Baselines retain authoritative revisions
-    /// and timestamps; only temporal validity begins at the restore boundary.
-    pub(crate) fn restart_history(self, restored_at: DateTime<Utc>) -> Self {
-        if self.history_sections.is_some() {
-            return super::computed::restart_history(self, restored_at);
-        }
-        // Every history section shares the timestamp precision supported by all adapters.
-        let restored_at = DateTime::from_timestamp_micros(restored_at.timestamp_micros())
-            .expect("a UTC timestamp remains representable at microsecond precision");
-        let mut history = StorageBackupHistorySection::ALL
-            .iter()
-            .copied()
-            .map(|section| (section, Vec::new()))
-            .collect::<super::StorageBackupHistorySections>();
-        for &(history_section, state_section) in REVISION_HISTORY_SECTIONS {
-            let mut rows = self.state_sections[&state_section]
-                .iter()
-                .collect::<Vec<_>>();
-            rows.sort_by_key(|row| row.get("id").and_then(Value::as_i64));
-            let baselines = rows
-                .into_iter()
-                .enumerate()
-                .map(|(index, row)| {
-                    // A Vec of non-zero-sized rows cannot hold i64::MAX
-                    // entries: its entire allocation is bounded by isize::MAX.
-                    let id = i64::try_from(index + 1).expect("allocated row count fits i64");
-                    baseline(row, id, restored_at)
-                })
-                .collect();
-            history.insert(history_section, baselines);
-        }
-        let mut schemas = self.state_sections
-            [&super::StorageBackupStateSection::ClassSchemaRevisions]
-            .iter()
-            .collect::<Vec<_>>();
-        schemas.sort_by_key(|row| {
-            (
-                row.get("class_id").and_then(Value::as_i64),
-                row.get("revision").and_then(Value::as_i64),
-            )
-        });
-        let schema_baselines = schemas.into_iter().enumerate().map(|(index, row)| {
-                let id = i64::try_from(index + 1).expect("allocated row count fits i64");
-                StorageBackupRow::try_from_value(json!({
-                    "id": id, "class_id": row.get("class_id"), "revision": row.get("revision"),
-                    "snapshot": row.clone().into_value(), "operation": "create", "occurred_at": restored_at,
-                    "actor_principal_id": null, "task_id": null
-                })).expect("schema baseline is an object")
-            }).collect();
-        history.insert(
-            StorageBackupHistorySection::ClassSchemaHistory,
-            schema_baselines,
-        );
-        super::computed::restart_history(
-            Self {
-                schema_limits: self.schema_limits,
-                state_sections: self.state_sections,
-                history_sections: Some(history),
-            },
-            restored_at,
-        )
-    }
-}
-
-fn baseline(
+pub(super) fn baseline(
     row: &StorageBackupRow,
     history_entry_id: i64,
     restored_at: DateTime<Utc>,
@@ -97,10 +30,10 @@ fn baseline(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        StorageBackupStateSection, StorageRestoreDocument, StorageRestoreDocumentMetadata,
-    };
+    use crate::{StorageBackupBudget, StorageBackupReplay, StorageBackupStateSection};
+    use crate::{StorageBackupHistorySection, StorageBackupSnapshot};
     use rstest::rstest;
+    use serde_json::Value;
 
     fn state_with_resource(section: StorageBackupStateSection) -> StorageBackupSnapshot {
         let mut state = StorageBackupStateSection::ALL
@@ -155,8 +88,8 @@ mod tests {
         }
         let reordered = StorageBackupSnapshot::try_new(reordered, None).unwrap();
         let at = Utc::now();
-        let original = source.restart_history(at).into_parts().1.unwrap();
-        let reordered = reordered.restart_history(at).into_parts().1.unwrap();
+        let original = source.prepare_for_test(at).into_parts().1.unwrap();
+        let reordered = reordered.prepare_for_test(at).into_parts().1.unwrap();
         assert_eq!(
             original[&StorageBackupHistorySection::ClassSchemaHistory],
             reordered[&StorageBackupHistorySection::ClassSchemaHistory],
@@ -169,7 +102,7 @@ mod tests {
             .unwrap()
             .to_utc();
         let history = state_with_resource(StorageBackupStateSection::Classes)
-            .restart_history(at)
+            .prepare_for_test(at)
             .into_parts()
             .1
             .unwrap();
@@ -217,13 +150,17 @@ mod tests {
         let at = DateTime::parse_from_rfc3339("2026-09-09T12:00:00Z")
             .unwrap()
             .to_utc();
-        let prepared = StorageRestoreDocument::at_restore_boundary(
-            StorageRestoreDocumentMetadata::new(5, at, "test"),
+        let prepared = StorageBackupReplay::from_snapshot(
             source,
-            at,
-        );
-        assert!(!prepared.source_includes_history());
-        let (_, snapshot) = prepared.into_parts();
+            StorageBackupBudget::new(16 * 1024 * 1024, 10000).unwrap(),
+        )
+        .unwrap();
+        assert!(!prepared.includes_history());
+        let snapshot = prepared
+            .at_restore_boundary(at)
+            .unwrap()
+            .materialize()
+            .unwrap();
         let (state, history) = snapshot.clone().into_parts();
         assert_eq!(state, expected_state);
         let history = history.unwrap();
@@ -248,13 +185,20 @@ mod tests {
                 + expected_state[&StorageBackupStateSection::Classes].len()
         );
 
-        let repeated = StorageRestoreDocument::at_restore_boundary(
-            StorageRestoreDocumentMetadata::new(5, at, "test"),
+        let repeated = StorageBackupReplay::from_snapshot(
             snapshot.clone(),
-            at + chrono::Duration::hours(1),
+            StorageBackupBudget::new(16 * 1024 * 1024, 10000).unwrap(),
+        )
+        .unwrap();
+        assert!(repeated.includes_history());
+        assert_eq!(
+            repeated
+                .at_restore_boundary(at + chrono::Duration::hours(1))
+                .unwrap()
+                .materialize()
+                .unwrap(),
+            snapshot
         );
-        assert!(repeated.source_includes_history());
-        assert_eq!(repeated.into_parts().1, snapshot);
     }
 
     #[test]

@@ -3,18 +3,18 @@
 use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::dsl::sql;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
-use diesel::sql_types::{BigInt, Jsonb, Text, Timestamp};
+use diesel::sql_types::{BigInt, Text, Timestamp};
 use diesel::{Insertable, Queryable, QueryableByName, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{MaintenanceState, PrincipalId, RestoreJobId};
 use hubuum_events_core::{Action, ActorKind, AuditDocument, EntityType, NewEvent};
 use hubuum_storage_core::{
-    StorageBackupHistorySection, StorageBackupHistorySections, StorageBackupRow,
-    StorageBackupStateSection, StorageBackupStateSections, StorageCallSite, StorageRestoreApply,
-    StorageRestoreArtifactSummary, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
-    StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreInitiator,
-    StorageRestoreInstance, StorageRestoreJob, StorageRestoreJobStatus, StorageRestoreJobSummary,
-    StorageRestoreStageCreate, StorageRestoreStatus, StorageRestoreTimestamps,
+    StorageBackupHistorySection, StorageBackupReplay, StorageBackupStateSection, StorageCallSite,
+    StorageRestoreArtifactJob, StorageRestoreArtifactSummary, StorageRestoreCompletion,
+    StorageRestoreCoordinatorSnapshot, StorageRestoreDrainState, StorageRestoreFailure,
+    StorageRestoreInitiator, StorageRestoreInstance, StorageRestoreJobStatus,
+    StorageRestoreJobSummary, StorageRestoreReplayApply, StorageRestoreStageArtifact,
+    StorageRestoreStatus, StorageRestoreTimestamps,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -25,6 +25,11 @@ use crate::operations::backup::{
 use crate::operations::computed_fields::enqueue_restored_computed_rebuilds_on_connection;
 use crate::operations::event_record::append_event;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError, with_storage_call_site};
+
+// A single row may exceed the batch byte target, but remains bounded by the
+// admitted backup document. Never duplicate an entire section for insertion.
+const RESTORE_BATCH_ROWS: usize = 256;
+const RESTORE_BATCH_BYTES: usize = 1024 * 1024;
 
 const DATABASE_UTC_NOW_SQL: &str = "clock_timestamp() AT TIME ZONE 'UTC'";
 
@@ -119,26 +124,6 @@ const HISTORY_SEQUENCE_TABLES: &[&str] = &[
     "export_templates_history",
     "remote_targets_history",
 ];
-
-#[derive(Queryable, Selectable)]
-#[diesel(table_name = crate::schema::restore_jobs)]
-struct RestoreJobRow {
-    id: i64,
-    status: String,
-    requested_by: Option<i32>,
-    requested_by_identity_scope: String,
-    requested_by_name: String,
-    document: Vec<u8>,
-    byte_size: i64,
-    sha256: String,
-    capability_hash: String,
-    error: Option<String>,
-    expires_at: NaiveDateTime,
-    confirmed_at: Option<NaiveDateTime>,
-    finished_at: Option<NaiveDateTime>,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
-}
 
 #[derive(Insertable)]
 #[diesel(table_name = crate::schema::restore_jobs)]
@@ -266,28 +251,6 @@ fn summary_from_parts(
     )
 }
 
-fn job_to_storage(row: RestoreJobRow) -> Result<StorageRestoreJob, PostgresStorageError> {
-    let summary = summary_from_parts(RestoreSummaryParts {
-        id: row.id,
-        status: row.status,
-        requested_by: row.requested_by,
-        requested_by_identity_scope: row.requested_by_identity_scope,
-        requested_by_name: row.requested_by_name,
-        byte_size: row.byte_size,
-        sha256: row.sha256,
-        error: row.error,
-        expires_at: row.expires_at,
-        confirmed_at: row.confirmed_at,
-        finished_at: row.finished_at,
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-    })?;
-    crate::validate_persisted(
-        "restore job",
-        StorageRestoreJob::try_new(summary, row.document, row.capability_hash),
-    )
-}
-
 fn status_to_storage(
     row: RestoreJobStatusRow,
 ) -> Result<StorageRestoreStatus, PostgresStorageError> {
@@ -349,70 +312,94 @@ fn instance_to_storage(
     )
 }
 
-/// Stage one validated restore artifact.
-pub async fn stage_restore(
+pub async fn stage_restore_artifact(
     runtime: &PostgresRuntime,
-    request: StorageRestoreStageCreate,
-) -> Result<StorageRestoreJob, PostgresStorageError> {
-    let (initiator, document, artifact, capability_hash, validation_summary, expires_at) =
+    request: StorageRestoreStageArtifact,
+) -> Result<StorageRestoreStatus, PostgresStorageError> {
+    use std::io::Read;
+    let (initiator, artifact, capability_hash, validation_summary, expires_at) =
         request.into_parts();
     let initiator = initiator.into_parts();
-    let requested_by = initiator.principal_id();
-    let requested_by_identity_scope = initiator.identity_scope().to_owned();
-    let requested_by_name = initiator.name().to_owned();
-    let artifact = artifact.into_parts();
-    let byte_size = artifact.byte_size();
-    let sha256 = artifact.sha256().to_owned();
     let input = NewRestoreJobRow {
-        status: StorageRestoreJobStatus::Validated.as_str().to_string(),
-        requested_by: requested_by.map(|principal_id| principal_id.id()),
-        requested_by_identity_scope,
-        requested_by_name,
-        document,
-        byte_size,
-        sha256,
+        status: StorageRestoreJobStatus::Validated.as_str().to_owned(),
+        requested_by: initiator.principal_id().map(|id| id.id()),
+        requested_by_identity_scope: initiator.identity_scope().to_owned(),
+        requested_by_name: initiator.name().to_owned(),
+        document: Vec::new(),
+        byte_size: artifact.summary().byte_size(),
+        sha256: artifact.summary().sha256().to_owned(),
         capability_hash,
         validation_summary,
         expires_at: expires_at.naive_utc(),
     };
-    runtime
-        .with_connection(async |connection| {
-            // These legacy columns store UTC without an offset. Their `now()`
-            // defaults otherwise use session-local time, unlike confirmation.
-            let staged_at = sql::<Timestamp>("statement_timestamp() AT TIME ZONE 'UTC'");
-            diesel::insert_into(crate::schema::restore_jobs::table)
-                .values((
-                    input,
-                    crate::schema::restore_jobs::created_at.eq(staged_at.clone()),
-                    crate::schema::restore_jobs::updated_at.eq(staged_at),
-                ))
-                .returning(RestoreJobRow::as_returning())
-                .get_result::<RestoreJobRow>(connection)
-                .await
-        })
-        .await
-        .and_then(job_to_storage)
+    runtime.with_transaction(async move |connection| -> Result<_, PostgresStorageError> {
+        let staged_at = sql::<Timestamp>("statement_timestamp() AT TIME ZONE 'UTC'");
+        let row = diesel::insert_into(crate::schema::restore_jobs::table)
+            .values((input, crate::schema::restore_jobs::created_at.eq(staged_at.clone()), crate::schema::restore_jobs::updated_at.eq(staged_at)))
+            .returning(RestoreJobStatusRow::as_returning()).get_result::<RestoreJobStatusRow>(connection).await?;
+        let mut reader = artifact.reader();
+        let mut ordinal = 0i32;
+        let mut buffer = vec![0; 1024 * 1024];
+        loop {
+            let mut size = 0;
+            while size < buffer.len() {
+                let count = reader.read(&mut buffer[size..]).map_err(|e| PostgresStorageError::internal(e.to_string()))?;
+                if count == 0 { break; } size += count;
+            }
+            if size == 0 { break; }
+            diesel::sql_query("INSERT INTO restore_artifact_chunks (restore_job_id, ordinal, content) VALUES ($1, $2, $3)")
+                .bind::<BigInt,_>(row.id).bind::<diesel::sql_types::Integer,_>(ordinal).bind::<diesel::sql_types::Binary,_>(&buffer[..size])
+                .execute(connection).await?;
+            ordinal = ordinal.checked_add(1).ok_or_else(|| PostgresStorageError::invalid_input("Too many restore chunks"))?;
+        }
+        status_to_storage(row)
+    }).await
 }
 
-/// Load a complete staged restore artifact.
-pub async fn get_restore_job(
+#[derive(QueryableByName)]
+struct ArtifactChunk {
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    ordinal: i32,
+    #[diesel(sql_type = diesel::sql_types::Binary)]
+    content: Vec<u8>,
+}
+
+pub async fn get_restore_artifact(
     runtime: &PostgresRuntime,
     job_id: i64,
-) -> Result<StorageRestoreJob, PostgresStorageError> {
-    let row = runtime
-        .with_connection(async |connection| {
-            crate::schema::restore_jobs::table
-                .filter(crate::schema::restore_jobs::id.eq(job_id))
-                .select(RestoreJobRow::as_select())
-                .first::<RestoreJobRow>(connection)
-                .await
-                .optional()
-        })
-        .await?
-        .ok_or_else(|| {
-            PostgresStorageError::not_found(format!("Restore stage {job_id} was not found"))
-        })?;
-    job_to_storage(row)
+) -> Result<StorageRestoreArtifactJob, PostgresStorageError> {
+    use hubuum_storage_core::StorageRestoreArtifactBuilder;
+    runtime.with_read_only_snapshot(async |connection| -> Result<_, PostgresStorageError> {
+        let row = crate::schema::restore_jobs::table.filter(crate::schema::restore_jobs::id.eq(job_id))
+            .select(RestoreJobStatusRow::as_select()).first::<RestoreJobStatusRow>(connection).await?;
+        let (summary, capability, _) = status_to_storage(row)?.into_parts();
+        let terminal = matches!(summary.status(), StorageRestoreJobStatus::Failed | StorageRestoreJobStatus::Expired | StorageRestoreJobStatus::Succeeded);
+        let artifact = if terminal { None } else {
+            let limit = usize::try_from(summary.artifact().byte_size()).map_err(|_| PostgresStorageError::database("Restore artifact size exceeds address space"))?;
+            let mut builder = StorageRestoreArtifactBuilder::new(limit)?;
+            let mut ordinal = 0i32;
+            loop {
+                // One chunk per query bounds both database-driver and application buffers.
+                let chunk = diesel::sql_query("SELECT ordinal, content FROM restore_artifact_chunks WHERE restore_job_id=$1 AND ordinal >= $2 ORDER BY ordinal LIMIT 1")
+                    .bind::<BigInt,_>(job_id).bind::<diesel::sql_types::Integer,_>(ordinal).get_result::<ArtifactChunk>(connection).await.optional()?;
+                let Some(chunk) = chunk else { break; };
+                if chunk.ordinal != ordinal { return Err(PostgresStorageError::database("Restore artifact has a missing chunk")); }
+                builder.push(&chunk.content)?;
+                ordinal = ordinal.checked_add(1).ok_or_else(|| PostgresStorageError::database("Restore chunk ordinal overflow"))?;
+            }
+            if ordinal == 0 {
+                // Read legacy BYTEA stages through bounded substrings, too.
+                for offset in (0..limit).step_by(1024 * 1024) {
+                    let chunk = diesel::sql_query("SELECT 0 AS ordinal, substring(document FROM $2 FOR 1048576) AS content FROM restore_jobs WHERE id=$1")
+                        .bind::<BigInt,_>(job_id).bind::<diesel::sql_types::Integer,_>(i32::try_from(offset + 1).map_err(|_| PostgresStorageError::database("Legacy restore BYTEA exceeds supported length"))?)
+                        .get_result::<ArtifactChunk>(connection).await?;
+                    builder.push(&chunk.content)?;
+                }
+            }
+            Some(builder.finish()?)
+        };
+        StorageRestoreArtifactJob::try_new(summary, artifact, capability).map_err(|e| PostgresStorageError::invalid_persisted_value("restore artifact", e))
+    }).await
 }
 
 /// Load the document-free status of a staged restore.
@@ -555,19 +542,30 @@ pub async fn start_restore_draining(
 }
 
 /// Replace the complete durable backend state with one validated backup.
-pub async fn apply_restore(
+pub async fn apply_restore_replay(
     runtime: &PostgresRuntime,
-    request: StorageRestoreApply,
+    request: StorageRestoreReplayApply,
 ) -> Result<StorageRestoreCompletion, PostgresStorageError> {
-    let (job_id, document) = request.into_parts();
-    let job_id = job_id.id();
-    let includes_history = document.source_includes_history();
-    let (metadata, snapshot) = document.into_parts();
-    let (backup_version, backup_created_at, backup_source_version) = metadata.into_parts();
-    let snapshot = snapshot
-        .with_schema_limits(runtime.schema_limits())
-        .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
-    let (state_sections, history_sections) = snapshot.into_parts();
+    let (job_id, metadata, snapshot, includes_history) = request.into_parts();
+    let snapshot = snapshot.with_schema_limits(runtime.schema_limits())?;
+    apply_restore_replay_parts(
+        runtime,
+        job_id.id(),
+        metadata.into_parts(),
+        snapshot,
+        includes_history,
+    )
+    .await
+}
+
+async fn apply_restore_replay_parts(
+    runtime: &PostgresRuntime,
+    job_id: i64,
+    metadata: (i32, DateTime<Utc>, String),
+    snapshot: StorageBackupReplay,
+    includes_history: bool,
+) -> Result<StorageRestoreCompletion, PostgresStorageError> {
+    let (backup_version, backup_created_at, backup_source_version) = metadata;
 
     runtime
         .with_transaction(
@@ -612,7 +610,7 @@ pub async fn apply_restore(
                 let started_at = Utc::now().naive_utc();
                 diesel::sql_query("UPDATE credential_approvals SET invalidated_at=timezone('UTC', clock_timestamp()) WHERE consumed_at IS NULL AND invalidated_at IS NULL").execute(connection).await?;
                 enable_restore_session_settings(connection).await?;
-                replace_backend_state(connection, &state_sections, history_sections.as_ref())
+                replace_backend_replay(connection, snapshot)
                     .await?;
                 enqueue_restored_computed_rebuilds_on_connection(connection).await?;
                 super::schema_evolution::enqueue_restored_schema_work_on(connection).await?;
@@ -679,10 +677,9 @@ async fn enable_restore_session_settings(
     Ok(())
 }
 
-async fn replace_backend_state(
+async fn replace_backend_replay(
     connection: &mut PostgresConnection,
-    state_sections: &StorageBackupStateSections,
-    history_sections: Option<&StorageBackupHistorySections>,
+    snapshot: StorageBackupReplay,
 ) -> Result<(), PostgresStorageError> {
     for table in TRUNCATE_TABLES {
         validate_restore_identifier(table, None)?;
@@ -699,31 +696,17 @@ async fn replace_backend_state(
 
     for section in StorageBackupStateSection::ALL.iter().copied() {
         let table = state_table(section);
-        let rows = state_sections
-            .get(&section)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        let rows = rows
-            .iter()
-            .cloned()
-            .map(StorageBackupRow::into_value)
-            .map(|row| state_row_to_postgres(section, row))
-            .collect::<Result<Vec<_>, _>>()?;
+        let rows = snapshot
+            .state_rows(section)
+            .map(|row| state_row_to_postgres(section, row?.into_value()));
         insert_restore_rows(connection, table, rows).await?;
     }
-    if let Some(history_sections) = history_sections {
+    if snapshot.includes_history() {
         for section in StorageBackupHistorySection::ALL.iter().copied() {
             let table = history_table(section);
-            let rows = history_sections
-                .get(&section)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
-            let rows = rows
-                .iter()
-                .cloned()
-                .map(StorageBackupRow::into_value)
-                .map(|row| history_row_to_postgres(section, row))
-                .collect::<Result<Vec<_>, _>>()?;
+            let rows = snapshot
+                .history_rows(section)
+                .map(|row| history_row_to_postgres(section, row?.into_value()));
             insert_restore_rows(connection, table, rows).await?;
         }
     }
@@ -750,10 +733,11 @@ struct RestoreRowProjection {
 async fn insert_restore_rows(
     connection: &mut PostgresConnection,
     table: &str,
-    rows: Vec<Value>,
+    rows: impl Iterator<Item = Result<Value, PostgresStorageError>> + Send,
 ) -> Result<(), PostgresStorageError> {
     validate_restore_identifier(table, None)?;
-    if rows.is_empty() {
+    let mut rows = rows.peekable();
+    if rows.peek().is_none() {
         return Ok(());
     }
     // PostgreSQL's record conversion maps JSON null to SQL NULL, including
@@ -778,10 +762,43 @@ async fn insert_restore_rows(
          CROSS JOIN LATERAL jsonb_populate_record(NULL::{table}, source.value) AS restored",
         projection.columns, projection.values,
     );
-    diesel::sql_query(query)
-        .bind::<Jsonb, _>(Value::Array(rows))
-        .execute(connection)
-        .await?;
+    // Collections can reference parents later in their section. Their immediate
+    // self foreign key requires one INSERT. All other section dependencies have
+    // already been loaded, and all batches remain in the fenced transaction.
+    let batch_sections = table != "collections";
+    let mut batch = String::from("[");
+    let mut row_count = 0;
+    for row in rows {
+        let encoded = serde_json::to_string(&row?)
+            .map_err(|_| PostgresStorageError::database("Failed to serialize a restore row"))?;
+        if batch_sections
+            && row_count > 0
+            && (row_count == RESTORE_BATCH_ROWS
+                || batch.len().saturating_add(encoded.len()).saturating_add(2)
+                    > RESTORE_BATCH_BYTES)
+        {
+            batch.push(']');
+            diesel::sql_query(&query)
+                .bind::<Text, _>(&batch)
+                .execute(connection)
+                .await?;
+            batch.clear();
+            batch.push('[');
+            row_count = 0;
+        }
+        if row_count > 0 {
+            batch.push(',');
+        }
+        batch.push_str(&encoded);
+        row_count += 1;
+    }
+    if row_count > 0 {
+        batch.push(']');
+        diesel::sql_query(&query)
+            .bind::<Text, _>(&batch)
+            .execute(connection)
+            .await?;
+    }
     Ok(())
 }
 
@@ -1209,6 +1226,94 @@ mod tests {
             id: i64,
         }
 
+        #[derive(QueryableByName)]
+        struct BatchSizes {
+            #[diesel(sql_type = Jsonb)]
+            sizes: Value,
+        }
+
+        #[rstest]
+        #[case::empty(0, 0, json!([]))]
+        #[case::row_boundary(257, 0, json!([256, 1]))]
+        #[case::byte_boundary(3, 600_000, json!([1, 1, 1]))]
+        #[case::large_row(2, 1_100_000, json!([1, 1]))]
+        #[tokio::test]
+        async fn restore_insert_bounds_each_batch(
+            #[case] count: usize,
+            #[case] payload_bytes: usize,
+            #[case] expected: Value,
+        ) {
+            let pool = integration_test_pool(1);
+            let sizes = with_transaction(&pool, async |connection| {
+                for query in [
+                    "CREATE TEMP TABLE hubuumobject (id BIGINT, data JSONB NOT NULL) ON COMMIT DROP",
+                    "CREATE TEMP TABLE restore_batches (ordinal BIGINT GENERATED ALWAYS AS IDENTITY, n BIGINT) ON COMMIT DROP",
+                    "CREATE FUNCTION pg_temp.record_restore_batch() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN INSERT INTO restore_batches(n) SELECT count(*) FROM inserted; RETURN NULL; END $$",
+                    "CREATE TRIGGER record_batch AFTER INSERT ON hubuumobject REFERENCING NEW TABLE AS inserted FOR EACH STATEMENT EXECUTE FUNCTION pg_temp.record_restore_batch()",
+                ] {
+                    diesel::sql_query(query).execute(connection).await?;
+                }
+                let rows = (0..count).map(|id| Ok(json!({"id": id, "data": "x".repeat(payload_bytes)})));
+                insert_restore_rows(connection, "hubuumobject", rows).await?;
+                diesel::sql_query("SELECT COALESCE(jsonb_agg(n ORDER BY ordinal), '[]'::jsonb) AS sizes FROM restore_batches")
+                    .get_result::<BatchSizes>(connection).await.map_err(PostgresStorageError::from)
+            }).await.unwrap();
+            assert_eq!(sizes.sizes, expected);
+        }
+
+        #[tokio::test]
+        async fn restore_collections_preserves_forward_parent_references() {
+            let pool = integration_test_pool(1);
+            let count = with_transaction(&pool, async |connection| {
+                diesel::sql_query("CREATE TEMP TABLE collections (id BIGINT PRIMARY KEY, parent_collection_id BIGINT REFERENCES collections(id)) ON COMMIT DROP")
+                    .execute(connection).await?;
+                // The parent is beyond the ordinary row-batch boundary.
+                let rows = (1..=257).map(|id| Ok(json!({
+                    "id": id,
+                    "parent_collection_id": (id < 257).then_some(257)
+                })));
+                insert_restore_rows(connection, "collections", rows).await?;
+                diesel::sql_query("SELECT count(*) AS id FROM collections")
+                    .get_result::<AllocatedId>(connection).await.map_err(PostgresStorageError::from)
+            }).await.unwrap();
+            assert_eq!(count.id, 257);
+        }
+
+        #[tokio::test]
+        async fn later_batch_failure_rolls_back_earlier_batches() {
+            let pool = integration_test_pool(1);
+            with_transaction(&pool, async |connection| {
+                diesel::sql_query("CREATE TEMP TABLE hubuumobject (id BIGINT PRIMARY KEY)")
+                    .execute(connection)
+                    .await?;
+                diesel::sql_query("INSERT INTO hubuumobject VALUES (-1)")
+                    .execute(connection)
+                    .await?;
+                Ok::<_, PostgresStorageError>(())
+            })
+            .await
+            .unwrap();
+            let result = with_transaction(&pool, async |connection| {
+                // Row 257 violates a key inserted by the first batch.
+                let rows = (0..257).map(|id| Ok(json!({"id": id % 256})));
+                insert_restore_rows(connection, "hubuumobject", rows).await
+            })
+            .await;
+            let rows = with_transaction(&pool, async |connection| {
+                let rows = diesel::sql_query("SELECT id FROM hubuumobject")
+                    .load::<AllocatedId>(connection)
+                    .await?;
+                diesel::sql_query("DROP TABLE pg_temp.hubuumobject")
+                    .execute(connection)
+                    .await?;
+                Ok::<_, PostgresStorageError>(rows)
+            })
+            .await
+            .unwrap();
+            assert!(result.is_err());
+            assert_eq!(rows.into_iter().map(|row| row.id).collect::<Vec<_>>(), [-1]);
+        }
+
         #[rstest]
         #[case("collections", "collections_history", "id")]
         #[case("hubuumclass", "hubuumclass_history", "id")]
@@ -1262,7 +1367,7 @@ mod tests {
                 )
                 .execute(connection)
                 .await?;
-                insert_restore_rows(connection, "hubuumobject", vec![row]).await?;
+                insert_restore_rows(connection, "hubuumobject", std::iter::once(Ok(row))).await?;
                 Ok::<_, PostgresStorageError>(
                     diesel::sql_query("SELECT data, optional_data FROM hubuumobject")
                         .get_result(connection)

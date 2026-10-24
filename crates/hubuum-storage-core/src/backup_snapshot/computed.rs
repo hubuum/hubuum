@@ -1,3 +1,4 @@
+use super::view::{BackupView, ReadError};
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
@@ -5,20 +6,20 @@ use hubuum_domain::{ClassId, HistoryRecordId};
 use serde_json::{Value, json};
 
 use super::{
-    StorageBackupHistorySection as History, StorageBackupRow, StorageBackupSnapshot,
-    StorageBackupStateSection as State,
+    StorageBackupHistorySection as History, StorageBackupRow, StorageBackupStateSection as State,
 };
-use crate::{StorageComputedFieldHistory, StorageHistoricalComputedField, StorageValidationError};
+use crate::{StorageComputedFieldHistory, StorageHistoricalComputedField};
 
-fn invalid(message: impl Into<String>) -> StorageValidationError {
-    StorageValidationError::invalid(message)
+fn invalid(message: impl Into<String>) -> ReadError {
+    ReadError::invalid(message)
 }
 
 fn shared_definitions(
-    snapshot: &StorageBackupSnapshot,
-) -> Result<BTreeMap<ClassId, Vec<StorageHistoricalComputedField>>, StorageValidationError> {
+    snapshot: &impl BackupView,
+) -> Result<BTreeMap<ClassId, Vec<StorageHistoricalComputedField>>, ReadError> {
     let mut result: BTreeMap<ClassId, Vec<StorageHistoricalComputedField>> = BTreeMap::new();
-    for row in &snapshot.state_sections[&State::ComputedFieldDefinitions] {
+    for row in snapshot.state_rows(State::ComputedFieldDefinitions)? {
+        let row = row?;
         if row.get("visibility").and_then(Value::as_str) != Some("shared") {
             continue;
         }
@@ -41,27 +42,25 @@ fn shared_definitions(
     Ok(result)
 }
 
-fn records(
-    snapshot: &StorageBackupSnapshot,
-) -> Result<Vec<StorageComputedFieldHistory>, StorageValidationError> {
+fn records(snapshot: &impl BackupView) -> Result<Vec<StorageComputedFieldHistory>, ReadError> {
     snapshot
-        .history_sections
-        .as_ref()
-        .into_iter()
-        .flat_map(|history| &history[&History::ComputedFieldHistory])
+        .history_rows(History::ComputedFieldHistory)?
+        .iter()
         .map(|row| {
-            serde_json::from_value(row.clone().into_value())
+            serde_json::from_value(row?.into_owned().into_value())
                 .map_err(|error| invalid(format!("Invalid computed definition history: {error}")))
         })
         .collect()
 }
 
-pub(super) fn validate(snapshot: &StorageBackupSnapshot) -> Result<(), StorageValidationError> {
+pub(super) fn validate(snapshot: &impl BackupView) -> Result<(), ReadError> {
     let definitions = shared_definitions(snapshot)?;
-    let classes = snapshot.state_sections[&State::Classes]
-        .iter()
-        .filter_map(|row| row.get("id").and_then(Value::as_i64))
-        .collect::<BTreeSet<_>>();
+    let mut classes = BTreeSet::new();
+    for row in snapshot.state_rows(State::Classes)? {
+        if let Some(id) = row?.get("id").and_then(Value::as_i64) {
+            classes.insert(id);
+        }
+    }
     for (&class_id, fields) in &definitions {
         if !classes.contains(&i64::from(class_id.id())) {
             return Err(invalid(
@@ -129,14 +128,12 @@ pub(super) fn validate(snapshot: &StorageBackupSnapshot) -> Result<(), StorageVa
     Ok(())
 }
 
-/// A legacy or history-free restore observes today's set at the restore boundary.
-/// Existing intervals survive; missing intervals are never filled retroactively.
-pub(super) fn restart_history(
-    mut snapshot: StorageBackupSnapshot,
+pub(super) fn missing_baselines(
+    snapshot: &impl BackupView,
     restored_at: DateTime<Utc>,
-) -> StorageBackupSnapshot {
-    let definitions = shared_definitions(&snapshot).expect("validated shared definitions");
-    let records = records(&snapshot).expect("validated computed history");
+) -> Result<Vec<StorageBackupRow>, ReadError> {
+    let definitions = shared_definitions(snapshot)?;
+    let records = records(snapshot)?;
     let mut next_id = records
         .iter()
         .map(|record| record.history_entry_id().id())
@@ -150,11 +147,14 @@ pub(super) fn restart_history(
     }
     let restored_at =
         DateTime::from_timestamp_micros(restored_at.timestamp_micros()).expect("valid timestamp");
-    let mut classes = snapshot.state_sections[&State::Classes]
-        .iter()
-        .filter_map(|row| row.get("id").and_then(Value::as_i64))
-        .collect::<Vec<_>>();
+    let mut classes = Vec::new();
+    for row in snapshot.state_rows(State::Classes)? {
+        if let Some(id) = row?.get("id").and_then(Value::as_i64) {
+            classes.push(id);
+        }
+    }
     classes.sort_unstable();
+    let mut baselines = Vec::new();
     for id in classes {
         let class_id = ClassId::new(i32::try_from(id).expect("validated class identity"))
             .expect("validated class identity");
@@ -174,20 +174,14 @@ pub(super) fn restart_history(
         .definitions(definitions.get(&class_id).cloned().unwrap_or_default())
         .build()
         .expect("validated shared definition set");
-        snapshot
-            .history_sections
-            .as_mut()
-            .expect("resource history established")
-            .get_mut(&History::ComputedFieldHistory)
-            .expect("normalized history section")
-            .push(
-                StorageBackupRow::try_from_value(
-                    serde_json::to_value(record).expect("history serializes"),
-                )
-                .expect("history is an object"),
-            );
+        baselines.push(
+            StorageBackupRow::try_from_value(
+                serde_json::to_value(record).expect("history serializes"),
+            )
+            .expect("history is an object"),
+        );
     }
-    snapshot
+    Ok(baselines)
 }
 
 #[cfg(test)]

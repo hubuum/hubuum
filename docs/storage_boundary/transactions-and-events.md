@@ -203,9 +203,9 @@ for an exception.
   ordinary domain lifecycle shortcut.
 - Retention: `TokenRetentionStorage::purge_expired_tokens` applies configured
   expiry and emits the token-purge semantics owned by the retention worker.
-- Maintenance: `RestoreStorage::stage_restore`,
+- Maintenance: `RestoreStorage::stage_restore_artifact`,
   `RestoreStorage::expire_restore_stage`,
-  `RestoreStorage::start_restore_draining`, `RestoreStorage::apply_restore`,
+  `RestoreStorage::start_restore_draining`, `RestoreStorage::apply_restore_replay`,
   `RestoreStorage::fail_restore_and_resume`,
   `RestoreStorage::resume_maintenance_without_restore`,
   `RestoreStorage::resume_terminal_restore`,
@@ -219,7 +219,7 @@ for an exception.
   `ImportStorage::record_claimed_import_results` preserve or reconstruct imported
   state and results under the typed import workflow.
 
-`BackupSnapshotStorage::capture_backup_snapshot` is not listed because it only
+`BackupSnapshotStorage::capture_backup_replay` is not listed because it only
 reads a consistent projection. `ImportStorage::preflight_import` executes
 against rollback-only state and does not durably write. `ExecutionStorage`
 scope changes are native execution context, not durable storage mutations.

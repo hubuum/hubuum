@@ -1,19 +1,19 @@
 mod maintenance;
+pub(crate) mod replay;
+use hubuum_storage_core::{
+    StorageBackupReplay, StorageRestoreArtifact, StorageRestoreArtifactJob,
+    StorageRestoreReplayApply, StorageRestoreStageArtifact,
+};
 pub use maintenance::MaintenanceActivityGuard;
 use maintenance::active_maintenance_work;
 
-#[cfg(feature = "embedded-migrations")]
-use crate::storage::{StorageBackupHistorySection, StorageBackupRow, StorageBackupStateSection};
 use hubuum_domain::{JsonSchemaLimits, PrincipalId};
 use std::collections::BTreeMap;
-#[cfg(feature = "embedded-migrations")]
-use std::collections::HashSet;
+use std::io::{self, Write};
 use std::sync::Once;
 use std::time::{Duration as StdDuration, Instant};
 
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
-#[cfg(test)]
-use hubuum_computed_fields::{MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS};
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -25,16 +25,15 @@ use crate::models::retention::FutureRetention;
 use crate::models::{
     BACKUP_MANIFEST_EXCLUSIONS, BackupDocument, MaintenanceState, RESTORE_CONFIRMATION_PHRASE,
     RestoreConfirmRequest, RestoreJobID, RestoreJobStatus, RestoreStageRequest,
-    RestoreStageResponse, RestoreValidationSummary,
+    RestoreStageResponse,
 };
 use crate::services::identity::resolve_identity_scope_name as load_identity_scope_name;
 use crate::storage::storage_handle;
 use crate::storage::{
-    OperationalStateStorage, RestoreStorage, StorageBackupSnapshot, StorageContext,
-    StorageRestoreApply, StorageRestoreArtifactSummary, StorageRestoreCompletion,
-    StorageRestoreCoordinatorSnapshot, StorageRestoreDocument, StorageRestoreDocumentMetadata,
-    StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreJob, StorageRestoreJobStatus,
-    StorageRestoreJobSummary, StorageRestoreStageCreate, StorageRestoreStatus,
+    OperationalStateStorage, RestoreStorage, StorageContext, StorageRestoreCompletion,
+    StorageRestoreCoordinatorSnapshot, StorageRestoreDocumentMetadata, StorageRestoreFailure,
+    StorageRestoreInitiator, StorageRestoreJobStatus, StorageRestoreJobSummary,
+    StorageRestoreStatus,
 };
 
 static RESTORE_COORDINATOR: Once = Once::new();
@@ -150,7 +149,7 @@ struct RestoreJobSummaryData {
 
 struct RestoreJobData {
     summary: RestoreJobSummaryData,
-    document: Vec<u8>,
+    document: Option<StorageRestoreArtifact>,
     capability_hash: String,
 }
 
@@ -202,7 +201,7 @@ fn restore_summary_from_storage(summary: StorageRestoreJobSummary) -> RestoreJob
     }
 }
 
-fn restore_job_from_storage(job: StorageRestoreJob) -> RestoreJobData {
+fn restore_job_from_storage(job: StorageRestoreArtifactJob) -> RestoreJobData {
     let (summary, document, capability_hash) = job.into_parts();
     RestoreJobData {
         summary: restore_summary_from_storage(summary),
@@ -264,40 +263,38 @@ fn sha256(bytes: &[u8]) -> String {
         .collect()
 }
 
-fn backup_section_counts(document: &BackupDocument) -> Result<BTreeMap<String, i64>, ApiError> {
-    let mut counts = BTreeMap::new();
-    for (section, rows) in &document.state.sections {
-        counts.insert(
-            section.as_str().to_string(),
-            i64::try_from(rows.len()).map_err(|_| {
-                ApiError::PayloadTooLarge(format!(
-                    "Full backup section '{section}' exceeds the supported row-count range"
-                ))
-            })?,
-        );
-    }
-    if let Some(history) = &document.history {
-        for (section, rows) in &history.sections {
-            counts.insert(
-                format!("history.{}", section.as_str()),
-                i64::try_from(rows.len()).map_err(|_| {
-                    ApiError::PayloadTooLarge(format!(
-                        "Full backup history section '{section}' exceeds the supported row-count range"
-                    ))
-                })?,
-            );
+/// Hash canonical JSON without retaining a second serialized document.
+fn serialized_sha256(value: &impl Serialize) -> Result<String, ApiError> {
+    struct HashWriter(Sha256);
+    impl Write for HashWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.update(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
         }
     }
-    Ok(counts)
+    let mut writer = HashWriter(Sha256::new());
+    serde_json::to_writer(&mut writer, value)?;
+    Ok(writer
+        .0
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
 }
 
-fn validate_backup_manifest(document: &BackupDocument) -> Result<BTreeMap<String, i64>, ApiError> {
-    let counts = backup_section_counts(document)?;
-    if document.manifest.item_counts != counts {
+fn validate_manifest_counts(
+    manifest: &crate::models::BackupManifest,
+    counts: &BTreeMap<String, i64>,
+) -> Result<(), ApiError> {
+    if manifest.item_counts != *counts {
         let mismatched_section = counts
             .keys()
-            .chain(document.manifest.item_counts.keys())
-            .find(|section| counts.get(*section) != document.manifest.item_counts.get(*section))
+            .chain(manifest.item_counts.keys())
+            .find(|section| counts.get(*section) != manifest.item_counts.get(*section))
             .map(String::as_str)
             .unwrap_or("unknown");
         return Err(ApiError::BadRequest(format!(
@@ -308,12 +305,12 @@ fn validate_backup_manifest(document: &BackupDocument) -> Result<BTreeMap<String
         .iter()
         .map(|value| (*value).to_string())
         .collect::<Vec<_>>();
-    if document.manifest.exclusions != exclusions {
+    if manifest.exclusions != exclusions {
         return Err(ApiError::BadRequest(
             "Full backup manifest exclusions do not match backup version 5".to_string(),
         ));
     }
-    Ok(counts)
+    Ok(())
 }
 
 fn validate_backup_metadata(document: &BackupDocument) -> Result<(), ApiError> {
@@ -332,40 +329,13 @@ fn validate_backup_metadata(document: &BackupDocument) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// Validate backup bytes without connecting to or mutating a database.
-pub fn verify_backup_document(
-    document_bytes: &[u8],
-    max_document_bytes: usize,
-) -> Result<BackupVerificationReport, ApiError> {
-    verify_backup_document_with_limits(
-        document_bytes,
-        max_document_bytes,
-        JsonSchemaLimits::default(),
-    )
-}
-
-pub(crate) fn verify_backup_document_with_limits(
-    document_bytes: &[u8],
+pub(crate) fn verify_backup_reader(
+    reader: impl std::io::Read,
     max_document_bytes: usize,
     schema_limits: JsonSchemaLimits,
 ) -> Result<BackupVerificationReport, ApiError> {
-    if document_bytes.is_empty() {
-        return Err(ApiError::BadRequest(
-            "Backup document must not be empty".to_string(),
-        ));
-    }
-    if document_bytes.len() > max_document_bytes {
-        return Err(ApiError::PayloadTooLarge(format!(
-            "Backup document is {} bytes, exceeding the configured {} byte limit",
-            document_bytes.len(),
-            max_document_bytes
-        )));
-    }
-    let mut document: BackupDocument = serde_json::from_slice(document_bytes).map_err(|error| {
-        ApiError::BadRequest(format!("Backup document is not valid backup JSON: {error}"))
-    })?;
-    let (summary, _) = validation_summary(&mut document, schema_limits)?;
-    let section_counts = backup_section_counts(&document)?;
+    let (document, sha256, byte_size) = replay::parse(reader, max_document_bytes, schema_limits)?;
+    let summary = document.summary()?;
     Ok(BackupVerificationReport {
         report_version: BACKUP_VERIFICATION_REPORT_VERSION,
         result: "passed",
@@ -374,158 +344,15 @@ pub(crate) fn verify_backup_document_with_limits(
         verifier_version: env!("CARGO_PKG_VERSION"),
         backup_version: summary.backup_version,
         source_version: summary.source_version,
-        created_at: document.created_at,
-        sha256: sha256(document_bytes),
-        byte_size: u64::try_from(document_bytes.len()).unwrap_or(u64::MAX),
+        created_at: document.metadata.created_at,
+        sha256,
+        byte_size: byte_size as u64,
         includes_history: summary.includes_history,
         total_items: summary.total_items,
-        canonical_state_sha256: sha256(&serde_json::to_vec(&document.state)?),
-        section_counts,
+        canonical_state_sha256: document.state_sha256()?,
+        section_counts: document.metadata.manifest.item_counts.clone(),
         restore_test: None,
     })
-}
-
-/// Compare a post-restore logical snapshot with the source artifact. The
-/// destructive restore deliberately appends exactly one provenance event; all
-/// authoritative state and every other requested history section must remain
-/// equivalent after canonicalizing optional history fields.
-#[cfg(feature = "embedded-migrations")]
-pub(crate) fn verify_restored_backup_matches(
-    source: &BackupDocument,
-    restored: &BackupDocument,
-    schema_limits: JsonSchemaLimits,
-) -> Result<(), ApiError> {
-    let mut source = source.clone();
-    let mut restored = restored.clone();
-    normalize_legacy_event_configuration(&mut source);
-    normalize_legacy_class_schema_policies(&mut source);
-    normalize_legacy_relation_labels(&mut source);
-    if source.backup_version < 9 {
-        // Restore adds this empty section for backups predating declarations.
-        source
-            .state
-            .sections
-            .entry(StorageBackupStateSection::QueryUsageDeclarations)
-            .or_default();
-    }
-    if let Some(history) = &mut source.history {
-        history
-            .sections
-            .entry(StorageBackupHistorySection::ComputedFieldHistory)
-            .or_default();
-    }
-    if let Some(history) = &mut source.history {
-        for (section, rows) in &mut history.sections {
-            for row in rows {
-                row.normalize_legacy_history(*section);
-            }
-        }
-    }
-    for document in [&mut source, &mut restored] {
-        StorageBackupSnapshot::normalize_legacy_event_sink_access(&mut document.state.sections);
-        if let Some(history) = &mut document.history {
-            StorageBackupSnapshot::canonicalize_discovery_history(&mut history.sections)
-                .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
-        }
-    }
-    if source.state != restored.state {
-        return Err(ApiError::InternalServerError(
-            "Restored logical state does not match the verified backup".to_string(),
-        ));
-    }
-    match (&source.history, &restored.history) {
-        (None, None) => Ok(()),
-        (Some(source_history), Some(restored_history)) => {
-            for section in StorageBackupHistorySection::ALL {
-                let source_rows = source_history.sections.get(section).ok_or_else(|| {
-                    ApiError::InternalServerError(format!(
-                        "Verified backup comparison is missing history section '{section}'"
-                    ))
-                })?;
-                let restored_rows = restored_history.sections.get(section).ok_or_else(|| {
-                    ApiError::InternalServerError(format!(
-                        "Restored snapshot comparison is missing history section '{section}'"
-                    ))
-                })?;
-                if *section == StorageBackupHistorySection::ComputedFieldHistory {
-                    verify_computed_history_baselines(
-                        &source,
-                        source_rows,
-                        restored_rows,
-                        schema_limits,
-                    )?;
-                    continue;
-                }
-                if !matches!(
-                    section,
-                    StorageBackupHistorySection::TerminalTasks
-                        | StorageBackupHistorySection::AuditEvents
-                        | StorageBackupHistorySection::RemoteCallResults
-                ) {
-                    if source_rows != restored_rows {
-                        return Err(ApiError::InternalServerError(format!(
-                            "Restored history section '{section}' does not match the verified backup"
-                        )));
-                    }
-                    continue;
-                }
-                let canonicalize = |rows: &[StorageBackupRow]| {
-                    rows.iter()
-                        .cloned()
-                        .map(|mut row| {
-                            row.canonicalize_history(*section);
-                            row
-                        })
-                        .collect::<Vec<_>>()
-                };
-                let source_rows = canonicalize(source_rows);
-                let restored_rows = canonicalize(restored_rows);
-                if *section == StorageBackupHistorySection::AuditEvents {
-                    verify_restore_provenance_delta(&source_rows, &restored_rows)?;
-                } else if source_rows != restored_rows {
-                    return Err(ApiError::InternalServerError(format!(
-                        "Restored history section '{section}' does not match the verified backup"
-                    )));
-                }
-            }
-            Ok(())
-        }
-        _ => Err(ApiError::InternalServerError(
-            "Restored history inclusion does not match the verified backup".to_string(),
-        )),
-    }
-}
-
-#[cfg(feature = "embedded-migrations")]
-fn verify_restore_provenance_delta(
-    source_rows: &[StorageBackupRow],
-    restored_rows: &[StorageBackupRow],
-) -> Result<(), ApiError> {
-    if restored_rows.len() != source_rows.len().saturating_add(1)
-        || source_rows
-            .iter()
-            .any(|source_row| !restored_rows.contains(source_row))
-    {
-        return Err(ApiError::InternalServerError(
-            "Restored audit history differs by more than its provenance event".to_string(),
-        ));
-    }
-    let added = restored_rows
-        .iter()
-        .find(|row| !source_rows.contains(row))
-        .ok_or_else(|| {
-            ApiError::InternalServerError(
-                "Restored audit history is missing its provenance event".to_string(),
-            )
-        })?;
-    if added.get("entity_type").and_then(Value::as_str) != Some("restore")
-        || added.get("action").and_then(Value::as_str) != Some("succeeded")
-    {
-        return Err(ApiError::InternalServerError(
-            "Restored audit history contains an unexpected additional event".to_string(),
-        ));
-    }
-    Ok(())
 }
 
 fn capability_matches(capability_hash: &str, capability: &str) -> bool {
@@ -553,177 +380,23 @@ fn invalid_restore_capability() -> ApiError {
     ApiError::Forbidden("Restore capability is invalid".to_string())
 }
 
-pub(crate) fn validation_summary(
-    document: &mut BackupDocument,
-    schema_limits: JsonSchemaLimits,
-) -> Result<(RestoreValidationSummary, StorageBackupSnapshot), ApiError> {
-    let summary = validate_document_metadata(document)?;
-    let snapshot = StorageBackupSnapshot::try_new_for_restore(
-        &document.state.sections,
-        document.history.as_ref().map(|history| &history.sections),
-        schema_limits,
-    )
-    .map_err(|error| ApiError::from(error.into_request_error()))?;
-    Ok((summary, snapshot))
-}
-
-#[cfg(feature = "embedded-migrations")]
-fn verify_computed_history_baselines(
-    source: &BackupDocument,
-    source_rows: &[StorageBackupRow],
-    restored_rows: &[StorageBackupRow],
-    schema_limits: JsonSchemaLimits,
-) -> Result<(), ApiError> {
-    if source_rows == restored_rows {
-        return Ok(());
-    }
-    let mismatch = || {
-        ApiError::InternalServerError("Restored computed definition history differs from retained history and required restore baselines".into())
-    };
-    let source_ids = source_rows
-        .iter()
-        .filter_map(|row| row.get("history_entry_id").and_then(Value::as_i64))
-        .collect::<HashSet<_>>();
-    let boundary = restored_rows
-        .iter()
-        .filter(|row| {
-            !row.get("history_entry_id")
-                .and_then(Value::as_i64)
-                .is_some_and(|id| source_ids.contains(&id))
-        })
-        .filter_map(|row| row.get("valid_from").and_then(Value::as_str))
-        .filter_map(|at| DateTime::parse_from_rfc3339(at).ok().map(|at| at.to_utc()))
-        .min()
-        .filter(|at| *at >= source.created_at)
-        .ok_or_else(mismatch)?;
-    let snapshot = StorageBackupSnapshot::try_new_with_limits(
-        source.state.sections.clone(),
-        source
-            .history
-            .as_ref()
-            .map(|history| history.sections.clone()),
-        schema_limits,
-    )
-    .map_err(|_| mismatch())?;
-    let expected = StorageRestoreDocument::at_restore_boundary(
-        StorageRestoreDocumentMetadata::new(
-            source.backup_version,
-            source.created_at,
-            &source.source_version,
-        ),
-        snapshot,
-        boundary,
-    )
-    .into_parts()
-    .1
-    .into_parts()
-    .1
-    .ok_or_else(mismatch)?;
-    if expected[&StorageBackupHistorySection::ComputedFieldHistory] != restored_rows {
-        return Err(mismatch());
-    }
-    Ok(())
-}
-
-/// Validate artifact metadata and application-owned resource schemas. Snapshot
-/// revision consistency is already proved by the storage capture contract.
-pub(crate) fn validate_document_fields(
-    document: &mut BackupDocument,
-    schema_limits: JsonSchemaLimits,
-) -> Result<RestoreValidationSummary, ApiError> {
-    let summary = validate_document_metadata(document)?;
-    StorageBackupSnapshot::validate_resource_sections(
-        &document.state.sections,
-        document.history.as_ref().map(|history| &history.sections),
-        schema_limits,
-    )
-    .map_err(|error| ApiError::from(error.into_request_error()))?;
-    Ok(summary)
-}
-
-fn validate_document_metadata(
-    document: &mut BackupDocument,
-) -> Result<RestoreValidationSummary, ApiError> {
-    document.validate_version()?;
-    normalize_legacy_event_configuration(document);
-    normalize_legacy_class_schema_policies(document);
-    normalize_legacy_relation_labels(document);
-    validate_backup_metadata(document)?;
-    let item_counts = validate_backup_manifest(document)?;
-    let total_items = item_counts.values().try_fold(0_i64, |total, count| {
-        total.checked_add(*count).ok_or_else(|| {
-            ApiError::PayloadTooLarge(
-                "Full backup total row count exceeds the supported range".to_string(),
-            )
-        })
-    })?;
-    Ok(RestoreValidationSummary {
-        backup_version: document.backup_version,
-        source_version: document.source_version.clone(),
-        includes_history: document.history.is_some(),
-        total_items,
-    })
-}
-
-fn normalize_legacy_event_configuration(document: &mut BackupDocument) {
-    StorageBackupSnapshot::normalize_legacy_event_configuration(
-        document.backup_version,
-        &mut document.state.sections,
-        document
-            .history
-            .as_mut()
-            .map(|history| &mut history.sections),
-    );
-}
-
-fn normalize_legacy_class_schema_policies(document: &mut BackupDocument) {
-    StorageBackupSnapshot::normalize_legacy_class_schema_policies(
-        document.backup_version,
-        &mut document.state.sections,
-        document
-            .history
-            .as_mut()
-            .map(|history| &mut history.sections),
-    );
-}
-
-fn normalize_legacy_relation_labels(document: &mut BackupDocument) {
-    StorageBackupSnapshot::normalize_legacy_relation_labels(
-        document.backup_version,
-        &mut document.state.sections,
-        document
-            .history
-            .as_mut()
-            .map(|history| &mut history.sections),
-    );
-}
-
 pub async fn stage_restore(
     pool: &impl crate::storage::StorageContext,
     settings: &RestoreSettings,
     request: RestoreStageRequest,
 ) -> Result<RestoreStageResponse, ApiError> {
-    let (initiator, document_bytes) = request.into_parts();
-    if document_bytes.len() > settings.max_upload_bytes() {
-        return Err(ApiError::PayloadTooLarge(format!(
-            "Restore upload is {} bytes, exceeding the configured {} byte limit",
-            document_bytes.len(),
-            settings.max_upload_bytes()
-        )));
-    }
-    let mut document: BackupDocument =
-        serde_json::from_slice(&document_bytes).map_err(|error| {
-            ApiError::BadRequest(format!(
-                "Restore document is not valid backup JSON: {error}"
-            ))
-        })?;
-    let (validation, _) = validation_summary(&mut document, storage_handle(pool).schema_limits())?;
-    let document_sha = sha256(&document_bytes);
+    let (initiator, artifact) = request.into_parts();
+    let (document, _, _) = replay::parse(
+        artifact.reader(),
+        settings.max_upload_bytes(),
+        storage_handle(pool).schema_limits(),
+    )?;
+    let validation = document.summary()?;
+    drop(document);
     let capability = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     let capability_hash = sha256(capability.as_bytes());
     let expires_at = settings.stage_expires_at(Utc::now().naive_utc())?;
     let validation_json = serde_json::to_value(&validation)?;
-    let byte_size = i64::try_from(document_bytes.len()).unwrap_or(i64::MAX);
     let (requested_by, requested_by_identity_scope, requested_by_name) = initiator.into_parts();
     let initiator = StorageRestoreInitiator::try_new(
         requested_by.map(|id| {
@@ -734,22 +407,19 @@ pub async fn stage_restore(
         requested_by_name,
     )
     .map_err(|error| ApiError::from(error.into_request_error()))?;
-    let artifact = StorageRestoreArtifactSummary::try_new(byte_size, document_sha.clone())
-        .map_err(|error| ApiError::from(error.into_request_error()))?;
-    let request = StorageRestoreStageCreate::try_new(
+    let request = StorageRestoreStageArtifact::try_new(
         initiator,
-        document_bytes,
         artifact,
         capability_hash,
         validation_json,
         expires_at.and_utc(),
     )
-    .map_err(|error| ApiError::from(error.into_request_error()))?;
-    let job = storage_handle(pool)
-        .stage_restore(request)
-        .await
-        .map(restore_job_from_storage)?;
-    let job = job.summary;
+    .map_err(|e| ApiError::from(e.into_request_error()))?;
+    let (summary, _, _) = storage_handle(pool)
+        .stage_restore_artifact(request)
+        .await?
+        .into_parts();
+    let job = restore_summary_from_storage(summary);
 
     Ok(RestoreStageResponse {
         id: job.id.id(),
@@ -776,7 +446,7 @@ async fn load_restore_job(
     job_id: RestoreJobID,
 ) -> Result<RestoreJobData, ApiError> {
     storage_handle(pool)
-        .get_restore_job(job_id)
+        .get_restore_artifact(job_id)
         .await
         .map(restore_job_from_storage)
         .map_err(Into::into)
@@ -839,11 +509,12 @@ async fn apply_restore(
     pool: &impl crate::storage::StorageContext,
     job_id: RestoreJobID,
     metadata: StorageRestoreDocumentMetadata,
-    snapshot: StorageBackupSnapshot,
+    snapshot: StorageBackupReplay,
 ) -> Result<StorageRestoreCompletion, ApiError> {
-    let document = StorageRestoreDocument::at_restore_boundary(metadata, snapshot, Utc::now());
+    let request =
+        StorageRestoreReplayApply::at_restore_boundary(job_id, metadata, snapshot, Utc::now())?;
     storage_handle(pool)
-        .apply_restore(StorageRestoreApply::new(job_id, document))
+        .apply_restore_replay(request)
         .await
         .map_err(Into::into)
 }
@@ -934,13 +605,20 @@ pub(crate) async fn confirm_restore_with_approval(
         }
         return Err(ApiError::Gone("Restore stage has expired".to_string()));
     }
-    let mut document: BackupDocument =
-        serde_json::from_slice(&document_bytes).map_err(|error| {
-            ApiError::InternalServerError(format!(
-                "Staged restore document became invalid: {error}"
-            ))
-        })?;
-    let (validation, _) = validation_summary(&mut document, storage_handle(pool).schema_limits())?;
+    let (document, _, _) = replay::parse(
+        document_bytes
+            .as_ref()
+            .ok_or_else(|| {
+                ApiError::InternalServerError("Active restore artifact is missing".into())
+            })?
+            .reader(),
+        usize::try_from(job.byte_size).map_err(|_| {
+            ApiError::PayloadTooLarge("Restore artifact exceeds address space".into())
+        })?,
+        storage_handle(pool).schema_limits(),
+    )?;
+    let validation = document.summary()?;
+    drop(document);
     // Confirmation commits only the maintenance transition. A separately
     // deployed executor owns the privileged destructive transaction, so the
     // API and worker processes never need a migration credential.
@@ -1020,7 +698,7 @@ async fn reconcile_restore_from_snapshot(
             .await?;
         return Err(error);
     };
-    let job = match storage_handle(pool).get_restore_job(job_id).await {
+    let job = match storage_handle(pool).get_restore_artifact(job_id).await {
         Ok(job) => restore_job_from_storage(job),
         Err(error) => {
             let error = ApiError::from(error);
@@ -1061,29 +739,31 @@ async fn reconcile_restore_from_snapshot(
         return Ok(false);
     }
 
-    let mut document: BackupDocument = match serde_json::from_slice(&document_bytes) {
+    let (document, _, _) = match replay::parse(
+        document_bytes
+            .as_ref()
+            .ok_or_else(|| {
+                ApiError::InternalServerError("Active restore artifact is missing".into())
+            })?
+            .reader(),
+        usize::try_from(job.byte_size).map_err(|_| {
+            ApiError::PayloadTooLarge("Restore artifact exceeds address space".into())
+        })?,
+        storage_handle(pool).schema_limits(),
+    ) {
         Ok(document) => document,
-        Err(parse_error) => {
-            let error = ApiError::InternalServerError(format!(
-                "Staged restore document became invalid: {parse_error}"
-            ));
+        Err(error) => {
             fail_restore_and_resume(pool, job_id, &error).await?;
             return Err(error);
         }
     };
-    let (_, snapshot) =
-        match validation_summary(&mut document, storage_handle(pool).schema_limits()) {
-            Ok(validated) => validated,
-            Err(error) => {
-                fail_restore_and_resume(pool, job_id, &error).await?;
-                return Err(error);
-            }
-        };
+    drop(document_bytes);
     let metadata = StorageRestoreDocumentMetadata::new(
-        document.backup_version,
-        document.created_at,
-        document.source_version,
+        document.metadata.backup_version,
+        document.metadata.created_at,
+        document.metadata.source_version,
     );
+    let snapshot = document.snapshot;
     if let Err(error) = wait_for_instances_drained(pool).await {
         fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
@@ -1202,9 +882,3 @@ pub async fn resolve_identity_scope_name(
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-fn validate_computed_field_definitions(document: &BackupDocument) -> Result<(), ApiError> {
-    StorageBackupSnapshot::validate_computed_definitions(&document.state.sections)
-        .map_err(|error| ApiError::from(error.into_request_error()))
-}

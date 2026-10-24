@@ -49,6 +49,8 @@ mod relation_query;
 mod remote_target;
 mod resource_lifecycle;
 mod restore;
+mod restore_artifact;
+pub use restore_artifact::{StorageRestoreArtifact, StorageRestoreArtifactBuilder};
 mod task_control;
 mod task_execution;
 mod task_metadata;
@@ -83,8 +85,9 @@ pub use authorization_resources::{
 pub use backend::StorageBackend;
 pub use backup_snapshot::{
     BackupSnapshotStorage, StorageBackupBudget, StorageBackupCaptureProgress,
-    StorageBackupHistorySection, StorageBackupHistorySections, StorageBackupRow,
-    StorageBackupSnapshot, StorageBackupStateSection, StorageBackupStateSections,
+    StorageBackupHistorySection, StorageBackupHistorySections, StorageBackupReplay,
+    StorageBackupReplayBuilder, StorageBackupReplayRows, StorageBackupRow, StorageBackupSnapshot,
+    StorageBackupStateSection, StorageBackupStateSections,
 };
 pub use catalog::{CatalogStorage, StorageCatalogListQuery};
 pub use collection_authorization::{
@@ -290,13 +293,13 @@ pub use resource_lifecycle::{
     StorageObjectUpdate, StorageObjectUpdateBuilder, StorageResolvedClass, StorageResolvedObject,
 };
 pub use restore::{
-    RestoreStorage, StorageRestoreApply, StorageRestoreArtifactSummary,
+    RestoreStorage, StorageRestoreArtifactJob, StorageRestoreArtifactSummary,
     StorageRestoreArtifactSummaryParts, StorageRestoreCompletion,
-    StorageRestoreCoordinatorSnapshot, StorageRestoreDocument, StorageRestoreDocumentMetadata,
-    StorageRestoreDrainState, StorageRestoreFailure, StorageRestoreInitiator,
-    StorageRestoreInitiatorParts, StorageRestoreInstance, StorageRestoreJob,
-    StorageRestoreJobStatus, StorageRestoreJobSummary, StorageRestoreStageCreate,
-    StorageRestoreStatus, StorageRestoreTimestamps, StorageRestoreTimestampsParts,
+    StorageRestoreCoordinatorSnapshot, StorageRestoreDocumentMetadata, StorageRestoreDrainState,
+    StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreInitiatorParts,
+    StorageRestoreInstance, StorageRestoreJobStatus, StorageRestoreJobSummary,
+    StorageRestoreReplayApply, StorageRestoreStageArtifact, StorageRestoreStatus,
+    StorageRestoreTimestamps, StorageRestoreTimestampsParts,
 };
 pub use task_execution::{
     StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageExportTaskArtifactBuilder,

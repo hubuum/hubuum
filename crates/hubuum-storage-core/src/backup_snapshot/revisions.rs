@@ -2,24 +2,14 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
-use super::{
-    StorageBackupHistorySection, StorageBackupRow, StorageBackupSnapshot, StorageBackupStateSection,
-};
-use crate::StorageValidationError;
+use super::view::{BackupView, ReadError, Rows};
+use super::{StorageBackupHistorySection, StorageBackupRow, StorageBackupStateSection};
 
 fn required_state_section(
-    document: &StorageBackupSnapshot,
+    document: &impl BackupView,
     section: StorageBackupStateSection,
-) -> Result<&[StorageBackupRow], StorageValidationError> {
-    document
-        .state_sections
-        .get(&section)
-        .map(Vec::as_slice)
-        .ok_or_else(|| {
-            StorageValidationError::invalid(format!(
-                "Backup snapshot is missing required state section '{section}'"
-            ))
-        })
+) -> Result<Rows<'_>, ReadError> {
+    document.state_rows(section)
 }
 
 const REVISION_STATE_SECTIONS: &[StorageBackupStateSection] = &[
@@ -75,35 +65,29 @@ pub(super) const REVISION_HISTORY_SECTIONS: &[(
     ),
 ];
 
-fn row_revision(section: &str, row: &StorageBackupRow) -> Result<i64, StorageValidationError> {
+fn row_revision(section: &str, row: &StorageBackupRow) -> Result<i64, ReadError> {
     row.get("revision")
         .and_then(Value::as_i64)
         .filter(|revision| (1..i64::MAX).contains(revision))
         .ok_or_else(|| {
-            StorageValidationError::invalid(format!(
+            ReadError::invalid(format!(
                 "Full backup section '{section}' contains an invalid resource revision"
             ))
         })
 }
 
-fn row_i64(
-    section: &str,
-    row: &StorageBackupRow,
-    field: &str,
-) -> Result<i64, StorageValidationError> {
+fn row_i64(section: &str, row: &StorageBackupRow, field: &str) -> Result<i64, ReadError> {
     row.get(field).and_then(Value::as_i64).ok_or_else(|| {
-        StorageValidationError::invalid(format!(
+        ReadError::invalid(format!(
             "Full backup section '{section}' contains an invalid {field}"
         ))
     })
 }
 
-pub(super) fn validate_backup_revisions(
-    document: &StorageBackupSnapshot,
-) -> Result<(), StorageValidationError> {
+pub(super) fn validate_backup_revisions(document: &impl BackupView) -> Result<(), ReadError> {
     for section in REVISION_STATE_SECTIONS {
         for row in required_state_section(document, *section)? {
-            row_revision(section.as_str(), row)?;
+            row_revision(section.as_str(), row?.as_ref())?;
         }
     }
 
@@ -112,49 +96,43 @@ pub(super) fn validate_backup_revisions(
     for &(_, section) in REVISION_HISTORY_SECTIONS {
         let mut ids = HashSet::new();
         for row in required_state_section(document, section)? {
-            let id = row_i64(section.as_str(), row, "id")?;
+            let id = row_i64(section.as_str(), row?.as_ref(), "id")?;
             if id <= 0 || !ids.insert(id) {
-                return Err(StorageValidationError::invalid(format!(
+                return Err(ReadError::invalid(format!(
                     "Full backup section '{section}' contains an invalid or duplicate resource identifier"
                 )));
             }
         }
     }
 
-    let Some(history) = &document.history_sections else {
+    if !document.includes_history() {
         return validate_event_revisions(document);
-    };
+    }
     for (history_section, state_section) in REVISION_HISTORY_SECTIONS {
-        let rows = history.get(history_section).ok_or_else(|| {
-            StorageValidationError::invalid(format!(
-                "Full backup history is missing required section '{history_section}'"
-            ))
-        })?;
-        for row in rows {
-            row_revision(history_section.as_str(), row)?;
+        let rows = document.history_rows(*history_section)?;
+        for row in rows.iter() {
+            row_revision(history_section.as_str(), row?.as_ref())?;
         }
         validate_live_history_revisions(document, *history_section, *state_section, rows)?;
     }
     validate_event_revisions(document)
 }
 
-fn validate_authorization_state_revisions(
-    document: &StorageBackupSnapshot,
-) -> Result<(), StorageValidationError> {
+fn validate_authorization_state_revisions(document: &impl BackupView) -> Result<(), ReadError> {
     let collection_ids = required_state_section(document, StorageBackupStateSection::Collections)?
         .iter()
-        .map(|row| row_i64("collections", row, "id"))
+        .map(|row| row_i64("collections", row?.as_ref(), "id"))
         .collect::<Result<HashSet<_>, _>>()?;
     let authorization_ids =
         required_state_section(document, StorageBackupStateSection::CollectionAuthorization)?
             .iter()
-            .map(|row| row_i64("collection_authorization", row, "collection_id"))
+            .map(|row| row_i64("collection_authorization", row?.as_ref(), "collection_id"))
             .collect::<Result<Vec<_>, _>>()?;
     let unique_authorization_ids = authorization_ids.iter().copied().collect::<HashSet<_>>();
     if authorization_ids.len() != unique_authorization_ids.len()
         || unique_authorization_ids != collection_ids
     {
-        return Err(StorageValidationError::invalid(
+        return Err(ReadError::invalid(
             "Full backup collection authorization revisions do not match collections".to_string(),
         ));
     }
@@ -162,54 +140,49 @@ fn validate_authorization_state_revisions(
 }
 
 fn validate_live_history_revisions(
-    document: &StorageBackupSnapshot,
+    document: &impl BackupView,
     history_section: StorageBackupHistorySection,
     state_section: StorageBackupStateSection,
-    history_rows: &[StorageBackupRow],
-) -> Result<(), StorageValidationError> {
+    history_rows: Rows<'_>,
+) -> Result<(), ReadError> {
     let live = required_state_section(document, state_section)?
         .iter()
         .map(|row| {
+            let row = row?;
             Ok((
-                row_i64(state_section.as_str(), row, "id")?,
-                row_revision(state_section.as_str(), row)?,
+                row_i64(state_section.as_str(), &row, "id")?,
+                row_revision(state_section.as_str(), &row)?,
             ))
         })
-        .collect::<Result<HashMap<_, _>, StorageValidationError>>()?;
+        .collect::<Result<HashMap<_, _>, ReadError>>()?;
     let mut open = HashMap::new();
-    for row in history_rows
-        .iter()
-        .filter(|row| row.get("valid_to").is_some_and(Value::is_null))
-    {
-        let id = row_i64(history_section.as_str(), row, "id")?;
-        let revision = row_revision(history_section.as_str(), row)?;
+    for row in history_rows {
+        let row = row?;
+        if !row.get("valid_to").is_some_and(Value::is_null) {
+            continue;
+        }
+        let id = row_i64(history_section.as_str(), &row, "id")?;
+        let revision = row_revision(history_section.as_str(), &row)?;
         if row.get("operation").and_then(Value::as_str) == Some("delete")
             || open.insert(id, revision).is_some()
         {
-            return Err(StorageValidationError::invalid(format!(
+            return Err(ReadError::invalid(format!(
                 "Full backup history section '{history_section}' has an invalid open snapshot"
             )));
         }
     }
     if open != live {
-        return Err(StorageValidationError::invalid(format!(
+        return Err(ReadError::invalid(format!(
             "Full backup live revisions disagree with '{history_section}'"
         )));
     }
     Ok(())
 }
 
-fn validate_event_revisions(
-    document: &StorageBackupSnapshot,
-) -> Result<(), StorageValidationError> {
-    let Some(events) = document
-        .history_sections
-        .as_ref()
-        .and_then(|history| history.get(&StorageBackupHistorySection::AuditEvents))
-    else {
-        return Ok(());
-    };
+fn validate_event_revisions(document: &impl BackupView) -> Result<(), ReadError> {
+    let events = document.history_rows(StorageBackupHistorySection::AuditEvents)?;
     for event in events {
+        let event = event?;
         for (column, snapshot) in [("before_revision", "before"), ("after_revision", "after")] {
             let stored = match event.get(column) {
                 None | Some(Value::Null) => None,
@@ -218,7 +191,7 @@ fn validate_event_revisions(
                         .as_i64()
                         .filter(|revision| (1..i64::MAX).contains(revision))
                         .ok_or_else(|| {
-                            StorageValidationError::invalid(format!(
+                            ReadError::invalid(format!(
                                 "Full backup event contains an invalid {column}"
                             ))
                         })?,
@@ -230,7 +203,7 @@ fn validate_event_revisions(
                 .and_then(|value| value.get("revision"))
                 .and_then(Value::as_i64);
             if stored.is_some() && stored != snapshot_revision {
-                return Err(StorageValidationError::invalid(format!(
+                return Err(ReadError::invalid(format!(
                     "Full backup event {column} disagrees with its {snapshot} snapshot"
                 )));
             }
@@ -249,7 +222,7 @@ fn validate_event_revisions(
                 _ => before && after,
             };
             if !valid_shape {
-                return Err(StorageValidationError::invalid(
+                return Err(ReadError::invalid(
                     "Full backup revision-aware event has inconsistent before/after revisions"
                         .to_string(),
                 ));
@@ -262,6 +235,7 @@ fn validate_event_revisions(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::StorageBackupSnapshot;
     use rstest::rstest;
     use serde_json::json;
 

@@ -838,6 +838,14 @@ diesel::table! {
 }
 
 diesel::table! {
+    restore_artifact_chunks (restore_job_id, ordinal) {
+        restore_job_id -> Int8,
+        ordinal -> Int4,
+        content -> Bytea,
+    }
+}
+
+diesel::table! {
     restore_jobs (id) {
         id -> Int8,
         status -> Varchar,
@@ -1101,6 +1109,7 @@ diesel::joinable!(remote_call_results -> remote_targets (target_id));
 diesel::joinable!(remote_call_results -> tasks (task_id));
 diesel::joinable!(remote_targets -> collections (collection_id));
 diesel::joinable!(remote_targets -> hubuumclass (class_id));
+diesel::joinable!(restore_artifact_chunks -> restore_jobs (restore_job_id));
 diesel::joinable!(schema_impact_findings -> schema_validation_work (task_id));
 diesel::joinable!(schema_repair_reports -> schema_validation_work (task_id));
 diesel::joinable!(schema_validation_work -> hubuumclass (class_id));
@@ -1171,6 +1180,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     remote_call_results,
     remote_targets,
     remote_targets_history,
+    restore_artifact_chunks,
     restore_jobs,
     restore_success_receipts,
     schema_impact_findings,

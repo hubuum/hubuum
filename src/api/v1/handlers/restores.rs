@@ -1,7 +1,7 @@
 use crate::extractors::AccessEventContext;
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, post, web};
-use bytes::BytesMut;
 use futures_util::StreamExt;
+use hubuum_storage_core::StorageRestoreArtifactBuilder;
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
@@ -42,28 +42,18 @@ pub async fn create_restore_stage(
     admin: AdminAccess,
     mut payload: web::Payload,
 ) -> Result<impl Responder, ApiError> {
-    let mut document = BytesMut::new();
+    let mut document = StorageRestoreArtifactBuilder::new(settings.max_upload_bytes())?;
     while let Some(chunk) = payload.next().await {
         let chunk = chunk.map_err(|error| {
             ApiError::BadRequest(format!("Failed to read restore upload: {error}"))
         })?;
-        if document.len().saturating_add(chunk.len()) > settings.max_upload_bytes() {
-            return Err(ApiError::PayloadTooLarge(format!(
-                "Restore upload exceeds the configured {} byte limit",
-                settings.max_upload_bytes()
-            )));
-        }
-        document.extend_from_slice(&chunk);
+        document.push(&chunk)?;
     }
-    if document.is_empty() {
-        return Err(ApiError::BadRequest(
-            "Restore upload must contain a backup document".to_string(),
-        ));
-    }
+    let artifact = document.finish()?;
     let principal = load_principal_by_id(&context, admin.user.id).await?;
     let scope_name = resolve_identity_scope_name(&context, principal.identity_scope_id).await?;
     let initiator = RestoreInitiator::principal(&principal, scope_name)?;
-    let request = RestoreStageRequest::new(initiator, document.to_vec())?;
+    let request = RestoreStageRequest::new(initiator, artifact)?;
     let staged = stage_restore(&context, &settings, request).await?;
     Ok(ApiResponse::new_no_store(staged, StatusCode::CREATED))
 }

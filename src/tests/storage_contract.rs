@@ -1,3 +1,4 @@
+use hubuum_storage_core::StorageRestoreStageArtifact;
 mod auth_sessions;
 use hubuum_storage_core::{EventSinkGrantAction, StorageAuditSubject, StorageEventSinkGrantChange};
 mod authentication;
@@ -145,16 +146,16 @@ use crate::storage::{
     StorageRemoteCallTaskArtifact, StorageRemoteTargetCreate, StorageRemoteTargetDefinition,
     StorageRemoteTargetDelete, StorageRemoteTargetInvocation, StorageRemoteTargetListQuery,
     StorageRemoteTargetPatch, StorageRemoteTargetPolicy, StorageRemoteTargetTransport,
-    StorageRemoteTargetUpdate, StorageRestoreArtifactSummary, StorageRestoreFailure,
-    StorageRestoreInitiator, StorageRestoreJobStatus, StorageRestoreStageCreate,
-    StorageRevisionPrecondition, StorageRevisionTarget, StorageServiceAccountCreate,
-    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountUpdate,
-    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageTaskActiveStatus, StorageTaskActiveUpdate,
-    StorageTaskChildListQuery, StorageTaskCompletion, StorageTaskCompletionPayload,
-    StorageTaskCreateRequest, StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure,
-    StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery,
-    StorageTaskOutputLookup, StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStatus,
+    StorageRemoteTargetUpdate, StorageRestoreFailure, StorageRestoreInitiator,
+    StorageRestoreJobStatus, StorageRevisionPrecondition, StorageRevisionTarget,
+    StorageServiceAccountCreate, StorageServiceAccountListQuery, StorageServiceAccountMutation,
+    StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
+    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageTaskActiveStatus,
+    StorageTaskActiveUpdate, StorageTaskChildListQuery, StorageTaskCompletion,
+    StorageTaskCompletionPayload, StorageTaskCreateRequest, StorageTaskEventAppend,
+    StorageTaskEventInput, StorageTaskFailure, StorageTaskKind, StorageTaskLease,
+    StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
+    StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStatus,
     StorageTaskTerminalStatus, StorageTaskTerminalUpdate, StorageTokenCreate, StorageTokenDigest,
     StorageTokenFormat, StorageTokenHashAlgorithm, StorageTokenHashKeyId, StorageTokenHashRevoke,
     StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState,
@@ -1227,16 +1228,12 @@ impl RestoreCoordinationFaultFixture for PostgresRestoreCoordinationFaultFixture
             .all(|instance| instance.instance_id() != instance_id);
 
         let job = backend
-            .stage_restore(
-                StorageRestoreStageCreate::try_new(
+            .stage_restore_artifact(
+                StorageRestoreStageArtifact::try_new(
                     StorageRestoreInitiator::try_new(None, "fault-test", prefix("restore_fault"))
                         .expect("valid restore initiator"),
-                    b"{}".to_vec(),
-                    StorageRestoreArtifactSummary::try_new(
-                        2,
-                        "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-                    )
-                    .expect("valid restore artifact"),
+                    hubuum_storage_core::StorageRestoreArtifact::from_reader(b"{}".as_slice(), 2)
+                        .unwrap(),
                     "f".repeat(64),
                     serde_json::json!({"compatible": true}),
                     now + chrono::Duration::try_hours(1).expect("valid test duration"),
@@ -4601,12 +4598,14 @@ async fn every_available_storage_backend_supplies_backup_snapshots() {
         )
         .await;
         let (state, history) = backend
-            .capture_backup_snapshot(
+            .capture_backup_replay(
                 false,
                 StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
             )
             .await
             .expect("certified backend should supply a state-only backup snapshot")
+            .materialize()
+            .expect("replay rows")
             .into_parts();
         assert_eq!(
             state.len(),
@@ -4640,12 +4639,14 @@ async fn every_available_storage_backend_supplies_backup_snapshots() {
         assert!(history.is_none());
 
         let (state, history) = backend
-            .capture_backup_snapshot(
+            .capture_backup_replay(
                 true,
                 StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
             )
             .await
             .expect("certified backend should supply a history-inclusive backup snapshot")
+            .materialize()
+            .expect("replay should preserve the snapshot")
             .into_parts();
         assert_eq!(
             state.len(),
@@ -4878,16 +4879,12 @@ async fn every_available_storage_backend_supplies_restore_lifecycle_and_coordina
         let backend = environment.storage();
         let label = prefix("restore");
         let job = backend
-            .stage_restore(
-                StorageRestoreStageCreate::try_new(
+            .stage_restore_artifact(
+                StorageRestoreStageArtifact::try_new(
                     StorageRestoreInitiator::try_new(None, "compatibility", label.clone())
                         .expect("valid restore initiator"),
-                    b"{}".to_vec(),
-                    StorageRestoreArtifactSummary::try_new(
-                        2,
-                        "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-                    )
-                    .expect("valid restore artifact"),
+                    hubuum_storage_core::StorageRestoreArtifact::from_reader(b"{}".as_slice(), 2)
+                        .unwrap(),
                     "b".repeat(64),
                     serde_json::json!({"compatible": true}),
                     now + chrono::Duration::try_hours(1).expect("valid duration"),
@@ -4903,12 +4900,15 @@ async fn every_available_storage_backend_supplies_restore_lifecycle_and_coordina
         assert_eq!(job.summary().status(), StorageRestoreJobStatus::Validated);
 
         let loaded = backend
-            .get_restore_job(job_id)
+            .get_restore_artifact(job_id)
             .await
             .expect("certified backend should load staged restore bytes");
         let (loaded_summary, document, capability_hash) = loaded.into_parts();
         assert_eq!(loaded_summary.id(), job_id);
-        assert_eq!(document, b"{}".to_vec());
+        assert_eq!(
+            serde_json::from_reader::<_, serde_json::Value>(document.unwrap().reader()).unwrap(),
+            serde_json::json!({})
+        );
         assert_eq!(capability_hash, "b".repeat(64));
 
         let status = backend
@@ -4956,12 +4956,12 @@ async fn every_available_storage_backend_supplies_restore_lifecycle_and_coordina
             .await
             .expect("certified backend should atomically fail a restore");
         let failed = backend
-            .get_restore_job(job_id)
+            .get_restore_artifact(job_id)
             .await
             .expect("failed restore should remain queryable");
         let (failed_summary, failed_document, _) = failed.into_parts();
         assert_eq!(failed_summary.status(), StorageRestoreJobStatus::Failed);
-        assert!(failed_document.is_empty());
+        assert!(failed_document.is_none());
 
         backend
             .resume_maintenance_without_restore()
@@ -4974,16 +4974,12 @@ async fn every_available_storage_backend_supplies_restore_lifecycle_and_coordina
 
         let expired_label = prefix("expired_restore");
         let expired = backend
-            .stage_restore(
-                StorageRestoreStageCreate::try_new(
+            .stage_restore_artifact(
+                StorageRestoreStageArtifact::try_new(
                     StorageRestoreInitiator::try_new(None, "compatibility", expired_label.clone())
                         .expect("valid restore initiator"),
-                    b"{}".to_vec(),
-                    StorageRestoreArtifactSummary::try_new(
-                        2,
-                        "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-                    )
-                    .expect("valid restore artifact"),
+                    hubuum_storage_core::StorageRestoreArtifact::from_reader(b"{}".as_slice(), 2)
+                        .unwrap(),
                     "d".repeat(64),
                     serde_json::json!({"compatible": true}),
                     now - chrono::Duration::try_minutes(1).expect("valid duration"),

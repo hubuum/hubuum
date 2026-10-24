@@ -572,11 +572,13 @@ mod restore_streams {
     }
 
     #[rstest]
-    #[case::restore("--restore", "Restore document is not valid backup JSON")]
-    #[case::verify("--verify-backup", "must be an ordinary file")]
+    #[case::restore("--restore", "Backup document is not valid backup JSON", None)]
+    #[case::verify("--verify-backup", "must be an ordinary file", None)]
+    #[case::restore_byte_limit("--restore", "exceeds 2 bytes", Some("2"))]
     fn fifo_input_preserves_each_commands_read_policy(
         #[case] operation: &str,
         #[case] expected_error: &str,
+        #[case] max_bytes: Option<&str>,
     ) {
         let input = FifoInput::new();
         let mut command = Command::new(admin_binary());
@@ -584,6 +586,9 @@ mod restore_streams {
         command.arg(operation).arg(&input.path);
         if operation == "--restore" {
             command.args(["--restore-confirmation", RESTORE_CONFIRMATION_PHRASE]);
+        }
+        if let Some(max_bytes) = max_bytes {
+            command.args(["--restore-max-upload-bytes", max_bytes]);
         }
 
         let output = run_command(command);
@@ -614,7 +619,7 @@ mod restore_streams {
         assert!(!output.status.success());
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("Restore document is not valid backup JSON"),
+            stderr.contains("Backup document is not valid backup JSON"),
             "unexpected error: {stderr}"
         );
     }

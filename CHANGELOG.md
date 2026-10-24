@@ -18,8 +18,39 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Update `ctutils` to 0.4.4 in the application and fuzz lockfiles to address
   RUSTSEC-2026-0385 (non-constant-time mask generation and `u128` comparisons).
 
+### Fixed
+
+- Scale lifecycle memory supervision counts each Linux process once rather than
+  counting its shared address space again for every thread. Earlier reports that
+  the large backup fixture exceeded 6 GiB and 12 GiB are superseded: the monitor
+  inflated RSS and terminated the administrator prematurely.
+- Scale lifecycle reports retain restore timing when structured logs precede the
+  verification report, and leave unmeasured computed-data rebuild timing unset.
+
 ### Changed
 
+- **Breaking (backup/restore deployments):** Stream PostgreSQL backup capture, administrator file verification, restore
+  uploads, and restore application through private replayable files. Validation
+  retains identity and schema indexes instead of all decoded object and relation
+  bodies. PostgreSQL stages restore artifacts in chunks of at most 1 MiB, shared
+  by separately deployed executors, and applies rows in bounded batches inside
+  the existing atomic transaction. Backup JSON versions 6–10 remain supported.
+  Apply the migration and upgrade restore executors before staging new restores;
+  old executors cannot read chunked stages. Complete or expire these stages before
+  rolling back the migration. Temporary disk space is now required for spooling;
+  refresh installer configuration or mount writable storage at the container
+  `TMPDIR` (normally `/tmp`).
+- **Breaking:** Administrator restore and backup verification enforce
+  `--restore-max-upload-bytes`. The limit also applies to piped restore input.
+  Increase that explicit limit when processing a larger artifact.
+- **Breaking (storage SDK backup/restore):** Remove the materialized capture,
+  staging, artifact-loading, and apply methods, their obsolete request types,
+  and materialized snapshot restore-validation and normalization helpers.
+  Adapters must implement the replay capabilities directly; migrate using the
+  [0.5 SDK guide](docs/storage_adapter_sdk.md#upgrading-from-04-to-05).
+  Storage operation metric labels now use `capture_backup_replay`,
+  `stage_restore_artifact`, `get_restore_artifact`, and `apply_restore_replay`;
+  update queries that filter the former operation names.
 - **Breaking (storage SDK):** advance the coordinated SDK train to `0.5.0`.
   Class-relation commands retain validated aliases and limits; relation
   decomposition uses named fields, and session issuance carries validated
@@ -35,8 +66,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   budgets. The large profile uses a 1 GiB document ceiling and four million
   scanned rows. A lifecycle-only command records per-stage memory and timing,
   bounds administrator execution, and removes temporary backup documents.
-  The measured large corpus exceeds both 6 GiB and 12 GiB process envelopes;
-  reports distinguish that limitation from completed verification or restore.
+  Reports distinguish limit termination from completed verification or restore;
+  the original memory-limit observations are superseded by the accounting fix
+  described above.
   Production backup and restore defaults remain unchanged.
 - Release builds use speed-oriented optimization (`opt-level = 3`) with the
   existing fat LTO and single codegen unit. Representative serialization, schema

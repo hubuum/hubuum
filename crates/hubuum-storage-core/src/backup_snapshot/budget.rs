@@ -39,7 +39,20 @@ impl StorageBackupBudget {
     /// Serialize through a hard byte limit, including all document framing.
     /// No write can grow the artifact contents beyond the limit.
     pub fn serialize<T: Serialize>(self, value: &T) -> Result<Vec<u8>, StorageError> {
-        let mut writer = LimitedWriter::new(Vec::new(), self.max_bytes);
+        let mut bytes = Vec::new();
+        self.serialize_into(value, &mut bytes)?;
+        Ok(bytes)
+    }
+
+    /// Write compact JSON directly to a sink, enforcing the same artifact limit
+    /// as `serialize`. The caller owns flushing, durability and atomic publication;
+    /// a failed write may leave a partial document in the sink.
+    pub fn serialize_into<T: Serialize>(
+        self,
+        value: &T,
+        writer: impl io::Write,
+    ) -> Result<usize, StorageError> {
+        let mut writer = LimitedWriter::new(writer, self.max_bytes);
         serde_json::to_writer(&mut writer, value).map_err(|error| {
             if writer.budget().exceeded() {
                 StorageError::input_too_large(format!(
@@ -50,7 +63,7 @@ impl StorageBackupBudget {
                 StorageError::internal(format!("Backup serialization failed: {error}"))
             }
         })?;
-        Ok(writer.into_inner())
+        Ok(writer.budget().used())
     }
 }
 
@@ -160,6 +173,38 @@ mod tests {
         if let Ok(bytes) = result {
             assert_eq!(bytes, br#"{"x":"\n"}"#);
         }
+    }
+
+    #[rstest]
+    #[case::exact(10, true)]
+    #[case::too_small(9, false)]
+    fn streaming_artifact_enforces_the_same_byte_limit(
+        #[case] limit: usize,
+        #[case] accepted: bool,
+    ) {
+        let mut output = Vec::new();
+        let result = StorageBackupBudget::new(limit, 1)
+            .unwrap()
+            .serialize_into(&json!({"x": "\n"}), &mut output);
+        assert_eq!(result.is_ok(), accepted);
+        assert!(output.len() <= limit);
+        match result {
+            Ok(count) => {
+                assert_eq!(count, output.len());
+                assert_eq!(output, br#"{"x":"\n"}"#);
+            }
+            Err(error) => assert_eq!(error.kind(), StorageErrorKind::InputTooLarge),
+        }
+    }
+
+    #[test]
+    fn streaming_artifact_propagates_sink_failure() {
+        let mut buffer = [0; 2];
+        let error = StorageBackupBudget::new(100, 1)
+            .unwrap()
+            .serialize_into(&json!({"x": 1}), buffer.as_mut_slice())
+            .unwrap_err();
+        assert_eq!(error.kind(), StorageErrorKind::Internal);
     }
 
     #[rstest]

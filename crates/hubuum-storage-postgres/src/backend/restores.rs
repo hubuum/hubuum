@@ -1,32 +1,31 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hubuum_domain::RestoreJobId;
-use uuid::Uuid;
-
 use hubuum_storage_core::{
-    RestoreStorage, StorageError, StorageRestoreApply, StorageRestoreCompletion,
+    RestoreStorage, StorageError, StorageRestoreArtifactJob, StorageRestoreCompletion,
     StorageRestoreCoordinatorSnapshot, StorageRestoreDrainState, StorageRestoreFailure,
-    StorageRestoreJob, StorageRestoreStageCreate, StorageRestoreStatus,
+    StorageRestoreReplayApply, StorageRestoreStageArtifact, StorageRestoreStatus,
 };
+use uuid::Uuid;
 
 use super::PostgresStorage;
 
 #[async_trait]
 impl RestoreStorage for PostgresStorage {
-    async fn stage_restore(
+    async fn stage_restore_artifact(
         &self,
-        request: StorageRestoreStageCreate,
-    ) -> Result<StorageRestoreJob, StorageError> {
-        crate::operations::restore_lifecycle::stage_restore(self.runtime(), request)
+        request: StorageRestoreStageArtifact,
+    ) -> Result<StorageRestoreStatus, StorageError> {
+        crate::operations::restore_lifecycle::stage_restore_artifact(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }
 
-    async fn get_restore_job(
+    async fn get_restore_artifact(
         &self,
         job_id: RestoreJobId,
-    ) -> Result<StorageRestoreJob, StorageError> {
-        crate::operations::restore_lifecycle::get_restore_job(self.runtime(), job_id.id())
+    ) -> Result<StorageRestoreArtifactJob, StorageError> {
+        crate::operations::restore_lifecycle::get_restore_artifact(self.runtime(), job_id.id())
             .await
             .map_err(StorageError::from)
     }
@@ -55,11 +54,11 @@ impl RestoreStorage for PostgresStorage {
             .map_err(StorageError::from)
     }
 
-    async fn apply_restore(
+    async fn apply_restore_replay(
         &self,
-        request: StorageRestoreApply,
+        request: StorageRestoreReplayApply,
     ) -> Result<StorageRestoreCompletion, StorageError> {
-        crate::operations::restore_lifecycle::apply_restore(self.runtime(), request)
+        crate::operations::restore_lifecycle::apply_restore_replay(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }

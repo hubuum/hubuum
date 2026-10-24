@@ -5,12 +5,8 @@ use sha2::{Digest, Sha256};
 
 use crate::errors::ApiError;
 use crate::models::retention::FutureRetention;
-use crate::models::{
-    BackupDocument, BackupHistory, BackupManifest, BackupRequest, BackupState,
-    CURRENT_BACKUP_VERSION, NewTaskEventRecord, TaskResultCounts, TaskStatus,
-};
+use crate::models::{BackupRequest, NewTaskEventRecord, TaskResultCounts, TaskStatus};
 use crate::permissions::{AppContext, PrincipalRef};
-use crate::services::backups::capture_backup_snapshot;
 use crate::services::tasks::{ClaimedTask, TaskStateChange, complete_task};
 use crate::storage::{
     StorageBackupBudget, StorageBackupTaskArtifact, StorageTaskCompletionPayload,
@@ -64,42 +60,6 @@ impl BackupSettings {
     }
 }
 
-fn build_manifest(state: &BackupState, history: Option<&BackupHistory>) -> BackupManifest {
-    BackupManifest::from_sections(state, history)
-}
-
-pub async fn create_backup_document(
-    backend: &impl crate::storage::StorageContext,
-    request: &BackupRequest,
-    budget: StorageBackupBudget,
-) -> Result<BackupDocument, ApiError> {
-    let include_history = request.include_history;
-    let (state, history) = capture_backup_snapshot(backend, include_history, budget)
-        .await?
-        .into_parts();
-    let state = BackupState { sections: state };
-    let history = history.map(|sections| BackupHistory { sections });
-    let manifest = build_manifest(&state, history.as_ref());
-    let mut document = BackupDocument {
-        backup_version: CURRENT_BACKUP_VERSION,
-        created_at: Utc::now(),
-        source_version: env!("CARGO_PKG_VERSION").to_string(),
-        state,
-        history,
-        manifest,
-    };
-    crate::restores::validate_document_fields(
-        &mut document,
-        crate::storage::storage_handle(backend).schema_limits(),
-    )
-    .map_err(|error| {
-        ApiError::InternalServerError(format!(
-            "Captured backup violates the restore contract: {error}"
-        ))
-    })?;
-    Ok(document)
-}
-
 pub(crate) async fn execute_backup_task(
     context: &AppContext,
     task: &ClaimedTask,
@@ -113,16 +73,19 @@ pub(crate) async fn execute_backup_task(
         .ok_or_else(|| ApiError::BadRequest("Backup task payload is missing".to_string()))?;
     let request: BackupRequest = serde_json::from_value(payload)?;
     authorize_backup_request(context, user, scopes).await?;
-    let document = create_backup_document(context, &request, settings.budget()).await?;
+    let document =
+        crate::restores::replay::capture(context, request.include_history, settings.budget())
+            .await?;
     crate::tasks::control::checkpoint()?;
     let bytes = settings.budget().serialize(&document)?;
+    let total_items = document.summary()?.total_items;
+    drop(document);
     crate::tasks::control::checkpoint()?;
     let sha256 = Sha256::digest(&bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     let expires_at = settings.output_expires_at(Utc::now().naive_utc())?;
-    let total_items = document.manifest.item_counts.values().copied().sum::<i64>();
     let total_items = i32::try_from(total_items).unwrap_or(i32::MAX);
     let summary = format!(
         "Full backup completed with {} logical rows ({} bytes)",

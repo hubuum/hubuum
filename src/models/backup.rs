@@ -1,9 +1,11 @@
+use hubuum_storage_core::{
+    StorageBackupHistorySections, StorageBackupStateSections, StorageRestoreArtifact,
+};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-use hubuum_storage_core::{StorageBackupHistorySections, StorageBackupStateSections};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -78,24 +80,26 @@ impl RestoreInitiator {
 /// Typed input for staging an exact backup artifact under an initiator snapshot.
 pub struct RestoreStageRequest {
     initiator: RestoreInitiator,
-    document_bytes: Vec<u8>,
+    artifact: StorageRestoreArtifact,
 }
 
 impl RestoreStageRequest {
-    pub fn new(initiator: RestoreInitiator, document_bytes: Vec<u8>) -> Result<Self, ApiError> {
-        if document_bytes.is_empty() {
+    pub fn new(
+        initiator: RestoreInitiator,
+        artifact: StorageRestoreArtifact,
+    ) -> Result<Self, ApiError> {
+        if artifact.summary().byte_size() == 0 {
             return Err(ApiError::BadRequest(
-                "Restore upload must contain a backup document".to_string(),
+                "Restore upload must contain a backup document".into(),
             ));
         }
         Ok(Self {
             initiator,
-            document_bytes,
+            artifact,
         })
     }
-
-    pub(crate) fn into_parts(self) -> (RestoreInitiator, Vec<u8>) {
-        (self.initiator, self.document_bytes)
+    pub(crate) fn into_parts(self) -> (RestoreInitiator, StorageRestoreArtifact) {
+        (self.initiator, self.artifact)
     }
 }
 
@@ -247,6 +251,7 @@ impl BackupDocument {
 
 #[cfg(test)]
 mod tests {
+    use hubuum_storage_core::StorageRestoreArtifact;
     use rstest::rstest;
 
     use super::{BackupRequest, RestoreInitiator, RestoreJobID, RestoreStageRequest};
@@ -284,7 +289,13 @@ mod tests {
         let initiator =
             RestoreInitiator::new(None, "system", "hubuum-admin").expect("restore initiator");
 
-        assert!(RestoreStageRequest::new(initiator, Vec::new()).is_err());
+        assert!(
+            RestoreStageRequest::new(
+                initiator,
+                StorageRestoreArtifact::from_reader(&b""[..], 1).unwrap()
+            )
+            .is_err()
+        );
     }
 
     #[test]
