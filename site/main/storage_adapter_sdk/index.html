@@ -5120,7 +5120,7 @@ recovery, and discard them with their work during retention or restore replaceme
 in class imports. Map the three new logical schema state sections and schema
 history section for backup format 6, validate them before restore replacement,
 and recreate revalidation work without restoring active leases or impact proofs.</p>
-<p><code>BackupSnapshotStorage::capture_backup_snapshot</code> now requires a validated
+<p><code>BackupSnapshotStorage::capture_backup_replay</code> requires a validated
 <code>StorageBackupBudget</code> in addition to the history selection. Pass deployment
 limits through unchanged and enforce both logical bytes and enumerated-row work
 before retaining snapshot rows. <code>StorageBackupCaptureProgress</code> supplies checked
@@ -5131,6 +5131,18 @@ that captures an unbounded document and checks its size afterward.
 Use <code>verify_backup_budget_rejected</code> from <code>hubuum-storage-conformance</code> with
 fixtures exceeding each limit, and retain native probes proving early database
 or iterator termination and bounded retained state.</p>
+<p>The materialized <code>capture_backup_snapshot</code>, <code>stage_restore</code>, <code>get_restore_job</code>,
+and <code>apply_restore</code> methods have been removed. Implement <code>capture_backup_replay</code>,
+<code>stage_restore_artifact</code>, <code>get_restore_artifact</code>, and <code>apply_restore_replay</code>
+directly; these are mandatory and have no materializing fallback. Replace
+<code>StorageRestoreStageCreate</code>, <code>StorageRestoreJob</code>, <code>StorageRestoreDocument</code>, and
+<code>StorageRestoreApply</code> with <code>StorageRestoreStageArtifact</code>,
+<code>StorageRestoreArtifactJob</code>, and <code>StorageRestoreReplayApply</code> as appropriate.
+Use <code>StorageRestoreArtifact::from_reader</code> for exact-byte staging and
+<code>StorageRestoreReplayApply::at_restore_boundary</code> to prepare baseline history.
+Replay I/O failures must abort the same transaction as ordinary write failures.
+Provide writable temporary storage through <code>TMPDIR</code>; see
+<a href="../deployment/#backup-spool-storage">backup spool storage</a>.</p>
 <p>Run the portable conformance suite and native transaction, lease, concurrency,
 and query-budget tests. The shared implementation scenarios and exact method
 inventory are in <code>docs/storage_boundary/semantic-coverage.toml</code>; behavioral
@@ -5222,8 +5234,9 @@ named accessors instead of a positional tuple.</p>
 this value after its three identifiers. Use <code>SessionLifetimes::try_new</code> and
 <code>deadlines</code> for rotation with persisted policy and the fixed family deadline.
 Retain the adapter's transaction, replay detection, and concurrency fencing.</p>
-<p>Restore upload validation can use <code>StorageBackupSnapshot::try_new_for_restore</code>
-to obtain a validated snapshot. Shared resource checks and legacy normalization
+<p>Restore upload validation uses <code>StorageBackupReplayBuilder::finish_for_restore</code>
+to obtain a validated replay. The older materialized validation constructors and
+normalization helpers are removed; apply destination schema limits to the replay. Shared resource checks and legacy normalization
 now live in storage-core; application artifact metadata and manifest checks
 remain the caller's responsibility. Adapters still enforce cross-row and
 transactional restore invariants.</p>

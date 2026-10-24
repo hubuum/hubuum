@@ -4384,10 +4384,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#measured-large-profile-limitation" class="md-nav__link">
+  <a href="#superseded-large-profile-memory-measurements" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Measured large-profile limitation
+        Superseded large-profile memory measurements
       </span>
     </span>
   </a>
@@ -4399,6 +4399,50 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Format decision
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#initial-memory-phase-measurements" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Initial memory-phase measurements
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#initial-reductions-in-retained-memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Initial reductions in retained memory
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#streaming-measurements" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Streaming measurements
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#streaming-implementation-indexed-json-replay" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Streaming implementation: indexed JSON replay
       </span>
     </span>
   </a>
@@ -4685,10 +4729,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#measured-large-profile-limitation" class="md-nav__link">
+  <a href="#superseded-large-profile-memory-measurements" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Measured large-profile limitation
+        Superseded large-profile memory measurements
       </span>
     </span>
   </a>
@@ -4700,6 +4744,50 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Format decision
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#initial-memory-phase-measurements" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Initial memory-phase measurements
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#initial-reductions-in-retained-memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Initial reductions in retained memory
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#streaming-measurements" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Streaming measurements
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#streaming-implementation-indexed-json-replay" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Streaming implementation: indexed JSON replay
       </span>
     </span>
   </a>
@@ -4833,7 +4921,8 @@ Ordinary <code>rust-pr-bench</code> jobs own base-versus-pull-request code-regre
 comparisons at a fixed corpus.</p>
 <h2 id="dataset-profiles">Dataset Profiles<a class="headerlink" href="#dataset-profiles" title="Permanent link">&para;</a></h2>
 <p>The committed profiles are compact TOML specifications. Generated rows, backup
-artifacts, and reports are CI artifacts and must not be committed.</p>
+artifacts, and raw reports are CI artifacts and must not be committed. Reviewed,
+sanitized measurement summaries may accompany performance documentation.</p>
 <table>
 <thead>
 <tr>
@@ -5292,7 +5381,7 @@ and retains reports for 14 days. It never uploads generated backup contents.</p>
 empty. The command writes the manifest, provisioning policy and lifecycle report
 and exits unsuccessfully unless offline verification (and the requested restore)
 completed. It does not silently accept a size limitation as a completed drill.</p>
-<h3 id="measured-large-profile-limitation">Measured large-profile limitation<a class="headerlink" href="#measured-large-profile-limitation" title="Permanent link">&para;</a></h3>
+<h3 id="superseded-large-profile-memory-measurements">Superseded large-profile memory measurements<a class="headerlink" href="#superseded-large-profile-memory-measurements" title="Permanent link">&para;</a></h3>
 <p>On 23 October 2026, the version-2 large fixture (seed <code>36520260901</code>, 250,000
 objects and 1,000,000 object relations, plus temporal histories and operational
 overlays) was loaded and verified against PostgreSQL 18.6. Its temporal-state
@@ -5301,10 +5390,10 @@ Both runs admitted 1 GiB of document bytes and 4,000,000 scanned rows:</p>
 <table>
 <thead>
 <tr>
-<th>Process memory ceiling</th>
+<th>Configured ceiling</th>
 <th>Preflight</th>
 <th>Backup before termination</th>
-<th>Sampled peak RSS</th>
+<th>Reported aggregate</th>
 <th>Result</th>
 </tr>
 </thead>
@@ -5325,32 +5414,220 @@ Both runs admitted 1 GiB of document bytes and 4,000,000 scanned rows:</p>
 </tr>
 </tbody>
 </table>
+<p>These reports <strong>do not measure actual process RSS</strong>. The supervisor used
+<code>sysinfo</code>'s default process refresh, which also lists Linux threads as tasks with
+their process as parent. It added each thread's shared RSS to the process RSS.
+Tokio worker threads therefore multiplied the reported total. The corrected
+supervisor disables task enumeration while retaining real child processes.</p>
 <p>The administrator was killed and reaped and the private artifact directories
 were removed in both runs. Neither produced a completed backup document;
-verification and restore were not attempted. These peaks include sampling
-overshoot. The fixture ran on Linux x86-64, an Intel Xeon Silver 4216 (16 cores,
+verification and restore were not attempted. The fixture ran on Linux x86-64,
+an Intel Xeon Silver 4216 (16 cores,
 32 threads), 62 GiB RAM, with a Rust 1.98.0 release administrator using <code>opt-level=z</code>,
 fat LTO, both TLS features and embedded migrations. Other validation builds were
 running, so timings are diagnostic observations, not performance baselines.</p>
-<p>The default large corpus therefore <strong>does not have a completed lifecycle within
-the measured 6 GiB or 12 GiB process envelopes</strong>. Keep that explicit limitation;
-raising the byte limit is not evidence of memory safety or restore support.
-The existing materialized backup representation needs further retained-memory
-reduction or a streaming/versioned design before claiming this corpus works on
-ordinary CI runners. The huge profile has no successful measured lifecycle here.
-To select a different provisioned envelope, copy the TOML profile, edit
+<p>The earlier conclusion that the large corpus exhausted 6 GiB and 12 GiB is
+withdrawn. A fresh run on <code>283ce8ce</code> reproduced the incorrect rejection at a
+reported 6,454,394,880 bytes after 14.748 seconds; a bounded 100,000-row capture
+measured independently with the system allocator profiler and <code>/usr/bin/time</code>
+used 147,304,414 bytes of peak heap and 222,976 KiB peak RSS while retaining
+34,187,173 compact logical bytes. Limiting allocator arenas did not correct the
+supervisor's accounting error.</p>
+<p>Use corrected process-only measurements to decide whether the materialized
+representation fits a provisioned envelope. The huge profile has no successful
+measured lifecycle here. To select a different envelope, copy the TOML profile, edit
 <code>lifecycle_max_resident_bytes</code>, and pass <code>--profile large --profile-spec &lt;file&gt;</code>.
 The harness enforces and records that choice; it does not certify it in advance.</p>
 <h3 id="format-decision">Format decision<a class="headerlink" href="#format-decision" title="Permanent link">&para;</a></h3>
-<p>Use the existing compact versioned JSON backup and an explicitly provisioned
-extended ceiling. Compression could reduce artifact/disk bytes but would not
-reduce the decoded row graph retained by verification/restore. A streaming format
-would require incremental validation, transaction-safe restoration, bounded
-cross-section reference checks and new compatibility/version handling. Neither
-is necessary to measure the current envelope, and neither is implied by a larger
-byte setting. Preserve the production capture limits and report measurements
-before selecting a format change. Backup capture already streams rows from
-PostgreSQL, but the admitted document and restore graph are still materialized.</p>
+<p>Keep the existing compact versioned JSON format and production limits. Measure
+each phase before selecting a larger deployment envelope. Compression could
+reduce artifact and disk bytes but would not reduce the decoded row graph.
+The initial memory changes retained complete decoded snapshots. The streaming
+implementation below replaces those graphs with replayable spools while retaining
+the same JSON format.</p>
+<h3 id="initial-memory-phase-measurements">Initial memory-phase measurements<a class="headerlink" href="#initial-memory-phase-measurements" title="Permanent link">&para;</a></h3>
+<p>On 24 October 2026, <code>/usr/bin/time -v</code> measured the same version-2 large corpus
+against baseline <code>283ce8ce</code>. The completed artifact contains 2,589,029 logical
+rows in 857,313,491 bytes. Both binaries used Rust 1.98.0, release <code>opt-level=3</code>,
+fat LTO, one codegen unit, embedded migrations, and both TLS features.</p>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Baseline peak RSS</th>
+<th>Changed peak RSS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Capture</td>
+<td>6.35 GiB</td>
+<td>5.62 GiB (sampled supervisor)</td>
+</tr>
+<tr>
+<td>Offline verification</td>
+<td>11.85 GiB</td>
+<td>6.38 GiB</td>
+</tr>
+<tr>
+<td>Isolated restore and comparison</td>
+<td>Not measured</td>
+<td>10.53 GiB</td>
+</tr>
+</tbody>
+</table>
+<p>Offline verification used about 46% less peak resident memory and produced the
+same report except for its timestamp, including the canonical state digest.
+It still exceeded the bundled 6 GiB envelope. These successful probes used a
+16 GiB virtual-address-space ceiling and a 1,800-second timeout. Builds ran
+concurrently, so elapsed times are diagnostic rather than speed comparisons.
+Exact bytes, commands' resource bounds, and fixture details are recorded in the
+<a href="../performance/backup_memory.json">sanitized measurement summary</a>.</p>
+<p>A full lifecycle attempt with an explicit 8 GiB resident-memory envelope
+completed capture and offline verification. The corrected supervisor measured
+6,034,833,408 bytes during capture and 6,853,775,360 during offline verification.
+It stopped isolated restore after 56.899 seconds at 8,658,653,184 bytes. This is
+an actual envelope failure, unlike the superseded thread-counting reports above.
+It does not certify an 8 GiB restore deployment. The capture result uses sampled
+RSS rather than the independent runs' operating-system high-water mark.</p>
+<p>Reusing the verified artifact, an independent restore-and-compare run passed
+under the diagnostic 16 GiB address-space ceiling. It peaked at 11,302,916,096
+resident bytes and took 1,218.19 seconds, including 707.633 seconds for restore
+staging, confirmation, and application. The verifier matched both authoritative
+state and retained history, preserved the canonical state digest, and reset the
+disposable schema. Normal computed-data reindex jobs were queued; their worker
+completion was not measured. This run establishes correctness at a larger
+diagnostic bound, not a production memory-sizing recommendation. The bundled
+6 GiB envelope and production document limits remain unchanged.</p>
+<h3 id="initial-reductions-in-retained-memory">Initial reductions in retained memory<a class="headerlink" href="#initial-reductions-in-retained-memory" title="Permanent link">&para;</a></h3>
+<p>The administrator serializes backups directly through a bounded buffered writer
+to its owner-only temporary file. A limit or write failure removes the partial
+file and leaves an existing destination intact. Task-backed backup output still
+uses an in-memory byte buffer for its database artifact, but releases the decoded
+document before persisting that buffer.</p>
+<p>Restore validation transfers the decoded sections into the validated snapshot
+instead of cloning them. Offline verification hashes canonical JSON directly into
+the digest. Isolated restore verification keeps the source in compact byte form
+during restore. Before capturing the destination, it fingerprints and releases
+the large object, object-relation, schema-evidence, and corresponding history
+sections. Fingerprints cover every value and row order. Sources needing legacy
+computed-history baselines retain the full source for that reconstruction.
+These initial measurements predate streaming: capture and decoding retained
+complete row trees. The following implementation replaces that retention.</p>
+<p>PostgreSQL restore consumes each validated section in batches of at most 256 rows
+and a target of 1 MiB of encoded JSON. A single larger row is admitted alone and
+remains bounded by the document limit. Collection rows retain one statement,
+because their immediate parent foreign key permits forward references within
+that statement. All batches remain inside the existing fenced transaction;
+failure rolls back the complete restore. The batch target does not bound total
+process memory or PostgreSQL transaction memory.</p>
+<h3 id="streaming-measurements">Streaming measurements<a class="headerlink" href="#streaming-measurements" title="Permanent link">&para;</a></h3>
+<p>The streaming implementation completed the full large lifecycle on 24 October
+2026 under the same explicit 8 GiB administrator RSS envelope that stopped the
+initial implementation. This reloaded version-2 fixture has 250,000 objects,
+1,000,000 object relations, 2,589,029 logical rows, and an 857,313,491-byte backup.
+The restore applied 74 migrations, matched authoritative state and retained
+history, and reset the disposable target schema.</p>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Sampled administrator peak RSS</th>
+<th>Elapsed time</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Capture</td>
+<td>115 MiB</td>
+<td>469.855 s</td>
+</tr>
+<tr>
+<td>Offline verification</td>
+<td>116 MiB</td>
+<td>76.152 s</td>
+</tr>
+<tr>
+<td>Isolated restore and comparison</td>
+<td>148 MiB</td>
+<td>1,227.648 s</td>
+</tr>
+</tbody>
+</table>
+<p>An independent <code>/usr/bin/time -v</code> comparison used the exact same artifact with
+the initial materialized binary and the streaming binary. Offline verification
+fell from 6,852,456,448 resident bytes (6.38 GiB) to 120,356,864 bytes (115 MiB), a
+98.24% reduction. Reports matched except for the verification timestamp. The
+state digest differs from the earlier fixture load because generated credential
+salts vary; the two verifiers agree on this artifact's digest.</p>
+<p>That independent verification took 26.66 s with materialization and 77.09 s with
+streaming. Replay trades additional parsing and temporary-disk I/O for memory.
+Builds ran concurrently, so these timings are diagnostic rather than controlled
+speed comparisons. The supervisor measures administrator process RSS, excluding
+PostgreSQL server memory and filesystem cache; the run does not establish a
+whole-container limit or a production sizing recommendation. The bundled 6 GiB
+envelope, production document limits, and unmeasured huge-profile status remain
+unchanged.</p>
+<p>The recorded runner lost the restore sub-duration when a structured setup log
+preceded its JSON report. Its semantic timing therefore contains the combined
+restore/comparison stage, and its zero computed-rebuild field is an old
+placeholder, not a worker measurement. The runner now reads the JSON report
+after structured logs and leaves unmeasured rebuild timing unset. The final
+code also requires the new migration in its schema-readiness checkpoint; these
+post-measurement corrections do not change the streaming algorithm. Exact
+figures and qualifications are in the
+<a href="../performance/backup_memory.json">sanitized measurement summary</a>.</p>
+<h3 id="streaming-implementation-indexed-json-replay">Streaming implementation: indexed JSON replay<a class="headerlink" href="#streaming-implementation-indexed-json-replay" title="Permanent link">&para;</a></h3>
+<p>The existing JSON format supports row streaming without a format migration.
+PostgreSQL capture writes one row at a time from its repeatable-read cursor to a
+private spool. It enforces the existing capture byte and row limits, including
+excluded history rows inspected during enumeration. The artifact is published
+only after validation; administrator file output remains an atomic replacement.</p>
+<p>Restore uploads and administrator inputs are copied to an owner-only temporary
+file while computing the exact-byte SHA-256. PostgreSQL commits the stage and
+chunks of at most 1 MiB in one transaction. A separately deployed executor can
+recover those bytes after a restart. Reads check chunk order, total length, and
+SHA-256. Old BYTEA stages are read through bounded substrings. Expiry, failure,
+and successful restore erase staged chunks through the same lifecycle as the
+control record.</p>
+<p>The parser uses Serde visitors to consume individual rows. It accepts arbitrary
+member and section order and rejects duplicate envelope fields and sections.
+Parsing records section offsets and row counts in a second private spool;
+normalization and semantic validation then replay those sections. The shared
+validators retain identity, revision, relationship, and schema indexes while
+object and historical payloads stay on disk. These are multiple logical passes,
+not exactly two scans: individual validators replay the sections they need.
+The private validated row source owns its file handle through application, so
+restore does not reopen an input path after validation. Read and insertion errors
+propagate through the existing fenced transaction and roll back all changes.</p>
+<p>Memory still scales with validation indexes, schema/definition metadata, the
+largest individual row, and the insertion batch. Collection rows use one SQL
+statement to preserve forward parent references. PostgreSQL transaction memory
+is independent of the application spool. The in-memory backend implements the
+same mandatory replay capabilities, materializing rows only to build its own
+in-memory state. The former materialized SDK methods have been removed.
+Backup task artifact storage/download still uses a byte buffer; capture no
+longer keeps the decoded graph alongside it.</p>
+<p>Input bytes use the configured upload limit. Parsing admits no more rows than
+half that byte limit (the minimum encoded row is <code>{}</code>). Serde's recursion limit
+remains enabled. Canonical row spools admit up to four times the input byte limit
+to allow legacy defaults; each row also consumes one newline on disk. Preparing
+history may use a further bounded expansion for new baseline fields. These are
+per-spool limits, not a total filesystem quota. Raw, canonical, and prepared
+spools can coexist, so provision temporary storage accordingly. Files are private
+and automatically removed when dropped, including on failed validation. A single
+large row or schema still needs to fit in memory; this is not a constant-memory
+parser or a substitute for realistic upload limits.</p>
+<p>Apply the chunk-storage migration and upgrade all restore executors before
+accepting new stages. Old executors cannot read new chunked stages. The rollback
+migration refuses to discard retained chunks: complete or expire those stages
+first. CLI restore and backup verification now enforce <code>--restore-max-upload-bytes</code>.
+The limit also applies to piped restore input; verification requires a regular file.</p>
+<p>A section-framed NDJSON or archive format could simplify record boundaries and
+per-section compression, but would require another format version and two
+readers. Cross-section validation would still need indexes and replay. Larger
+corpora may eventually justify disk-backed indexes. External artifact storage
+in <a href="https://github.com/hubuum/hubuum/issues/252">#252</a> remains a separate decision.</p>
 <h2 id="ci-policy">CI Policy<a class="headerlink" href="#ci-policy" title="Permanent link">&para;</a></h2>
 <p>Scale jobs are expensive and never run because <code>ci:full</code>, <code>ci:benchmarks</code>, or
 an ordinary benchmark-path change requested them. Pull requests opt in with

@@ -4741,13 +4741,20 @@ non-sensitive <code>StorageAuditReceipt</code> values for the durable events wri
 with the state change; a genuine no-op returns <code>Unchanged</code>. Imports and
 restores use explicit <code>ImportStorage</code> and <code>RestoreStorage</code> capabilities and do
 not weaken ordinary mutation signatures.</p>
-<p>Backup snapshots validate revision and temporal-history consistency at their
-fallible constructor. Restore documents consume that validated source and
-prepare a complete replacement, including fresh current temporal snapshots
-for a history-free source. <code>StorageRestoreDocument::new</code> retains its existing
-signature; <code>at_restore_boundary</code> accepts an explicit boundary timestamp.
-Adapters must persist the prepared history even when <code>source_includes_history</code>
-is false.</p>
+<p>Backup capture and restore use mandatory replay capabilities:
+<code>capture_backup_replay</code>, <code>stage_restore_artifact</code>, <code>get_restore_artifact</code>, and
+<code>apply_restore_replay</code>. The former materialized methods and their staging/apply
+DTOs have been removed; there are no compatibility defaults. External adapters
+must implement these methods directly as part of the 0.5 SDK migration.</p>
+<p><code>StorageBackupReplay</code> and <code>StorageRestoreArtifact</code> own private immutable temporary
+files with independent, fallible readers. <code>StorageRestoreReplayApply::at_restore_boundary</code>
+prepares complete temporal baselines before destructive application. Adapters
+persist those exact rows, including when <code>source_includes_history</code> is false,
+and preserve fencing, rollback, provenance, and artifact identity checks.
+PostgreSQL implements bounded capture, durable chunked staging, and row replay.
+The memory adapter implements the same lifecycle contract and materializes rows
+only when constructing its in-memory state; it does not offer a bounded-memory
+storage backend.</p>
 <p>Endpoint-set relation queries expose an optional <code>max_results()</code> bound.
 Adapters must apply that bound before materializing rows, after endpoint
 selection and visibility; zero requests no rows. <code>new</code> and <code>into_parts</code> retain

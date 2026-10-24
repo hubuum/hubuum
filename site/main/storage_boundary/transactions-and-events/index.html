@@ -4993,9 +4993,9 @@ for an exception.</p>
   ordinary domain lifecycle shortcut.</li>
 <li>Retention: <code>TokenRetentionStorage::purge_expired_tokens</code> applies configured
   expiry and emits the token-purge semantics owned by the retention worker.</li>
-<li>Maintenance: <code>RestoreStorage::stage_restore</code>,
+<li>Maintenance: <code>RestoreStorage::stage_restore_artifact</code>,
   <code>RestoreStorage::expire_restore_stage</code>,
-  <code>RestoreStorage::start_restore_draining</code>, <code>RestoreStorage::apply_restore</code>,
+  <code>RestoreStorage::start_restore_draining</code>, <code>RestoreStorage::apply_restore_replay</code>,
   <code>RestoreStorage::fail_restore_and_resume</code>,
   <code>RestoreStorage::resume_maintenance_without_restore</code>,
   <code>RestoreStorage::resume_terminal_restore</code>,
@@ -5009,7 +5009,7 @@ for an exception.</p>
   <code>ImportStorage::record_claimed_import_results</code> preserve or reconstruct imported
   state and results under the typed import workflow.</li>
 </ul>
-<p><code>BackupSnapshotStorage::capture_backup_snapshot</code> is not listed because it only
+<p><code>BackupSnapshotStorage::capture_backup_replay</code> is not listed because it only
 reads a consistent projection. <code>ImportStorage::preflight_import</code> executes
 against rollback-only state and does not durably write. <code>ExecutionStorage</code>
 scope changes are native execution context, not durable storage mutations.

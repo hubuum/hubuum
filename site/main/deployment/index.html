@@ -1987,6 +1987,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#backup-spool-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Backup Spool Storage
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4995,6 +5006,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#backup-spool-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Backup Spool Storage
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5633,6 +5655,50 @@ worker containers in split mode.</p>
 <li><code>NEXT_PUBLIC_APP_NAME="Hubuum Console"</code></li>
 </ul>
 <p>The backend creates the initial admin user and group on first startup. The generated admin password is not logged; reset it with <code>hubuum-admin</code> in the API container after installation.</p>
+<h2 id="backup-spool-storage">Backup Spool Storage<a class="headerlink" href="#backup-spool-storage" title="Permanent link">&para;</a></h2>
+<p>Backup capture, upload validation, and restore replay require writable temporary
+disk space for every artifact size. There is no in-memory size cutoff or
+configurable spill threshold: spools are file-backed from creation, with buffered
+reads and writes. The operating system may still cache file pages in memory.
+On Linux, temporary files use <code>TMPDIR</code> when set and <code>/tmp</code> otherwise. This is
+process-wide temporary storage, not a separate Hubuum spool-directory setting.</p>
+<p>The single-host installer mounts the <code>backup_spool</code> named volume at
+<code>/tmp</code> for API replicas, the migrator, and the restore executor; their root
+filesystems remain read-only. This replaces the previous 16 MiB memory filesystem.
+The named volume uses the container runtime's configured volume storage; it does
+not provision a separate disk. Native administrator commands use the filesystem
+backing their own temporary directory.
+Refresh generated deployment files when upgrading. Custom read-only deployments
+must provide writable disk storage for <code>TMPDIR</code> (normally <code>/tmp</code>). A memory
+filesystem charges spool contents to container memory and defeats the memory
+savings for large backups. Spool files remain private and are unlinked when
+opened on supported platforms; sharing temporary storage does not expose their
+contents through filenames.</p>
+<p>To place spools on a dedicated host disk, mount that disk at a host path such as
+<code>/srv/hubuum-spool</code>, then add a bind mount and <code>TMPDIR</code> to the existing service
+configuration. This Compose fragment shows the API service:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="nt">services</span><span class="p">:</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">  </span><span class="nt">hubuum-api</span><span class="p">:</span>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="w">    </span><span class="nt">environment</span><span class="p">:</span>
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="w">      </span><span class="nt">TMPDIR</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/var/lib/hubuum/spool</span>
+<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="w">    </span><span class="nt">volumes</span><span class="p">:</span>
+<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bind</span>
+<a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="w">        </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/srv/hubuum-spool</span>
+<a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a><span class="w">        </span><span class="nt">target</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/var/lib/hubuum/spool</span>
+</code></pre></div>
+<p>Pre-create the host directory and make it writable by the container user
+(UID/GID <code>10001:10001</code> in the default image; account for user-namespace mappings
+with rootless runtimes). Apply the same configuration to each API replica,
+restore executor, and administrator container that performs backup or restore
+work. Each host can use its own local spool disk; no shared filesystem is required.
+For native commands, set <code>TMPDIR</code> to an existing writable directory on the desired
+filesystem before starting <code>hubuum-admin</code>.</p>
+<p>Allow space for simultaneous raw, canonical, and prepared spools, plus concurrent
+backup/restore jobs. The per-document limits do not impose a total filesystem
+quota. Private temporary files are removed automatically; durable staged restore
+bytes reside in PostgreSQL and do not depend on sharing the local volume between
+hosts. Apply migrations and upgrade restore executors before accepting new
+chunked stages. Complete or expire these stages before rolling back.</p>
 
 
 
