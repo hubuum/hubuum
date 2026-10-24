@@ -4672,7 +4672,7 @@ no new runtime dependencies or configuration settings.</p>
 <td>Each render has an exclusive child budget under one batch ceiling. Cancellation/deadline kills and reaps the process; byte counters cannot provide that guarantee.</td>
 </tr>
 <tr>
-<td>Export hydration (<code>src/exports</code>)</td>
+<td>Export hydration (<code>src/services/exports</code>)</td>
 <td>Hydrated objects, related depth, candidates, output bytes; admitted request limits constrained by deployment policy</td>
 <td>Root/related capacity checks, paginated fetches, stage checks, bounded output serialization</td>
 <td>Counts are cumulative work, not memory reservations. Fetches can retain a bounded page before checks. Storage query deadlines remain adapter-owned.</td>

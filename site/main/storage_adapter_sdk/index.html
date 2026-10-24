@@ -3744,6 +3744,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#upgrading-from-04-to-05" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.4 to 0.5
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4754,6 +4765,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#upgrading-from-04-to-05" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.4 to 0.5
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4835,7 +4857,7 @@
 
 
 <h1 id="storage-adapter-sdk-compatibility">Storage Adapter SDK Compatibility<a class="headerlink" href="#storage-adapter-sdk-compatibility" title="Permanent link">&para;</a></h1>
-<p>Status: accepted; current experimental release train is <code>0.4</code>.</p>
+<p>Status: accepted; current experimental release train is <code>0.5</code>.</p>
 <h2 id="supported-crate-graph">Supported Crate Graph<a class="headerlink" href="#supported-crate-graph" title="Permanent link">&para;</a></h2>
 <p>The statically linked storage adapter SDK consists of these crates:</p>
 <table>
@@ -5182,6 +5204,29 @@ and terminal test deliveries; transient admission state resets on restore.</p>
 <p>The built-in PostgreSQL and memory backends share application contract tests in
 <code>src/tests/storage_contract/webhook_notifications.rs</code>; retain adapter-specific
 locking and lease-loss tests when implementing these guarantees.</p>
+<h2 id="upgrading-from-04-to-05">Upgrading from 0.4 to 0.5<a class="headerlink" href="#upgrading-from-04-to-05" title="Permanent link">&para;</a></h2>
+<p>Update all ten SDK dependencies to exactly <code>0.5.0</code> together. This is a breaking
+Rust source release; HTTP resource representations and database schemas retain
+their existing formats.</p>
+<p>Class-relation creation and import inputs now carry <code>TemplateAlias</code> and
+<code>ObjectRelationLimit</code> from <code>hubuum-domain</code>. Construct aliases with
+<code>TemplateAlias::new</code> at input boundaries, or <code>from_canonical</code> when reading
+persisted canonical values. Construct limits with <code>ObjectRelationLimit::new</code>.
+Keep these values typed through command preparation and persistence. Use
+<code>StorageClassRelation::with_relation_details</code> to retain existing proofs;
+raw database rows may use the fallible <code>try_with_*</code> constructors.
+<code>StorageClassRelation::into_parts</code> now returns <code>StorageClassRelationParts</code> with
+named accessors instead of a positional tuple.</p>
+<p><code>SessionPolicy::deadlines</code> returns <code>SessionDeadlines</code>, which guarantees
+<code>issued &lt; access &lt;= refresh &lt;= absolute</code>. <code>StorageSessionIssued::new</code> takes
+this value after its three identifiers. Use <code>SessionLifetimes::try_new</code> and
+<code>deadlines</code> for rotation with persisted policy and the fixed family deadline.
+Retain the adapter's transaction, replay detection, and concurrency fencing.</p>
+<p>Restore upload validation can use <code>StorageBackupSnapshot::try_new_for_restore</code>
+to obtain a validated snapshot. Shared resource checks and legacy normalization
+now live in storage-core; application artifact metadata and manifest checks
+remain the caller's responsibility. Adapters still enforce cross-row and
+transactional restore invariants.</p>
 
 
 
