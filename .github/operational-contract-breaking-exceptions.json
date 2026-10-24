@@ -33,6 +33,24 @@
       "fingerprints": [
         "c8de28364855"
       ]
+    },
+    {
+      "id": "backup-restore-replay-operation-labels",
+      "baseline": "v0.0.20",
+      "expires": "2027-01-31",
+      "reason": "Remove unused materialized storage capabilities and route every adapter through the replay contract. Common metrics now identify the replay operations actually used by the CLI and API.",
+      "migration": "Update operation-label filters from capture_backup_snapshot to capture_backup_replay, stage_restore to stage_restore_artifact, get_restore_job to get_restore_artifact, and apply_restore to apply_restore_replay. Metric names and other labels are unchanged.",
+      "changelog_entry": "**Breaking (storage SDK backup/restore):** Remove the materialized capture,",
+      "fingerprints": [
+        "5968d03612a4",
+        "5bb76248891c",
+        "6f89c3c293d4",
+        "ccdfea67ece7",
+        "dd2662386170",
+        "e7e7b51d81ab",
+        "fcd69d051cc0",
+        "ff98d88823ea"
+      ]
     }
   ]
 }

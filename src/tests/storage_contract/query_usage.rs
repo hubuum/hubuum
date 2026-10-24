@@ -135,12 +135,14 @@ async fn declaration_capture_preserves_intent_and_provenance() {
             .unwrap()
             .into_value();
         let snapshot = backend
-            .capture_backup_snapshot(
+            .capture_backup_replay(
                 false,
                 hubuum_storage_core::StorageBackupBudget::new(128 * 1024 * 1024, 100_000).unwrap(),
             )
             .await
-            .unwrap();
+            .unwrap()
+            .materialize()
+            .expect("replay rows");
         let (sections, _) = snapshot.into_parts();
         let rows =
             &sections[&hubuum_storage_core::StorageBackupStateSection::QueryUsageDeclarations];

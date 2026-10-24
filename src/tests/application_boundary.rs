@@ -2115,9 +2115,9 @@ fn restore_consumers_use_only_the_mandatory_storage_contract() {
     let facade = read_source(&facade_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", facade_path.display()));
     let implementation = item_body(&facade, "impl", "RestoreStorage for PostgresStorage");
-    let apply = item_body(implementation, "fn", "apply_restore");
+    let apply = item_body(implementation, "fn", "apply_restore_replay");
     assert!(
-        apply.contains("restore_lifecycle::apply_restore"),
+        apply.contains("restore_lifecycle::apply_restore_replay"),
         "the destructive restore implementation must delegate into the adapter crate"
     );
     for forbidden in ["self.pool", "apply_restore_db", "map_postgres_error"] {

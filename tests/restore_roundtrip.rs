@@ -7,7 +7,6 @@ use std::time::Duration;
 use chrono::Utc;
 use diesel::ExpressionMethods;
 use diesel_async::RunQueryDsl;
-use hubuum::backups::create_backup_document;
 use hubuum::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS;
 use hubuum::events::{
     Action, ActorKind, EntityType, EventEntityId, MutationProvenance, NewEvent, PrincipalId, TaskId,
@@ -27,10 +26,11 @@ use hubuum::schema::{
     system_maintenance, tasks,
 };
 use hubuum::storage::with_mutation_provenance;
+use hubuum::test_support::capture_backup_document;
 use hubuum::test_support::{create_audit_event, postgres_test_pool_with_timeout};
 use hubuum::tests::TestScope;
 use hubuum::traits::CanSave;
-use hubuum_storage_core::{RestoreStorage, StorageBackupBudget};
+use hubuum_storage_core::{RestoreStorage, StorageBackupBudget, StorageRestoreArtifact};
 use hubuum_storage_postgres::diesel_async_prelude::*;
 use hubuum_storage_postgres::{PostgresStorage, with_connection, with_transaction};
 use rstest::rstest;
@@ -145,7 +145,7 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     create_audit_event(&pool, &historical_task_event)
         .await
         .expect("historical task event");
-    let document = create_backup_document(
+    let document = capture_backup_document(
         &pool,
         &BackupRequest {
             include_history: true,
@@ -164,7 +164,11 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     let settings = RestoreSettings::new(60, document.len() + 1).expect("restore settings");
     let initiator =
         RestoreInitiator::new(None, "test", "restore-roundtrip").expect("restore initiator");
-    let request = RestoreStageRequest::new(initiator, document.clone()).expect("restore request");
+    let request = RestoreStageRequest::new(
+        initiator,
+        StorageRestoreArtifact::from_reader(document.as_slice(), document.len()).unwrap(),
+    )
+    .expect("restore request");
     let staged = stage_restore(&pool, &settings, request)
         .await
         .expect("stage restore");
@@ -352,7 +356,11 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
 
     let initiator = RestoreInitiator::new(None, "test", "restore-confirmation")
         .expect("restore confirmation initiator");
-    let request = RestoreStageRequest::new(initiator, document).expect("restore request");
+    let request = RestoreStageRequest::new(
+        initiator,
+        StorageRestoreArtifact::from_reader(document.as_slice(), document.len()).unwrap(),
+    )
+    .expect("restore request");
     let confirmed_stage = stage_restore(&runtime_pool, &settings, request)
         .await
         .expect("stage confirmation-path restore");
@@ -432,7 +440,7 @@ async fn repeated_restores_wait_for_current_generation_drain(#[case] previously_
     for cycle in 0..2 {
         // Drain coordination is independent of history. Restoring all history left by
         // earlier suites makes the completion deadline depend on their fixture volume.
-        let document = create_backup_document(
+        let document = capture_backup_document(
             &pool,
             &BackupRequest {
                 include_history: false,
@@ -447,7 +455,11 @@ async fn repeated_restores_wait_for_current_generation_drain(#[case] previously_
         let staged = stage_restore(
             &runtime_pool,
             &settings,
-            RestoreStageRequest::new(initiator, document).unwrap(),
+            RestoreStageRequest::new(
+                initiator,
+                StorageRestoreArtifact::from_reader(document.as_slice(), document.len()).unwrap(),
+            )
+            .unwrap(),
         )
         .await
         .expect("stage restore");

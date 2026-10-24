@@ -281,20 +281,16 @@ async fn failed_restore_confirmation_rolls_back_consumed_approval_and_maintenanc
         let mut f = Fixture::new(StorageHandle::postgres(pool.clone())).await;
         let stage = f
             .backend
-            .stage_restore(
-                StorageRestoreStageCreate::try_new(
+            .stage_restore_artifact(
+                StorageRestoreStageArtifact::try_new(
                     StorageRestoreInitiator::try_new(
                         Some(f.user.principal_id),
                         "local",
                         prefix("approved_restore"),
                     )
                     .unwrap(),
-                    b"{}".to_vec(),
-                    StorageRestoreArtifactSummary::try_new(
-                        2,
-                        "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-                    )
-                    .unwrap(),
+                    hubuum_storage_core::StorageRestoreArtifact::from_reader(b"{}".as_slice(), 2)
+                        .unwrap(),
                     "b".repeat(64),
                     serde_json::json!({}),
                     Utc::now() + ChronoDuration::hours(1),

@@ -1038,12 +1038,14 @@ async fn schema_backup_retains_supported_evidence_and_lifecycle_documents(
         .await;
     let (state, history) = fixture
         .backend
-        .capture_backup_snapshot(
+        .capture_backup_replay(
             true,
             StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
         )
         .await
         .unwrap()
+        .materialize()
+        .expect("replay rows")
         .into_parts();
     let evidence = state[&StorageBackupStateSection::ObjectSchemaEvidence]
         .iter()
@@ -1104,12 +1106,14 @@ async fn schema_history_preserves_explicit_mutation_actor(#[case] kind: StorageB
         .into_value();
     let (_, history) = fixture
         .backend
-        .capture_backup_snapshot(
+        .capture_backup_replay(
             true,
             StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
         )
         .await
         .unwrap()
+        .materialize()
+        .expect("replay rows")
         .into_parts();
     let history = history.unwrap();
     let rows = history[&StorageBackupHistorySection::ClassSchemaHistory]
@@ -1260,12 +1264,14 @@ async fn rejected_memory_class_policy_leaves_no_persisted_changes(
     let fixture = SchemaFixture::new(StorageBackendKind::Memory, vec![]).await;
     let before = fixture
         .backend
-        .capture_backup_snapshot(
+        .capture_backup_replay(
             true,
             StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
         )
         .await
-        .unwrap();
+        .unwrap()
+        .materialize()
+        .expect("replay rows");
     let result = if update {
         let target = fixture
             .backend
@@ -1307,12 +1313,14 @@ async fn rejected_memory_class_policy_leaves_no_persisted_changes(
     assert!(result.is_err());
     let after = fixture
         .backend
-        .capture_backup_snapshot(
+        .capture_backup_replay(
             true,
             StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
         )
         .await
-        .unwrap();
+        .unwrap()
+        .materialize()
+        .expect("replay rows");
     assert_eq!(before.into_parts(), after.into_parts());
     fixture.cleanup().await;
 }

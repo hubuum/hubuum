@@ -7,6 +7,7 @@ use hubuum_storage_core::{
     StorageBackupBudget, StorageBackupCaptureProgress, StorageError, StorageErrorKind,
 };
 use rstest::rstest;
+use std::collections::BTreeMap;
 
 #[derive(QueryableByName)]
 struct Probe {
@@ -36,7 +37,7 @@ async fn oversized_capture_stops_database_work_early(
              SET LOCAL enable_sort = off;"
         ).await?;
         let mut progress = StorageBackupCaptureProgress::new(StorageBackupBudget::new(max_bytes, max_rows).unwrap());
-        let error = load_capture_rows(conn, "hubuumobject", SnapshotFilter::All, &mut progress, |_| Ok(())).await.unwrap_err();
+        let error = stream_capture_rows(conn, "hubuumobject", SnapshotFilter::All, &mut progress, |_| Ok(()), |_| Ok(())).await.unwrap_err();
         assert_eq!(StorageError::from(error).kind(), StorageErrorKind::InputTooLarge);
         let calls = diesel::sql_query("SELECT last_value AS calls FROM backup_probe").get_result::<Probe>(conn).await?.calls;
         // The database-side sequence proves enumeration itself stopped, rather
@@ -61,11 +62,12 @@ async fn excluded_history_rows_consume_the_work_budget() {
         .await?;
         let mut progress =
             StorageBackupCaptureProgress::new(StorageBackupBudget::new(4096, 3).unwrap());
-        let error = load_capture_rows(
+        let error = stream_capture_rows(
             conn,
             "tasks",
             SnapshotFilter::TerminalTasks,
             &mut progress,
+            |_| Ok(()),
             |_| Ok(()),
         )
         .await
@@ -93,20 +95,20 @@ async fn capture_orders_by_numeric_primary_keys() {
         .await?;
         let mut progress =
             StorageBackupCaptureProgress::new(StorageBackupBudget::new(4096, 3).unwrap());
-        let rows = load_capture_rows(
+        let mut ids = Vec::new();
+        stream_capture_rows(
             conn,
             "hubuumobject",
             SnapshotFilter::All,
             &mut progress,
             |_| Ok(()),
+            |row| {
+                ids.push(row.get("id").unwrap().as_i64().unwrap());
+                Ok(())
+            },
         )
         .await?;
-        assert_eq!(
-            rows.iter()
-                .map(|r| r.get("id").unwrap().as_i64().unwrap())
-                .collect::<Vec<_>>(),
-            vec![1, 2, 10]
-        );
+        assert_eq!(ids, vec![1, 2, 10]);
         Ok(())
     })
     .await
@@ -135,11 +137,21 @@ async fn successive_capture_cursors_preserve_the_transaction_snapshot() {
             let mut progress = StorageBackupCaptureProgress::new(
                 StorageBackupBudget::new(1024 * 1024, 10000).unwrap(),
             );
-            let before =
-                load_capture_rows(conn, "groups", SnapshotFilter::All, &mut progress, |_| {
+            let mut before = None;
+            stream_capture_rows(
+                conn,
+                "groups",
+                SnapshotFilter::All,
+                &mut progress,
+                |_| Ok(()),
+                |row| {
+                    if row.get("groupname").and_then(Value::as_str) == Some(name.as_str()) {
+                        before = Some(row);
+                    }
                     Ok(())
-                })
-                .await?;
+                },
+            )
+            .await?;
             with_connection(&pool, async |writer| -> Result<(), PostgresStorageError> {
                 diesel::sql_query("UPDATE groups SET description = 'after' WHERE groupname = $1")
                     .bind::<Text, _>(&name)
@@ -148,19 +160,25 @@ async fn successive_capture_cursors_preserve_the_transaction_snapshot() {
                 Ok(())
             })
             .await?;
-            let after =
-                load_capture_rows(conn, "groups", SnapshotFilter::All, &mut progress, |_| {
+            let mut after = None;
+            stream_capture_rows(
+                conn,
+                "groups",
+                SnapshotFilter::All,
+                &mut progress,
+                |_| Ok(()),
+                |row| {
+                    if row.get("groupname").and_then(Value::as_str) == Some(name.as_str()) {
+                        after = Some(row);
+                    }
                     Ok(())
-                })
-                .await?;
-            let find = |rows: Vec<StorageBackupRow>| {
-                rows.into_iter()
-                    .find(|r| r.get("groupname").and_then(Value::as_str) == Some(name.as_str()))
-                    .ok_or_else(|| {
-                        PostgresStorageError::database("Missing scoped snapshot fixture")
-                    })
-            };
-            Ok((find(before)?, find(after)?))
+                },
+            )
+            .await?;
+            Ok((
+                before.expect("scoped row before write"),
+                after.expect("scoped row after write"),
+            ))
         })
         .await;
     with_connection(&pool, async |conn| -> Result<(), PostgresStorageError> {

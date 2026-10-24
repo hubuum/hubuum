@@ -2,16 +2,15 @@ use crate::config::SchemaValidationOptions;
 use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
 use hubuum_domain::ClassId;
 use hubuum_domain::JsonSchemaLimits;
-use hubuum_storage_core::StorageBackupBudget;
+use hubuum_storage_core::{StorageBackupBudget, StorageRestoreArtifact};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-use crate::backups::create_backup_document;
 use crate::config::{
     CommandLineDatabaseUrl, DEFAULT_BACKUP_MAX_CAPTURE_ROWS, DEFAULT_BACKUP_MAX_OUTPUT_BYTES,
     DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS, DEFAULT_DB_STATEMENT_TIMEOUT_MS,
@@ -23,17 +22,13 @@ use crate::config::{
 use crate::errors::EXIT_CODE_DATABASE_ERROR;
 use crate::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
 use crate::logger;
-#[cfg(feature = "embedded-migrations")]
-use crate::models::BackupDocument;
 use crate::models::{
-    BackupRequest, ExportContentType, RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest,
-    RestoreInitiator, RestoreJobID, RestoreStageRequest,
+    ExportContentType, RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreInitiator,
+    RestoreJobID, RestoreStageRequest,
 };
-#[cfg(feature = "embedded-migrations")]
-use crate::restores::verify_restored_backup_matches;
 use crate::restores::{
     BackupVerificationReport, RestoreSettings, confirm_restore, execute_confirmed_restore,
-    restore_status, stage_restore, verify_backup_document_with_limits,
+    restore_status, stage_restore,
 };
 use crate::secrets::{self, DatabaseCredential};
 use crate::services::identity as identity_service;
@@ -117,7 +112,7 @@ struct AdminCli {
     #[arg(long, default_value_t = false, requires = "restore_test_database_url")]
     keep_restore_test_database: bool,
 
-    /// Maximum backup document size accepted by offline and isolated verification
+    /// Maximum backup document size accepted by restore and backup verification
     #[arg(
         long,
         env = "HUBUUM_RESTORE_MAX_UPLOAD_BYTES",
@@ -532,7 +527,13 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
         )
         .await?;
     } else if let Some(path) = admin_cli.restore {
-        restore_database(&storage, &path, admin_cli.restore_confirmation.as_deref()).await?;
+        restore_database(
+            &storage,
+            &path,
+            admin_cli.restore_confirmation.as_deref(),
+            admin_cli.restore_max_upload_bytes,
+        )
+        .await?;
     } else if let Some(username) = admin_cli.reset_password {
         reset_password(&storage, &username).await?;
     } else if admin_cli.audit_templates {
@@ -746,24 +747,17 @@ async fn backup_database(
     include_history: bool,
     budget: StorageBackupBudget,
 ) -> Result<(), ApiError> {
-    let document =
-        create_backup_document(storage, &BackupRequest { include_history }, budget).await?;
-    let bytes = budget.serialize(&document)?;
-    write_backup_file(path, &bytes).map_err(|error| {
-        ApiError::InternalServerError(format!(
-            "Failed to write backup to '{}': {error}",
-            path.display()
-        ))
-    })?;
+    let document = crate::restores::replay::capture(storage, include_history, budget).await?;
+    let byte_size = write_backup_file(path, &document, budget)?;
     println!(
         "Wrote consistent backup to '{}' ({} bytes).",
         path.display(),
-        bytes.len()
+        byte_size
     );
     Ok(())
 }
 
-fn read_backup_file(path: &Path, max_bytes: usize) -> Result<Vec<u8>, ApiError> {
+fn open_backup_file(path: &Path, max_bytes: usize) -> Result<File, ApiError> {
     let file = File::open(path).map_err(|error| {
         ApiError::BadRequest(format!(
             "Failed to open backup document '{}': {error}",
@@ -789,28 +783,7 @@ fn read_backup_file(path: &Path, max_bytes: usize) -> Result<Vec<u8>, ApiError> 
             max_bytes
         )));
     }
-    let read_limit = u64::try_from(max_bytes)
-        .unwrap_or(u64::MAX - 1)
-        .saturating_add(1);
-    let mut bytes = Vec::with_capacity(
-        usize::try_from(metadata.len())
-            .unwrap_or(max_bytes)
-            .min(max_bytes),
-    );
-    file.take(read_limit)
-        .read_to_end(&mut bytes)
-        .map_err(|error| {
-            ApiError::BadRequest(format!(
-                "Failed to read backup document '{}': {error}",
-                path.display()
-            ))
-        })?;
-    if bytes.len() > max_bytes {
-        return Err(ApiError::PayloadTooLarge(format!(
-            "Backup document exceeds the configured {max_bytes} byte limit"
-        )));
-    }
-    Ok(bytes)
+    Ok(file)
 }
 
 fn admin_storage_settings(
@@ -861,9 +834,12 @@ struct BackupVerificationOptions<'a> {
 async fn verify_backup_file(
     options: BackupVerificationOptions<'_>,
 ) -> Result<BackupVerificationReport, ApiError> {
-    let bytes = read_backup_file(options.path, options.max_upload_bytes)?;
-    let report = verify_backup_document_with_limits(
-        &bytes,
+    let artifact = StorageRestoreArtifact::from_reader(
+        open_backup_file(options.path, options.max_upload_bytes)?,
+        options.max_upload_bytes,
+    )?;
+    let report = crate::restores::verify_backup_reader(
+        artifact.reader(),
         options.max_upload_bytes,
         options.schema_limits,
     )?;
@@ -901,7 +877,7 @@ async fn verify_backup_file(
         }
         verify_backup_restore(
             report,
-            bytes,
+            artifact,
             target,
             options.keep_restore_test_database,
             options.capture_budget,
@@ -932,7 +908,7 @@ async fn verify_backup_file(
 #[cfg(feature = "embedded-migrations")]
 async fn verify_backup_restore(
     mut report: BackupVerificationReport,
-    bytes: Vec<u8>,
+    artifact: StorageRestoreArtifact,
     target: StorageSettings,
     keep_restore_test_database: bool,
     capture_budget: StorageBackupBudget,
@@ -940,9 +916,9 @@ async fn verify_backup_restore(
     let migrations_applied = prepare_disposable_restore_database(&target)?;
     let verification = async {
         let storage = initialize_storage(&target)?;
-        let source: BackupDocument = serde_json::from_slice(&bytes)?;
         let started_at = std::time::Instant::now();
-        restore_database_bytes(&storage, bytes).await?;
+        // The report, staging and comparison all read the same immutable artifact.
+        restore_database_artifact(&storage, artifact.clone()).await?;
         let restore_duration = started_at.elapsed();
         let readiness = storage.get_readiness_snapshot().await?;
         if !readiness.storage_is_ready() {
@@ -950,15 +926,19 @@ async fn verify_backup_restore(
                 "Restored disposable database did not pass storage readiness".to_string(),
             ));
         }
-        let restored = create_backup_document(
+        let (source, _, _) = crate::restores::replay::parse(
+            artifact.reader(),
+            artifact.summary().byte_size() as usize,
+            storage.schema_limits(),
+        )?;
+        drop(artifact);
+        let restored = crate::restores::replay::capture(
             &storage,
-            &BackupRequest {
-                include_history: source.history.is_some(),
-            },
+            source.snapshot.includes_history(),
             capture_budget,
         )
         .await?;
-        verify_restored_backup_matches(&source, &restored, storage.schema_limits())?;
+        crate::restores::replay::compare(&source, &restored)?;
         Ok::<_, ApiError>(restore_duration)
     }
     .await;
@@ -984,7 +964,7 @@ async fn verify_backup_restore(
 #[cfg(not(feature = "embedded-migrations"))]
 async fn verify_backup_restore(
     _report: BackupVerificationReport,
-    _bytes: Vec<u8>,
+    _artifact: StorageRestoreArtifact,
     _target: StorageSettings,
     _keep_restore_test_database: bool,
     _capture_budget: StorageBackupBudget,
@@ -1011,10 +991,26 @@ fn print_backup_verification_summary(report: &BackupVerificationReport) {
     );
 }
 
-fn write_backup_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let (temporary_path, mut file) = create_backup_temporary_file(path)?;
-    let write_result = file.write_all(bytes).and_then(|_| file.sync_all());
-    drop(file);
+fn write_backup_file(
+    path: &Path,
+    document: &impl Serialize,
+    budget: StorageBackupBudget,
+) -> Result<usize, ApiError> {
+    let io_error = |error| {
+        ApiError::InternalServerError(format!(
+            "Failed to write backup to '{}': {error}",
+            path.display()
+        ))
+    };
+    let (temporary_path, file) = create_backup_temporary_file(path).map_err(io_error)?;
+    let mut writer = BufWriter::new(file);
+    let write_result = (|| {
+        let bytes = budget.serialize_into(document, &mut writer)?;
+        writer.flush().map_err(io_error)?;
+        writer.get_ref().sync_all().map_err(io_error)?;
+        Ok::<_, ApiError>(bytes)
+    })();
+    drop(writer);
 
     if let Err(error) = write_result {
         let _ = std::fs::remove_file(&temporary_path);
@@ -1023,10 +1019,10 @@ fn write_backup_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
     if let Err(error) = replace_backup_file(&temporary_path, path) {
         let _ = std::fs::remove_file(&temporary_path);
-        return Err(error);
+        return Err(io_error(error));
     }
 
-    Ok(())
+    write_result
 }
 
 fn backup_parent_directory(path: &Path) -> &Path {
@@ -1215,19 +1211,21 @@ async fn restore_database(
     storage: &StorageHandle,
     path: &Path,
     confirmation: Option<&str>,
+    max_bytes: usize,
 ) -> Result<(), ApiError> {
     if confirmation != Some(RESTORE_CONFIRMATION_PHRASE) {
         return Err(destructive_confirmation_error());
     }
     // Restore also accepts finite streams (FIFOs and shell process substitution).
     // The verifier's regular-file restriction must not apply to this path.
-    let bytes = std::fs::read(path).map_err(|error| {
+    let file = File::open(path).map_err(|error| {
         ApiError::BadRequest(format!(
             "Failed to read restore document '{}': {error}",
             path.display()
         ))
     })?;
-    let restored = restore_database_bytes(storage, bytes).await?;
+    let artifact = StorageRestoreArtifact::from_reader(file, max_bytes)?;
+    let restored = restore_database_artifact(storage, artifact).await?;
     println!(
         "Restore {} completed with status '{}'.",
         restored.id,
@@ -1236,17 +1234,17 @@ async fn restore_database(
     Ok(())
 }
 
-async fn restore_database_bytes(
+async fn restore_database_artifact(
     storage: &StorageHandle,
-    bytes: Vec<u8>,
+    artifact: StorageRestoreArtifact,
 ) -> Result<crate::models::RestoreStageResponse, ApiError> {
     let settings = RestoreSettings::new(
         DEFAULT_RESTORE_STAGE_RETENTION_MINUTES,
-        DEFAULT_RESTORE_MAX_UPLOAD_BYTES.max(bytes.len()),
+        DEFAULT_RESTORE_MAX_UPLOAD_BYTES.max(artifact.summary().byte_size() as usize),
     )
     .map_err(ApiError::BadRequest)?;
     let initiator = RestoreInitiator::new(None, "system", "hubuum-admin")?;
-    let request = RestoreStageRequest::new(initiator, bytes)?;
+    let request = RestoreStageRequest::new(initiator, artifact)?;
     let staged = stage_restore(storage, &settings, request).await?;
     let capability = staged.restore_capability.clone().ok_or_else(|| {
         ApiError::InternalServerError("Restore stage did not return a capability".to_string())
@@ -1461,10 +1459,14 @@ fn init_logging(log_level: &str, report_on_stdout: bool) {
 
 #[cfg(test)]
 mod tests {
+    use crate::models::{BackupDocument, BackupManifest, BackupState, CURRENT_BACKUP_VERSION};
+    use crate::storage::StorageBackupBudget;
+    use chrono::Utc;
     use clap::Parser;
     #[cfg(feature = "embedded-migrations")]
     use clap::{CommandFactory, FromArgMatches};
     use hubuum_domain::ClassId;
+    use uuid::Uuid;
 
     #[cfg(feature = "embedded-migrations")]
     use super::effective_database_role_mode;
@@ -1473,6 +1475,30 @@ mod tests {
         DEFAULT_DATABASE_RUNTIME_ROLE, DatabaseRoleMode, StorageBackendKind,
         StorageDatabaseRoleNames, resolve_database_roles,
     };
+
+    #[test]
+    fn failed_streaming_backup_preserves_the_destination_and_removes_partial_output() {
+        let directory = std::env::temp_dir().join(format!("backup-write-{}", Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("backup.json");
+        std::fs::write(&path, b"previous backup").unwrap();
+        let document = BackupDocument {
+            backup_version: CURRENT_BACKUP_VERSION,
+            created_at: Utc::now(),
+            source_version: "test".into(),
+            state: BackupState::default(),
+            history: None,
+            manifest: BackupManifest::default(),
+        };
+        let result =
+            super::write_backup_file(&path, &document, StorageBackupBudget::new(16, 1).unwrap());
+        let contents = std::fs::read(&path).unwrap();
+        let files = std::fs::read_dir(&directory).unwrap().count();
+        std::fs::remove_dir_all(&directory).unwrap();
+        assert!(matches!(result, Err(super::ApiError::PayloadTooLarge(_))));
+        assert_eq!(contents, b"previous backup");
+        assert_eq!(files, 1, "failed writes must not retain a partial artifact");
+    }
 
     #[test]
     fn storage_backend_selection_defaults_only_for_an_empty_value() {

@@ -79,12 +79,14 @@ fn restored_relationship_history_preserves_endpoint_availability(#[case] prune_e
             .unwrap()
             .into_value();
         let snapshot = storage
-            .capture_backup_snapshot(
+            .capture_backup_replay(
                 true,
                 StorageBackupBudget::new(16 * 1024 * 1024, 10000).unwrap(),
             )
             .await
-            .unwrap();
+            .unwrap()
+            .materialize()
+            .expect("replay rows");
         let snapshot = edit_history(
             snapshot,
             StorageBackupHistorySection::ClassHistory,
@@ -138,12 +140,14 @@ fn schema_history_allocation_survives_reordered_backup_rows() {
         }
         let snapshot = edit_history(
             storage
-                .capture_backup_snapshot(
+                .capture_backup_replay(
                     true,
                     StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
                 )
                 .await
-                .unwrap(),
+                .unwrap()
+                .materialize()
+                .expect("replay rows"),
             StorageBackupHistorySection::ClassSchemaHistory,
             |rows| rows.reverse(),
         );
@@ -162,12 +166,14 @@ fn schema_history_allocation_survives_reordered_backup_rows() {
             .unwrap()
             .into_value();
         let (_, history) = storage
-            .capture_backup_snapshot(
+            .capture_backup_replay(
                 true,
                 StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
             )
             .await
             .unwrap()
+            .materialize()
+            .expect("replay rows")
             .into_parts();
         assert_eq!(
             history.unwrap()[&StorageBackupHistorySection::ClassSchemaHistory].len(),
@@ -242,12 +248,14 @@ fn external_memberships_use_directory_revocation_provenance() {
             .await
             .unwrap();
         let (sections, _) = storage
-            .capture_backup_snapshot(
+            .capture_backup_replay(
                 false,
                 StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
             )
             .await
             .unwrap()
+            .materialize()
+            .expect("replay rows")
             .into_parts();
         let group = sections[&StorageBackupStateSection::Groups]
             .iter()
@@ -289,12 +297,14 @@ fn completed_task_logs_survive_repeated_backup_restores() {
         let expected = task_events(&storage, id).await;
         assert_eq!(expected.len(), 2);
         let snapshot = storage
-            .capture_backup_snapshot(
+            .capture_backup_replay(
                 true,
                 StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
             )
             .await
-            .unwrap();
+            .unwrap()
+            .materialize()
+            .expect("replay rows");
         let (_, history) = snapshot.clone().into_parts();
         let audit_ids = history.unwrap()[&StorageBackupHistorySection::AuditEvents]
             .iter()
@@ -307,12 +317,14 @@ fn completed_task_logs_survive_repeated_backup_restores() {
         let first = restored(snapshot);
         let second = restored(
             first
-                .capture_backup_snapshot(
+                .capture_backup_replay(
                     true,
                     StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
                 )
                 .await
-                .unwrap(),
+                .unwrap()
+                .materialize()
+                .expect("replay rows"),
         );
         assert!(task_events(&second, id).await == expected);
     });
@@ -325,12 +337,14 @@ fn backups_exclude_active_task_logs() {
         let id = queued_task(&storage).await;
         assert_eq!(task_events(&storage, id).await.len(), 1);
         let (_, history) = storage
-            .capture_backup_snapshot(
+            .capture_backup_replay(
                 true,
                 StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
             )
             .await
             .unwrap()
+            .materialize()
+            .expect("replay rows")
             .into_parts();
         assert!(history.unwrap()[&StorageBackupHistorySection::AuditEvents].is_empty());
     });
@@ -344,12 +358,14 @@ fn postgres_task_audit_rows_restore_the_task_event_read_model() {
         let now = Utc::now();
         let snapshot = edit_history(
             storage
-                .capture_backup_snapshot(
+                .capture_backup_replay(
                     true,
                     StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
                 )
                 .await
-                .unwrap(),
+                .unwrap()
+                .materialize()
+                .expect("replay rows"),
             StorageBackupHistorySection::AuditEvents,
             |rows| {
                 *rows = vec![row(json!({
@@ -388,12 +404,14 @@ fn task_event_sequences_continue_after_imported_history() {
         let id = completed_task(&storage).await;
         let snapshot = edit_history(
             storage
-                .capture_backup_snapshot(
+                .capture_backup_replay(
                     true,
                     StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
                 )
                 .await
-                .unwrap(),
+                .unwrap()
+                .materialize()
+                .expect("replay rows"),
             StorageBackupHistorySection::AuditEvents,
             |rows| {
                 set_field(&mut rows[0], "id", json!(200));
@@ -431,12 +449,14 @@ async fn updated_collection_snapshot() -> StorageBackupSnapshot {
         .await
         .unwrap();
     storage
-        .capture_backup_snapshot(
+        .capture_backup_replay(
             true,
             StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
         )
         .await
         .unwrap()
+        .materialize()
+        .expect("replay rows")
 }
 
 async fn collection_as_of(storage: &MemoryStorage, at: DateTime<Utc>) -> StorageCollection {
@@ -499,12 +519,14 @@ async fn deleted_task_snapshot(
     let deleted_at = Utc::now();
     let snapshot = edit_history(
         storage
-            .capture_backup_snapshot(
+            .capture_backup_replay(
                 true,
                 StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
             )
             .await
-            .unwrap(),
+            .unwrap()
+            .materialize()
+            .expect("replay rows"),
         StorageBackupHistorySection::TerminalTasks,
         |rows| {
             let row = rows
@@ -644,21 +666,25 @@ fn custom_schema_budgets_survive_memory_restore() {
             .unwrap()
             .into_value();
         let snapshot = storage
-            .capture_backup_snapshot(
+            .capture_backup_replay(
                 true,
                 StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
             )
             .await
-            .unwrap();
+            .unwrap()
+            .materialize()
+            .expect("replay rows");
         let restored = restored(snapshot.clone());
         assert_eq!(
             restored
-                .capture_backup_snapshot(
+                .capture_backup_replay(
                     true,
                     StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap()
                 )
                 .await
-                .unwrap(),
+                .unwrap()
+                .materialize()
+                .expect("replay rows"),
             snapshot
         );
     });

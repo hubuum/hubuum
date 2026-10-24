@@ -1,16 +1,17 @@
 use std::collections::BTreeMap;
 
 use chrono::{Duration, NaiveDate};
+#[cfg(feature = "embedded-migrations")]
+use hubuum_storage_core::StorageBackupBudget;
+use hubuum_storage_core::StorageBackupSnapshot;
 use rstest::rstest;
 use serde_json::json;
 
 #[cfg(feature = "embedded-migrations")]
-use super::{JsonSchemaLimits, verify_restored_backup_matches};
+use super::JsonSchemaLimits;
 use super::{
-    MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, RESTORE_RECONCILIATION_GRACE_SECONDS,
-    RestoreSettings, confirmation_is_stale, normalize_legacy_class_schema_policies,
-    normalize_legacy_event_configuration, restore_capability_matches, restore_error_for_storage,
-    sha256, validate_computed_field_definitions, verify_backup_document,
+    RESTORE_RECONCILIATION_GRACE_SECONDS, RestoreSettings, confirmation_is_stale,
+    restore_capability_matches, restore_error_for_storage, sha256,
 };
 use crate::errors::ApiError;
 use crate::models::{
@@ -18,48 +19,41 @@ use crate::models::{
 };
 use crate::storage::{StorageBackupHistorySection, StorageBackupRow, StorageBackupStateSection};
 
+fn verify_backup_document(
+    bytes: &[u8],
+    max_bytes: usize,
+) -> Result<super::BackupVerificationReport, ApiError> {
+    super::verify_backup_reader(bytes, max_bytes, hubuum_domain::JsonSchemaLimits::default())
+}
+
+#[cfg(feature = "embedded-migrations")]
+fn comparison_document(
+    mut document: BackupDocument,
+) -> Result<super::replay::ReplayDocument, ApiError> {
+    document.manifest = BackupManifest::from_sections(&document.state, document.history.as_ref());
+    let bytes = serde_json::to_vec(&document)?;
+    Ok(super::replay::parse(
+        bytes.as_slice(),
+        16 * 1024 * 1024,
+        JsonSchemaLimits::default(),
+    )?
+    .0)
+}
+
+#[cfg(feature = "embedded-migrations")]
+fn compare_backups(source: BackupDocument, restored: BackupDocument) -> Result<(), ApiError> {
+    super::replay::compare(
+        &comparison_document(source)?,
+        &comparison_document(restored)?,
+    )
+}
+
 fn backup_instant() -> chrono::DateTime<chrono::Utc> {
     NaiveDate::from_ymd_opt(2026, 7, 16)
         .unwrap()
         .and_hms_opt(0, 0, 0)
         .unwrap()
         .and_utc()
-}
-
-fn computed_definition(class_id: i32, owner_id: Option<i32>, key: String) -> serde_json::Value {
-    json!({
-        "class_id": class_id,
-        "visibility": if owner_id.is_some() { "personal" } else { "shared" },
-        "owner_principal_id": owner_id,
-        "key": key,
-        "label": "Restored field",
-        "description": "",
-        "operation": {"type": "first_non_null", "paths": ["/value"]},
-        "result_type": "string",
-        "enabled": true,
-        "revision": 1,
-        "semantics_version": 1
-    })
-}
-
-fn document_with_computed_definitions(definitions: Vec<serde_json::Value>) -> BackupDocument {
-    BackupDocument {
-        backup_version: CURRENT_BACKUP_VERSION,
-        created_at: backup_instant(),
-        source_version: "test".to_string(),
-        state: BackupState {
-            sections: BTreeMap::from([(
-                StorageBackupStateSection::ComputedFieldDefinitions,
-                definitions
-                    .into_iter()
-                    .map(StorageBackupRow::try_from_value)
-                    .collect::<Result<_, _>>()
-                    .unwrap(),
-            )]),
-        },
-        history: None,
-        manifest: BackupManifest::default(),
-    }
 }
 
 fn minimally_valid_document() -> BackupDocument {
@@ -127,88 +121,6 @@ fn minimally_valid_document() -> BackupDocument {
         history: None,
         manifest,
     }
-}
-
-#[test]
-fn format_six_notifications_restore_with_legacy_defaults() {
-    let mut document = minimally_valid_document();
-    document.backup_version = 6;
-    document.state.sections.insert(
-        StorageBackupStateSection::EventSinks,
-        vec![StorageBackupRow::try_from_value(json!({"id": 1, "kind": "webhook"})).unwrap()],
-    );
-    document.history = Some(BackupHistory {
-        sections: BTreeMap::from([(
-            StorageBackupHistorySection::TerminalEventDeliveries,
-            vec![
-                StorageBackupRow::try_from_value(json!({"id": 1, "status": "succeeded"})).unwrap(),
-            ],
-        )]),
-    });
-    normalize_legacy_event_configuration(&mut document);
-    assert_eq!(
-        document.state.sections[&StorageBackupStateSection::EventSinks][0].fields()["delivery_policy"],
-        json!({"min_interval_ms": null}),
-    );
-    let delivery = &document.history.unwrap().sections
-        [&StorageBackupHistorySection::TerminalEventDeliveries][0];
-    assert_eq!(delivery.fields()["purpose"], "event");
-    assert_eq!(delivery.fields()["deferred_reason"], json!(null));
-}
-
-#[test]
-fn legacy_current_class_without_schema_disables_validation() {
-    let mut document = minimally_valid_document();
-    document
-        .state
-        .sections
-        .get_mut(&StorageBackupStateSection::Classes)
-        .unwrap()
-        .push(
-            StorageBackupRow::try_from_value(json!({
-                "id": 2,
-                "json_schema": null,
-                "validate_schema": true
-            }))
-            .unwrap(),
-        );
-
-    normalize_legacy_class_schema_policies(&mut document);
-
-    let class = &document.state.sections[&StorageBackupStateSection::Classes][0];
-    assert_eq!(class.get("validate_schema"), Some(&json!(false)));
-}
-
-#[test]
-fn legacy_class_history_without_schema_disables_validation() {
-    let mut document = minimally_valid_document();
-    document.history = Some(BackupHistory {
-        sections: StorageBackupHistorySection::ALL
-            .iter()
-            .copied()
-            .map(|section| (section, Vec::new()))
-            .collect(),
-    });
-    document
-        .history
-        .as_mut()
-        .unwrap()
-        .sections
-        .get_mut(&StorageBackupHistorySection::ClassHistory)
-        .unwrap()
-        .push(
-            StorageBackupRow::try_from_value(json!({
-                "id": 2,
-                "json_schema": null,
-                "validate_schema": true
-            }))
-            .unwrap(),
-        );
-
-    normalize_legacy_class_schema_policies(&mut document);
-
-    let class = &document.history.unwrap().sections[&StorageBackupHistorySection::ClassHistory][0];
-    assert_eq!(class.get("validate_schema"), Some(&json!(false)));
 }
 
 #[test]
@@ -364,304 +276,119 @@ fn offline_backup_verification_rejects_invalid_row_timestamps() {
 }
 
 #[cfg(feature = "embedded-migrations")]
+fn retained_comparison_document() -> BackupDocument {
+    let mut document = minimally_valid_document();
+    let snapshot = StorageBackupSnapshot::try_new(document.state.sections.clone(), None).unwrap();
+    let replay = hubuum_storage_core::StorageBackupReplay::from_snapshot(
+        snapshot,
+        StorageBackupBudget::new(16 * 1024 * 1024, 10000).unwrap(),
+    )
+    .unwrap()
+    .at_restore_boundary(document.created_at)
+    .unwrap();
+    let (state, history) = replay.materialize().unwrap().into_parts();
+    document.state.sections = state;
+    document.history = history.map(|sections| BackupHistory { sections });
+    document
+}
+
+#[cfg(feature = "embedded-migrations")]
 #[rstest]
-#[case::version_six(6, false, true)]
-#[case::version_seven(7, false, true)]
-#[case::version_eight(8, false, true)]
-#[case::unexpected_declaration(8, true, false)]
-#[case::missing_current_section(CURRENT_BACKUP_VERSION, false, false)]
-fn restored_backup_comparison_normalizes_only_absent_legacy_declarations(
-    #[case] version: i32,
-    #[case] unexpected_declaration: bool,
-    #[case] accepted: bool,
-) {
-    let mut restored = minimally_valid_document();
-    let mut source = restored.clone();
+#[case::format_six(6)]
+#[case::format_seven(7)]
+#[case::format_eight(8)]
+fn streaming_comparison_accepts_absent_legacy_declarations(#[case] version: i32) {
+    let mut source = minimally_valid_document();
+    let restored = source.clone();
     source.backup_version = version;
     source
         .state
         .sections
         .remove(&StorageBackupStateSection::QueryUsageDeclarations);
-    source.manifest = BackupManifest::from_sections(&source.state, None);
-    if unexpected_declaration {
-        restored
-            .state
-            .sections
-            .get_mut(&StorageBackupStateSection::QueryUsageDeclarations)
-            .unwrap()
-            .push(StorageBackupRow::try_from_value(json!({"id": 1})).unwrap());
-    }
-
-    assert_eq!(
-        verify_restored_backup_matches(&source, &restored, JsonSchemaLimits::default()).is_ok(),
-        accepted
-    );
+    assert!(compare_backups(source, restored).is_ok());
 }
 
 #[cfg(feature = "embedded-migrations")]
-#[test]
-fn restored_backup_comparison_accepts_only_the_provenance_event() {
-    let mut source = minimally_valid_document();
-    source.history = Some(BackupHistory {
-        sections: StorageBackupHistorySection::ALL
-            .iter()
-            .copied()
-            .map(|section| (section, Vec::new()))
-            .collect(),
-    });
+#[rstest]
+#[case::unchanged(false)]
+#[case::changed(true)]
+fn streaming_comparison_detects_authoritative_state_drift(#[case] changed: bool) {
+    let source = minimally_valid_document();
     let mut restored = source.clone();
-    restored
+    if changed {
+        let rows = restored
+            .state
+            .sections
+            .get_mut(&StorageBackupStateSection::Collections)
+            .unwrap();
+        let mut row = rows[0].clone().into_value();
+        row["name"] = json!("changed");
+        rows[0] = StorageBackupRow::try_from_value(row).unwrap();
+    }
+    let result = compare_backups(source, restored);
+    if changed {
+        assert!(result.unwrap_err().to_string().contains("collections"));
+    } else {
+        assert!(result.is_ok());
+    }
+}
+
+#[cfg(feature = "embedded-migrations")]
+#[rstest]
+#[case::missing(0, "restore", "succeeded", false)]
+#[case::expected(1, "restore", "succeeded", true)]
+#[case::duplicate(2, "restore", "succeeded", false)]
+#[case::unrelated(1, "object", "create", false)]
+#[case::failed(1, "restore", "failed", false)]
+fn streaming_comparison_requires_exactly_one_success_provenance_event(
+    #[case] count: i32,
+    #[case] entity_type: &str,
+    #[case] action: &str,
+    #[case] accepted: bool,
+) {
+    let source = retained_comparison_document();
+    let mut restored = source.clone();
+    let events = restored
         .history
         .as_mut()
         .unwrap()
         .sections
         .get_mut(&StorageBackupHistorySection::AuditEvents)
-        .unwrap()
-        .push(
-            StorageBackupRow::try_from_value(json!({
-                "id": 1,
-                "entity_type": "restore",
-                "action": "succeeded"
-            }))
+        .unwrap();
+    for id in 1..=count {
+        events.push(
+            StorageBackupRow::try_from_value(
+                json!({"id":id,"entity_type":entity_type,"action":action}),
+            )
             .unwrap(),
         );
-
-    assert!(
-        verify_restored_backup_matches(&source, &restored, JsonSchemaLimits::default()).is_ok()
-    );
+    }
+    assert_eq!(compare_backups(source, restored).is_ok(), accepted);
 }
 
 #[cfg(feature = "embedded-migrations")]
-#[rstest]
-#[case::old_to_null(json!({}), json!({"trace_id": null, "trace_span_id": null, "trace_flags": null, "trace_context_version": null}), true)]
-#[case::null_to_absent(json!({"trace_id": null, "trace_span_id": null, "trace_flags": null, "trace_context_version": null}), json!({}), true)]
-#[case::new_link(json!({}), json!({"trace_id": "4bf92f3577b34da6a3ce929d0e0e4736", "trace_span_id": "00f067aa0ba902b7", "trace_flags": 1, "trace_context_version": 0}), false)]
-#[case::partial_link(json!({}), json!({"trace_id": "4bf92f3577b34da6a3ce929d0e0e4736", "trace_span_id": null}), false)]
-#[case::cleared_link(json!({"trace_id": "4bf92f3577b34da6a3ce929d0e0e4736", "trace_span_id": "00f067aa0ba902b7", "trace_flags": 1, "trace_context_version": 0}), json!({}), false)]
-fn restored_backup_comparison_canonicalizes_only_empty_trace_links(
-    #[values(
-        StorageBackupHistorySection::TerminalTasks,
-        StorageBackupHistorySection::AuditEvents
-    )]
-    section: StorageBackupHistorySection,
-    #[case] source_link: serde_json::Value,
-    #[case] restored_link: serde_json::Value,
-    #[case] accepted: bool,
-) {
-    assert_history_comparison(section, source_link, restored_link, accepted);
-}
-
-#[cfg(feature = "embedded-migrations")]
-#[rstest]
-#[case::empty_control(StorageBackupHistorySection::TerminalTasks, json!({}), json!({
-    "cancel_requested_at": null, "cancel_requested_by": null, "cancel_reason": null,
-    "execution_deadline_at": null, "import_effects_committed_at": null,
-    "remote_dispatched_at": null, "terminal_reason": null
-}), true)]
-#[case::lost_cancellation(StorageBackupHistorySection::TerminalTasks, json!({"cancel_requested_at": "2026-09-14T12:00:00Z"}), json!({}), false)]
-#[case::lost_deadline(StorageBackupHistorySection::TerminalTasks, json!({"execution_deadline_at": "2026-09-14T12:00:00Z"}), json!({}), false)]
-#[case::legacy_remote(StorageBackupHistorySection::RemoteCallResults, json!({}), json!({"side_effect_state": "legacy_unknown"}), true)]
-#[case::canonical_legacy_remote(StorageBackupHistorySection::RemoteCallResults, json!({"side_effect_state": "legacy_unknown"}), json!({}), true)]
-#[case::lost_dispatch_evidence(StorageBackupHistorySection::RemoteCallResults, json!({"side_effect_state": "possibly_sent"}), json!({}), false)]
-#[case::invented_dispatch_evidence(StorageBackupHistorySection::RemoteCallResults, json!({}), json!({"side_effect_state": "not_sent"}), false)]
-#[case::malformed_remote(StorageBackupHistorySection::RemoteCallResults, json!({}), json!({"side_effect_state": null}), false)]
-#[case::unrelated_drift(StorageBackupHistorySection::TerminalTasks, json!({}), json!({"unknown_field": null}), false)]
-fn restored_backup_comparison_preserves_task_execution_evidence(
-    #[case] section: StorageBackupHistorySection,
-    #[case] source_fields: serde_json::Value,
-    #[case] restored_fields: serde_json::Value,
-    #[case] accepted: bool,
-) {
-    assert_history_comparison(section, source_fields, restored_fields, accepted);
-}
-
-#[cfg(feature = "embedded-migrations")]
-fn assert_history_comparison(
-    section: StorageBackupHistorySection,
-    source_link: serde_json::Value,
-    restored_link: serde_json::Value,
-    accepted: bool,
-) {
-    let row = |link: serde_json::Value| {
-        let mut row = json!({"id": 1, "summary": "retained history"});
-        row.as_object_mut()
-            .unwrap()
-            .extend(link.as_object().unwrap().clone());
-        StorageBackupRow::try_from_value(row).unwrap()
-    };
-    let mut source = minimally_valid_document();
-    source.history = Some(BackupHistory {
-        sections: StorageBackupHistorySection::ALL
-            .iter()
-            .copied()
-            .map(|section| (section, Vec::new()))
-            .collect(),
-    });
-    source
-        .history
-        .as_mut()
-        .unwrap()
-        .sections
-        .insert(section, vec![row(source_link)]);
+#[test]
+fn streaming_comparison_rejects_retained_history_drift() {
+    let source = retained_comparison_document();
     let mut restored = source.clone();
-    let history = restored.history.as_mut().unwrap();
-    history.sections.insert(section, vec![row(restored_link)]);
+    let history = &mut restored.history.as_mut().unwrap().sections;
     history
-        .sections
         .get_mut(&StorageBackupHistorySection::AuditEvents)
         .unwrap()
         .push(
             StorageBackupRow::try_from_value(
-                json!({"id": 2, "entity_type": "restore", "action": "succeeded"}),
+                json!({"id":1,"entity_type":"restore","action":"succeeded"}),
             )
             .unwrap(),
         );
-
-    assert_eq!(
-        verify_restored_backup_matches(&source, &restored, JsonSchemaLimits::default()).is_ok(),
-        accepted
-    );
-}
-
-#[cfg(feature = "embedded-migrations")]
-#[rstest]
-#[case::legacy(json!({}), json!({"forward_label": null, "reverse_label": null}), true)]
-#[case::forward_retained(json!({"forward_label": "contains"}), json!({"forward_label": "contains", "reverse_label": null}), true)]
-#[case::reverse_retained(json!({"reverse_label": "is in"}), json!({"forward_label": null, "reverse_label": "is in"}), true)]
-#[case::lost_label(json!({"forward_label": "contains"}), json!({"forward_label": null, "reverse_label": null}), false)]
-#[case::invented_label(json!({}), json!({"forward_label": "contains", "reverse_label": null}), false)]
-#[case::swapped_labels(json!({"forward_label": "contains", "reverse_label": "is in"}), json!({"forward_label": "is in", "reverse_label": "contains"}), false)]
-#[case::malformed_label(json!({"forward_label": 42}), json!({"forward_label": null, "reverse_label": null}), false)]
-#[case::unrelated_drift(json!({}), json!({"forward_label": null, "reverse_label": null, "unknown_field": null}), false)]
-fn restored_backup_comparison_defaults_only_absent_relation_labels(
-    #[values(false, true)] history: bool,
-    #[case] source_fields: serde_json::Value,
-    #[case] restored_fields: serde_json::Value,
-    #[case] accepted: bool,
-) {
-    if history {
-        assert_history_comparison(
-            StorageBackupHistorySection::ClassRelationHistory,
-            source_fields,
-            restored_fields,
-            accepted,
-        );
-        return;
-    }
-    let mut source = minimally_valid_document();
-    let mut restored = source.clone();
-    for (document, fields) in [
-        (&mut source, source_fields),
-        (&mut restored, restored_fields),
-    ] {
-        document.state.sections.insert(
-            StorageBackupStateSection::ClassRelations,
-            vec![StorageBackupRow::try_from_value(fields).unwrap()],
-        );
-    }
-
-    assert_eq!(
-        verify_restored_backup_matches(&source, &restored, JsonSchemaLimits::default()).is_ok(),
-        accepted
-    );
-}
-
-#[cfg(feature = "embedded-migrations")]
-#[test]
-fn restored_backup_comparison_accepts_legacy_class_schema_normalization() {
-    let mut source = minimally_valid_document();
-    source
-        .state
-        .sections
-        .get_mut(&StorageBackupStateSection::Classes)
-        .unwrap()
-        .push(
-            StorageBackupRow::try_from_value(json!({
-                "id": 2,
-                "json_schema": null,
-                "validate_schema": true
-            }))
-            .unwrap(),
-        );
-    let mut restored = source.clone();
-    normalize_legacy_class_schema_policies(&mut restored);
-
-    assert!(
-        verify_restored_backup_matches(&source, &restored, JsonSchemaLimits::default()).is_ok()
-    );
-}
-
-#[cfg(feature = "embedded-migrations")]
-#[rstest]
-#[case::legacy_spaces(json!("legacy correlation"), json!(null), true)]
-#[case::legacy_empty(json!(""), json!(null), true)]
-#[case::legacy_overlong(json!("x".repeat(129)), json!(null), true)]
-#[case::valid_unchanged(json!("client-correlation"), json!("client-correlation"), true)]
-#[case::valid_cleared(json!("client-correlation"), json!(null), false)]
-#[case::valid_replaced(json!("client-correlation"), json!("different-correlation"), false)]
-#[case::restored_invalid(json!(null), json!("invalid correlation"), false)]
-#[case::legacy_replaced_with_invalid(json!("legacy correlation"), json!("invalid correlation"), false)]
-#[case::malformed_non_string(json!(42), json!(null), false)]
-fn restored_backup_comparison_normalizes_only_legacy_source_correlation_ids(
-    #[case] source_correlation: serde_json::Value,
-    #[case] restored_correlation: serde_json::Value,
-    #[case] accepted: bool,
-) {
-    let row = |correlation: serde_json::Value| {
-        StorageBackupRow::try_from_value(json!({
-            "id": 1,
-            "correlation_id": correlation
-        }))
-        .unwrap()
-    };
-    let mut source = minimally_valid_document();
-    source.history = Some(BackupHistory {
-        sections: StorageBackupHistorySection::ALL
-            .iter()
-            .copied()
-            .map(|section| (section, Vec::new()))
-            .collect(),
-    });
-    source.history.as_mut().unwrap().sections.insert(
-        StorageBackupHistorySection::AuditEvents,
-        vec![row(source_correlation)],
-    );
-    let mut restored = source.clone();
-    restored.history.as_mut().unwrap().sections.insert(
-        StorageBackupHistorySection::AuditEvents,
-        vec![
-            row(restored_correlation),
-            StorageBackupRow::try_from_value(json!({
-                "id": 2,
-                "entity_type": "restore",
-                "action": "succeeded"
-            }))
-            .unwrap(),
-        ],
-    );
-
-    assert_eq!(
-        verify_restored_backup_matches(&source, &restored, JsonSchemaLimits::default()).is_ok(),
-        accepted
-    );
-}
-
-#[cfg(feature = "embedded-migrations")]
-#[test]
-fn restored_backup_comparison_rejects_state_drift() {
-    let source = minimally_valid_document();
-    let mut restored = source.clone();
-    restored
-        .state
-        .sections
-        .get_mut(&StorageBackupStateSection::Collections)
-        .unwrap()
-        .clear();
-
-    let error = verify_restored_backup_matches(&source, &restored, JsonSchemaLimits::default())
-        .unwrap_err();
-
-    assert!(error.to_string().contains("logical state"));
+    let rows = history
+        .get_mut(&StorageBackupHistorySection::CollectionHistory)
+        .unwrap();
+    let mut row = rows[0].clone().into_value();
+    row["task_id"] = json!(1);
+    rows[0] = StorageBackupRow::try_from_value(row).unwrap();
+    let error = compare_backups(source, restored).unwrap_err();
+    assert!(error.to_string().contains("collection_history"), "{error}");
 }
 
 #[rstest]
@@ -722,36 +449,6 @@ fn restore_confirmation_staleness_respects_grace_period(
 }
 
 #[rstest]
-#[case::shared(MAX_SHARED_DEFINITIONS, None)]
-#[case::personal(MAX_PERSONAL_DEFINITIONS, Some(7))]
-fn restore_rejects_computed_definition_scope_over_capacity(
-    #[case] maximum: usize,
-    #[case] owner_id: Option<i32>,
-) {
-    let definitions = (0..=maximum)
-        .map(|index| computed_definition(42, owner_id, format!("field_{index}")))
-        .collect();
-    let error =
-        validate_computed_field_definitions(&document_with_computed_definitions(definitions))
-            .unwrap_err();
-    assert!(error.to_string().contains(&maximum.to_string()));
-}
-
-#[test]
-fn restore_rejects_duplicate_computed_definition_keys() {
-    let definitions = vec![
-        computed_definition(42, None, "duplicate".to_string()),
-        computed_definition(42, None, "duplicate".to_string()),
-    ];
-
-    let error =
-        validate_computed_field_definitions(&document_with_computed_definitions(definitions))
-            .unwrap_err();
-
-    assert!(error.to_string().contains("duplicate"));
-}
-
-#[rstest]
 #[case::internal_server(
     ApiError::InternalServerError("secret internal path".to_string()),
     "secret internal path"
@@ -789,4 +486,104 @@ fn restore_status_internal_errors_do_not_expose_details(
 )]
 fn restore_status_preserves_public_safe_errors(#[case] error: ApiError, #[case] expected: &str) {
     assert_eq!(restore_error_for_storage(&error), expected);
+}
+
+#[test]
+fn replay_parser_accepts_reordered_members_and_single_byte_reads() {
+    use std::io::Read;
+    struct OneByte<'a>(&'a [u8]);
+    impl Read for OneByte<'_> {
+        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+            let limit = bytes.len().min(1);
+            self.0.read(&mut bytes[..limit])
+        }
+    }
+    let document = minimally_valid_document();
+    // Value's sorted keys put history and manifest before state/version metadata.
+    let bytes = serde_json::to_vec(&serde_json::to_value(&document).unwrap()).unwrap();
+    let (replay, digest, count) = super::replay::parse(
+        OneByte(&bytes),
+        bytes.len(),
+        hubuum_domain::JsonSchemaLimits::default(),
+    )
+    .unwrap();
+    let expected = StorageBackupSnapshot::try_new_with_limits(
+        document.state.sections,
+        document.history.map(|h| h.sections),
+        hubuum_domain::JsonSchemaLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(replay.snapshot.materialize().unwrap(), expected);
+    assert_eq!((digest, count), (sha256(&bytes), bytes.len()));
+}
+
+#[rstest]
+#[case::duplicate_envelope("duplicate_envelope")]
+#[case::duplicate_section("duplicate_section")]
+#[case::truncated("truncated")]
+#[case::trailing("trailing")]
+fn replay_parser_rejects_ambiguous_or_incomplete_input(#[case] change: &str) {
+    let mut bytes = serde_json::to_string(&minimally_valid_document()).unwrap();
+    match change {
+        "duplicate_envelope" => bytes.insert_str(1, "\"backup_version\":10,"),
+        "duplicate_section" => {
+            bytes = bytes.replacen("\"sections\":{", "\"sections\":{\"objects\":[],", 1)
+        }
+        "truncated" => {
+            bytes.pop();
+        }
+        "trailing" => bytes.push_str(" {}"),
+        _ => unreachable!(),
+    }
+    assert!(
+        super::verify_backup_reader(
+            bytes.as_bytes(),
+            bytes.len(),
+            hubuum_domain::JsonSchemaLimits::default()
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn replay_parser_enforces_input_limit_including_trailing_whitespace() {
+    let mut bytes = serde_json::to_vec(&minimally_valid_document()).unwrap();
+    let limit = bytes.len();
+    bytes.push(b' ');
+    let error = super::verify_backup_reader(
+        bytes.as_slice(),
+        limit,
+        hubuum_domain::JsonSchemaLimits::default(),
+    )
+    .unwrap_err();
+    assert!(matches!(error, ApiError::PayloadTooLarge(_)));
+}
+
+#[test]
+fn streaming_restore_accepts_legacy_missing_computed_history() {
+    let mut document = minimally_valid_document();
+    let bytes = serde_json::to_vec(&document).unwrap();
+    let (replay, _, _) = super::replay::parse(
+        bytes.as_slice(),
+        bytes.len(),
+        hubuum_domain::JsonSchemaLimits::default(),
+    )
+    .unwrap();
+    let (state, mut history) = replay
+        .snapshot
+        .at_restore_boundary(document.created_at)
+        .unwrap()
+        .materialize()
+        .unwrap()
+        .into_parts();
+    history
+        .as_mut()
+        .unwrap()
+        .remove(&StorageBackupHistorySection::ComputedFieldHistory);
+    document.state = BackupState { sections: state };
+    document.history = history.map(|sections| BackupHistory { sections });
+    document.backup_version = 9;
+    document.manifest = BackupManifest::from_sections(&document.state, document.history.as_ref());
+    let bytes = serde_json::to_vec(&document).unwrap();
+    verify_backup_document(&bytes, bytes.len()).expect("legacy computed history is optional");
 }

@@ -433,6 +433,17 @@ mod tests {
             (RestoreJobStatus::Expired.as_str(), true)
         );
 
+        let chunks = with_connection(&context.pool, async |conn| {
+            crate::schema::restore_artifact_chunks::table
+                .filter(crate::schema::restore_artifact_chunks::restore_job_id.eq(staged.id))
+                .count()
+                .get_result::<i64>(conn)
+                .await
+        })
+        .await
+        .unwrap();
+        assert_eq!(chunks, 0, "expired restore bytes must be erased");
+
         with_connection(&context.pool, async |conn| {
             diesel::delete(restore_jobs.filter(id.eq(staged.id)))
                 .execute(conn)
@@ -440,5 +451,77 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+    #[rstest]
+    #[case::roundtrip(false)]
+    #[case::corrupted(true)]
+    #[actix_web::test]
+    async fn staged_restore_chunks_replay_exact_bytes_and_detect_corruption(
+        #[future(awt)] test_context: TestContext,
+        #[case] corrupt: bool,
+    ) {
+        use hubuum_storage_core::{
+            RestoreStorage, StorageRestoreArtifact, StorageRestoreInitiator,
+            StorageRestoreStageArtifact,
+        };
+        use hubuum_storage_postgres::PostgresStorage;
+        let context = test_context;
+        let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
+        let mut bytes = serde_json::to_vec(&minimally_valid_full_backup_document()).unwrap();
+        bytes.resize(2 * 1024 * 1024 + 17, b' ');
+        let artifact = StorageRestoreArtifact::from_reader(bytes.as_slice(), bytes.len()).unwrap();
+        let request = StorageRestoreStageArtifact::try_new(
+            StorageRestoreInitiator::try_new(None, "test", "chunk-regression").unwrap(),
+            artifact,
+            "a".repeat(64),
+            serde_json::json!({}),
+            Utc::now() + Duration::minutes(5),
+        )
+        .unwrap();
+        let (summary, _, _) = backend
+            .stage_restore_artifact(request)
+            .await
+            .unwrap()
+            .into_parts();
+        let job_id = summary.id();
+        if corrupt {
+            with_connection(&context.pool, async |conn| {
+                diesel::update(
+                    crate::schema::restore_artifact_chunks::table
+                        .filter(
+                            crate::schema::restore_artifact_chunks::restore_job_id.eq(job_id.id()),
+                        )
+                        .filter(crate::schema::restore_artifact_chunks::ordinal.eq(1)),
+                )
+                .set(crate::schema::restore_artifact_chunks::content.eq(vec![b'x']))
+                .execute(conn)
+                .await
+            })
+            .await
+            .unwrap();
+        }
+        let result = backend.get_restore_artifact(job_id).await;
+        with_connection(&context.pool, async |conn| {
+            diesel::delete(restore_jobs.filter(id.eq(job_id.id())))
+                .execute(conn)
+                .await
+        })
+        .await
+        .unwrap();
+        if corrupt {
+            assert!(result.is_err());
+        } else {
+            use std::io::Read;
+            let mut actual = Vec::new();
+            result
+                .unwrap()
+                .into_parts()
+                .1
+                .unwrap()
+                .reader()
+                .read_to_end(&mut actual)
+                .unwrap();
+            assert_eq!(actual, bytes);
+        }
     }
 }

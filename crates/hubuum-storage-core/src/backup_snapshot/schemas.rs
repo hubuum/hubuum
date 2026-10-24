@@ -1,42 +1,60 @@
+use super::view::{BackupView, ReadError};
 use std::collections::BTreeMap;
 
 use serde_json::Value;
 
 use crate::{
-    StorageBackupSnapshot, StorageBackupStateSection as Section, StorageSchemaRevision,
-    StorageSchemaRevisionStatus, StorageValidationError,
+    StorageBackupStateSection as Section, StorageSchemaRevision, StorageSchemaRevisionStatus,
 };
 
-fn invalid() -> StorageValidationError {
-    StorageValidationError::invalid(
+fn invalid() -> ReadError {
+    ReadError::invalid(
         "Backup schema revision, active projection or object evidence is inconsistent",
     )
 }
-fn integer(value: Option<&Value>) -> Result<i64, StorageValidationError> {
+fn integer(value: Option<&Value>) -> Result<i64, ReadError> {
     value.and_then(Value::as_i64).ok_or_else(invalid)
 }
 
-pub(super) fn validate(snapshot: &StorageBackupSnapshot) -> Result<(), StorageValidationError> {
-    let sections = &snapshot.state_sections;
-    let classes = sections[&Section::Classes]
-        .iter()
-        .map(|row| Ok((integer(row.get("id"))?, row)))
-        .collect::<Result<BTreeMap<_, _>, StorageValidationError>>()?;
-    let objects = sections[&Section::Objects]
-        .iter()
-        .map(|row| Ok((integer(row.get("id"))?, row)))
-        .collect::<Result<BTreeMap<_, _>, StorageValidationError>>()?;
+pub(super) fn validate(snapshot: &impl BackupView) -> Result<(), ReadError> {
+    let mut classes = BTreeMap::new();
+    for row in snapshot.state_rows(Section::Classes)? {
+        let row = row?;
+        classes.insert(
+            integer(row.get("id"))?,
+            (
+                row.get("validate_schema").and_then(Value::as_bool),
+                row.get("json_schema")
+                    .filter(|value| !value.is_null())
+                    .cloned(),
+            ),
+        );
+    }
+    // Object payloads stay in the replay source. Only identity, placement and
+    // revision are needed to resolve evidence and class counts.
+    let mut objects = BTreeMap::new();
+    for row in snapshot.state_rows(Section::Objects)? {
+        let row = row?;
+        objects.insert(
+            integer(row.get("id"))?,
+            (
+                row.get("class_id").and_then(Value::as_i64),
+                row.get("revision").and_then(Value::as_i64),
+            ),
+        );
+    }
     let mut object_counts = BTreeMap::<i64, i64>::new();
-    for object in objects.values() {
-        if let Some(class_id) = object.get("class_id").and_then(Value::as_i64) {
-            *object_counts.entry(class_id).or_default() += 1;
+    for (class_id, _) in objects.values() {
+        if let Some(class_id) = class_id {
+            *object_counts.entry(*class_id).or_default() += 1;
         }
     }
     let mut revisions = BTreeMap::new();
-    for row in &sections[&Section::ClassSchemaRevisions] {
+    for row in snapshot.state_rows(Section::ClassSchemaRevisions)? {
+        let row = row?;
         let revision = StorageSchemaRevision::from_snapshot_with_limits(
-            row.clone().into_value(),
-            snapshot.schema_limits,
+            row.into_owned().into_value(),
+            snapshot.schema_limits(),
         )?;
         let key = (
             i64::from(revision.reference().class_id().id()),
@@ -47,7 +65,8 @@ pub(super) fn validate(snapshot: &StorageBackupSnapshot) -> Result<(), StorageVa
         }
     }
     let mut states = BTreeMap::new();
-    for state in &sections[&Section::ClassSchemaState] {
+    for state in snapshot.state_rows(Section::ClassSchemaState)? {
+        let state = state?;
         let id = integer(state.get("class_id"))?;
         let active = integer(state.get("active_revision"))?;
         let last = integer(state.get("last_revision"))?;
@@ -67,10 +86,8 @@ pub(super) fn validate(snapshot: &StorageBackupSnapshot) -> Result<(), StorageVa
                 .filter(|(_, revision)| revision.status() == StorageSchemaRevisionStatus::Active)
                 .count()
                 != 1
-            || class.get("validate_schema").and_then(Value::as_bool)
-                != Some(policy.validates_schema())
-            || class.get("json_schema").filter(|value| !value.is_null())
-                != policy.json_schema().filter(|value| !value.is_null())
+            || class.0 != Some(policy.validates_schema())
+            || class.1.as_ref() != policy.json_schema().filter(|value| !value.is_null())
         {
             return Err(invalid());
         }
@@ -78,15 +95,17 @@ pub(super) fn validate(snapshot: &StorageBackupSnapshot) -> Result<(), StorageVa
     if states.len() != classes.len() {
         return Err(invalid());
     }
+    let mut payload_checks = BTreeMap::new();
     let mut evidence_ids = std::collections::BTreeSet::new();
-    for row in &sections[&Section::ObjectSchemaEvidence] {
+    for row in snapshot.state_rows(Section::ObjectSchemaEvidence)? {
+        let row = row?;
         let object_id = integer(row.get("object_id"))?;
         let class_id = integer(row.get("class_id"))?;
         let revision = integer(row.get("schema_revision"))?;
         let inspected = integer(row.get("object_revision"))?;
         let object = objects.get(&object_id).ok_or_else(invalid)?;
-        let schema = revisions.get(&(class_id, revision)).ok_or_else(invalid)?;
-        let current = integer(object.get("revision"))?;
+        revisions.get(&(class_id, revision)).ok_or_else(invalid)?;
+        let current = object.1.ok_or_else(invalid)?;
         let valid = row
             .get("valid")
             .and_then(Value::as_bool)
@@ -97,31 +116,39 @@ pub(super) fn validate(snapshot: &StorageBackupSnapshot) -> Result<(), StorageVa
             .ok_or_else(invalid)?;
         if chrono::DateTime::parse_from_rfc3339(timestamp).is_err()
             || !evidence_ids.insert(object_id)
-            || class_id != integer(object.get("class_id"))?
+            || Some(class_id) != object.0
             || inspected <= 0
             || inspected > current
         {
             return Err(invalid());
         }
-        if inspected == current
-            && valid
-            && schema
-                .policy()
-                .inspect(object.get("data").ok_or_else(invalid)?)
-                != crate::StorageComplianceStatus::Valid
-        {
-            return Err(invalid());
+        if inspected == current && valid {
+            payload_checks.insert(object_id, (class_id, revision));
         }
     }
-    if let Some(history) = &snapshot.history_sections {
+    if !payload_checks.is_empty() {
+        for object in snapshot.state_rows(Section::Objects)? {
+            let object = object?;
+            if let Some(reference) = payload_checks.get(&integer(object.get("id"))?)
+                && revisions[reference]
+                    .policy()
+                    .inspect(object.get("data").ok_or_else(invalid)?)
+                    != crate::StorageComplianceStatus::Valid
+            {
+                return Err(invalid());
+            }
+        }
+    }
+    if snapshot.includes_history() {
         let mut ids = std::collections::BTreeSet::new();
         let mut documents = BTreeMap::new();
-        for row in &history[&crate::StorageBackupHistorySection::ClassSchemaHistory] {
+        for row in snapshot.history_rows(crate::StorageBackupHistorySection::ClassSchemaHistory)? {
+            let row = row?;
             let id = integer(row.get("id"))?;
             let reference = (integer(row.get("class_id"))?, integer(row.get("revision"))?);
             let revision = StorageSchemaRevision::from_snapshot_with_limits(
                 row.get("snapshot").cloned().ok_or_else(invalid)?,
-                snapshot.schema_limits,
+                snapshot.schema_limits(),
             )?;
             let timestamp = row
                 .get("occurred_at")

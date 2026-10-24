@@ -35,7 +35,8 @@ comparisons at a fixed corpus.
 ## Dataset Profiles
 
 The committed profiles are compact TOML specifications. Generated rows, backup
-artifacts, and reports are CI artifacts and must not be committed.
+artifacts, and raw reports are CI artifacts and must not be committed. Reviewed,
+sanitized measurement summaries may accompany performance documentation.
 
 | Profile | Collections | Classes |   Objects | Class relations | Object relations |
 | ------- | ----------: | ------: | --------: | --------------: | ---------------: |
@@ -422,7 +423,7 @@ empty. The command writes the manifest, provisioning policy and lifecycle report
 and exits unsuccessfully unless offline verification (and the requested restore)
 completed. It does not silently accept a size limitation as a completed drill.
 
-### Measured large-profile limitation
+### Superseded large-profile memory measurements
 
 On 23 October 2026, the version-2 large fixture (seed `36520260901`, 250,000
 objects and 1,000,000 object relations, plus temporal histories and operational
@@ -430,40 +431,212 @@ overlays) was loaded and verified against PostgreSQL 18.6. Its temporal-state
 lower bound was **837,811,676 bytes**, already above the ordinary 256 MiB ceiling.
 Both runs admitted 1 GiB of document bytes and 4,000,000 scanned rows:
 
-| Process memory ceiling | Preflight | Backup before termination | Sampled peak RSS | Result |
+| Configured ceiling | Preflight | Backup before termination | Reported aggregate | Result |
 | --- | --- | --- | --- | --- |
 | 6 GiB (bundled profile) | 232.772 s | 28.711 s | 6,487,523,328 bytes | Memory envelope exceeded |
 | 12 GiB (explicit custom profile) | 204.672 s | 57.656 s | 12,920,004,608 bytes | Memory envelope exceeded |
 
+These reports **do not measure actual process RSS**. The supervisor used
+`sysinfo`'s default process refresh, which also lists Linux threads as tasks with
+their process as parent. It added each thread's shared RSS to the process RSS.
+Tokio worker threads therefore multiplied the reported total. The corrected
+supervisor disables task enumeration while retaining real child processes.
+
 The administrator was killed and reaped and the private artifact directories
 were removed in both runs. Neither produced a completed backup document;
-verification and restore were not attempted. These peaks include sampling
-overshoot. The fixture ran on Linux x86-64, an Intel Xeon Silver 4216 (16 cores,
+verification and restore were not attempted. The fixture ran on Linux x86-64,
+an Intel Xeon Silver 4216 (16 cores,
 32 threads), 62 GiB RAM, with a Rust 1.98.0 release administrator using `opt-level=z`,
 fat LTO, both TLS features and embedded migrations. Other validation builds were
 running, so timings are diagnostic observations, not performance baselines.
 
-The default large corpus therefore **does not have a completed lifecycle within
-the measured 6 GiB or 12 GiB process envelopes**. Keep that explicit limitation;
-raising the byte limit is not evidence of memory safety or restore support.
-The existing materialized backup representation needs further retained-memory
-reduction or a streaming/versioned design before claiming this corpus works on
-ordinary CI runners. The huge profile has no successful measured lifecycle here.
-To select a different provisioned envelope, copy the TOML profile, edit
+The earlier conclusion that the large corpus exhausted 6 GiB and 12 GiB is
+withdrawn. A fresh run on `283ce8ce` reproduced the incorrect rejection at a
+reported 6,454,394,880 bytes after 14.748 seconds; a bounded 100,000-row capture
+measured independently with the system allocator profiler and `/usr/bin/time`
+used 147,304,414 bytes of peak heap and 222,976 KiB peak RSS while retaining
+34,187,173 compact logical bytes. Limiting allocator arenas did not correct the
+supervisor's accounting error.
+
+Use corrected process-only measurements to decide whether the materialized
+representation fits a provisioned envelope. The huge profile has no successful
+measured lifecycle here. To select a different envelope, copy the TOML profile, edit
 `lifecycle_max_resident_bytes`, and pass `--profile large --profile-spec <file>`.
 The harness enforces and records that choice; it does not certify it in advance.
 
 ### Format decision
 
-Use the existing compact versioned JSON backup and an explicitly provisioned
-extended ceiling. Compression could reduce artifact/disk bytes but would not
-reduce the decoded row graph retained by verification/restore. A streaming format
-would require incremental validation, transaction-safe restoration, bounded
-cross-section reference checks and new compatibility/version handling. Neither
-is necessary to measure the current envelope, and neither is implied by a larger
-byte setting. Preserve the production capture limits and report measurements
-before selecting a format change. Backup capture already streams rows from
-PostgreSQL, but the admitted document and restore graph are still materialized.
+Keep the existing compact versioned JSON format and production limits. Measure
+each phase before selecting a larger deployment envelope. Compression could
+reduce artifact and disk bytes but would not reduce the decoded row graph.
+The initial memory changes retained complete decoded snapshots. The streaming
+implementation below replaces those graphs with replayable spools while retaining
+the same JSON format.
+
+### Initial memory-phase measurements
+
+On 24 October 2026, `/usr/bin/time -v` measured the same version-2 large corpus
+against baseline `283ce8ce`. The completed artifact contains 2,589,029 logical
+rows in 857,313,491 bytes. Both binaries used Rust 1.98.0, release `opt-level=3`,
+fat LTO, one codegen unit, embedded migrations, and both TLS features.
+
+| Operation | Baseline peak RSS | Changed peak RSS |
+| --- | --- | --- |
+| Capture | 6.35 GiB | 5.62 GiB (sampled supervisor) |
+| Offline verification | 11.85 GiB | 6.38 GiB |
+| Isolated restore and comparison | Not measured | 10.53 GiB |
+
+Offline verification used about 46% less peak resident memory and produced the
+same report except for its timestamp, including the canonical state digest.
+It still exceeded the bundled 6 GiB envelope. These successful probes used a
+16 GiB virtual-address-space ceiling and a 1,800-second timeout. Builds ran
+concurrently, so elapsed times are diagnostic rather than speed comparisons.
+Exact bytes, commands' resource bounds, and fixture details are recorded in the
+[sanitized measurement summary](performance/backup_memory.json).
+
+A full lifecycle attempt with an explicit 8 GiB resident-memory envelope
+completed capture and offline verification. The corrected supervisor measured
+6,034,833,408 bytes during capture and 6,853,775,360 during offline verification.
+It stopped isolated restore after 56.899 seconds at 8,658,653,184 bytes. This is
+an actual envelope failure, unlike the superseded thread-counting reports above.
+It does not certify an 8 GiB restore deployment. The capture result uses sampled
+RSS rather than the independent runs' operating-system high-water mark.
+
+Reusing the verified artifact, an independent restore-and-compare run passed
+under the diagnostic 16 GiB address-space ceiling. It peaked at 11,302,916,096
+resident bytes and took 1,218.19 seconds, including 707.633 seconds for restore
+staging, confirmation, and application. The verifier matched both authoritative
+state and retained history, preserved the canonical state digest, and reset the
+disposable schema. Normal computed-data reindex jobs were queued; their worker
+completion was not measured. This run establishes correctness at a larger
+diagnostic bound, not a production memory-sizing recommendation. The bundled
+6 GiB envelope and production document limits remain unchanged.
+
+### Initial reductions in retained memory
+
+The administrator serializes backups directly through a bounded buffered writer
+to its owner-only temporary file. A limit or write failure removes the partial
+file and leaves an existing destination intact. Task-backed backup output still
+uses an in-memory byte buffer for its database artifact, but releases the decoded
+document before persisting that buffer.
+
+Restore validation transfers the decoded sections into the validated snapshot
+instead of cloning them. Offline verification hashes canonical JSON directly into
+the digest. Isolated restore verification keeps the source in compact byte form
+during restore. Before capturing the destination, it fingerprints and releases
+the large object, object-relation, schema-evidence, and corresponding history
+sections. Fingerprints cover every value and row order. Sources needing legacy
+computed-history baselines retain the full source for that reconstruction.
+These initial measurements predate streaming: capture and decoding retained
+complete row trees. The following implementation replaces that retention.
+
+PostgreSQL restore consumes each validated section in batches of at most 256 rows
+and a target of 1 MiB of encoded JSON. A single larger row is admitted alone and
+remains bounded by the document limit. Collection rows retain one statement,
+because their immediate parent foreign key permits forward references within
+that statement. All batches remain inside the existing fenced transaction;
+failure rolls back the complete restore. The batch target does not bound total
+process memory or PostgreSQL transaction memory.
+
+### Streaming measurements
+
+The streaming implementation completed the full large lifecycle on 24 October
+2026 under the same explicit 8 GiB administrator RSS envelope that stopped the
+initial implementation. This reloaded version-2 fixture has 250,000 objects,
+1,000,000 object relations, 2,589,029 logical rows, and an 857,313,491-byte backup.
+The restore applied 74 migrations, matched authoritative state and retained
+history, and reset the disposable target schema.
+
+| Stage | Sampled administrator peak RSS | Elapsed time |
+| --- | --- | --- |
+| Capture | 115 MiB | 469.855 s |
+| Offline verification | 116 MiB | 76.152 s |
+| Isolated restore and comparison | 148 MiB | 1,227.648 s |
+
+An independent `/usr/bin/time -v` comparison used the exact same artifact with
+the initial materialized binary and the streaming binary. Offline verification
+fell from 6,852,456,448 resident bytes (6.38 GiB) to 120,356,864 bytes (115 MiB), a
+98.24% reduction. Reports matched except for the verification timestamp. The
+state digest differs from the earlier fixture load because generated credential
+salts vary; the two verifiers agree on this artifact's digest.
+
+That independent verification took 26.66 s with materialization and 77.09 s with
+streaming. Replay trades additional parsing and temporary-disk I/O for memory.
+Builds ran concurrently, so these timings are diagnostic rather than controlled
+speed comparisons. The supervisor measures administrator process RSS, excluding
+PostgreSQL server memory and filesystem cache; the run does not establish a
+whole-container limit or a production sizing recommendation. The bundled 6 GiB
+envelope, production document limits, and unmeasured huge-profile status remain
+unchanged.
+
+The recorded runner lost the restore sub-duration when a structured setup log
+preceded its JSON report. Its semantic timing therefore contains the combined
+restore/comparison stage, and its zero computed-rebuild field is an old
+placeholder, not a worker measurement. The runner now reads the JSON report
+after structured logs and leaves unmeasured rebuild timing unset. The final
+code also requires the new migration in its schema-readiness checkpoint; these
+post-measurement corrections do not change the streaming algorithm. Exact
+figures and qualifications are in the
+[sanitized measurement summary](performance/backup_memory.json).
+
+### Streaming implementation: indexed JSON replay
+
+The existing JSON format supports row streaming without a format migration.
+PostgreSQL capture writes one row at a time from its repeatable-read cursor to a
+private spool. It enforces the existing capture byte and row limits, including
+excluded history rows inspected during enumeration. The artifact is published
+only after validation; administrator file output remains an atomic replacement.
+
+Restore uploads and administrator inputs are copied to an owner-only temporary
+file while computing the exact-byte SHA-256. PostgreSQL commits the stage and
+chunks of at most 1 MiB in one transaction. A separately deployed executor can
+recover those bytes after a restart. Reads check chunk order, total length, and
+SHA-256. Old BYTEA stages are read through bounded substrings. Expiry, failure,
+and successful restore erase staged chunks through the same lifecycle as the
+control record.
+
+The parser uses Serde visitors to consume individual rows. It accepts arbitrary
+member and section order and rejects duplicate envelope fields and sections.
+Parsing records section offsets and row counts in a second private spool;
+normalization and semantic validation then replay those sections. The shared
+validators retain identity, revision, relationship, and schema indexes while
+object and historical payloads stay on disk. These are multiple logical passes,
+not exactly two scans: individual validators replay the sections they need.
+The private validated row source owns its file handle through application, so
+restore does not reopen an input path after validation. Read and insertion errors
+propagate through the existing fenced transaction and roll back all changes.
+
+Memory still scales with validation indexes, schema/definition metadata, the
+largest individual row, and the insertion batch. Collection rows use one SQL
+statement to preserve forward parent references. PostgreSQL transaction memory
+is independent of the application spool. The in-memory backend implements the
+same mandatory replay capabilities, materializing rows only to build its own
+in-memory state. The former materialized SDK methods have been removed.
+Backup task artifact storage/download still uses a byte buffer; capture no
+longer keeps the decoded graph alongside it.
+
+Input bytes use the configured upload limit. Parsing admits no more rows than
+half that byte limit (the minimum encoded row is `{}`). Serde's recursion limit
+remains enabled. Canonical row spools admit up to four times the input byte limit
+to allow legacy defaults; each row also consumes one newline on disk. Preparing
+history may use a further bounded expansion for new baseline fields. These are
+per-spool limits, not a total filesystem quota. Raw, canonical, and prepared
+spools can coexist, so provision temporary storage accordingly. Files are private
+and automatically removed when dropped, including on failed validation. A single
+large row or schema still needs to fit in memory; this is not a constant-memory
+parser or a substitute for realistic upload limits.
+
+Apply the chunk-storage migration and upgrade all restore executors before
+accepting new stages. Old executors cannot read new chunked stages. The rollback
+migration refuses to discard retained chunks: complete or expire those stages
+first. CLI restore and backup verification now enforce `--restore-max-upload-bytes`.
+The limit also applies to piped restore input; verification requires a regular file.
+
+A section-framed NDJSON or archive format could simplify record boundaries and
+per-section compression, but would require another format version and two
+readers. Cross-section validation would still need indexes and replay. Larger
+corpora may eventually justify disk-backed indexes. External artifact storage
+in [#252](https://github.com/hubuum/hubuum/issues/252) remains a separate decision.
 
 ## CI Policy
 

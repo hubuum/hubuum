@@ -1834,28 +1834,28 @@ impl TaskExecutionStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl BackupSnapshotStorage for CompleteExternalAdapter {
-    async fn capture_backup_snapshot(
+    async fn capture_backup_replay(
         &self,
         include_history: bool,
         _budget: StorageBackupBudget,
-    ) -> Result<StorageBackupSnapshot, StorageError> {
+    ) -> Result<StorageBackupReplay, StorageError> {
         fixture_result()
     }
 }
 
 #[async_trait]
 impl RestoreStorage for CompleteExternalAdapter {
-    async fn stage_restore(
+    async fn stage_restore_artifact(
         &self,
-        request: StorageRestoreStageCreate,
-    ) -> Result<StorageRestoreJob, StorageError> {
+        request: StorageRestoreStageArtifact,
+    ) -> Result<StorageRestoreStatus, StorageError> {
         fixture_result()
     }
 
-    async fn get_restore_job(
+    async fn get_restore_artifact(
         &self,
         job_id: RestoreJobId,
-    ) -> Result<StorageRestoreJob, StorageError> {
+    ) -> Result<StorageRestoreArtifactJob, StorageError> {
         fixture_result()
     }
 
@@ -1877,9 +1877,9 @@ impl RestoreStorage for CompleteExternalAdapter {
         fixture_result()
     }
 
-    async fn apply_restore(
+    async fn apply_restore_replay(
         &self,
-        request: StorageRestoreApply,
+        request: StorageRestoreReplayApply,
     ) -> Result<StorageRestoreCompletion, StorageError> {
         fixture_result()
     }

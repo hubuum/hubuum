@@ -129,12 +129,11 @@ pub(crate) use hubuum_storage_core::{
     StorageRemoteTargetPatch, StorageRemoteTargetPolicy, StorageRemoteTargetSubjectType,
     StorageRemoteTargetTransport, StorageRemoteTargetUpdate, StorageResolvedClass,
     StorageResolvedClassRelation, StorageResolvedObject, StorageResolvedObjectRelation,
-    StorageResourceScope, StorageRestoreApply, StorageRestoreArtifactSummary,
-    StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot, StorageRestoreDocument,
+    StorageResourceScope, StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot,
     StorageRestoreDocumentMetadata, StorageRestoreDrainState, StorageRestoreFailure,
-    StorageRestoreInitiator, StorageRestoreJob, StorageRestoreJobStatus, StorageRestoreJobSummary,
-    StorageRestoreStageCreate, StorageRestoreStatus, StorageRetainedEvent, StorageServiceAccount,
-    StorageServiceAccountCreate, StorageServiceAccountDetails, StorageServiceAccountDisableOutcome,
+    StorageRestoreInitiator, StorageRestoreJobStatus, StorageRestoreJobSummary,
+    StorageRestoreStatus, StorageRetainedEvent, StorageServiceAccount, StorageServiceAccountCreate,
+    StorageServiceAccountDetails, StorageServiceAccountDisableOutcome,
     StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
     StorageServiceAccountUpdate, StorageSharedComputedFieldCreate,
     StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, StorageSyncedHuman,
@@ -156,9 +155,9 @@ pub(crate) use hubuum_storage_core::{
 };
 pub(crate) use hubuum_storage_core::{
     BackupSnapshotStorage, StorageBackupBudget, StorageBackupHistorySection, StorageBackupOutput,
-    StorageBackupOutputSummary, StorageBackupSnapshot, StorageBackupStateSection,
-    StorageBackupTaskArtifact, StorageExportOutput, StorageExportOutputSummary,
-    StorageExportTaskArtifact, StorageExportTaskArtifactContent, StorageImportTaskResult,
+    StorageBackupOutputSummary, StorageBackupStateSection, StorageBackupTaskArtifact,
+    StorageExportOutput, StorageExportOutputSummary, StorageExportTaskArtifact,
+    StorageExportTaskArtifactContent, StorageImportTaskResult,
 };
 pub use hubuum_storage_core::{
     ExecutionStorage, StorageAuthenticatedToken, StorageCallSite, StorageExecutionScope,
@@ -195,5 +194,5 @@ pub use hubuum_storage_core::{
     StorageCredentialApprovalCreate, StorageCredentialApprovalMetadata, StorageCredentialClaim,
 };
 
-#[cfg(any(test, feature = "embedded-migrations"))]
+#[cfg(test)]
 pub(crate) use hubuum_storage_core::StorageBackupRow;

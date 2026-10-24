@@ -1,20 +1,24 @@
+use super::view::{BackupView, ReadError};
 use crate::{
-    MAX_QUERY_USAGE_DECLARATIONS, StorageBackupSnapshot, StorageBackupStateSection as Section,
-    StorageQueryUsageDeclaration, StorageValidationError,
+    MAX_QUERY_USAGE_DECLARATIONS, StorageBackupStateSection as Section,
+    StorageQueryUsageDeclaration,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(super) fn validate(snapshot: &StorageBackupSnapshot) -> Result<(), StorageValidationError> {
-    let classes = snapshot.state_sections[&Section::Classes]
-        .iter()
-        .filter_map(|row| row.get("id").and_then(Value::as_i64))
-        .collect::<BTreeSet<_>>();
+pub(super) fn validate(snapshot: &impl BackupView) -> Result<(), ReadError> {
+    let mut classes = BTreeSet::new();
+    for row in snapshot.state_rows(Section::Classes)? {
+        if let Some(id) = row?.get("id").and_then(Value::as_i64) {
+            classes.insert(id);
+        }
+    }
     let mut ids = BTreeSet::new();
     let mut patterns = BTreeSet::new();
     let mut counts = BTreeMap::new();
-    for row in &snapshot.state_sections[&Section::QueryUsageDeclarations] {
-        let record = StorageQueryUsageDeclaration::from_snapshot(row.clone().into_value())?;
+    for row in snapshot.state_rows(Section::QueryUsageDeclarations)? {
+        let row = row?;
+        let record = StorageQueryUsageDeclaration::from_snapshot(row.into_owned().into_value())?;
         let class_id = record.class_id().id();
         let count = counts.entry(class_id).or_insert(0);
         *count += 1;
@@ -28,7 +32,7 @@ pub(super) fn validate(snapshot: &StorageBackupSnapshot) -> Result<(), StorageVa
             || !patterns.insert(pattern_key)
             || *count > MAX_QUERY_USAGE_DECLARATIONS
         {
-            return Err(StorageValidationError::invalid(
+            return Err(ReadError::invalid(
                 "Backup query usage declarations violate class, identity, uniqueness or quota invariants",
             ));
         }

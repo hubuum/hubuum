@@ -21,6 +21,19 @@ class MonitoringTests(InstallerFixture):
         # Last --engine takes precedence over the base fixture's Docker default.
         return super().run_script(script, *args, "--engine", self.engine, **kwargs)
 
+    def test_backup_spools_use_disk_with_read_only_backend_roots(self):
+        self.install()
+        compose = (self.installation / "compose.yml").read_text()
+        for service, following in (("hubuum-migrate", "hubuum-restore-executor"),
+                                   ("hubuum-restore-executor", "hubuum-api"),
+                                   ("hubuum-api", "hubuum-api-standby")):
+            with self.subTest(service=service):
+                block = compose.split(f"  {service}:")[1].split(f"  {following}:")[0]
+                self.assertIn("read_only: true", block)
+                self.assertIn("backup_spool:/tmp", block)
+                self.assertNotIn("/tmp:size=16m", block)
+        self.assertIn("\nvolumes:\n  backup_spool:", compose)
+
     def test_monitoring_is_opt_in(self):
         self.install()
         self.assertNotIn('  prometheus:', (self.installation / "compose.yml").read_text())

@@ -1,7 +1,7 @@
 use super::*;
 use hubuum_storage_core::{
-    StorageTaskCancellationOutcome, StorageTaskCancellationRequest, StorageTaskExecutionAdmission,
-    StorageTaskExecutionObservation, StorageTaskRemoteDispatch,
+    StorageBackupReplay, StorageTaskCancellationOutcome, StorageTaskCancellationRequest,
+    StorageTaskExecutionAdmission, StorageTaskExecutionObservation, StorageTaskRemoteDispatch,
 };
 
 #[async_trait]
@@ -379,11 +379,11 @@ impl TaskExecutionStorage for StorageHandle {
 
 #[async_trait]
 impl BackupSnapshotStorage for StorageHandle {
-    async fn capture_backup_snapshot(
+    async fn capture_backup_replay(
         &self,
         include_history: bool,
         budget: StorageBackupBudget,
-    ) -> Result<StorageBackupSnapshot, StorageError> {
+    ) -> Result<StorageBackupReplay, StorageError> {
         debug!(
             backend = self.backend_name(),
             max_output_bytes = budget.max_bytes(),
@@ -394,12 +394,10 @@ impl BackupSnapshotStorage for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::BackupSnapshot,
-            "capture_backup_snapshot",
+            "capture_backup_replay",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend
-                        .capture_backup_snapshot(include_history, budget)
-                        .await
+                    backend.capture_backup_replay(include_history, budget).await
                 })
             },
         )

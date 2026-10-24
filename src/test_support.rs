@@ -594,4 +594,4 @@ fn restore_contract_storage(
 }
 
 mod recovery;
-pub use recovery::RestoreContractFixture;
+pub use recovery::{RestoreContractFixture, capture_backup_document};
