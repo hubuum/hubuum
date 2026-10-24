@@ -178,8 +178,8 @@ async fn create_class_relation(
     debug!(
         message = "Creating class relation",
         user_id = user.id().id(),
-        from_class = relation.from_hubuum_class_id,
-        to_class = relation.to_hubuum_class_id,
+        from_class = relation.from_hubuum_class_id.id(),
+        to_class = relation.to_hubuum_class_id.id(),
     );
 
     let prepared = context

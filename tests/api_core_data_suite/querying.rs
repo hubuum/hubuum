@@ -3,6 +3,7 @@ mod tests {
     use actix_web::{http::StatusCode, test as actix_test};
     use chrono::{NaiveDate, NaiveDateTime};
     use diesel::sql_types::Text;
+    use hubuum_domain::ClassId;
     use hubuum_storage_postgres::diesel_async_prelude::*;
     use hubuum_storage_postgres::test_support::{
         database_role_tests_enabled, integration_test_database_roles,
@@ -201,8 +202,8 @@ mod tests {
         }
 
         let relation_ab = NewHubuumClassRelation {
-            from_hubuum_class_id: classes[0].id,
-            to_hubuum_class_id: classes[1].id,
+            from_hubuum_class_id: ClassId::new(classes[0].id).unwrap(),
+            to_hubuum_class_id: ClassId::new(classes[1].id).unwrap(),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -214,8 +215,8 @@ mod tests {
         .await
         .unwrap();
         let relation_bc = NewHubuumClassRelation {
-            from_hubuum_class_id: classes[1].id,
-            to_hubuum_class_id: classes[2].id,
+            from_hubuum_class_id: ClassId::new(classes[1].id).unwrap(),
+            to_hubuum_class_id: ClassId::new(classes[2].id).unwrap(),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -246,7 +247,7 @@ mod tests {
         NewHubuumObjectRelation {
             from_hubuum_object_id: objects[0].id,
             to_hubuum_object_id: objects[1].id,
-            class_relation_id: relation_ab.id,
+            class_relation_id: relation_ab.id.id(),
         }
         .save_without_events(&context.pool)
         .await
@@ -254,7 +255,7 @@ mod tests {
         NewHubuumObjectRelation {
             from_hubuum_object_id: objects[1].id,
             to_hubuum_object_id: objects[2].id,
-            class_relation_id: relation_bc.id,
+            class_relation_id: relation_bc.id.id(),
         }
         .save_without_events(&context.pool)
         .await

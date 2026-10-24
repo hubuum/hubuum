@@ -6,6 +6,7 @@ use crate::models::{
 use crate::permissions::{AuthzTarget, ResourceRef};
 use crate::services::authorization_resources::load_current_authorization_resources;
 use crate::traits::{CanDelete, CanSave};
+use hubuum_domain::ClassId;
 use hubuum_domain::{ExportTemplateId, RemoteTargetId};
 use hubuum_storage_core::StorageAuthorizationResourceKey as K;
 use std::collections::HashMap;
@@ -45,8 +46,8 @@ async fn graph_label_batches_respect_filter_limits_and_external_permissions(#[ca
         )
         .await;
         let relation = NewHubuumClassRelation {
-            from_hubuum_class_id: root.class.id().id(),
-            to_hubuum_class_id: leaf.class.id().id(),
+            from_hubuum_class_id: root.class.id(),
+            to_hubuum_class_id: leaf.class.id(),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -62,7 +63,7 @@ async fn graph_label_batches_respect_filter_limits_and_external_permissions(#[ca
             NewHubuumObjectRelation {
                 from_hubuum_object_id: root.objects[0].id().id(),
                 to_hubuum_object_id: leaf.objects[0].id().id(),
-                class_relation_id: relation.id,
+                class_relation_id: relation.id.id(),
             }
             .save_without_events(&backend)
             .await
@@ -98,8 +99,8 @@ async fn batched_authorization_facts_match_individual_resolution_on_every_backen
         )
         .await;
         let class_relation = NewHubuumClassRelation {
-            from_hubuum_class_id: from.class.id().id(),
-            to_hubuum_class_id: to.class.id().id(),
+            from_hubuum_class_id: from.class.id(),
+            to_hubuum_class_id: to.class.id(),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -113,7 +114,7 @@ async fn batched_authorization_facts_match_individual_resolution_on_every_backen
         let object_relation = NewHubuumObjectRelation {
             from_hubuum_object_id: from.objects[0].id().id(),
             to_hubuum_object_id: to.objects[0].id().id(),
-            class_relation_id: class_relation.id,
+            class_relation_id: class_relation.id.id(),
         }
         .save_without_events(&backend)
         .await
@@ -162,7 +163,7 @@ async fn batched_authorization_facts_match_individual_resolution_on_every_backen
                     .unwrap(),
             ),
             (
-                K::ClassRelation(ClassRelationId::new(class_relation.id).unwrap()),
+                K::ClassRelation(class_relation.id),
                 class_relation.to_resource_ref(&backend).await.unwrap(),
             ),
             (

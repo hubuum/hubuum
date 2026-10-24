@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use hubuum_domain::{
-    ClassId, ClassRelationId, ObjectId, ObjectRelationId, RelationLabel, normalize_template_alias,
+    ClassId, ClassRelationId, ObjectId, ObjectRelationId, ObjectRelationLimit, RelationLabel,
+    TemplateAlias,
 };
 use hubuum_events_core::EventContext;
 
@@ -16,10 +17,10 @@ pub struct StorageClassRelationCreate {
     to_class_id: ClassId,
     forward_label: Option<RelationLabel>,
     reverse_label: Option<RelationLabel>,
-    forward_template_alias: Option<String>,
-    reverse_template_alias: Option<String>,
-    from_max_relations: Option<i32>,
-    to_max_relations: Option<i32>,
+    forward_template_alias: Option<TemplateAlias>,
+    reverse_template_alias: Option<TemplateAlias>,
+    from_max_relations: Option<ObjectRelationLimit>,
+    to_max_relations: Option<ObjectRelationLimit>,
 }
 
 impl StorageClassRelationCreate {
@@ -48,18 +49,6 @@ impl StorageClassRelationCreate {
                 "class relation endpoints must be distinct",
             ));
         }
-        self.forward_template_alias = self
-            .forward_template_alias
-            .as_deref()
-            .map(normalize_template_alias)
-            .transpose()
-            .map_err(|error| StorageValidationError::invalid(error.into_message()))?;
-        self.reverse_template_alias = self
-            .reverse_template_alias
-            .as_deref()
-            .map(normalize_template_alias)
-            .transpose()
-            .map_err(|error| StorageValidationError::invalid(error.into_message()))?;
         if self.from_class_id > self.to_class_id {
             std::mem::swap(&mut self.from_class_id, &mut self.to_class_id);
             std::mem::swap(&mut self.forward_label, &mut self.reverse_label);
@@ -93,22 +82,22 @@ impl StorageClassRelationCreate {
     }
 
     #[must_use]
-    pub fn forward_template_alias(&self) -> Option<&str> {
-        self.forward_template_alias.as_deref()
+    pub fn forward_template_alias(&self) -> Option<&TemplateAlias> {
+        self.forward_template_alias.as_ref()
     }
 
     #[must_use]
-    pub fn reverse_template_alias(&self) -> Option<&str> {
-        self.reverse_template_alias.as_deref()
+    pub fn reverse_template_alias(&self) -> Option<&TemplateAlias> {
+        self.reverse_template_alias.as_ref()
     }
 
     #[must_use]
-    pub const fn from_max_relations(&self) -> Option<i32> {
+    pub const fn from_max_relations(&self) -> Option<ObjectRelationLimit> {
         self.from_max_relations
     }
 
     #[must_use]
-    pub const fn to_max_relations(&self) -> Option<i32> {
+    pub const fn to_max_relations(&self) -> Option<ObjectRelationLimit> {
         self.to_max_relations
     }
 }
@@ -130,14 +119,22 @@ impl StorageClassRelationCreateBuilder {
     }
 
     #[must_use]
-    pub fn template_aliases(mut self, forward: Option<String>, reverse: Option<String>) -> Self {
+    pub fn template_aliases(
+        mut self,
+        forward: Option<TemplateAlias>,
+        reverse: Option<TemplateAlias>,
+    ) -> Self {
         self.command.forward_template_alias = forward;
         self.command.reverse_template_alias = reverse;
         self
     }
 
     #[must_use]
-    pub const fn relation_limits(mut self, from: Option<i32>, to: Option<i32>) -> Self {
+    pub const fn relation_limits(
+        mut self,
+        from: Option<ObjectRelationLimit>,
+        to: Option<ObjectRelationLimit>,
+    ) -> Self {
         self.command.from_max_relations = from;
         self.command.to_max_relations = to;
         self
@@ -166,8 +163,6 @@ impl StoragePreparedClassRelation {
         if command.from_class_id() >= command.to_class_id()
             || command.from_class_id() != from_class.id()
             || command.to_class_id() != to_class.id()
-            || command.from_max_relations().is_some_and(|value| value <= 0)
-            || command.to_max_relations().is_some_and(|value| value <= 0)
         {
             return Err(StorageValidationError::invalid(
                 "prepared class relation command and endpoints are inconsistent",

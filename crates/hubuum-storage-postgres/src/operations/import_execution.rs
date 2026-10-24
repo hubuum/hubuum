@@ -1,8 +1,10 @@
 //! Atomic PostgreSQL execution for validated backend-neutral import plans.
 use super::task_execution::{claimed_task, live_claimed_task};
+use hubuum_domain::ClassId;
 use hubuum_domain::JsonSchemaLimits;
 use hubuum_domain::PlaintextPassword;
 use hubuum_domain::RelationLabel;
+use hubuum_domain::{ObjectRelationLimit, TemplateAlias};
 use hubuum_storage_core::{
     FencedImportItem, FencedImportPlan, FencedImportResults, StorageImportResult, StorageTaskLease,
 };
@@ -1104,7 +1106,7 @@ async fn update_object(
     validate_import_object_on(
         schema_limits,
         connection,
-        hubuum_domain::ClassId::new(class_id)?,
+        ClassId::new(class_id)?,
         None,
         &parts.data,
     )
@@ -2283,13 +2285,13 @@ async fn create_class_relation(
                     crate::schema::hubuumclass_relation::reverse_label
                         .eq(command.reverse_label().map(RelationLabel::as_str)),
                     crate::schema::hubuumclass_relation::forward_template_alias
-                        .eq(command.forward_template_alias()),
+                        .eq(command.forward_template_alias().map(TemplateAlias::as_str)),
                     crate::schema::hubuumclass_relation::reverse_template_alias
-                        .eq(command.reverse_template_alias()),
+                        .eq(command.reverse_template_alias().map(TemplateAlias::as_str)),
                     crate::schema::hubuumclass_relation::from_max_relations
-                        .eq(command.from_max_relations()),
+                        .eq(command.from_max_relations().map(ObjectRelationLimit::value)),
                     crate::schema::hubuumclass_relation::to_max_relations
-                        .eq(command.to_max_relations()),
+                        .eq(command.to_max_relations().map(ObjectRelationLimit::value)),
                     crate::schema::hubuumclass_relation::created_at.eq(created_at),
                     crate::schema::hubuumclass_relation::updated_at.eq(updated_at),
                 ))
@@ -2308,13 +2310,13 @@ async fn create_class_relation(
                     crate::schema::hubuumclass_relation::reverse_label
                         .eq(command.reverse_label().map(RelationLabel::as_str)),
                     crate::schema::hubuumclass_relation::forward_template_alias
-                        .eq(command.forward_template_alias()),
+                        .eq(command.forward_template_alias().map(TemplateAlias::as_str)),
                     crate::schema::hubuumclass_relation::reverse_template_alias
-                        .eq(command.reverse_template_alias()),
+                        .eq(command.reverse_template_alias().map(TemplateAlias::as_str)),
                     crate::schema::hubuumclass_relation::from_max_relations
-                        .eq(command.from_max_relations()),
+                        .eq(command.from_max_relations().map(ObjectRelationLimit::value)),
                     crate::schema::hubuumclass_relation::to_max_relations
-                        .eq(command.to_max_relations()),
+                        .eq(command.to_max_relations().map(ObjectRelationLimit::value)),
                 ))
                 .execute(connection)
                 .await?;

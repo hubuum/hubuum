@@ -12,9 +12,9 @@ use hubuum_events_core::{
     Action, AuditDocument, EntityType, EventContext, EventEntityId, NewEvent,
 };
 use hubuum_storage_core::{
-    AuthSessionId, RefreshCredential, SessionCredentials, SessionRevocation, StorageAuditReceipt,
-    StorageAuditReceipts, StorageMutationOutcome, StorageSessionCreate, StorageSessionIssued,
-    StorageSessionRotate, StorageSessionRotation,
+    AuthSessionId, RefreshCredential, SessionCredentials, SessionLifetimes, SessionRevocation,
+    StorageAuditReceipt, StorageAuditReceipts, StorageMutationOutcome, StorageSessionCreate,
+    StorageSessionIssued, StorageSessionRotate, StorageSessionRotation,
 };
 use uuid::Uuid;
 
@@ -121,14 +121,12 @@ async fn issue(
     credentials: &SessionCredentials,
     issued: NaiveDateTime,
 ) -> Result<StorageSessionIssued, PostgresStorageError> {
-    let expiry = |seconds| {
-        issued
-            .checked_add_signed(Duration::seconds(seconds))
-            .map(|deadline| deadline.min(family.absolute_expires_at))
-            .ok_or_else(|| PostgresStorageError::database("Invalid persisted session lifetime"))
-    };
-    let access_expiry = expiry(family.access_seconds)?;
-    let refresh_expiry = expiry(family.idle_seconds)?;
+    let deadlines = SessionLifetimes::try_new(family.access_seconds, family.idle_seconds)
+        .map_err(|e| PostgresStorageError::database(e.to_string()))?
+        .deadlines(issued.and_utc(), family.absolute_expires_at.and_utc())
+        .map_err(|e| PostgresStorageError::database(e.to_string()))?;
+    let access_expiry = deadlines.access_expires_at().naive_utc();
+    let refresh_expiry = deadlines.refresh_expires_at().naive_utc();
     let access = credentials.access();
     let key_id = access.key_id().ok_or_else(denied)?.as_str();
     let id = diesel::sql_query("INSERT INTO tokens (token, principal_id, issued, expires_at, token_format, token_hash_algorithm, token_hash_key_id, auth_session_id, credential_kind) VALUES ($1,$2,$3,$4,1,1,$5,$6,'session_access') RETURNING id")
@@ -163,10 +161,7 @@ async fn issue(
         AuthSessionId::new(family.id),
         PrincipalId::new(family.principal_id)?,
         TokenId::new(id)?,
-        issued.and_utc(),
-        access_expiry.and_utc(),
-        refresh_expiry.and_utc(),
-        family.absolute_expires_at.and_utc(),
+        deadlines,
     ))
 }
 

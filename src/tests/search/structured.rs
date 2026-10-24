@@ -1,3 +1,4 @@
+use hubuum_domain::ClassId;
 use std::sync::Arc;
 
 use actix_web::{http, test};
@@ -79,8 +80,8 @@ async fn hydration_fixture(
     let hosts = save_class(context, collection, "hydration_hosts").await;
     let sites = save_class(context, collection, "hydration_sites").await;
     let class_relation = NewHubuumClassRelation {
-        from_hubuum_class_id: hosts.id,
-        to_hubuum_class_id: sites.id,
+        from_hubuum_class_id: ClassId::new(hosts.id).unwrap(),
+        to_hubuum_class_id: ClassId::new(sites.id).unwrap(),
         forward_label: None,
         reverse_label: None,
         forward_template_alias: None,
@@ -111,7 +112,7 @@ async fn hydration_fixture(
             NewHubuumObjectRelation {
                 from_hubuum_object_id: objects[from].id,
                 to_hubuum_object_id: objects[to].id,
-                class_relation_id: class_relation.id,
+                class_relation_id: class_relation.id.id(),
             }
             .save_without_events(&context.pool)
             .await
@@ -965,8 +966,8 @@ async fn not_related_means_no_visible_related_target_matches() {
     let host_class = save_class(&context, &collection, "host").await;
     let room_class = save_class(&context, &collection, "room").await;
     let class_relation = NewHubuumClassRelation {
-        from_hubuum_class_id: host_class.id,
-        to_hubuum_class_id: room_class.id,
+        from_hubuum_class_id: ClassId::new(host_class.id).unwrap(),
+        to_hubuum_class_id: ClassId::new(room_class.id).unwrap(),
         forward_label: None,
         reverse_label: None,
         forward_template_alias: None,
@@ -1007,7 +1008,7 @@ async fn not_related_means_no_visible_related_target_matches() {
     NewHubuumObjectRelation {
         from_hubuum_object_id: related_host.id,
         to_hubuum_object_id: room.id,
-        class_relation_id: class_relation.id,
+        class_relation_id: class_relation.id.id(),
     }
     .save_without_events(&context.pool)
     .await
@@ -1096,8 +1097,8 @@ async fn external_policy_structured_search_only_uses_visible_paths() {
     let host_class = save_class(&context, &collection, "external_host").await;
     let room_class = save_class(&context, &collection, "external_room").await;
     let class_relation = NewHubuumClassRelation {
-        from_hubuum_class_id: host_class.id,
-        to_hubuum_class_id: room_class.id,
+        from_hubuum_class_id: ClassId::new(host_class.id).unwrap(),
+        to_hubuum_class_id: ClassId::new(room_class.id).unwrap(),
         forward_label: None,
         reverse_label: None,
         forward_template_alias: None,
@@ -1138,7 +1139,7 @@ async fn external_policy_structured_search_only_uses_visible_paths() {
     let visible_relation = NewHubuumObjectRelation {
         from_hubuum_object_id: visible_host.id,
         to_hubuum_object_id: room.id,
-        class_relation_id: class_relation.id,
+        class_relation_id: class_relation.id.id(),
     }
     .save_without_events(&context.pool)
     .await
@@ -1146,7 +1147,7 @@ async fn external_policy_structured_search_only_uses_visible_paths() {
     NewHubuumObjectRelation {
         from_hubuum_object_id: hidden_host.id,
         to_hubuum_object_id: room.id,
-        class_relation_id: class_relation.id,
+        class_relation_id: class_relation.id.id(),
     }
     .save_without_events(&context.pool)
     .await

@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use hubuum_auth_core::VersionedCredential;
 use hubuum_storage_core::{
     RefreshCredential, SessionClientId, SessionCredentials, StorageSessionIssued,
     StorageTokenFormat, StorageTokenHashKeyId,
@@ -11,7 +12,7 @@ use uuid::Uuid;
 use crate::{
     errors::ApiError,
     models::{LoginUser, Token},
-    utilities::auth::generate_token,
+    utilities::auth::generate_token_secret,
 };
 
 #[derive(Deserialize, Serialize, ToSchema)]
@@ -37,10 +38,18 @@ impl SessionLoginRequest {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize, ToSchema)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(try_from = "String", into = "String")]
-#[schema(value_type = String)]
-pub struct RefreshToken(String);
+pub struct RefreshToken {
+    value: VersionedCredential,
+    key_id: StorageTokenHashKeyId,
+}
+impl utoipa::PartialSchema for RefreshToken {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        <String as utoipa::PartialSchema>::schema()
+    }
+}
+impl ToSchema for RefreshToken {}
 impl fmt::Debug for RefreshToken {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("RefreshToken(<redacted>)")
@@ -49,40 +58,44 @@ impl fmt::Debug for RefreshToken {
 impl TryFrom<String> for RefreshToken {
     type Error = ApiError;
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        let mut parts = value.split('.');
-        if parts.next() != Some("hbr1")
-            || StorageTokenHashKeyId::try_new(parts.next().unwrap_or_default()).is_err()
-            || parts
-                .next()
-                .is_none_or(|s| !super::token::is_valid_token_secret(s))
-            || parts.next().is_some()
-        {
-            return Err(authentication_failed());
-        }
-        Ok(Self(value))
+        let value =
+            VersionedCredential::parse_refresh(value).map_err(|_| authentication_failed())?;
+        let key_id =
+            StorageTokenHashKeyId::try_new(value.key_id()).map_err(|_| authentication_failed())?;
+        Ok(Self { value, key_id })
     }
 }
 impl From<RefreshToken> for String {
     fn from(value: RefreshToken) -> Self {
-        value.0
+        value.value.as_str().to_owned()
     }
 }
 impl RefreshToken {
     pub fn generate() -> Self {
-        Self(generate_token().0.replacen("hbt1.", "hbr1.", 1))
+        let ring = crate::config::token_hash_key_ring()
+            .expect("token hash key-ring configuration must be valid at startup");
+        let value = VersionedCredential::issue_refresh(
+            ring.active_key_id().as_str(),
+            &generate_token_secret(),
+        )
+        .expect("generated refresh credential must have valid syntax");
+        Self {
+            value,
+            key_id: ring.active_key_id().clone(),
+        }
     }
     pub fn credential(&self) -> Result<RefreshCredential, ApiError> {
-        let key_id = StorageTokenHashKeyId::try_new(self.0.split('.').nth(1).unwrap_or_default())
-            .map_err(|_| authentication_failed())?;
         let ring = crate::config::token_hash_key_ring().map_err(|_| {
             ApiError::InternalServerError("Authentication configuration unavailable".into())
         })?;
-        let key = ring.key_bytes(&key_id).ok_or_else(authentication_failed)?;
+        let key = ring
+            .key_bytes(&self.key_id)
+            .ok_or_else(authentication_failed)?;
         Ok(RefreshCredential::new(super::token::digest_with_key(
-            &self.0,
+            self.value.as_str(),
             key,
             StorageTokenFormat::Version1,
-            key_id,
+            self.key_id.clone(),
         )?))
     }
 }
@@ -116,7 +129,7 @@ impl SessionResponse {
         Self {
             session_id: metadata.session_id().value(),
             token_type: "Bearer".into(),
-            access_token: access.0,
+            access_token: access.get_token(),
             access_expires_at: metadata.access_expires_at(),
             refresh_token: refresh,
             refresh_expires_at: metadata.refresh_expires_at(),

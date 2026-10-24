@@ -7,6 +7,7 @@ mod tests {
     use diesel_async::RunQueryDsl;
     use futures::join;
     use hubuum_domain::RelationLabel;
+    use hubuum_domain::TemplateAlias;
     use hubuum_storage_postgres::PostgresRevision;
     use rstest::rstest;
     use std::time::Duration;
@@ -631,8 +632,8 @@ mod tests {
                     to_class_key: None,
                     forward_label: Some(RelationLabel::new("is in".into()).unwrap()),
                     reverse_label: Some(RelationLabel::new("contains".into()).unwrap()),
-                    forward_template_alias: Some("room".to_string()),
-                    reverse_template_alias: Some("jacks".to_string()),
+                    forward_template_alias: Some(TemplateAlias::new("room").unwrap()),
+                    reverse_template_alias: Some(TemplateAlias::new("jacks").unwrap()),
                     from_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),
                     to_max_relations: None,
                     condition: None,

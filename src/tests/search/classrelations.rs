@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod test {
+    use hubuum_domain::ClassId;
     use regex::Regex;
     use rstest::rstest;
 
@@ -45,8 +46,8 @@ mod test {
 
         let mut relations = Vec::new();
         let rel1 = NewHubuumClassRelation {
-            from_hubuum_class_id: classes[0].id,
-            to_hubuum_class_id: classes[1].id,
+            from_hubuum_class_id: ClassId::new(classes[0].id).expect("positive fixture class id"),
+            to_hubuum_class_id: ClassId::new(classes[1].id).expect("positive fixture class id"),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -59,8 +60,8 @@ mod test {
         .unwrap();
 
         let rel2 = NewHubuumClassRelation {
-            from_hubuum_class_id: classes[1].id,
-            to_hubuum_class_id: classes[2].id,
+            from_hubuum_class_id: ClassId::new(classes[1].id).expect("positive fixture class id"),
+            to_hubuum_class_id: ClassId::new(classes[2].id).expect("positive fixture class id"),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,

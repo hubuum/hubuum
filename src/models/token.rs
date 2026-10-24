@@ -2,9 +2,8 @@ use std::{fmt, str::FromStr};
 
 use chrono::NaiveDateTime;
 
-use hmac::{Hmac, KeyInit, Mac};
+use hubuum_auth_core::{BearerCredential, keyed_digest};
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 use utoipa::ToSchema;
 
 use crate::config::{TokenHashKeyRing, get_config, token_hash_key_ring};
@@ -333,7 +332,31 @@ impl FromStr for TokenListState {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct Token(pub String);
+#[serde(try_from = "String", into = "String")]
+pub struct Token {
+    value: BearerCredential,
+    key_id: Option<StorageTokenHashKeyId>,
+}
+
+impl TryFrom<String> for Token {
+    type Error = ApiError;
+
+    fn try_from(raw: String) -> Result<Self, Self::Error> {
+        let value = BearerCredential::parse(raw).map_err(|_| invalid_bearer_token())?;
+        let key_id = value
+            .key_id()
+            .map(StorageTokenHashKeyId::try_new)
+            .transpose()
+            .map_err(|_| invalid_bearer_token())?;
+        Ok(Self { value, key_id })
+    }
+}
+
+impl From<Token> for String {
+    fn from(token: Token) -> Self {
+        token.get_token()
+    }
+}
 
 pub(crate) struct TokenCredentialPlan {
     pub credentials: Vec<StorageAuthenticationCredential>,
@@ -380,8 +403,12 @@ pub(crate) fn configured_token_lifetime() -> Result<TokenLifetime, ApiError> {
 }
 
 impl Token {
+    pub fn as_str(&self) -> &str {
+        self.value.as_str()
+    }
+
     pub fn get_token(&self) -> String {
-        self.0.clone()
+        self.as_str().to_owned()
     }
 
     /// Validate this bearer token through the selected complete storage
@@ -396,7 +423,7 @@ impl Token {
     /// Return a string where we only expose the first three and last three characters.
     /// The middle part is replaced with "..."
     pub fn obfuscate(&self) -> String {
-        let chars: Vec<char> = self.0.chars().collect();
+        let chars: Vec<char> = self.as_str().chars().collect();
         if chars.len() > 6 {
             let start: String = chars[..3].iter().collect();
             let end: String = chars[chars.len() - 3..].iter().collect();
@@ -420,11 +447,8 @@ impl Token {
         Ok(())
     }
 
-    pub fn storage_hash(&self) -> String {
-        self.storage_digest()
-            .expect("issued and legacy token values must be hashable")
-            .lookup_value()
-            .to_string()
+    pub fn storage_hash(&self) -> Result<String, ApiError> {
+        Ok(self.storage_digest()?.lookup_value().to_owned())
     }
 
     pub fn storage_hash_from_raw(raw_token: &str) -> String {
@@ -440,7 +464,7 @@ impl Token {
             .and_then(|(key_id, _)| StorageTokenHashKeyId::try_new(key_id).ok())
             .and_then(|key_id| ring.key_bytes(&key_id))
             .unwrap_or_else(|| ring.active_key_bytes());
-        hash_with_key(raw_token, key)
+        keyed_digest(raw_token, key)
     }
 
     pub(crate) fn issued(secret: impl AsRef<str>) -> Result<Self, ApiError> {
@@ -453,13 +477,12 @@ impl Token {
         secret: impl AsRef<str>,
         ring: &TokenHashKeyRing,
     ) -> Result<Self, ApiError> {
-        let secret = secret.as_ref();
-        if !is_valid_token_secret(secret) {
-            return Err(ApiError::InternalServerError(
-                "generated token secret has an invalid representation".to_string(),
-            ));
-        }
-        Ok(Self(format!("hbt1.{}.{}", ring.active_key_id(), secret)))
+        let value = BearerCredential::issue(ring.active_key_id().as_str(), secret.as_ref())
+            .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
+        Ok(Self {
+            value,
+            key_id: Some(ring.active_key_id().clone()),
+        })
     }
 
     pub(crate) fn storage_digest(&self) -> Result<StorageTokenDigest, ApiError> {
@@ -481,26 +504,15 @@ impl Token {
         &self,
         ring: &TokenHashKeyRing,
     ) -> Result<TokenCredentialPlan, ApiError> {
-        if self.0.starts_with("hbr") {
-            return Err(invalid_bearer_token());
-        }
-        if self.0.starts_with("hbt") {
-            let mut parts = self.0.split('.');
-            let version = parts.next();
-            let key_id = parts.next();
-            let secret = parts.next();
-            if version != Some("hbt1")
-                || parts.next().is_some()
-                || secret.is_none_or(|value| !is_valid_token_secret(value))
-            {
-                return Err(invalid_bearer_token());
-            }
-            let key_id = StorageTokenHashKeyId::try_new(key_id.unwrap_or_default())
-                .map_err(|_| invalid_bearer_token())?;
-            let key = ring.key_bytes(&key_id).ok_or_else(invalid_bearer_token)?;
-            let digest =
-                digest_with_key(&self.0, key, StorageTokenFormat::Version1, key_id.clone())?;
-            let key_state = if &key_id == ring.active_key_id() {
+        if let Some(key_id) = &self.key_id {
+            let key = ring.key_bytes(key_id).ok_or_else(invalid_bearer_token)?;
+            let digest = digest_with_key(
+                self.as_str(),
+                key,
+                StorageTokenFormat::Version1,
+                key_id.clone(),
+            )?;
+            let key_state = if key_id == ring.active_key_id() {
                 "active"
             } else {
                 "previous"
@@ -516,8 +528,13 @@ impl Token {
         let credentials = ring
             .keys()
             .map(|(key_id, key)| {
-                digest_with_key(&self.0, key, StorageTokenFormat::Legacy, key_id.clone())
-                    .map(StorageAuthenticationCredential::from_digest)
+                digest_with_key(
+                    self.as_str(),
+                    key,
+                    StorageTokenFormat::Legacy,
+                    key_id.clone(),
+                )
+                .map(StorageAuthenticationCredential::from_digest)
             })
             .collect::<Result<Vec<_>, _>>()?;
         let migration_target = credentials
@@ -545,13 +562,6 @@ impl Token {
     }
 }
 
-pub(crate) fn is_valid_token_secret(value: &str) -> bool {
-    value.len() == 128
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
-
 pub(crate) fn digest_with_key(
     raw_token: &str,
     key: &[u8],
@@ -559,27 +569,12 @@ pub(crate) fn digest_with_key(
     key_id: StorageTokenHashKeyId,
 ) -> Result<StorageTokenDigest, ApiError> {
     StorageTokenDigest::try_new(
-        hash_with_key(raw_token, key),
+        keyed_digest(raw_token, key),
         format,
         StorageTokenHashAlgorithm::HmacSha256V1,
         Some(key_id),
     )
     .map_err(|error| ApiError::InternalServerError(error.to_string()))
-}
-
-fn hash_with_key(raw_token: &str, key: &[u8]) -> String {
-    type HmacSha256 = Hmac<Sha256>;
-
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts keys of any length");
-    mac.update(raw_token.as_bytes());
-    let digest = mac.finalize().into_bytes();
-    let mut encoded = String::with_capacity(digest.len() * 2);
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    for byte in digest {
-        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
-        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    encoded
 }
 
 fn invalid_bearer_token() -> ApiError {
@@ -790,7 +785,7 @@ mod tests {
 
         assert!(
             token
-                .0
+                .as_str()
                 .starts_with(&format!("hbt1.{}.", ring.active_key_id()))
         );
         let plan = token.credentials().unwrap();
@@ -808,17 +803,15 @@ mod tests {
 
     #[test]
     fn malformed_versioned_tokens_do_not_fall_back_to_legacy_hashing() {
-        let token = Token("hbt2.legacy.not-a-version-one-secret".to_string());
-
         assert!(matches!(
-            token.credentials(),
+            Token::try_from("hbt2.legacy.not-a-version-one-secret".to_string()),
             Err(ApiError::Unauthorized(_))
         ));
     }
 
     #[test]
     fn legacy_tokens_generate_one_bounded_candidate_per_configured_key() {
-        let token = Token("legacy-bearer-value".to_string());
+        let token = Token::try_from("legacy-bearer-value".to_string()).unwrap();
         let ring = token_hash_key_ring().unwrap();
         let plan = token.credentials().unwrap();
 

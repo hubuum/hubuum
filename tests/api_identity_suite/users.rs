@@ -875,7 +875,8 @@ mod tests {
         let renewed_raw = renewed["token"].as_str().unwrap();
         assert_ne!(renewed_raw, source_raw);
         assert!(
-            Token(renewed_raw.to_string())
+            Token::try_from(renewed_raw.to_string())
+                .unwrap()
                 .authenticate(&context.pool)
                 .await
                 .is_ok()

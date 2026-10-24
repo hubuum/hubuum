@@ -6804,7 +6804,7 @@ async fn every_available_storage_backend_supplies_relation_queries() {
             .into_parts();
         assert!(class_total.is_some_and(|total| total >= 1));
         assert!(class_relations.into_iter().any(|row| {
-            let (id, ..) = row.into_parts();
+            let id = row.into_parts().id();
             id == class_relation_id
         }));
 

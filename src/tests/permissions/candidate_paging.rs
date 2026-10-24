@@ -1,4 +1,5 @@
 //! Request-level row and policy-work regressions for external cursor pagination.
+use hubuum_domain::ClassId;
 
 use std::sync::Arc;
 
@@ -884,8 +885,8 @@ async fn equivalent_external_lists_page_before_authorization(
                 .unwrap();
                 if !matches!(listing, EquivalentListing::StructuredClasses) {
                     let relation = NewHubuumClassRelation {
-                        from_hubuum_class_id: source.id,
-                        to_hubuum_class_id: class.id,
+                        from_hubuum_class_id: ClassId::new(source.id).unwrap(),
+                        to_hubuum_class_id: ClassId::new(class.id).unwrap(),
                         forward_label: None,
                         reverse_label: None,
                         forward_template_alias: None,
@@ -913,7 +914,7 @@ async fn equivalent_external_lists_page_before_authorization(
                         NewHubuumObjectRelation {
                             from_hubuum_object_id: anchor.id,
                             to_hubuum_object_id: object.id,
-                            class_relation_id: relation.id,
+                            class_relation_id: relation.id.id(),
                         }
                         .save_without_events(&context.pool)
                         .await

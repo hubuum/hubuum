@@ -106,29 +106,36 @@ pub(crate) async fn class_relation_authorization_resources(
 ) -> Result<Vec<ResourceRef>, ApiError> {
     let classes = load_classes(
         backend,
-        relations
-            .iter()
-            .flat_map(|relation| [relation.from_hubuum_class_id, relation.to_hubuum_class_id]),
+        relations.iter().flat_map(|relation| {
+            [
+                relation.from_hubuum_class_id.id(),
+                relation.to_hubuum_class_id.id(),
+            ]
+        }),
     )
     .await?;
 
     relations
         .iter()
         .map(|relation| {
-            let from = classes.get(&relation.from_hubuum_class_id).ok_or_else(|| {
-                ApiError::InternalServerError(format!(
-                    "class relation {} references missing class {}",
-                    relation.id, relation.from_hubuum_class_id
-                ))
-            })?;
-            let to = classes.get(&relation.to_hubuum_class_id).ok_or_else(|| {
-                ApiError::InternalServerError(format!(
-                    "class relation {} references missing class {}",
-                    relation.id, relation.to_hubuum_class_id
-                ))
-            })?;
+            let from = classes
+                .get(&relation.from_hubuum_class_id.id())
+                .ok_or_else(|| {
+                    ApiError::InternalServerError(format!(
+                        "class relation {} references missing class {}",
+                        relation.id, relation.from_hubuum_class_id
+                    ))
+                })?;
+            let to = classes
+                .get(&relation.to_hubuum_class_id.id())
+                .ok_or_else(|| {
+                    ApiError::InternalServerError(format!(
+                        "class relation {} references missing class {}",
+                        relation.id, relation.to_hubuum_class_id
+                    ))
+                })?;
             Ok(ResourceRef::class_relation(
-                Some(relation.id),
+                Some(relation.id.id()),
                 ClassResourceEndpoint::new(from.collection_id().id(), from.id().id()),
                 ClassResourceEndpoint::new(to.collection_id().id(), to.id().id()),
             ))

@@ -1,10 +1,22 @@
 #![allow(async_fn_in_trait)]
 
+mod credential;
+pub use credential::{BearerCredential, CredentialError, VersionedCredential, keyed_digest};
+
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String")]
 pub struct IdentityScopeName(String);
+
+impl TryFrom<String> for IdentityScopeName {
+    type Error = AuthProviderError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
 
 impl IdentityScopeName {
     pub fn new(value: impl Into<String>) -> Result<Self, AuthProviderError> {
@@ -153,6 +165,18 @@ pub trait ExternalIdentityProvider: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deserialization_rejects_empty_scope_names() {
+        let value = serde::de::value::StrDeserializer::<serde::de::value::Error>::new("");
+        assert!(IdentityScopeName::deserialize(value).is_err());
+    }
+
+    #[test]
+    fn deserialization_rejects_padded_scope_names() {
+        let value = serde::de::value::StrDeserializer::<serde::de::value::Error>::new(" ldap ");
+        assert!(IdentityScopeName::deserialize(value).is_err());
+    }
 
     #[test]
     fn refresh_request_rejects_an_empty_username() {

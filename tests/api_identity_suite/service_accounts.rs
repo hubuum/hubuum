@@ -12,6 +12,7 @@
 
 #[cfg(test)]
 mod tests {
+    use hubuum_domain::ClassId;
     use std::time::Duration;
 
     use actix_web::{App, http::StatusCode, test, web};
@@ -155,8 +156,8 @@ mod tests {
             );
         }
         let class_relation = NewHubuumClassRelation {
-            from_hubuum_class_id: classes[0].id,
-            to_hubuum_class_id: classes[1].id,
+            from_hubuum_class_id: ClassId::new(classes[0].id).unwrap(),
+            to_hubuum_class_id: ClassId::new(classes[1].id).unwrap(),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -170,7 +171,7 @@ mod tests {
         let object_relation = NewHubuumObjectRelation {
             from_hubuum_object_id: objects[0].id,
             to_hubuum_object_id: objects[1].id,
-            class_relation_id: class_relation.id,
+            class_relation_id: class_relation.id.id(),
         }
         .save_without_events(&context.pool)
         .await
@@ -453,7 +454,7 @@ mod tests {
                 let expiry = chrono::Utc::now().naive_utc() + chrono::Duration::hours(h);
                 if h < 0 {
                     let token = user.create_token(pool).await.unwrap();
-                    let token_hash = token.storage_hash();
+                    let token_hash = token.storage_hash().unwrap();
                     with_connection(pool, async |conn| {
                         diesel::update(
                             crate::schema::tokens::table
@@ -476,7 +477,7 @@ mod tests {
             }
             None => {
                 let token = user.create_token(pool).await.unwrap();
-                let token_hash = token.storage_hash();
+                let token_hash = token.storage_hash().unwrap();
                 with_connection(pool, async |conn| {
                     diesel::update(
                         crate::schema::tokens::table
@@ -664,7 +665,7 @@ mod tests {
         let user = create_test_user(pool).await;
 
         let raw = user.create_token(pool).await.unwrap();
-        let hash = raw.storage_hash();
+        let hash = raw.storage_hash().unwrap();
         raw.delete(pool).await.unwrap();
 
         let revoked_at_value: Option<chrono::NaiveDateTime> = with_connection(pool, async |conn| {
@@ -711,7 +712,7 @@ mod tests {
 
         let returned = raw.authenticate(pool).await.unwrap().last_used_at();
 
-        let hash = raw.storage_hash();
+        let hash = raw.storage_hash().unwrap();
         let persisted: Option<chrono::NaiveDateTime> = with_connection(pool, async |conn| {
             tokens
                 .filter(token_col.eq(&hash))
@@ -733,7 +734,7 @@ mod tests {
 
         let group = create_test_group(pool).await;
         let sa = create_test_service_account(pool, &group, None).await;
-        let token = Token(service_account_token(pool, &sa, None, None).await);
+        let token = Token::try_from(service_account_token(pool, &sa, None, None).await).unwrap();
         assert!(
             token.authenticate(pool).await.is_ok(),
             "precondition: active SA token validates"
@@ -1429,7 +1430,7 @@ mod tests {
                         fixture.class_relation.id
                     ),
                     list_endpoint: "/api/v1/relations/classes".to_string(),
-                    expected_ids: vec![fixture.class_relation.id],
+                    expected_ids: vec![fixture.class_relation.id.id()],
                 },
                 Self::ObjectRelations => ScopedAdminListRequest {
                     exact_endpoint: format!(
@@ -1571,8 +1572,8 @@ mod tests {
         let context = TestContext::new().await;
         let (classes, objects, sa) = resource_hierarchy_fixture(&context).await;
         let class_relation = NewHubuumClassRelation {
-            from_hubuum_class_id: classes[0].id,
-            to_hubuum_class_id: classes[1].id,
+            from_hubuum_class_id: ClassId::new(classes[0].id).unwrap(),
+            to_hubuum_class_id: ClassId::new(classes[1].id).unwrap(),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -1586,7 +1587,7 @@ mod tests {
         let object_relation = NewHubuumObjectRelation {
             from_hubuum_object_id: objects[0].id,
             to_hubuum_object_id: objects[1].id,
-            class_relation_id: class_relation.id,
+            class_relation_id: class_relation.id.id(),
         }
         .save_without_events(&context.pool)
         .await
@@ -1597,7 +1598,7 @@ mod tests {
                     HubuumClassID::new(classes[0].id).unwrap(),
                 )],
                 "/api/v1/relations/classes",
-                class_relation.id,
+                class_relation.id.id(),
             ),
             RelationScopeTarget::BothClasses => (
                 vec![
@@ -1605,7 +1606,7 @@ mod tests {
                     TokenResourceScope::Class(HubuumClassID::new(classes[1].id).unwrap()),
                 ],
                 "/api/v1/relations/classes",
-                class_relation.id,
+                class_relation.id.id(),
             ),
             RelationScopeTarget::OneObject => (
                 vec![TokenResourceScope::Object(
@@ -1694,8 +1695,8 @@ mod tests {
         let context = TestContext::new().await;
         let (classes, objects, sa) = resource_hierarchy_fixture(&context).await;
         let class_relation_input = NewHubuumClassRelation {
-            from_hubuum_class_id: classes[0].id,
-            to_hubuum_class_id: classes[1].id,
+            from_hubuum_class_id: ClassId::new(classes[0].id).unwrap(),
+            to_hubuum_class_id: ClassId::new(classes[1].id).unwrap(),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -1722,7 +1723,7 @@ mod tests {
             to_hubuum_object_id: objects[1].id,
             class_relation_id: class_relation
                 .as_ref()
-                .map(|relation| relation.id)
+                .map(|relation| relation.id.id())
                 .unwrap_or(0),
         };
         let object_relation = if matches!(kind, ScopedRelationKind::Object)

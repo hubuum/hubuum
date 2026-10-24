@@ -9,7 +9,10 @@ use std::num::ParseIntError;
 
 use tracing::error;
 
-use hubuum_domain::{EventPolicyError, PositiveIdError, ResourceRevision, ResourceRevisionError};
+use hubuum_domain::{
+    EventPolicyError, PositiveIdError, RelationLimitError, ResourceRevision, ResourceRevisionError,
+    TemplateAliasError,
+};
 use hubuum_events_core::{EventCatalogError, EventIdentifierError};
 
 use crate::models::TokenPolicyError;
@@ -456,6 +459,18 @@ fn serialize_task_stop_reason<S: Serializer>(
 impl From<TaskStopReason> for ApiError {
     fn from(reason: TaskStopReason) -> Self {
         Self::TaskStopped(reason)
+    }
+}
+
+impl From<RelationLimitError> for ApiError {
+    fn from(error: RelationLimitError) -> Self {
+        Self::BadRequest(error.to_string())
+    }
+}
+
+impl From<TemplateAliasError> for ApiError {
+    fn from(error: TemplateAliasError) -> Self {
+        Self::BadRequest(error.to_string())
     }
 }
 

@@ -121,7 +121,7 @@ async fn create_class_relation(
         message = "Creating class relation",
         user_id = user.id().id(),
         from_class = class_id.id(),
-        to_class = partial_relation.to_hubuum_class_id,
+        to_class = partial_relation.to_hubuum_class_id.id(),
     );
 
     let relation = partial_relation.into_relation(class_id);
@@ -263,8 +263,8 @@ async fn delete_class_relation(
             user_id = user.id().id(),
             class_id = class_id.id(),
             relation_id = relation_id.id(),
-            relation_from_class = relation.from_hubuum_class_id,
-            relation_to_class = relation.to_hubuum_class_id
+            relation_from_class = relation.from_hubuum_class_id.id(),
+            relation_to_class = relation.to_hubuum_class_id.id()
         );
         Err(ApiError::BadRequest(format!(
             "Class {} is not part of relation {}.",

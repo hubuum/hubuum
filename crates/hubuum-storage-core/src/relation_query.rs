@@ -1,4 +1,4 @@
-use hubuum_domain::RelationLabel;
+use hubuum_domain::{ObjectRelationLimit, RelationLabel, TemplateAlias};
 use hubuum_query::TraversalBudget;
 use std::fmt;
 
@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{
     ClassId, ClassRelationId, CollectionId, ObjectId, ObjectRelationId, ResourceId,
-    ResourceRevision, normalize_template_alias,
+    ResourceRevision,
 };
 use hubuum_query::QueryOptions;
 use serde_json::Value;
@@ -53,10 +53,48 @@ pub struct StorageClassRelation {
     to_class_id: ClassId,
     forward_label: Option<RelationLabel>,
     reverse_label: Option<RelationLabel>,
-    forward_template_alias: Option<String>,
-    reverse_template_alias: Option<String>,
-    from_max_relations: Option<i32>,
-    to_max_relations: Option<i32>,
+    forward_template_alias: Option<TemplateAlias>,
+    reverse_template_alias: Option<TemplateAlias>,
+    from_max_relations: Option<ObjectRelationLimit>,
+    to_max_relations: Option<ObjectRelationLimit>,
+}
+
+/// Named, validated components of a class relation.
+#[derive(Clone, Debug)]
+pub struct StorageClassRelationParts {
+    relation: StorageClassRelation,
+}
+impl StorageClassRelationParts {
+    pub fn id(&self) -> ClassRelationId {
+        ClassRelationId::from(self.relation.metadata.id())
+    }
+    pub fn metadata(&self) -> StorageRecordMetadata {
+        self.relation.metadata
+    }
+    pub fn from_class_id(&self) -> ClassId {
+        self.relation.from_class_id
+    }
+    pub fn to_class_id(&self) -> ClassId {
+        self.relation.to_class_id
+    }
+    pub fn forward_label(&self) -> Option<&RelationLabel> {
+        self.relation.forward_label.as_ref()
+    }
+    pub fn reverse_label(&self) -> Option<&RelationLabel> {
+        self.relation.reverse_label.as_ref()
+    }
+    pub fn forward_alias(&self) -> Option<&TemplateAlias> {
+        self.relation.forward_template_alias.as_ref()
+    }
+    pub fn reverse_alias(&self) -> Option<&TemplateAlias> {
+        self.relation.reverse_template_alias.as_ref()
+    }
+    pub fn from_limit(&self) -> Option<ObjectRelationLimit> {
+        self.relation.from_max_relations
+    }
+    pub fn to_limit(&self) -> Option<ObjectRelationLimit> {
+        self.relation.to_max_relations
+    }
 }
 
 impl StorageClassRelation {
@@ -83,6 +121,20 @@ impl StorageClassRelation {
         })
     }
 
+    /// Replace revision/timestamps while preserving this relation's identity and details.
+    pub fn try_with_metadata(
+        mut self,
+        metadata: StorageRecordMetadata,
+    ) -> Result<Self, StorageValidationError> {
+        if metadata.id() != self.metadata.id() {
+            return Err(StorageValidationError::invalid(
+                "updated class relation metadata must preserve its identifier",
+            ));
+        }
+        self.metadata = metadata;
+        Ok(self)
+    }
+
     #[must_use]
     pub fn with_labels(
         mut self,
@@ -99,20 +151,14 @@ impl StorageClassRelation {
         forward: Option<String>,
         reverse: Option<String>,
     ) -> Result<Self, StorageValidationError> {
-        for alias in [forward.as_deref(), reverse.as_deref()]
-            .into_iter()
-            .flatten()
-        {
-            let normalized = normalize_template_alias(alias)
-                .map_err(|error| StorageValidationError::invalid(error.into_message()))?;
-            if normalized != alias {
-                return Err(StorageValidationError::invalid(
-                    "class relation template aliases must use their canonical form",
-                ));
-            }
-        }
-        self.forward_template_alias = forward;
-        self.reverse_template_alias = reverse;
+        self.forward_template_alias = forward
+            .map(TemplateAlias::from_canonical)
+            .transpose()
+            .map_err(|e| StorageValidationError::invalid(e.to_string()))?;
+        self.reverse_template_alias = reverse
+            .map(TemplateAlias::from_canonical)
+            .transpose()
+            .map_err(|e| StorageValidationError::invalid(e.to_string()))?;
         Ok(self)
     }
 
@@ -121,14 +167,29 @@ impl StorageClassRelation {
         from: Option<i32>,
         to: Option<i32>,
     ) -> Result<Self, StorageValidationError> {
-        if from.is_some_and(|value| value <= 0) || to.is_some_and(|value| value <= 0) {
-            return Err(StorageValidationError::invalid(
-                "class relation limits must be greater than zero",
-            ));
-        }
+        self.from_max_relations = from
+            .map(ObjectRelationLimit::new)
+            .transpose()
+            .map_err(|e| StorageValidationError::invalid(e.to_string()))?;
+        self.to_max_relations = to
+            .map(ObjectRelationLimit::new)
+            .transpose()
+            .map_err(|e| StorageValidationError::invalid(e.to_string()))?;
+        Ok(self)
+    }
+
+    pub fn with_relation_details(
+        mut self,
+        forward: Option<TemplateAlias>,
+        reverse: Option<TemplateAlias>,
+        from: Option<ObjectRelationLimit>,
+        to: Option<ObjectRelationLimit>,
+    ) -> Self {
+        self.forward_template_alias = forward;
+        self.reverse_template_alias = reverse;
         self.from_max_relations = from;
         self.to_max_relations = to;
-        Ok(self)
+        self
     }
 
     #[must_use]
@@ -158,57 +219,31 @@ impl StorageClassRelation {
 
     #[must_use]
     pub fn forward_template_alias(&self) -> Option<&str> {
-        self.forward_template_alias.as_deref()
+        self.forward_template_alias
+            .as_ref()
+            .map(TemplateAlias::as_str)
     }
 
     #[must_use]
     pub fn reverse_template_alias(&self) -> Option<&str> {
-        self.reverse_template_alias.as_deref()
+        self.reverse_template_alias
+            .as_ref()
+            .map(TemplateAlias::as_str)
     }
 
     #[must_use]
-    pub const fn from_max_relations(&self) -> Option<i32> {
-        self.from_max_relations
+    pub fn from_max_relations(&self) -> Option<i32> {
+        self.from_max_relations.map(ObjectRelationLimit::value)
     }
 
     #[must_use]
-    pub const fn to_max_relations(&self) -> Option<i32> {
-        self.to_max_relations
+    pub fn to_max_relations(&self) -> Option<i32> {
+        self.to_max_relations.map(ObjectRelationLimit::value)
     }
 
     #[must_use]
-    #[allow(clippy::type_complexity)]
-    pub fn into_parts(
-        self,
-    ) -> (
-        ClassRelationId,
-        ClassId,
-        ClassId,
-        Option<String>,
-        Option<String>,
-        DateTime<Utc>,
-        DateTime<Utc>,
-        Option<i32>,
-        Option<i32>,
-        ResourceRevision,
-        Option<RelationLabel>,
-        Option<RelationLabel>,
-    ) {
-        let (id, created_at, updated_at, revision) = self.metadata.into_parts();
-        (
-            ClassRelationId::from(id),
-            self.from_class_id,
-            self.to_class_id,
-            self.forward_template_alias,
-            self.reverse_template_alias,
-            created_at,
-            updated_at,
-            self.from_max_relations,
-            self.to_max_relations,
-            revision,
-            self.forward_label,
-            self.reverse_label,
-        )
+    pub fn into_parts(self) -> StorageClassRelationParts {
+        StorageClassRelationParts { relation: self }
     }
 
     /// Return the canonical class-relation snapshot stored in audit documents.

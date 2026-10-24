@@ -593,53 +593,90 @@ impl UpdateRemoteTarget {
     }
 }
 
-pub async fn validate_target_parts(
-    class_id: Option<i32>,
-    url_template: &str,
-    headers_template: &serde_json::Value,
-    body_template: Option<&str>,
-    auth_config: &RemoteAuthConfig,
-    allowed_subject_types: &[RemoteTargetSubjectType],
-    timeout_ms: i32,
-) -> Result<(), ApiError> {
-    if timeout_ms <= 0 {
-        return Err(ApiError::BadRequest(
-            "timeout_ms must be greater than 0".to_string(),
-        ));
+/// Raw definition fields, collected at the API or persisted-data boundary.
+pub struct RemoteTargetDefinition<'a> {
+    pub class_id: Option<i32>,
+    pub url_template: &'a str,
+    pub headers_template: &'a serde_json::Value,
+    pub body_template: Option<&'a str>,
+    pub auth_config: &'a RemoteAuthConfig,
+    pub allowed_subject_types: &'a [RemoteTargetSubjectType],
+    pub timeout_ms: i32,
+}
+
+pub struct ValidatedRemoteTargetDefinition<'a> {
+    input: RemoteTargetDefinition<'a>,
+    templates: RemoteTemplateSources,
+}
+
+impl fmt::Debug for ValidatedRemoteTargetDefinition<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ValidatedRemoteTargetDefinition")
+            .finish_non_exhaustive()
     }
-    let headers = RemoteHeaderTemplates::new(headers_template)?;
-    let (recursion_limit, fuel) = remote_template_limits();
-    let limits = TemplateLimits::new(recursion_limit, fuel);
-    let mut batch = TemplateBatch::new(0);
-    let templates = std::iter::once(("url_template", url_template))
-        .chain(body_template.map(|body| ("body_template", body)))
-        .chain(
-            headers
-                .iter()
-                .map(|(_, source)| ("header template", source)),
-        );
-    let mut labels = Vec::new();
-    for (label, source) in templates {
-        batch
-            .push(TemplateExecution::new("template", source, limits))
-            .map_err(|error| ApiError::BadRequest(format!("Invalid {label}: {error}")))?;
-        labels.push(label);
+}
+
+impl ValidatedRemoteTargetDefinition<'_> {
+    pub fn input(&self) -> &RemoteTargetDefinition<'_> {
+        &self.input
     }
-    batch.validate().await.map_err(|error| {
-        let label = error
-            .template_index()
-            .and_then(|index| labels.get(index))
-            .copied()
-            .unwrap_or("template batch");
-        ApiError::BadRequest(format!("Invalid {label}: {error}"))
-    })?;
-    validate_auth_config(auth_config)?;
-    if auth_config.uses_server_credentials() {
-        CredentialBoundDestination::from_template(url_template)?;
+    pub(crate) fn templates(&self) -> &RemoteTemplateSources {
+        &self.templates
     }
-    validate_allowed_subject_types(allowed_subject_types)?;
-    validate_class_scope(class_id, allowed_subject_types)?;
-    Ok(())
+}
+
+impl<'a> RemoteTargetDefinition<'a> {
+    pub async fn validate(self) -> Result<ValidatedRemoteTargetDefinition<'a>, ApiError> {
+        let Self {
+            class_id,
+            url_template,
+            headers_template,
+            body_template,
+            auth_config,
+            allowed_subject_types,
+            timeout_ms,
+        } = self;
+        if timeout_ms <= 0 {
+            return Err(ApiError::BadRequest(
+                "timeout_ms must be greater than 0".to_string(),
+            ));
+        }
+        let templates =
+            RemoteTemplateSources::new(url_template, headers_template, body_template, auth_config)?;
+        let headers = &templates.headers;
+        let (recursion_limit, fuel) = remote_template_limits();
+        let limits = TemplateLimits::new(recursion_limit, fuel);
+        let mut batch = TemplateBatch::new(0);
+        let sources = std::iter::once(("url_template", url_template))
+            .chain(body_template.map(|body| ("body_template", body)))
+            .chain(
+                headers
+                    .iter()
+                    .map(|(_, source)| ("header template", source)),
+            );
+        let mut labels = Vec::new();
+        for (label, source) in sources {
+            batch
+                .push(TemplateExecution::new("template", source, limits))
+                .map_err(|error| ApiError::BadRequest(format!("Invalid {label}: {error}")))?;
+            labels.push(label);
+        }
+        batch.validate().await.map_err(|error| {
+            let label = error
+                .template_index()
+                .and_then(|index| labels.get(index))
+                .copied()
+                .unwrap_or("template batch");
+            ApiError::BadRequest(format!("Invalid {label}: {error}"))
+        })?;
+        validate_allowed_subject_types(allowed_subject_types)?;
+        validate_class_scope(class_id, allowed_subject_types)?;
+        Ok(ValidatedRemoteTargetDefinition {
+            input: self,
+            templates,
+        })
+    }
 }
 
 pub fn validate_class_scope(
@@ -685,13 +722,13 @@ impl RemoteTarget {
 }
 
 /// Validated remote header names, string sources and count, shared by target
-/// validation and execution. Values remain borrowed until batch serialization.
-pub(crate) struct RemoteHeaderTemplates<'a> {
-    templates: Vec<(&'a str, &'a str)>,
+/// validation and execution. Owned sources travel with the validated target.
+pub(crate) struct RemoteHeaderTemplates {
+    templates: Vec<(String, String)>,
 }
 
-impl<'a> RemoteHeaderTemplates<'a> {
-    pub(crate) fn new(value: &'a serde_json::Value) -> Result<Self, ApiError> {
+impl RemoteHeaderTemplates {
+    pub(crate) fn new(value: &serde_json::Value) -> Result<Self, ApiError> {
         let object = value.as_object().ok_or_else(|| {
             ApiError::BadRequest("headers_template must be a JSON object".to_string())
         })?;
@@ -712,13 +749,72 @@ impl<'a> RemoteHeaderTemplates<'a> {
             let source = value.as_str().ok_or_else(|| {
                 ApiError::BadRequest("header template values must be strings".to_string())
             })?;
-            templates.push((name.as_str(), source));
+            templates.push((name.clone(), source.to_owned()));
         }
         Ok(Self { templates })
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (&'a str, &'a str)> + '_ {
-        self.templates.iter().copied()
+    pub(crate) fn to_value(&self) -> serde_json::Value {
+        serde_json::Value::Object(
+            self.iter()
+                .map(|(name, source)| {
+                    (
+                        name.to_owned(),
+                        serde_json::Value::String(source.to_owned()),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
+        self.templates
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+    }
+}
+
+/// Structural template and credential-origin proofs carried into rendering.
+pub(crate) struct RemoteTemplateSources {
+    url: String,
+    headers: RemoteHeaderTemplates,
+    body: Option<String>,
+    destination: Option<CredentialBoundDestination>,
+}
+
+impl RemoteTemplateSources {
+    pub(crate) fn new(
+        url: &str,
+        headers: &serde_json::Value,
+        body: Option<&str>,
+        auth: &RemoteAuthConfig,
+    ) -> Result<Self, ApiError> {
+        validate_auth_config(auth)?;
+        let destination = auth
+            .uses_server_credentials()
+            .then(|| CredentialBoundDestination::from_template(url))
+            .transpose()?;
+        Ok(Self {
+            url: url.to_owned(),
+            headers: RemoteHeaderTemplates::new(headers)?,
+            body: body.map(str::to_owned),
+            destination,
+        })
+    }
+    pub(crate) fn url(&self) -> &str {
+        &self.url
+    }
+    pub(crate) fn headers(&self) -> &RemoteHeaderTemplates {
+        &self.headers
+    }
+    pub(crate) fn body(&self) -> Option<&str> {
+        self.body.as_deref()
+    }
+    pub(crate) fn validate_destination(&self, parts: &OutboundUrlParts) -> Result<(), ApiError> {
+        if let Some(destination) = &self.destination {
+            destination.validate_rendered(parts)?;
+        }
+        Ok(())
     }
 }
 
@@ -750,7 +846,7 @@ fn validate_auth_config(auth_config: &RemoteAuthConfig) -> Result<(), ApiError> 
     }
 }
 
-fn remote_template_limits() -> (usize, u64) {
+pub(crate) fn remote_template_limits() -> (usize, u64) {
     get_config()
         .map(|config| {
             (
@@ -908,73 +1004,78 @@ mod tests {
     #[tokio::test]
     async fn target_parts_validate_templates_and_auth_references() {
         assert!(
-            validate_target_parts(
-                Some(1),
-                "https://example.com/{{ object.id }}",
-                &serde_json::json!({ "X-Object": "{{ object.name }}" }),
-                Some("{\"id\": {{ object.id }}}"),
-                &RemoteAuthConfig::BearerSecret {
+            RemoteTargetDefinition {
+                class_id: Some(1),
+                url_template: "https://example.com/{{ object.id }}",
+                headers_template: &serde_json::json!({ "X-Object": "{{ object.name }}" }),
+                body_template: Some("{\"id\": {{ object.id }}}"),
+                auth_config: &RemoteAuthConfig::BearerSecret {
                     secret: "servicenow_token".to_string(),
                 },
-                &[RemoteTargetSubjectType::Object],
-                1000,
-            )
+                allowed_subject_types: &[RemoteTargetSubjectType::Object],
+                timeout_ms: 1000
+            }
+            .validate()
             .await
             .is_ok()
         );
 
         assert!(
-            validate_target_parts(
-                Some(1),
-                "https://example.com/{{",
-                &serde_json::json!({}),
-                None,
-                &RemoteAuthConfig::None,
-                &[RemoteTargetSubjectType::Object],
-                1000,
-            )
+            RemoteTargetDefinition {
+                class_id: Some(1),
+                url_template: "https://example.com/{{",
+                headers_template: &serde_json::json!({}),
+                body_template: None,
+                auth_config: &RemoteAuthConfig::None,
+                allowed_subject_types: &[RemoteTargetSubjectType::Object],
+                timeout_ms: 1000
+            }
+            .validate()
             .await
             .is_err()
         );
         assert!(
-            validate_target_parts(
-                Some(1),
-                "https://example.com",
-                &serde_json::json!([]),
-                None,
-                &RemoteAuthConfig::None,
-                &[RemoteTargetSubjectType::Object],
-                1000,
-            )
+            RemoteTargetDefinition {
+                class_id: Some(1),
+                url_template: "https://example.com",
+                headers_template: &serde_json::json!([]),
+                body_template: None,
+                auth_config: &RemoteAuthConfig::None,
+                allowed_subject_types: &[RemoteTargetSubjectType::Object],
+                timeout_ms: 1000
+            }
+            .validate()
             .await
             .is_err()
         );
         assert!(
-            validate_target_parts(
-                Some(1),
-                "https://example.com",
-                &serde_json::json!({ "Invalid Header": "{{ object.id }}" }),
-                None,
-                &RemoteAuthConfig::None,
-                &[RemoteTargetSubjectType::Object],
-                1000,
-            )
+            RemoteTargetDefinition {
+                class_id: Some(1),
+                url_template: "https://example.com",
+                headers_template: &serde_json::json!({ "Invalid Header": "{{ object.id }}" }),
+                body_template: None,
+                auth_config: &RemoteAuthConfig::None,
+                allowed_subject_types: &[RemoteTargetSubjectType::Object],
+                timeout_ms: 1000
+            }
+            .validate()
             .await
             .is_err()
         );
         assert!(
-            validate_target_parts(
-                Some(1),
-                "https://example.com",
-                &serde_json::json!({}),
-                None,
-                &RemoteAuthConfig::ApiKeySecret {
+            RemoteTargetDefinition {
+                class_id: Some(1),
+                url_template: "https://example.com",
+                headers_template: &serde_json::json!({}),
+                body_template: None,
+                auth_config: &RemoteAuthConfig::ApiKeySecret {
                     header: "X-API-Key".to_string(),
                     secret: "bad-secret".to_string(),
                 },
-                &[RemoteTargetSubjectType::Object],
-                1000,
-            )
+                allowed_subject_types: &[RemoteTargetSubjectType::Object],
+                timeout_ms: 1000
+            }
+            .validate()
             .await
             .is_err()
         );
@@ -984,15 +1085,16 @@ mod tests {
     async fn curated_filters_are_accepted_in_templates() {
         // The `tojson` filter is documented for remote targets; validation must accept it.
         assert!(
-            validate_target_parts(
-                Some(1),
-                "https://example.com/{{ object.id }}",
-                &serde_json::json!({ "X-Object": "{{ object.name }}" }),
-                Some("{\"data\": {{ object.data | tojson }}}"),
-                &RemoteAuthConfig::None,
-                &[RemoteTargetSubjectType::Object],
-                1000,
-            )
+            RemoteTargetDefinition {
+                class_id: Some(1),
+                url_template: "https://example.com/{{ object.id }}",
+                headers_template: &serde_json::json!({ "X-Object": "{{ object.name }}" }),
+                body_template: Some("{\"data\": {{ object.data | tojson }}}"),
+                auth_config: &RemoteAuthConfig::None,
+                allowed_subject_types: &[RemoteTargetSubjectType::Object],
+                timeout_ms: 1000
+            }
+            .validate()
             .await
             .is_ok()
         );
@@ -1039,15 +1141,16 @@ mod tests {
 
     #[tokio::test]
     async fn transport_controlled_header_template_is_rejected() {
-        let error = validate_target_parts(
-            Some(1),
-            "https://example.com",
-            &serde_json::json!({ "Host": "internal.example" }),
-            None,
-            &RemoteAuthConfig::None,
-            &[RemoteTargetSubjectType::Object],
-            1000,
-        )
+        let error = RemoteTargetDefinition {
+            class_id: Some(1),
+            url_template: "https://example.com",
+            headers_template: &serde_json::json!({ "Host": "internal.example" }),
+            body_template: None,
+            auth_config: &RemoteAuthConfig::None,
+            allowed_subject_types: &[RemoteTargetSubjectType::Object],
+            timeout_ms: 1000,
+        }
+        .validate()
         .await
         .unwrap_err();
 

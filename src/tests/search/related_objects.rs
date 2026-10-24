@@ -5,8 +5,8 @@ use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use rstest::rstest;
 
 use crate::models::{
-    HubuumClass, HubuumObject, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
-    NewHubuumObjectRelation, Permissions,
+    HubuumClass, HubuumClassID, HubuumObject, NewHubuumClass, NewHubuumClassRelation,
+    NewHubuumObject, NewHubuumObjectRelation, Permissions,
 };
 use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
 use crate::permissions::{ResourceFields, ResourceKind, ResourceRef};
@@ -69,8 +69,8 @@ async fn relate_classes(
     right: &HubuumClass,
 ) -> crate::models::HubuumClassRelation {
     NewHubuumClassRelation {
-        from_hubuum_class_id: left.id,
-        to_hubuum_class_id: right.id,
+        from_hubuum_class_id: HubuumClassID::new(left.id).expect("positive fixture class id"),
+        to_hubuum_class_id: HubuumClassID::new(right.id).expect("positive fixture class id"),
         forward_label: None,
         reverse_label: None,
         forward_template_alias: None,
@@ -92,7 +92,7 @@ async fn relate_objects(
     NewHubuumObjectRelation {
         from_hubuum_object_id: left.id,
         to_hubuum_object_id: right.id,
-        class_relation_id: class_relation.id,
+        class_relation_id: class_relation.id.id(),
     }
     .save_without_events(&context.pool)
     .await
@@ -436,7 +436,7 @@ async fn external_policy_requires_a_visible_path_and_preserves_allowed_alternati
     let allowed_first = NewHubuumObjectRelation {
         from_hubuum_object_id: room.id,
         to_hubuum_object_id: allowed_bridge.id,
-        class_relation_id: room_bridge.id,
+        class_relation_id: room_bridge.id.id(),
     }
     .save_without_events(&context.pool)
     .await
@@ -444,7 +444,7 @@ async fn external_policy_requires_a_visible_path_and_preserves_allowed_alternati
     let allowed_second = NewHubuumObjectRelation {
         from_hubuum_object_id: allowed_bridge.id,
         to_hubuum_object_id: host_with_alternative.id,
-        class_relation_id: bridge_host.id,
+        class_relation_id: bridge_host.id.id(),
     }
     .save_without_events(&context.pool)
     .await
@@ -597,7 +597,7 @@ async fn traversal_authorizes_complete_paths(
         let object_relation = NewHubuumObjectRelation {
             from_hubuum_object_id: pair[0].1.id,
             to_hubuum_object_id: pair[1].1.id,
-            class_relation_id: relation.id,
+            class_relation_id: relation.id.id(),
         }
         .save_without_events(&context.pool)
         .await
@@ -606,7 +606,7 @@ async fn traversal_authorizes_complete_paths(
             allow(
                 Permissions::ReadClassRelation,
                 ResourceKind::ClassRelation,
-                relation.id,
+                relation.id.id(),
             );
             allow(
                 Permissions::ReadObjectRelation,

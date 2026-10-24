@@ -122,7 +122,7 @@ impl ClassRelationService {
 
 #[cfg(test)]
 mod tests {
-    use hubuum_domain::ClassRelationId;
+    use hubuum_domain::{ClassRelationId, TemplateAlias};
     use rstest::rstest;
 
     use super::{prepare_and_create_class_relation, resolve_and_delete_class_relation};
@@ -130,9 +130,9 @@ mod tests {
     use crate::errors::ApiError;
     use crate::events::{Action, EventContext};
     use crate::models::{
-        ClassSelector, GroupID, HubuumClass, HubuumClassID, HubuumClassRelationID,
-        NewCollectionWithAssignee, NewGroup, NewHubuumClass, NewHubuumClassRelation,
-        ObjectRelationLimit, ResourceRevision, UpdateHubuumClass,
+        ClassSelector, GroupID, HubuumClass, HubuumClassID, NewCollectionWithAssignee, NewGroup,
+        NewHubuumClass, NewHubuumClassRelation, ObjectRelationLimit, ResourceRevision,
+        UpdateHubuumClass,
     };
     use crate::services::Services;
     use crate::storage::MemoryStorageModel;
@@ -233,8 +233,10 @@ mod tests {
             to_class: &HubuumClass,
         ) -> NewHubuumClassRelation {
             NewHubuumClassRelation {
-                from_hubuum_class_id: from_class.id,
-                to_hubuum_class_id: to_class.id,
+                from_hubuum_class_id: HubuumClassID::new(from_class.id)
+                    .expect("positive fixture class id"),
+                to_hubuum_class_id: HubuumClassID::new(to_class.id)
+                    .expect("positive fixture class id"),
                 forward_label: None,
                 reverse_label: None,
                 forward_template_alias: None,
@@ -265,12 +267,20 @@ mod tests {
             .services
             .class_relations()
             .prepare_create(NewHubuumClassRelation {
-                from_hubuum_class_id: higher.id,
-                to_hubuum_class_id: lower.id,
+                from_hubuum_class_id: HubuumClassID::new(higher.id)
+                    .expect("positive fixture class id"),
+                to_hubuum_class_id: HubuumClassID::new(lower.id)
+                    .expect("positive fixture class id"),
                 forward_label: None,
                 reverse_label: None,
-                forward_template_alias: Some("Higher Links".to_string()),
-                reverse_template_alias: Some("Lower Links".to_string()),
+                forward_template_alias: Some(
+                    TemplateAlias::try_from("Higher Links".to_string())
+                        .expect("valid fixture alias"),
+                ),
+                reverse_template_alias: Some(
+                    TemplateAlias::try_from("Lower Links".to_string())
+                        .expect("valid fixture alias"),
+                ),
                 from_max_relations: Some(ObjectRelationLimit::new(1).expect("valid limit")),
                 to_max_relations: Some(ObjectRelationLimit::new(2).expect("valid limit")),
             })
@@ -280,11 +290,19 @@ mod tests {
         assert_eq!(prepared.from_class().id, lower.id);
         assert_eq!(prepared.to_class().id, higher.id);
         assert_eq!(
-            prepared.command().forward_template_alias.as_deref(),
+            prepared
+                .command()
+                .forward_template_alias
+                .as_ref()
+                .map(TemplateAlias::as_str),
             Some("lower_links")
         );
         assert_eq!(
-            prepared.command().reverse_template_alias.as_deref(),
+            prepared
+                .command()
+                .reverse_template_alias
+                .as_ref()
+                .map(TemplateAlias::as_str),
             Some("higher_links")
         );
         assert_eq!(
@@ -343,9 +361,7 @@ mod tests {
         let resolved = harness
             .services
             .class_relations()
-            .resolve(
-                HubuumClassRelationID::new(created.relation().id).expect("valid class relation id"),
-            )
+            .resolve(created.relation().id)
             .await
             .expect("relation should resolve");
 
@@ -504,8 +520,7 @@ mod tests {
             .create(&prepared, &EventContext::system())
             .await
             .expect("relation should create");
-        let relation_id =
-            HubuumClassRelationID::new(created.relation().id).expect("valid relation id");
+        let relation_id = created.relation().id;
         harness
             .services
             .class_relations()
@@ -545,8 +560,7 @@ mod tests {
             .create(&prepared, &EventContext::system())
             .await
             .expect("relation should create");
-        let relation_id =
-            HubuumClassRelationID::new(created.relation().id).expect("valid relation id");
+        let relation_id = created.relation().id;
         let class_target = harness
             .services
             .classes()
@@ -609,7 +623,7 @@ mod tests {
             vec![Action::Created, Action::Deleted]
         );
         assert!(events.iter().all(|event| {
-            event.class_relation_id == created.relation().id && event.context == context
+            event.class_relation_id == created.relation().id.id() && event.context == context
         }));
         harness.finish().await;
     }

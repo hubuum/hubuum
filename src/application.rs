@@ -58,6 +58,58 @@ use crate::{api, logger, middlewares, observability, tls, utilities};
 /// This is the workspace-internal composition boundary used by the server
 /// binary. It is not a supported third-party embedding API.
 pub async fn run_runtime_from_environment() -> std::io::Result<()> {
+    let (mut config, mut trace_runtime) = initialize_runtime().await;
+    let RuntimeServices {
+        app_context,
+        backup_settings,
+        restore_settings,
+    } = initialize_services(&mut config).await;
+    let storage_backend = app_context.storage_backend_descriptor();
+    if config.metrics_enabled {
+        observability::metrics::storage_backend_identity(storage_backend.kind().as_str());
+    }
+
+    // Every process that can serve or originate work must participate in the
+    // restore drain barrier. In particular, API-only replicas need their own
+    // heartbeat even though they do not run task or event workers.
+    ensure_restore_coordinator_running(app_context.clone_backend());
+
+    let active_event_sinks = match count_enabled_event_sinks(&app_context).await {
+        Ok(count) => Some(count),
+        Err(error) => {
+            warn!(
+                message = "failed to count active event sinks for startup metadata",
+                error = %error,
+            );
+            None
+        }
+    };
+
+    let result = if config.runtime_role.serves_http() {
+        run_http_role(
+            &config,
+            &app_context,
+            &backup_settings,
+            &restore_settings,
+            active_event_sinks,
+        )
+        .await
+    } else {
+        run_worker_role(&config, &app_context, &backup_settings, active_event_sinks).await
+    };
+    shutdown_background_workers(Duration::from_secs(30)).await;
+    hubuum_templates::shutdown_template_workers().await;
+    drop(app_context);
+    if let Err(error) = trace_runtime.shutdown().await {
+        warn!(
+            message = "OpenTelemetry shutdown did not complete cleanly",
+            error
+        );
+    }
+    result
+}
+
+async fn initialize_runtime() -> (AppConfig, observability::tracing::TraceRuntime) {
     hubuum_templates::set_worker_event_handler(observability::metrics::template_worker_event);
     if let Err(e) = tls::install_default_crypto_provider() {
         fatal_error(
@@ -67,7 +119,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
     }
 
     #[cfg(not(test))]
-    let mut config = match initialize_config() {
+    let config = match initialize_config() {
         Ok(cfg) => cfg.clone(),
         Err(e) => fatal_error(
             &format!("Failed to load configuration: {}", e),
@@ -75,7 +127,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         ),
     };
     #[cfg(test)]
-    let mut config = match get_config() {
+    let config = match get_config() {
         Ok(cfg) => cfg.clone(),
         Err(e) => fatal_error(
             &format!("Failed to load configuration: {}", e),
@@ -90,7 +142,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
     }
     let tracing_settings = observability::tracing::TracingSettings::from_config(&config)
         .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
-    let mut trace_runtime = observability::tracing::initialize(&tracing_settings)
+    let trace_runtime = observability::tracing::initialize(&tracing_settings)
         .await
         .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_INIT_ERROR));
     if let Err(err) =
@@ -148,6 +200,16 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
             u64::try_from(token_hash_key_ring.previous_key_ids().count()).unwrap_or(u64::MAX),
         );
     }
+    (config, trace_runtime)
+}
+
+struct RuntimeServices {
+    app_context: AppContext,
+    backup_settings: BackupSettings,
+    restore_settings: RestoreSettings,
+}
+
+async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
     if config.storage_backend == StorageBackendKind::Postgres {
         config.database_url = crate::secrets::resolve_database_url(
             DatabaseCredential::Runtime,
@@ -291,7 +353,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         );
     }
 
-    let permission_backend = build_permission_backend(&config, storage.clone())
+    let permission_backend = build_permission_backend(config, storage.clone())
         .await
         .unwrap_or_else(|error| {
             fatal_error(
@@ -312,66 +374,57 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         });
     storage.start_query_observation_control();
     let app_context = AppContext::new(storage, permission_backend);
+    RuntimeServices {
+        app_context,
+        backup_settings,
+        restore_settings,
+    }
+}
+
+async fn run_worker_role(
+    config: &AppConfig,
+    app_context: &AppContext,
+    backup_settings: &BackupSettings,
+    active_event_sinks: Option<i64>,
+) -> std::io::Result<()> {
     let storage_backend = app_context.storage_backend_descriptor();
-    if config.metrics_enabled {
-        observability::metrics::storage_backend_identity(storage_backend.kind().as_str());
-    }
     let authorization_backend = app_context.permission_backend().kind();
-
-    // Every process that can serve or originate work must participate in the
-    // restore drain barrier. In particular, API-only replicas need their own
-    // heartbeat even though they do not run task or event workers.
-    ensure_restore_coordinator_running(app_context.clone_backend());
-
-    let active_event_sinks = match count_enabled_event_sinks(&app_context).await {
-        Ok(count) => Some(count),
-        Err(error) => {
-            warn!(
-                message = "failed to count active event sinks for startup metadata",
-                error = %error,
-            );
-            None
-        }
-    };
-
-    if !config.runtime_role.serves_http() {
-        let metrics_server = start_worker_metrics_server(&config, app_context.clone())?;
-        start_background_workers(&app_context, &backup_settings);
-        info!(
-            message = "worker startup",
-            version = env!("CARGO_PKG_VERSION"),
-            git_sha = logger::build_git_sha(),
-            runtime_role = config.runtime_role.as_str(),
-            task_workers = config.task_workers,
-            event_fanout_workers = config.event_fanout_workers,
-            event_delivery_workers = config.event_delivery_workers,
-            db_backend = storage_backend.kind().as_str(),
-            storage_backend = storage_backend.kind().as_str(),
-            authorization_backend,
-            active_event_sinks,
-            metrics_listener = metrics_server.is_some(),
+    let metrics_server = start_worker_metrics_server(config, app_context.clone())?;
+    start_background_workers(app_context, backup_settings);
+    info!(
+        message = "worker startup",
+        version = env!("CARGO_PKG_VERSION"),
+        git_sha = logger::build_git_sha(),
+        runtime_role = config.runtime_role.as_str(),
+        task_workers = config.task_workers,
+        event_fanout_workers = config.event_fanout_workers,
+        event_delivery_workers = config.event_delivery_workers,
+        db_backend = storage_backend.kind().as_str(),
+        storage_backend = storage_backend.kind().as_str(),
+        authorization_backend,
+        active_event_sinks,
+        metrics_listener = metrics_server.is_some(),
+    );
+    let supervision_result = supervise_worker_process(metrics_server).await;
+    if let Err(error) = &supervision_result {
+        error!(
+            message = "Worker process supervision failed",
+            reason = %error,
         );
-        let supervision_result = supervise_worker_process(metrics_server).await;
-        if let Err(error) = &supervision_result {
-            error!(
-                message = "Worker process supervision failed",
-                reason = %error,
-            );
-        }
-        shutdown_background_workers(Duration::from_secs(30)).await;
-        hubuum_templates::shutdown_template_workers().await;
-        drop(app_context);
-        if let Err(error) = trace_runtime.shutdown().await {
-            warn!(
-                message = "OpenTelemetry shutdown did not complete cleanly",
-                error
-            );
-        }
-        supervision_result?;
-        return Ok(());
     }
+    supervision_result
+}
 
-    let login_rate_limit_store_settings = login_rate_limit_store_settings(&config)
+async fn run_http_role(
+    config: &AppConfig,
+    app_context: &AppContext,
+    backup_settings: &BackupSettings,
+    restore_settings: &RestoreSettings,
+    active_event_sinks: Option<i64>,
+) -> std::io::Result<()> {
+    let storage_backend = app_context.storage_backend_descriptor();
+    let authorization_backend = app_context.permission_backend().kind();
+    let login_rate_limit_store_settings = login_rate_limit_store_settings(config)
         .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
     initialize_login_rate_limit_store(login_rate_limit_store_settings)
         .await
@@ -388,7 +441,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         config.trusted_proxies.nets().to_vec(),
         config.trusted_proxy_hops,
     );
-    let running_config = RunningConfig::from_app_config_and_storage(&config, storage_backend);
+    let running_config = RunningConfig::from_app_config_and_storage(config, storage_backend);
     let metrics_enabled = config.metrics_enabled;
     let metrics_path = config.metrics_path.clone();
     let server_app_context = app_context.clone();
@@ -468,7 +521,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
     };
 
     if config.runtime_role.runs_background_workers() {
-        start_background_workers(&background_worker_context, &backup_settings);
+        start_background_workers(&background_worker_context, backup_settings);
     }
 
     info!(
@@ -492,7 +545,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
     );
 
     let server = server.workers(config.actix_workers).run();
-    let result = if background_worker_count() > 0 {
+    if background_worker_count() > 0 {
         tokio::select! {
             result = server => result,
             error = wait_for_background_worker_failure() => {
@@ -505,17 +558,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         }
     } else {
         server.await
-    };
-    shutdown_background_workers(Duration::from_secs(30)).await;
-    hubuum_templates::shutdown_template_workers().await;
-    drop(app_context);
-    if let Err(error) = trace_runtime.shutdown().await {
-        warn!(
-            message = "OpenTelemetry shutdown did not complete cleanly",
-            error
-        );
     }
-    result
 }
 
 fn start_background_workers(context: &AppContext, backup_settings: &BackupSettings) {

@@ -2,6 +2,7 @@
 
 #![cfg(test)]
 
+use hubuum_domain::TemplateAlias;
 use uuid::Uuid;
 
 use crate::events::{
@@ -419,12 +420,16 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
     .unwrap();
 
     let relation = NewHubuumClassRelation {
-        from_hubuum_class_id: class_a.id,
-        to_hubuum_class_id: class_b.id,
+        from_hubuum_class_id: HubuumClassID::new(class_a.id).expect("positive fixture class id"),
+        to_hubuum_class_id: HubuumClassID::new(class_b.id).expect("positive fixture class id"),
         forward_label: None,
         reverse_label: None,
-        forward_template_alias: Some("children".to_string()),
-        reverse_template_alias: Some("parents".to_string()),
+        forward_template_alias: Some(
+            TemplateAlias::try_from("children".to_string()).expect("valid fixture alias"),
+        ),
+        reverse_template_alias: Some(
+            TemplateAlias::try_from("parents".to_string()).expect("valid fixture alias"),
+        ),
         from_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),
         to_max_relations: None,
     }
@@ -432,13 +437,13 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
     .await
     .unwrap();
 
-    HubuumClassRelationID::new(relation.id)
+    HubuumClassRelationID::new(relation.id.id())
         .unwrap()
         .delete(&scope.pool, &context)
         .await
         .unwrap();
 
-    let rows = events_for(&scope, "class_relation", relation.id).await;
+    let rows = events_for(&scope, "class_relation", relation.id.id()).await;
     assert_eq!(rows.len(), 2);
 
     assert_eq!(rows[0].action, "created");
@@ -519,8 +524,8 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
     .await
     .unwrap();
     let class_relation = NewHubuumClassRelation {
-        from_hubuum_class_id: class_a.id,
-        to_hubuum_class_id: class_b.id,
+        from_hubuum_class_id: HubuumClassID::new(class_a.id).expect("positive fixture class id"),
+        to_hubuum_class_id: HubuumClassID::new(class_b.id).expect("positive fixture class id"),
         forward_label: None,
         reverse_label: None,
         forward_template_alias: None,
@@ -556,7 +561,7 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
     let relation = NewHubuumObjectRelation {
         from_hubuum_object_id: object_a.id,
         to_hubuum_object_id: object_b.id,
-        class_relation_id: class_relation.id,
+        class_relation_id: class_relation.id.id(),
     }
     .save(&scope.pool, &context)
     .await
@@ -587,7 +592,7 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
     );
     assert_eq!(
         rows[0].after.as_ref().unwrap()["class_relation_id"],
-        class_relation.id
+        class_relation.id.id()
     );
 
     assert_eq!(rows[1].action, "deleted");

@@ -3,7 +3,9 @@ mod baseline;
 mod budget;
 mod computed;
 pub use budget::{StorageBackupBudget, StorageBackupCaptureProgress};
+mod normalization;
 mod query_usage;
+mod resources;
 mod revisions;
 mod schemas;
 mod task_discovery;
@@ -239,6 +241,41 @@ impl PartialEq for StorageBackupSnapshot {
 }
 
 impl StorageBackupSnapshot {
+    pub fn normalize_legacy_event_configuration(
+        backup_version: i32,
+        state: &mut StorageBackupStateSections,
+        history: Option<&mut StorageBackupHistorySections>,
+    ) {
+        normalization::normalize_legacy_event_configuration(backup_version, state, history);
+    }
+
+    pub fn normalize_legacy_class_schema_policies(
+        backup_version: i32,
+        state: &mut StorageBackupStateSections,
+        history: Option<&mut StorageBackupHistorySections>,
+    ) {
+        normalization::normalize_legacy_class_schema_policies(backup_version, state, history);
+    }
+
+    pub fn normalize_legacy_relation_labels(
+        backup_version: i32,
+        state: &mut StorageBackupStateSections,
+        history: Option<&mut StorageBackupHistorySections>,
+    ) {
+        normalization::normalize_legacy_relation_labels(backup_version, state, history);
+    }
+
+    /// Validate restore resource semantics before constructing a snapshot.
+    pub fn try_new_for_restore(
+        state: &StorageBackupStateSections,
+        history: Option<&StorageBackupHistorySections>,
+        schema_limits: JsonSchemaLimits,
+    ) -> Result<Self, StorageValidationError> {
+        // Reject invalid uploads before allocating a second copy of their rows.
+        resources::validate_sections(state, history, schema_limits)?;
+        Self::try_new_with_limits(state.clone(), history.cloned(), schema_limits)
+    }
+
     #[must_use]
     pub const fn schema_limits(&self) -> JsonSchemaLimits {
         self.schema_limits
@@ -310,6 +347,22 @@ impl StorageBackupSnapshot {
                     .or_insert(Value::Null);
             }
         }
+    }
+
+    /// Validate restore resource semantics without copying the snapshot's JSON rows.
+    pub fn validate_resource_sections(
+        state: &StorageBackupStateSections,
+        history: Option<&StorageBackupHistorySections>,
+        schema_limits: JsonSchemaLimits,
+    ) -> Result<(), StorageValidationError> {
+        resources::validate_sections(state, history, schema_limits)
+    }
+
+    /// Validate definitions in a state section, including personal definitions and ownership.
+    pub fn validate_computed_definitions(
+        state: &StorageBackupStateSections,
+    ) -> Result<(), StorageValidationError> {
+        resources::validate_definitions(state)
     }
 
     pub fn try_new_with_limits(

@@ -2,6 +2,47 @@
 
 use std::fmt;
 
+/// A normalized template alias whose spelling is safe as a relation lookup key.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "String", into = "String")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", schema(value_type = String))]
+pub struct TemplateAlias(String);
+
+impl TemplateAlias {
+    pub fn new(value: &str) -> Result<Self, TemplateAliasError> {
+        normalize_template_alias(value).map(Self)
+    }
+    pub fn from_canonical(value: String) -> Result<Self, TemplateAliasError> {
+        let alias = Self::new(&value)?;
+        if alias.0 != value {
+            return Err(TemplateAliasError::new(
+                "class relation template aliases must use their canonical form",
+            ));
+        }
+        Ok(alias)
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+impl TryFrom<String> for TemplateAlias {
+    type Error = TemplateAliasError;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(&value)
+    }
+}
+impl From<TemplateAlias> for String {
+    fn from(value: TemplateAlias) -> Self {
+        value.0
+    }
+}
+impl fmt::Display for TemplateAlias {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Invalid template alias supplied at an application or storage boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TemplateAliasError {
@@ -80,6 +121,19 @@ pub fn normalize_template_alias(alias: &str) -> Result<String, TemplateAliasErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[rstest::rstest]
+    #[case(" Room Name ")]
+    #[case("roomName")]
+    fn persisted_aliases_reject_noncanonical_spelling(#[case] value: &str) {
+        assert!(TemplateAlias::from_canonical(value.to_owned()).is_err());
+    }
+
+    #[test]
+    fn deserialization_normalizes_aliases() {
+        let alias: TemplateAlias = serde_json::from_str("\"Room Name\"").unwrap();
+        assert_eq!(alias.as_str(), "room_name");
+    }
 
     #[test]
     fn normalizes_case_boundaries_and_separators() {

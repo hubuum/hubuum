@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use actix_web::{http::StatusCode, test};
+    use hubuum_domain::ClassId;
     use rstest::rstest;
 
     use crate::models::{TaskKind, TaskResponse, TaskStatus};
@@ -936,8 +937,8 @@ mod tests {
             let fixture = &fixtures[index * 2];
             let (class, object) = &objects[0];
             let class_relation = NewHubuumClassRelation {
-                from_hubuum_class_id: class.id,
-                to_hubuum_class_id: objects[1].0.id,
+                from_hubuum_class_id: ClassId::new(class.id).unwrap(),
+                to_hubuum_class_id: ClassId::new(objects[1].0.id).unwrap(),
                 forward_label: None,
                 reverse_label: None,
                 forward_template_alias: None,
@@ -951,7 +952,7 @@ mod tests {
             let object_relation = NewHubuumObjectRelation {
                 from_hubuum_object_id: object.id,
                 to_hubuum_object_id: objects[1].1.id,
-                class_relation_id: class_relation.id,
+                class_relation_id: class_relation.id.id(),
             }
             .save_without_events(&context.pool)
             .await

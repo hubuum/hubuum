@@ -6,6 +6,7 @@ mod tests {
         test,
     };
     use hubuum_domain::RelationLabel;
+    use hubuum_domain::{ClassId, ClassRelationId, TemplateAlias};
     use rstest::rstest;
     use std::time::Duration;
 
@@ -472,8 +473,8 @@ mod tests {
         to_class_id: i32,
     ) -> HubuumClassRelation {
         NewHubuumClassRelation {
-            from_hubuum_class_id: from_class_id,
-            to_hubuum_class_id: to_class_id,
+            from_hubuum_class_id: ClassId::new(from_class_id).unwrap(),
+            to_hubuum_class_id: ClassId::new(to_class_id).unwrap(),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -507,12 +508,12 @@ mod tests {
         pool: &hubuum_storage_postgres::PostgresPool,
         from_object_id: i32,
         to_object_id: i32,
-        class_relation_id: i32,
+        class_relation_id: ClassRelationId,
     ) -> HubuumObjectRelation {
         NewHubuumObjectRelation {
             from_hubuum_object_id: from_object_id,
             to_hubuum_object_id: to_object_id,
-            class_relation_id,
+            class_relation_id: class_relation_id.id(),
         }
         .save_without_events(pool)
         .await
@@ -1679,12 +1680,12 @@ mod tests {
         .unwrap();
 
         let host_room_relation = NewHubuumClassRelation {
-            from_hubuum_class_id: host_class.id,
-            to_hubuum_class_id: room_class.id,
+            from_hubuum_class_id: ClassId::new(host_class.id).unwrap(),
+            to_hubuum_class_id: ClassId::new(room_class.id).unwrap(),
             forward_label: Some(RelationLabel::new("is in".into()).unwrap()),
             reverse_label: Some(RelationLabel::new("contains".into()).unwrap()),
-            forward_template_alias: Some("rooms".to_string()),
-            reverse_template_alias: Some("hosts".to_string()),
+            forward_template_alias: Some(TemplateAlias::new("rooms").unwrap()),
+            reverse_template_alias: Some(TemplateAlias::new("hosts").unwrap()),
             from_max_relations: None,
             to_max_relations: None,
         }
@@ -1692,12 +1693,12 @@ mod tests {
         .await
         .unwrap();
         let room_person_relation = NewHubuumClassRelation {
-            from_hubuum_class_id: room_class.id,
-            to_hubuum_class_id: person_class.id,
+            from_hubuum_class_id: ClassId::new(room_class.id).unwrap(),
+            to_hubuum_class_id: ClassId::new(person_class.id).unwrap(),
             forward_label: None,
             reverse_label: None,
-            forward_template_alias: Some("persons".to_string()),
-            reverse_template_alias: Some("rooms".to_string()),
+            forward_template_alias: Some(TemplateAlias::new("persons").unwrap()),
+            reverse_template_alias: Some(TemplateAlias::new("rooms").unwrap()),
             from_max_relations: None,
             to_max_relations: None,
         }
@@ -1838,12 +1839,12 @@ mod tests {
         .unwrap();
 
         let host_room_relation = NewHubuumClassRelation {
-            from_hubuum_class_id: host_class.id,
-            to_hubuum_class_id: room_class.id,
+            from_hubuum_class_id: ClassId::new(host_class.id).unwrap(),
+            to_hubuum_class_id: ClassId::new(room_class.id).unwrap(),
             forward_label: None,
             reverse_label: None,
-            forward_template_alias: Some("rooms".to_string()),
-            reverse_template_alias: Some("hosts".to_string()),
+            forward_template_alias: Some(TemplateAlias::new("rooms").unwrap()),
+            reverse_template_alias: Some(TemplateAlias::new("hosts").unwrap()),
             from_max_relations: None,
             to_max_relations: None,
         }
@@ -1851,12 +1852,12 @@ mod tests {
         .await
         .unwrap();
         let room_person_relation = NewHubuumClassRelation {
-            from_hubuum_class_id: room_class.id,
-            to_hubuum_class_id: person_class.id,
+            from_hubuum_class_id: ClassId::new(room_class.id).unwrap(),
+            to_hubuum_class_id: ClassId::new(person_class.id).unwrap(),
             forward_label: None,
             reverse_label: None,
-            forward_template_alias: Some("persons".to_string()),
-            reverse_template_alias: Some("rooms".to_string()),
+            forward_template_alias: Some(TemplateAlias::new("persons").unwrap()),
+            reverse_template_alias: Some(TemplateAlias::new("rooms").unwrap()),
             from_max_relations: None,
             to_max_relations: None,
         }
@@ -2267,12 +2268,12 @@ mod tests {
             .unwrap();
 
         let host_room_relation = NewHubuumClassRelation {
-            from_hubuum_class_id: host_class.id,
-            to_hubuum_class_id: room_class.id,
+            from_hubuum_class_id: ClassId::new(host_class.id).unwrap(),
+            to_hubuum_class_id: ClassId::new(room_class.id).unwrap(),
             forward_label: None,
             reverse_label: None,
-            forward_template_alias: Some("rooms".to_string()),
-            reverse_template_alias: Some("hosts".to_string()),
+            forward_template_alias: Some(TemplateAlias::new("rooms").unwrap()),
+            reverse_template_alias: Some(TemplateAlias::new("hosts").unwrap()),
             from_max_relations: None,
             to_max_relations: None,
         }
@@ -2392,7 +2393,7 @@ mod tests {
             context: &TestContext,
             host_class_id: i32,
             room_class_id: i32,
-            class_relation_id: i32,
+            class_relation_id: ClassRelationId,
             sort: &str,
         ) -> Vec<String> {
             let body = serde_json::json!({
@@ -2486,12 +2487,12 @@ mod tests {
         )
         .await;
         let class_relation = NewHubuumClassRelation {
-            from_hubuum_class_id: host_class.id,
-            to_hubuum_class_id: room_class.id,
+            from_hubuum_class_id: ClassId::new(host_class.id).unwrap(),
+            to_hubuum_class_id: ClassId::new(room_class.id).unwrap(),
             forward_label: None,
             reverse_label: None,
-            forward_template_alias: Some("rooms".to_string()),
-            reverse_template_alias: Some("hosts".to_string()),
+            forward_template_alias: Some(TemplateAlias::new("rooms").unwrap()),
+            reverse_template_alias: Some(TemplateAlias::new("hosts").unwrap()),
             from_max_relations: None,
             to_max_relations: None,
         }

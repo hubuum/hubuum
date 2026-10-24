@@ -250,7 +250,7 @@ pub async fn logout_token(
     user_access: AdminAccess,
     token: web::Json<LogoutTokenRequest>,
 ) -> Result<impl Responder, ApiError> {
-    let token = Token(token.into_inner().token);
+    let token = Token::try_from(token.into_inner().token)?;
     debug!(message = "administrative token logout requested");
 
     let result = token.delete(&context).await;

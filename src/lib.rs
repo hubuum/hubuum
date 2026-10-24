@@ -22,7 +22,6 @@ pub mod benchmark_support;
 pub mod config;
 pub mod errors;
 pub mod events;
-pub mod exports;
 pub mod extractors;
 #[doc(hidden)]
 pub mod lifecycle;

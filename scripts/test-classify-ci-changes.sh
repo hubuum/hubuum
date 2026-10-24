@@ -883,3 +883,19 @@ for session_input in src/services/auth_sessions.rs src/services/credential_activ
   session_output="$(bash "$classifier" "$session_input")"
   assert_flag "$session_output" rust true
 done
+
+# Extracted domain schemas and service modules retain their validation lanes.
+for schema_input in crates/hubuum-domain/src/relation_limit.rs crates/hubuum-domain/src/template_alias.rs; do
+  schema_output="$(bash "$classifier" "$schema_input")"
+  assert_flag "$schema_output" rust true
+  assert_flag "$schema_output" openapi true
+done
+for extracted_input in src/services/exports/execution.rs src/services/exports/hydration.rs \
+  src/tasks/planning/import.rs crates/hubuum-storage-memory/src/imports/relations.rs \
+  crates/hubuum-storage-core/src/backup_snapshot/resources.rs \
+  crates/hubuum-storage-core/src/backup_snapshot/normalization.rs \
+  crates/hubuum-auth-core/src/credential.rs; do
+  extracted_output="$(bash "$classifier" "$extracted_input")"
+  assert_flag "$extracted_output" rust true
+  assert_flag "$extracted_output" container true
+done

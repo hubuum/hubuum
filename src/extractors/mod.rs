@@ -313,8 +313,8 @@ fn extract_token(req: &HttpRequest) -> Result<Token, ApiError> {
                 .strip_prefix("Bearer ")
                 .map(|header_str: &str| header_str.to_string())
         })
-        .map(Token)
         .ok_or_else(|| ApiError::Unauthorized("No token provided".to_string()))
+        .and_then(Token::try_from)
 }
 
 fn backend_from_req(req: &HttpRequest) -> Result<AppContext, ApiError> {
@@ -367,11 +367,11 @@ fn resolved_auth(
         Some(ResolvedAuth::Authenticated {
             token: resolved_token,
             token_meta,
-        }) if resolved_token.0 == token.0 => Some(Ok(token_meta.clone())),
+        }) if resolved_token.as_str() == token.as_str() => Some(Ok(token_meta.clone())),
         Some(ResolvedAuth::Invalid {
             token: resolved_token,
             error,
-        }) if resolved_token.0 == token.0 => Some(Err(error.clone())),
+        }) if resolved_token.as_str() == token.as_str() => Some(Err(error.clone())),
         _ => None,
     }
 }

@@ -9,5 +9,7 @@ publish = false
 rust-api = "workspace-internal"
 
 [dependencies]
+hmac = "0.13"
+sha2 = "0.11"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"

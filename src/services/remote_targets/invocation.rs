@@ -3,11 +3,11 @@ use std::time::Duration;
 use hubuum_outbound_http::{OutboundMethod, OutboundRequest, OutboundUrlParts};
 
 use crate::errors::ApiError;
-use crate::models::remote_target::CredentialBoundDestination;
+use crate::models::remote_target::RemoteTemplateSources;
 use crate::models::{
-    Collection, CollectionID, HubuumClassID, HubuumClassRelationID, HubuumObjectID, Permissions,
-    RemoteHttpMethod, RemoteInvocationSubject, RemoteTarget, RemoteTargetSubjectType,
-    RemoteTemplateContext, StoredRemoteCallTaskPayload, TokenScope,
+    Collection, CollectionID, HubuumClassRelationID, HubuumObjectID, Permissions, RemoteHttpMethod,
+    RemoteInvocationSubject, RemoteTarget, RemoteTargetSubjectType, RemoteTemplateContext,
+    StoredRemoteCallTaskPayload, TokenScope,
 };
 use crate::permissions::{
     AuthorizationContext, AuthorizationMode, ClassResourceEndpoint, ObjectResourceEndpoint,
@@ -28,7 +28,7 @@ struct ResolvedRemoteInvocationSubject {
 pub(crate) struct AuthorizedRemoteInvocation {
     target: RemoteTarget,
     resolved: ResolvedRemoteInvocationSubject,
-    destination: Option<CredentialBoundDestination>,
+    templates: RemoteTemplateSources,
 }
 
 impl AuthorizedRemoteInvocation {
@@ -46,6 +46,9 @@ impl AuthorizedRemoteInvocation {
     pub(crate) fn target(&self) -> &RemoteTarget {
         &self.target
     }
+    pub(crate) fn templates(&self) -> &RemoteTemplateSources {
+        &self.templates
+    }
     pub(crate) fn subject_type(&self) -> RemoteTargetSubjectType {
         self.resolved.subject.subject_type()
     }
@@ -60,9 +63,7 @@ impl AuthorizedRemoteInvocation {
         &self,
         parts: OutboundUrlParts,
     ) -> Result<AuthorizedRemoteDestination<'_>, ApiError> {
-        if let Some(binding) = &self.destination {
-            binding.validate_rendered(&parts)?;
-        }
+        self.templates.validate_destination(&parts)?;
         Ok(AuthorizedRemoteDestination {
             invocation: self,
             parts,
@@ -117,17 +118,18 @@ impl AuthorizedRemoteInvocation {
                 "Remote target not found for invocation subject".to_string(),
             ));
         }
-        let destination = if target.auth_config.uses_server_credentials() {
-            Some(CredentialBoundDestination::from_template(
-                &target.url_template,
-            )?)
-        } else {
-            None
-        };
+        // Persisted source syntax is checked by rendering; retain structural and
+        // credential-origin validation without a second template compilation.
+        let templates = RemoteTemplateSources::new(
+            &target.url_template,
+            &target.headers_template,
+            target.body_template.as_deref(),
+            &target.auth_config,
+        )?;
         Ok(Self {
             target,
             resolved,
-            destination,
+            templates,
         })
     }
 }
@@ -241,12 +243,8 @@ async fn authorize_subject(
         }
         RemoteInvocationSubject::ClassRelation { relation_id } => {
             let relation = relation_id.instance(backend).await?;
-            let from_class = HubuumClassID::new(relation.from_hubuum_class_id)?
-                .instance(backend)
-                .await?;
-            let to_class = HubuumClassID::new(relation.to_hubuum_class_id)?
-                .instance(backend)
-                .await?;
+            let from_class = relation.from_hubuum_class_id.instance(backend).await?;
+            let to_class = relation.to_hubuum_class_id.instance(backend).await?;
             let collections = (
                 from_class.collection(backend).await?,
                 to_class.collection(backend).await?,
@@ -259,7 +257,7 @@ async fn authorize_subject(
                 scopes,
                 Permissions::ReadClassRelation,
                 ResourceRef::class_relation(
-                    Some(relation.id),
+                    Some(relation.id.id()),
                     ClassResourceEndpoint::new(from_class.collection_id, from_class.id),
                     ClassResourceEndpoint::new(to_class.collection_id, to_class.id),
                 ),
@@ -305,12 +303,11 @@ async fn authorize_subject(
                 .await?;
             let class_relation_id = HubuumClassRelationID::new(relation.class_relation_id)?;
             let class_relation = class_relation_id.instance(backend).await?;
-            let from_class = HubuumClassID::new(class_relation.from_hubuum_class_id)?
+            let from_class = class_relation
+                .from_hubuum_class_id
                 .instance(backend)
                 .await?;
-            let to_class = HubuumClassID::new(class_relation.to_hubuum_class_id)?
-                .instance(backend)
-                .await?;
+            let to_class = class_relation.to_hubuum_class_id.instance(backend).await?;
             let collections = (
                 from_object.collection(backend).await?,
                 to_object.collection(backend).await?,
@@ -344,7 +341,7 @@ async fn authorize_subject(
                 scopes,
                 Permissions::ReadClassRelation,
                 ResourceRef::class_relation(
-                    Some(class_relation.id),
+                    Some(class_relation.id.id()),
                     ClassResourceEndpoint::new(from_class.collection_id, from_class.id),
                     ClassResourceEndpoint::new(to_class.collection_id, to_class.id),
                 ),

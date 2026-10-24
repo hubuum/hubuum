@@ -193,8 +193,8 @@ macro_rules! assert_contains_all {
 macro_rules! assert_contains_same_ids {
     // Case where both arguments are references to vectors of instances
     ($collection1:expr, $collection2:expr) => {{
-        let ids1: std::collections::HashSet<i32> = $collection1.iter().map(|item| item.id).collect();
-        let ids2: std::collections::HashSet<i32> = $collection2.iter().map(|item| item.id).collect();
+        let ids1: std::collections::HashSet<_> = $collection1.iter().map(|item| item.id).collect();
+        let ids2: std::collections::HashSet<_> = $collection2.iter().map(|item| item.id).collect();
 
         if ids1 != ids2 {
             let missing_ids: Vec<_> = ids2.difference(&ids1).collect();

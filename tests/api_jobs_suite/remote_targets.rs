@@ -7,6 +7,7 @@ mod tests {
     };
     use base64::Engine;
     use futures::join;
+    use hubuum_domain::ClassId;
     use rstest::rstest;
     use std::sync::Arc;
     use std::time::Duration;
@@ -469,8 +470,8 @@ mod tests {
         let (to_collection_id, to_class_id, to_object_id) =
             setup_object(context, &format!("{label}_to")).await;
         let class_relation = NewHubuumClassRelation {
-            from_hubuum_class_id: from_class_id,
-            to_hubuum_class_id: to_class_id,
+            from_hubuum_class_id: ClassId::new(from_class_id).unwrap(),
+            to_hubuum_class_id: ClassId::new(to_class_id).unwrap(),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -484,7 +485,7 @@ mod tests {
         let object_relation = NewHubuumObjectRelation {
             from_hubuum_object_id: from_object_id,
             to_hubuum_object_id: to_object_id,
-            class_relation_id: class_relation.id,
+            class_relation_id: class_relation.id.id(),
         }
         .save_without_events(&context.pool)
         .await
@@ -1793,12 +1794,12 @@ mod tests {
             class_relation.from_hubuum_class_id,
             class_relation.to_hubuum_class_id,
         ] {
-            allow(Permissions::ReadClass, ResourceKind::Class, Some(id));
+            allow(Permissions::ReadClass, ResourceKind::Class, Some(id.id()));
         }
         allow(
             Permissions::ReadClassRelation,
             ResourceKind::ClassRelation,
-            Some(class_relation.id),
+            Some(class_relation.id.id()),
         );
         allow(
             Permissions::ReadObjectRelation,

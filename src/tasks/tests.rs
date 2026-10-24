@@ -1,6 +1,8 @@
+use crate::models::HubuumClassID;
 use chrono::NaiveDateTime;
 use diesel::{ExpressionMethods, QueryDsl};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::ClassId;
 use rstest::rstest;
 use std::sync::Arc;
 
@@ -402,8 +404,8 @@ async fn relation_timestamp_overwrite_requires_update_permission(
         objects.push(object);
     }
     let class_relation = NewHubuumClassRelation {
-        from_hubuum_class_id: classes[0].id,
-        to_hubuum_class_id: classes[1].id,
+        from_hubuum_class_id: HubuumClassID::new(classes[0].id).expect("positive fixture class id"),
+        to_hubuum_class_id: HubuumClassID::new(classes[1].id).expect("positive fixture class id"),
         forward_label: None,
         reverse_label: None,
         forward_template_alias: None,
@@ -417,7 +419,7 @@ async fn relation_timestamp_overwrite_requires_update_permission(
     NewHubuumObjectRelation {
         from_hubuum_object_id: objects[0].id,
         to_hubuum_object_id: objects[1].id,
-        class_relation_id: class_relation.id,
+        class_relation_id: class_relation.id.id(),
     }
     .save_without_events(&context.pool)
     .await
@@ -3120,7 +3122,7 @@ async fn test_update_object_refreshes_runtime_ref_for_following_items() {
     let backend = PostgresStorage::unobserved(context.pool.get_ref().clone());
     backend.apply_import_strict(plan).await.unwrap();
     let resolved = backend
-        .get_import_object_by_name(hubuum_domain::ClassId::new(class.id).unwrap(), &object.name)
+        .get_import_object_by_name(ClassId::new(class.id).unwrap(), &object.name)
         .await
         .unwrap()
         .expect("updated object should remain addressable by name");

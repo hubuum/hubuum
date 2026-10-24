@@ -430,10 +430,11 @@ impl_id_etag!(
 impl_id_etag!(crate::models::Collection, EtagResourceKind::Collection);
 impl_id_etag!(crate::models::HubuumClass, EtagResourceKind::Class);
 impl_id_etag!(crate::models::HubuumObject, EtagResourceKind::Object);
-impl_id_etag!(
-    crate::models::HubuumClassRelation,
-    EtagResourceKind::ClassRelation
-);
+impl RevisionedResource for crate::models::HubuumClassRelation {
+    fn entity_tag(&self) -> Result<EntityTag, ApiError> {
+        EntityTag::for_id(EtagResourceKind::ClassRelation, self.id.id(), self.revision)
+    }
+}
 impl_id_etag!(
     crate::models::HubuumObjectRelation,
     EtagResourceKind::ObjectRelation

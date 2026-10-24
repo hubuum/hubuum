@@ -268,8 +268,10 @@ mod tests {
                 .services
                 .class_relations()
                 .prepare_create(NewHubuumClassRelation {
-                    from_hubuum_class_id: from_class.id,
-                    to_hubuum_class_id: to_class.id,
+                    from_hubuum_class_id: HubuumClassID::new(from_class.id)
+                        .expect("positive fixture class id"),
+                    to_hubuum_class_id: HubuumClassID::new(to_class.id)
+                        .expect("positive fixture class id"),
                     forward_label: None,
                     reverse_label: None,
                     forward_template_alias: None,
@@ -311,7 +313,7 @@ mod tests {
             ObjectRelationCreateSelector::explicit(NewHubuumObjectRelation {
                 from_hubuum_object_id: fixture.from_object.id,
                 to_hubuum_object_id: fixture.to_object.id,
-                class_relation_id: fixture.class_relation.relation().id,
+                class_relation_id: fixture.class_relation.relation().id.id(),
             })
         }
 
@@ -377,7 +379,7 @@ mod tests {
                 NewHubuumObjectRelation {
                     from_hubuum_object_id: fixture.to_object.id,
                     to_hubuum_object_id: fixture.from_object.id,
-                    class_relation_id: fixture.class_relation.relation().id,
+                    class_relation_id: fixture.class_relation.relation().id.id(),
                 },
             ))
             .await
@@ -453,7 +455,7 @@ mod tests {
                 NewHubuumObjectRelation {
                     from_hubuum_object_id: fixture.from_object.id,
                     to_hubuum_object_id: fixture.to_object.id,
-                    class_relation_id: fixture.class_relation.relation().id,
+                    class_relation_id: fixture.class_relation.relation().id.id(),
                 },
             )
             .expect("valid fixture command"),
@@ -535,7 +537,7 @@ mod tests {
                 NewHubuumObjectRelation {
                     from_hubuum_object_id: fixture.from_object.id,
                     to_hubuum_object_id: fixture.from_object.id,
-                    class_relation_id: fixture.class_relation.relation().id,
+                    class_relation_id: fixture.class_relation.relation().id.id(),
                 },
             ))
             .await
@@ -563,7 +565,7 @@ mod tests {
                 NewHubuumObjectRelation {
                     from_hubuum_object_id: fixture.from_object.id,
                     to_hubuum_object_id: sibling.id,
-                    class_relation_id: fixture.class_relation.relation().id,
+                    class_relation_id: fixture.class_relation.relation().id.id(),
                 },
             ))
             .await
@@ -592,7 +594,7 @@ mod tests {
                 NewHubuumObjectRelation {
                     from_hubuum_object_id: fixture.from_object.id,
                     to_hubuum_object_id: fixture.to_object.id,
-                    class_relation_id: mismatched.relation().id,
+                    class_relation_id: mismatched.relation().id.id(),
                 },
             ))
             .await
@@ -629,7 +631,7 @@ mod tests {
                 NewHubuumObjectRelation {
                     from_hubuum_object_id: fixture.to_object.id,
                     to_hubuum_object_id: fixture.from_object.id,
-                    class_relation_id: fixture.class_relation.relation().id,
+                    class_relation_id: fixture.class_relation.relation().id.id(),
                 },
             ))
             .await
@@ -673,7 +675,7 @@ mod tests {
             ObjectRelationCreateSelector::explicit(NewHubuumObjectRelation {
                 from_hubuum_object_id: from_object.id,
                 to_hubuum_object_id: to_object.id,
-                class_relation_id: class_relation.relation().id,
+                class_relation_id: class_relation.relation().id.id(),
             })
         };
         let first = harness

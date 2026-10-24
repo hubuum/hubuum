@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use hubuum_domain::{ClassId, ClassRelationId, TemplateAlias};
     use std::time::Duration;
 
     use actix_web::{http::StatusCode, test};
@@ -55,7 +56,7 @@ mod tests {
         format!("/api/v1/classes/{class_id}/objects/{object_id}/related/graph")
     }
 
-    fn relation_endpoint(relation_id: i32) -> String {
+    fn relation_endpoint(relation_id: ClassRelationId) -> String {
         format!("{CLASS_RELATIONS_ENDPOINT}/{relation_id}")
     }
 
@@ -65,8 +66,8 @@ mod tests {
         to_class: &HubuumClass,
     ) -> HubuumClassRelation {
         let relation = NewHubuumClassRelation {
-            from_hubuum_class_id: from_class.id,
-            to_hubuum_class_id: to_class.id,
+            from_hubuum_class_id: ClassId::new(from_class.id).unwrap(),
+            to_hubuum_class_id: ClassId::new(to_class.id).unwrap(),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -87,7 +88,7 @@ mod tests {
         let relation = NewHubuumObjectRelation {
             from_hubuum_object_id: from_object.id,
             to_hubuum_object_id: to_object.id,
-            class_relation_id: relation.id,
+            class_relation_id: relation.id.id(),
         };
 
         relation.save_without_events(pool).await.unwrap()
@@ -241,8 +242,8 @@ mod tests {
         let relations_in_collection: Vec<HubuumClassRelation> = relations_fetched_all
             .iter()
             .filter(|r| {
-                classes.iter().any(|c| c.id == r.from_hubuum_class_id)
-                    && classes.iter().any(|c| c.id == r.to_hubuum_class_id)
+                classes.iter().any(|c| c.id == r.from_hubuum_class_id.id())
+                    && classes.iter().any(|c| c.id == r.to_hubuum_class_id.id())
             })
             .cloned()
             .collect();
@@ -726,7 +727,7 @@ mod tests {
         let classes = create_test_classes(&context, "creating_class_relation_from_class").await;
 
         let content = NewHubuumClassRelationFromClass {
-            to_hubuum_class_id: classes[1].id,
+            to_hubuum_class_id: ClassId::new(classes[1].id).unwrap(),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -740,8 +741,8 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let relation_response: HubuumClassRelation = test::read_body_json(resp).await;
 
-        assert_eq!(relation_response.from_hubuum_class_id, classes[0].id);
-        assert_eq!(relation_response.to_hubuum_class_id, classes[1].id);
+        assert_eq!(relation_response.from_hubuum_class_id.id(), classes[0].id);
+        assert_eq!(relation_response.to_hubuum_class_id.id(), classes[1].id);
 
         let resp = get_request(
             &context.pool,
@@ -766,7 +767,7 @@ mod tests {
             create_test_classes(&context, "creating_class_relation_from_class_reverse").await;
 
         let forward_content = NewHubuumClassRelationFromClass {
-            to_hubuum_class_id: classes[1].id,
+            to_hubuum_class_id: ClassId::new(classes[1].id).unwrap(),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -775,7 +776,7 @@ mod tests {
             to_max_relations: None,
         };
         let reverse_content = NewHubuumClassRelationFromClass {
-            to_hubuum_class_id: classes[0].id,
+            to_hubuum_class_id: ClassId::new(classes[0].id).unwrap(),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -827,12 +828,12 @@ mod tests {
         let context = test_context;
         let classes = create_test_classes(&context, "class_relation_limits_normalized_order").await;
         let content = NewHubuumClassRelation {
-            from_hubuum_class_id: classes[1].id,
-            to_hubuum_class_id: classes[0].id,
+            from_hubuum_class_id: ClassId::new(classes[1].id).unwrap(),
+            to_hubuum_class_id: ClassId::new(classes[0].id).unwrap(),
             forward_label: None,
             reverse_label: None,
-            forward_template_alias: Some("Jack Room".to_string()),
-            reverse_template_alias: Some("Room Jacks".to_string()),
+            forward_template_alias: Some(TemplateAlias::new("Jack Room").unwrap()),
+            reverse_template_alias: Some(TemplateAlias::new("Room Jacks").unwrap()),
             from_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),
             to_max_relations: Some(ObjectRelationLimit::new(2).unwrap()),
         };
@@ -847,14 +848,20 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let relation: HubuumClassRelation = test::read_body_json(resp).await;
 
-        assert_eq!(relation.from_hubuum_class_id, classes[0].id);
-        assert_eq!(relation.to_hubuum_class_id, classes[1].id);
+        assert_eq!(relation.from_hubuum_class_id.id(), classes[0].id);
+        assert_eq!(relation.to_hubuum_class_id.id(), classes[1].id);
         assert_eq!(
-            relation.forward_template_alias.as_deref(),
+            relation
+                .forward_template_alias
+                .as_ref()
+                .map(|alias| alias.as_str()),
             Some("room_jacks")
         );
         assert_eq!(
-            relation.reverse_template_alias.as_deref(),
+            relation
+                .reverse_template_alias
+                .as_ref()
+                .map(|alias| alias.as_str()),
             Some("jack_room")
         );
         assert_eq!(
@@ -877,8 +884,8 @@ mod tests {
         let context = test_context;
         let classes = create_test_classes(&context, "object_relation_limit").await;
         let relation = NewHubuumClassRelation {
-            from_hubuum_class_id: classes[0].id,
-            to_hubuum_class_id: classes[1].id,
+            from_hubuum_class_id: ClassId::new(classes[0].id).unwrap(),
+            to_hubuum_class_id: ClassId::new(classes[1].id).unwrap(),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -895,12 +902,12 @@ mod tests {
         let first_relation = NewHubuumObjectRelation {
             from_hubuum_object_id: objects[0].id,
             to_hubuum_object_id: objects[1].id,
-            class_relation_id: relation.id,
+            class_relation_id: relation.id.id(),
         };
         let extra_relation = NewHubuumObjectRelation {
             from_hubuum_object_id: objects[0].id,
             to_hubuum_object_id: second_target.id,
-            class_relation_id: relation.id,
+            class_relation_id: relation.id.id(),
         };
 
         let resp = post_request(
@@ -940,8 +947,8 @@ mod tests {
         let context = test_context;
         let classes = create_test_classes(&context, "object_relation_limit_concurrent").await;
         let relation = NewHubuumClassRelation {
-            from_hubuum_class_id: classes[0].id,
-            to_hubuum_class_id: classes[1].id,
+            from_hubuum_class_id: ClassId::new(classes[0].id).unwrap(),
+            to_hubuum_class_id: ClassId::new(classes[1].id).unwrap(),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -958,12 +965,12 @@ mod tests {
         let first_relation = NewHubuumObjectRelation {
             from_hubuum_object_id: objects[0].id,
             to_hubuum_object_id: objects[1].id,
-            class_relation_id: relation.id,
+            class_relation_id: relation.id.id(),
         };
         let competing_relation = NewHubuumObjectRelation {
             from_hubuum_object_id: second_source.id,
             to_hubuum_object_id: objects[1].id,
-            class_relation_id: relation.id,
+            class_relation_id: relation.id.id(),
         };
 
         let (first_result, competing_result) = tokio::join!(
@@ -1000,8 +1007,8 @@ mod tests {
         )
         .await;
         let relation = NewHubuumClassRelation {
-            from_hubuum_class_id: classes[0].id,
-            to_hubuum_class_id: classes[1].id,
+            from_hubuum_class_id: ClassId::new(classes[0].id).unwrap(),
+            to_hubuum_class_id: ClassId::new(classes[1].id).unwrap(),
             forward_label: None,
             reverse_label: None,
             forward_template_alias: None,
@@ -1023,12 +1030,12 @@ mod tests {
         let held_relation = NewHubuumObjectRelation {
             from_hubuum_object_id: objects[0].id,
             to_hubuum_object_id: objects[1].id,
-            class_relation_id: relation.id,
+            class_relation_id: relation.id.id(),
         };
         let independent_relation = NewHubuumObjectRelation {
             from_hubuum_object_id: second_source.id,
             to_hubuum_object_id: second_target.id,
-            class_relation_id: relation.id,
+            class_relation_id: relation.id.id(),
         };
         let (inserted_tx, inserted_rx) = tokio::sync::oneshot::channel();
         let (release_tx, release_rx) = tokio::sync::oneshot::channel();
@@ -1382,7 +1389,7 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let relation_response: HubuumObjectRelation = test::read_body_json(resp).await;
 
-        assert_eq!(relation_response.class_relation_id, relations[0].id);
+        assert_eq!(relation_response.class_relation_id, relations[0].id.id());
 
         let resp = post_request(&context.pool, &context.admin_token, &reverse_endpoint, &()).await;
         let _ = assert_response_status(resp, StatusCode::CONFLICT).await;

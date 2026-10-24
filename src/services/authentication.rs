@@ -53,7 +53,7 @@ pub async fn authenticate_bearer_token(
         Ok(plan) => plan,
         Err(error) => {
             crate::observability::metrics::token_authentication(
-                if token.0.starts_with("hbt") {
+                if token.as_str().starts_with("hbt") {
                     "versioned_unknown"
                 } else {
                     "legacy"
@@ -196,7 +196,7 @@ pub(crate) async fn issue_login_token(
     )
     .await?;
     Ok(crate::models::IssuedToken::new(
-        Token(response.access_token),
+        Token::try_from(response.access_token)?,
         response.access_expires_at.naive_utc(),
     ))
 }
