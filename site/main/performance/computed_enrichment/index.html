@@ -1010,6 +1010,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../computed_read_repair/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Computed read repair
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../class_field_discovery/" class="md-nav__link">
         
   
@@ -4700,8 +4727,10 @@
 through the PostgreSQL storage capability. It does not measure HTTP latency,
 authorization, or client deserialization. Source object loading, fixture setup,
 cache invalidation, and cloning the input page happen outside the timed region.
-The measured region includes the enrichment snapshot and, for stale pages, the
-synchronous repair transactions. Serialization is reported separately using the
+The measured region includes the enrichment snapshot and, for current stale
+reads, bounded durable queue admission. Worker drain time is reported separately.
+The historical #491 measurements below include synchronous repair transactions;
+see <a href="../../computed_read_repair/">computed read repair</a> for the asynchronous comparison. Serialization is reported separately using the
 production API response mapping.</p>
 <h2 id="reproduction">Reproduction<a class="headerlink" href="#reproduction" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>cargo<span class="w"> </span>bench<span class="w"> </span>--bench<span class="w"> </span>computed_enrichment_criterion<span class="w"> </span><span class="se">\</span>

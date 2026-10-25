@@ -164,6 +164,12 @@
           "name": "outcome",
           "bounded_by": "enumerated values",
           "values": [
+            "queued",
+            "coalesced",
+            "queue_full",
+            "queue_busy",
+            "enqueue_failure",
+            "enqueue_timeout",
             "success",
             "failure"
           ]
