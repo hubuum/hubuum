@@ -258,6 +258,7 @@ fn classified_span(name: &str) -> Option<(&'static str, &'static [&'static str])
         | "computed.evaluate"
         | "computed.enrich"
         | "computed.repair"
+        | "computed.repair.enqueue"
         | "computed.lock.class.shared"
         | "computed.lock.class.exclusive"
         | "computed.lock.objects"
@@ -1417,6 +1418,7 @@ mod tests {
     #[case("computed.hash")]
     #[case("computed.evaluate")]
     #[case("computed.repair")]
+    #[case("computed.repair.enqueue")]
     #[case("computed.lock.class.shared")]
     #[case("computed.lock.class.exclusive")]
     #[case("computed.lock.objects")]

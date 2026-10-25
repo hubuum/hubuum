@@ -328,6 +328,17 @@ pub async fn recover_expired_task_leases(
                     recovered.push(row);
                     continue;
                 }
+                if super::computed_fields::read_repair::is_read_repair(&stale_task) {
+                    append_task_lifecycle_event(connection, &stale_task,
+                        StorageTaskEventInput::new("queued", "Computed read repair resumed from its durable identity queue after lease expiry"),
+                        &system_provenance(&stale_task)?).await?;
+                    let row = diesel::update(tasks::tasks.filter(tasks::id.eq(stale_task.id))).set((
+                        tasks::status.eq("queued"), tasks::lease_token.eq::<Option<Uuid>>(None),
+                        tasks::lease_expires_at.eq::<Option<NaiveDateTime>>(None), tasks::updated_at.eq(now),
+                    )).returning(TaskRow::as_returning()).get_result::<TaskRow>(connection).await?;
+                    recovered.push(row);
+                    continue;
+                }
                 let counts = recovered_counts(connection, &stale_task, kind).await?;
                 // Atomic import receipts prove all effects/results committed even
                 // if the worker died before updating the task's terminal state.

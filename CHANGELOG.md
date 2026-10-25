@@ -33,6 +33,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking operational change:** Stale computed reads return their evaluated
+  snapshot without waiting for repair persistence. Bounded durable tasks coalesce
+  repair identities and reload current data under transaction locks. Deployments
+  that disable task workers must enable at least one worker process to persist
+  read repairs; reads remain correct and retry admission when busy or full.
+
 - Computed object reads reuse prepared definitions and cached-value validation
   metadata per class and owner, consume cached JSON without copying it, and skip
   source hashing when no shared fields are enabled. Read repair carries only

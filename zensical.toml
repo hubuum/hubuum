@@ -155,6 +155,7 @@ nav = [
       { "Release profiles" = "performance/release_profiles.md" },
       { "Runtime measurements" = "performance/runtime_hardening.md" },
       { "Computed enrichment" = "performance/computed_enrichment.md" },
+      { "Computed read repair" = "computed_read_repair.md" },
       { "Template measurements" = "performance/template_worker.md" },
       { "Treetop conformance fixture" = "treetop/test-fixture.md" },
     ] },

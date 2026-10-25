@@ -469,6 +469,5 @@ mod tests {
     mod field_discovery;
     mod history;
     mod lifecycle;
-    mod locking;
     mod querying;
 }

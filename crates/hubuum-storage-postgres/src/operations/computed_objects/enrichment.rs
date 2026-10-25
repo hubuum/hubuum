@@ -16,9 +16,7 @@ use super::query::ComputedQuerySnapshot;
 use crate::operations::computed_definition::{
     ComputedDefinitionRow, PERSONAL_VISIBILITY, PreparedDefinitions, SHARED_VISIBILITY,
 };
-use crate::operations::computed_fields::locking::{
-    ComputedRepairIdentity, repair_stale_materializations,
-};
+use crate::operations::computed_fields::read_repair::{self, ComputedRepairIdentity};
 use crate::operations::computed_materialization::{
     acquire_computed_class_shared_lock, source_data_sha256,
 };
@@ -88,18 +86,7 @@ pub(super) async fn enrich_objects(
         .await?;
 
     if !stale_objects.is_empty() {
-        match repair_stale_materializations(runtime, stale_objects).await {
-            Ok(()) => runtime.record_computed_read_repair("success"),
-            Err(error) => {
-                runtime.record_computed_read_repair("failure");
-                tracing::warn!(
-                    operation = "computed_read_repair",
-                    backend = "postgresql",
-                    error_kind = error.kind().as_str(),
-                    "computed-field read repair failed"
-                );
-            }
-        }
+        read_repair::enqueue(runtime, stale_objects).await;
     }
     Ok(enriched)
 }
