@@ -906,3 +906,20 @@ for extracted_input in src/services/exports/execution.rs src/services/exports/hy
   assert_flag "$extracted_output" rust true
   assert_flag "$extracted_output" container true
 done
+
+for discovery_path in src/models/class_fields.rs src/models/class_fields/tests.rs src/api/v1/handlers/classes/field_discovery.rs; do
+  discovery_output="$(bash "$classifier" "$discovery_path")"
+  assert_flag "$discovery_output" rust true
+  assert_flag "$discovery_output" openapi true
+done
+for discovery_path in src/services/class_fields.rs src/api/v1/handlers/classes/field_discovery.rs tests/api_core_data_suite/computed_fields/tests/field_discovery.rs; do
+  discovery_output="$(bash "$classifier" "$discovery_path")"
+  assert_flag "$discovery_output" rust true
+  assert_flag "$discovery_output" treetop_conformance true
+done
+
+# The live discovery driver and its regression tests are repository tooling inputs.
+for discovery_path in tests/python/integration/class_field_discovery.py tests/python/unit/tooling/test_class_field_discovery.py tests/python/run.py; do
+  discovery_output="$(bash "$classifier" "$discovery_path")"
+  assert_flag "$discovery_output" code true
+done

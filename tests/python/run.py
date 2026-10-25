@@ -28,6 +28,7 @@ INTEGRATION = {
     "corpus": "integration.corpus",
     "atlas": "integration.atlas",
     "schema-budget": "integration.schema_budget",
+    "class-field-discovery": "integration.class_field_discovery",
     "treetop-server": "support.treetop_server",
 }
 
