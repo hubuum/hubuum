@@ -346,3 +346,8 @@ harness = false
 [[bench]]
 name = "release_template_criterion"
 harness = false
+
+[[bench]]
+name = "computed_enrichment_criterion"
+harness = false
+required-features = ["postgres-bench", "query-capture"]

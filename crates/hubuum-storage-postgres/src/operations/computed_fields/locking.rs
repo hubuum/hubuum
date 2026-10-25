@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 
 use diesel::{ExpressionMethods, QueryDsl, SelectableHelper};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::{ClassId, ObjectId};
 use hubuum_storage_core::StorageObject;
 
 use super::{ComputedReindexPayload, ReindexBatch, ensure_computation_state};
@@ -105,6 +106,7 @@ impl<'transaction> LockedComputedClass<'transaction> {
     /// Reload only this class's objects, in ascending ID order. Objects deleted
     /// or moved since the read snapshot are skipped, never materialized from
     /// stale source data or under a different class's proof.
+    #[tracing::instrument(name = "computed.lock.objects", skip_all, fields(object_count = object_ids.len()))]
     pub async fn lock_objects(
         self,
         object_ids: &[i32],
@@ -224,17 +226,34 @@ pub(super) async fn reindex_batch(
     .await
 }
 
+/// Identity from a validated object snapshot; repair always reloads its data.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ComputedRepairIdentity {
+    class_id: ClassId,
+    object_id: ObjectId,
+}
+
+impl From<&StorageObject> for ComputedRepairIdentity {
+    fn from(object: &StorageObject) -> Self {
+        Self {
+            class_id: object.class_id(),
+            object_id: object.id(),
+        }
+    }
+}
+
+#[tracing::instrument(name = "computed.repair", skip_all, fields(object_count = stale_objects.len()))]
 pub(crate) async fn repair_stale_materializations(
     runtime: &PostgresRuntime,
-    stale_objects: Vec<StorageObject>,
+    stale_objects: Vec<ComputedRepairIdentity>,
 ) -> Result<(), PostgresStorageError> {
     crate::reach_fault_point(crate::PostgresFaultPoint::ComputedRepairBeforeLocks, None).await?;
     let mut by_class = BTreeMap::<i32, Vec<i32>>::new();
     for object in stale_objects {
         by_class
-            .entry(object.class_id().id())
+            .entry(object.class_id.id())
             .or_default()
-            .push(object.id().id());
+            .push(object.object_id.id());
     }
     for (class_id, mut object_ids) in by_class {
         object_ids.sort_unstable();
