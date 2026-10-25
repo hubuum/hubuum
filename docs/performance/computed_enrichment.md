@@ -4,8 +4,10 @@ The `computed_enrichment_criterion` target measures a bounded server-side page
 through the PostgreSQL storage capability. It does not measure HTTP latency,
 authorization, or client deserialization. Source object loading, fixture setup,
 cache invalidation, and cloning the input page happen outside the timed region.
-The measured region includes the enrichment snapshot and, for stale pages, the
-synchronous repair transactions. Serialization is reported separately using the
+The measured region includes the enrichment snapshot and, for current stale
+reads, bounded durable queue admission. Worker drain time is reported separately.
+The historical #491 measurements below include synchronous repair transactions;
+see [computed read repair](../computed_read_repair.md) for the asynchronous comparison. Serialization is reported separately using the
 production API response mapping.
 
 ## Reproduction

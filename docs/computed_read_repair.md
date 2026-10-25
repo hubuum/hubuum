@@ -71,3 +71,75 @@ batch diagnostics expose remaining backlog (`total_items - processed_items`).
 Success counts committed batches; skipped deleted/moved identities still advance
 task progress. A completed repair is not a promise that a concurrent later write
 will leave the next snapshot fresh.
+
+## Pinned read and worker measurements
+
+Measured on 2026-10-25 on a shared Linux host with the optimized release profile.
+The synchronous baseline is `2742327aef454004d8aef33bbf52bde48cc78692` from #491;
+queue/evaluation code is `84d7f9755b92dbd1301e305101604d003aedd9c9`.
+The revised benchmark in this change has SHA-256
+`7675a3257e5f21b45f086cb3c084aba6dd858c387830a6bedf44f09705a3c84b`.
+The later required-migration checkpoint correction does not change the measured
+operations. #492's streaming hash is not included in either binary.
+
+Both fixtures use PostgreSQL
+`18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873`,
+20 stored objects, eight shared first-non-null definitions, and 1 KiB or 256 KiB
+of unrelated string padding per object. A Docker CLI wrapper changes only the
+fixture's container arguments: `--network host`, a free loopback-only port, and
+`--tmpfs /var/lib/postgresql:rw,size=512m`; the default benchmark instead publishes
+a container port and uses the image's normal data volume. PostgreSQL fsync remains
+enabled. This controlled fixture removes shared-host disk and rootless port-forwarding
+stalls; it is not a production durability, throughput, or multi-replica load test.
+
+Each row uses 100 separate calls; input construction, cache invalidation, worker
+execution, and response serialization are outside the read timer. CPU is process
+CPU excluding PostgreSQL, aggregated from a 10 ms clock. Times are microseconds.
+
+| Mode | Objects | Padding/object | Read p50 before → after | Read p95 before → after | Process CPU before → after |
+| --- | --- | --- | --- | --- | --- |
+| fresh | 1 | 1,024 B | 762 → 709 | 947 → 732 | 400 → 400 |
+| fresh | 20 | 1,024 B | 1,081 → 1,168 | 1,293 → 1,400 | 800 → 800 |
+| fresh | 1 | 262,144 B | 2,530 → 2,826 | 2,711 → 3,594 | 2,300 → 2,600 |
+| fresh | 20 | 262,144 B | 37,004 → 36,991 | 38,477 → 43,714 | 36,200 → 37,600 |
+| stale | 1 | 1,024 B | 2,029 → 3,317 | 2,476 → 3,995 | 800 → 500 |
+| stale | 20 | 1,024 B | 10,344 → 3,664 | 11,190 → 4,530 | 3,700 → 1,500 |
+| stale | 1 | 262,144 B | 7,160 → 3,967 | 7,800 → 4,964 | 5,500 → 1,400 |
+| stale | 20 | 262,144 B | 108,401 → 9,607 | 114,238 → 10,196 | 92,100 → 7,600 |
+
+The large 20-object stale-page median falls from about 108 ms to 9.6 ms because
+repair runs afterward. The smallest one-object stale case is slower (2.0 to
+3.3 ms): durable task admission has bookkeeping cost, so this is not a universal
+latency improvement. Fresh reads perform the same freshness work; the large-page
+median remains about 37 ms. Small-case and tail timing vary on this shared host;
+these samples do not establish a precise fresh-read percentage change.
+
+Worker drain measurements include task claim, locked repair transactions, task
+completion, and confirmation that the active queue is empty. Only samples with
+observed admitted identities contribute to these worker percentiles. An empty
+`SKIP LOCKED` claim alone is not evidence of an empty queue; the harness checks
+active tasks and retries. Freshness is asserted for the identities actually
+observed in the queue, because a best-effort admission can leave part of a page
+unadmitted. The check itself does not queue the other objects.
+
+| Objects | Padding/object | Admitted samples | Worker p50 | Worker p95 | Maximum observed queued identities |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 1,024 B | 100 | 11,769 µs | 14,073 µs | 1 |
+| 20 | 1,024 B | 100 | 19,874 µs | 23,563 µs | 20 |
+| 1 | 262,144 B | 100 | 16,660 µs | 19,783 µs | 1 |
+| 20 | 262,144 B | 100 | 73,372 µs | 78,132 µs | 20 |
+
+Every controlled-fixture stale sample admitted its complete page; observed misses
+and partial admissions were zero, and every drain ended with zero active tasks.
+Fresh reads use seven queries and one checkout. Stale reads use 14 queries and two
+checkouts for both page sizes, versus 16/35 queries in the synchronous one/20-object
+baseline. Worker queries are separate. Response sizes and snapshot staleness
+metadata are unchanged.
+
+A separate run with the same localhost networking but the normal disk-backed
+container volume observed no queued identity immediately after 74–96 of 100
+stale reads, depending on the case. The 25 ms admission deadline intentionally
+bounds those waits; lost acknowledgements mean this observation is not proof
+that every such admission rolled back. Later reads retry. Those disk-backed
+results must not be presented as successful repair speedups. Use the admission
+outcome counters and backlog to evaluate a deployment's database latency.
