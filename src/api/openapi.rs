@@ -1742,6 +1742,7 @@ mod tests {
             "/api/v1/classes/{class_id}/query-usage/{declaration_id}",
             "/api/v1/classes/{class_id}/query-usage/analysis",
             "/api/v1/classes/by-name/{class_name}",
+            "/api/v1/classes/by-name/{class_name}/fields",
             "/api/v1/classes/by-name/{class_name}/permissions",
             "/api/v1/classes/by-name/{class_name}/related/classes",
             "/api/v1/classes/by-name/{class_name}/related/relations",

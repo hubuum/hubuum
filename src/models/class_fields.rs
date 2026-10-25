@@ -361,7 +361,16 @@ impl FieldInventoryBuilder {
         sampled_objects: usize,
     ) -> Result<ClassFieldInventory, ApiError> {
         let mut fields = self.fields.into_values().collect::<Vec<_>>();
-        fields.sort_by(|a, b| (a.source, &a.field, &a.path).cmp(&(b.source, &b.field, &b.path)));
+        // Keep the bounded enabled selector set even when data paths exhaust
+        // the response budget. Restore the documented display order afterward.
+        fields.sort_by(|a, b| {
+            (a.source == FieldSource::Data, a.source, &a.field, &a.path).cmp(&(
+                b.source == FieldSource::Data,
+                b.source,
+                &b.field,
+                &b.path,
+            ))
+        });
         // Reserve a fixed allowance for the bounded response envelope and all
         // truncation flags. Per-field serialization accounts for JSON escaping.
         let mut bytes = 4096;
@@ -379,6 +388,7 @@ impl FieldInventoryBuilder {
             keep += 1;
         }
         fields.truncate(keep);
+        fields.sort_by(|a, b| (a.source, &a.field, &a.path).cmp(&(b.source, &b.field, &b.path)));
         Ok(ClassFieldInventory {
             sampled: true,
             sampled_objects,

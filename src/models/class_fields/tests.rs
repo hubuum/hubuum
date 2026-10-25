@@ -161,3 +161,27 @@ fn escaped_paths_cannot_exceed_response_budget() {
 fn invalid_options_fail_at_boundary(#[case] limit: usize, #[case] depth: usize) {
     assert!(FieldDiscoveryOptions::new(limit, depth, false).is_err());
 }
+
+#[test]
+fn response_truncation_preserves_enabled_computed_selectors() {
+    let mut builder = FieldInventoryBuilder::new(FieldDiscoveryOptions::new(1, 6, false).unwrap());
+    builder.add_definition("shared", false);
+    builder.add_definition("personal", true);
+    let data = Value::Object(
+        (0..MAX_FIELDS)
+            .map(|i| (format!("{}{:04}", "\n".repeat(500), i), json!(true)))
+            .collect(),
+    );
+    builder.observe_data(0, &data);
+    let result = serde_json::to_value(builder.finish(1).unwrap()).unwrap();
+    let fields = result["fields"].as_array().unwrap();
+    assert!(fields.iter().any(|field| field["field"] == "S:shared"));
+    assert!(fields.iter().any(|field| field["field"] == "P:personal"));
+    assert!(
+        result["truncation"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("response_limit"))
+    );
+    assert!(serde_json::to_vec(&result).unwrap().len() <= MAX_RESPONSE_BYTES);
+}
