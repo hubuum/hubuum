@@ -263,11 +263,19 @@ async fn ensure_computation_state(
 /// Return the canonical hash stored beside materialized computed values.
 #[doc(hidden)]
 pub fn source_data_sha256(data: &serde_json::Value) -> Result<String, PostgresStorageError> {
-    let mut writer = DigestWriter(Sha256::new());
-    canonical_json(data, &mut writer)
-        .map_err(|error| PostgresStorageError::internal(error.to_string()))?;
+    let mut hasher = DigestWriter(Sha256::new());
+    {
+        // Escaping can emit many tiny fragments. Batch them in a fixed-size
+        // buffer without retaining the complete canonical document.
+        let mut writer = io::BufWriter::with_capacity(8 * 1024, &mut hasher);
+        canonical_json(data, &mut writer)
+            .map_err(|error| PostgresStorageError::internal(error.to_string()))?;
+        writer
+            .flush()
+            .map_err(|error| PostgresStorageError::internal(error.to_string()))?;
+    }
     let mut digest = String::with_capacity(64);
-    for byte in writer.0.finalize() {
+    for byte in hasher.0.finalize() {
         write!(digest, "{byte:02x}").expect("writing to a String cannot fail");
     }
     Ok(digest)

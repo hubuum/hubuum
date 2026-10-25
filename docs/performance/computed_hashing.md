@@ -7,6 +7,10 @@ streams canonical JSON tokens into SHA-256 and formats the final 64-character
 hexadecimal digest in one allocation. It removes the full canonical-document
 buffer; hashing still takes time proportional to document size.
 
+An 8 KiB `std::io::BufWriter` batches the small fragments emitted by JSON escaping
+and delimiters before updating the hasher. Its storage is bounded independently
+of document size; sorted-key scratch space still grows with object width.
+
 Canonicalization preserves sorted object keys, array order, compact delimiters,
 JSON string escaping, and the existing numeric tokens. It deliberately does not
 introduce numeric normalization. PostgreSQL JSONB may normalize input number

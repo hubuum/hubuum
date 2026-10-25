@@ -2514,6 +2514,7 @@ mod tests {
     #[test]
     fn server_preserves_explicit_database_url_provenance() {
         use clap::CommandFactory;
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
         let matches = AppConfig::command()
             .try_get_matches_from(["hubuum-server", "--database-url", "postgres://cli/db"])
             .unwrap();
