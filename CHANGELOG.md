@@ -38,6 +38,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   repair identities and reload current data under transaction locks. Deployments
   that disable task workers must enable at least one worker process to persist
   read repairs; reads remain correct and retry admission when busy or full.
+  Apply the bounded transactional migration during a quiet period; lock or scan
+  timeouts roll it back so contention or capacity can be addressed before retry.
   Read-repair metrics distinguish queue admission outcomes from worker success
   and failure.
 

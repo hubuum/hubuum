@@ -56,7 +56,11 @@ evaluate correctly and admission remains bounded.
 Full backups retain terminal task history, not active work or computed caches.
 Restore rebuilds derived computed state from restored definitions and objects;
 it does not replay this queue. The single migration adds the queue bound and
-active-task uniqueness constraints without backfilling objects. Stop workers
+active-task uniqueness constraints without backfilling objects. Apply it during a
+quiet period: its index build and constraint validation scan retained task history
+and take write locks. Lock waits are limited to five seconds and statements to
+60 seconds; a timeout rolls back the whole migration. Resolve contention or
+provision capacity for the retained history, then retry. Stop workers
 before rolling this migration back: rollback removes outstanding internal repair
 tasks, and the previous synchronous read path can recreate their derived values.
 
