@@ -7,7 +7,7 @@ use hubuum_query::{ComputedFieldScope, ComputedQueryValueType};
 use hubuum_storage_core::{StorageComputedFieldSelector, StorageObjectAggregateSpec};
 
 use crate::operations::computed_definition::{
-    ComputedDefinitionRow, PERSONAL_VISIBILITY, SHARED_VISIBILITY, evaluate_definitions,
+    ComputedDefinitionRow, PERSONAL_VISIBILITY, PreparedDefinitions, SHARED_VISIBILITY,
 };
 use crate::operations::computed_objects::query::ComputedQuerySnapshot;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
@@ -215,7 +215,7 @@ fn evaluate_aggregate_definitions(
     scope: &'static str,
 ) -> Result<Option<EvaluationResult>, PostgresStorageError> {
     let result = (!definitions.is_empty())
-        .then(|| evaluate_definitions(data, definitions, limit))
+        .then(|| PreparedDefinitions::new(definitions, limit)?.evaluate(data))
         .transpose()?;
     if let Some(result) = &result {
         let error_codes = result

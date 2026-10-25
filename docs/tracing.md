@@ -122,10 +122,29 @@ Only these fixed span names can cross the OTLP boundary:
 - `event.fanout`
 - `event.delivery`
 - `http.client.request`
+- `http.response.serialize`
+- `storage.pool.acquire`
+- `computed.enrich`
+- `computed.hash`
+- `computed.evaluate`
+- `computed.repair`
+- `computed.lock.class.shared`
+- `computed.lock.class.exclusive`
+- `computed.lock.objects`
+- `computed.query.load_definitions`
+- `computed.query.load_states`
+- `computed.query.load_materialized`
 
 `storage_operation` spans cover logical persistence calls for every selected
 backend, including memory storage. PostgreSQL connection and transaction
 diagnostics remain available as `db.connection` and `db.operation` spans.
+
+Computed spans separate source hashing, evaluation, bounded enrichment queries,
+lock waits, and repair from pool acquisition and response serialization. They
+export only an optional object count, never identifiers, definitions, or data.
+Repair currently finishes before a stale read returns; the read's staleness flag
+describes its original snapshot even if that repair succeeds. A missing cache
+row and a scope without enabled shared definitions do not require hashing.
 
 Each category has a closed attribute allowlist. Route templates, status codes,
 bounded operation categories, result categories, counts, attempts, and coarse

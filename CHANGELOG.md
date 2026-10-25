@@ -29,6 +29,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- Computed object reads reuse prepared definitions and cached-value validation
+  metadata per class and owner, consume cached JSON without copying it, and skip
+  source hashing when no shared fields are enabled. Read repair carries only
+  typed identities. Stage spans separate pool waits, queries, locks, hashing,
+  evaluation, repair, and response serialization without exposing object data.
 - Stream computed-field source hashing into SHA-256 instead of allocating a second
   full canonical JSON document. Existing cache digests and freshness rules remain
   compatible; no cache rebuild or migration is required.

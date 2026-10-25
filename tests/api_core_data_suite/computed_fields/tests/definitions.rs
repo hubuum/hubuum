@@ -504,3 +504,137 @@ async fn service_accounts_cannot_manage_or_receive_personal_fields(
         .unwrap();
 }
 use super::*;
+
+#[rstest::rstest]
+#[case::none("none")]
+#[case::disabled("disabled")]
+#[case::personal("personal")]
+#[tokio::test]
+async fn enrichment_without_enabled_shared_fields_is_fresh(
+    #[future(awt)] test_context: TestContext,
+    #[case] mode: &str,
+) {
+    let fixture = fixture(&test_context, "empty shared scope").await;
+    if mode == "disabled" {
+        let mut definition = definition("disabled");
+        definition["enabled"] = serde_json::json!(false);
+        let response = post_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!("/api/v1/classes/{}/computed-fields", fixture.class.id),
+            definition,
+        )
+        .await;
+        assert_response_status(response, StatusCode::CREATED).await;
+    } else if mode == "personal" {
+        create_personal_definition(
+            &test_context.pool,
+            typed_class_id(fixture.class.id),
+            typed_principal_id(test_context.admin_user.id),
+            definition_request("personal"),
+            &EventContext::system(),
+        )
+        .await
+        .unwrap();
+    }
+    let response = get_request(
+        &test_context.pool,
+        &test_context.admin_token,
+        &format!(
+            "/api/v1/classes/{}/{}?include=computed",
+            fixture.class.id, fixture.objects[0].id
+        ),
+    )
+    .await;
+    let response = assert_response_status(response, StatusCode::OK).await;
+    let object: serde_json::Value = test::read_body_json(response).await;
+    assert_eq!(object["computed"]["shared"]["materialization_stale"], false);
+    assert_eq!(
+        object["computed"]["shared"]["values"],
+        serde_json::json!({})
+    );
+    if mode == "personal" {
+        assert_eq!(
+            object["computed"]["personal"]["values"]["personal"],
+            "inventory.example"
+        );
+    }
+    fixture.cleanup().await.unwrap();
+}
+
+#[rstest::rstest]
+#[case::small(1, false)]
+#[case::page(20, false)]
+#[case::repeated_identity(1, true)]
+#[tokio::test]
+async fn fresh_enrichment_reads_definitions_and_materializations_once_per_page(
+    #[future(awt)] test_context: TestContext,
+    #[case] object_count: usize,
+    #[case] duplicate: bool,
+) {
+    use hubuum_domain::ObjectId;
+    use hubuum_storage_core::{
+        ComputedObjectStorage, ObjectStorage, StorageComputedObjectEnrichmentQuery,
+    };
+    use hubuum_storage_postgres::PostgresStorage;
+
+    let mut fixture = fixture(&test_context, "fresh enrichment budget").await;
+    let response = post_request(
+        &test_context.pool,
+        &test_context.admin_token,
+        &format!("/api/v1/classes/{}/computed-fields", fixture.class.id),
+        definition("display_name"),
+    )
+    .await;
+    assert_response_status(response, StatusCode::CREATED).await;
+    finish_active_rebuild(&test_context, fixture.class.id).await;
+    for index in 1..object_count {
+        fixture.objects.push(
+            NewHubuumObject {
+                collection_id: fixture.class.collection_id,
+                hubuum_class_id: fixture.class.id,
+                name: test_context.scoped_name(&format!("fresh budget {index}")),
+                description: String::new(),
+                data: fixture.objects[0].data.clone(),
+            }
+            .save_without_events(&test_context.pool)
+            .await
+            .unwrap(),
+        );
+    }
+    let storage = PostgresStorage::unobserved(test_context.pool.get_ref().clone());
+    let mut objects = Vec::new();
+    for object in &fixture.objects {
+        objects.push(
+            storage
+                .get_object(ObjectId::new(object.id).unwrap())
+                .await
+                .unwrap()
+                .object()
+                .clone(),
+        );
+    }
+    if duplicate {
+        objects.push(objects[0].clone());
+    }
+    let (result, queries) = capture_queries(
+        storage
+            .enrich_objects_with_computed(StorageComputedObjectEnrichmentQuery::new(objects, None)),
+    )
+    .await;
+    let enriched = result.unwrap();
+    assert_eq!(enriched.len(), object_count + usize::from(duplicate));
+    assert!(
+        enriched
+            .into_iter()
+            .all(|object| !object.into_parts().1.into_parts().1)
+    );
+    assert_eq!(queries.connection_checkouts(), 1);
+    assert_eq!(
+        queries.queries_matching("FROM \"computed_field_definitions\""),
+        1
+    );
+    assert_eq!(queries.queries_matching("FROM \"object_computed_data\""), 1);
+    assert_eq!(queries.queries_matching("FOR UPDATE"), 0);
+    fixture.cleanup().await.unwrap();
+}

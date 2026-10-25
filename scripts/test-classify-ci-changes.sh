@@ -659,6 +659,13 @@ for budget_input in crates/hubuum-budget/Cargo.toml crates/hubuum-budget/src/lib
   assert_flag "$budget_output" container true
   assert_flag "$budget_output" benchmarks true
 done
+# Shared PostgreSQL fixture modules are build inputs for both benchmark targets.
+for computed_benchmark_path in benches/computed_enrichment_criterion.rs benches/support/mod.rs benches/support/postgres.rs; do
+  computed_benchmark="$(bash "$classifier" "$computed_benchmark_path")"
+  assert_flag "$computed_benchmark" code true
+  assert_flag "$computed_benchmark" benchmarks true
+done
+
 budget_benchmark="$(bash "$classifier" benches/operation_budgets_criterion.rs)"
 assert_flag "$budget_benchmark" rust true
 assert_flag "$budget_benchmark" benchmarks true

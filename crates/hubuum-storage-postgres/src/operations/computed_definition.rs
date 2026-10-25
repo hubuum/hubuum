@@ -197,19 +197,46 @@ impl ComputedDefinitionRow {
     }
 }
 
-pub(crate) fn evaluate_definitions(
-    data: &serde_json::Value,
-    definitions: &[ComputedDefinitionRow],
+/// Enabled definitions decoded once for one class and visibility scope.
+pub(crate) struct PreparedDefinitions {
+    definitions: Vec<Definition>,
     maximum: usize,
-) -> Result<EvaluationResult, PostgresStorageError> {
-    let definitions = definitions
-        .iter()
-        .filter(|definition| definition.enabled())
-        .map(ComputedDefinitionRow::evaluator_definition)
-        .collect::<Result<Vec<_>, _>>()?;
-    evaluate(data, &definitions, maximum, EvaluationLimits::standard()).map_err(|error| {
-        PostgresStorageError::internal(format!("Computed-field evaluation failed: {error}"))
-    })
+}
+
+impl PreparedDefinitions {
+    pub(crate) fn new<'a>(
+        definitions: impl IntoIterator<Item = &'a ComputedDefinitionRow>,
+        maximum: usize,
+    ) -> Result<Self, PostgresStorageError> {
+        let definitions = definitions
+            .into_iter()
+            .filter(|definition| definition.enabled())
+            .map(ComputedDefinitionRow::evaluator_definition)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            definitions,
+            maximum,
+        })
+    }
+
+    #[tracing::instrument(name = "computed.evaluate", skip_all)]
+    pub(crate) fn evaluate(
+        &self,
+        data: &serde_json::Value,
+    ) -> Result<EvaluationResult, PostgresStorageError> {
+        if self.definitions.is_empty() {
+            return Ok(EvaluationResult::default());
+        }
+        evaluate(
+            data,
+            &self.definitions,
+            self.maximum,
+            EvaluationLimits::standard(),
+        )
+        .map_err(|error| {
+            PostgresStorageError::internal(format!("Computed-field evaluation failed: {error}"))
+        })
+    }
 }
 
 fn result_type_from_database(value: &str) -> Option<ResultType> {
