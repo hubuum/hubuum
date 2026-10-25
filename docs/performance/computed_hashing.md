@@ -68,3 +68,38 @@ that work. This change retains content hashing and adds no stored state, migrati
 backfill, SQL write, or new public API. Existing writers use the streamed hash
 where they already computed a digest; hash timing therefore also describes that
 part of write cost. PostgreSQL's canonical hashing function is unchanged.
+
+## Pinned hash measurements
+
+Measured on 2026-10-25 at `d53d206e` (the streaming implementation is
+`ea287f89`), using the repository's optimized release profile on a shared Linux
+host. Legacy code is pinned to `61182b17866e14b5705c760316496518aa70b907`.
+Each latency is Criterion's point estimate from 30 samples after a one-second
+warmup, with a three-second measurement window. These are hash-function costs,
+not HTTP latency. The isolated allocation call excludes input storage.
+
+Process CPU is measured separately from `/proc/self/stat` over 10,000 calls for
+the 1 KiB setting and 100 calls for larger settings. The clock has 10 ms ticks;
+these aggregate samples are coarse estimates, not per-call CPU timers. Arrows
+show legacy followed by buffered streaming.
+
+| Shape | Input setting | Serialized bytes | Latency (µs) | Process CPU/call (µs) | Allocations | Requested bytes |
+| --- | --- | --- | --- | --- | --- | --- |
+| string | 1,024 | 1,066 | 10.96 → 8.94 | 10 → 9 | 46 → 3 | 7,122 → 8,288 |
+| escaped | 1,024 | 1,659 | 17.52 → 17.43 | 17 → 22 | 48 → 3 | 9,711 → 8,288 |
+| wide | 1,024 | 887 | 15.12 → 9.92 | 18 → 13 | 172 → 3 | 19,048 → 8,512 |
+| string | 262,144 | 262,186 | 1,964.30 → 1,858.40 | 1,900 → 1,800 | 46 → 3 | 1,573,842 → 8,288 |
+| escaped | 262,144 | 419,451 | 3,739.90 → 3,996.20 | 3,700 → 3,900 | 56 → 3 | 2,307,567 → 8,288 |
+| wide | 262,144 | 244,651 | 3,651.30 → 3,073.70 | 3,800 → 3,100 | 32,820 → 3 | 4,784,488 → 73,792 |
+| string | 1,048,576 | 1,048,618 | 7,735.30 → 7,388.40 | 7,800 → 7,400 | 46 → 3 | 6,292,434 → 8,288 |
+| escaped | 1,048,576 | 1,677,747 | 13,884.00 → 15,804.00 | 13,900 → 15,900 | 58 → 3 | 9,228,183 → 8,288 |
+| wide | 1,048,576 | 1,004,699 | 15,996.00 → 14,270.00 | 16,100 → 14,000 | 131,126 → 3 | 19,136,872 → 270,400 |
+
+Streaming removes the document-sized temporary buffer and most allocation calls.
+The fixed 8 KiB buffer slightly increases requested bytes for the smallest plain
+string fixture. Wide objects still allocate sorted-key scratch space. Large
+escaped strings show a latency/CPU tradeoff: the 1 MiB input setting took about
+14% longer despite reducing cumulative requested bytes from 9.23 MB to 8.29 KB.
+Ordinary large strings and wide objects improved in this run. This is not a
+universal CPU speedup. No SQL write or additional persisted state is introduced;
+writers that already hash data share these same shape-dependent costs.
