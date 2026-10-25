@@ -3,6 +3,7 @@ pub(crate) mod authorization;
 pub(crate) mod authorization_resources;
 pub(crate) mod authorized_traversal;
 pub(crate) mod catalog;
+pub(crate) mod class_fields;
 mod class_relations;
 mod classes;
 mod collections;

@@ -8,6 +8,7 @@ pub(crate) fn redacted_debug_option<T>(value: &Option<T>) -> Option<&'static str
 
 pub mod backup;
 pub mod class;
+pub mod class_fields;
 pub mod collection;
 pub mod computed_field;
 pub mod event_delivery;

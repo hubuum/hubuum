@@ -1636,6 +1636,115 @@
         ]
       }
     },
+    "/api/v1/classes/by-name/{class_name}/fields": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Discover fields in an authorized sample of a class",
+        "description": "Returns observed data paths and enabled shared/caller-personal computed selectors. Objects are sampled by ascending ID after authorization. Counts describe this sample only; repeated array items contribute separate observations. Explicit truncation flags identify sample, candidate, depth, traversal, cardinality, path, and response limits. No exact class-wide count or schema inference is performed.",
+        "operationId": "getApiV1ClassesByNameByClassNameFields",
+        "parameters": [
+          {
+            "name": "class_name",
+            "in": "path",
+            "description": "Exact globally unique class name, including numeric-looking names",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum authorized sample size; defaults to 100",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 250,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "depth",
+            "in": "query",
+            "description": "Maximum path depth; defaults to 6",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 32,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "containers",
+            "in": "query",
+            "description": "Include object and array paths; defaults to false",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bounded field observations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassFieldInventory"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid discovery options",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Class access denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/classes/by-name/{class_name}/object-aggregates": {
       "get": {
         "tags": [
@@ -25152,6 +25261,51 @@
           }
         }
       },
+      "ClassFieldInventory": {
+        "type": "object",
+        "required": [
+          "sampled",
+          "sampled_objects",
+          "effective_sample_limit",
+          "max_depth",
+          "include_containers",
+          "truncation",
+          "fields"
+        ],
+        "properties": {
+          "effective_sample_limit": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscoveredField"
+            }
+          },
+          "include_containers": {
+            "type": "boolean"
+          },
+          "max_depth": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sampled": {
+            "type": "boolean"
+          },
+          "sampled_objects": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "truncation": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldDiscoveryTruncation"
+            },
+            "uniqueItems": true
+          }
+        }
+      },
       "ClassKey": {
         "type": "object",
         "required": [
@@ -26564,6 +26718,74 @@
             "format": "int32",
             "description": "Connections currently managed by this process-local context.",
             "minimum": 0
+          }
+        }
+      },
+      "DiscoveredField": {
+        "type": "object",
+        "required": [
+          "field",
+          "source",
+          "path",
+          "observation_count",
+          "object_count",
+          "types",
+          "example_truncated",
+          "error_count"
+        ],
+        "properties": {
+          "error_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "example": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "example_truncated": {
+            "type": "boolean"
+          },
+          "field": {
+            "type": "string"
+          },
+          "object_count": {
+            "type": "integer",
+            "description": "Number of sampled objects contributing at least one value at this path.",
+            "minimum": 0
+          },
+          "observation_count": {
+            "type": "integer",
+            "description": "Number of value occurrences; repeated array items count separately.",
+            "minimum": 0
+          },
+          "path": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldPathSegment"
+            }
+          },
+          "source": {
+            "$ref": "#/components/schemas/FieldSource"
+          },
+          "types": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string",
+              "enum": [
+                "null",
+                "bool",
+                "number",
+                "string",
+                "array",
+                "object"
+              ]
+            }
           }
         }
       },
@@ -28392,6 +28614,63 @@
           "message": "Template lookup failed",
           "path": "item.data.owner"
         }
+      },
+      "FieldDiscoveryTruncation": {
+        "type": "string",
+        "enum": [
+          "sample_limit",
+          "candidate_limit",
+          "depth",
+          "work_limit",
+          "field_limit",
+          "path_limit",
+          "response_limit"
+        ]
+      },
+      "FieldPathSegment": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "name",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "property"
+                ]
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "array_item"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Property names and array traversal remain distinct even when display labels collide."
+      },
+      "FieldSource": {
+        "type": "string",
+        "enum": [
+          "data",
+          "shared_computed",
+          "personal_computed"
+        ]
       },
       "Group": {
         "type": "object",

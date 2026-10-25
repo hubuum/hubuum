@@ -298,6 +298,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         classes::create_class,
         classes::get_class,
         classes::get_class_by_name,
+        classes::field_discovery::get_class_fields_by_name,
         classes::get_class_history,
         classes::get_class_as_of,
         classes::get_class_history_timeline,

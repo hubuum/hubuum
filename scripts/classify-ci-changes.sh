@@ -64,7 +64,8 @@ for path in "$@"; do
   done <<< "$declared_policy_documents"
 
   case "$path" in
-    src/api/v1/handlers/auth.rs | src/models/auth_session.rs | src/models/credential_activity.rs | \
+    src/models/class_fields.rs | src/models/class_fields/* | src/api/v1/handlers/classes/field_discovery.rs | \
+      src/api/v1/handlers/auth.rs | src/models/auth_session.rs | src/models/credential_activity.rs | \
       src/models/history/computed.rs | src/api/v1/handlers/classes/history_computed.rs | src/api/v1/handlers/classes/history_population.rs | src/api/v1/handlers/classes/history_relations.rs | \
       src/config/running.rs | src/api/v1/handlers/runtime_config.rs | src/models/query_usage.rs | src/models/credential_approval.rs | \
       src/api/v1/handlers/credential_approvals.rs | crates/hubuum-events-core/src/* | \
@@ -97,6 +98,8 @@ for path in "$@"; do
       src/api/v1/handlers/service_accounts.rs | \
       src/api/v1/handlers/credential_approvals.rs | src/services/credential_approvals.rs | \
       tests/api_identity_suite/administrative_authorization.rs | \
+      src/services/class_fields.rs | src/api/v1/handlers/classes/field_discovery.rs | \
+      tests/api_core_data_suite/computed_fields/tests/field_discovery.rs | \
       src/services/authorized_traversal.rs | src/services/authorization_resources.rs | \
       src/services/history/* | src/models/history/* | \
       src/tests/storage_contract/history_access.rs | src/services/remote_targets/invocation.rs | \
