@@ -472,6 +472,7 @@ mod tests {
     mod authorization;
     mod consistency;
     mod definitions;
+    mod field_discovery;
     mod history;
     mod lifecycle;
     mod locking;
