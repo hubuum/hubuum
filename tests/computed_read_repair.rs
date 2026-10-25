@@ -12,7 +12,7 @@ use crate::tests::api_operations::{
 use crate::tests::asserts::assert_response_status;
 use crate::tests::{TestContext, test_context};
 use crate::traits::{CanSave, SelfAccessors};
-use actix_web::{http::StatusCode, test};
+use actix_web::{App, http::StatusCode, test};
 use hubuum_domain::{ClassId, CollectionId, PrincipalId};
 use hubuum_storage_core::{ComputedFieldStorage, StorageTaskClaim};
 use hubuum_storage_postgres::diesel_async_prelude::*;
@@ -727,8 +727,25 @@ async fn concurrent_duplicate_readers_keep_one_active_repair_identity(
     reset_read_repairs(&test_context).await;
     let (fixture, endpoint) = stale_fixture(&test_context, "duplicate readers").await;
     let claim = queued_repair(&test_context, &endpoint).await;
+    let app = test::init_service(
+        App::new()
+            .wrap(actix_web::middleware::from_fn(
+                crate::middlewares::actor_context,
+            ))
+            .app_data(crate::tests::app_context(&test_context.pool))
+            .configure(crate::api::config),
+    )
+    .await;
     let reads = (0..8).map(|_| async {
-        let response = get_request(&test_context.pool, &test_context.admin_token, &endpoint).await;
+        let response = test::TestRequest::get()
+            .insert_header((
+                actix_web::http::header::AUTHORIZATION,
+                format!("Bearer {}", test_context.admin_token),
+            ))
+            .uri(&endpoint)
+            .send_request(&app)
+            .await
+            .map_into_boxed_body();
         let response = assert_response_status(response, StatusCode::OK).await;
         let body: serde_json::Value = test::read_body_json(response).await;
         assert_eq!(body["computed"]["shared"]["materialization_stale"], true);

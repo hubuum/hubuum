@@ -291,6 +291,7 @@ pub(super) async fn execute(
     runtime: &PostgresRuntime,
     lease: StorageTaskLease,
 ) -> Result<StorageTask, PostgresStorageError> {
+    crate::reach_fault_point(crate::PostgresFaultPoint::ComputedRepairBeforeLocks, None).await?;
     loop {
         match locking::repair_queue_batch(runtime, lease.clone()).await {
             Ok(BatchResult::Progress {

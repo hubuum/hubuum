@@ -237,7 +237,6 @@ pub(super) async fn repair_queue_batch(
     runtime: &PostgresRuntime,
     lease: StorageTaskLease,
 ) -> Result<BatchResult, PostgresStorageError> {
-    crate::reach_fault_point(crate::PostgresFaultPoint::ComputedRepairBeforeLocks, None).await?;
     let claimed = task_execution::claimed_task(&lease)?;
     let batch_size = runtime.computed_reindex_batch_size();
     runtime

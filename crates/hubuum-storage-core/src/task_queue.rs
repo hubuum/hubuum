@@ -804,9 +804,13 @@ impl StorageTaskBuilder {
         }
         let lifecycle_is_consistent = match self.task.status {
             StorageTaskStatus::Queued => {
+                // Durable schema and reindex work can retain its original start
+                // timestamp while awaiting a replacement claim after recovery.
                 (self.task.started_at.is_none()
-                    || (self.task.kind == StorageTaskKind::SchemaValidation
-                        && self.task.attempt_count > 0))
+                    || (matches!(
+                        self.task.kind,
+                        StorageTaskKind::SchemaValidation | StorageTaskKind::Reindex
+                    ) && self.task.attempt_count > 0))
                     && self.task.finished_at.is_none()
                     && self.task.lease_expires_at.is_none()
             }
@@ -1944,24 +1948,31 @@ mod tests {
         );
     }
 
-    #[test]
-    fn queued_task_projection_rejects_a_start_timestamp() {
+    #[rstest::rstest]
+    #[case(StorageTaskKind::Import, 0, false)]
+    #[case(StorageTaskKind::Import, 1, false)]
+    #[case(StorageTaskKind::SchemaValidation, 0, false)]
+    #[case(StorageTaskKind::SchemaValidation, 1, true)]
+    #[case(StorageTaskKind::Reindex, 0, false)]
+    #[case(StorageTaskKind::Reindex, 1, true)]
+    fn queued_task_start_timestamp_requires_a_resumable_attempt(
+        #[case] kind: StorageTaskKind,
+        #[case] attempt_count: i32,
+        #[case] valid: bool,
+    ) {
         let now = chrono::Utc::now();
-        let error = StorageTask::builder(
+        let result = StorageTask::builder(
             TaskId::new(91_012).unwrap(),
-            StorageTaskKind::Import,
+            kind,
             StorageTaskStatus::Queued,
             now,
             now,
         )
         .started_at(Some(now))
-        .try_build()
-        .unwrap_err();
+        .attempt_count(attempt_count)
+        .try_build();
 
-        assert_eq!(
-            error.kind(),
-            crate::StorageValidationErrorKind::InvalidValue
-        );
+        assert_eq!(result.is_ok(), valid);
     }
 
     #[test]

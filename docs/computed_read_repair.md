@@ -79,8 +79,9 @@ The synchronous baseline is `2742327aef454004d8aef33bbf52bde48cc78692` from #491
 queue/evaluation code is `84d7f9755b92dbd1301e305101604d003aedd9c9`.
 The revised benchmark in this change has SHA-256
 `7675a3257e5f21b45f086cb3c084aba6dd858c387830a6bedf44f09705a3c84b`.
-The later required-migration checkpoint correction does not change the measured
-operations. #492's streaming hash is not included in either binary.
+Later migration-checkpoint, metric-contract, and resumed-task validation fixes do
+not change these successful read/worker measurements. #492's streaming hash is not
+included in either binary.
 
 Both fixtures use PostgreSQL
 `18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873`,
