@@ -41,6 +41,8 @@ mod tests {
     struct ComputedSourceHashSqlValue {
         #[diesel(sql_type = diesel::sql_types::Text)]
         value: String,
+        #[diesel(sql_type = diesel::sql_types::Jsonb)]
+        data: serde_json::Value,
     }
 
     async fn evaluate_sql_scope(
@@ -327,26 +329,30 @@ mod tests {
     }
 
     #[rstest::rstest]
+    #[case::key_order(r#"{"z":1,"aa":2,"a":3}"#)]
+    #[case::nested(r#"{"z":[{"b":2,"a":1},[],{}],"a":{"nested":[null,false]}}"#)]
+    #[case::escaping(r#"{"quote\"":"line\n\t\r\b\f\\/","unicode":"blåbær 🫐","\u0001":"control"}"#)]
+    #[case::nulls(r#"{"null":null,"values":[null,true,false]}"#)]
+    #[case::numbers(r#"[0,-0,0.0,-0.0,1.0,1.2300,1e2,1E+02,1e-7,18446744073709551616,9.999999999999999999999999999999999]"#)]
     #[tokio::test]
-    async fn database_source_hash_matches_the_domain_canonical_json(
+    async fn database_source_hash_matches_persisted_jsonb(
         #[future(awt)] test_context: TestContext,
+        #[case] source: &str,
     ) {
-        let data = serde_json::json!({
-            "z": [1, {"quote": "'\"", "unicode": "blåbær 🫐"}],
-            "a": {"nested": true, "control": "line\nbreak"}
-        });
-        let expected = source_data_sha256(&data).unwrap();
-
+        let fixture = fixture(&test_context, "persisted digest parity").await;
+        let data: serde_json::Value = serde_json::from_str(source).unwrap();
         let actual = with_connection(&test_context.pool, async |conn| {
-            diesel::sql_query("SELECT hubuum_computed_source_sha256($1) AS value")
-                .bind::<diesel::sql_types::Jsonb, _>(&data)
-                .get_result::<ComputedSourceHashSqlValue>(conn)
-                .await
-        })
-        .await
-        .unwrap();
-
-        assert_eq!(actual.value, expected);
+            use crate::schema::hubuumobject::dsl as objects;
+            diesel::update(objects::hubuumobject.filter(objects::id.eq(fixture.objects[0].id)))
+                .set(objects::data.eq(&data)).execute(conn).await?;
+            diesel::sql_query("SELECT data, hubuum_computed_source_sha256(data) AS value FROM hubuumobject WHERE id=$1")
+                .bind::<diesel::sql_types::Integer,_>(fixture.objects[0].id)
+                .get_result::<ComputedSourceHashSqlValue>(conn).await
+        }).await.unwrap();
+        fixture.cleanup().await.unwrap();
+        // JSONB can rewrite numeric token representations. Compare the same
+        // authoritative document both sorting SQL and Rust enrichment read.
+        assert_eq!(actual.value, source_data_sha256(&actual.data).unwrap());
     }
 
     #[rstest::rstest]

@@ -899,3 +899,7 @@ for extracted_input in src/services/exports/execution.rs src/services/exports/hy
   assert_flag "$extracted_output" rust true
   assert_flag "$extracted_output" container true
 done
+
+hash_benchmark_output="$(bash "$classifier" benches/computed_hash_criterion.rs)"
+assert_flag "$hash_benchmark_output" code true
+assert_flag "$hash_benchmark_output" benchmarks true
