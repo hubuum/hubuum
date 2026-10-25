@@ -2,8 +2,9 @@
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 
-ALTER TABLE tasks DROP CONSTRAINT tasks_kind_check;
-ALTER TABLE tasks ADD CONSTRAINT tasks_kind_check CHECK (kind IN ('import','export','backup','reindex','remote_call','schema_validation','schema_profiling'));
+ALTER TABLE tasks DROP CONSTRAINT tasks_kind_check; -- hubuum-compat: widen-enum-check
+ALTER TABLE tasks ADD CONSTRAINT tasks_kind_check CHECK (kind IN ('import','export','backup','reindex','remote_call','schema_validation','schema_profiling')) NOT VALID;
+ALTER TABLE tasks VALIDATE CONSTRAINT tasks_kind_check;
 
 CREATE OR REPLACE FUNCTION valid_task_discovery(metadata jsonb, task_kind text) RETURNS boolean
 LANGUAGE plpgsql IMMUTABLE AS $$
@@ -86,7 +87,8 @@ CREATE TABLE schema_profile_outputs (
     report JSONB NOT NULL CHECK (jsonb_typeof(report) = 'object'),
     output_expires_at TIMESTAMP NOT NULL
 );
-CREATE INDEX schema_profile_outputs_expiry ON schema_profile_outputs(output_expires_at);
+-- This table is empty until this transaction commits; the index build is bounded.
+CREATE INDEX schema_profile_outputs_expiry ON schema_profile_outputs(output_expires_at); -- hubuum-compat: bounded-transactional-index
 
 CREATE FUNCTION retain_schema_profile_output() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
