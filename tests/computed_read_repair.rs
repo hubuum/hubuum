@@ -972,7 +972,20 @@ async fn saturated_queue_does_not_fail_reads_or_grow_and_later_reads_retry(
     })
     .await
     .unwrap();
-    assert_eq!(retained, Some(payload));
+    let retained = retained.expect("the saturated queue must remain present");
+    // Coalescing may reorder the queue; retain every identity and its multiplicity.
+    let sorted_identities = |payload: &serde_json::Value| {
+        let mut identities = payload["objects"].as_array().unwrap().clone();
+        identities.sort_unstable_by_key(|identity| {
+            (
+                identity["class_id"].as_i64().unwrap(),
+                identity["object_id"].as_i64().unwrap(),
+            )
+        });
+        identities
+    };
+    assert_eq!(retained["type"], payload["type"]);
+    assert_eq!(sorted_identities(&retained), sorted_identities(&payload));
     execute_read_repair(&test_context, &task).await.unwrap();
     let retry = queued_repair(&test_context, &endpoint).await;
     execute_read_repair(&test_context, &retry).await.unwrap();
