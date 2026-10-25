@@ -37438,6 +37438,27 @@
         },
         "additionalProperties": false
       },
+      "SchemaProfileTaskDetails": {
+        "type": "object",
+        "properties": {
+          "class_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HubuumClassID"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "output_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "SchemaReference": {
         "type": "object",
         "description": "A dependency on one exact schema document; resource revisions are unrelated.",

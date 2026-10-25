@@ -22,7 +22,7 @@ use crate::models::auth_session::{
 use crate::models::task::TaskDiscoveryTarget;
 use crate::models::task::{
     RebuildTaskDetails, RemoteCallTaskDetails, RetainedBackupDetails, RetainedExportDetails,
-    RetainedImportDetails, SchemaTaskDetails, TaskOutputDiscoveryState,
+    RetainedImportDetails, SchemaProfileTaskDetails, SchemaTaskDetails, TaskOutputDiscoveryState,
 };
 use crate::models::{
     BackupDocument, BackupHistory, BackupManifest, BackupRequest, BackupState, BackupTaskDetails,
@@ -495,6 +495,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             TaskProgress,
             TaskLinks,
             TaskDiscoveryTarget,
+            SchemaProfileTaskDetails,
             SchemaTaskDetails,
             RebuildTaskDetails,
             RemoteCallTaskDetails,
@@ -1513,6 +1514,29 @@ mod tests {
 
     fn openapi_json() -> Value {
         serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI should serialize to JSON")
+    }
+
+    #[test]
+    fn openapi_local_references_resolve() {
+        let document = openapi_json();
+        let mut pending = vec![&document];
+        while let Some(value) = pending.pop() {
+            match value {
+                Value::Object(fields) => {
+                    if let Some(reference) = fields.get("$ref").and_then(Value::as_str)
+                        && let Some(pointer) = reference.strip_prefix('#')
+                    {
+                        assert!(
+                            document.pointer(pointer).is_some(),
+                            "Unresolved OpenAPI reference: {reference}"
+                        );
+                    }
+                    pending.extend(fields.values());
+                }
+                Value::Array(items) => pending.extend(items),
+                _ => {}
+            }
+        }
     }
 
     #[test]

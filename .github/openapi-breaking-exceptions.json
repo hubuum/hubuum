@@ -2,6 +2,36 @@
   "schema_version": 1,
   "exceptions": [
     {
+      "id": "v0.0.20-schema-profiling-task-kind",
+      "baseline": "v0.0.20",
+      "expires": "2027-01-31",
+      "reason": "Asynchronous schema profiling adds one task kind to task responses and event-subscription filters. Existing kinds and their behavior remain unchanged; clients using closed response enums must support the new kind.",
+      "migration": "Regenerate clients from the updated OpenAPI document or add `schema_profiling` to task-kind response enums before enabling profiling requests and subscriptions.",
+      "changelog_entry": "**Breaking (REST clients with closed task-kind enums):** task and event-subscription responses can now contain `schema_profiling`.",
+      "fingerprints": [
+        "0084c2b70242",
+        "098713a48f2f",
+        "299285495321",
+        "2d4e5484ed81",
+        "30d394da13f4",
+        "32fa8ea0d2a9",
+        "4c76088dac3c",
+        "56180182634f",
+        "74c5dd45ebb2",
+        "760673bca905",
+        "7cb8ef8e121f",
+        "a5141df657b7",
+        "b5d6f4d01f79",
+        "dbf00730c408",
+        "ddbb4cb3bc71",
+        "e261863b37fc",
+        "e39042b6feab",
+        "f502367c9b75",
+        "f955dd7f8228",
+        "fa83770089af"
+      ]
+    },
+    {
       "id": "v0.0.8-class-point-shape",
       "baseline": "v0.0.8",
       "expires": "2027-01-31",

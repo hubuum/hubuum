@@ -39,6 +39,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (REST clients with closed task-kind enums):** task and event-subscription
+  responses can now contain `schema_profiling`. Regenerate clients from the updated
+  OpenAPI document or add `schema_profiling` to task-kind response enums before
+  enabling profiling requests and subscriptions.
+
 - **Breaking (supported Rust crates / storage SDK):** advance the coordinated
   SDK train to `0.6.0` for schema profiling task kinds, artifacts, and required
   output-read/cleanup methods. External adapters must update all ten SDK
