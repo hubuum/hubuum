@@ -137,10 +137,31 @@ fn benchmark_computed_enrichment(c: &mut Criterion) {
                     StorageComputedObjectEnrichmentQuery::new(objects[..page_size].to_vec(), owner)
                 };
                 // Warm up materializations and then report a captured query budget.
-                runtime
-                    .block_on(storage.enrich_objects_with_computed(prepare()))
+                let warmup_deadline = Instant::now() + Duration::from_secs(10);
+                loop {
+                    let response = runtime
+                        .block_on(storage.enrich_objects_with_computed(prepare()))
+                        .unwrap();
+                    runtime.block_on(drain_repairs(&storage));
+                    if mode != "fresh" {
+                        break;
+                    }
+                    let body = serde_json::to_value(
+                        hubuum::benchmark_support::computed_response(response).unwrap(),
+                    )
                     .unwrap();
-                runtime.block_on(drain_repairs(&storage));
+                    if body.as_array().unwrap().iter().all(|object| {
+                        object["computed"]["shared"]["materialization_stale"] == false
+                    }) {
+                        break;
+                    }
+                    // Admission deliberately has a short deadline. Retry setup
+                    // outside timing until the fixture is demonstrably fresh.
+                    assert!(
+                        Instant::now() < warmup_deadline,
+                        "fresh fixture admission timed out"
+                    );
+                }
                 let (result, queries) = runtime.block_on(capture_queries(
                     storage.enrich_objects_with_computed(prepare()),
                 ));
