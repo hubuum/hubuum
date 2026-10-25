@@ -7,7 +7,7 @@ use hubuum_domain::{ClassId, ObjectId};
 use hubuum_storage_core::{StorageSchemaProfileArtifact, StorageTaskCompletionPayload};
 use hubuum_task_core::{IdempotencyKey, TaskExecutionContext};
 use json_schema_profiler::{
-    Document, EvaluationOptions, Profiler, SchemaOptions, Suggestion, ValueLimits,
+    Document, EvaluationOptions, EvaluationStatus, Profiler, SchemaOptions, Suggestion, ValueLimits,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -217,6 +217,9 @@ fn infer(
                 )
                 .map_err(|error| error.into_parts().1)?;
             check()?;
+            if !matches!(replay.status(), EvaluationStatus::Complete) {
+                return Err(profile_error("candidate replay did not complete"));
+            }
             report.status = ProfileSuggestionStatus::Candidate;
             report.schema = Some(candidate.schema().clone());
             report.findings = candidate
@@ -366,6 +369,35 @@ mod tests {
             serde_json::from_str("{\"value\":1.00000000000000000000000000000000001}").unwrap();
         let report = report(json!({}), vec![value]);
         assert_eq!(report["schema"]["properties"]["value"]["type"], "number");
+    }
+    #[rstest]
+    #[case::at_number_limit(1024, true)]
+    #[case::over_number_limit(1025, false)]
+    #[case::oversized_number(1100, false)]
+    fn candidate_requires_complete_replay(
+        #[case] digits: usize,
+        #[case] complete: bool,
+        #[values(0, 1)] preceding_documents: usize,
+    ) {
+        let mut objects = vec![object(json!({"value":1})); preceding_documents];
+        objects.push(object(
+            serde_json::from_str(&format!("{{\"value\":{}}}", "1".repeat(digits))).unwrap(),
+        ));
+        let result = infer(
+            ClassId::new(1).unwrap(),
+            serde_json::from_value(json!({})).unwrap(),
+            &objects,
+            None,
+            None,
+        );
+        if complete {
+            let report = result.unwrap();
+            assert_eq!(report.sample_valid, Some(true));
+            assert_eq!(report.replay.unwrap()["processed"], objects.len());
+        } else {
+            assert!(matches!(result, Err(ApiError::BadRequest(message))
+                if message == "Schema profiling failed: candidate replay did not complete"));
+        }
     }
     #[test]
     fn profiling_honors_a_stop_before_observing_data() {

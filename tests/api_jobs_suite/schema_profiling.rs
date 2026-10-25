@@ -12,6 +12,15 @@ use crate::tests::{ObjectFixture, TestContext, scoped_token, test_context};
 use crate::traits::PermissionController;
 
 async fn fixture(context: &TestContext) -> ObjectFixture {
+    fixture_with_documents(
+        context,
+        (0..3)
+            .map(|index| json!({format!("visible_{index}"):index,"value":index}))
+            .collect(),
+    )
+    .await
+}
+async fn fixture_with_documents(context: &TestContext, documents: Vec<Value>) -> ObjectFixture {
     context
         .object_fixture(
             "schema profiling",
@@ -22,13 +31,15 @@ async fn fixture(context: &TestContext) -> ObjectFixture {
                 json_schema: None,
                 validate_schema: Some(false),
             },
-            (0..3)
-                .map(|index| NewHubuumObject {
+            documents
+                .into_iter()
+                .enumerate()
+                .map(|(index, data)| NewHubuumObject {
                     collection_id: 0,
                     hubuum_class_id: 0,
                     name: context.scoped_name(&format!("profile {index}")),
                     description: String::new(),
-                    data: json!({format!("visible_{index}"):index,"value":index}),
+                    data,
                 })
                 .collect(),
         )
@@ -49,6 +60,9 @@ async fn submit(
     test::read_body_json(response).await
 }
 async fn wait(context: &TestContext, id: i32) {
+    wait_for_status(context, id, TaskStatus::Succeeded).await;
+}
+async fn wait_for_status(context: &TestContext, id: i32, expected: TaskStatus) {
     for _ in 0..200 {
         let response = get_request(
             &context.pool,
@@ -58,14 +72,13 @@ async fn wait(context: &TestContext, id: i32) {
         .await;
         let task: TaskResponse =
             test::read_body_json(assert_response_status(response, StatusCode::OK).await).await;
-        if task.status == TaskStatus::Succeeded {
+        if matches!(
+            task.status,
+            TaskStatus::Succeeded | TaskStatus::Failed | TaskStatus::Cancelled
+        ) {
+            assert_eq!(task.status, expected, "{:?}", task.summary);
             return;
         }
-        assert!(
-            !matches!(task.status, TaskStatus::Failed | TaskStatus::Cancelled),
-            "{:?}",
-            task.summary
-        );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     panic!("profiling task {id} did not finish");
@@ -107,6 +120,26 @@ async fn schema_profile_returns_a_sampled_replayed_candidate(
         "integer"
     );
     assert!(report["schema"]["properties"]["visible_1"].is_null());
+    fixture.cleanup().await.unwrap();
+}
+
+#[rstest]
+#[tokio::test]
+async fn incomplete_schema_profile_replay_fails_without_output(
+    #[future(awt)] test_context: TestContext,
+) {
+    let context = test_context;
+    let document = serde_json::from_str(&format!("{{\"value\":{}}}", "1".repeat(1100))).unwrap();
+    let fixture = fixture_with_documents(&context, vec![document]).await;
+    let task = submit(&context, &fixture, &context.admin_token, json!({})).await;
+    wait_for_status(&context, task.id, TaskStatus::Failed).await;
+    let response = get_request(
+        &context.pool,
+        &context.admin_token,
+        &format!("{}/{}", endpoint(&fixture), task.id),
+    )
+    .await;
+    assert_response_status(response, StatusCode::NOT_FOUND).await;
     fixture.cleanup().await.unwrap();
 }
 

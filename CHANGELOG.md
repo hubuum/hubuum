@@ -30,6 +30,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Schema profiling output-state searches include profiling tasks on the memory
+  backend. Incomplete candidate replays fail without publishing a report.
 - Scale lifecycle memory supervision counts each Linux process once rather than
   counting its shared address space again for every thread. Earlier reports that
   the large backup fixture exceeded 6 GiB and 12 GiB are superseded: the monitor

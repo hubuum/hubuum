@@ -149,7 +149,9 @@ impl TaskDiscoveryPredicate {
             Self::OutputState(v) => {
                 matches!(
                     task.kind(),
-                    StorageTaskKind::Export | StorageTaskKind::Backup
+                    StorageTaskKind::Export
+                        | StorageTaskKind::Backup
+                        | StorageTaskKind::SchemaProfiling
                 ) && data
                     .and_then(D::output)
                     .map_or(TaskOutputState::Unknown, |o| {
