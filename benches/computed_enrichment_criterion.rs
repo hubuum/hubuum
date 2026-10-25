@@ -24,7 +24,29 @@ struct IdRow {
     id: i32,
 }
 
+// Linux process CPU is sampled independently of wall time. Tick resolution is
+// intentionally reported rather than implying allocation or database CPU data.
+fn process_cpu_ticks() -> Option<u64> {
+    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
+    let fields = stat
+        .rsplit_once(')')?
+        .1
+        .split_whitespace()
+        .collect::<Vec<_>>();
+    Some(fields.get(11)?.parse::<u64>().ok()? + fields.get(12)?.parse::<u64>().ok()?)
+}
+
+fn cpu_ticks_per_second() -> Option<u64> {
+    let output = std::process::Command::new("getconf")
+        .arg("CLK_TCK")
+        .output()
+        .ok()?;
+    output.status.success().then_some(())?;
+    String::from_utf8(output.stdout).ok()?.trim().parse().ok()
+}
+
 fn benchmark_computed_enrichment(c: &mut Criterion) {
+    let cpu_hz = cpu_ticks_per_second().filter(|_| process_cpu_ticks().is_some());
     let database = PostgresBenchmarkDatabase::start();
     let runtime = runtime();
     let pool = {
@@ -81,57 +103,89 @@ fn benchmark_computed_enrichment(c: &mut Criterion) {
                 }
                 objects
             });
-            let owner = (mode == "personal").then(|| PrincipalId::new(owner_id).unwrap());
-            let prepare = || {
-                if mode == "stale" {
-                    runtime
-                        .block_on(with_connection(&pool, async |conn| {
-                            diesel::sql_query(
-                                "DELETE FROM object_computed_data WHERE class_id = $1",
-                            )
-                            .bind::<Integer, _>(class_id)
-                            .execute(conn)
-                            .await
-                        }))
-                        .unwrap();
-                }
-                StorageComputedObjectEnrichmentQuery::new(objects.clone(), owner)
-            };
-            // Warm up materializations and then report a captured query budget.
-            runtime
-                .block_on(storage.enrich_objects_with_computed(prepare()))
-                .unwrap();
-            let (result, queries) = runtime.block_on(capture_queries(
-                storage.enrich_objects_with_computed(prepare()),
-            ));
-            let response = hubuum::benchmark_support::computed_response(result.unwrap()).unwrap();
-            let response_bytes = serde_json::to_vec(&response).unwrap().len();
-            eprintln!(
-                "fixture mode={mode} padding_bytes={bytes} objects=20 definitions=8 queries={} checkouts={} response_bytes={response_bytes}",
-                queries.total_queries(),
-                queries.connection_checkouts()
-            );
-            group.bench_with_input(BenchmarkId::new(mode, bytes), &(), |b, _| {
-                b.iter_batched(
-                    prepare,
-                    |query| {
-                        black_box(
-                            runtime
-                                .block_on(storage.enrich_objects_with_computed(query))
-                                .unwrap(),
+            for page_size in [1, 20] {
+                let owner = (mode == "personal").then(|| PrincipalId::new(owner_id).unwrap());
+                let prepare = || {
+                    if mode == "stale" {
+                        runtime
+                            .block_on(with_connection(&pool, async |conn| {
+                                diesel::sql_query(
+                                    "DELETE FROM object_computed_data WHERE class_id = $1",
+                                )
+                                .bind::<Integer, _>(class_id)
+                                .execute(conn)
+                                .await
+                            }))
+                            .unwrap();
+                    }
+                    StorageComputedObjectEnrichmentQuery::new(objects[..page_size].to_vec(), owner)
+                };
+                // Warm up materializations and then report a captured query budget.
+                runtime
+                    .block_on(storage.enrich_objects_with_computed(prepare()))
+                    .unwrap();
+                let (result, queries) = runtime.block_on(capture_queries(
+                    storage.enrich_objects_with_computed(prepare()),
+                ));
+                let response =
+                    hubuum::benchmark_support::computed_response(result.unwrap()).unwrap();
+                let response_bytes = serde_json::to_vec(&response).unwrap().len();
+                eprintln!(
+                    "fixture mode={mode} padding_bytes={bytes} objects={page_size} definitions=8 queries={} checkouts={} response_bytes={response_bytes}",
+                    queries.total_queries(),
+                    queries.connection_checkouts()
+                );
+                group.bench_with_input(
+                    BenchmarkId::new(format!("{mode}/{page_size}"), bytes),
+                    &(),
+                    |b, _| {
+                        b.iter_batched(
+                            prepare,
+                            |query| {
+                                black_box(
+                                    runtime
+                                        .block_on(storage.enrich_objects_with_computed(query))
+                                        .unwrap(),
+                                );
+                            },
+                            BatchSize::PerIteration,
                         );
                     },
-                    BatchSize::PerIteration,
                 );
-            });
-            let started = Instant::now();
-            for _ in 0..100 {
-                black_box(serde_json::to_vec(&response).unwrap());
+                let mut latencies = Vec::with_capacity(100);
+                let mut cpu_ticks = 0;
+                for _ in 0..100 {
+                    let query = prepare();
+                    let cpu_before = process_cpu_ticks();
+                    let started = Instant::now();
+                    black_box(
+                        runtime
+                            .block_on(storage.enrich_objects_with_computed(query))
+                            .unwrap(),
+                    );
+                    latencies.push(started.elapsed().as_micros());
+                    if let (Some(before), Some(after)) = (cpu_before, process_cpu_ticks()) {
+                        cpu_ticks += after.saturating_sub(before);
+                    }
+                }
+                latencies.sort_unstable();
+                eprintln!(
+                    "server_samples mode={mode} objects={page_size} padding_bytes={bytes} n=100 p50_us={} p95_us={} process_cpu_us_per_page={:?} cpu_ticks_per_second={cpu_hz:?}",
+                    latencies[49],
+                    latencies[94],
+                    cpu_hz
+                        .filter(|hz| *hz > 0)
+                        .map(|hz| cpu_ticks * 1_000_000 / hz / 100)
+                );
+                let started = Instant::now();
+                for _ in 0..100 {
+                    black_box(serde_json::to_vec(&response).unwrap());
+                }
+                eprintln!(
+                    "serialization mode={mode} objects={page_size} padding_bytes={bytes} mean_us={}",
+                    started.elapsed().as_micros() / 100
+                );
             }
-            eprintln!(
-                "serialization mode={mode} padding_bytes={bytes} mean_us={}",
-                started.elapsed().as_micros() / 100
-            );
         }
     }
     group.finish();
