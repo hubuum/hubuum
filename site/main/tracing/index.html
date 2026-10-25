@@ -4433,6 +4433,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../performance/computed_enrichment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Computed enrichment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../performance/template_worker/" class="md-nav__link">
         
   
@@ -4795,10 +4822,28 @@ current span. Integration configuration cannot override <code>traceparent</code>
 <li><code>event.fanout</code></li>
 <li><code>event.delivery</code></li>
 <li><code>http.client.request</code></li>
+<li><code>http.response.serialize</code></li>
+<li><code>storage.pool.acquire</code></li>
+<li><code>computed.enrich</code></li>
+<li><code>computed.hash</code></li>
+<li><code>computed.evaluate</code></li>
+<li><code>computed.repair</code></li>
+<li><code>computed.lock.class.shared</code></li>
+<li><code>computed.lock.class.exclusive</code></li>
+<li><code>computed.lock.objects</code></li>
+<li><code>computed.query.load_definitions</code></li>
+<li><code>computed.query.load_states</code></li>
+<li><code>computed.query.load_materialized</code></li>
 </ul>
 <p><code>storage_operation</code> spans cover logical persistence calls for every selected
 backend, including memory storage. PostgreSQL connection and transaction
 diagnostics remain available as <code>db.connection</code> and <code>db.operation</code> spans.</p>
+<p>Computed spans separate source hashing, evaluation, bounded enrichment queries,
+lock waits, and repair from pool acquisition and response serialization. They
+export only an optional object count, never identifiers, definitions, or data.
+Repair currently finishes before a stale read returns; the read's staleness flag
+describes its original snapshot even if that repair succeeds. A missing cache
+row and a scope without enabled shared definitions do not require hashing.</p>
 <p>Each category has a closed attribute allowlist. Route templates, status codes,
 bounded operation categories, result categories, counts, attempts, and coarse
 network or principal categories are allowed. SQL, bind values, raw URL paths,
