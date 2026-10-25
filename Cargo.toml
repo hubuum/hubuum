@@ -351,3 +351,8 @@ harness = false
 name = "computed_enrichment_criterion"
 harness = false
 required-features = ["postgres-bench", "query-capture"]
+
+[[bench]]
+name = "computed_hash_criterion"
+harness = false
+required-features = ["postgres-bench"]

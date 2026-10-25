@@ -1,5 +1,8 @@
 //! PostgreSQL materialization used by canonical object writes.
 
+use std::fmt::Write as _;
+use std::io::{self, Write};
+
 use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{Insertable, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
@@ -267,50 +270,69 @@ async fn ensure_computation_state(
 #[doc(hidden)]
 #[tracing::instrument(name = "computed.hash", skip_all)]
 pub fn source_data_sha256(data: &serde_json::Value) -> Result<String, PostgresStorageError> {
-    let mut canonical = String::new();
-    canonical_json(data, &mut canonical)?;
-    Ok(Sha256::digest(canonical.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
+    let mut hasher = DigestWriter(Sha256::new());
+    {
+        // Escaping can emit many tiny fragments. Batch them in a fixed-size
+        // buffer without retaining the complete canonical document.
+        let mut writer = io::BufWriter::with_capacity(8 * 1024, &mut hasher);
+        canonical_json(data, &mut writer)
+            .map_err(|error| PostgresStorageError::internal(error.to_string()))?;
+        writer
+            .flush()
+            .map_err(|error| PostgresStorageError::internal(error.to_string()))?;
+    }
+    let mut digest = String::with_capacity(64);
+    for byte in hasher.0.finalize() {
+        write!(digest, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    Ok(digest)
 }
 
+struct DigestWriter(Sha256);
+
+impl Write for DigestWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+// Write exactly the original representation: sorted object keys, compact JSON,
+// and serde_json's escaping and number tokens. Do not normalize numbers here.
 fn canonical_json(
     value: &serde_json::Value,
-    output: &mut String,
-) -> Result<(), PostgresStorageError> {
+    output: &mut impl Write,
+) -> Result<(), serde_json::Error> {
     match value {
         serde_json::Value::Object(values) => {
-            output.push('{');
+            output.write_all(b"{").map_err(serde_json::Error::io)?;
             let mut keys = values.keys().collect::<Vec<_>>();
             keys.sort_unstable();
             for (index, key) in keys.into_iter().enumerate() {
                 if index > 0 {
-                    output.push(',');
+                    output.write_all(b",").map_err(serde_json::Error::io)?;
                 }
-                output.push_str(
-                    &serde_json::to_string(key)
-                        .map_err(|error| PostgresStorageError::internal(error.to_string()))?,
-                );
-                output.push(':');
+                serde_json::to_writer(&mut *output, key)?;
+                output.write_all(b":").map_err(serde_json::Error::io)?;
                 canonical_json(&values[key], output)?;
             }
-            output.push('}');
+            output.write_all(b"}").map_err(serde_json::Error::io)?;
         }
         serde_json::Value::Array(values) => {
-            output.push('[');
+            output.write_all(b"[").map_err(serde_json::Error::io)?;
             for (index, value) in values.iter().enumerate() {
                 if index > 0 {
-                    output.push(',');
+                    output.write_all(b",").map_err(serde_json::Error::io)?;
                 }
                 canonical_json(value, output)?;
             }
-            output.push(']');
+            output.write_all(b"]").map_err(serde_json::Error::io)?;
         }
-        _ => output.push_str(
-            &serde_json::to_string(value)
-                .map_err(|error| PostgresStorageError::internal(error.to_string()))?,
-        ),
+        _ => serde_json::to_writer(output, value)?,
     }
     Ok(())
 }
@@ -328,5 +350,62 @@ mod tests {
             source_data_sha256(&left).unwrap(),
             source_data_sha256(&right).unwrap()
         );
+    }
+    #[rstest::rstest]
+    #[case::scalars(r#"[null,true,false,"",0,-1]"#)]
+    #[case::nested(r#"{"z":[{"b":2,"a":1},[],{}],"a":{"nested":[null,false]}}"#)]
+    #[case::escaping(r#"{"quote\"":"line\n\t\r\b\f\\/","unicode":"blåbær 🫐","\u0001":"control"}"#)]
+    #[case::numbers(r#"[0,-0,0.0,-0.0,1.0,1.2300,1e2,1E+02,1e-7,18446744073709551616,9.999999999999999999999999999999999]"#)]
+    fn streaming_digest_preserves_the_legacy_representation(#[case] input: &str) {
+        let data = serde_json::from_str(input).unwrap();
+        let mut canonical = String::new();
+        legacy_canonical_json(&data, &mut canonical).unwrap();
+        assert_eq!(
+            source_data_sha256(&data).unwrap(),
+            Sha256::digest(canonical.as_bytes())
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
+    }
+
+    fn legacy_canonical_json(
+        value: &serde_json::Value,
+        output: &mut String,
+    ) -> Result<(), PostgresStorageError> {
+        match value {
+            serde_json::Value::Object(values) => {
+                output.push('{');
+                let mut keys = values.keys().collect::<Vec<_>>();
+                keys.sort_unstable();
+                for (index, key) in keys.into_iter().enumerate() {
+                    if index > 0 {
+                        output.push(',');
+                    }
+                    output.push_str(
+                        &serde_json::to_string(key)
+                            .map_err(|error| PostgresStorageError::internal(error.to_string()))?,
+                    );
+                    output.push(':');
+                    legacy_canonical_json(&values[key], output)?;
+                }
+                output.push('}');
+            }
+            serde_json::Value::Array(values) => {
+                output.push('[');
+                for (index, value) in values.iter().enumerate() {
+                    if index > 0 {
+                        output.push(',');
+                    }
+                    legacy_canonical_json(value, output)?;
+                }
+                output.push(']');
+            }
+            _ => output.push_str(
+                &serde_json::to_string(value)
+                    .map_err(|error| PostgresStorageError::internal(error.to_string()))?,
+            ),
+        }
+        Ok(())
     }
 }

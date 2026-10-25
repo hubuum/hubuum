@@ -907,6 +907,10 @@ for extracted_input in src/services/exports/execution.rs src/services/exports/hy
   assert_flag "$extracted_output" container true
 done
 
+hash_benchmark_output="$(bash "$classifier" benches/computed_hash_criterion.rs)"
+assert_flag "$hash_benchmark_output" code true
+assert_flag "$hash_benchmark_output" benchmarks true
+
 for discovery_path in src/models/class_fields.rs src/models/class_fields/tests.rs src/api/v1/handlers/classes/field_discovery.rs; do
   discovery_output="$(bash "$classifier" "$discovery_path")"
   assert_flag "$discovery_output" rust true
