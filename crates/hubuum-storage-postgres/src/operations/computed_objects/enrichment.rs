@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, hash_map::Entry};
 
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
 use diesel::{Queryable, Selectable, SelectableHelper};
@@ -14,9 +14,11 @@ use hubuum_storage_core::{
 
 use super::query::ComputedQuerySnapshot;
 use crate::operations::computed_definition::{
-    ComputedDefinitionRow, PERSONAL_VISIBILITY, SHARED_VISIBILITY, evaluate_definitions,
+    ComputedDefinitionRow, PERSONAL_VISIBILITY, PreparedDefinitions, SHARED_VISIBILITY,
 };
-use crate::operations::computed_fields::locking::repair_stale_materializations;
+use crate::operations::computed_fields::locking::{
+    ComputedRepairIdentity, repair_stale_materializations,
+};
 use crate::operations::computed_materialization::{
     acquire_computed_class_shared_lock, source_data_sha256,
 };
@@ -77,7 +79,7 @@ pub(super) async fn enrich_objects(
                 &snapshot_runtime,
                 objects,
                 personal_owner_id,
-                definitions,
+                &definitions,
                 states,
                 materialized,
                 true,
@@ -133,7 +135,7 @@ pub(super) async fn enrich_with_query_snapshot(
         runtime,
         objects,
         personal_owner_id,
-        snapshot.definitions().to_vec(),
+        snapshot.definitions(),
         states,
         materialized,
         false,
@@ -141,27 +143,30 @@ pub(super) async fn enrich_with_query_snapshot(
     .map(|(objects, _)| objects)
 }
 
+#[tracing::instrument(name = "computed.enrich", skip_all, fields(object_count = objects.len()))]
 fn enrich_from_rows(
     runtime: &PostgresRuntime,
     objects: Vec<StorageObject>,
     personal_owner_id: Option<i32>,
-    definitions: Vec<ComputedDefinitionRow>,
+    definitions: &[ComputedDefinitionRow],
     states: Vec<ComputationStateRow>,
     materialized: Vec<MaterializedObjectRow>,
     collect_stale: bool,
-) -> Result<(Vec<StorageComputedObject>, Vec<StorageObject>), PostgresStorageError> {
-    let mut shared_by_class = HashMap::<i32, Vec<ComputedDefinitionRow>>::new();
-    let mut personal_by_class = HashMap::<i32, Vec<ComputedDefinitionRow>>::new();
-    for definition in definitions {
+) -> Result<(Vec<StorageComputedObject>, Vec<ComputedRepairIdentity>), PostgresStorageError> {
+    let mut shared_by_class = HashMap::<i32, PreparedScope<'_>>::new();
+    let mut personal_by_class = HashMap::<i32, PreparedScope<'_>>::new();
+    for definition in definitions.iter().filter(|definition| definition.enabled()) {
         if definition.is_shared() {
             shared_by_class
                 .entry(definition.class_id())
                 .or_default()
+                .enabled
                 .push(definition);
         } else if personal_owner_id.is_some_and(|owner| definition.is_personal_for(owner)) {
             personal_by_class
                 .entry(definition.class_id())
                 .or_default()
+                .enabled
                 .push(definition);
         }
     }
@@ -169,33 +174,46 @@ fn enrich_from_rows(
         .into_iter()
         .map(|state| (state.class_id, state.evaluation_revision))
         .collect::<HashMap<_, _>>();
-    let materialized = materialized
+    let mut materialized = materialized
         .into_iter()
-        .map(|row| (row.object_id, row))
+        .map(|row| (row.object_id, (row, 0usize)))
         .collect::<HashMap<_, _>>();
+
+    // Normal pages have unique IDs. Preserve the enrichment capability's
+    // duplicate-input behavior, copying cache data only for repeated identities.
+    for object in &objects {
+        if let Some((_, uses)) = materialized.get_mut(&object.id().id()) {
+            *uses += 1;
+        }
+    }
 
     let mut stale_objects = Vec::new();
     let mut enriched = Vec::with_capacity(objects.len());
     for object in objects {
         let evaluation_revision = states.get(&object.class_id().id()).copied().unwrap_or(0);
-        let shared_definitions = shared_by_class
-            .get(&object.class_id().id())
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        let hash = source_data_sha256(object.data())?;
-        let stored = materialized.get(&object.id().id());
-        let has_enabled_definitions = shared_definitions
-            .iter()
-            .any(ComputedDefinitionRow::enabled);
-        let stored_maps = match stored {
-            Some(row)
-                if row.class_id == object.class_id().id()
-                    && row.evaluation_revision == evaluation_revision
-                    && row.source_data_sha256 == hash =>
-            {
-                valid_stored_evaluation_maps(row, shared_definitions)?
+        let shared_definitions = shared_by_class.entry(object.class_id().id()).or_default();
+        let has_enabled_definitions = !shared_definitions.enabled.is_empty();
+        let stored_maps = if has_enabled_definitions {
+            let stored = match materialized.entry(object.id().id()) {
+                Entry::Occupied(mut entry) if entry.get().1 > 1 => {
+                    entry.get_mut().1 -= 1;
+                    Some(entry.get().0.clone())
+                }
+                Entry::Occupied(entry) => Some(entry.remove().0),
+                Entry::Vacant(_) => None,
+            };
+            match stored {
+                Some(row)
+                    if row.class_id == object.class_id().id()
+                        && row.evaluation_revision == evaluation_revision
+                        && row.source_data_sha256 == source_data_sha256(object.data())? =>
+                {
+                    valid_stored_evaluation_maps(row, shared_definitions.validation()?)
+                }
+                _ => None,
             }
-            _ => None,
+        } else {
+            None
         };
         let fresh = !has_enabled_definitions || stored_maps.is_some();
         let shared = if !has_enabled_definitions {
@@ -204,7 +222,7 @@ fn enrich_from_rows(
             StorageComputedScope::new(values, errors)
         } else {
             if collect_stale {
-                stale_objects.push(object.clone());
+                stale_objects.push(ComputedRepairIdentity::from(&object));
             }
             runtime.record_computed_live_fallback();
             let result = evaluate_scope(
@@ -218,10 +236,7 @@ fn enrich_from_rows(
         };
 
         let personal = personal_owner_id.map(|_| {
-            let definitions = personal_by_class
-                .get(&object.class_id().id())
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
+            let definitions = personal_by_class.entry(object.class_id().id()).or_default();
             evaluate_scope(
                 runtime,
                 object.data(),
@@ -247,14 +262,57 @@ fn enrich_from_rows(
     Ok((enriched, stale_objects))
 }
 
+// Keep decoding lazy: fresh cached values need result types, while only live
+// evaluation needs operations. Disabled and other-owner definitions never enter
+// a scope. Both preparations are reused for every object in that scope.
+#[derive(Default)]
+struct PreparedScope<'a> {
+    enabled: Vec<&'a ComputedDefinitionRow>,
+    validation: Option<BTreeMap<&'a str, ComputedQueryValueType>>,
+    evaluator: Option<PreparedDefinitions>,
+}
+
+impl<'a> PreparedScope<'a> {
+    fn validation(
+        &mut self,
+    ) -> Result<&BTreeMap<&'a str, ComputedQueryValueType>, PostgresStorageError> {
+        if self.validation.is_none() {
+            self.validation = Some(
+                self.enabled
+                    .iter()
+                    .map(|definition| Ok((definition.key(), definition.query_value_type()?)))
+                    .collect::<Result<_, PostgresStorageError>>()?,
+            );
+        }
+        Ok(self.validation.as_ref().expect("validation prepared above"))
+    }
+
+    fn evaluate(
+        &mut self,
+        data: &serde_json::Value,
+        maximum: usize,
+    ) -> Result<EvaluationResult, PostgresStorageError> {
+        if self.evaluator.is_none() {
+            self.evaluator = Some(PreparedDefinitions::new(
+                self.enabled.iter().copied(),
+                maximum,
+            )?);
+        }
+        self.evaluator
+            .as_ref()
+            .expect("evaluator prepared above")
+            .evaluate(data)
+    }
+}
+
 fn evaluate_scope(
     runtime: &PostgresRuntime,
     data: &serde_json::Value,
-    definitions: &[ComputedDefinitionRow],
+    definitions: &mut PreparedScope<'_>,
     maximum: usize,
     scope: &'static str,
 ) -> Result<EvaluationResult, PostgresStorageError> {
-    let result = evaluate_definitions(data, definitions, maximum)?;
+    let result = definitions.evaluate(data, maximum)?;
     let error_codes = result
         .errors
         .values()
@@ -276,50 +334,38 @@ fn scope_from_evaluation(result: EvaluationResult) -> StorageComputedScope {
 }
 
 fn valid_stored_evaluation_maps(
-    row: &MaterializedObjectRow,
-    definitions: &[ComputedDefinitionRow],
-) -> Result<Option<EvaluationMaps>, PostgresStorageError> {
-    let Ok(values) =
-        serde_json::from_value::<BTreeMap<String, serde_json::Value>>(row.values.clone())
+    row: MaterializedObjectRow,
+    enabled: &BTreeMap<&str, ComputedQueryValueType>,
+) -> Option<EvaluationMaps> {
+    let Ok(values) = serde_json::from_value::<BTreeMap<String, serde_json::Value>>(row.values)
     else {
-        return Ok(None);
+        return None;
     };
-    let Ok(errors) = serde_json::from_value::<BTreeMap<String, FieldError>>(row.errors.clone())
-    else {
-        return Ok(None);
+    let Ok(errors) = serde_json::from_value::<BTreeMap<String, FieldError>>(row.errors) else {
+        return None;
     };
-    let enabled = definitions
-        .iter()
-        .filter(|definition| definition.enabled())
-        .collect::<Vec<_>>();
     if values.len() != enabled.len() {
-        return Ok(None);
+        return None;
     }
-    for definition in &enabled {
-        let Some(value) = values.get(definition.key()) else {
-            return Ok(None);
-        };
-        if !computed_value_matches_result_type(value, definition.query_value_type()?) {
-            return Ok(None);
+    for (key, result_type) in enabled {
+        let value = values.get(*key)?;
+        if !computed_value_matches_result_type(value, *result_type) {
+            return None;
         }
     }
-    let enabled_keys = enabled
-        .iter()
-        .map(|definition| definition.key())
-        .collect::<BTreeSet<_>>();
     if errors.iter().any(|(key, _)| {
-        !enabled_keys.contains(key.as_str())
+        !enabled.contains_key(key.as_str())
             || !values.get(key).is_some_and(serde_json::Value::is_null)
     }) {
-        return Ok(None);
+        return None;
     }
-    Ok(Some((
+    Some((
         values,
         errors
             .into_iter()
             .map(|(key, error)| (key, storage_error(error)))
             .collect(),
-    )))
+    ))
 }
 
 fn computed_value_matches_result_type(
@@ -347,6 +393,7 @@ fn storage_error(error: FieldError) -> StorageComputedFieldError {
     StorageComputedFieldError::new(error.code.as_str().to_string(), error.path, error.message)
 }
 
+#[tracing::instrument(name = "computed.query.load_definitions", skip_all)]
 async fn load_definitions(
     connection: &mut PostgresConnection,
     class_ids: &[i32],
@@ -375,6 +422,7 @@ async fn load_definitions(
         .map_err(PostgresStorageError::from)
 }
 
+#[tracing::instrument(name = "computed.query.load_states", skip_all)]
 async fn load_states(
     connection: &mut PostgresConnection,
     class_ids: &[i32],
@@ -389,6 +437,7 @@ async fn load_states(
         .map_err(PostgresStorageError::from)
 }
 
+#[tracing::instrument(name = "computed.query.load_materialized", skip_all)]
 async fn load_materialized(
     connection: &mut PostgresConnection,
     object_ids: &[i32],

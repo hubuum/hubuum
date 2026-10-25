@@ -163,3 +163,14 @@ pub async fn template_related_include_objects(
     )
     .await
 }
+
+/// Convert computed storage results using the production response mapping.
+#[cfg(feature = "postgres-bench")]
+pub fn computed_response(
+    objects: Vec<hubuum_storage_core::StorageComputedObject>,
+) -> Result<Vec<crate::models::HubuumObjectComputedResponse>, ApiError> {
+    objects
+        .into_iter()
+        .map(crate::services::computed_objects::computed_from_storage)
+        .collect()
+}

@@ -252,6 +252,18 @@ fn classified_span(name: &str) -> Option<(&'static str, &'static [&'static str])
         "http.client.request" => Some(("outbound", HTTP_CLIENT_ATTRIBUTES)),
         "db.connection" | "db.operation" => Some(("database", DATABASE_ATTRIBUTES)),
         "storage_operation" => Some(("storage", STORAGE_ATTRIBUTES)),
+        "storage.pool.acquire" => Some(("database", &[])),
+        "http.response.serialize" => Some(("http", &[])),
+        "computed.hash"
+        | "computed.evaluate"
+        | "computed.enrich"
+        | "computed.repair"
+        | "computed.lock.class.shared"
+        | "computed.lock.class.exclusive"
+        | "computed.lock.objects"
+        | "computed.query.load_definitions"
+        | "computed.query.load_states"
+        | "computed.query.load_materialized" => Some(("computed", &["object_count"])),
         "authz.permission_backend" | "authz.scope_intersection" => {
             Some(("authorization", AUTHORIZATION_ATTRIBUTES))
         }
@@ -1397,6 +1409,36 @@ mod tests {
                 )
                 .decision,
             SamplingDecision::Drop
+        );
+    }
+
+    #[rstest::rstest]
+    #[case("computed.enrich")]
+    #[case("computed.hash")]
+    #[case("computed.evaluate")]
+    #[case("computed.repair")]
+    #[case("computed.lock.class.shared")]
+    #[case("computed.lock.class.exclusive")]
+    #[case("computed.lock.objects")]
+    #[case("computed.query.load_definitions")]
+    #[case("computed.query.load_states")]
+    #[case("computed.query.load_materialized")]
+    #[case("storage.pool.acquire")]
+    #[case("http.response.serialize")]
+    fn computed_stage_spans_export_without_source_data(#[case] name: &'static str) {
+        let capture = TraceCapture::new("warn");
+        let mut span = capture.tracer().start(name);
+        span.set_attribute(KeyValue::new("object_count", 20_i64));
+        span.set_attribute(KeyValue::new("data", "private source document"));
+        span.set_attribute(KeyValue::new("class_id", 123_i64));
+        span.end();
+        let spans = capture.spans();
+        assert_eq!(spans.len(), 1);
+        assert!(
+            spans[0]
+                .attributes
+                .iter()
+                .all(|attribute| attribute.key.as_str() == "object_count")
         );
     }
 

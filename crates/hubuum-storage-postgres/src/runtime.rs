@@ -167,6 +167,7 @@ impl PostgresRuntime {
         self.computed_reindex_batch_size.get()
     }
 
+    #[tracing::instrument(name = "storage.pool.acquire", skip_all)]
     async fn acquire_connection_from<'pool>(
         &self,
         pool: &'pool PostgresPool,

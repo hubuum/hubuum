@@ -242,7 +242,7 @@ pub(crate) async fn enrich_objects_with_computed(
         .collect()
 }
 
-fn computed_from_storage(
+pub(crate) fn computed_from_storage(
     object: StorageComputedObject,
 ) -> Result<HubuumObjectComputedResponse, ApiError> {
     let (object, shared, personal) = object.into_parts();

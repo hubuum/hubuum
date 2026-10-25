@@ -7,7 +7,7 @@ use hubuum_computed_fields::MAX_SHARED_DEFINITIONS;
 use sha2::{Digest, Sha256};
 
 use crate::operations::computed_definition::{
-    ComputedDefinitionRow, SHARED_VISIBILITY, evaluate_definitions,
+    ComputedDefinitionRow, PreparedDefinitions, SHARED_VISIBILITY,
 };
 use crate::{PostgresConnection, PostgresStorageError};
 
@@ -66,6 +66,7 @@ struct NewMaterializedObjectRow {
 
 /// Acquire the class lock shared by object writes and computed-definition work.
 #[doc(hidden)]
+#[tracing::instrument(name = "computed.lock.class.shared", skip_all)]
 pub async fn acquire_computed_class_shared_lock(
     connection: &mut PostgresConnection,
     class_id: i32,
@@ -82,6 +83,7 @@ pub async fn acquire_computed_class_shared_lock(
 
 /// Acquire the class lock used by computed-definition mutations.
 #[doc(hidden)]
+#[tracing::instrument(name = "computed.lock.class.exclusive", skip_all)]
 pub async fn acquire_computed_class_exclusive_lock(
     connection: &mut PostgresConnection,
     class_id: i32,
@@ -113,8 +115,11 @@ pub(crate) async fn materialize_object(
         return Ok(None);
     }
     let state = ensure_computation_state(connection, object.class_id).await?;
-    let (input, summary) =
-        evaluate_materialized_object(object, state.evaluation_revision, &definitions)?;
+    let (input, summary) = evaluate_materialized_object(
+        object,
+        state.evaluation_revision,
+        &PreparedDefinitions::new(&definitions, MAX_SHARED_DEFINITIONS)?,
+    )?;
     upsert_materialized_object(connection, &input).await?;
     Ok(Some(summary))
 }
@@ -166,6 +171,7 @@ pub(crate) async fn rebuild_objects(
         .await?;
         return Ok(Vec::new());
     }
+    let definitions = PreparedDefinitions::new(&definitions, MAX_SHARED_DEFINITIONS)?;
     let mut summaries = Vec::with_capacity(objects.len());
     for object in objects {
         let (input, summary) =
@@ -179,9 +185,9 @@ pub(crate) async fn rebuild_objects(
 fn evaluate_materialized_object(
     object: ObjectMaterializationInput<'_>,
     evaluation_revision: i64,
-    definitions: &[ComputedDefinitionRow],
+    definitions: &PreparedDefinitions,
 ) -> Result<(NewMaterializedObjectRow, ComputedEvaluationSummary), PostgresStorageError> {
-    let result = evaluate_definitions(object.data, definitions, MAX_SHARED_DEFINITIONS)?;
+    let result = definitions.evaluate(object.data)?;
     let summary = ComputedEvaluationSummary {
         error_codes: result
             .errors
@@ -259,6 +265,7 @@ async fn ensure_computation_state(
 
 /// Return the canonical hash stored beside materialized computed values.
 #[doc(hidden)]
+#[tracing::instrument(name = "computed.hash", skip_all)]
 pub fn source_data_sha256(data: &serde_json::Value) -> Result<String, PostgresStorageError> {
     let mut canonical = String::new();
     canonical_json(data, &mut canonical)?;

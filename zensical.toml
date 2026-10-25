@@ -153,6 +153,7 @@ nav = [
       { "Scale benchmarks" = "scale_benchmarks.md" },
       { "Release profiles" = "performance/release_profiles.md" },
       { "Runtime measurements" = "performance/runtime_hardening.md" },
+      { "Computed enrichment" = "performance/computed_enrichment.md" },
       { "Template measurements" = "performance/template_worker.md" },
       { "Treetop conformance fixture" = "treetop/test-fixture.md" },
     ] },

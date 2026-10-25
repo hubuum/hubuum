@@ -260,6 +260,7 @@ impl ApiResponse<MessageResponse> {
 impl<T: Serialize> Responder for ApiResponse<T> {
     type Body = BoxBody;
 
+    #[tracing::instrument(name = "http.response.serialize", skip_all)]
     fn respond_to(self, _req: &HttpRequest) -> HttpResponse<Self::Body> {
         match self {
             Self::Json {
