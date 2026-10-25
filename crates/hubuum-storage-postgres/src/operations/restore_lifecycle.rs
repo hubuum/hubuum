@@ -49,6 +49,7 @@ const TRUNCATE_TABLES: &[&str] = &[
     "query_usage_declarations",
     "event_deliveries",
     "events",
+    "schema_profile_outputs",
     "backup_task_outputs",
     "export_task_outputs",
     "remote_call_results",

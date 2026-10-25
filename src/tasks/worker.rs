@@ -1,5 +1,5 @@
 use crate::models::task::task_kind_from_db;
-use hubuum_storage_core::StorageBackupBudget;
+use hubuum_storage_core::{StorageBackupBudget, TaskExecutionStorage};
 use std::future::Future;
 use std::sync::{LazyLock, Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
@@ -32,7 +32,7 @@ use crate::services::tasks::{
     purge_expired_export_outputs, recover_expired_task_leases, renew_task_lease,
 };
 use crate::storage::{
-    StorageCallSite, StorageNotification, spawn_storage_notification_listener,
+    StorageCallSite, StorageNotification, spawn_storage_notification_listener, storage_handle,
     with_mutation_provenance, with_storage_call_site, with_storage_call_site_send,
 };
 
@@ -707,6 +707,19 @@ async fn maybe_cleanup_expired_task_outputs(
         }
     };
     metrics::task_output_cleanup_deleted(metrics::TaskOutputKind::Backup, deleted_backups);
+    metrics::task_output_cleanup_run(metrics::TaskOutputKind::SchemaProfiling);
+    match storage_handle(backend)
+        .purge_expired_schema_profile_outputs()
+        .await
+    {
+        Ok(count) => {
+            metrics::task_output_cleanup_deleted(metrics::TaskOutputKind::SchemaProfiling, count)
+        }
+        Err(error) => {
+            metrics::task_output_cleanup_failed(metrics::TaskOutputKind::SchemaProfiling);
+            return Err(error.into());
+        }
+    }
     reservation.commit()?;
 
     Ok(())
@@ -767,6 +780,9 @@ async fn process_claimed_task(
     );
 
     match task_kind {
+        TaskKind::SchemaProfiling => {
+            crate::services::schema_profiling::execute(context, task, &principal, scopes).await
+        }
         TaskKind::Import => execute_import_task(context, task, &principal, scopes).await,
         TaskKind::Export => execute_export_task(context, task, &principal, scopes).await,
         TaskKind::Backup => {

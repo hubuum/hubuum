@@ -15,11 +15,11 @@ use hubuum_events_core::{
 };
 use hubuum_storage_core::{
     StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageRemoteCallTaskArtifact,
-    StorageTask, StorageTaskActiveUpdate, StorageTaskClaim, StorageTaskClaimToken,
-    StorageTaskCompletion, StorageTaskCompletionPayload, StorageTaskEventAppend,
-    StorageTaskEventInput, StorageTaskFailure, StorageTaskKind, StorageTaskLease,
-    StorageTaskLeaseDuration, StorageTaskResultCounts, StorageTaskStatus,
-    StorageTaskTerminalUpdate,
+    StorageSchemaProfileArtifact, StorageTask, StorageTaskActiveUpdate, StorageTaskClaim,
+    StorageTaskClaimToken, StorageTaskCompletion, StorageTaskCompletionPayload,
+    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
+    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskOutputLookup, StorageTaskResultCounts,
+    StorageTaskStatus, StorageTaskTerminalUpdate,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -453,6 +453,16 @@ pub async fn complete_task(
         | StorageTaskCompletionPayload::SchemaValidation => {
             finalize_task(runtime, claimed, update, event, None).await?
         }
+        StorageTaskCompletionPayload::SchemaProfiling(artifact) => {
+            finalize_task(
+                runtime,
+                claimed,
+                update,
+                event,
+                Some(TaskArtifact::SchemaProfiling(claimed.id, artifact)),
+            )
+            .await?
+        }
         StorageTaskCompletionPayload::Export(artifact) => {
             let output = export_artifact(claimed.id, artifact);
             finalize_task(
@@ -510,9 +520,10 @@ pub async fn fail_task(
     let kind = stored_task_kind(&stored)?;
     let counts = match kind {
         StorageTaskKind::Import => import_result_counts(runtime, claimed.id).await?,
-        StorageTaskKind::Export | StorageTaskKind::Backup | StorageTaskKind::RemoteCall => {
-            validated_counts(1, 0, 1)?
-        }
+        StorageTaskKind::SchemaProfiling
+        | StorageTaskKind::Export
+        | StorageTaskKind::Backup
+        | StorageTaskKind::RemoteCall => validated_counts(1, 0, 1)?,
         StorageTaskKind::Reindex | StorageTaskKind::SchemaValidation => {
             validated_counts(stored.processed_items, stored.success_items, 1)?
         }
@@ -563,6 +574,7 @@ pub async fn purge_expired_backup_outputs(
 }
 
 enum TaskArtifact {
+    SchemaProfiling(i32, StorageSchemaProfileArtifact),
     Export(NewExportOutputRow),
     Backup(NewBackupOutputRow),
     RemoteCall(NewRemoteCallResultRow),
@@ -610,6 +622,17 @@ async fn persist_artifact(
     artifact: TaskArtifact,
 ) -> Result<(), PostgresStorageError> {
     match artifact {
+        TaskArtifact::SchemaProfiling(task_id, artifact) => {
+            use crate::schema::schema_profile_outputs::dsl as outputs;
+            diesel::insert_into(outputs::schema_profile_outputs)
+                .values((
+                    outputs::task_id.eq(task_id),
+                    outputs::report.eq(artifact.report()),
+                    outputs::output_expires_at.eq(artifact.expires_at().naive_utc()),
+                ))
+                .execute(connection)
+                .await?;
+        }
         TaskArtifact::Export(output) => {
             use crate::schema::export_task_outputs::dsl as outputs;
             diesel::insert_into(outputs::export_task_outputs)
@@ -933,9 +956,10 @@ async fn recovered_counts(
 ) -> Result<StorageTaskResultCounts, PostgresStorageError> {
     match kind {
         StorageTaskKind::Import => import_result_counts_connection(connection, task.id).await,
-        StorageTaskKind::Export | StorageTaskKind::Backup | StorageTaskKind::RemoteCall => {
-            validated_counts(1, 0, 1)
-        }
+        StorageTaskKind::SchemaProfiling
+        | StorageTaskKind::Export
+        | StorageTaskKind::Backup
+        | StorageTaskKind::RemoteCall => validated_counts(1, 0, 1),
         StorageTaskKind::Reindex | StorageTaskKind::SchemaValidation => {
             validated_counts(task.processed_items, task.success_items, task.failed_items)
         }
@@ -1226,6 +1250,56 @@ pub(super) fn record_task_terminal(runtime: &PostgresRuntime, row: &TaskRow) {
 fn duration_between(start: NaiveDateTime, end: Option<NaiveDateTime>) -> Option<Duration> {
     let milliseconds = end?.signed_duration_since(start).num_milliseconds();
     (milliseconds >= 0).then(|| Duration::from_millis(milliseconds as u64))
+}
+
+pub async fn get_schema_profile_output(
+    runtime: &PostgresRuntime,
+    task_id: TaskId,
+) -> Result<StorageTaskOutputLookup<StorageSchemaProfileArtifact>, PostgresStorageError> {
+    runtime
+        .with_connection::<_, _, PostgresStorageError>(async move |connection| {
+            use crate::schema::schema_profile_outputs::dsl as outputs;
+            let row = outputs::schema_profile_outputs
+                .filter(outputs::task_id.eq(task_id.id()))
+                .select((outputs::report, outputs::output_expires_at))
+                .first::<(Value, NaiveDateTime)>(connection)
+                .await
+                .optional()?;
+            let Some((report, expires_at)) = row else {
+                return Ok(StorageTaskOutputLookup::Missing);
+            };
+            if expires_at <= database_now(connection).await? {
+                return Ok(StorageTaskOutputLookup::Expired {
+                    expires_at: expires_at.and_utc(),
+                });
+            }
+            Ok(StorageTaskOutputLookup::Available(
+                crate::validate_persisted(
+                    "schema profile",
+                    StorageSchemaProfileArtifact::new(report, expires_at.and_utc()),
+                )?,
+            ))
+        })
+        .await
+}
+
+pub async fn purge_expired_schema_profile_outputs(
+    runtime: &PostgresRuntime,
+) -> Result<usize, PostgresStorageError> {
+    runtime
+        .with_connection::<_, _, PostgresStorageError>(async move |connection| {
+            use crate::schema::schema_profile_outputs::dsl as outputs;
+            Ok(diesel::delete(
+                outputs::schema_profile_outputs.filter(outputs::output_expires_at.le(sql::<
+                    Timestamp,
+                >(
+                    DATABASE_UTC_NOW_SQL,
+                ))),
+            )
+            .execute(connection)
+            .await?)
+        })
+        .await
 }
 
 #[cfg(test)]

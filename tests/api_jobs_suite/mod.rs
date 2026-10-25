@@ -4,4 +4,5 @@ mod exports;
 mod imports;
 mod remote_targets;
 mod restores;
+mod schema_profiling;
 mod tasks;

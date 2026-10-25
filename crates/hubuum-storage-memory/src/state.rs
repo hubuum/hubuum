@@ -143,6 +143,7 @@ impl MemoryState {
             tasks: BTreeMap::new(),
             task_events: BTreeMap::new(),
             import_task_results: BTreeMap::new(),
+            schema_profile_outputs: BTreeMap::new(),
             export_outputs: BTreeMap::new(),
             backup_outputs: BTreeMap::new(),
             export_templates: BTreeMap::new(),

@@ -740,7 +740,7 @@ fn build_task_query(
                 };
                 query = query.filter(sql::<Bool>("(CASE WHEN tasks.discovery_metadata->'data'->'output'->>'state' = 'produced' THEN CASE WHEN (tasks.discovery_metadata->'data'->'output'->>'expires_at')::timestamptz > ")
                     .bind::<diesel::sql_types::Timestamptz,_>(discovery.evaluated_at())
-                    .sql(" AND (EXISTS (SELECT 1 FROM export_task_outputs e WHERE e.task_id = tasks.id) OR EXISTS (SELECT 1 FROM backup_task_outputs b WHERE b.task_id = tasks.id)) THEN 'available' ELSE 'expired' END WHEN tasks.discovery_metadata->'data'->'output'->>'state' = 'not_produced' THEN 'not_produced' ELSE 'unknown' END) = ")
+                    .sql(" AND (EXISTS (SELECT 1 FROM export_task_outputs e WHERE e.task_id = tasks.id) OR EXISTS (SELECT 1 FROM schema_profile_outputs p WHERE p.task_id = tasks.id) OR EXISTS (SELECT 1 FROM backup_task_outputs b WHERE b.task_id = tasks.id)) THEN 'available' ELSE 'expired' END WHEN tasks.discovery_metadata->'data'->'output'->>'state' = 'not_produced' THEN 'not_produced' ELSE 'unknown' END) = ")
                     .bind::<diesel::sql_types::Text,_>(state.to_string()));
             }
         }
@@ -913,6 +913,7 @@ fn task_capacity_lock_key(submitted_by: i32, kind: StorageTaskKind) -> i64 {
         StorageTaskKind::Export => 1,
         StorageTaskKind::RemoteCall => 2,
         StorageTaskKind::Backup => 3,
+        StorageTaskKind::SchemaProfiling => 4,
         StorageTaskKind::Import | StorageTaskKind::Reindex | StorageTaskKind::SchemaValidation => 9,
     };
     BASE_KEY + (kind_slot * KIND_STRIDE) + i64::from(submitted_by)

@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.5`.
+Status: accepted; current experimental release train is `0.6`.
 
 ## Supported Crate Graph
 
@@ -395,3 +395,24 @@ normalization helpers are removed; apply destination schema limits to the replay
 now live in storage-core; application artifact metadata and manifest checks
 remain the caller's responsibility. Adapters still enforce cross-row and
 transactional restore invariants.
+
+## Upgrading from 0.5 to 0.6
+
+Update all ten SDK dependencies to exactly `0.6.0` together. This is a breaking
+supported Rust crate change: the closed task-kind vocabulary adds
+`SchemaProfiling`, and `TaskMetadataDetails` and `StorageTaskCompletionPayload`
+add matching variants. `StorageSchemaProfileArtifact` carries a bounded report
+and expiry timestamp.
+
+Implement both new `TaskExecutionStorage` methods: `get_schema_profile_output`
+and `purge_expired_schema_profile_outputs`. Publish the artifact atomically with
+successful task completion under the existing lease and cancellation fence.
+Retain output expiry metadata after cleanup, and include profiling in task
+capacity, discovery, cancellation, recovery, and output-state filtering. Profiling
+reports are transient and need not enter backup snapshots; restore must clear
+local reports. Run the complete adapter conformance and task-control suites.
+
+The PostgreSQL adapter requires migration
+`2026-10-25-000002_schema_profiling`. Drain old workers before submitting the new
+task kind. The server uses `json-schema-profiler` 0.0.1; the SDK does not depend
+on it and retains its Rust 1.88 minimum version.

@@ -9,6 +9,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Queue class schema profiling with `json-schema-profiler`, configurable policy
+  presets and sample sizes, authorized raw-data sampling, replay diagnostics,
+  cancellation, and expiring reports. Apply the schema-profiling migration before
+  starting the updated server, and upgrade all API and worker processes before
+  accepting profiling requests. Suggestions never modify class schemas automatically.
+
 - Discover observed raw and computed fields for an exact class name in one bounded,
   permission-filtered request. Responses include sample counts, structured paths,
   value types, previews, and explicit truncation details.
@@ -32,6 +38,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   verification report, and leave unmeasured computed-data rebuild timing unset.
 
 ### Changed
+
+- **Breaking (supported Rust crates / storage SDK):** advance the coordinated
+  SDK train to `0.6.0` for schema profiling task kinds, artifacts, and required
+  output-read/cleanup methods. External adapters must update all ten SDK
+  dependencies together and implement fenced report publication, cancellation,
+  retention, and discovery as described in the
+  [0.6 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-05-to-06).
 
 - **Breaking operational change:** Stale computed reads return their evaluated
   snapshot without waiting for repair persistence. Bounded durable tasks coalesce

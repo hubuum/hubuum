@@ -137,6 +137,10 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_TASK_REINDEX_EXECUTION_TIMEOUT_SECONDS", Tasks),
     option!("HUBUUM_TASK_REMOTE_CALL_EXECUTION_TIMEOUT_SECONDS", Tasks),
     option!(
+        "HUBUUM_TASK_SCHEMA_PROFILING_EXECUTION_TIMEOUT_SECONDS",
+        Tasks
+    ),
+    option!(
         "HUBUUM_TASK_SCHEMA_VALIDATION_EXECUTION_TIMEOUT_SECONDS",
         Tasks
     ),
@@ -449,6 +453,11 @@ pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
     configuration_bound!(
         "HUBUUM_TASK_REMOTE_CALL_EXECUTION_TIMEOUT_SECONDS",
         task_remote_call_execution_timeout_seconds,
+        maximum = (hubuum_task_core::TaskExecutionLimit::MAX_MILLISECONDS / 1000) as i64
+    ),
+    configuration_bound!(
+        "HUBUUM_TASK_SCHEMA_PROFILING_EXECUTION_TIMEOUT_SECONDS",
+        task_schema_profiling_execution_timeout_seconds,
         maximum = (hubuum_task_core::TaskExecutionLimit::MAX_MILLISECONDS / 1000) as i64
     ),
     configuration_bound!(

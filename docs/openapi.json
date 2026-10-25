@@ -7446,6 +7446,204 @@
         ]
       }
     },
+    "/api/v1/classes/{class_id}/schema/profiles": {
+      "post": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Queue schema inference from authorized raw object data",
+        "description": "Auto-generated documentation for POST /api/v1/classes/{class_id}/schema/profiles.",
+        "operationId": "postApiV1ClassesByClassIdSchemaProfiles",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchemaProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Schema profiling task accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid profiling options",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Class access denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency key conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Two profiling tasks are already active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/schema/profiles/{task_id}": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Read an authorized schema profiling report",
+        "description": "Returns sampled observations, a candidate or inference findings, and replay results. Never modifies the class schema. Reports expire after 24 hours; access to every sampled object is rechecked.",
+        "operationId": "getApiV1ClassesByClassIdSchemaProfilesByTaskId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Schema profiling task ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Schema profiling report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchemaProfileReport"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current permissions or token scope do not cover the report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Task, class, sampled object, or output not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Report expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/classes/{class_id}/schema/revisions": {
       "get": {
         "tags": [
@@ -34937,6 +35135,23 @@
           }
         }
       },
+      "ProfilePreset": {
+        "type": "string",
+        "description": "Strict rejects mixed types and closes objects; balanced preserves observed\nunions and required fields; expansive makes fields optional and objects open.",
+        "enum": [
+          "strict",
+          "balanced",
+          "expansive"
+        ]
+      },
+      "ProfileSuggestionStatus": {
+        "type": "string",
+        "enum": [
+          "candidate",
+          "blocked",
+          "insufficient"
+        ]
+      },
       "Provenance": {
         "type": "object",
         "description": "Shared provenance returned by audit/history APIs and serialized to sinks.",
@@ -37143,6 +37358,86 @@
         "description": "Absolute frontend URL containing exactly one `{object_id}` placeholder.",
         "example": "https://inventory.example/objects/{object_id}"
       },
+      "SchemaProfileReport": {
+        "type": "object",
+        "required": [
+          "class_id",
+          "sampled",
+          "sampled_objects",
+          "effective_sample_limit",
+          "options",
+          "status",
+          "findings"
+        ],
+        "properties": {
+          "class_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "effective_sample_limit": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "findings": {
+            "type": "array",
+            "items": {}
+          },
+          "options": {
+            "$ref": "#/components/schemas/SchemaProfileRequest"
+          },
+          "profile": {
+            "description": "Profiler 0.0.1 structural counts and document evidence. No scalar values are retained."
+          },
+          "replay": {
+            "description": "Validation of exactly the in-memory sample used for profiling, when a candidate exists."
+          },
+          "sample_valid": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "sampled": {
+            "type": "boolean",
+            "description": "Always true: inference describes a deterministic authorized convenience sample."
+          },
+          "sampled_objects": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "schema": {},
+          "status": {
+            "$ref": "#/components/schemas/ProfileSuggestionStatus"
+          },
+          "truncation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FieldDiscoveryTruncation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "SchemaProfileRequest": {
+        "type": "object",
+        "description": "Omitted options use a 100-object sample and balanced inference.",
+        "properties": {
+          "preset": {
+            "$ref": "#/components/schemas/ProfilePreset",
+            "default": "balanced"
+          },
+          "sample_limit": {
+            "type": "integer",
+            "default": 100,
+            "maximum": 250,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
       "SchemaReference": {
         "type": "object",
         "description": "A dependency on one exact schema document; resource revisions are unrelated.",
@@ -38835,6 +39130,7 @@
           "backup_execution_timeout_seconds",
           "reindex_execution_timeout_seconds",
           "remote_call_execution_timeout_seconds",
+          "schema_profiling_execution_timeout_seconds",
           "schema_validation_execution_timeout_seconds",
           "heartbeat_seconds",
           "recovery_interval_seconds",
@@ -38905,6 +39201,11 @@
             "type": "integer",
             "minimum": 0
           },
+          "schema_profiling_execution_timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
           "schema_validation_execution_timeout_seconds": {
             "type": "integer",
             "format": "int64",
@@ -38963,6 +39264,16 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/RemoteCallTaskDetails"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schema_profiling": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SchemaProfileTaskDetails"
               },
               {
                 "type": "null"
@@ -39135,7 +39446,8 @@
           "backup",
           "reindex",
           "remote_call",
-          "schema_validation"
+          "schema_validation",
+          "schema_profiling"
         ]
       },
       "TaskLinks": {

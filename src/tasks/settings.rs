@@ -209,6 +209,7 @@ pub struct TaskExecutionLimits {
     reindex: TaskExecutionLimit,
     remote_call: TaskExecutionLimit,
     schema_validation: TaskExecutionLimit,
+    schema_profiling: TaskExecutionLimit,
 }
 impl Default for TaskExecutionLimits {
     fn default() -> Self {
@@ -222,6 +223,8 @@ impl Default for TaskExecutionLimits {
             reindex: TaskExecutionLimit::from_milliseconds(7200 * 1000)
                 .expect("default duration is valid"),
             remote_call: TaskExecutionLimit::from_milliseconds(300 * 1000)
+                .expect("default duration is valid"),
+            schema_profiling: TaskExecutionLimit::from_milliseconds(300 * 1000)
                 .expect("default duration is valid"),
             schema_validation: TaskExecutionLimit::from_milliseconds(7200 * 1000)
                 .expect("default duration is valid"),
@@ -241,6 +244,7 @@ impl TaskExecutionLimits {
             TaskKind::Backup => self.backup = limit,
             TaskKind::Reindex => self.reindex = limit,
             TaskKind::RemoteCall => self.remote_call = limit,
+            TaskKind::SchemaProfiling => self.schema_profiling = limit,
             TaskKind::SchemaValidation => self.schema_validation = limit,
         }
         Ok(self)
@@ -252,6 +256,7 @@ impl TaskExecutionLimits {
             TaskKind::Backup => self.backup,
             TaskKind::Reindex => self.reindex,
             TaskKind::RemoteCall => self.remote_call,
+            TaskKind::SchemaProfiling => self.schema_profiling,
             TaskKind::SchemaValidation => self.schema_validation,
         }
     }

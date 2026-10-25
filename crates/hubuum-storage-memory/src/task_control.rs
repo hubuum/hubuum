@@ -263,6 +263,7 @@ impl MemoryState {
             format!("Task stopped: {}", reason.as_str())
         };
         if status == StorageTaskStatus::Cancelled {
+            self.schema_profile_outputs.remove(&id.id());
             self.export_outputs.remove(&id.id());
             self.export_output_ids.remove(&id.id());
             self.backup_outputs.remove(&id.id());

@@ -185,6 +185,7 @@ for an exception.
   `TaskExecutionStorage::append_task_event`,
   `TaskExecutionStorage::update_task_state`,
   `TaskExecutionStorage::complete_task`, `TaskExecutionStorage::fail_task`,
+  `TaskExecutionStorage::purge_expired_schema_profile_outputs`,
   `TaskExecutionStorage::purge_expired_export_outputs`, and
   `TaskExecutionStorage::purge_expired_backup_outputs`.
 - Event coordination:

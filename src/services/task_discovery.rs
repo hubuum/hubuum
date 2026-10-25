@@ -38,6 +38,9 @@ pub(super) fn capture(
         StorageTaskKind::RemoteCall => {
             json!({"kind":"remote_call", "remote_target_id":payload["target_id"], "target":payload["subject"]})
         }
+        StorageTaskKind::SchemaProfiling => {
+            json!({"kind":"schema_profiling", "class_id":payload["class_id"], "output":{"state":"not_produced"}})
+        }
         StorageTaskKind::SchemaValidation => {
             json!({"kind":"schema_validation", "class_id":payload["class_id"], "schema_revision":payload["schema_revision"], "work_kind":payload["kind"]})
         }

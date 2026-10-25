@@ -79,12 +79,11 @@ first-value previews, and source ordering follow the CLI implementation at
 type frequencies, computed-error counts, and explicit truncation provide additional
 evidence without changing those display conventions.
 
-Future schema profiling should consume the raw authorized sample through the
+[Schema profiling](schema_profiling.md) consumes the raw authorized sample through the
 sampling service, preserving property versus array-item paths and null versus
 missing values. Display previews cannot establish numeric precision, complete
 value sets, required properties, or schema compatibility. A truncated sample is
-not a verified full corpus. This endpoint adds no profiler dependency and makes no
-schema inference or compatibility guarantee.
+not a verified full corpus. The field-discovery endpoint makes no schema inference or compatibility guarantee.
 
 ## Measured request and decoding costs
 

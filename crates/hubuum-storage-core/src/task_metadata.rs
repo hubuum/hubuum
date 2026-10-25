@@ -141,6 +141,11 @@ pub enum TaskMetadataDetails {
         #[serde(default)]
         output: TaskOutputMetadata,
     },
+    SchemaProfiling {
+        class_id: Option<ClassId>,
+        #[serde(default)]
+        output: TaskOutputMetadata,
+    },
     SchemaValidation {
         class_id: Option<ClassId>,
         schema_revision: Option<SchemaRevision>,
@@ -162,6 +167,7 @@ impl TaskMetadataDetails {
             Self::Import { .. } => StorageTaskKind::Import,
             Self::Export { .. } => StorageTaskKind::Export,
             Self::Backup { .. } => StorageTaskKind::Backup,
+            Self::SchemaProfiling { .. } => StorageTaskKind::SchemaProfiling,
             Self::SchemaValidation { .. } => StorageTaskKind::SchemaValidation,
             Self::Reindex { .. } => StorageTaskKind::Reindex,
             Self::RemoteCall { .. } => StorageTaskKind::RemoteCall,
@@ -170,7 +176,9 @@ impl TaskMetadataDetails {
     #[must_use]
     pub fn target(&self) -> Option<TaskExplicitTarget> {
         match self {
-            Self::SchemaValidation { class_id, .. } | Self::Reindex { class_id, .. } => {
+            Self::SchemaProfiling { class_id, .. }
+            | Self::SchemaValidation { class_id, .. }
+            | Self::Reindex { class_id, .. } => {
                 class_id.map(|class_id| TaskExplicitTarget::Class { class_id })
             }
             Self::Export { target, .. } | Self::RemoteCall { target, .. } => *target,
@@ -180,7 +188,9 @@ impl TaskMetadataDetails {
     #[must_use]
     pub const fn output(&self) -> Option<&TaskOutputMetadata> {
         match self {
-            Self::Export { output, .. } | Self::Backup { output, .. } => Some(output),
+            Self::SchemaProfiling { output, .. }
+            | Self::Export { output, .. }
+            | Self::Backup { output, .. } => Some(output),
             _ => None,
         }
     }
@@ -235,6 +245,10 @@ impl StorageTaskMetadata {
             },
             StorageTaskKind::Backup => TaskMetadataDetails::Backup {
                 include_history: None,
+                output: TaskOutputMetadata::Unknown,
+            },
+            StorageTaskKind::SchemaProfiling => TaskMetadataDetails::SchemaProfiling {
+                class_id: None,
                 output: TaskOutputMetadata::Unknown,
             },
             StorageTaskKind::SchemaValidation => TaskMetadataDetails::SchemaValidation {
@@ -358,6 +372,16 @@ impl StorageTaskMetadata {
         };
         *stored_count = Some(warning_count);
         *stored_truncated = Some(truncated);
+        *output = TaskOutputMetadata::Produced { expires_at };
+        Ok(())
+    }
+    pub fn record_schema_profile(
+        &mut self,
+        expires_at: DateTime<Utc>,
+    ) -> Result<(), StorageValidationError> {
+        let TaskMetadataDetails::SchemaProfiling { output, .. } = &mut self.data else {
+            return Err(invalid("Schema profile output requires profiling metadata"));
+        };
         *output = TaskOutputMetadata::Produced { expires_at };
         Ok(())
     }

@@ -66,8 +66,14 @@ impl TaskDiscoveryPredicate {
             | Self::ImportPermissionPolicy(_)
             | Self::ImportHasFailedItems(_) => &[K::Import],
             Self::BackupIncludeHistory(_) => &[K::Backup],
-            Self::OutputState(_) => &[K::Export, K::Backup],
-            Self::Class(_) => &[K::SchemaValidation, K::Reindex, K::Export, K::RemoteCall],
+            Self::OutputState(_) => &[K::Export, K::Backup, K::SchemaProfiling],
+            Self::Class(_) => &[
+                K::SchemaProfiling,
+                K::SchemaValidation,
+                K::Reindex,
+                K::Export,
+                K::RemoteCall,
+            ],
             Self::Object(_) => &[K::Export, K::RemoteCall],
         }
     }

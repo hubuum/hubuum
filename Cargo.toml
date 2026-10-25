@@ -78,6 +78,7 @@ diesel-async = { version = "0.9.2", features = ["postgres", "bb8"] }
 ipnet = "2.12"
 futures = "0.3"
 futures-util = "0.3"
+json-schema-profiler = "=0.0.1"
 json-patch = { version = "4.2", default-features = false }
 rand = "0.10"
 # The OpenTelemetry SDK's default BatchSpanProcessor exports on a dedicated
@@ -89,6 +90,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 sha2 = "0.11"
 hmac = "0.13"
+hubuum-budget = { path = "crates/hubuum-budget" }
 hubuum-auth-core = { path = "crates/hubuum-auth-core" }
 hubuum-auth-ldap = { path = "crates/hubuum-auth-ldap" }
 hubuum-computed-fields = { path = "crates/hubuum-computed-fields" }
@@ -147,7 +149,6 @@ toml = "1.1"
 libc = "0.2"
 
 [dev-dependencies]
-hubuum-budget = { path = "crates/hubuum-budget" }
 criterion = "0.8.2"
 gungraun = "0.20.0"
 hubuum-storage-conformance = { path = "crates/hubuum-storage-conformance" }

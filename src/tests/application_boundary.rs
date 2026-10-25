@@ -1730,6 +1730,7 @@ fn validated_facts_remain_typed_across_application_storage_boundaries() {
             "Export".to_string(),
             "Import".to_string(),
             "SchemaValidation".to_string(),
+            "SchemaProfiling".to_string(),
             "Reindex".to_string(),
             "RemoteCall".to_string(),
         ]),

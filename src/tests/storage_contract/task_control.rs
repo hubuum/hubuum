@@ -114,6 +114,7 @@ impl Fixture {
 #[case(StorageTaskKind::Reindex)]
 #[case(StorageTaskKind::RemoteCall)]
 #[case(StorageTaskKind::SchemaValidation)]
+#[case(StorageTaskKind::SchemaProfiling)]
 #[actix_web::test]
 async fn queued_stop_is_terminal_redacted_and_idempotent(#[case] kind: StorageTaskKind) {
     let _permit = postgres_permit().await;
@@ -874,6 +875,7 @@ async fn cancelled_reindex_stays_incomplete_and_a_later_rebuild_can_finish() {
 #[case(StorageTaskKind::Reindex)]
 #[case(StorageTaskKind::RemoteCall)]
 #[case(StorageTaskKind::SchemaValidation)]
+#[case(StorageTaskKind::SchemaProfiling)]
 #[actix_web::test]
 async fn task_search_filters_before_counting(#[case] kind: StorageTaskKind) {
     use hubuum_storage_core::{StorageTaskSearch, TaskTimeRange};
@@ -1387,6 +1389,109 @@ async fn restoring_unchanged_artifact_facts_preserves_task_timestamps(
             .into_parts();
         assert_eq!(before.updated_at(), after.updated_at());
         assert_eq!(before.metadata(), after.metadata());
+        fixture.cleanup().await;
+    }
+}
+
+#[rstest]
+#[case::completed(false)]
+#[case::cancelled(true)]
+#[actix_web::test]
+async fn profiling_output_is_published_only_with_successful_fenced_completion(
+    #[case] cancel: bool,
+) {
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let fixture = Fixture::new(environment, StorageTaskKind::SchemaProfiling).await;
+        let lease = fixture.claim().await;
+        if cancel {
+            fixture
+                .backend
+                .request_task_cancellation(fixture.request())
+                .await
+                .unwrap();
+        }
+        let artifact = hubuum_storage_core::StorageSchemaProfileArtifact::new(
+            serde_json::json!({"report":{"sampled":true},"object_ids":[]}),
+            chrono::Utc::now() + chrono::Duration::hours(1),
+        )
+        .unwrap();
+        let completed = fixture
+            .backend
+            .complete_task(StorageTaskCompletion::new(
+                StorageTaskTerminalUpdate::new(
+                    lease,
+                    StorageTaskTerminalStatus::Succeeded,
+                    StorageTaskResultCounts::try_new(1, 1, 0).unwrap(),
+                ),
+                StorageTaskEventInput::new("succeeded", "report ready"),
+                StorageTaskCompletionPayload::SchemaProfiling(artifact),
+            ))
+            .await
+            .unwrap();
+        let output = fixture
+            .backend
+            .get_schema_profile_output(fixture.task.id())
+            .await
+            .unwrap();
+        if cancel {
+            assert_eq!(completed.status(), StorageTaskStatus::Cancelled);
+            assert!(matches!(output, StorageTaskOutputLookup::Missing));
+        } else {
+            assert_eq!(completed.status(), StorageTaskStatus::Succeeded);
+            assert!(matches!(output, StorageTaskOutputLookup::Available(_)));
+        }
+        fixture.cleanup().await;
+    }
+}
+
+#[actix_web::test]
+async fn profiling_output_expires_and_retains_discovery_evidence_after_cleanup() {
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let fixture = Fixture::new(environment, StorageTaskKind::SchemaProfiling).await;
+        let lease = fixture.claim().await;
+        let artifact = hubuum_storage_core::StorageSchemaProfileArtifact::new(
+            serde_json::json!({"report":{}}),
+            chrono::Utc::now() - chrono::Duration::hours(1),
+        )
+        .unwrap();
+        fixture
+            .backend
+            .complete_task(StorageTaskCompletion::new(
+                StorageTaskTerminalUpdate::new(
+                    lease,
+                    StorageTaskTerminalStatus::Succeeded,
+                    StorageTaskResultCounts::try_new(1, 1, 0).unwrap(),
+                ),
+                StorageTaskEventInput::new("succeeded", "report ready"),
+                StorageTaskCompletionPayload::SchemaProfiling(artifact),
+            ))
+            .await
+            .unwrap();
+        fixture
+            .backend
+            .purge_expired_schema_profile_outputs()
+            .await
+            .unwrap();
+        assert!(matches!(
+            fixture
+                .backend
+                .get_schema_profile_output(fixture.task.id())
+                .await
+                .unwrap(),
+            StorageTaskOutputLookup::Missing
+        ));
+        let (task, _) = fixture
+            .backend
+            .get_task_access(fixture.task.id())
+            .await
+            .unwrap()
+            .into_parts();
+        assert!(matches!(
+            task.metadata().unwrap().details().output(),
+            Some(hubuum_storage_core::TaskOutputMetadata::Produced { .. })
+        ));
         fixture.cleanup().await;
     }
 }

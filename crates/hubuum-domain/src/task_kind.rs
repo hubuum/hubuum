@@ -8,16 +8,18 @@ pub enum TaskKind {
     Reindex,
     RemoteCall,
     SchemaValidation,
+    SchemaProfiling,
 }
 
 impl TaskKind {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Import,
         Self::Export,
         Self::Backup,
         Self::Reindex,
         Self::RemoteCall,
         Self::SchemaValidation,
+        Self::SchemaProfiling,
     ];
 
     #[must_use]
@@ -28,6 +30,7 @@ impl TaskKind {
             Self::Backup => "backup",
             Self::Reindex => "reindex",
             Self::SchemaValidation => "schema_validation",
+            Self::SchemaProfiling => "schema_profiling",
             Self::RemoteCall => "remote_call",
         }
     }
@@ -40,6 +43,7 @@ impl TaskKind {
             "backup" => Some(Self::Backup),
             "reindex" => Some(Self::Reindex),
             "schema_validation" => Some(Self::SchemaValidation),
+            "schema_profiling" => Some(Self::SchemaProfiling),
             "remote_call" => Some(Self::RemoteCall),
             _ => None,
         }

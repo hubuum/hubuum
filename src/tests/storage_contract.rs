@@ -4377,6 +4377,10 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                 .await
                 .expect("certified backend should complete a claimed task");
             match claimed.task().kind() {
+                StorageTaskKind::SchemaProfiling => assert!(matches!(
+                    backend.get_schema_profile_output(claimed.task().id()).await,
+                    Ok(StorageTaskOutputLookup::Available(_))
+                )),
                 StorageTaskKind::Export => assert!(matches!(
                     backend.get_export_output(claimed.task().id()).await,
                     Ok(StorageTaskOutputLookup::Available(_))
@@ -4531,6 +4535,13 @@ fn compatibility_completion_payload(kind: StorageTaskKind) -> StorageTaskComplet
         StorageTaskKind::Import => StorageTaskCompletionPayload::Import,
         StorageTaskKind::Reindex => StorageTaskCompletionPayload::Reindex,
         StorageTaskKind::SchemaValidation => StorageTaskCompletionPayload::SchemaValidation,
+        StorageTaskKind::SchemaProfiling => StorageTaskCompletionPayload::SchemaProfiling(
+            hubuum_storage_core::StorageSchemaProfileArtifact::new(
+                serde_json::json!({"report":{}, "object_ids":[]}),
+                output_expires_at,
+            )
+            .unwrap(),
+        ),
         StorageTaskKind::Export => StorageTaskCompletionPayload::Export(
             StorageExportTaskArtifact::builder(
                 "application/json",
