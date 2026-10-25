@@ -34,6 +34,7 @@ nav = [
       { "Class schemas & compliance" = "schema_evolution.md" },
       { "Query usage declarations" = "query_usage.md" },
       { "Computed fields" = "computed_fields.md" },
+      { "Computed read repair" = "computed_read_repair.md" },
       { "Class field discovery" = "class_field_discovery.md" },
       { "History & provenance" = "temporal_history.md" },
     ] },

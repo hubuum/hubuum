@@ -259,6 +259,11 @@ path = "tests/api_platform.rs"
 required-features = ["integration-test-support"]
 
 [[test]]
+name = "computed_read_repair"
+path = "tests/computed_read_repair.rs"
+required-features = ["integration-test-support"]
+
+[[test]]
 name = "restore_roundtrip"
 path = "tests/restore_roundtrip.rs"
 required-features = ["integration-test-support"]

@@ -874,6 +874,11 @@ for history_input in src/services/history/access.rs src/services/history/navigat
   assert_flag "$history_output" treetop_conformance true
 done
 
+for repair_path in tests/computed_read_repair.rs crates/hubuum-storage-postgres/src/operations/computed_fields/read_repair.rs crates/hubuum-storage-postgres/tests/computed_read_repair_migration.rs crates/hubuum-storage-postgres/migrations/2026-10-25-000001_computed_read_repairs/up.sql; do
+  repair_output="$(bash "$classifier" "$repair_path")"
+  assert_flag "$repair_output" rust true
+done
+
 # Interactive auth and activity schemas must regenerate the public contract.
 for session_schema in src/api/v1/handlers/auth.rs src/models/auth_session.rs src/models/credential_activity.rs; do
   session_output="$(bash "$classifier" "$session_schema")"

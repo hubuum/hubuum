@@ -5,12 +5,15 @@
 //! savepoint, or acquire another class after locking objects. Dropping a token
 //! does not unlock PostgreSQL rows: all locks last until transaction completion.
 
-use std::collections::BTreeMap;
-
-use diesel::{ExpressionMethods, QueryDsl, SelectableHelper};
+use super::read_repair::{self, BatchResult, RepairQueue};
+use crate::operations::task_execution;
+use crate::operations::task_rows::TaskRow;
+use diesel::{ExpressionMethods, OptionalExtension, QueryDsl, SelectableHelper};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::{ClassId, ObjectId};
-use hubuum_storage_core::StorageObject;
+use hubuum_storage_core::{
+    StorageTaskEventInput, StorageTaskLease, StorageTaskResultCounts, StorageTaskTerminalStatus,
+    StorageTaskTerminalUpdate,
+};
 
 use super::{ComputedReindexPayload, ReindexBatch, ensure_computation_state};
 use crate::operations::computed_materialization::{
@@ -66,6 +69,7 @@ where
 }
 
 impl<'transaction> ComputedTransaction<'transaction> {
+    #[cfg(feature = "integration-test-support")]
     pub async fn lock_class(
         self,
         class_id: i32,
@@ -226,53 +230,82 @@ pub(super) async fn reindex_batch(
     .await
 }
 
-/// Identity from a validated object snapshot; repair always reloads its data.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct ComputedRepairIdentity {
-    class_id: ClassId,
-    object_id: ObjectId,
-}
-
-impl From<&StorageObject> for ComputedRepairIdentity {
-    fn from(object: &StorageObject) -> Self {
-        Self {
-            class_id: object.class_id(),
-            object_id: object.id(),
-        }
-    }
-}
-
-#[tracing::instrument(name = "computed.repair", skip_all, fields(object_count = stale_objects.len()))]
-pub(crate) async fn repair_stale_materializations(
+/// The queue driver owns the transaction, queue serialization lock, and claim.
+/// Class-before-task-before-object ordering is the same as the rebuild protocol.
+#[tracing::instrument(name = "computed.repair", skip_all)]
+pub(super) async fn repair_queue_batch(
     runtime: &PostgresRuntime,
-    stale_objects: Vec<ComputedRepairIdentity>,
-) -> Result<(), PostgresStorageError> {
-    crate::reach_fault_point(crate::PostgresFaultPoint::ComputedRepairBeforeLocks, None).await?;
-    let mut by_class = BTreeMap::<i32, Vec<i32>>::new();
-    for object in stale_objects {
-        by_class
-            .entry(object.class_id.id())
-            .or_default()
-            .push(object.object_id.id());
-    }
-    for (class_id, mut object_ids) in by_class {
-        object_ids.sort_unstable();
-        object_ids.dedup();
-        for batch in object_ids.chunks(runtime.computed_reindex_batch_size()) {
-            let evaluations = with_computed_transaction(runtime, async move |transaction| {
-                transaction
-                    .lock_class(class_id)
-                    .await?
-                    .lock_objects(batch)
-                    .await?
-                    .repair()
-                    .await
-            })
+    lease: StorageTaskLease,
+) -> Result<BatchResult, PostgresStorageError> {
+    let claimed = task_execution::claimed_task(&lease)?;
+    let batch_size = runtime.computed_reindex_batch_size();
+    runtime
+        .with_transaction(async move |connection| {
+            read_repair::lock_queue(connection, true).await?;
+            let task = crate::schema::tasks::table
+                .find(claimed.id)
+                .select(TaskRow::as_select())
+                .first::<TaskRow>(connection)
+                .await?;
+            let mut queue = RepairQueue::from_task(&task)?;
+            let Some((class_id, ids)) = queue.first_batch(batch_size) else {
+                task_execution::runnable_claimed_task(connection, claimed).await?;
+                let counts = crate::validate_persisted(
+                    "repair progress",
+                    StorageTaskResultCounts::try_new(
+                        task.processed_items,
+                        task.success_items,
+                        task.failed_items,
+                    ),
+                )?;
+                let completed = task_execution::complete_task_on_connection(
+                    connection,
+                    StorageTaskTerminalUpdate::new(
+                        lease,
+                        StorageTaskTerminalStatus::Succeeded,
+                        counts,
+                    )
+                    .summary(Some("Computed read repairs completed".into()))
+                    .started_at(task.started_at.map(|value| value.and_utc())),
+                    StorageTaskEventInput::new("succeeded", "Computed read repairs completed"),
+                )
+                .await?;
+                return Ok(BatchResult::Complete(Box::new(completed)));
+            };
+            acquire_computed_class_shared_lock(connection, class_id.id()).await?;
+            task_execution::runnable_claimed_task(connection, claimed).await?;
+            let class_exists = crate::schema::hubuumclass::table
+                .find(class_id.id())
+                .for_key_share()
+                .select(crate::schema::hubuumclass::id)
+                .first::<i32>(connection)
+                .await
+                .optional()?
+                .is_some();
+            let errors = if class_exists {
+                let class = LockedComputedClass {
+                    transaction: ComputedTransaction {
+                        connection,
+                        batch_size,
+                    },
+                    class_id: class_id.id(),
+                };
+                class.lock_objects(&ids).await?.repair().await?
+            } else {
+                Vec::new()
+            };
+            crate::reach_fault_point(
+                crate::PostgresFaultPoint::ComputedRepairBeforeCommit,
+                Some(connection),
+            )
             .await?;
-            for error_codes in evaluations {
-                runtime.record_computed_evaluation("shared", &error_codes);
-            }
-        }
-    }
-    Ok(())
+            queue.remove_batch(ids.len());
+            read_repair::persist_progress(connection, claimed, &queue, ids.len()).await?;
+            Ok::<_, PostgresStorageError>(BatchResult::Progress {
+                repaired: errors.len(),
+                backlog: queue.len(),
+                errors,
+            })
+        })
+        .await
 }

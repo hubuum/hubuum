@@ -7,11 +7,12 @@ use diesel::QueryableByName;
 use diesel::sql_types::{Integer, Jsonb, Text};
 use hubuum_domain::{ObjectId, PrincipalId};
 use hubuum_storage_core::{
-    ComputedObjectStorage, ObjectStorage, StorageComputedObjectEnrichmentQuery,
+    ComputedFieldStorage, ComputedObjectStorage, ObjectStorage,
+    StorageComputedObjectEnrichmentQuery, StorageTaskLeaseDuration, TaskExecutionStorage,
 };
 use hubuum_storage_postgres::diesel_async_prelude::RunQueryDsl;
 use hubuum_storage_postgres::{
-    PostgresStorage, PostgresStorageError, capture_queries, with_connection,
+    PostgresPool, PostgresStorage, PostgresStorageError, capture_queries, with_connection,
 };
 use serde_json::json;
 
@@ -22,6 +23,38 @@ use support::postgres::{PostgresBenchmarkDatabase, benchmark_pool, runtime, uniq
 struct IdRow {
     #[diesel(sql_type = Integer)]
     id: i32,
+}
+
+// Worker service time is measured separately from the response operation.
+async fn drain_repairs(storage: &PostgresStorage, pool: &PostgresPool) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Some(claim) = storage
+            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+            .await
+            .unwrap()
+        {
+            storage
+                .execute_computed_field_rebuild(claim.lease().clone())
+                .await
+                .unwrap();
+            continue;
+        }
+        // Claims skip locked rows. An admission can still finish after its
+        // acknowledgement deadline, so an empty claim is not an empty queue.
+        let remaining = with_connection(pool, async |conn| {
+            diesel::sql_query("SELECT count(*)::integer AS id FROM tasks WHERE status IN ('queued', 'validating', 'running') AND request_payload->>'type' = 'computed_read_repairs'")
+                .get_result::<IdRow>(conn).await
+        }).await.unwrap().id;
+        if remaining == 0 {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "repair queue did not drain: {remaining} active tasks"
+        );
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
 }
 
 // Linux process CPU is sampled independently of wall time. Tick resolution is
@@ -107,6 +140,7 @@ fn benchmark_computed_enrichment(c: &mut Criterion) {
                 let owner = (mode == "personal").then(|| PrincipalId::new(owner_id).unwrap());
                 let prepare = || {
                     if mode == "stale" {
+                        runtime.block_on(drain_repairs(&storage, &pool));
                         runtime
                             .block_on(with_connection(&pool, async |conn| {
                                 diesel::sql_query(
@@ -121,14 +155,42 @@ fn benchmark_computed_enrichment(c: &mut Criterion) {
                     StorageComputedObjectEnrichmentQuery::new(objects[..page_size].to_vec(), owner)
                 };
                 // Warm up materializations and then report a captured query budget.
-                runtime
-                    .block_on(storage.enrich_objects_with_computed(prepare()))
+                let warmup_deadline = Instant::now() + Duration::from_secs(10);
+                loop {
+                    let response = runtime
+                        .block_on(storage.enrich_objects_with_computed(prepare()))
+                        .unwrap();
+                    runtime.block_on(drain_repairs(&storage, &pool));
+                    if mode != "fresh" {
+                        break;
+                    }
+                    let body = serde_json::to_value(
+                        hubuum::benchmark_support::computed_response(response).unwrap(),
+                    )
                     .unwrap();
+                    if body.as_array().unwrap().iter().all(|object| {
+                        object["computed"]["shared"]["materialization_stale"] == false
+                    }) {
+                        break;
+                    }
+                    // Admission deliberately has a short deadline. Retry setup
+                    // outside timing until the fixture is demonstrably fresh.
+                    assert!(
+                        Instant::now() < warmup_deadline,
+                        "fresh fixture admission timed out"
+                    );
+                }
                 let (result, queries) = runtime.block_on(capture_queries(
                     storage.enrich_objects_with_computed(prepare()),
                 ));
                 let response =
                     hubuum::benchmark_support::computed_response(result.unwrap()).unwrap();
+                if mode == "fresh" {
+                    let body = serde_json::to_value(&response).unwrap();
+                    assert!(body.as_array().unwrap().iter().all(
+                        |object| object["computed"]["shared"]["materialization_stale"] == false
+                    ));
+                }
                 let response_bytes = serde_json::to_vec(&response).unwrap().len();
                 eprintln!(
                     "fixture mode={mode} padding_bytes={bytes} objects={page_size} definitions=8 queries={} checkouts={} response_bytes={response_bytes}",
@@ -154,6 +216,10 @@ fn benchmark_computed_enrichment(c: &mut Criterion) {
                 );
                 let mut latencies = Vec::with_capacity(100);
                 let mut cpu_ticks = 0;
+                let mut repairs = Vec::new();
+                let mut max_backlog = 0;
+                let mut admission_misses = 0;
+                let mut partial_admissions = 0;
                 for _ in 0..100 {
                     let query = prepare();
                     let cpu_before = process_cpu_ticks();
@@ -167,6 +233,61 @@ fn benchmark_computed_enrichment(c: &mut Criterion) {
                     if let (Some(before), Some(after)) = (cpu_before, process_cpu_ticks()) {
                         cpu_ticks += after.saturating_sub(before);
                     }
+                    if mode == "stale" {
+                        let queued = runtime.block_on(with_connection(&pool, async |conn| {
+                            diesel::sql_query("SELECT (identity->>'object_id')::integer AS id FROM tasks CROSS JOIN LATERAL jsonb_array_elements(request_payload->'objects') AS identity WHERE status IN ('queued', 'validating', 'running') AND request_payload->>'type' = 'computed_read_repairs'")
+                                .load::<IdRow>(conn).await
+                        })).unwrap();
+                        max_backlog = max_backlog.max(queued.len());
+                        let admitted = objects[..page_size]
+                            .iter()
+                            .filter(|object| queued.iter().any(|row| row.id == object.id().id()))
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        admission_misses += usize::from(admitted.is_empty());
+                        partial_admissions +=
+                            usize::from(!admitted.is_empty() && admitted.len() < page_size);
+                        let started = Instant::now();
+                        runtime.block_on(drain_repairs(&storage, &pool));
+                        if !admitted.is_empty() {
+                            repairs.push(started.elapsed().as_micros());
+                            let fresh = runtime
+                                .block_on(storage.enrich_objects_with_computed(
+                                    StorageComputedObjectEnrichmentQuery::new(admitted, owner),
+                                ))
+                                .unwrap();
+                            let body = serde_json::to_value(
+                                hubuum::benchmark_support::computed_response(fresh).unwrap(),
+                            )
+                            .unwrap();
+                            assert!(
+                                body.as_array().unwrap().iter().all(
+                                    |object| object["computed"]["shared"]["materialization_stale"]
+                                        == false
+                                ),
+                                "queued={}, page={page_size}, states={:?}",
+                                queued.len(),
+                                body.as_array()
+                                    .unwrap()
+                                    .iter()
+                                    .map(|object| (
+                                        object["id"].clone(),
+                                        object["computed"]["shared"]["materialization_stale"]
+                                            .clone()
+                                    ))
+                                    .collect::<Vec<_>>()
+                            );
+                        }
+                    }
+                }
+                if !repairs.is_empty() {
+                    repairs.sort_unstable();
+                    eprintln!(
+                        "repair_samples objects={page_size} padding_bytes={bytes} admitted_samples={} p50_us={} p95_us={} max_observed_queued_identities={max_backlog} remaining_after_drain=0 observed_admission_misses={admission_misses} partial_admissions={partial_admissions}",
+                        repairs.len(),
+                        repairs[(repairs.len() * 50).div_ceil(100) - 1],
+                        repairs[(repairs.len() * 95).div_ceil(100) - 1]
+                    );
                 }
                 latencies.sort_unstable();
                 eprintln!(

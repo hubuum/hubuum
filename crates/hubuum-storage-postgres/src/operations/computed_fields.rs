@@ -1,6 +1,7 @@
 //! PostgreSQL implementation of computed-field definition and rebuild lifecycle.
 
 pub(crate) mod locking;
+pub(crate) mod read_repair;
 
 use std::time::Instant;
 
@@ -794,6 +795,9 @@ pub async fn execute_computed_field_rebuild(
     let started = Instant::now();
     let claimed = task_execution::claimed_task(&lease)?;
     let task = task_execution::find_task(runtime, claimed.id).await?;
+    if read_repair::is_read_repair(&task) {
+        return read_repair::execute(runtime, lease).await;
+    }
     if task.kind != StorageTaskKind::Reindex.as_str() {
         return Err(PostgresStorageError::invalid_input(format!(
             "Task {} is not a computed-field rebuild",
