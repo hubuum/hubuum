@@ -60,8 +60,9 @@ active-task uniqueness constraints without backfilling objects. Apply it during 
 quiet period: its index build and constraint validation scan retained task history
 and take write locks. Lock waits are limited to five seconds and statements to
 60 seconds; a timeout rolls back the whole migration. Resolve contention or
-provision capacity for the retained history, then retry. Stop workers
-before rolling this migration back: rollback removes outstanding internal repair
+provision capacity for the retained history, then retry. Stop new-version API and
+worker replicas before rolling this migration back, so no reader can admit new
+repair work during rollback. Rollback removes outstanding internal repair
 tasks, and the previous synchronous read path can recreate their derived values.
 
 ## Diagnostics
