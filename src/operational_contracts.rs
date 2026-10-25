@@ -1397,7 +1397,16 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
         ("hubuum_computed_field_evaluations_total", "outcome") => {
             strings(&["success", "field_error"])
         }
-        ("hubuum_computed_field_read_repairs_total", "outcome") => strings(&["success", "failure"]),
+        ("hubuum_computed_field_read_repairs_total", "outcome") => strings(&[
+            "queued",
+            "coalesced",
+            "queue_full",
+            "queue_busy",
+            "enqueue_failure",
+            "enqueue_timeout",
+            "success",
+            "failure",
+        ]),
         ("hubuum_schema_mutations_total", "policy") => {
             strings(&["stage", "reject_incompatible", "allow_pending"])
         }
@@ -3239,6 +3248,23 @@ mod tests {
             "hubuum_api_errors_total",
             "class",
             error.class(),
+        ));
+    }
+
+    #[rstest]
+    #[case("queued")]
+    #[case("coalesced")]
+    #[case("queue_full")]
+    #[case("queue_busy")]
+    #[case("enqueue_failure")]
+    #[case("enqueue_timeout")]
+    #[case("success")]
+    #[case("failure")]
+    fn computed_read_repair_outcomes_are_recordable(#[case] outcome: &str) {
+        assert!(metric_label_value_is_allowed(
+            "hubuum_computed_field_read_repairs_total",
+            "outcome",
+            outcome,
         ));
     }
 

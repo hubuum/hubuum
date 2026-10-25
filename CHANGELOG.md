@@ -38,6 +38,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   repair identities and reload current data under transaction locks. Deployments
   that disable task workers must enable at least one worker process to persist
   read repairs; reads remain correct and retry admission when busy or full.
+  Read-repair metrics distinguish queue admission outcomes from worker success
+  and failure.
 
 - Computed object reads reuse prepared definitions and cached-value validation
   metadata per class and owner, consume cached JSON without copying it, and skip
