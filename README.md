@@ -308,7 +308,7 @@ Recent published releases:
 
 | Release | Date | Highlights |
 | --- | --- | --- |
-| [0.0.21](https://github.com/hubuum/hubuum/releases/tag/v0.0.21) | 2026-10-26 | Adds bounded field discovery and asynchronous schema suggestions with policy presets and sampled replay. Streams backup/restore through disk spools and moves computed read repair to durable workers. Requires migrations, writable temporary storage, and clients that recognize profiling tasks; advances the storage SDK to 0.6. |
+| [0.0.21](https://github.com/hubuum/hubuum/releases/tag/v0.0.21) | 2026-10-26 | Adds bounded field discovery and asynchronous schema suggestions with policy presets and sampled replay. Streams backup/restore through disk spools, moves computed read repair to durable workers, and fixes deletion contention with those workers. Requires migrations, writable temporary storage, and clients that recognize profiling tasks; advances the storage SDK to 0.6. |
 | [0.0.20](https://github.com/hubuum/hubuum/releases/tag/v0.0.20) | 2026-10-22 | Adds rotating interactive sessions, credential provenance and source history, historical object populations, relationships and computed values, directional relation labels, and shared query-observation controls. Requires an offline migration and upgraded clients; introduces backup format 10. |
 | [0.0.19](https://github.com/hubuum/hubuum/releases/tag/v0.0.19) | 2026-10-13 | Adds successful-login notifications, query usage declarations and bounded PostgreSQL index preparation, and relation-aware audit timelines. Improves search performance and memory filtering. Introduces backup format 9 and breaking login, event-reader, and storage SDK requirements. |
 | [0.0.18](https://github.com/hubuum/hubuum/releases/tag/v0.0.18) | 2026-10-06 | Adds collection-owned webhook setup, permitted sink discovery, and explicit shared-sink grants. Binds credentials to destinations, introduces backup format 8, and fixes single-host migration profiles and versioned monitoring links. Requires an offline migration. |
@@ -322,7 +322,7 @@ Recent published releases:
 
 Before upgrading from `0.0.20` to `0.0.21`:
 
-- Apply the restore-chunk, computed-read-repair, and schema-profiling migrations
+- Apply the restore-chunk, computed-read-repair, schema-profiling, and computed-history deletion-lock migrations
   with matching `hubuum-admin --migrate` and reconcile database role grants.
   Schedule a quiet period: task-history scans and lock waits have bounded
   timeouts, and a timeout requires resolving contention before retrying.

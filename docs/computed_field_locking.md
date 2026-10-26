@@ -55,6 +55,12 @@ Foreign keys and triggers can acquire additional database locks.
 | Shared definition create/update/delete or manual rebuild request | Exclusive definition advisory lock; class `FOR SHARE`; definition row lock where applicable; computation-state changes; active-task inspection/enqueue; audit/event writes where applicable | Existing operation implementation plus database revision/uniqueness constraints |
 | Backfill completion | Shared definition advisory lock; runnable task claim `FOR UPDATE`; fenced computation-state update; terminal task/event writes | Existing claim and target-revision fencing; no object locks |
 
+Class and collection deletion already own the deleted class row. Their history
+trigger closes the retained interval without acquiring a definition advisory
+lock: a worker may hold that lock while waiting for the class row. Live-class
+history writes still acquire the advisory lock and serialize snapshots. The
+class row and history-row locks protect the deletion's final interval closure.
+
 Personal definition creation uses an advisory lock scoped to the class and
 owner; updates and deletes lock the applicable definition row. These operations
 read the class without an explicit row lock and do not maintain shared
