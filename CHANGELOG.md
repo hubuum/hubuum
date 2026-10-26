@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.21] - 2026-10-26
+
 ### Added
 
 - Queue class schema profiling with `json-schema-profiler`, configurable policy

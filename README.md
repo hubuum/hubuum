@@ -17,8 +17,8 @@ The website opens the latest released documentation. Select a release version
 or explicitly choose `main` for development documentation, and check
 [client compatibility](docs/integrations/clients.md#choose-compatible-versions).
 
-The latest release is [Hubuum `0.0.20`](https://github.com/hubuum/hubuum/releases/tag/v0.0.20),
-published on October 22, 2026. Hubuum is suitable for evaluation and early deployments,
+The latest release is [Hubuum `0.0.21`](https://github.com/hubuum/hubuum/releases/tag/v0.0.21),
+published on October 26, 2026. Hubuum is suitable for evaluation and early deployments,
 but its API and configuration may change before `1.0.0`. Pin deployments to an explicit
 version instead of using the moving `main` image tag. See [Releases](#releases) for recent
 changes and upgrade guidance.
@@ -39,7 +39,7 @@ Install matching versions of all three together; template rendering and validati
 require the worker executable beside the server and administrator binaries.
 
 ```sh
-docker pull ghcr.io/hubuum/hubuum-server:v0.0.20
+docker pull ghcr.io/hubuum/hubuum-server:v0.0.21
 ```
 
 Run `hubuum-admin --migrate` as a one-shot workload before starting or upgrading the
@@ -136,6 +136,9 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
 - Event audit and delivery behavior is documented in [docs/events.md](docs/events.md).
 - Temporal history, actor capture, and GDPR anonymization are documented in [docs/temporal_history.md](docs/temporal_history.md).
 - Personal and shared computed object fields are documented in [docs/computed_fields.md](docs/computed_fields.md).
+- Discover available raw and computed fields with [class field discovery](docs/class_field_discovery.md).
+- Generate and review sampled schema suggestions with [schema profiling](docs/schema_profiling.md),
+  then stage, analyze, and activate them through [schema evolution](docs/schema_evolution.md).
 - Numeric-safe class and object name addressing is documented in
   [docs/name_addressing.md](docs/name_addressing.md).
 - Atomic RFC 6902 updates to raw object data are documented in
@@ -305,6 +308,7 @@ Recent published releases:
 
 | Release | Date | Highlights |
 | --- | --- | --- |
+| [0.0.21](https://github.com/hubuum/hubuum/releases/tag/v0.0.21) | 2026-10-26 | Adds bounded field discovery and asynchronous schema suggestions with policy presets and sampled replay. Streams backup/restore through disk spools and moves computed read repair to durable workers. Requires migrations, writable temporary storage, and clients that recognize profiling tasks; advances the storage SDK to 0.6. |
 | [0.0.20](https://github.com/hubuum/hubuum/releases/tag/v0.0.20) | 2026-10-22 | Adds rotating interactive sessions, credential provenance and source history, historical object populations, relationships and computed values, directional relation labels, and shared query-observation controls. Requires an offline migration and upgraded clients; introduces backup format 10. |
 | [0.0.19](https://github.com/hubuum/hubuum/releases/tag/v0.0.19) | 2026-10-13 | Adds successful-login notifications, query usage declarations and bounded PostgreSQL index preparation, and relation-aware audit timelines. Improves search performance and memory filtering. Introduces backup format 9 and breaking login, event-reader, and storage SDK requirements. |
 | [0.0.18](https://github.com/hubuum/hubuum/releases/tag/v0.0.18) | 2026-10-06 | Adds collection-owned webhook setup, permitted sink discovery, and explicit shared-sink grants. Binds credentials to destinations, introduces backup format 8, and fixes single-host migration profiles and versioned monitoring links. Requires an offline migration. |
@@ -316,7 +320,31 @@ Recent published releases:
 | [0.0.12](https://github.com/hubuum/hubuum/releases/tag/v0.0.12) | 2026-09-08 | Adds OpenTelemetry tracing, mounted-file secrets, token hash key rotation, backup verification, optional split database roles, and isolated template and restore execution. Includes breaking deployment and resource-limit changes. |
 | [0.0.11](https://github.com/hubuum/hubuum/releases/tag/v0.0.11) | 2026-08-30 | Adds the experimental memory storage backend and a coordinated public storage adapter SDK, with bounded authorization queries. |
 
-Before upgrading to `0.0.20`:
+Before upgrading from `0.0.20` to `0.0.21`:
+
+- Apply the restore-chunk, computed-read-repair, and schema-profiling migrations
+  with matching `hubuum-admin --migrate` and reconcile database role grants.
+  Schedule a quiet period: task-history scans and lock waits have bounded
+  timeouts, and a timeout requires resolving contention before retrying.
+- Upgrade all API, worker, and restore-executor processes before accepting
+  profiling requests or staging new restores. Upgrade clients that use closed
+  task-kind enums to recognize `schema_profiling`, including subscription filters.
+  Keep at least one task worker enabled to persist computed read repairs.
+- Provision writable temporary disk space at `TMPDIR` (normally `/tmp`) for
+  backup and restore spools; refresh existing installer configuration or mounts.
+  Administrator verification and piped restore input now obey
+  `--restore-max-upload-bytes`. Increase it explicitly for larger artifacts.
+- Backup format 10 is unchanged, and formats 6–10 remain readable. Old restore
+  executors cannot read new chunked stages; complete or expire stages before
+  rolling back their migration. Rolling back profiling removes its tasks and reports.
+- Schema suggestions describe an authorized sample, never update classes
+  automatically, and expire after 24 hours. Review the candidate, stage a schema
+  revision, and analyze whole-class impact before activation.
+- External storage adapters must update all ten SDK crates to `0.6.0` together
+  and apply both the [0.5](docs/storage_adapter_sdk.md#upgrading-from-04-to-05)
+  and [0.6](docs/storage_adapter_sdk.md#upgrading-from-05-to-06) migration guides.
+
+When upgrading from before `0.0.20`, also follow its requirements:
 
 - **Schedule downtime.** Stop all old API, worker, and restore-executor writers,
   take a PostgreSQL snapshot, then apply migrations and database role grants with

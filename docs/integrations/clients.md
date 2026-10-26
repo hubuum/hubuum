@@ -68,7 +68,16 @@ tag. Each companion project declares its server targets independently:
 | CLI | [Compatibility matrix](https://hubuum.github.io/hubuum-cli/compatibility/) |
 | Frontend | [Compatibility matrix](https://hubuum.github.io/hubuum-frontend/compatibility/) |
 
-Server v0.0.20 requires session-aware releases for interactive login. Consult
+Server v0.0.21 adds field discovery and asynchronous schema profiling. Clients
+with closed task-kind enums must recognize `schema_profiling` before profiling
+is enabled. A useful suggestion workflow submits a profile, polls its task,
+reviews the report and sample limits, then stages a candidate for whole-class
+impact analysis before explicit activation. Reports expire after 24 hours.
+See [field discovery](../class_field_discovery.md),
+[schema profiling](../schema_profiling.md), and
+[schema evolution](../schema_evolution.md).
+
+Server v0.0.20 and newer require session-aware releases for interactive login. Consult
 each current compatibility record before upgrading; older published clients may
 still target an earlier server. Select the matching edition for an older installation. Verify the workflows you rely on, especially credential
 approvals, imports, schema changes, and backup formats. The server's

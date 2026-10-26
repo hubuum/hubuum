@@ -11,6 +11,13 @@ object-validation requirement. Schema changes can be staged, analyzed, and
 activated without rewriting existing object JSON. PostgreSQL and the experimental
 process-local memory backend implement the same required storage capability.
 
+To start from existing data, use [field discovery](class_field_discovery.md) to
+inspect available paths and [schema profiling](schema_profiling.md) to generate a
+candidate. Review the report's preset, sample size, truncation, findings, and
+sample replay before staging its `schema` as `json_schema` below. Profiling does
+not activate a revision or provide the whole-class impact proof required by
+`reject_incompatible`.
+
 ## Revisions and object compliance
 
 `SchemaRevision` is a positive number allocated monotonically within one class.
