@@ -17,6 +17,10 @@ tokio::task_local! {
     static EXECUTION: TaskExecutionContext;
 }
 
+pub(crate) fn execution_context() -> Option<TaskExecutionContext> {
+    EXECUTION.try_with(Clone::clone).ok()
+}
+
 pub(crate) fn checkpoint() -> Result<(), ApiError> {
     EXECUTION
         .try_with(TaskExecutionContext::check)

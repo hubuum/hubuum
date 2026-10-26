@@ -807,6 +807,12 @@ impl From<hubuum_storage_core::TaskExplicitTarget> for TaskDiscoveryTarget {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SchemaProfileTaskDetails {
+    pub class_id: Option<hubuum_domain::ClassId>,
+    pub output_url: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct SchemaTaskDetails {
     pub class_id: Option<crate::models::HubuumClassID>,
@@ -883,6 +889,7 @@ pub enum TaskDetails {
     Export(ExportTaskDetails),
     Backup(BackupTaskDetails),
     SchemaValidation(SchemaTaskDetails),
+    SchemaProfiling(SchemaProfileTaskDetails),
     Reindex(RebuildTaskDetails),
     RemoteCall(RemoteCallTaskDetails),
 }
@@ -944,6 +951,8 @@ struct TaskDetailsWire {
     export: Option<ExportTaskDetails>,
     backup: Option<BackupTaskDetails>,
     schema_validation: Option<SchemaTaskDetails>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    schema_profiling: Option<SchemaProfileTaskDetails>,
     reindex: Option<RebuildTaskDetails>,
     remote_call: Option<RemoteCallTaskDetails>,
 }
@@ -970,6 +979,10 @@ impl Serialize for TaskDetails {
                 import: None,
                 export: None,
                 backup: Some(details.clone()),
+                ..Default::default()
+            },
+            Self::SchemaProfiling(details) => TaskDetailsWire {
+                schema_profiling: Some(details.clone()),
                 ..Default::default()
             },
             Self::SchemaValidation(details) => TaskDetailsWire {
@@ -1004,6 +1017,9 @@ impl<'de> Deserialize<'de> for TaskDetails {
         }
         if let Some(v) = wire.backup {
             details.push(Self::Backup(v));
+        }
+        if let Some(v) = wire.schema_profiling {
+            details.push(Self::SchemaProfiling(v));
         }
         if let Some(v) = wire.schema_validation {
             details.push(Self::SchemaValidation(v));
@@ -1948,6 +1964,14 @@ impl TaskRecord {
                         output_state: output_state.unwrap_or(TaskOutputDiscoveryState::Unknown),
                     });
                 }
+            }
+            D::SchemaProfiling { class_id, .. } => {
+                *details = Some(TaskDetails::SchemaProfiling(SchemaProfileTaskDetails {
+                    class_id: *class_id,
+                    output_url: class_id.map(|id| {
+                        format!("/api/v1/classes/{}/schema/profiles/{}", id.id(), self.id)
+                    }),
+                }));
             }
             D::SchemaValidation {
                 class_id,

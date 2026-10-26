@@ -1748,6 +1748,16 @@ impl TaskQueueStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl TaskExecutionStorage for CompleteExternalAdapter {
+    async fn get_schema_profile_output(
+        &self,
+        task_id: hubuum_domain::TaskId,
+    ) -> Result<StorageTaskOutputLookup<StorageSchemaProfileArtifact>, StorageError> {
+        fixture_result()
+    }
+    async fn purge_expired_schema_profile_outputs(&self) -> Result<usize, StorageError> {
+        fixture_result()
+    }
+
     async fn request_task_cancellation(
         &self,
         request: StorageTaskCancellationRequest,

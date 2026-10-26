@@ -32,6 +32,7 @@ nav = [
       { "Collections & inheritance" = "collection_hierarchy.md" },
       { "Permissions" = "permissions.md" },
       { "Class schemas & compliance" = "schema_evolution.md" },
+      { "Schema profiling" = "schema_profiling.md" },
       { "Query usage declarations" = "query_usage.md" },
       { "Computed fields" = "computed_fields.md" },
       { "Computed read repair" = "computed_read_repair.md" },

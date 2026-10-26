@@ -274,6 +274,7 @@ Current dispatch:
 - `backup` -> full-system backup executor
 - `reindex` -> internal computed-field class rebuild executor
 - `remote_call` -> remote HTTP invocation executor
+- `schema_profiling` -> authorized sampling and bounded schema inference executor
 - `schema_validation` -> bounded schema validation executor
 
 This logic is in:
@@ -599,6 +600,7 @@ execution budget.
 | `HUBUUM_TASK_BACKUP_EXECUTION_TIMEOUT_SECONDS` | `3600` |
 | `HUBUUM_TASK_REINDEX_EXECUTION_TIMEOUT_SECONDS` | `7200` |
 | `HUBUUM_TASK_REMOTE_CALL_EXECUTION_TIMEOUT_SECONDS` | `300` |
+| `HUBUUM_TASK_SCHEMA_PROFILING_EXECUTION_TIMEOUT_SECONDS` | `300` |
 | `HUBUUM_TASK_SCHEMA_VALIDATION_EXECUTION_TIMEOUT_SECONDS` | `7200` |
 
 Values must be positive whole seconds, at most thirty days. Zero does not disable

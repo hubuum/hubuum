@@ -514,6 +514,32 @@ impl TaskQueueStorage for MemoryStorage {
 
 #[async_trait]
 impl TaskExecutionStorage for MemoryStorage {
+    async fn get_schema_profile_output(
+        &self,
+        task_id: TaskId,
+    ) -> Result<
+        StorageTaskOutputLookup<hubuum_storage_core::StorageSchemaProfileArtifact>,
+        StorageError,
+    > {
+        let state = self.state.read().await;
+        Ok(match state.schema_profile_outputs.get(&task_id.id()) {
+            Some(output) if output.expires_at() <= Utc::now() => StorageTaskOutputLookup::Expired {
+                expires_at: output.expires_at(),
+            },
+            Some(output) => StorageTaskOutputLookup::Available(output.clone()),
+            None => StorageTaskOutputLookup::Missing,
+        })
+    }
+    async fn purge_expired_schema_profile_outputs(&self) -> Result<usize, StorageError> {
+        let mut state = self.state.write().await;
+        let before = state.schema_profile_outputs.len();
+        let now = Utc::now();
+        state
+            .schema_profile_outputs
+            .retain(|_, output| output.expires_at() > now);
+        Ok(before - state.schema_profile_outputs.len())
+    }
+
     async fn request_task_cancellation(
         &self,
         request: StorageTaskCancellationRequest,
@@ -808,6 +834,21 @@ impl TaskExecutionStorage for MemoryStorage {
                     artifact,
                     now,
                 )?;
+            }
+            StorageTaskCompletionPayload::SchemaProfiling(artifact) => {
+                let task = state
+                    .tasks
+                    .get_mut(&lease.task_id().id())
+                    .expect("validated task");
+                task.metadata
+                    .get_or_insert_with(|| {
+                        StorageTaskMetadata::unknown(StorageTaskKind::SchemaProfiling)
+                    })
+                    .record_schema_profile(artifact.expires_at())
+                    .map_err(invalid_contract_value)?;
+                state
+                    .schema_profile_outputs
+                    .insert(lease.task_id().id(), artifact);
             }
             StorageTaskCompletionPayload::Export(artifact) => {
                 let (identity, content, report, output_expires_at, durations) =
@@ -2106,7 +2147,8 @@ impl MemoryState {
             self.schema_work
                 .get(&task.id.id())
                 .map(|work| (work.kind(), work.status())),
-            self.export_outputs.contains_key(&task.id.id())
+            self.schema_profile_outputs.contains_key(&task.id.id())
+                || self.export_outputs.contains_key(&task.id.id())
                 || self.backup_outputs.contains_key(&task.id.id()),
         ));
         Ok(projection)

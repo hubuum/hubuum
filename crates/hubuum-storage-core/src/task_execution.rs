@@ -1,4 +1,5 @@
-use std::fmt;
+use hubuum_budget::{ByteLimit, LimitedWriter};
+use std::{fmt, io};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -10,7 +11,7 @@ use crate::{
     StorageError, StorageRemoteTargetHttpMethod, StorageRemoteTargetSubjectType, StorageTask,
     StorageTaskCancellationOutcome, StorageTaskCancellationRequest, StorageTaskDurations,
     StorageTaskExecutionAdmission, StorageTaskExecutionObservation, StorageTaskKind,
-    StorageTaskRemoteDispatch, StorageTaskStatus, StorageValidationError,
+    StorageTaskOutputLookup, StorageTaskRemoteDispatch, StorageTaskStatus, StorageValidationError,
 };
 
 /// Validated lease duration shared with a storage adapter.
@@ -863,12 +864,44 @@ impl StorageRemoteCallTaskArtifact {
     }
 }
 
+/// Bounded profiling report, separate from generic task projections and events.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StorageSchemaProfileArtifact {
+    report: Value,
+    expires_at: DateTime<Utc>,
+}
+impl StorageSchemaProfileArtifact {
+    pub fn new(report: Value, expires_at: DateTime<Utc>) -> Result<Self, StorageValidationError> {
+        if !report.is_object()
+            || serde_json::to_writer(
+                &mut LimitedWriter::new(io::sink(), ByteLimit::new(4 * 1024 * 1024)),
+                &report,
+            )
+            .is_err()
+        {
+            return Err(StorageValidationError::invalid(
+                "Schema profile report must be an object of at most 4 MiB",
+            ));
+        }
+        Ok(Self { report, expires_at })
+    }
+    #[must_use]
+    pub fn report(&self) -> &Value {
+        &self.report
+    }
+    #[must_use]
+    pub const fn expires_at(&self) -> DateTime<Utc> {
+        self.expires_at
+    }
+}
+
 /// Completion data whose variant determines the only compatible task kind.
 #[derive(Clone, Debug, PartialEq)]
 pub enum StorageTaskCompletionPayload {
     Import,
     Reindex,
     SchemaValidation,
+    SchemaProfiling(StorageSchemaProfileArtifact),
     Export(StorageExportTaskArtifact),
     Backup(StorageBackupTaskArtifact),
     RemoteCall(StorageRemoteCallTaskArtifact),
@@ -879,6 +912,7 @@ impl StorageTaskCompletionPayload {
     pub const fn task_kind(&self) -> StorageTaskKind {
         match self {
             Self::Import => StorageTaskKind::Import,
+            Self::SchemaProfiling(_) => StorageTaskKind::SchemaProfiling,
             Self::SchemaValidation => StorageTaskKind::SchemaValidation,
             Self::Reindex => StorageTaskKind::Reindex,
             Self::Export(_) => StorageTaskKind::Export,
@@ -1014,6 +1048,13 @@ pub trait TaskExecutionStorage: Send + Sync {
     ) -> Result<StorageTask, StorageError>;
 
     async fn fail_task(&self, failure: StorageTaskFailure) -> Result<StorageTask, StorageError>;
+
+    async fn get_schema_profile_output(
+        &self,
+        task_id: TaskId,
+    ) -> Result<StorageTaskOutputLookup<StorageSchemaProfileArtifact>, StorageError>;
+
+    async fn purge_expired_schema_profile_outputs(&self) -> Result<usize, StorageError>;
 
     async fn purge_expired_export_outputs(&self) -> Result<usize, StorageError>;
 

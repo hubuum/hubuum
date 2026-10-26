@@ -306,11 +306,12 @@ pub use task_execution::{
     StorageExportTaskArtifactContent, StorageExportTaskArtifactIdentity,
     StorageExportTaskArtifactReport, StorageRemoteCallArtifactOutcome,
     StorageRemoteCallArtifactResponse, StorageRemoteCallArtifactTarget,
-    StorageRemoteCallArtifactTargetParts, StorageRemoteCallTaskArtifact, StorageTaskActiveStatus,
-    StorageTaskActiveUpdate, StorageTaskClaim, StorageTaskClaimToken, StorageTaskCompletion,
-    StorageTaskCompletionPayload, StorageTaskEventAppend, StorageTaskEventInput,
-    StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskResultCounts,
-    StorageTaskTerminalStatus, StorageTaskTerminalUpdate, TaskExecutionStorage,
+    StorageRemoteCallArtifactTargetParts, StorageRemoteCallTaskArtifact,
+    StorageSchemaProfileArtifact, StorageTaskActiveStatus, StorageTaskActiveUpdate,
+    StorageTaskClaim, StorageTaskClaimToken, StorageTaskCompletion, StorageTaskCompletionPayload,
+    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskLease,
+    StorageTaskLeaseDuration, StorageTaskResultCounts, StorageTaskTerminalStatus,
+    StorageTaskTerminalUpdate, TaskExecutionStorage,
 };
 pub use task_queue::{
     StorageBackupOutput, StorageBackupOutputSummary, StorageExportOutput,

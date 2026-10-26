@@ -1548,7 +1548,7 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             strings(&["cancel_requested", "deadline_exceeded"])
         }
         (name, "kind") if name.starts_with("hubuum_task_output_cleanup") => {
-            strings(&["export", "backup"])
+            strings(&["export", "backup", "schema_profiling"])
         }
         (name, "kind") if name.starts_with("hubuum_task") || name == "hubuum_tasks" => {
             StorageTaskKind::ALL

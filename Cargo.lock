@@ -1625,6 +1625,16 @@ dependencies = [
 
 [[package]]
 name = "fraction"
+version = "0.15.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e076045bb43dac435333ed5f04caf35c7463631d0dae2deb2638d94dd0a5b872"
+dependencies = [
+ "lazy_static",
+ "num",
+]
+
+[[package]]
+name = "fraction"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e246562084dde8ebbcc943b261c406ce4f68e5032ec28029a251a47d6a295500"
@@ -2091,6 +2101,7 @@ dependencies = [
  "hubuum-templates",
  "ipnet",
  "json-patch",
+ "json-schema-profiler",
  "libc",
  "minijinja",
  "openssl",
@@ -2151,14 +2162,14 @@ dependencies = [
 
 [[package]]
 name = "hubuum-budget"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "rstest",
 ]
 
 [[package]]
 name = "hubuum-computed-fields"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "bigdecimal",
  "rstest",
@@ -2169,13 +2180,13 @@ dependencies = [
 
 [[package]]
 name = "hubuum-domain"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "bigdecimal",
  "chrono",
  "hubuum-schema-diagnostics",
  "json-patch",
- "jsonschema",
+ "jsonschema 0.59.0",
  "lru",
  "rstest",
  "serde",
@@ -2272,7 +2283,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-events-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "hubuum-domain",
@@ -2299,7 +2310,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-query"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64 0.23.1",
  "bigdecimal",
@@ -2314,7 +2325,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-regex"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "regex-syntax",
  "rstest",
@@ -2351,9 +2362,9 @@ dependencies = [
 
 [[package]]
 name = "hubuum-schema-diagnostics"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
- "jsonschema",
+ "jsonschema 0.59.0",
  "rstest",
  "serde",
  "serde_json",
@@ -2372,7 +2383,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-storage-conformance"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "hubuum-domain",
@@ -2382,7 +2393,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-storage-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -2463,7 +2474,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-task-core"
-version = "0.5.0"
+version = "0.6.0"
 
 [[package]]
 name = "hubuum-templates"
@@ -2847,6 +2858,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "json-schema-profiler"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f3ded8f68e4b6352c8bf50266dfa4ee2be3723f8a7b4683e828db0900217592"
+dependencies = [
+ "jsonschema 0.49.9",
+ "ordermap",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "jsonptr"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2854,6 +2877,37 @@ checksum = "a5a3cc660ba5d72bce0b3bb295bf20847ccbb40fd423f3f05b61273672e561fe"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "jsonschema"
+version = "0.49.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59ec8a241beed129f06114aa68007e905ca350e7baeb6e17a7631bb7978d91b2"
+dependencies = [
+ "ahash",
+ "bytecount",
+ "data-encoding",
+ "email_address",
+ "fancy-regex",
+ "fraction 0.15.4",
+ "getrandom 0.3.4",
+ "idna",
+ "itoa",
+ "jsonschema-macros",
+ "jsonschema-regex 0.49.9",
+ "jsonschema-value 0.49.9",
+ "num-bigint",
+ "num-cmp",
+ "num-traits",
+ "percent-encoding",
+ "referencing 0.49.9",
+ "regex",
+ "serde",
+ "serde_json",
+ "strum",
+ "unicode-general-category",
+ "uuid-simd",
 ]
 
 [[package]]
@@ -2867,21 +2921,59 @@ dependencies = [
  "data-encoding",
  "email_address",
  "fancy-regex",
- "fraction",
+ "fraction 0.17.0",
  "getrandom 0.3.4",
  "itoa",
- "jsonschema-regex",
- "jsonschema-value",
+ "jsonschema-regex 0.59.0",
+ "jsonschema-value 0.59.0",
  "num-cmp",
  "num-traits",
  "percent-encoding",
- "referencing",
+ "referencing 0.59.0",
  "regex",
  "serde",
  "serde_json",
  "strum",
  "unicode-general-category",
  "uuid-simd",
+]
+
+[[package]]
+name = "jsonschema-macros"
+version = "0.49.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ba6d64053e49c693c9f3fbdc97d0b50011b381fd2653756c783b483b9ca7bfb"
+dependencies = [
+ "jsonschema-macros-core",
+ "proc-macro2",
+]
+
+[[package]]
+name = "jsonschema-macros-core"
+version = "0.49.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "660a4d9630fc867a0e5260f520f3c0dde13e8e83d3d63df50b3c6593188be4da"
+dependencies = [
+ "fancy-regex",
+ "indexmap",
+ "jsonschema-regex 0.49.9",
+ "percent-encoding",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "referencing 0.49.9",
+ "regex",
+ "serde_json",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "jsonschema-regex"
+version = "0.49.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91994f45017ed5e66aa8e59b8415f4cb033a6380d7200387b7cf117595fbdf85"
+dependencies = [
+ "regex-syntax",
 ]
 
 [[package]]
@@ -2895,13 +2987,28 @@ dependencies = [
 
 [[package]]
 name = "jsonschema-value"
+version = "0.49.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ec7637f83e510868ae6ed625f7ebfbbde4554ee8ce49854caa5126a8b9b9ecb"
+dependencies = [
+ "ahash",
+ "bytecount",
+ "fraction 0.15.4",
+ "num-bigint",
+ "num-cmp",
+ "num-traits",
+ "serde_json",
+]
+
+[[package]]
+name = "jsonschema-value"
 version = "0.59.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5a7550a7a84787e715ead0b47e01fa8c6bb7c3413630f91a8f2094c06c2078a"
 dependencies = [
  "ahash",
  "bytecount",
- "fraction",
+ "fraction 0.17.0",
  "getrandom 0.3.4",
  "num-cmp",
  "num-traits",
@@ -3548,6 +3655,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ordermap"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16a756ddcdeb6c0efc8927bdf0ed112885815a35ba350472a467be5104f01ca1"
+dependencies = [
+ "indexmap",
+ "serde",
+ "serde_core",
+]
+
+[[package]]
 name = "outref"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4175,6 +4293,23 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "referencing"
+version = "0.49.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6efa2154ea6f5ce0fdecdd2a8d18f2fa1a39a8fbba91564f555a592e4dce8278"
+dependencies = [
+ "ahash",
+ "fluent-uri",
+ "getrandom 0.3.4",
+ "hashbrown",
+ "itoa",
+ "micromap",
+ "parking_lot",
+ "percent-encoding",
+ "serde_json",
 ]
 
 [[package]]

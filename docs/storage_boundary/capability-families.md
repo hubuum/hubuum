@@ -404,6 +404,8 @@ only terminal updates (`succeeded`, `failed`, `partially_succeeded`, or
 | --- | --- |
 | `import` | None |
 | `reindex` | None |
+| `schema_validation` | None |
+| `schema_profiling` | Schema profile artifact |
 | `export` | Export artifact |
 | `backup` | Backup artifact |
 | `remote_call` | Remote-call artifact |
@@ -412,6 +414,13 @@ The completion DTO validates the matrix before adapter dispatch. The adapter
 must additionally verify that the DTO's declared task kind matches the claimed
 persisted task; it must reject a mismatch as `InvalidInput` without consuming
 the claim.
+
+`get_schema_profile_output` returns a bounded JSON report or distinguishes
+missing output from expired output. `purge_expired_schema_profile_outputs`
+removes only expired artifacts and preserves retained task output metadata.
+Publish profiling artifacts with successful fenced completion only; cancellation,
+deadline expiry, and lease loss must not publish them. Profiling artifacts are
+transient and excluded from backup documents and cleared during restore.
 
 ### `backup_snapshots`
 

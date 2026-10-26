@@ -98,12 +98,13 @@ pub fn record_principal_on_current_span(principal_id: i32) {
     crate::middlewares::tracing::record_principal_on_current_span(principal_id);
 }
 
-pub fn executable_task_kind_values() -> [&'static str; 4] {
+pub fn executable_task_kind_values() -> [&'static str; 5] {
     [
         TaskKind::Import.as_str(),
         TaskKind::Export.as_str(),
         TaskKind::Backup.as_str(),
         TaskKind::RemoteCall.as_str(),
+        TaskKind::SchemaProfiling.as_str(),
     ]
 }
 
@@ -452,6 +453,9 @@ pub fn persisted_test_task_request(
         crate::models::TaskKind::Backup => hubuum_storage_core::StorageTaskKind::Backup,
         crate::models::TaskKind::Reindex => hubuum_storage_core::StorageTaskKind::Reindex,
         crate::models::TaskKind::RemoteCall => hubuum_storage_core::StorageTaskKind::RemoteCall,
+        crate::models::TaskKind::SchemaProfiling => {
+            hubuum_storage_core::StorageTaskKind::SchemaProfiling
+        }
         crate::models::TaskKind::SchemaValidation => {
             hubuum_storage_core::StorageTaskKind::SchemaValidation
         }

@@ -1,6 +1,6 @@
 # `hubuum-budget` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.5` release train.
+Status: experimental public API in the storage SDK `0.6` release train.
 
 ## Purpose and Compatibility
 

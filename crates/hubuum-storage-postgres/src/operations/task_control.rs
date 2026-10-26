@@ -291,6 +291,14 @@ pub(super) async fn finish_stopped_on(
                 )
                 .await?
             }
+            StorageTaskKind::SchemaProfiling => {
+                diesel::delete(
+                    crate::schema::schema_profile_outputs::table
+                        .filter(crate::schema::schema_profile_outputs::task_id.eq(row.id)),
+                )
+                .execute(connection)
+                .await?;
+            }
             StorageTaskKind::Export => {
                 diesel::delete(
                     crate::schema::export_task_outputs::table

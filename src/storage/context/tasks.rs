@@ -1,7 +1,8 @@
 use super::*;
 use hubuum_storage_core::{
-    StorageBackupReplay, StorageTaskCancellationOutcome, StorageTaskCancellationRequest,
-    StorageTaskExecutionAdmission, StorageTaskExecutionObservation, StorageTaskRemoteDispatch,
+    StorageBackupReplay, StorageSchemaProfileArtifact, StorageTaskCancellationOutcome,
+    StorageTaskCancellationRequest, StorageTaskExecutionAdmission, StorageTaskExecutionObservation,
+    StorageTaskRemoteDispatch,
 };
 
 #[async_trait]
@@ -173,6 +174,36 @@ impl TaskQueueStorage for StorageHandle {
 
 #[async_trait]
 impl TaskExecutionStorage for StorageHandle {
+    async fn get_schema_profile_output(
+        &self,
+        task_id: TaskId,
+    ) -> Result<StorageTaskOutputLookup<StorageSchemaProfileArtifact>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::TaskExecution,
+            "get_schema_profile_output",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .get_schema_profile_output(task_id)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn purge_expired_schema_profile_outputs(&self) -> Result<usize, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::TaskExecution,
+            "purge_expired_schema_profile_outputs",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .purge_expired_schema_profile_outputs()
+                    .await)
+            },
+        )
+        .await
+    }
+
     async fn request_task_cancellation(
         &self,
         request: StorageTaskCancellationRequest,

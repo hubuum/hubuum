@@ -532,6 +532,14 @@ pub struct AppConfig {
     )]
     pub task_remote_call_execution_timeout_seconds: u64,
 
+    /// Maximum schema profiling execution time, starting at first claim.
+    #[clap(
+        long,
+        env = "HUBUUM_TASK_SCHEMA_PROFILING_EXECUTION_TIMEOUT_SECONDS",
+        default_value_t = 300
+    )]
+    pub task_schema_profiling_execution_timeout_seconds: u64,
+
     /// Maximum schema validation execution time, starting at first claim.
     #[clap(
         long,
@@ -1371,6 +1379,11 @@ impl AppConfig {
             )
             .map_err(ApiError::BadRequest)?
             .with_seconds(
+                crate::models::TaskKind::SchemaProfiling,
+                self.task_schema_profiling_execution_timeout_seconds,
+            )
+            .map_err(ApiError::BadRequest)?
+            .with_seconds(
                 crate::models::TaskKind::SchemaValidation,
                 self.task_schema_validation_execution_timeout_seconds,
             )
@@ -2107,6 +2120,10 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         )?,
         task_remote_call_execution_timeout_seconds: execution_seconds(
             "HUBUUM_TASK_REMOTE_CALL_EXECUTION_TIMEOUT_SECONDS",
+            300,
+        )?,
+        task_schema_profiling_execution_timeout_seconds: execution_seconds(
+            "HUBUUM_TASK_SCHEMA_PROFILING_EXECUTION_TIMEOUT_SECONDS",
             300,
         )?,
         task_schema_validation_execution_timeout_seconds: execution_seconds(

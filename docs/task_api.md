@@ -38,9 +38,11 @@ Current task kinds:
 - `reindex`
 - `remote_call`
 - `schema_validation`
+- `schema_profiling`
 
 Public task-producing endpoints today:
 
+- `POST /api/v1/classes/{class_id}/schema/profiles` ([profiling options and reports](schema_profiling.md))
 - `POST /api/v1/imports`
 - `POST /api/v1/exports`
 - `POST /api/v1/backups`
@@ -116,6 +118,7 @@ is excluded from metric labels and lifecycle log messages.
 | Backup | Capture stops at checkpoints and discards incomplete output. Cancellation is separate from backup verification failure. |
 | Reindex | Committed object batches remain, class materialization stays incomplete, and a later class rebuild can restore freshness. |
 | Remote call | Before dispatch, no request is sent. After dispatch, external effects may have occurred; cancellation cannot undo them and never automatically retries. |
+| Schema profiling | Sampling and inference stop at checkpoints. Cancellation publishes no partial report. |
 | Schema validation | Completed batches remain. Further commits are fenced, and cancelled work is never requeued by lease recovery. The existing schema DELETE endpoint retains its atomic batch-fencing behavior. |
 
 For remote calls, `remote_side_effect_state` is `not_sent`, `possibly_sent`, or

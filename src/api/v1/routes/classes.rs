@@ -1,8 +1,12 @@
 use actix_web::web;
 
-use crate::api::v1::handlers::{classes, computed_fields, events, query_usage, schema_evolution};
+use crate::api::v1::handlers::{
+    classes, computed_fields, events, query_usage, schema_evolution, schema_profiling,
+};
 pub fn config(cfg: &mut web::ServiceConfig) {
-    cfg.service(query_usage::analyze_query_usage)
+    cfg.service(schema_profiling::create_schema_profile)
+        .service(schema_profiling::get_schema_profile)
+        .service(query_usage::analyze_query_usage)
         .service(query_usage::list_query_usage)
         .service(query_usage::create_query_usage)
         .service(query_usage::replace_query_usage)

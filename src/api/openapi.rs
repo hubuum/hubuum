@@ -22,7 +22,7 @@ use crate::models::auth_session::{
 use crate::models::task::TaskDiscoveryTarget;
 use crate::models::task::{
     RebuildTaskDetails, RemoteCallTaskDetails, RetainedBackupDetails, RetainedExportDetails,
-    RetainedImportDetails, SchemaTaskDetails, TaskOutputDiscoveryState,
+    RetainedImportDetails, SchemaProfileTaskDetails, SchemaTaskDetails, TaskOutputDiscoveryState,
 };
 use crate::models::{
     BackupDocument, BackupHistory, BackupManifest, BackupRequest, BackupState, BackupTaskDetails,
@@ -299,6 +299,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
         classes::get_class,
         classes::get_class_by_name,
         classes::field_discovery::get_class_fields_by_name,
+        crate::api::v1::handlers::schema_profiling::create_schema_profile,
+        crate::api::v1::handlers::schema_profiling::get_schema_profile,
         classes::get_class_history,
         classes::get_class_as_of,
         classes::get_class_history_timeline,
@@ -493,6 +495,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             TaskProgress,
             TaskLinks,
             TaskDiscoveryTarget,
+            SchemaProfileTaskDetails,
             SchemaTaskDetails,
             RebuildTaskDetails,
             RemoteCallTaskDetails,
@@ -1514,6 +1517,29 @@ mod tests {
     }
 
     #[test]
+    fn openapi_local_references_resolve() {
+        let document = openapi_json();
+        let mut pending = vec![&document];
+        while let Some(value) = pending.pop() {
+            match value {
+                Value::Object(fields) => {
+                    if let Some(reference) = fields.get("$ref").and_then(Value::as_str)
+                        && let Some(pointer) = reference.strip_prefix('#')
+                    {
+                        assert!(
+                            document.pointer(pointer).is_some(),
+                            "Unresolved OpenAPI reference: {reference}"
+                        );
+                    }
+                    pending.extend(fields.values());
+                }
+                Value::Array(items) => pending.extend(items),
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
     fn openapi_excludes_persisted_token_storage_schema() {
         let json = openapi_json();
         let schemas = json
@@ -1757,6 +1783,8 @@ mod tests {
             "/api/v1/classes/{class_id}/schema",
             "/api/v1/classes/{class_id}/schema/objects",
             "/api/v1/classes/{class_id}/schema/revisions",
+            "/api/v1/classes/{class_id}/schema/profiles",
+            "/api/v1/classes/{class_id}/schema/profiles/{task_id}",
             "/api/v1/classes/{class_id}/schema/revisions/{revision}",
             "/api/v1/classes/{class_id}/schema/revisions/{revision}/activate",
             "/api/v1/classes/{class_id}/schema/revisions/{revision}/impact",

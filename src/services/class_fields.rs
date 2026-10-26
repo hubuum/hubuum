@@ -5,18 +5,18 @@ use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::class_fields::{
     ClassFieldInventory, FieldDiscoveryOptions, FieldDiscoveryTruncation, FieldInventoryBuilder,
-    MAX_FIELD_CANDIDATES,
+    MAX_FIELD_CANDIDATES, SampleLimit,
 };
 use crate::models::search::{FilterField, QueryOptions, QueryParamsExt, SearchOperator, SortParam};
-use crate::models::{HubuumClass, HubuumObject, Permissions};
+use crate::models::{HubuumClass, HubuumObject, Permissions, TokenScope};
 use crate::permissions::visibility::authorize_all_candidates;
 use crate::permissions::{AppContext, PrincipalRef};
 use crate::services::{catalog, computed_fields, computed_objects};
 use crate::traits::{AuthzSubject, scope_allows};
 
 /// Only this module's authorization-aware sampler constructs this evidence.
-/// Future profiling must consume the raw authorized sample, not display previews.
-struct AuthorizedObjectSample {
+/// Profiling consumes this raw evidence, never display previews.
+pub(crate) struct AuthorizedObjectSample {
     objects: Vec<HubuumObject>,
     truncation: Option<FieldDiscoveryTruncation>,
 }
@@ -49,15 +49,20 @@ fn sample_query(
 }
 
 impl AuthorizedObjectSample {
-    async fn load(
+    pub(crate) fn into_parts(self) -> (Vec<HubuumObject>, Option<FieldDiscoveryTruncation>) {
+        (self.objects, self.truncation)
+    }
+
+    pub(crate) async fn load<S: AuthzSubject>(
         context: &AppContext,
-        requestor: &Authenticated,
+        principal: &S,
+        scopes: Option<&TokenScope>,
         class: ClassId,
-        limit: usize,
+        limit: SampleLimit,
     ) -> Result<Self, ApiError> {
-        let principal = &requestor.principal;
+        let limit = limit.get();
         let permissions = [Permissions::ReadCollection, Permissions::ReadObject];
-        if !scope_allows(requestor.scopes(), &permissions) {
+        if !scope_allows(scopes, &permissions) {
             return Ok(Self {
                 objects: Vec::new(),
                 truncation: None,
@@ -71,9 +76,9 @@ impl AuthorizedObjectSample {
         {
             objects = catalog::list_objects(
                 context,
-                principal.id().id(),
+                principal.principal_id(),
                 principal.is_admin(context).await?,
-                requestor.scopes(),
+                scopes,
                 sample_query(class, None, limit + 1)?,
             )
             .await?
@@ -84,12 +89,13 @@ impl AuthorizedObjectSample {
             let mut inspected = 0;
             let mut after = None;
             loop {
+                crate::tasks::control::checkpoint()?;
                 let batch_limit = (limit + 1 - objects.len())
                     .clamp(32, 128)
                     .min(MAX_FIELD_CANDIDATES - inspected);
                 let candidates = catalog::list_objects(
                     context,
-                    principal.id().id(),
+                    principal.principal_id(),
                     true,
                     None,
                     sample_query(class, after, batch_limit)?,
@@ -104,7 +110,7 @@ impl AuthorizedObjectSample {
                         context.permission_backend(),
                         &principal_ref,
                         candidates,
-                        requestor.scopes(),
+                        scopes,
                         permissions.to_vec(),
                         HubuumObject::authorization_resource,
                     )
@@ -170,8 +176,14 @@ pub(crate) async fn discover(
             }
         }
     }
-    let sample =
-        AuthorizedObjectSample::load(context, requestor, class_id, options.limit()).await?;
+    let sample = AuthorizedObjectSample::load(
+        context,
+        &requestor.principal,
+        requestor.scopes(),
+        class_id,
+        options.limit(),
+    )
+    .await?;
     if let Some(reason) = sample.truncation {
         inventory.truncate(reason);
     }

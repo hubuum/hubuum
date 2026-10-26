@@ -138,6 +138,7 @@ pub struct TaskConfig {
     pub backup_execution_timeout_seconds: u64,
     pub reindex_execution_timeout_seconds: u64,
     pub remote_call_execution_timeout_seconds: u64,
+    pub schema_profiling_execution_timeout_seconds: u64,
     pub schema_validation_execution_timeout_seconds: u64,
 
     pub heartbeat_seconds: u64,
@@ -407,6 +408,8 @@ impl RunningConfig {
                 reindex_execution_timeout_seconds: config.task_reindex_execution_timeout_seconds,
                 remote_call_execution_timeout_seconds: config
                     .task_remote_call_execution_timeout_seconds,
+                schema_profiling_execution_timeout_seconds: config
+                    .task_schema_profiling_execution_timeout_seconds,
                 schema_validation_execution_timeout_seconds: config
                     .task_schema_validation_execution_timeout_seconds,
 

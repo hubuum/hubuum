@@ -2,8 +2,9 @@ use crate::operations::task_control as postgres_task_control;
 use crate::operations::task_execution as postgres_task_execution;
 use async_trait::async_trait;
 use hubuum_storage_core::{
-    StorageTaskCancellationOutcome, StorageTaskCancellationRequest, StorageTaskExecutionAdmission,
-    StorageTaskExecutionObservation, StorageTaskRemoteDispatch,
+    StorageSchemaProfileArtifact, StorageTaskCancellationOutcome, StorageTaskCancellationRequest,
+    StorageTaskExecutionAdmission, StorageTaskExecutionObservation, StorageTaskOutputLookup,
+    StorageTaskRemoteDispatch,
 };
 
 use hubuum_storage_core::{
@@ -16,6 +17,20 @@ use super::PostgresStorage;
 
 #[async_trait]
 impl TaskExecutionStorage for PostgresStorage {
+    async fn get_schema_profile_output(
+        &self,
+        task_id: hubuum_domain::TaskId,
+    ) -> Result<StorageTaskOutputLookup<StorageSchemaProfileArtifact>, StorageError> {
+        postgres_task_execution::get_schema_profile_output(self.runtime(), task_id)
+            .await
+            .map_err(StorageError::from)
+    }
+    async fn purge_expired_schema_profile_outputs(&self) -> Result<usize, StorageError> {
+        postgres_task_execution::purge_expired_schema_profile_outputs(self.runtime())
+            .await
+            .map_err(StorageError::from)
+    }
+
     async fn request_task_cancellation(
         &self,
         request: StorageTaskCancellationRequest,

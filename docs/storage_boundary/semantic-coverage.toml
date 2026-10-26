@@ -43,6 +43,7 @@ workflow_state_machine = [
     "TaskExecutionStorage::update_task_state",
     "TaskExecutionStorage::complete_task",
     "TaskExecutionStorage::fail_task",
+    "TaskExecutionStorage::purge_expired_schema_profile_outputs",
     "TaskExecutionStorage::purge_expired_export_outputs",
     "TaskExecutionStorage::purge_expired_backup_outputs",
 ]
@@ -315,9 +316,9 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.TaskExecutionStorage]
 source = "crates/hubuum-storage-core/src/task_execution.rs"
-methods = ["poll_task_execution", "request_task_cancellation", "admit_task_execution", "acknowledge_task_stop", "begin_remote_dispatch", "claim_next_task", "renew_task_lease", "recover_expired_task_leases", "append_task_event", "update_task_state", "complete_task", "fail_task", "purge_expired_export_outputs", "purge_expired_backup_outputs"]
-effects = { point_read = ["poll_task_execution"], workflow_mutation = ["request_task_cancellation", "admit_task_execution", "acknowledge_task_stop", "begin_remote_dispatch", "claim_next_task", "renew_task_lease", "recover_expired_task_leases", "append_task_event", "update_task_state", "complete_task", "fail_task", "purge_expired_export_outputs", "purge_expired_backup_outputs"] }
-shared_scenarios = ["src/tests/storage_contract/task_control.rs::active_stop_is_durable_and_retains_lease_until_acknowledgement", "src/tests/storage_contract/task_control.rs::execution_deadline_is_pinned_independently_of_renewed_leases", "src/tests/storage_contract/task_control.rs::remote_stop_preserves_dispatch_knowledge_and_forbids_replay", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine", "src/tests/storage_contract/schema_evolution.rs::failed_schema_workers_publish_terminal_checkpoints"]
+methods = ["get_schema_profile_output", "purge_expired_schema_profile_outputs", "poll_task_execution", "request_task_cancellation", "admit_task_execution", "acknowledge_task_stop", "begin_remote_dispatch", "claim_next_task", "renew_task_lease", "recover_expired_task_leases", "append_task_event", "update_task_state", "complete_task", "fail_task", "purge_expired_export_outputs", "purge_expired_backup_outputs"]
+effects = { point_read = ["poll_task_execution", "get_schema_profile_output"], workflow_mutation = ["purge_expired_schema_profile_outputs", "request_task_cancellation", "admit_task_execution", "acknowledge_task_stop", "begin_remote_dispatch", "claim_next_task", "renew_task_lease", "recover_expired_task_leases", "append_task_event", "update_task_state", "complete_task", "fail_task", "purge_expired_export_outputs", "purge_expired_backup_outputs"] }
+shared_scenarios = ["src/tests/storage_contract/task_control.rs::profiling_output_is_published_only_with_successful_fenced_completion", "src/tests/storage_contract/task_control.rs::profiling_output_expires_and_retains_discovery_evidence_after_cleanup", "src/tests/storage_contract/task_control.rs::active_stop_is_durable_and_retains_lease_until_acknowledgement", "src/tests/storage_contract/task_control.rs::execution_deadline_is_pinned_independently_of_renewed_leases", "src/tests/storage_contract/task_control.rs::remote_stop_preserves_dispatch_knowledge_and_forbids_replay", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine", "src/tests/storage_contract/schema_evolution.rs::failed_schema_workers_publish_terminal_checkpoints"]
 native_scenarios = ["src/tests/storage_contract.rs::postgres_rolls_back_task_finalization_at_an_injected_failure", "src/tests/storage_contract.rs::postgres_task_page_count_and_rows_share_one_snapshot", "src/tests/storage_contract.rs::postgres_lease_renewal_loss_expires_and_finalizes_without_replay"]
 
 [traits.BackupSnapshotStorage]
@@ -367,7 +368,7 @@ scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_sup
 
 [enums.StorageTaskCompletionPayload]
 source = "crates/hubuum-storage-core/src/task_execution.rs"
-variants = ["Import", "Reindex", "Export", "Backup", "RemoteCall", "SchemaValidation"]
+variants = ["Import", "Reindex", "Export", "Backup", "RemoteCall", "SchemaValidation", "SchemaProfiling"]
 scenarios = ["crates/hubuum-storage-core/src/task_execution.rs::task_completion_payload_determines_task_kind", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine"]
 
 [enums.StorageTaskActiveStatus]
@@ -432,7 +433,7 @@ scenarios = ["crates/hubuum-storage-core/src/worker_notifications.rs::notificati
 
 [enums.TaskKind]
 source = "crates/hubuum-domain/src/task_kind.rs"
-variants = ["Import", "Export", "Backup", "Reindex", "RemoteCall", "SchemaValidation"]
+variants = ["Import", "Export", "Backup", "Reindex", "RemoteCall", "SchemaValidation", "SchemaProfiling"]
 scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine"]
 
 [enums.StorageTaskStatus]

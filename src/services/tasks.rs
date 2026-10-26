@@ -759,6 +759,7 @@ fn task_kind_to_storage(kind: TaskKind) -> StorageTaskKind {
         TaskKind::Reindex => StorageTaskKind::Reindex,
         TaskKind::RemoteCall => StorageTaskKind::RemoteCall,
         TaskKind::SchemaValidation => StorageTaskKind::SchemaValidation,
+        TaskKind::SchemaProfiling => StorageTaskKind::SchemaProfiling,
     }
 }
 

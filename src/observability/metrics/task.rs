@@ -12,6 +12,7 @@ use super::{Metrics, current};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskOutputKind {
+    SchemaProfiling,
     Export,
     Backup,
 }
@@ -19,6 +20,7 @@ pub enum TaskOutputKind {
 impl TaskOutputKind {
     const fn as_str(self) -> &'static str {
         match self {
+            Self::SchemaProfiling => "schema_profiling",
             Self::Export => "export",
             Self::Backup => "backup",
         }
@@ -367,8 +369,13 @@ mod tests {
     #[test]
     fn task_output_kinds_have_stable_bounded_labels() {
         assert_eq!(
-            [TaskOutputKind::Export, TaskOutputKind::Backup].map(TaskOutputKind::as_str),
-            ["export", "backup"]
+            [
+                TaskOutputKind::Export,
+                TaskOutputKind::Backup,
+                TaskOutputKind::SchemaProfiling
+            ]
+            .map(TaskOutputKind::as_str),
+            ["export", "backup", "schema_profiling"]
         );
     }
 

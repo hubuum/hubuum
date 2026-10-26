@@ -27,6 +27,7 @@ pub(super) async fn enrich(
     let rows = sql_query(
         "SELECT t.id, w.kind AS work_kind, w.checkpoint->>'status' AS work_status,
         (EXISTS (SELECT 1 FROM export_task_outputs e WHERE e.task_id = t.id)
+         OR EXISTS (SELECT 1 FROM schema_profile_outputs p WHERE p.task_id = t.id)
          OR EXISTS (SELECT 1 FROM backup_task_outputs b WHERE b.task_id = t.id)) AS output_present
         FROM tasks t LEFT JOIN schema_validation_work w ON w.task_id = t.id WHERE t.id = ANY($1)",
     )

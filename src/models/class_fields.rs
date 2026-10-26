@@ -15,10 +15,14 @@ const MAX_PATH_BYTES: usize = 512;
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Copy, Debug)]
-struct SampleLimit(usize);
+pub(crate) struct SampleLimit(usize);
 
 impl SampleLimit {
-    fn new(value: usize) -> Result<Self, ApiError> {
+    pub(crate) const fn get(self) -> usize {
+        self.0
+    }
+
+    pub(crate) fn new(value: usize) -> Result<Self, ApiError> {
         if !(1..=250).contains(&value) {
             return Err(ApiError::BadRequest(
                 "limit must be between 1 and 250".into(),
@@ -78,8 +82,8 @@ impl FieldDiscoveryOptions {
         })
     }
 
-    pub(crate) const fn limit(self) -> usize {
-        self.limit.0
+    pub(crate) const fn limit(self) -> SampleLimit {
+        self.limit
     }
 }
 

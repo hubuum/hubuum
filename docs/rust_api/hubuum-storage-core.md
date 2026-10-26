@@ -1,6 +1,6 @@
 # `hubuum-storage-core` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.5` release train.
+Status: experimental public API in the storage SDK `0.6` release train.
 
 ## Purpose and Callers
 
@@ -233,3 +233,11 @@ reason from a missing row or from the oldest retained timestamp.
 Adding these two required methods is a breaking pre-1.0 SDK change. Adapter
 implementations must add both methods and run the shared history-navigation
 conformance coverage. Existing full-row history and as-of methods are unchanged.
+
+## Schema profiling task outputs
+
+The 0.6 SDK adds `StorageSchemaProfileArtifact` and the matching task completion
+variant. Every adapter implements `get_schema_profile_output` and
+`purge_expired_schema_profile_outputs`, fences publication with terminal task
+completion, and retains expiry metadata after removal. See the
+[0.6 upgrade guide](../storage_adapter_sdk.md#upgrading-from-05-to-06).
