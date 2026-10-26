@@ -1,0 +1,26 @@
+{
+  "name": "Atlas documentation corpus",
+  "revision": 1,
+  "source_version": "0.0.16",
+  "backup_version": 6,
+  "files": {
+    "atlas.import.json": {
+      "sha256": "77aad4ba9e2f8cf66f7600f51457c049dc96ef1ccab883aecfe848bc1905dcdf",
+      "bytes": 12815
+    },
+    "atlas.backup.json": {
+      "sha256": "a927cb368594056f2438c0a7738bf3c040af55d797c15242169a0b9207d49a99",
+      "bytes": 102213
+    }
+  },
+  "counts": {
+    "groups": 2,
+    "collections": 2,
+    "classes": 4,
+    "objects": 10,
+    "computed_fields": 1,
+    "class_relations": 4,
+    "object_relations": 10,
+    "collection_permissions": 2
+  }
+}
