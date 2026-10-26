@@ -21,6 +21,39 @@ fn endpoint(fixture: &crate::tests::ObjectFixture) -> String {
 
 #[rstest::rstest]
 #[tokio::test]
+async fn id_and_name_routes_return_the_same_bounded_inventory(
+    #[future(awt)] test_context: TestContext,
+) {
+    let fixture = field_fixture(&test_context, 3).await;
+    let by_name = get_request(
+        &test_context.pool,
+        &test_context.admin_token,
+        &format!("{}?limit=1&depth=2&containers=true", endpoint(&fixture)),
+    )
+    .await;
+    let by_name: serde_json::Value =
+        test::read_body_json(assert_response_status(by_name, StatusCode::OK).await).await;
+    let by_id = get_request(
+        &test_context.pool,
+        &test_context.admin_token,
+        &format!(
+            "/api/v1/classes/{}/fields?limit=1&depth=2&containers=true",
+            fixture.class.id,
+        ),
+    )
+    .await;
+    let by_id = assert_response_status(by_id, StatusCode::OK).await;
+    assert_eq!(
+        header_value(&by_id, "Cache-Control").as_deref(),
+        Some("private, no-store")
+    );
+    let by_id: serde_json::Value = test::read_body_json(by_id).await;
+    assert_eq!(by_id, by_name);
+    fixture.cleanup().await.unwrap();
+}
+
+#[rstest::rstest]
+#[tokio::test]
 async fn fields_sample_is_deterministic_and_does_not_count_whole_class(
     #[future(awt)] test_context: TestContext,
 ) {
@@ -135,10 +168,16 @@ async fn empty_class_keeps_all_enabled_shared_and_owner_personal_selectors(
 async fn permission_scope_hides_object_observations(
     #[future(awt)] test_context: TestContext,
     #[case] permissions: Vec<Permissions>,
+    #[values(false, true)] by_id: bool,
 ) {
     let fixture = field_fixture(&test_context, 1).await;
     let token = scoped_token(&test_context.pool, test_context.admin_user.id, &permissions).await;
-    let response = get_request(&test_context.pool, &token, &endpoint(&fixture)).await;
+    let url = if by_id {
+        format!("/api/v1/classes/{}/fields", fixture.class.id)
+    } else {
+        endpoint(&fixture)
+    };
+    let response = get_request(&test_context.pool, &token, &url).await;
     let result: serde_json::Value =
         test::read_body_json(assert_response_status(response, StatusCode::OK).await).await;
     assert_eq!(result["sampled_objects"], 0);
@@ -148,7 +187,10 @@ async fn permission_scope_hides_object_observations(
 
 #[rstest::rstest]
 #[tokio::test]
-async fn class_resource_scope_rejects_another_class(#[future(awt)] test_context: TestContext) {
+async fn class_resource_scope_rejects_another_class(
+    #[future(awt)] test_context: TestContext,
+    #[values(false, true)] by_id: bool,
+) {
     let fixture = field_fixture(&test_context, 1).await;
     let token = resource_scoped_token(
         &test_context.pool,
@@ -158,7 +200,12 @@ async fn class_resource_scope_rejects_another_class(#[future(awt)] test_context:
         )],
     )
     .await;
-    let response = get_request(&test_context.pool, &token, &endpoint(&fixture)).await;
+    let url = if by_id {
+        format!("/api/v1/classes/{}/fields", fixture.class.id)
+    } else {
+        endpoint(&fixture)
+    };
+    let response = get_request(&test_context.pool, &token, &url).await;
     assert_response_status(response, StatusCode::FORBIDDEN).await;
     fixture.cleanup().await.unwrap();
 }

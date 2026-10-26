@@ -853,7 +853,7 @@ mod history_navigation;
 pub use history_navigation::*;
 pub(crate) mod field_discovery;
 pub(crate) mod object_aggregates;
-pub(crate) use field_discovery::get_class_fields_by_name;
+pub(crate) use field_discovery::{get_class_fields, get_class_fields_by_name};
 mod object_related;
 
 pub use class_objects::*;

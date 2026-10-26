@@ -3,8 +3,13 @@
 `GET /api/v1/classes/by-name/{class_name}/fields` summarizes fields in an
 authorized sample in one request. URL-encode the exact class name; numeric-looking
 names are treated as names. This replaces client-side discovery's class lookup,
-object list, shared-definition list, and personal-definition list. SDK and CLI
-adoption are separate changes.
+object list, shared-definition list, and personal-definition list.
+
+Use `GET /api/v1/classes/{class_id}/fields` when the class ID is already known.
+Both routes share authorization, query options, and the response contract. The
+ID route also supports valid names such as `.` and `..`, which URL parsers
+normalize as path segments; resolve those names through an exact class search
+before using the ID route.
 
 ```http
 GET /api/v1/classes/by-name/Hosts/fields?limit=100&depth=6&containers=false

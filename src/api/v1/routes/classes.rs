@@ -24,6 +24,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(schema_evolution::generate_schema_repair_report)
         .service(schema_evolution::get_schema_repair_report)
         .service(schema_evolution::cancel_schema_work)
+        .service(classes::get_class_fields)
         .service(classes::get_class_fields_by_name)
         .service(classes::get_class_by_name)
         .service(classes::update_class_by_name)

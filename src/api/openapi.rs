@@ -298,6 +298,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         classes::create_class,
         classes::get_class,
         classes::get_class_by_name,
+        classes::field_discovery::get_class_fields,
         classes::field_discovery::get_class_fields_by_name,
         crate::api::v1::handlers::schema_profiling::create_schema_profile,
         crate::api::v1::handlers::schema_profiling::get_schema_profile,
