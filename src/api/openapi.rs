@@ -1765,6 +1765,7 @@ mod tests {
             "/api/v1/relations/objects/{relation_id}",
             "/api/v1/classes",
             "/api/v1/classes/{class_id}",
+            "/api/v1/classes/{class_id}/fields",
             "/api/v1/classes/{class_id}/query-usage",
             "/api/v1/classes/{class_id}/query-usage/{declaration_id}",
             "/api/v1/classes/{class_id}/query-usage/analysis",
