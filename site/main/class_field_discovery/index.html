@@ -4750,8 +4750,12 @@
 <p><code>GET /api/v1/classes/by-name/{class_name}/fields</code> summarizes fields in an
 authorized sample in one request. URL-encode the exact class name; numeric-looking
 names are treated as names. This replaces client-side discovery's class lookup,
-object list, shared-definition list, and personal-definition list. SDK and CLI
-adoption are separate changes.</p>
+object list, shared-definition list, and personal-definition list.</p>
+<p>Use <code>GET /api/v1/classes/{class_id}/fields</code> when the class ID is already known.
+Both routes share authorization, query options, and the response contract. The
+ID route also supports valid names such as <code>.</code> and <code>..</code>, which URL parsers
+normalize as path segments; resolve those names through an exact class search
+before using the ID route.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="err">GET /api/v1/classes/by-name/Hosts/fields?limit=100&amp;depth=6&amp;containers=false</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="err">Authorization: Bearer &lt;token&gt;</span>
 </code></pre></div>

@@ -4922,6 +4922,12 @@ ID-addressed revision endpoints below.</p>
 object-validation requirement. Schema changes can be staged, analyzed, and
 activated without rewriting existing object JSON. PostgreSQL and the experimental
 process-local memory backend implement the same required storage capability.</p>
+<p>To start from existing data, use <a href="../class_field_discovery/">field discovery</a> to
+inspect available paths and <a href="../schema_profiling/">schema profiling</a> to generate a
+candidate. Review the report's preset, sample size, truncation, findings, and
+sample replay before staging its <code>schema</code> as <code>json_schema</code> below. Profiling does
+not activate a revision or provide the whole-class impact proof required by
+<code>reject_incompatible</code>.</p>
 <h2 id="revisions-and-object-compliance">Revisions and object compliance<a class="headerlink" href="#revisions-and-object-compliance" title="Permanent link">&para;</a></h2>
 <p><code>SchemaRevision</code> is a positive number allocated monotonically within one class.
 <code>SchemaReference</code> binds that number to a <code>ClassId</code>. Neither is the class or
