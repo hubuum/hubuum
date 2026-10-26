@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use crate::models::{
     GroupID, NewHubuumClass, NewHubuumObject, Permissions, TaskKind, TaskResponse, TaskStatus,
+    schema_evolution::{SchemaActivationResponse, SchemaRevisionResponse, SchemaWorkResponse},
 };
 use crate::tests::api_operations::{get_request, post_request};
 use crate::tests::asserts::{assert_response_status, header_value};
@@ -120,6 +121,79 @@ async fn schema_profile_returns_a_sampled_replayed_candidate(
         "integer"
     );
     assert!(report["schema"]["properties"]["visible_1"].is_null());
+    fixture.cleanup().await.unwrap();
+}
+
+#[rstest]
+#[case::strict_full_sample("strict", 3, StatusCode::OK)]
+#[case::balanced_full_sample("balanced", 3, StatusCode::OK)]
+#[case::expansive_full_sample("expansive", 3, StatusCode::OK)]
+#[case::strict_partial_sample("strict", 1, StatusCode::CONFLICT)]
+#[tokio::test]
+async fn suggested_schema_activation_requires_whole_class_compatibility(
+    #[future(awt)] test_context: TestContext,
+    #[case] preset: &str,
+    #[case] sample_limit: usize,
+    #[case] expected: StatusCode,
+) {
+    let context = test_context;
+    let fixture = fixture(&context).await;
+    let task = submit(
+        &context,
+        &fixture,
+        &context.admin_token,
+        json!({"sample_limit": sample_limit, "preset": preset}),
+    )
+    .await;
+    wait(&context, task.id).await;
+    let response = get_request(
+        &context.pool,
+        &context.admin_token,
+        &format!("{}/{}", endpoint(&fixture), task.id),
+    )
+    .await;
+    let report: Value =
+        test::read_body_json(assert_response_status(response, StatusCode::OK).await).await;
+    // Even the partial sample passes its replay; only whole-class impact can
+    // establish whether the candidate is safe to activate.
+    assert_eq!(report["sample_valid"], true);
+    let revisions = format!("/api/v1/classes/{}/schema/revisions", fixture.class.id);
+    let response = post_request(
+        &context.pool,
+        &context.admin_token,
+        &revisions,
+        json!({"json_schema": report["schema"], "validate_schema": true}),
+    )
+    .await;
+    let staged: SchemaRevisionResponse =
+        test::read_body_json(assert_response_status(response, StatusCode::CREATED).await).await;
+    let revision = format!("{revisions}/{}", staged.revision);
+    let response = post_request(
+        &context.pool,
+        &context.admin_token,
+        &format!("{revision}/impact"),
+        json!({}),
+    )
+    .await;
+    let impact: SchemaWorkResponse =
+        test::read_body_json(assert_response_status(response, StatusCode::ACCEPTED).await).await;
+    wait(&context, impact.task_id.id()).await;
+    let response = post_request(
+        &context.pool,
+        &context.admin_token,
+        &format!("{revision}/activate"),
+        json!({
+            "expected_active_revision": 1,
+            "policy": "reject_incompatible",
+            "impact_task_id": impact.task_id,
+        }),
+    )
+    .await;
+    let response = assert_response_status(response, expected).await;
+    if expected == StatusCode::OK {
+        let activated: SchemaActivationResponse = test::read_body_json(response).await;
+        wait(&context, activated.task_id.unwrap().id()).await;
+    }
     fixture.cleanup().await.unwrap();
 }
 

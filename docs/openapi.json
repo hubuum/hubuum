@@ -7,7 +7,7 @@
       "name": "MIT",
       "identifier": "MIT"
     },
-    "version": "0.0.20"
+    "version": "0.0.21"
   },
   "servers": [
     {
@@ -4568,6 +4568,115 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/fields": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Discover fields in an authorized sample of a class by ID",
+        "description": "Returns the same bounded inventory as name-addressed field discovery. Use the stable class ID when it is already known or the class name is a URL dot segment. Counts describe an authorized sample only; explicit truncation flags identify its limits.",
+        "operationId": "getApiV1ClassesByClassIdFields",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/HubuumClassID"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum authorized sample size; defaults to 100",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 250,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "depth",
+            "in": "query",
+            "description": "Maximum path depth; defaults to 6",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 32,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "containers",
+            "in": "query",
+            "description": "Include object and array paths; defaults to false",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bounded field observations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassFieldInventory"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid discovery options",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Class access denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
             "content": {
               "application/json": {
                 "schema": {
