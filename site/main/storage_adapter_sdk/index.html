@@ -956,6 +956,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../schema_profiling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema profiling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../query_usage/" class="md-nav__link">
         
   
@@ -3809,6 +3836,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#upgrading-from-05-to-06" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.5 to 0.6
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4884,6 +4922,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#upgrading-from-05-to-06" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.5 to 0.6
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4965,7 +5014,7 @@
 
 
 <h1 id="storage-adapter-sdk-compatibility">Storage Adapter SDK Compatibility<a class="headerlink" href="#storage-adapter-sdk-compatibility" title="Permanent link">&para;</a></h1>
-<p>Status: accepted; current experimental release train is <code>0.5</code>.</p>
+<p>Status: accepted; current experimental release train is <code>0.6</code>.</p>
 <h2 id="supported-crate-graph">Supported Crate Graph<a class="headerlink" href="#supported-crate-graph" title="Permanent link">&para;</a></h2>
 <p>The statically linked storage adapter SDK consists of these crates:</p>
 <table>
@@ -5348,6 +5397,23 @@ normalization helpers are removed; apply destination schema limits to the replay
 now live in storage-core; application artifact metadata and manifest checks
 remain the caller's responsibility. Adapters still enforce cross-row and
 transactional restore invariants.</p>
+<h2 id="upgrading-from-05-to-06">Upgrading from 0.5 to 0.6<a class="headerlink" href="#upgrading-from-05-to-06" title="Permanent link">&para;</a></h2>
+<p>Update all ten SDK dependencies to exactly <code>0.6.0</code> together. This is a breaking
+supported Rust crate change: the closed task-kind vocabulary adds
+<code>SchemaProfiling</code>, and <code>TaskMetadataDetails</code> and <code>StorageTaskCompletionPayload</code>
+add matching variants. <code>StorageSchemaProfileArtifact</code> carries a bounded report
+and expiry timestamp.</p>
+<p>Implement both new <code>TaskExecutionStorage</code> methods: <code>get_schema_profile_output</code>
+and <code>purge_expired_schema_profile_outputs</code>. Publish the artifact atomically with
+successful task completion under the existing lease and cancellation fence.
+Retain output expiry metadata after cleanup, and include profiling in task
+capacity, discovery, cancellation, recovery, and output-state filtering. Profiling
+reports are transient and need not enter backup snapshots; restore must clear
+local reports. Run the complete adapter conformance and task-control suites.</p>
+<p>The PostgreSQL adapter requires migration
+<code>2026-10-25-000002_schema_profiling</code>. Drain old workers before submitting the new
+task kind. The server uses <code>json-schema-profiler</code> 0.0.1; the SDK does not depend
+on it and retains its Rust 1.88 minimum version.</p>
 
 
 

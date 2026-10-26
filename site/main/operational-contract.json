@@ -1948,6 +1948,7 @@
             "get_restore_drain_state",
             "get_restore_status",
             "get_schema_impact_boundary",
+            "get_schema_profile_output",
             "get_schema_repair_report",
             "get_schema_state",
             "get_schema_work",
@@ -2060,6 +2061,7 @@
             "purge_credential_sources",
             "purge_expired_backup_outputs",
             "purge_expired_export_outputs",
+            "purge_expired_schema_profile_outputs",
             "purge_expired_tokens",
             "query_observation_control",
             "record_claimed_import_results",
@@ -2369,6 +2371,7 @@
             "get_restore_drain_state",
             "get_restore_status",
             "get_schema_impact_boundary",
+            "get_schema_profile_output",
             "get_schema_repair_report",
             "get_schema_state",
             "get_schema_work",
@@ -2481,6 +2484,7 @@
             "purge_credential_sources",
             "purge_expired_backup_outputs",
             "purge_expired_export_outputs",
+            "purge_expired_schema_profile_outputs",
             "purge_expired_tokens",
             "query_observation_control",
             "record_claimed_import_results",
@@ -2615,7 +2619,8 @@
             "backup",
             "reindex",
             "remote_call",
-            "schema_validation"
+            "schema_validation",
+            "schema_profiling"
           ]
         },
         {
@@ -2664,7 +2669,8 @@
             "backup",
             "reindex",
             "remote_call",
-            "schema_validation"
+            "schema_validation",
+            "schema_profiling"
           ]
         },
         {
@@ -2696,7 +2702,8 @@
             "backup",
             "reindex",
             "remote_call",
-            "schema_validation"
+            "schema_validation",
+            "schema_profiling"
           ]
         }
       ],
@@ -2719,7 +2726,8 @@
             "backup",
             "reindex",
             "remote_call",
-            "schema_validation"
+            "schema_validation",
+            "schema_profiling"
           ]
         },
         {
@@ -2752,7 +2760,8 @@
             "backup",
             "reindex",
             "remote_call",
-            "schema_validation"
+            "schema_validation",
+            "schema_profiling"
           ]
         },
         {
@@ -2803,7 +2812,8 @@
             "backup",
             "reindex",
             "remote_call",
-            "schema_validation"
+            "schema_validation",
+            "schema_profiling"
           ]
         },
         {
@@ -2836,7 +2846,8 @@
             "backup",
             "reindex",
             "remote_call",
-            "schema_validation"
+            "schema_validation",
+            "schema_profiling"
           ]
         }
       ],
@@ -2859,7 +2870,8 @@
             "backup",
             "reindex",
             "remote_call",
-            "schema_validation"
+            "schema_validation",
+            "schema_profiling"
           ]
         },
         {
@@ -2886,7 +2898,8 @@
           "bounded_by": "enumerated values",
           "values": [
             "export",
-            "backup"
+            "backup",
+            "schema_profiling"
           ]
         }
       ],
@@ -2905,7 +2918,8 @@
           "bounded_by": "enumerated values",
           "values": [
             "export",
-            "backup"
+            "backup",
+            "schema_profiling"
           ]
         }
       ],
@@ -2924,7 +2938,8 @@
           "bounded_by": "enumerated values",
           "values": [
             "export",
-            "backup"
+            "backup",
+            "schema_profiling"
           ]
         }
       ],
@@ -2957,7 +2972,8 @@
             "backup",
             "reindex",
             "remote_call",
-            "schema_validation"
+            "schema_validation",
+            "schema_profiling"
           ]
         }
       ],
@@ -2998,7 +3014,8 @@
             "backup",
             "reindex",
             "remote_call",
-            "schema_validation"
+            "schema_validation",
+            "schema_profiling"
           ]
         },
         {
@@ -3059,7 +3076,8 @@
             "backup",
             "reindex",
             "remote_call",
-            "schema_validation"
+            "schema_validation",
+            "schema_profiling"
           ]
         },
         {
@@ -6073,6 +6091,28 @@
       "dynamic_prefix": false
     },
     {
+      "name": "HUBUUM_TASK_SCHEMA_PROFILING_EXECUTION_TIMEOUT_SECONDS",
+      "owner": "tasks",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "300"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 2592000,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
       "name": "HUBUUM_TASK_SCHEMA_VALIDATION_EXECUTION_TIMEOUT_SECONDS",
       "owner": "tasks",
       "exposure": "public",
@@ -8626,6 +8666,25 @@
           "long": "task-remote-call-execution-timeout-seconds",
           "short": null,
           "environment": "HUBUUM_TASK_REMOTE_CALL_EXECUTION_TIMEOUT_SECONDS",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "300"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "task_schema_profiling_execution_timeout_seconds",
+          "long": "task-schema-profiling-execution-timeout-seconds",
+          "short": null,
+          "environment": "HUBUUM_TASK_SCHEMA_PROFILING_EXECUTION_TIMEOUT_SECONDS",
           "value_kind": "integer",
           "value_count": {
             "minimum": 1,

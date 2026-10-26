@@ -956,6 +956,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../schema_profiling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema profiling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../query_usage/" class="md-nav__link">
         
   
@@ -4243,6 +4270,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#schema-profiling-task-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Schema profiling task outputs
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4708,6 +4746,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#schema-profiling-task-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Schema profiling task outputs
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4789,7 +4838,7 @@
 
 
 <h1 id="hubuum-storage-core-rust-api-policy"><code>hubuum-storage-core</code> Rust API Policy<a class="headerlink" href="#hubuum-storage-core-rust-api-policy" title="Permanent link">&para;</a></h1>
-<p>Status: experimental public API in the storage SDK <code>0.5</code> release train.</p>
+<p>Status: experimental public API in the storage SDK <code>0.6</code> release train.</p>
 <h2 id="purpose-and-callers">Purpose and Callers<a class="headerlink" href="#purpose-and-callers" title="Permanent link">&para;</a></h2>
 <p><code>hubuum-storage-core</code> is the complete backend-neutral storage extension
 contract. It exposes capability traits, private-field DTOs, the bounded
@@ -4984,6 +5033,12 @@ reason from a missing row or from the oldest retained timestamp.</p>
 <p>Adding these two required methods is a breaking pre-1.0 SDK change. Adapter
 implementations must add both methods and run the shared history-navigation
 conformance coverage. Existing full-row history and as-of methods are unchanged.</p>
+<h2 id="schema-profiling-task-outputs">Schema profiling task outputs<a class="headerlink" href="#schema-profiling-task-outputs" title="Permanent link">&para;</a></h2>
+<p>The 0.6 SDK adds <code>StorageSchemaProfileArtifact</code> and the matching task completion
+variant. Every adapter implements <code>get_schema_profile_output</code> and
+<code>purge_expired_schema_profile_outputs</code>, fences publication with terminal task
+completion, and retains expiry metadata after removal. See the
+<a href="../../storage_adapter_sdk/#upgrading-from-05-to-06">0.6 upgrade guide</a>.</p>
 
 
 

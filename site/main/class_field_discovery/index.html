@@ -966,6 +966,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../schema_profiling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema profiling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../query_usage/" class="md-nav__link">
         
   
@@ -4786,12 +4813,11 @@ first-value previews, and source ordering follow the CLI implementation at
 <code>46da8b31e2a507f70e8cb63b690eb79b295ee191</code>. Structured paths, distinct-object counts,
 type frequencies, computed-error counts, and explicit truncation provide additional
 evidence without changing those display conventions.</p>
-<p>Future schema profiling should consume the raw authorized sample through the
+<p><a href="../schema_profiling/">Schema profiling</a> consumes the raw authorized sample through the
 sampling service, preserving property versus array-item paths and null versus
 missing values. Display previews cannot establish numeric precision, complete
 value sets, required properties, or schema compatibility. A truncated sample is
-not a verified full corpus. This endpoint adds no profiler dependency and makes no
-schema inference or compatibility guarantee.</p>
+not a verified full corpus. The field-discovery endpoint makes no schema inference or compatibility guarantee.</p>
 <h2 id="measured-request-and-decoding-costs">Measured request and decoding costs<a class="headerlink" href="#measured-request-and-decoding-costs" title="Permanent link">&para;</a></h2>
 <p>Measured on 2026-10-25 with server revision
 <code>58b50b2d01f45d91579724afae7ffbbb039906e3</code>, an unoptimized debug build running

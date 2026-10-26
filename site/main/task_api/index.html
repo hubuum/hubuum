@@ -964,6 +964,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../schema_profiling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema profiling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../query_usage/" class="md-nav__link">
         
   
@@ -5099,9 +5126,11 @@ class rebuild endpoint.</p>
 <li><code>reindex</code></li>
 <li><code>remote_call</code></li>
 <li><code>schema_validation</code></li>
+<li><code>schema_profiling</code></li>
 </ul>
 <p>Public task-producing endpoints today:</p>
 <ul>
+<li><code>POST /api/v1/classes/{class_id}/schema/profiles</code> (<a href="../schema_profiling/">profiling options and reports</a>)</li>
 <li><code>POST /api/v1/imports</code></li>
 <li><code>POST /api/v1/exports</code></li>
 <li><code>POST /api/v1/backups</code></li>
@@ -5192,6 +5221,10 @@ is excluded from metric labels and lifecycle log messages.</p>
 <tr>
 <td>Remote call</td>
 <td>Before dispatch, no request is sent. After dispatch, external effects may have occurred; cancellation cannot undo them and never automatically retries.</td>
+</tr>
+<tr>
+<td>Schema profiling</td>
+<td>Sampling and inference stop at checkpoints. Cancellation publishes no partial report.</td>
 </tr>
 <tr>
 <td>Schema validation</td>

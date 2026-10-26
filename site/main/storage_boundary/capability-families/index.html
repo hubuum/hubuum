@@ -956,6 +956,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../schema_profiling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema profiling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../query_usage/" class="md-nav__link">
         
   
@@ -5711,6 +5738,14 @@ only terminal updates (<code>succeeded</code>, <code>failed</code>, <code>partia
 <td>None</td>
 </tr>
 <tr>
+<td><code>schema_validation</code></td>
+<td>None</td>
+</tr>
+<tr>
+<td><code>schema_profiling</code></td>
+<td>Schema profile artifact</td>
+</tr>
+<tr>
 <td><code>export</code></td>
 <td>Export artifact</td>
 </tr>
@@ -5728,6 +5763,12 @@ only terminal updates (<code>succeeded</code>, <code>failed</code>, <code>partia
 must additionally verify that the DTO's declared task kind matches the claimed
 persisted task; it must reject a mismatch as <code>InvalidInput</code> without consuming
 the claim.</p>
+<p><code>get_schema_profile_output</code> returns a bounded JSON report or distinguishes
+missing output from expired output. <code>purge_expired_schema_profile_outputs</code>
+removes only expired artifacts and preserves retained task output metadata.
+Publish profiling artifacts with successful fenced completion only; cancellation,
+deadline expiry, and lease loss must not publish them. Profiling artifacts are
+transient and excluded from backup documents and cleared during restore.</p>
 <h3 id="backup_snapshots"><code>backup_snapshots</code><a class="headerlink" href="#backup_snapshots" title="Permanent link">&para;</a></h3>
 <p>Required trait: <code>BackupSnapshotStorage</code>.</p>
 <p>Owns a consistent projection of live state into the canonical backup sections,
