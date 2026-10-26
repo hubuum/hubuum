@@ -33,6 +33,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Deleting a class or collection no longer deadlocks with computed-field workers
+  that have acquired the definition lock but are waiting for the class row.
+  The migration preserves retained history and closes its final validity interval.
 - Schema profiling output-state searches include profiling tasks on the memory
   backend. Incomplete candidate replays fail without publishing a report.
 - Scale lifecycle memory supervision counts each Linux process once rather than
