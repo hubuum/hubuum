@@ -7,6 +7,30 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking operational change:** logical identity migration requires an offline
+  upgrade. Stop older API and worker processes, take a database backup, run
+  `hubuum-admin --migrate` to finish the resumable identity backfill, then start
+  matching binaries. Internal resource, principal, task and historical-version
+  UUIDs survive restore without replacing REST integer IDs or revision counters.
+  See the [upgrade instructions](docs/logical_identity.md#upgrade-and-backup-compatibility).
+- **Breaking backup compatibility:** new backups use format 11 with captured
+  identity evidence. Upgrade restore binaries before consuming them. Formats
+  6–10 remain readable through an isolated identity upgrade; ambiguous legacy
+  references do not establish correspondence to existing archives or receipts.
+- **Breaking (supported Rust crates / storage SDK):** advance the coordinated
+  SDK train to `0.7.0`. Update all ten SDK dependencies together, implement
+  `LogicalIdentityStorage`, use captured principal UUIDs for history-name
+  resolution, and consume the validated restore replay as described in the
+  [0.7 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-06-to-07).
+
+### Fixed
+
+- Retained history and task-event actor names no longer attach to a different
+  principal when a restore timeline reuses an integer ID. Historical relation
+  endpoint hydration also requires the captured endpoint identity.
+
 ## [0.0.21] - 2026-10-26
 
 ### Added

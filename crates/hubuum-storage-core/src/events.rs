@@ -8,13 +8,14 @@ use serde_json::Value;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
-use crate::{StorageAuditReceipt, StorageError, StorageValidationError};
+use crate::{StorageAuditReceipt, StorageError, StorageIdentityEvidence, StorageValidationError};
 
 /// One committed event returned by a storage adapter after an append or read.
 ///
 /// The envelope and revisions are backend-neutral, validated domain values.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageRecordedEvent {
+    logical_identity: Option<StorageIdentityEvidence>,
     envelope: EventEnvelope,
     before_revision: Option<ResourceRevision>,
     after_revision: Option<ResourceRevision>,
@@ -22,12 +23,24 @@ pub struct StorageRecordedEvent {
 
 impl StorageRecordedEvent {
     #[must_use]
+    pub fn with_logical_identity(mut self, evidence: StorageIdentityEvidence) -> Self {
+        self.logical_identity = Some(evidence);
+        self
+    }
+
+    #[must_use]
+    pub const fn logical_identity(&self) -> Option<&StorageIdentityEvidence> {
+        self.logical_identity.as_ref()
+    }
+
+    #[must_use]
     pub const fn new(
         envelope: EventEnvelope,
         before_revision: Option<ResourceRevision>,
         after_revision: Option<ResourceRevision>,
     ) -> Self {
         Self {
+            logical_identity: None,
             envelope,
             before_revision,
             after_revision,

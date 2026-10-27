@@ -10,7 +10,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 use crate::{
-    StorageComputedFieldDefinition, StorageComputedFieldVisibility, StorageValidationError,
+    StorageComputedFieldDefinition, StorageComputedFieldVisibility, StorageIdentityEvidence,
+    StorageValidationError,
 };
 
 /// Versions the historical evaluator's ordering, operation catalog and safety limits.
@@ -183,6 +184,8 @@ pub struct StorageComputedFieldHistory {
     valid_to: Option<DateTime<Utc>>,
     evaluator_version: i16,
     definitions: Vec<StorageHistoricalComputedField>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    logical_identity: Option<StorageIdentityEvidence>,
 }
 
 #[derive(Deserialize)]
@@ -194,6 +197,7 @@ struct HistoryWire {
     valid_to: Option<DateTime<Utc>>,
     evaluator_version: i16,
     definitions: Vec<StorageHistoricalComputedField>,
+    logical_identity: Option<StorageIdentityEvidence>,
 }
 
 impl<'de> Deserialize<'de> for StorageComputedFieldHistory {
@@ -203,6 +207,7 @@ impl<'de> Deserialize<'de> for StorageComputedFieldHistory {
             .valid_until(wire.valid_to)
             .evaluator_version(wire.evaluator_version)
             .definitions(wire.definitions)
+            .logical_identity(wire.logical_identity)
             .build()
             .map_err(serde::de::Error::custom)
     }
@@ -211,6 +216,10 @@ impl<'de> Deserialize<'de> for StorageComputedFieldHistory {
 pub struct StorageComputedFieldHistoryBuilder(StorageComputedFieldHistory);
 
 impl StorageComputedFieldHistoryBuilder {
+    pub fn logical_identity(mut self, evidence: Option<StorageIdentityEvidence>) -> Self {
+        self.0.logical_identity = evidence;
+        self
+    }
     pub fn valid_until(mut self, at: Option<DateTime<Utc>>) -> Self {
         self.0.valid_to = at;
         self
@@ -267,6 +276,7 @@ impl StorageComputedFieldHistory {
             valid_to: None,
             evaluator_version: HISTORICAL_COMPUTED_EVALUATOR_VERSION,
             definitions: Vec::new(),
+            logical_identity: None,
         })
     }
     pub const fn class_id(&self) -> ClassId {
@@ -286,6 +296,9 @@ impl StorageComputedFieldHistory {
     }
     pub fn definitions(&self) -> &[StorageHistoricalComputedField] {
         &self.definitions
+    }
+    pub fn logical_identity(&self) -> Option<&StorageIdentityEvidence> {
+        self.logical_identity.as_ref()
     }
     pub fn close_at(&mut self, at: DateTime<Utc>) -> Result<(), StorageValidationError> {
         if self.valid_to.is_some() || at <= self.valid_from {

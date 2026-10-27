@@ -306,7 +306,7 @@ impl LocalIdentityCredentialStorage for MemoryStorage {
             .get(&user_id)
             .cloned()
             .ok_or_else(|| StorageError::internal("password reset principal is missing"))?;
-        state.principals.insert(
+        state.store_principal(
             user_id,
             advanced_principal(
                 &principal,
@@ -363,7 +363,7 @@ impl IdentityScopeStorage for MemoryStorage {
             ResourceRevision::INITIAL,
         )
         .map_err(invalid_contract_value)?;
-        state.identity_scopes.insert(id.id(), scope.clone());
+        state.store_identity_scope(id.id(), scope.clone());
         Ok(scope)
     }
 
@@ -526,9 +526,7 @@ impl GroupMembershipStorage for MemoryStorage {
             ResourceRevision::INITIAL,
         )
         .map_err(invalid_contract_value)?;
-        state
-            .memberships
-            .insert((principal_id.id(), group_id.id()), membership.clone());
+        state.store_membership((principal_id.id(), group_id.id()), membership.clone());
         let receipt = state.append_simple_event(
             EntityType::UserGroup,
             principal_id.id(),
@@ -730,8 +728,8 @@ impl ServiceAccountStorage for MemoryStorage {
             now,
         )
         .map_err(invalid_contract_value)?;
-        state.principals.insert(principal_id.id(), principal);
-        state.service_accounts.insert(id.id(), account.clone());
+        state.store_principal(principal_id.id(), principal);
+        state.store_service_account(id.id(), account.clone());
         let receipt = state.append_simple_event(
             EntityType::ServiceAccount,
             id.id(),
@@ -777,13 +775,13 @@ impl ServiceAccountStorage for MemoryStorage {
             now,
         )
         .map_err(invalid_contract_value)?;
-        state.service_accounts.insert(id.id(), updated.clone());
+        state.store_service_account(id.id(), updated.clone());
         let principal = state
             .principals
             .get(&id.id())
             .cloned()
             .ok_or_else(|| StorageError::internal("service-account principal is missing"))?;
-        state.principals.insert(
+        state.store_principal(
             id.id(),
             advanced_principal(
                 &principal,
@@ -832,7 +830,7 @@ impl ServiceAccountStorage for MemoryStorage {
             now,
         )
         .map_err(invalid_contract_value)?;
-        state.service_accounts.insert(id.id(), disabled.clone());
+        state.store_service_account(id.id(), disabled.clone());
         state.invalidate_principal_sessions(id.id());
         for token in state.tokens.values_mut() {
             if token.principal_id.id() == id.id() && token.revoked_at.is_none() {
@@ -847,7 +845,7 @@ impl ServiceAccountStorage for MemoryStorage {
             .get(&id.id())
             .cloned()
             .ok_or_else(|| StorageError::internal("service-account principal is missing"))?;
-        state.principals.insert(
+        state.store_principal(
             id.id(),
             advanced_principal(
                 &principal,
@@ -1036,7 +1034,7 @@ impl ExternalIdentityStorage for MemoryStorage {
         })
         .try_build()
         .map_err(invalid_contract_value)?;
-        state.principals.insert(principal_id.id(), updated);
+        state.store_principal(principal_id.id(), updated);
         *live = state;
         Ok(())
     }
@@ -1070,7 +1068,7 @@ impl ExternalIdentityStorage for MemoryStorage {
                 ResourceRevision::INITIAL,
             )
             .map_err(invalid_contract_value)?;
-            state.identity_scopes.insert(id.id(), scope.clone());
+            state.store_identity_scope(id.id(), scope.clone());
             scope
         };
         // A name is not evidence that two external identities are the same user.
@@ -1156,7 +1154,7 @@ impl ExternalIdentityStorage for MemoryStorage {
                     .last_sync_success_at(Some(now))
                     .try_build()
                     .map_err(invalid_contract_value)?;
-            state.principals.insert(id, principal);
+            state.store_principal(id, principal);
             PrincipalId::new(id).expect("external principal id is positive")
         } else {
             let principal_id =
@@ -1188,7 +1186,7 @@ impl ExternalIdentityStorage for MemoryStorage {
                 None,
             )
             .map_err(invalid_contract_value)?;
-            state.principals.insert(principal_id.id(), principal);
+            state.store_principal(principal_id.id(), principal);
             state.users.insert(
                 user_id.id(),
                 MemoryUserRecord {
@@ -1235,13 +1233,12 @@ impl ExternalIdentityStorage for MemoryStorage {
                 .last_sync_success_at(Some(now))
                 .try_build()
                 .map_err(invalid_contract_value)?;
-                state.groups.insert(group_id.id(), group.clone());
+                state.store_group(group_id.id(), group.clone());
                 group
             };
             let key = (principal_id.id(), group.id().id());
             current_external_groups.insert(key);
-            if let std::collections::btree_map::Entry::Vacant(entry) = state.memberships.entry(key)
-            {
+            if !state.memberships.contains_key(&key) {
                 let membership = StoragePrincipalGroup::try_new(
                     principal_id,
                     group.id(),
@@ -1250,7 +1247,7 @@ impl ExternalIdentityStorage for MemoryStorage {
                     ResourceRevision::INITIAL,
                 )
                 .map_err(invalid_contract_value)?;
-                entry.insert(membership);
+                state.store_membership(key, membership);
             }
         }
         let stale_groups = state
@@ -1519,7 +1516,7 @@ impl UserStorage for MemoryStorage {
             .get(&id.id())
             .cloned()
             .ok_or_else(|| StorageError::internal("anonymized user principal is missing"))?;
-        state.principals.insert(
+        state.store_principal(
             id.id(),
             advanced_principal(
                 &principal,
@@ -2275,7 +2272,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         state
             .authorization_revisions
             .insert(key.collection_id().id(), revision);
-        state.authorization_grants.insert(map_key, grant.clone());
+        state.store_authorization_grant(map_key, grant.clone());
         let receipt = state.append_simple_event(
             EntityType::Permission,
             id.id(),
@@ -2333,7 +2330,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         state
             .authorization_revisions
             .insert(key.collection_id().id(), revision);
-        state.authorization_grants.insert(map_key, grant.clone());
+        state.store_authorization_grant(map_key, grant.clone());
         let receipt = state.append_simple_event(
             EntityType::Permission,
             grant.id().id(),
@@ -2473,7 +2470,7 @@ impl GroupStorage for MemoryStorage {
         )
         .try_build()
         .map_err(invalid_contract_value)?;
-        state.groups.insert(id.id(), group.clone());
+        state.store_group(id.id(), group.clone());
         let receipt = state.append_simple_event(
             EntityType::Group,
             id.id(),
@@ -2534,7 +2531,7 @@ impl GroupStorage for MemoryStorage {
         .last_sync_success_at(current.last_sync_success_at())
         .try_build()
         .map_err(invalid_contract_value)?;
-        state.groups.insert(group_id.id(), group.clone());
+        state.store_group(group_id.id(), group.clone());
         let receipt = state.append_simple_event(
             EntityType::Group,
             group_id.id(),
@@ -2643,7 +2640,7 @@ impl PrincipalStorage for MemoryStorage {
         let settings =
             StoragePrincipalSettings::try_new(principal_id, updated.revision(), document)
                 .map_err(invalid_contract_value)?;
-        state.principals.insert(principal_id.id(), updated);
+        state.store_principal(principal_id.id(), updated);
         let entity_type = if current.kind().is_human() {
             EntityType::User
         } else {
@@ -2910,7 +2907,7 @@ fn create_user_in_state(
         None,
     )
     .map_err(invalid_contract_value)?;
-    state.principals.insert(principal_id.id(), principal);
+    state.store_principal(principal_id.id(), principal);
     state.users.insert(
         user_id.id(),
         MemoryUserRecord {
@@ -2989,7 +2986,7 @@ fn update_user_in_state(
         .get(&id.id())
         .cloned()
         .ok_or_else(|| StorageError::internal("updated user principal is missing"))?;
-    state.principals.insert(
+    state.store_principal(
         id.id(),
         advanced_principal(
             &principal,

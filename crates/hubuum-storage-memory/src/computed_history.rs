@@ -39,6 +39,10 @@ impl MemoryState {
             let id = HistoryRecordId::new(self.next_history_id)
                 .map_err(|error| StorageError::internal(error.to_string()))?;
             let record = StorageComputedFieldHistory::builder(class_id, id, boundary)
+                .logical_identity(Some(
+                    self.logical_identities
+                        .computed_history(class_id, &definitions),
+                ))
                 .definitions(definitions)
                 .build()
                 .map_err(invalid_contract_value)?;

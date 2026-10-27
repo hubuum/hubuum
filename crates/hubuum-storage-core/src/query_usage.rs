@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
-    StorageError, StorageMutationOutcome, StorageQueryObservationControl, StorageRecordMetadata,
-    StorageValidationError,
+    StorageError, StorageIdentityEvidence, StorageMutationOutcome, StorageQueryObservationControl,
+    StorageRecordMetadata, StorageValidationError,
 };
 
 pub const MAX_QUERY_USAGE_DECLARATIONS: usize = 32;
@@ -186,6 +186,7 @@ pub enum StorageQueryUsageSchemaCompatibility {
 /// Recorded intent, independent of whether an adapter prepares any resource.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StorageQueryUsageDeclaration {
+    logical_identity: Option<StorageIdentityEvidence>,
     metadata: StorageRecordMetadata,
     class_id: ClassId,
     pattern: StorageQueryUsagePattern,
@@ -194,6 +195,12 @@ pub struct StorageQueryUsageDeclaration {
 }
 
 impl StorageQueryUsageDeclaration {
+    #[must_use]
+    pub fn with_logical_identity(mut self, identity: StorageIdentityEvidence) -> Self {
+        self.logical_identity = Some(identity);
+        self
+    }
+
     pub const fn new(
         metadata: StorageRecordMetadata,
         class_id: ClassId,
@@ -202,6 +209,7 @@ impl StorageQueryUsageDeclaration {
         updated_by: Option<PrincipalId>,
     ) -> Self {
         Self {
+            logical_identity: None,
             metadata,
             class_id,
             pattern,
@@ -225,14 +233,20 @@ impl StorageQueryUsageDeclaration {
         self.updated_by
     }
     pub fn snapshot(&self) -> Value {
-        json!({"id": self.metadata.id().id(), "class_id": self.class_id.id(), "pattern": self.pattern,
+        let mut snapshot = json!({"id": self.metadata.id().id(), "class_id": self.class_id.id(), "pattern": self.pattern,
             "revision": self.metadata.revision().get(), "created_at": self.metadata.created_at(), "updated_at": self.metadata.updated_at(),
-            "created_by": self.created_by, "updated_by": self.updated_by})
+            "created_by": self.created_by, "updated_by": self.updated_by});
+        if let Some(identity) = &self.logical_identity {
+            snapshot["logical_identity"] =
+                serde_json::to_value(identity).expect("validated identity serializes");
+        }
+        snapshot
     }
     pub fn from_snapshot(value: Value) -> Result<Self, StorageValidationError> {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Record {
+            logical_identity: Option<StorageIdentityEvidence>,
             id: ResourceId,
             class_id: ClassId,
             pattern: StorageQueryUsagePattern,
@@ -244,7 +258,7 @@ impl StorageQueryUsageDeclaration {
         }
         let record: Record = serde_json::from_value(value)
             .map_err(|error| StorageValidationError::invalid(error.to_string()))?;
-        Ok(Self::new(
+        let mut declaration = Self::new(
             StorageRecordMetadata::try_new(
                 record.id,
                 record.created_at,
@@ -255,7 +269,9 @@ impl StorageQueryUsageDeclaration {
             record.pattern,
             record.created_by,
             record.updated_by,
-        ))
+        );
+        declaration.logical_identity = record.logical_identity;
+        Ok(declaration)
     }
 }
 

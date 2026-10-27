@@ -2,7 +2,7 @@ mod maintenance;
 pub(crate) mod replay;
 use hubuum_storage_core::{
     StorageBackupReplay, StorageRestoreArtifact, StorageRestoreArtifactJob,
-    StorageRestoreReplayApply, StorageRestoreStageArtifact,
+    StorageRestoreIdentityContext, StorageRestoreReplayApply, StorageRestoreStageArtifact,
 };
 pub use maintenance::MaintenanceActivityGuard;
 use maintenance::active_maintenance_work;
@@ -507,12 +507,11 @@ pub async fn restore_status(
 
 async fn apply_restore(
     pool: &impl crate::storage::StorageContext,
-    job_id: RestoreJobID,
+    context: StorageRestoreIdentityContext,
     metadata: StorageRestoreDocumentMetadata,
     snapshot: StorageBackupReplay,
 ) -> Result<StorageRestoreCompletion, ApiError> {
-    let request =
-        StorageRestoreReplayApply::at_restore_boundary(job_id, metadata, snapshot, Utc::now())?;
+    let request = StorageRestoreReplayApply::at_restore_boundary(context, metadata, snapshot)?;
     storage_handle(pool)
         .apply_restore_replay(request)
         .await
@@ -699,13 +698,15 @@ async fn reconcile_restore_from_snapshot(
         return Err(error);
     };
     let job = match storage_handle(pool).get_restore_artifact(job_id).await {
-        Ok(job) => restore_job_from_storage(job),
+        Ok(job) => job,
         Err(error) => {
             let error = ApiError::from(error);
             fail_restore_and_resume(pool, job_id, &error).await?;
             return Err(error);
         }
     };
+    let identity_context = job.identity_context();
+    let job = restore_job_from_storage(job);
     let RestoreJobData {
         summary: job,
         document: document_bytes,
@@ -726,6 +727,8 @@ async fn reconcile_restore_from_snapshot(
         fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     }
+    let identity_context =
+        identity_context.map_err(|error| ApiError::Conflict(error.to_string()))?;
     let Some(confirmed_at) = job.confirmed_at else {
         let error = ApiError::Conflict(format!(
             "Confirmed restore stage {job_id} has no confirmation timestamp"
@@ -768,7 +771,7 @@ async fn reconcile_restore_from_snapshot(
         fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     }
-    if let Err(error) = apply_restore(pool, job_id, metadata, snapshot).await {
+    if let Err(error) = apply_restore(pool, identity_context, metadata, snapshot).await {
         fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     }

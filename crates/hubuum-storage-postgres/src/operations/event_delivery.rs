@@ -93,7 +93,8 @@ fn delivery_sink_value(
     .map_err(|error| invalid_delivery_value("event delivery sink", error))
 }
 
-#[derive(Queryable)]
+#[derive(Queryable, diesel::Selectable)]
+#[diesel(table_name = crate::schema::event_deliveries)]
 pub(super) struct AdministrationDeliveryRow {
     id: i64,
     event_id: i64,
@@ -103,6 +104,7 @@ pub(super) struct AdministrationDeliveryRow {
     next_attempt_at: NaiveDateTime,
     last_error: Option<String>,
     locked_until: Option<NaiveDateTime>,
+    #[diesel(column_name = claim_token)]
     _claim_token: Option<Uuid>,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
@@ -200,6 +202,7 @@ pub(crate) async fn load_event_delivery_for_event_for_test(
 
             event_deliveries
                 .filter(event_id.eq(event_sequence.get()))
+                .select(AdministrationDeliveryRow::as_select())
                 .first::<AdministrationDeliveryRow>(connection)
                 .await?
                 .try_into()
@@ -880,6 +883,7 @@ pub async fn list_event_deliveries(
                     )
                 );
                 let rows = records
+                    .select(AdministrationDeliveryRow::as_select())
                     .load::<AdministrationDeliveryRow>(connection)
                     .await?
                     .into_iter()
@@ -902,6 +906,7 @@ pub async fn get_event_delivery(
         .with_connection(async |connection| {
             event_deliveries
                 .filter(id.eq(delivery_id))
+                .select(AdministrationDeliveryRow::as_select())
                 .first::<AdministrationDeliveryRow>(connection)
                 .await
         })
@@ -935,6 +940,7 @@ pub async fn release_event_delivery_for_retry(
                     claim_token.eq::<Option<Uuid>>(None),
                     last_error.eq::<Option<String>>(None),
                 ))
+                .returning(AdministrationDeliveryRow::as_select())
                 .get_result::<AdministrationDeliveryRow>(connection)
                 .await?;
                 notify_event_delivery(connection).await?;
@@ -966,6 +972,7 @@ pub async fn mark_event_delivery_dead(
                 claim_token.eq::<Option<Uuid>>(None),
                 last_error.eq(Some("marked dead by operator".to_string())),
             ))
+            .returning(AdministrationDeliveryRow::as_select())
             .get_result::<AdministrationDeliveryRow>(connection)
             .await
         })

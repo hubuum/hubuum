@@ -37,6 +37,10 @@ cargo fmt --all --check
 
 The runner includes PostgreSQL adapter tests and a resource-limited JSON Schema
 probe. Python applies the probe's process limits; its assertions remain in Rust.
+Destructive restore contracts use a second runner-owned database with the same
+split owner, migrator and runtime roles. This keeps their backup budgets and
+deadlines independent of history retained by other suites. The runner migrates
+and removes both databases, including on test failure.
 Use Rust's shared fixtures and scoped names for application data. Never replace
 database concurrency or migration coverage with a Python mock.
 

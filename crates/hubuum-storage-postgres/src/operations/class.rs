@@ -1,6 +1,7 @@
 //! PostgreSQL implementation of the class lifecycle contract.
 
 use chrono::NaiveDateTime;
+use diesel::SelectableHelper;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::{AsChangeset, Queryable, Selectable};
 use diesel_async::RunQueryDsl;
@@ -209,6 +210,7 @@ pub(crate) async fn update_class_on(
         crate::schema::hubuumclass::table.filter(crate::schema::hubuumclass::id.eq(before.id)),
     )
     .set(update)
+    .returning(ClassRow::as_select())
     .get_result::<ClassRow>(connection)
     .await?;
     if before.json_schema != updated.json_schema
@@ -342,11 +344,13 @@ async fn load_class_by_selector(
     match selector {
         StorageClassSelector::Id(class_id) => crate::schema::hubuumclass::table
             .filter(crate::schema::hubuumclass::id.eq(class_id.id()))
+            .select(ClassRow::as_select())
             .first(connection)
             .await
             .map_err(PostgresStorageError::from),
         StorageClassSelector::Name(class_name) => crate::schema::hubuumclass::table
             .filter(crate::schema::hubuumclass::name.eq(class_name))
+            .select(ClassRow::as_select())
             .first(connection)
             .await
             .map_err(PostgresStorageError::from),
@@ -369,6 +373,7 @@ async fn insert_class(
             validate_schema.eq(command.validates_schema()),
             description.eq(command.description()),
         ))
+        .returning(ClassRow::as_select())
         .get_result(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -386,6 +391,7 @@ pub(crate) async fn lock_resolved_class(
             .filter(crate::schema::hubuumclass::name.eq(resolved.name()))
             .filter(crate::schema::hubuumclass::collection_id.eq(resolved.collection_id().id()))
             .for_update()
+            .select(ClassRow::as_select())
             .first::<ClassRow>(connection)
             .await
             .optional()?,
@@ -394,6 +400,7 @@ pub(crate) async fn lock_resolved_class(
             .filter(crate::schema::hubuumclass::name.eq(class_name))
             .filter(crate::schema::hubuumclass::collection_id.eq(resolved.collection_id().id()))
             .for_update()
+            .select(ClassRow::as_select())
             .first::<ClassRow>(connection)
             .await
             .optional()?,

@@ -246,6 +246,7 @@ pub async fn list_local_authorized_collections(
             }
             let rows = collections::table
                 .filter(collections::id.eq_any(ids))
+                .select(CollectionRow::as_select())
                 .load::<CollectionRow>(connection)
                 .await?;
             rows.into_iter().map(CollectionRow::into_storage).collect()
@@ -317,6 +318,7 @@ pub async fn load_authorization_collection_candidates(
             let rows = candidates
                 .order_by(collections::id.asc())
                 .limit(query_limit)
+                .select(CollectionRow::as_select())
                 .load::<CollectionRow>(connection)
                 .await?;
             let rows = rows
@@ -392,6 +394,7 @@ pub async fn load_authorization_group_candidates(
                 )
             );
             let rows = candidates
+                .select(GroupRow::as_select())
                 .load::<GroupRow>(connection)
                 .await?
                 .into_iter()
@@ -618,6 +621,7 @@ pub async fn list_visible_collections(
             }
             let rows = collections_query
                 .order_by(collections::id.asc())
+                .select(CollectionRow::as_select())
                 .load::<CollectionRow>(connection)
                 .await?;
             rows.into_iter().map(CollectionRow::into_storage).collect()
@@ -698,6 +702,7 @@ pub async fn load_groups_with_collection_permission(
         .with_read_connection(async move |connection| {
             let rows = build_groups_with_permission_query(query)?
                 .order_by(crate::schema::groups::id.asc())
+                .select(GroupRow::as_select())
                 .load::<GroupRow>(connection)
                 .await?;
             rows.into_iter().map(GroupRow::into_storage).collect()
@@ -771,6 +776,7 @@ async fn hydrate_effective_grants(
     let collection_ids = normalized_ids(collection_ids);
     let collections = collections::table
         .filter(collections::id.eq_any(collection_ids))
+        .select(CollectionRow::as_select())
         .load::<CollectionRow>(connection)
         .await?
         .into_iter()
@@ -961,7 +967,10 @@ async fn load_groups_page(
             group_cursor_field(&FilterField::Id)?,
         )
     );
-    let rows = groups.load::<GroupRow>(connection).await?;
+    let rows = groups
+        .select(GroupRow::as_select())
+        .load::<GroupRow>(connection)
+        .await?;
     rows.into_iter().map(GroupRow::into_storage).collect()
 }
 
@@ -1140,6 +1149,7 @@ pub async fn get_local_collection_grant(
             permissions::table
                 .filter(permissions::collection_id.eq(key.collection_id().id()))
                 .filter(permissions::group_id.eq(key.group_id().id()))
+                .select(PermissionRow::as_select())
                 .first::<PermissionRow>(connection)
                 .await
                 .optional()

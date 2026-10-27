@@ -53,7 +53,7 @@ impl MemoryStorage {
             revision,
         )
         .map_err(invalid_contract_value)?;
-        state.identity_scopes.insert(id.id(), scope);
+        state.store_identity_scope(id.id(), scope);
         if let Some(reference) = parts.reference {
             references.insert(reference, MemoryImportReference::IdentityScope(id));
         }
@@ -131,7 +131,7 @@ impl MemoryStorage {
         .last_sync_success_at(parts.last_sync_success_at)
         .try_build()
         .map_err(invalid_contract_value)?;
-        state.groups.insert(id.id(), group);
+        state.store_group(id.id(), group);
         if let Some(reference) = parts.reference {
             references.insert(reference, MemoryImportReference::Group(id));
         }
@@ -195,9 +195,7 @@ impl MemoryStorage {
             revision,
         )
         .map_err(invalid_contract_value)?;
-        state
-            .memberships
-            .insert((principal_id.id(), group_id.id()), membership);
+        state.store_membership((principal_id.id(), group_id.id()), membership);
         if parts.sources.is_empty() {
             state
                 .external_memberships

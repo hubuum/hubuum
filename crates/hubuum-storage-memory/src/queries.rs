@@ -204,7 +204,7 @@ impl ComputedFieldStorage for MemoryStorage {
             .get(&class_id.id())
             .map_or(0, |value| value.evaluation_revision().get());
         let computation_state = ready_computation_state(class_id, previous_revision + 1, now)?;
-        state.computed_fields.insert(id, definition.clone());
+        state.store_computed_field(id, definition.clone());
         state
             .computation_states
             .insert(class_id.id(), computation_state.clone());
@@ -261,9 +261,7 @@ impl ComputedFieldStorage for MemoryStorage {
             previous.evaluation_revision().get() + 1,
             previous.created_at(),
         )?;
-        state
-            .computed_fields
-            .insert(definition_id.id(), definition.clone());
+        state.store_computed_field(definition_id.id(), definition.clone());
         state
             .computation_states
             .insert(class_id.id(), computation_state.clone());
@@ -303,7 +301,7 @@ impl ComputedFieldStorage for MemoryStorage {
         if definition.class_id() != class_id
             || definition.visibility() != StorageComputedFieldVisibility::Shared
         {
-            state.computed_fields.insert(definition_id.id(), definition);
+            state.store_computed_field(definition_id.id(), definition);
             return Err(StorageError::not_found(
                 "Shared computed field definition was not found",
             ));
@@ -381,7 +379,7 @@ impl ComputedFieldStorage for MemoryStorage {
             StorageComputedFieldDefinitionContent::new(input),
             StorageComputedFieldProvenance::new(Some(owner_id), Some(owner_id)),
         );
-        state.computed_fields.insert(id, definition.clone());
+        state.store_computed_field(id, definition.clone());
         let receipt = state.append_simple_event(
             EntityType::ComputedFieldDefinition,
             id,
@@ -410,9 +408,7 @@ impl ComputedFieldStorage for MemoryStorage {
             ));
         }
         let definition = updated_computed_field(&current, &patch, owner_id)?;
-        state
-            .computed_fields
-            .insert(definition_id.id(), definition.clone());
+        state.store_computed_field(definition_id.id(), definition.clone());
         let receipt = state.append_simple_event(
             EntityType::ComputedFieldDefinition,
             definition_id.id(),
@@ -511,7 +507,7 @@ impl ComputedFieldStorage for MemoryStorage {
             claim_token: None,
         };
         let task = record.projection()?;
-        state.tasks.insert(task_id.id(), record);
+        state.store_task(task_id.id(), record);
         state.append_task_event_record(
             task_id,
             StorageTaskEventInput::new("queued", "Computation rebuild queued"),

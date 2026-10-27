@@ -199,6 +199,15 @@ pub struct StorageExportTemplate {
 
 impl StorageExportTemplate {
     #[must_use]
+    pub const fn include(&self) -> Option<&Value> {
+        self.definition.include.as_ref()
+    }
+
+    #[must_use]
+    pub const fn class_id(&self) -> Option<ClassId> {
+        self.definition.class_id
+    }
+    #[must_use]
     pub const fn collection_id(&self) -> CollectionId {
         self.collection_id
     }

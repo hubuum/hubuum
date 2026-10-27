@@ -116,7 +116,8 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let _ = StorageHistoryEntry::Object;
     let _ = StorageExportTemplateHistoryRecord::try_new;
     let _ = StorageHistoryMetadata::try_new;
-    let _ = StorageHistoryPrincipalName::new(PrincipalId::new(1).unwrap(), "principal");
+    let _ =
+        StorageHistoryPrincipalName::new(hubuum_domain::PrincipalIdentity::generate(), "principal");
     let _ = StorageInventoryGaugeSnapshot::try_new;
     let _ = MaintenanceState::Normal;
     let _ = StorageMutationOutcome::<()>::unchanged;

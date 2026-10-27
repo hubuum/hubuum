@@ -33,7 +33,7 @@ validated identity facts needed by their consumers.
 | Objects | `hubuumobject` and `hubuumobject_history` share the incarnation UUID. | One UUID per history row. | Snapshot class and collection, schema evidence, actor, initiator and task; movement cannot rewrite older memberships. |
 | Class relations | Relation incarnation shared by live and history rows. | One UUID per history row. | Both endpoint class identities, including deleted endpoints and endpoints outside the current collection; actor, initiator and task. |
 | Object relations | Relation incarnation shared by live and history rows. | One UUID per history row. | Both endpoint objects and the represented class relation; actor, initiator and task. |
-| Export templates | Template incarnation shared by `export_templates` and its history. | One UUID per history row. | Snapshot collection, optional class, actor, initiator and task. Class selectors and relation contexts use their defined reference paths. |
+| Export templates | Template incarnation shared by `export_templates` and its history. | One UUID per history row. | Snapshot collection, optional class, actor, initiator and task. Related-object selectors capture class and class-relation identities; relation-context depth is an option, not a resource reference. |
 | Remote targets | Target incarnation shared by `remote_targets` and its history. | One UUID per history row. | Snapshot collection, optional class, actor, initiator and task. Template text remains user data. |
 | Principals | `principals` owns the human/service-account identity; `users` and `service_accounts` share that identity. | No synthetic temporal principal version is implied. | Identity scope and any principal attribution retained after deletion. Deleted principals remain distinguishable from later integer reuse. |
 | Identity scopes and groups | Stable identities for scopes and groups referenced by durable policy or membership. | Existing revisions remain revision counters. | Principal/group membership and its source retain their endpoint identities. Composite associations do not need unrelated resource UUIDs. |
@@ -48,6 +48,19 @@ validated identity facts needed by their consumers.
 | Query usage | Declarations refer to stable resource identities. | Existing physical-index ownership UUIDs keep their separate meaning. | Declared class/resource dependencies; never reuse `query_usage_resources.identity` as a logical resource UUID. |
 | Restore control | Restore job/receipt identity remains independent of replaceable application rows. | Existing job/maintenance generations retain their fencing role. | Known initiator identity survives application replacement; stored integer, scope and name cannot prove a new principal is the original requester. |
 | Sessions, credentials and caches | Session IDs, token material, server IDs and claim tokens retain their existing purpose. | No new resource/version identity for regenerated caches or execution leases. | Principal/resource identities are required only where a retained reference crosses the restore boundary; backup exclusions remain explicit. |
+
+Import-result `identifier` values and export-output `template_name` values are
+display data. They do not establish resource correspondence and must never be
+resolved into archive or erasure targets by name. Results retain their task UUID;
+the task's canonical typed discovery metadata retains its explicit target,
+template, remote-target and schema bindings. Import-local named references are
+resolved during execution and are not durable resource identities.
+
+Active tasks and schema work checkpoints are excluded from logical restore.
+Schema profiling and repair artifacts retain their task binding in native
+storage, but this identity migration does not add them to the backup format or
+make work from the discarded timeline resumable. Artifact attempt identities
+and retention rules remain the separate contract in #508.
 
 ## Backfill and legacy evidence
 
@@ -134,3 +147,31 @@ Before changing the implementation, account for these existing behaviors:
 Archive providers, schedulers and erasure executors remain outside #505. Its
 identity proof is a prerequisite for their cross-restore references, not a claim
 that those features have been implemented.
+
+## Upgrade and backup compatibility
+
+This change requires an offline upgrade. Stop API and worker replicas running an
+older binary and take a database backup before applying the migration. Run
+`hubuum-admin --migrate` with the migration credentials. The command reconciles
+role ownership, then commits identity backfill in bounded batches and checks
+completion. If interrupted, rerun the same command; assigned identities remain
+unchanged. Start matching binaries after the command completes. Keep the
+pre-upgrade database snapshot for rollback to an older binary.
+
+Logical backup format 11 carries identity evidence. Older binaries cannot read
+that format. The new reader continues accepting formats 6, 7, 8, 9 and 10. A
+confirmed restore of a legacy format receives an isolated upgrade cohort;
+retries of that stage retain its assignments. A separately staged legacy import
+receives a different cohort and does not establish correspondence to an existing
+archive or erasure receipt. Ambiguous historical references remain explicitly
+unresolved, including historical attribution that cannot be proved from the
+backup. A format 11 document missing required identity evidence is rejected
+before application replacement. Staging reports `identity_quarantine` and
+`unresolved_identity_references` in its validation summary. Legacy staging checks
+the entire upgrade in a disposable cohort; confirmation binds final assignments
+to the retained restore stage. Neither preview nor unresolved references establish
+correspondence with an existing external archive.
+
+Internal UUIDs do not replace REST integer IDs or revision counters. Consumers
+must not treat a restored integer or revision counter as proof of correspondence
+with a previously retained reference.

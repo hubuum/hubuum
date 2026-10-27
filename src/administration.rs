@@ -2,7 +2,9 @@ use crate::config::SchemaValidationOptions;
 use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
 use hubuum_domain::ClassId;
 use hubuum_domain::JsonSchemaLimits;
-use hubuum_storage_core::{StorageBackupBudget, StorageRestoreArtifact};
+use hubuum_storage_core::{
+    StorageBackupBudget, StorageRestoreArtifact, StorageRestoreIdentityContext,
+};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -36,7 +38,7 @@ use crate::services::operational_administration as operational_service;
 #[cfg(feature = "embedded-migrations")]
 use crate::storage::reset_disposable_restore_database;
 use crate::storage::{
-    OperationalStateStorage, StorageBackendKind, StorageDatabasePrivilegeReport,
+    OperationalStateStorage, RestoreStorage, StorageBackendKind, StorageDatabasePrivilegeReport,
     StorageDatabaseRole, StorageDatabaseRoleNames, StorageHandle, StorageSettings,
     StorageTokenKeyUsage, StorageTokenObservation, TokenStorage, initialize_storage,
     inspect_storage_database_privileges, storage_database_role_grants_sql,
@@ -918,7 +920,7 @@ async fn verify_backup_restore(
         let storage = initialize_storage(&target)?;
         let started_at = std::time::Instant::now();
         // The report, staging and comparison all read the same immutable artifact.
-        restore_database_artifact(&storage, artifact.clone()).await?;
+        let (_, context) = restore_database_artifact(&storage, artifact.clone()).await?;
         let restore_duration = started_at.elapsed();
         let readiness = storage.get_readiness_snapshot().await?;
         if !readiness.storage_is_ready() {
@@ -932,12 +934,8 @@ async fn verify_backup_restore(
             storage.schema_limits(),
         )?;
         drop(artifact);
-        let restored = crate::restores::replay::capture(
-            &storage,
-            source.snapshot.includes_history(),
-            capture_budget,
-        )
-        .await?;
+        let source = source.at_restore_boundary(context)?;
+        let restored = crate::restores::replay::capture(&storage, true, capture_budget).await?;
         crate::restores::replay::compare(&source, &restored)?;
         Ok::<_, ApiError>(restore_duration)
     }
@@ -1225,7 +1223,7 @@ async fn restore_database(
         ))
     })?;
     let artifact = StorageRestoreArtifact::from_reader(file, max_bytes)?;
-    let restored = restore_database_artifact(storage, artifact).await?;
+    let (restored, _) = restore_database_artifact(storage, artifact).await?;
     println!(
         "Restore {} completed with status '{}'.",
         restored.id,
@@ -1237,7 +1235,13 @@ async fn restore_database(
 async fn restore_database_artifact(
     storage: &StorageHandle,
     artifact: StorageRestoreArtifact,
-) -> Result<crate::models::RestoreStageResponse, ApiError> {
+) -> Result<
+    (
+        crate::models::RestoreStageResponse,
+        StorageRestoreIdentityContext,
+    ),
+    ApiError,
+> {
     let settings = RestoreSettings::new(
         DEFAULT_RESTORE_STAGE_RETENTION_MINUTES,
         DEFAULT_RESTORE_MAX_UPLOAD_BYTES.max(artifact.summary().byte_size() as usize),
@@ -1259,6 +1263,11 @@ async fn restore_database_artifact(
         },
     )
     .await?;
+    let context = storage
+        .get_restore_artifact(RestoreJobID::new(confirmed.id)?)
+        .await?
+        .identity_context()
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
     if !execute_confirmed_restore(storage).await? {
         return Err(ApiError::Conflict(format!(
             "Restore {} was confirmed but no longer owns draining maintenance",
@@ -1266,7 +1275,7 @@ async fn restore_database_artifact(
         )));
     }
     let restored = restore_status(storage, RestoreJobID::new(confirmed.id)?, &capability).await?;
-    Ok(restored)
+    Ok((restored, context))
 }
 
 async fn run_restore_executor(storage: &StorageHandle) -> Result<(), ApiError> {

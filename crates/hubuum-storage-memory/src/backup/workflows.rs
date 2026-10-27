@@ -8,7 +8,7 @@ pub(super) fn capture(
     sections: &mut StorageBackupStateSections,
     progress: &mut StorageBackupCaptureProgress,
 ) -> Result<(), StorageError> {
-    sections.insert(StorageBackupStateSection::EventSinks, state.event_sinks.values().map(|v| row(json!({"id": v.id().id(), "name": v.name(), "kind": v.kind(), "collection_id": v.collection_id().map(CollectionId::id), "config": v.configuration(), "delivery_policy": v.delivery_policy(), "secret_ref": v.secret_ref(), "enabled": v.enabled(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
+    sections.insert(StorageBackupStateSection::EventSinks, state.event_sinks.values().map(|v| identified_row(state, v, row(json!({"id": v.id().id(), "name": v.name(), "kind": v.kind(), "collection_id": v.collection_id().map(CollectionId::id), "config": v.configuration(), "delivery_policy": v.delivery_policy(), "secret_ref": v.secret_ref(), "enabled": v.enabled(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()})))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
     sections.insert(
         StorageBackupStateSection::EventSinkCollectionGrants,
         state
@@ -17,27 +17,39 @@ pub(super) fn capture(
             .map(|(sink, collection)| {
                 capture_row(
                     progress,
-                    row(json!({"sink_id": sink, "collection_id": collection})),
+                    associated_row(
+                        state,
+                        Association::SinkGrant(
+                            EventSinkId::new(*sink).map_err(|_| invalid("sink_id"))?,
+                            CollectionId::new(*collection).map_err(|_| invalid("collection_id"))?,
+                        ),
+                        row(json!({"sink_id": sink, "collection_id": collection})),
+                    ),
                 )
             })
             .collect::<Result<_, _>>()?,
     );
-    sections.insert(StorageBackupStateSection::EventSubscriptions, state.event_subscriptions.values().map(|v| row(json!({"id": v.id().id(), "collection_id": v.scope().collection_id().map(|id| id.id()), "sink_id": v.sink_id().id(), "name": v.name(), "description": v.description(), "entity_types": v.entity_types(), "actions": v.actions(), "filter": v.filter(), "routing": v.routing(), "enabled": v.enabled(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
+    sections.insert(StorageBackupStateSection::EventSubscriptions, state.event_subscriptions.values().map(|v| identified_row(state, v, row(json!({"id": v.id().id(), "collection_id": v.scope().collection_id().map(|id| id.id()), "sink_id": v.sink_id().id(), "name": v.name(), "description": v.description(), "entity_types": v.entity_types(), "actions": v.actions(), "filter": v.filter(), "routing": v.routing(), "enabled": v.enabled(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()})))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
     sections.insert(
         StorageBackupStateSection::QueryUsageDeclarations,
         state
             .query_usage
             .values()
-            .map(|value| capture_row(progress, row(value.snapshot())))
+            .map(|value| {
+                capture_row(
+                    progress,
+                    identified_row(state, value, row(value.snapshot())),
+                )
+            })
             .collect::<Result<_, _>>()?,
     );
     sections.insert(StorageBackupStateSection::ComputedFieldDefinitions, state.computed_fields.values().map(|v| {
         let (visibility, owner) = match v.visibility() { StorageComputedFieldVisibility::Shared => ("shared", None), StorageComputedFieldVisibility::Personal { owner_id } => ("personal", Some(owner_id.id())) };
         let m = v.metadata();
-        row(json!({"id": m.id().id(), "class_id": v.class_id().id(), "visibility": visibility, "owner_principal_id": owner,
+        identified_row(state, v, row(json!({"id": m.id().id(), "class_id": v.class_id().id(), "visibility": visibility, "owner_principal_id": owner,
             "key": v.key(), "label": v.label(), "description": v.description(), "operation": v.operation(), "result_type": v.result_type(),
             "enabled": v.enabled(), "revision": m.revision().get(), "semantics_version": v.semantics_version(),
-            "created_by": v.created_by().map(PrincipalId::id), "updated_by": v.updated_by().map(PrincipalId::id), "created_at": m.created_at(), "updated_at": m.updated_at()}))
+            "created_by": v.created_by().map(PrincipalId::id), "updated_by": v.updated_by().map(PrincipalId::id), "created_at": m.created_at(), "updated_at": m.updated_at()})))
     }).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
     Ok(())
 }
@@ -50,16 +62,23 @@ pub(super) fn restore(
     for row in &sections[&StorageBackupStateSection::QueryUsageDeclarations] {
         let value = StorageQueryUsageDeclaration::from_snapshot(row.clone().into_value())
             .map_err(invalid_contract_value)?;
+        state
+            .logical_identities
+            .restore_record(&value, Row(row).identity()?);
         state.query_usage.insert(value.metadata().id().id(), value);
     }
     state.next_query_usage_id = next_id(&state.query_usage)?;
-    state.event_sink_grants = sections[&StorageBackupStateSection::EventSinkCollectionGrants]
-        .iter()
-        .map(|row| {
-            let r = Row(row);
-            Ok((r.integer("sink_id")?, r.integer("collection_id")?))
-        })
-        .collect::<Result<_, StorageError>>()?;
+    state.event_sink_grants.clear();
+    for row in &sections[&StorageBackupStateSection::EventSinkCollectionGrants] {
+        let r = Row(row);
+        let sink = EventSinkId::new(r.integer("sink_id")?).map_err(|_| invalid("sink_id"))?;
+        let collection =
+            CollectionId::new(r.integer("collection_id")?).map_err(|_| invalid("collection_id"))?;
+        state.event_sink_grants.insert((sink.id(), collection.id()));
+        state
+            .logical_identities
+            .restore_association(Association::SinkGrant(sink, collection), r.identity()?);
+    }
     for row in &sections[&StorageBackupStateSection::EventSinks] {
         let r = Row(row);
         let value = StorageEventSink::builder(
@@ -85,6 +104,9 @@ pub(super) fn restore(
         .enabled(r.boolean("enabled")?)
         .try_build()
         .map_err(invalid_contract_value)?;
+        state
+            .logical_identities
+            .restore_record(&value, Row(row).identity()?);
         state.event_sinks.insert(value.id().id(), value);
     }
     for row in &sections[&StorageBackupStateSection::EventSubscriptions] {
@@ -117,6 +139,9 @@ pub(super) fn restore(
         .enabled(r.boolean("enabled")?)
         .try_build()
         .map_err(invalid_contract_value)?;
+        state
+            .logical_identities
+            .restore_record(&value, Row(row).identity()?);
         state.event_subscriptions.insert(value.id().id(), value);
     }
     for row in &sections[&StorageBackupStateSection::ComputedFieldDefinitions] {
@@ -161,6 +186,9 @@ pub(super) fn restore(
             )),
             provenance,
         );
+        state
+            .logical_identities
+            .restore_record(&value, Row(row).identity()?);
         state
             .computed_fields
             .insert(value.metadata().id().id(), value);

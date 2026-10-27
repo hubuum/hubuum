@@ -322,6 +322,7 @@ async fn create_service_account_parts(
                     crate::schema::service_accounts::owner_group_id.eq(owner_group_id),
                     crate::schema::service_accounts::created_by.eq(created_by),
                 ))
+                .returning(ServiceAccountRow::as_select())
                 .get_result::<ServiceAccountRow>(connection)
                 .await?;
             let revision = principal_revision(connection, principal_id).await?;
@@ -375,6 +376,7 @@ pub async fn update_service_account(
                 description: description.as_deref(),
                 owner_group_id,
             })
+            .returning(ServiceAccountRow::as_select())
             .get_result::<ServiceAccountRow>(connection)
             .await?;
             let name = principal_name(connection, service_account_id).await?;
@@ -423,6 +425,7 @@ async fn disable_service_account_parts(
                     .filter(crate::schema::service_accounts::id.eq(service_account_id)),
             )
             .set(crate::schema::service_accounts::disabled_at.eq(diesel::dsl::now))
+            .returning(ServiceAccountRow::as_select())
             .get_result::<ServiceAccountRow>(connection)
             .await?;
             let name = principal_name(connection, service_account_id).await?;

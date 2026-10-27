@@ -1,6 +1,6 @@
 use diesel::{
     QueryableByName, sql_query,
-    sql_types::{Array, BigInt, Integer, Nullable, Text, Timestamp, Timestamptz},
+    sql_types::{Array, BigInt, Integer, Jsonb, Nullable, Text, Timestamp, Timestamptz},
 };
 use hubuum_domain::{ClassRelationId, ObjectId};
 use hubuum_query::CursorValue;
@@ -18,6 +18,8 @@ mod tests;
 
 #[derive(QueryableByName)]
 struct MetadataRow {
+    #[diesel(sql_type = Nullable<Jsonb>)]
+    logical_identity: Option<Value>,
     #[diesel(sql_type = Text)]
     op: String,
     #[diesel(sql_type = Timestamptz)]
@@ -52,7 +54,8 @@ impl MetadataRow {
             self.actor_kind,
         )
         .initiator_principal_id(self.initiator_user_id.map(PrincipalId::new).transpose()?)
-        .task_id(self.task_id.map(TaskId::new).transpose()?))
+        .task_id(self.task_id.map(TaskId::new).transpose()?)
+        .with_logical_identity(history_identity(self.logical_identity)?))
     }
 }
 
@@ -266,9 +269,9 @@ impl RelationTables {
         // Seek the latest version first, including tombstones. Checking validity
         // afterward preserves gaps without scanning thousands of older versions.
         format!(
-            "SELECT requested.ordinal, endpoint.* FROM unnest($1::int4[], $2::timestamptz[]) WITH ORDINALITY AS requested(id, at, ordinal)
+            "SELECT requested.ordinal, endpoint.* FROM unnest($1::int4[], $2::timestamptz[], $3::text[]) WITH ORDINALITY AS requested(id, at, identity, ordinal)
              CROSS JOIN LATERAL (SELECT id, {class}, collection_id, name, {metadata} FROM {table}
-               WHERE id = requested.id AND valid_from <= requested.at
+               WHERE id = requested.id AND valid_from <= requested.at AND logical_identity #>> '{{subject,identity,identity}}' = requested.identity
                ORDER BY valid_from DESC, history_id DESC LIMIT 1) endpoint
              WHERE endpoint.op <> 'D' AND (endpoint.valid_to IS NULL OR requested.at < endpoint.valid_to)
              ORDER BY requested.ordinal",
@@ -277,7 +280,7 @@ impl RelationTables {
     }
 }
 
-const METADATA: &str = "op, valid_from, valid_to, history_id, revision, actor_id, actor_kind, initiator_user_id, task_id";
+const METADATA: &str = "logical_identity, op, valid_from, valid_to, history_id, revision, actor_id, actor_kind, initiator_user_id, task_id";
 const VALIDITY: &str = "($2::timestamptz IS NULL OR (op <> 'D' AND tstzrange(valid_from, valid_to, '[)') @> $2::timestamptz))";
 
 fn timestamp_floor(at: DateTime<Utc>) -> DateTime<Utc> {
@@ -317,15 +320,17 @@ pub(crate) async fn list_relation_history(
             .load::<RelationRow>(connection).await?.into_iter().map(RelationRow::project).collect::<Result<Vec<_>, _>>()?;
         let mut ids = Vec::with_capacity(2 * records.len());
         let mut times = Vec::with_capacity(2 * records.len());
+        let mut identities = Vec::with_capacity(2 * records.len());
         for record in &records {
-            for endpoint in record.relation().endpoints() {
+            for (endpoint, identity) in record.relation().endpoints().into_iter().zip(record.endpoint_identities()) {
+                identities.push(identity.map(|identity| identity.to_string()));
                 ids.push(match endpoint { StorageRelationHistoryResource::Class(id) => id.id(), StorageRelationHistoryResource::Object(id) => id.id() });
                 times.push(at.unwrap_or_else(|| record.metadata().valid_from()));
             }
         }
         let mut endpoints = vec![None; ids.len()];
         if !ids.is_empty() {
-            for row in sql_query(tables.endpoint_sql()).bind::<Array<Integer>, _>(ids).bind::<Array<Timestamptz>, _>(times).load::<EndpointRow>(connection).await? {
+            for row in sql_query(tables.endpoint_sql()).bind::<Array<Integer>, _>(ids).bind::<Array<Timestamptz>, _>(times).bind::<Array<Nullable<Text>>, _>(identities).load::<EndpointRow>(connection).await? {
                 let (ordinal, snapshot) = row.project()?;
                 let slot = endpoints.get_mut(ordinal).ok_or_else(|| PostgresStorageError::internal("Unexpected endpoint ordinal"))?;
                 *slot = Some(snapshot);

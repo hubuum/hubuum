@@ -8,10 +8,12 @@
 use std::collections::HashSet;
 
 mod backup_restore;
+mod logical_identity;
 pub use backup_restore::{
     BackupRestoreFixture, verify_backup_budget_rejected, verify_backup_restore_contract,
     verify_failed_restore_preserves_snapshot,
 };
+pub use logical_identity::verify_collection_version_identity;
 use std::error::Error;
 use std::fmt;
 use std::sync::Mutex;

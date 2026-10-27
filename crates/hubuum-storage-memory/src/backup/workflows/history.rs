@@ -74,7 +74,7 @@ pub(in crate::backup) fn capture_history(
             ),
         };
         let mut fields = snapshot.fields().clone();
-        fields.extend(json!({"history_entry_id": entry.id.id(), "operation": entry.operation.as_str(),
+        fields.extend(json!({"logical_identity": entry.logical_identity, "history_entry_id": entry.id.id(), "operation": entry.operation.as_str(),
             "valid_from": entry.valid_from, "valid_to": entry.valid_to, "actor_principal_id": entry.actor_id.map(PrincipalId::id),
             "actor_kind": entry.actor_kind, "initiator_principal_id": entry.initiator_principal_id.map(PrincipalId::id), "task_id": entry.task_id.map(TaskId::id)}).as_object().expect("literal object").clone());
         sections
@@ -111,6 +111,15 @@ pub(in crate::backup) fn capture_history(
             "metadata": event.metadata(), "schema_version": event.schema_version(), "dispatched_at": state.event_dispatched_at.get(&event.id().get()).copied().unwrap_or(event.occurred_at()),
             "initiator_principal_id": event.provenance().initiator.as_ref().map(|p| p.principal_id.id()), "task_id": event.provenance().task_id.map(TaskId::id),
             "before_revision": before.map(ResourceRevision::get), "after_revision": after.map(ResourceRevision::get)}).as_object().expect("literal object").clone();
+        fields.insert(
+            "logical_identity".into(),
+            serde_json::to_value(
+                recorded
+                    .logical_identity()
+                    .ok_or_else(|| invalid("event identity"))?,
+            )
+            .map_err(|_| invalid("event identity"))?,
+        );
         add_trace(&mut fields, event.trace_link());
         events.push(retain_row(progress, row(Value::Object(fields)))?);
     }
@@ -133,6 +142,7 @@ pub(in crate::backup) fn capture_history(
             continue;
         }
         deliveries.push(retain_row(progress, row(json!({
+            "logical_identity": state.logical_identities.association(Association::Delivery(d.id()))?,
             "id": d.id().id(), "event_id": d.event_id().get(), "subscription_id": d.subscription_id().id(), "status": d.status().as_str(), "purpose": d.purpose(), "deferred_reason": d.deferred_reason(), "attempts": d.attempts(),
             "next_attempt_at": d.next_attempt_at(), "last_error": d.last_error(), "created_at": d.created_at(), "updated_at": d.updated_at()
         })))?);
@@ -271,6 +281,8 @@ pub(in crate::backup) fn restore_history(
                 _ => unreachable!("temporal resource selection"),
             };
             state.history.push(MemoryHistoryEntry {
+                logical_identity: serde_json::from_value(r.value("logical_identity")?.clone())
+                    .map_err(|_| invalid("logical_identity"))?,
                 id: HistoryRecordId::new(r.number("history_entry_id")?)
                     .map_err(|_| invalid("history_entry_id"))?,
                 value,
@@ -430,12 +442,16 @@ pub(in crate::backup) fn restore_history(
         state
             .event_dispatched_at
             .insert(envelope.id().get(), r.time("dispatched_at")?);
-        state.index_task_event(&envelope)?;
-        state.events.push(StorageRecordedEvent::new(
-            envelope,
-            revision("before_revision")?,
-            revision("after_revision")?,
-        ));
+        let identity = r.identity()?;
+        state.index_task_event(&envelope, &identity)?;
+        state.events.push(
+            StorageRecordedEvent::new(
+                envelope,
+                revision("before_revision")?,
+                revision("after_revision")?,
+            )
+            .with_logical_identity(identity),
+        );
     }
     for events in state.task_events.values_mut() {
         events.sort_by_key(|event| event.id().get());
@@ -469,6 +485,9 @@ pub(in crate::backup) fn restore_history(
         .last_error(r.optional_text("last_error")?)
         .try_build()
         .map_err(invalid_contract_value)?;
+        state
+            .logical_identities
+            .restore_association(Association::Delivery(value.id()), r.identity()?);
         state.event_deliveries.insert(value.id().id(), value);
     }
     state.next_event_delivery_id = state

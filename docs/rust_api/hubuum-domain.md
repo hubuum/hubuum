@@ -1,6 +1,6 @@
 # `hubuum-domain` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.6` release train.
+Status: experimental public API in the storage SDK `0.7` release train.
 
 ## Purpose and Callers
 
@@ -23,7 +23,12 @@ implements Utoipa 6 schema traits for values also used by Hubuum's HTTP API.
 ## Errors, Runtime, and Security
 
 Validation returns crate-owned errors and does not panic for caller input.
-There is no asynchronous runtime requirement, I/O, or cancellation behavior.
+There is no asynchronous runtime requirement or cancellation behavior. Logical
+identity generation uses operating-system entropy and can panic if that source
+fails; parsing and byte validation do not access it. Resource, principal, task,
+version, and legacy-cohort UUIDs are distinct private-field types. Their serialized
+representations are UUID strings; unresolved references retain an explicit cohort
+and validated legacy identifier rather than claiming known correspondence.
 `PlaintextPassword` validates nonempty passwords up to 4096 Unicode characters,
 preserves their exact contents, and redacts debug output. Hashing and verification
 belong to consumers; plaintext is accessible only through its explicit accessor.

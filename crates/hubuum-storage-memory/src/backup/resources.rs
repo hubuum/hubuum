@@ -91,7 +91,11 @@ pub(super) fn restore(
                 .iter()
                 .map(|row| {
                     let r = Row(row);
-                    Ok((r.integer("id")?, $decode(&r)?))
+                    let value = $decode(&r)?;
+                    state
+                        .logical_identities
+                        .restore_record(&value, r.identity()?);
+                    Ok((r.integer("id")?, value))
                 })
                 .collect::<Result<_, StorageError>>()?;
             state.$sequence = next_id(&state.$field)?;
@@ -137,7 +141,7 @@ fn capture_integrations(
         state
             .export_templates
             .values()
-            .map(export_templates)
+            .map(|value| identified_row(state, value, export_templates(value)))
             .map(|row| capture_row(progress, row))
             .collect::<Result<_, _>>()?,
     );
@@ -146,7 +150,7 @@ fn capture_integrations(
         state
             .remote_targets
             .values()
-            .map(remote_targets)
+            .map(|value| identified_row(state, value, remote_targets(value)))
             .map(|row| capture_row(progress, row))
             .collect::<Result<_, _>>()?,
     );
@@ -258,7 +262,7 @@ pub(super) fn capture(
         state
             .collections
             .values()
-            .map(collections)
+            .map(|value| identified_row(state, value, collections(value)))
             .map(|row| capture_row(progress, row))
             .collect::<Result<Vec<_>, _>>()?,
     );
@@ -267,7 +271,7 @@ pub(super) fn capture(
         state
             .classes
             .values()
-            .map(classes)
+            .map(|value| identified_row(state, value, classes(value)))
             .map(|row| capture_row(progress, row))
             .collect::<Result<Vec<_>, _>>()?,
     );
@@ -276,7 +280,7 @@ pub(super) fn capture(
         state
             .objects
             .values()
-            .map(objects)
+            .map(|value| identified_row(state, value, objects(value)))
             .map(|row| capture_row(progress, row))
             .collect::<Result<Vec<_>, _>>()?,
     );
@@ -285,7 +289,7 @@ pub(super) fn capture(
         state
             .class_relations
             .values()
-            .map(classrelations)
+            .map(|value| identified_row(state, value, classrelations(value)))
             .map(|row| capture_row(progress, row))
             .collect::<Result<Vec<_>, _>>()?,
     );
@@ -294,7 +298,7 @@ pub(super) fn capture(
         state
             .object_relations
             .values()
-            .map(objectrelations)
+            .map(|value| identified_row(state, value, objectrelations(value)))
             .map(|row| capture_row(progress, row))
             .collect::<Result<Vec<_>, _>>()?,
     );

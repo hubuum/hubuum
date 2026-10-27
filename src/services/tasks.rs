@@ -10,8 +10,8 @@ use crate::models::search::QueryOptions;
 use crate::models::{
     BackupOutputLookup, BackupTaskOutput, BackupTaskOutputSummary, ExportOutputLookup,
     ExportTaskOutput, ExportTaskOutputSummary, ImportTaskResultRecord, NewTaskEventRecord,
-    PrincipalID, TaskEventRecord, TaskID, TaskKind, TaskRecord, TaskResultCounts, TaskStatus,
-    TokenID, TokenScope,
+    PrincipalID, TaskEventRecord, TaskEventResponse, TaskID, TaskKind, TaskRecord,
+    TaskResultCounts, TaskStatus, TokenID, TokenScope,
 };
 use crate::observability::tracing as telemetry;
 use crate::pagination::SKIPPED_TOTAL_COUNT;
@@ -610,7 +610,7 @@ pub(crate) async fn list_task_events(
     backend: &impl StorageContext,
     task_id: TaskID,
     options: QueryOptions,
-) -> Result<(Vec<crate::models::TaskEventResponse>, i64), ApiError> {
+) -> Result<(Vec<TaskEventResponse>, i64), ApiError> {
     let (events, total) = storage_handle(backend)
         .list_task_events(StorageTaskChildListQuery::new(task_id, options))
         .await?
@@ -621,7 +621,14 @@ pub(crate) async fn list_task_events(
         .collect::<Vec<_>>();
     let principal_ids = records
         .iter()
-        .flat_map(|record| [record.actor_user_id, record.initiator_user_id])
+        .flat_map(|record| {
+            ["/actor_principal_id", "/initiator_principal_id"].map(|path| {
+                record
+                    .logical_identity
+                    .as_ref()
+                    .and_then(|identity| identity.principal_reference(path))
+            })
+        })
         .flatten()
         .collect();
     let principal_names =
@@ -629,8 +636,12 @@ pub(crate) async fn list_task_events(
     Ok((
         records
             .into_iter()
-            .map(|record| {
-                crate::models::TaskEventResponse::from_record_with_names(record, &principal_names)
+            .map(|mut record| {
+                let evidence = record.logical_identity.take();
+                let mut response = TaskEventResponse::from(record);
+                response.provenance =
+                    principal_names.enrich(evidence.as_ref(), response.provenance);
+                response
             })
             .collect(),
         total.unwrap_or(SKIPPED_TOTAL_COUNT),
@@ -820,6 +831,7 @@ pub(crate) fn task_from_storage(task: StorageTask) -> Result<TaskRecord, ApiErro
 
 fn task_event_from_storage(event: StorageTaskEvent) -> TaskEventRecord {
     TaskEventRecord {
+        logical_identity: event.logical_identity().cloned(),
         id: event.id().get(),
         task_id: event.task_id().id(),
         event_type: event.event_type().to_string(),

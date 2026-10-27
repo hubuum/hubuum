@@ -1,3 +1,4 @@
+use diesel::SelectableHelper;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::{AsChangeset, Insertable};
 use diesel_async::RunQueryDsl;
@@ -239,12 +240,14 @@ pub async fn apply_local_collection_grant(
                             .filter(crate::schema::permissions::group_id.eq(group_id)),
                     )
                     .set(UpdatePermission::grant(&requested, replace_existing))
+                    .returning(PermissionRow::as_select())
                     .get_result::<PermissionRow>(connection)
                     .await?
                 }
                 None => {
                     diesel::insert_into(crate::schema::permissions::table)
                         .values(NewPermission::new(collection_id, group_id, &requested))
+                        .returning(PermissionRow::as_select())
                         .get_result::<PermissionRow>(connection)
                         .await?
                 }
@@ -297,6 +300,7 @@ pub async fn revoke_local_collection_grant(
                     .filter(crate::schema::permissions::group_id.eq(group_id)),
             )
             .set(UpdatePermission::revoke(&requested))
+            .returning(PermissionRow::as_select())
             .get_result::<PermissionRow>(connection)
             .await?;
             let after_revision = permission_owner_revision(connection, collection_id).await?;
@@ -407,6 +411,7 @@ async fn lock_grant(
         .filter(crate::schema::permissions::collection_id.eq(collection_id))
         .filter(crate::schema::permissions::group_id.eq(group_id))
         .for_update()
+        .select(PermissionRow::as_select())
         .first(connection)
         .await
         .optional()

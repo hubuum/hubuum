@@ -2,15 +2,18 @@ pub(crate) mod access;
 pub(crate) mod computed;
 pub(crate) mod navigation;
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, Utc};
+use hubuum_storage_core::StorageIdentityEvidence;
 
 mod name;
 mod relations;
-use hubuum_domain::{ClassId, CollectionId, ObjectId, PrincipalId, ResourceId};
+use hubuum_domain::{ClassId, CollectionId, ObjectId, PrincipalIdentity, ResourceId};
 pub use name::{class_objects_as_of, object_history_by_name};
 
 use crate::errors::ApiError;
-use crate::events::PrincipalNames;
+use crate::events::Provenance;
 use crate::models::search::QueryOptions;
 use crate::models::{
     CollectionHistory, ExportTemplateHistory, HubuumClassHistory, HubuumObjectHistory,
@@ -70,6 +73,7 @@ struct AppHistoryMetadata {
     initiator_principal_id: Option<i32>,
     task_id: Option<i32>,
     revision: ResourceRevision,
+    logical_identity: Option<StorageIdentityEvidence>,
 }
 
 impl From<StorageHistoryMetadata> for AppHistoryMetadata {
@@ -93,6 +97,7 @@ impl From<StorageHistoryMetadata> for AppHistoryMetadata {
             initiator_principal_id: parts.initiator_principal_id().map(|id| id.id()),
             task_id: parts.task_id().map(|id| id.id()),
             revision: parts.revision(),
+            logical_identity: parts.logical_identity().cloned(),
         }
     }
 }
@@ -119,6 +124,7 @@ fn collection_from_storage(
         actor_kind: metadata.actor_kind,
         initiator_user_id: metadata.initiator_principal_id,
         task_id: metadata.task_id,
+        logical_identity: metadata.logical_identity,
         revision: metadata.revision,
     })
 }
@@ -154,6 +160,7 @@ fn class_from_storage(row: StorageClassHistoryRecord) -> Result<HubuumClassHisto
         actor_kind: metadata.actor_kind,
         initiator_user_id: metadata.initiator_principal_id,
         task_id: metadata.task_id,
+        logical_identity: metadata.logical_identity,
         revision: metadata.revision,
     })
 }
@@ -180,6 +187,7 @@ fn object_from_storage(row: StorageObjectHistoryRecord) -> Result<HubuumObjectHi
         actor_kind: metadata.actor_kind,
         initiator_user_id: metadata.initiator_principal_id,
         task_id: metadata.task_id,
+        logical_identity: metadata.logical_identity,
         revision: metadata.revision,
     })
 }
@@ -217,6 +225,7 @@ fn export_template_from_storage(
         actor_kind: metadata.actor_kind,
         initiator_user_id: metadata.initiator_principal_id,
         task_id: metadata.task_id,
+        logical_identity: metadata.logical_identity,
         revision: metadata.revision,
     })
 }
@@ -267,27 +276,48 @@ fn remote_target_from_storage(
         actor_kind: metadata.actor_kind,
         initiator_user_id: metadata.initiator_principal_id,
         task_id: metadata.task_id,
+        logical_identity: metadata.logical_identity,
         revision: metadata.revision,
     })
 }
 
-pub async fn resolve_principal_names(
+/// Names indexed by the captured principal UUID, never the reusable REST id.
+#[derive(Default)]
+pub(crate) struct CapturedPrincipalNames(BTreeMap<PrincipalIdentity, String>);
+
+impl CapturedPrincipalNames {
+    pub(crate) fn enrich(
+        &self,
+        evidence: Option<&StorageIdentityEvidence>,
+        mut provenance: Provenance,
+    ) -> Provenance {
+        for (path, principal) in [
+            ("/actor_principal_id", &mut provenance.actor.principal),
+            ("/initiator_principal_id", &mut provenance.initiator),
+        ] {
+            if let Some(principal) = principal {
+                principal.name = evidence
+                    .and_then(|evidence| evidence.principal_reference(path))
+                    .and_then(|identity| self.0.get(&identity))
+                    .cloned();
+            }
+        }
+        provenance
+    }
+}
+
+pub(crate) async fn resolve_principal_names(
     backend: &impl StorageContext,
-    principal_ids: Vec<i32>,
-) -> Result<PrincipalNames, ApiError> {
-    let principal_ids = principal_ids
-        .into_iter()
-        .map(PrincipalId::new)
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(storage_handle(backend)
-        .resolve_history_principal_names(principal_ids)
-        .await?
-        .into_iter()
-        .map(|row| {
-            let (principal_id, name) = row.into_parts();
-            (principal_id.id(), name)
-        })
-        .collect())
+    principal_ids: Vec<PrincipalIdentity>,
+) -> Result<CapturedPrincipalNames, ApiError> {
+    Ok(CapturedPrincipalNames(
+        storage_handle(backend)
+            .resolve_history_principal_names(principal_ids)
+            .await?
+            .into_iter()
+            .map(|row| row.into_parts())
+            .collect(),
+    ))
 }
 
 macro_rules! history_service {
@@ -381,4 +411,106 @@ pub async fn object_as_of(
         .await?
         .map(object_from_storage)
         .transpose()
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use crate::events::StoredProvenance;
+    use hubuum_domain::{
+        IdentityReference, LegacyIdentityCohort, LegacyRecordId, UnresolvedIdentity,
+    };
+    use hubuum_storage_core::{StorageCapturedIdentity, StorageIdentityEvidence};
+    use rstest::rstest;
+    use std::collections::BTreeMap;
+
+    #[rstest]
+    #[case::same_principal(true)]
+    #[case::reused_integer(false)]
+    fn names_require_the_captured_principal_identity(#[case] same_identity: bool) {
+        let captured = PrincipalIdentity::generate();
+        let current = if same_identity {
+            captured
+        } else {
+            PrincipalIdentity::generate()
+        };
+        let names = CapturedPrincipalNames(BTreeMap::from([(current, "current-name".into())]));
+        let evidence = StorageIdentityEvidence::try_new(
+            None,
+            BTreeMap::from([(
+                "/actor_principal_id".into(),
+                StorageCapturedIdentity::Principal {
+                    reference: IdentityReference::Known { identity: captured },
+                },
+            )]),
+        )
+        .unwrap();
+        let provenance = StoredProvenance::from_actor_kind(Some("user"))
+            .with_actor_user_id(Some(42))
+            .without_names();
+        assert_eq!(
+            names
+                .enrich(Some(&evidence), provenance)
+                .actor
+                .principal
+                .unwrap()
+                .name
+                .as_deref(),
+            same_identity.then_some("current-name")
+        );
+    }
+
+    #[rstest]
+    #[case::distinct_identities(true, true)]
+    #[case::unresolved_actor(false, true)]
+    #[case::unresolved_initiator(true, false)]
+    fn shared_integer_does_not_mix_actor_and_initiator_names(
+        #[case] actor_known: bool,
+        #[case] initiator_known: bool,
+    ) {
+        let actor = PrincipalIdentity::generate();
+        let initiator = PrincipalIdentity::generate();
+        let names = CapturedPrincipalNames(BTreeMap::from([
+            (actor, "actor".into()),
+            (initiator, "initiator".into()),
+        ]));
+        let reference = |identity, known| StorageCapturedIdentity::Principal {
+            reference: if known {
+                IdentityReference::Known { identity }
+            } else {
+                IdentityReference::Unresolved {
+                    legacy: UnresolvedIdentity::new(
+                        LegacyIdentityCohort::generate(),
+                        LegacyRecordId::new(42).unwrap(),
+                    ),
+                }
+            },
+        };
+        let evidence = StorageIdentityEvidence::try_new(
+            None,
+            BTreeMap::from([
+                ("/actor_principal_id".into(), reference(actor, actor_known)),
+                (
+                    "/initiator_principal_id".into(),
+                    reference(initiator, initiator_known),
+                ),
+            ]),
+        )
+        .unwrap();
+        let provenance = StoredProvenance::from_actor_kind(Some("user"))
+            .with_actor_user_id(Some(42))
+            .with_initiator_user_id(Some(42))
+            .without_names();
+        let provenance = names.enrich(Some(&evidence), provenance);
+        assert_eq!(
+            (
+                provenance.actor.principal.unwrap().name,
+                provenance.initiator.unwrap().name
+            ),
+            (
+                actor_known.then(|| "actor".to_owned()),
+                initiator_known.then(|| "initiator".to_owned())
+            ),
+        );
+    }
 }

@@ -7,6 +7,7 @@ use hubuum_storage_core::{
     StorageEventSinkGrantChange,
 };
 use hubuum_storage_core::{StorageEventNotificationInput, StorageEventNotificationSelection};
+use hubuum_storage_core::{StorageIdentitySubject, StorageIdentityTarget};
 use std::time::Instant;
 
 #[async_trait]
@@ -69,6 +70,10 @@ impl AuditEventStorage for MemoryStorage {
                         .is_none_or(|value| event.occurred_at() < value)
             })
             .map(|recorded| {
+                let evidence = recorded
+                    .logical_identity()
+                    .expect("stored event identity")
+                    .clone();
                 let (event, before_revision, after_revision) = recorded.clone().into_parts();
                 let directly_visible = event
                     .collection_id()
@@ -81,6 +86,7 @@ impl AuditEventStorage for MemoryStorage {
                     event.without_payloads()
                 };
                 StorageAuditEvent::new(event, before_revision, after_revision)
+                    .with_logical_identity(evidence)
             })
             .collect::<Vec<_>>();
         events.sort_by_key(|recorded| {
@@ -186,7 +192,9 @@ impl EventConfigurationStorage for MemoryStorage {
         }
         let key = (request.sink_id().id(), request.collection_id().id());
         let changed = match request.action() {
-            EventSinkGrantAction::Grant => state.event_sink_grants.insert(key),
+            EventSinkGrantAction::Grant => {
+                state.store_sink_grant(request.sink_id(), request.collection_id())
+            }
             EventSinkGrantAction::Revoke => state.event_sink_grants.remove(&key),
         };
         if !changed {
@@ -304,7 +312,7 @@ impl EventConfigurationStorage for MemoryStorage {
         .enabled(request.enabled())
         .try_build()
         .map_err(invalid_contract_value)?;
-        state.event_sinks.insert(id.id(), sink.clone());
+        state.store_event_sink(id.id(), sink.clone());
         let receipt = append_memory_scoped_simple_event!(
             state,
             EntityType::EventSink,
@@ -429,7 +437,7 @@ impl EventConfigurationStorage for MemoryStorage {
                 }
             }
         }
-        state.event_sinks.insert(sink.id().id(), sink.clone());
+        state.store_event_sink(sink.id().id(), sink.clone());
         let receipt = append_memory_scoped_simple_event!(
             state,
             EntityType::EventSink,
@@ -560,9 +568,7 @@ impl EventConfigurationStorage for MemoryStorage {
         .enabled(request.enabled())
         .try_build()
         .map_err(invalid_contract_value)?;
-        state
-            .event_subscriptions
-            .insert(id.id(), subscription.clone());
+        state.store_event_subscription(id.id(), subscription.clone());
         let receipt = append_memory_scoped_simple_event!(
             state,
             EntityType::EventSubscription,
@@ -630,9 +636,7 @@ impl EventConfigurationStorage for MemoryStorage {
         .enabled(enabled)
         .try_build()
         .map_err(invalid_contract_value)?;
-        state
-            .event_subscriptions
-            .insert(subscription.id().id(), subscription.clone());
+        state.store_event_subscription(subscription.id().id(), subscription.clone());
         let receipt = append_memory_scoped_simple_event!(
             state,
             EntityType::EventSubscription,
@@ -741,7 +745,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
             None,
         )?;
         state.next_event_delivery_id += 1;
-        state.event_deliveries.insert(id.id(), delivery.clone());
+        state.store_event_delivery(id.id(), delivery.clone());
         Ok(StorageMutationOutcome::committed(delivery, receipt))
     }
 
@@ -943,7 +947,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
             state
                 .event_delivery_claims
                 .insert(delivery.id().id(), token);
-            state.event_deliveries.insert(delivery.id().id(), delivery);
+            state.store_event_delivery(delivery.id().id(), delivery);
             work.push(StorageEventDeliveryWorkItem::new(
                 claim,
                 envelope,
@@ -1046,7 +1050,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                 (!allowed).then(|| "Sink use revoked or destination disabled".to_string()),
                 None,
             )?;
-            state.event_deliveries.insert(delivery.id().id(), rejected);
+            state.store_event_delivery(delivery.id().id(), rejected);
             state.event_delivery_claims.remove(&delivery.id().id());
             return Ok(None);
         }
@@ -1084,7 +1088,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                     .to_string(),
                 ),
             )?;
-            state.event_deliveries.insert(delivery.id().id(), deferred);
+            state.store_event_delivery(delivery.id().id(), deferred);
             state.event_delivery_claims.remove(&delivery.id().id());
             return Ok(None);
         }
@@ -1096,7 +1100,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
             ),
         );
         let admitted = delivery_metadata(delivery.clone(), delivery.purpose(), None)?;
-        state.event_deliveries.insert(delivery.id().id(), admitted);
+        state.store_event_delivery(delivery.id().id(), admitted);
         StorageEventDeliveryLease::try_new(claim.clone(), check_started, remaining)
             .map(Some)
             .map_err(invalid_contract_value)
@@ -1164,7 +1168,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                 )?
             }
         };
-        state.event_deliveries.insert(current.id().id(), updated);
+        state.store_event_delivery(current.id().id(), updated);
         state.event_delivery_claims.remove(&current.id().id());
         Ok(())
     }
@@ -1317,7 +1321,7 @@ impl EventFanoutStorage for MemoryStorage {
                     )
                     .try_build()
                     .map_err(invalid_contract_value)?;
-                    state.event_deliveries.insert(id.id(), delivery);
+                    state.store_event_delivery(id.id(), delivery);
                 }
             }
         }
@@ -1606,18 +1610,25 @@ impl HistoryStorage for MemoryStorage {
 
     async fn resolve_history_principal_names(
         &self,
-        principal_ids: Vec<PrincipalId>,
+        principal_ids: Vec<PrincipalIdentity>,
     ) -> Result<Vec<StorageHistoryPrincipalName>, StorageError> {
         let state = self.state.read().await;
-        Ok(principal_ids
-            .into_iter()
-            .filter_map(|id| {
-                state
-                    .principals
-                    .get(&id.id())
-                    .map(|principal| StorageHistoryPrincipalName::new(id, principal.name()))
-            })
-            .collect())
+        let requested = principal_ids.into_iter().collect::<BTreeSet<_>>();
+        let mut names = Vec::new();
+        for principal in state.principals.values() {
+            let evidence = state
+                .logical_identities
+                .record(StorageIdentityTarget::Principal(principal.id()))?;
+            if let Some(StorageIdentitySubject::Principal {
+                identity: IdentityReference::Known { identity },
+            }) = evidence.subject()
+                && requested.contains(&identity)
+            {
+                names.push(StorageHistoryPrincipalName::new(identity, principal.name()));
+            }
+        }
+        names.sort_by_key(StorageHistoryPrincipalName::identity);
+        Ok(names)
     }
 
     async fn list_collection_history(

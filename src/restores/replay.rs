@@ -4,10 +4,11 @@ use std::fmt;
 use std::io::{BufReader, Read};
 
 use chrono::{DateTime, Utc};
-use hubuum_domain::JsonSchemaLimits;
+use hubuum_domain::{JsonSchemaLimits, LegacyIdentityCohort};
 use hubuum_storage_core::{
     StorageBackupBudget, StorageBackupHistorySection as History, StorageBackupReplay,
     StorageBackupReplayBuilder, StorageBackupRow, StorageBackupStateSection as State,
+    StorageIdentityUpgrade,
 };
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize, Serializer};
@@ -24,6 +25,7 @@ use crate::storage::{BackupSnapshotStorage, StorageContext, storage_handle};
 pub(crate) struct ReplayDocument {
     pub metadata: BackupDocument,
     pub snapshot: StorageBackupReplay,
+    unresolved_identity_references: usize,
 }
 #[derive(Serialize)]
 struct Sections<T> {
@@ -57,6 +59,25 @@ impl Serialize for ReplayDocument {
     }
 }
 impl ReplayDocument {
+    #[cfg(feature = "embedded-migrations")]
+    pub(crate) fn at_restore_boundary(
+        mut self,
+        context: hubuum_storage_core::StorageRestoreIdentityContext,
+    ) -> Result<Self, ApiError> {
+        let upgrade = if self.metadata.backup_version == CURRENT_BACKUP_VERSION {
+            StorageIdentityUpgrade::Native
+        } else {
+            StorageIdentityUpgrade::Legacy(context.cohort())
+        };
+        let prepared = self
+            .snapshot
+            .upgrade_logical_identities(upgrade)?
+            .at_restore_boundary(context)?;
+        self.unresolved_identity_references = prepared.unresolved_references();
+        self.snapshot = prepared.into_replay();
+        Ok(self)
+    }
+
     pub fn summary(&self) -> Result<RestoreValidationSummary, ApiError> {
         let total_items = self
             .metadata
@@ -70,6 +91,11 @@ impl ReplayDocument {
             source_version: self.metadata.source_version.clone(),
             includes_history: self.snapshot.includes_history(),
             total_items,
+            identity_quarantine: self.metadata.backup_version != CURRENT_BACKUP_VERSION,
+            unresolved_identity_references: u64::try_from(self.unresolved_identity_references)
+                .map_err(|_| {
+                    ApiError::PayloadTooLarge("Identity reference count overflow".into())
+                })?,
         })
     }
     pub fn state_sha256(&self) -> Result<String, ApiError> {
@@ -87,7 +113,10 @@ pub(crate) async fn capture(
     let snapshot = storage_handle(backend)
         .capture_backup_replay(include_history, budget)
         .await?
-        .validate_resources()?;
+        .validate_resources()?
+        .upgrade_logical_identities(StorageIdentityUpgrade::Native)?;
+    let unresolved_identity_references = snapshot.unresolved_references();
+    let snapshot = snapshot.into_replay();
     if snapshot.includes_history() != include_history {
         return Err(ApiError::InternalServerError(
             "Captured backup history does not match the request".into(),
@@ -103,6 +132,7 @@ pub(crate) async fn capture(
         }
     }
     Ok(ReplayDocument {
+        unresolved_identity_references,
         metadata: BackupDocument {
             backup_version: CURRENT_BACKUP_VERSION,
             created_at: Utc::now(),
@@ -189,7 +219,21 @@ pub(crate) fn parse(
         builder = builder.without_history()?;
     }
     let snapshot = builder.finish_for_restore(metadata.backup_version)?;
-    let document = ReplayDocument { metadata, snapshot };
+    let upgrade = if metadata.backup_version == CURRENT_BACKUP_VERSION {
+        StorageIdentityUpgrade::Native
+    } else {
+        // Validate the full legacy upgrade in quarantine before accepting a
+        // stage. Confirmation binds final assignments to the persisted job;
+        // this preview cohort is discarded and never identifies published data.
+        StorageIdentityUpgrade::Legacy(LegacyIdentityCohort::generate())
+    };
+    let preview = snapshot.upgrade_logical_identities(upgrade)?;
+    let unresolved_identity_references = preview.unresolved_references();
+    let document = ReplayDocument {
+        metadata,
+        snapshot,
+        unresolved_identity_references,
+    };
     document.summary()?;
     Ok((
         document,

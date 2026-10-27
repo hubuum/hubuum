@@ -1,4 +1,5 @@
 use chrono::{NaiveDateTime, Utc};
+use diesel::SelectableHelper;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::sql_types::{Array, BigInt, Bool, Jsonb, Nullable, Timestamp, Uuid as SqlUuid};
 use diesel::{Queryable, QueryableByName};
@@ -59,7 +60,8 @@ struct RetentionBatchRow {
 /// Coordination fields are retained in the archive for compatibility with
 /// the existing JSONL format, but this row never crosses the storage boundary
 /// directly.
-#[derive(Queryable, Serialize)]
+#[derive(Queryable, Serialize, diesel::Selectable)]
+#[diesel(table_name = crate::schema::events)]
 struct RetentionEventRow {
     id: i64,
     event_id: Uuid,
@@ -346,6 +348,7 @@ async fn select_events_for_retention_purge(
     events
         .filter(id.eq_any(ids))
         .order(id.asc())
+        .select(RetentionEventRow::as_select())
         .load::<RetentionEventRow>(connection)
         .await
         .map_err(PostgresStorageError::from)

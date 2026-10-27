@@ -356,6 +356,17 @@ fn postgres_task_audit_rows_restore_the_task_event_read_model() {
         let storage = MemoryStorage::new();
         let id = completed_task(&storage).await;
         let now = Utc::now();
+        let evidence = task_events(&storage, id)
+            .await
+            .pop()
+            .unwrap()
+            .logical_identity()
+            .unwrap()
+            .clone();
+        let event_id = match evidence.subject().unwrap() {
+            hubuum_storage_core::StorageIdentitySubject::Event { identity } => identity,
+            _ => unreachable!("task audit event"),
+        };
         let snapshot = edit_history(
             storage
                 .capture_backup_replay(
@@ -369,7 +380,8 @@ fn postgres_task_audit_rows_restore_the_task_event_read_model() {
             StorageBackupHistorySection::AuditEvents,
             |rows| {
                 *rows = vec![row(json!({
-                    "id": 200, "event_id": Uuid::new_v4(), "occurred_at": now,
+                    "id": 200, "event_id": event_id, "occurred_at": now,
+                    "logical_identity": evidence,
                     "entity_type": "task", "entity_id": id.id(), "entity_name": null,
                     "collection_id": null, "action": "succeeded", "actor_principal_id": 1,
                     "actor_kind": "user", "initiator_principal_id": 1, "task_id": id.id(),
@@ -392,6 +404,7 @@ fn postgres_task_audit_rows_restore_the_task_event_read_model() {
         .data(Some(json!({"rows": 7})))
         .actor_principal_id(Some(PrincipalId::new(1).unwrap()))
         .provenance(Some(PrincipalId::new(1).unwrap()), Some(id))
+        .logical_identity(evidence)
         .build();
         assert!(task_events(&storage, id).await == vec![expected]);
     });

@@ -37,6 +37,10 @@ fn metadata(row: &Row<'_>) -> Result<StorageHistoryMetadata, StorageError> {
             .map(TaskId::new)
             .transpose()
             .map_err(|_| invalid("task_id"))?,
+    )
+    .with_logical_identity(
+        serde_json::from_value(row.value("logical_identity")?.clone())
+            .map_err(|_| invalid("logical_identity"))?,
     ))
 }
 
@@ -154,6 +158,15 @@ pub(crate) fn list_relation_history(
             .map(|(_, slots)| slots)
         {
             for &slot in slots {
+                let captured = records[slot / 2].endpoint_identities()[slot % 2];
+                let actual = entry
+                    .logical_identity
+                    .subject()
+                    .and_then(|subject| subject.record_identity())
+                    .map(|identity| identity.resource());
+                if captured.is_none() || captured != actual {
+                    continue;
+                }
                 if endpoints[slot].is_none_or(|previous| previous.id < entry.id) {
                     endpoints[slot] = Some(entry);
                 }

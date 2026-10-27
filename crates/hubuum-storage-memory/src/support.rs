@@ -344,6 +344,7 @@ pub(super) fn transition_restore_record(
     let job = StorageRestoreArtifactJob::try_new(summary, document, capability_hash)
         .map_err(invalid_contract_value)?;
     Ok(MemoryRestoreRecord {
+        logical_identity: record.logical_identity.clone(),
         job,
         validation_summary: record.validation_summary.clone(),
     })

@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use hubuum_storage_core::StorageIdentityEvidence;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -47,6 +48,9 @@ pub enum HistoricalEndpointContext {
 /// Relationship versions and endpoint context resolved at `context_at`.
 #[derive(Clone, Serialize, ToSchema)]
 pub struct HistoricalRelation {
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub(crate) logical_identity: Option<StorageIdentityEvidence>,
     #[serde(flatten)]
     pub(crate) value: HistoricalRelationValue,
     pub(crate) history_id: i64,

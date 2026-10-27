@@ -44,7 +44,7 @@ async fn historical_population_seeks_large_class_without_loading_earlier_pages(
         crate::apply_query_options_with_fields!(records, options, fields,
             crate::cursor::CursorTieBreaker::new(FilterField::HistoryId, false,
                 history_cursor_field(&FilterField::HistoryId, "hubuumobject_history")?));
-        let rows = records.load::<ObjectHistoryRow>(connection).await?;
+        let rows = records.select(ObjectHistoryRow::as_select()).load::<ObjectHistoryRow>(connection).await?;
         assert_eq!(rows.iter().map(|row| row.history_id).collect::<Vec<_>>(), expected);
         let comparison = if descending { "<" } else { ">" };
         let order = if descending { "DESC" } else { "ASC" };

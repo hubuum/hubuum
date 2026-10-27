@@ -5,15 +5,15 @@ pub(super) fn capture(
     sections: &mut StorageBackupStateSections,
     progress: &mut StorageBackupCaptureProgress,
 ) -> Result<(), StorageError> {
-    sections.insert(StorageBackupStateSection::IdentityScopes, state.identity_scopes.values().map(|v| row(json!({"id": v.id().id(), "name": v.name(), "provider_kind": v.provider_kind(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
-    sections.insert(StorageBackupStateSection::Groups, state.groups.values().map(|v| row(json!({"id": v.id().id(), "name": v.name(), "description": v.description(), "identity_scope_id": v.identity_scope_id().id(), "managed_by": v.managed_by(), "external_key": v.external_key(), "last_sync_attempted_at": v.last_sync_attempted_at(), "last_sync_success_at": v.last_sync_success_at(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
-    sections.insert(StorageBackupStateSection::Principals, state.principals.values().map(|v| row(json!({"id": v.id().id(), "kind": v.kind().as_str(), "name": v.name(), "identity_scope_id": v.identity_scope_id().id(), "provider_managed": v.provider_managed(), "settings": v.settings(), "external_subject": v.external_subject(), "last_sync_attempted_at": v.last_sync_attempted_at(), "last_sync_success_at": v.last_sync_success_at(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
-    sections.insert(StorageBackupStateSection::ServiceAccounts, state.service_accounts.values().map(|v| row(json!({"id": v.id().id(), "kind": "service_account", "description": v.description(), "owner_group_id": v.owner_group_id().id(), "created_by": v.created_by().map(PrincipalId::id), "disabled_at": v.disabled_at(), "created_at": v.created_at(), "updated_at": v.updated_at()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
-    sections.insert(StorageBackupStateSection::GroupMemberships, state.memberships.values().map(|v| row(json!({"principal_id": v.principal_id().id(), "group_id": v.group_id().id(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
-    sections.insert(StorageBackupStateSection::CollectionPermissionGrants, state.authorization_grants.values().map(|v| row(json!({"id": v.id().id(), "collection_id": v.collection_id().id(), "group_id": v.group_id().id(), "permissions": v.permissions().iter().map(|p| permission_name(*p)).collect::<Vec<_>>(), "created_at": v.created_at(), "updated_at": v.updated_at()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
+    sections.insert(StorageBackupStateSection::IdentityScopes, state.identity_scopes.values().map(|v| identified_row(state, v, row(json!({"id": v.id().id(), "name": v.name(), "provider_kind": v.provider_kind(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()})))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
+    sections.insert(StorageBackupStateSection::Groups, state.groups.values().map(|v| identified_row(state, v, row(json!({"id": v.id().id(), "name": v.name(), "description": v.description(), "identity_scope_id": v.identity_scope_id().id(), "managed_by": v.managed_by(), "external_key": v.external_key(), "last_sync_attempted_at": v.last_sync_attempted_at(), "last_sync_success_at": v.last_sync_success_at(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()})))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
+    sections.insert(StorageBackupStateSection::Principals, state.principals.values().map(|v| identified_row(state, v, row(json!({"id": v.id().id(), "kind": v.kind().as_str(), "name": v.name(), "identity_scope_id": v.identity_scope_id().id(), "provider_managed": v.provider_managed(), "settings": v.settings(), "external_subject": v.external_subject(), "last_sync_attempted_at": v.last_sync_attempted_at(), "last_sync_success_at": v.last_sync_success_at(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()})))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
+    sections.insert(StorageBackupStateSection::ServiceAccounts, state.service_accounts.values().map(|v| associated_row(state, Association::ServiceAccount(v.id().into()), row(json!({"id": v.id().id(), "kind": "service_account", "description": v.description(), "owner_group_id": v.owner_group_id().id(), "created_by": v.created_by().map(PrincipalId::id), "disabled_at": v.disabled_at(), "created_at": v.created_at(), "updated_at": v.updated_at()})))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
+    sections.insert(StorageBackupStateSection::GroupMemberships, state.memberships.values().map(|v| associated_row(state, Association::Membership(v.principal_id(), v.group_id()), row(json!({"principal_id": v.principal_id().id(), "group_id": v.group_id().id(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()})))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
+    sections.insert(StorageBackupStateSection::CollectionPermissionGrants, state.authorization_grants.values().map(|v| associated_row(state, Association::Permission(v.id()), row(json!({"id": v.id().id(), "collection_id": v.collection_id().id(), "group_id": v.group_id().id(), "permissions": v.permissions().iter().map(|p| permission_name(*p)).collect::<Vec<_>>(), "created_at": v.created_at(), "updated_at": v.updated_at()})))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
     sections.insert(StorageBackupStateSection::Users, state.users.values().map(|record| {
         let v = record.user.clone().into_parts();
-        row(json!({"id": v.id().id(), "kind": "human", "proper_name": v.proper_name(), "email": v.email(), "created_at": v.created_at(), "updated_at": v.updated_at(), "anonymized_at": v.anonymized_at()}))
+        identity_row(row(json!({"id": v.id().id(), "kind": "human", "proper_name": v.proper_name(), "email": v.email(), "created_at": v.created_at(), "updated_at": v.updated_at(), "anonymized_at": v.anonymized_at()})), state.logical_identities.record(StorageIdentityTarget::Principal(v.id().into()))?)
     }).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
     sections.insert(StorageBackupStateSection::CollectionAuthorization, state.collections.keys().map(|id| row(json!({"collection_id": id, "revision": state.authorization_revisions.get(id).copied().unwrap_or(ResourceRevision::INITIAL).get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
     let mut hierarchy = Vec::new();
@@ -60,11 +60,11 @@ pub(super) fn capture(
                 .get(&key.1)
                 .ok_or_else(|| invalid("membership group"))?;
             let external = state.external_memberships.contains(&key);
-            sources.push(capture_row(progress, row(json!({"principal_id": key.0, "group_id": key.1,
+            sources.push(capture_row(progress, identity_row(row(json!({"principal_id": key.0, "group_id": key.1,
                 "source": if external { EXTERNAL_MEMBERSHIP_SOURCE } else { MANUAL_MEMBERSHIP_SOURCE },
                 "source_scope_id": group.identity_scope_id().id(),
                 "source_key": if external { group.external_key().unwrap_or_default() } else { "" },
-                "created_at": membership.created_at(), "updated_at": membership.updated_at()})))?);
+                "created_at": membership.created_at(), "updated_at": membership.updated_at()})), state.logical_identities.membership_source(membership.principal_id(), membership.group_id())?))?);
         }
     }
     sources.sort_by(|left, right| {
@@ -126,6 +126,9 @@ pub(super) fn restore(
             r.revision()?,
         )
         .map_err(invalid_contract_value)?;
+        state
+            .logical_identities
+            .restore_record(&value, Row(row).identity()?);
         state.identity_scopes.insert(value.id().id(), value);
     }
     for row in &sections[&StorageBackupStateSection::Groups] {
@@ -142,6 +145,9 @@ pub(super) fn restore(
         .last_sync_success_at(r.optional_time("last_sync_success_at")?)
         .try_build()
         .map_err(invalid_contract_value)?;
+        state
+            .logical_identities
+            .restore_record(&value, Row(row).identity()?);
         state.groups.insert(value.id().id(), value);
     }
     for row in &sections[&StorageBackupStateSection::Principals] {
@@ -159,6 +165,9 @@ pub(super) fn restore(
         .last_sync_success_at(r.optional_time("last_sync_success_at")?)
         .try_build()
         .map_err(invalid_contract_value)?;
+        state
+            .logical_identities
+            .restore_record(&value, Row(row).identity()?);
         state.principals.insert(value.id().id(), value);
     }
     for row in &sections[&StorageBackupStateSection::Users] {
@@ -203,7 +212,11 @@ pub(super) fn restore(
             r.time("updated_at")?,
         )
         .map_err(invalid_contract_value)?;
-        state.service_accounts.insert(value.id().id(), value);
+        let key = Association::ServiceAccount(value.id().into());
+        state.store_service_account(value.id().id(), value);
+        state
+            .logical_identities
+            .restore_association(key, r.identity()?);
     }
     state.memberships.clear();
     for row in &sections[&StorageBackupStateSection::GroupMemberships] {
@@ -216,9 +229,11 @@ pub(super) fn restore(
             r.revision()?,
         )
         .map_err(invalid_contract_value)?;
+        let key = Association::Membership(value.principal_id(), value.group_id());
+        state.store_membership((value.principal_id().id(), value.group_id().id()), value);
         state
-            .memberships
-            .insert((value.principal_id().id(), value.group_id().id()), value);
+            .logical_identities
+            .restore_association(key, r.identity()?);
     }
     state.membership_sources = sections[&StorageBackupStateSection::GroupMembershipSources].clone();
     for row in &state.membership_sources {
@@ -259,9 +274,11 @@ pub(super) fn restore(
             r.time("updated_at")?,
         )
         .map_err(invalid_contract_value)?;
+        let key = Association::Permission(value.id());
+        state.store_authorization_grant((value.collection_id().id(), value.group_id().id()), value);
         state
-            .authorization_grants
-            .insert((value.collection_id().id(), value.group_id().id()), value);
+            .logical_identities
+            .restore_association(key, r.identity()?);
     }
     state.next_identity_scope_id = next_id(&state.identity_scopes)?;
     state.next_principal_id = next_id(&state.principals)?;

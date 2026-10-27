@@ -638,7 +638,7 @@ async fn evidence_on(
     connection: &mut PostgresConnection,
     object_id: ObjectId,
 ) -> Result<Option<StorageSchemaEvidence>, PostgresStorageError> {
-    let row=diesel::sql_query("SELECT jsonb_build_object('schema',jsonb_build_object('class_id',class_id,'revision',schema_revision),'object_revision',object_revision,'valid',valid,'validated_at',validated_at) AS value FROM object_schema_evidence WHERE object_id=$1").bind::<Integer,_>(object_id.id()).get_result::<JsonRow>(connection).await.optional()?;
+    let row=diesel::sql_query("SELECT jsonb_build_object('logical_identity',logical_identity,'schema',jsonb_build_object('class_id',class_id,'revision',schema_revision),'object_revision',object_revision,'valid',valid,'validated_at',validated_at) AS value FROM object_schema_evidence WHERE object_id=$1").bind::<Integer,_>(object_id.id()).get_result::<JsonRow>(connection).await.optional()?;
     row.map(|row| serde_json::from_value(row.value).map_err(invalid))
         .transpose()
 }

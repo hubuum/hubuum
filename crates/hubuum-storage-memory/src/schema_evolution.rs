@@ -1,5 +1,6 @@
 use super::*;
 use chrono::SubsecRound;
+use hubuum_storage_core::{StorageIdentityResourceKind, StorageIdentityTarget};
 use serde_json::json;
 use std::io::{self, Write};
 use std::time::Instant;
@@ -58,7 +59,7 @@ impl ValidationObject {
 impl MemoryState {
     // Copy only lifecycle metadata for this class. Object documents and their
     // audit/history payloads never enter a schema mutation's staged delta.
-    fn schema_mutation_delta(&self, class_id: ClassId) -> Self {
+    fn schema_mutation_delta(&self, class_id: ClassId, context: &EventContext) -> Self {
         let mut delta = Self::new();
         delta.history.clear();
         delta.next_event_sequence = self.next_event_sequence;
@@ -103,10 +104,42 @@ impl MemoryState {
                 .computation_states
                 .insert(class_id.id(), state.clone());
         }
+        let targets = std::iter::once(StorageIdentityTarget::Resource {
+            kind: StorageIdentityResourceKind::Class,
+            id: class_id.into(),
+        })
+        .chain(
+            delta
+                .tasks
+                .values()
+                .map(|task| StorageIdentityTarget::Task(task.id)),
+        )
+        .chain(
+            delta
+                .computed_fields
+                .values()
+                .map(|value| StorageIdentityTarget::Resource {
+                    kind: StorageIdentityResourceKind::ComputedDefinition,
+                    id: value.metadata().id(),
+                }),
+        )
+        .chain(
+            context
+                .actor_user_id()
+                .map(StorageIdentityTarget::Principal),
+        )
+        .chain(
+            context
+                .initiator_user_id()
+                .map(StorageIdentityTarget::Principal),
+        )
+        .chain(context.task_id().map(StorageIdentityTarget::Task));
+        delta.logical_identities = self.logical_identities.fork(targets);
         delta
     }
 
     fn commit_schema_delta(&mut self, delta: Self) {
+        self.logical_identities.merge(delta.logical_identities);
         self.next_event_sequence = delta.next_event_sequence;
         self.next_task_id = delta.next_task_id;
         self.next_history_id = delta.next_history_id;
@@ -291,7 +324,8 @@ impl MemoryState {
             .unwrap_or(0)
             .checked_add(1)
             .ok_or_else(|| StorageError::internal("Schema history identity exhausted"))?;
-        self.schema_history.push(StorageBackupRow::try_from_value(json!({"id":id,"class_id":class_id,"revision":number,"snapshot":revision.snapshot(),"operation":operation,"occurred_at":Utc::now().trunc_subsecs(6),"actor_principal_id":context.actor_user_id(),"task_id":context.task_id()})).map_err(schema_error)?);
+        let logical_identity = self.logical_identities.schema_history(revision, context);
+        self.schema_history.push(StorageBackupRow::try_from_value(json!({"logical_identity": logical_identity, "id":id,"class_id":class_id,"revision":number,"snapshot":revision.snapshot(),"operation":operation,"occurred_at":Utc::now().trunc_subsecs(6),"actor_principal_id":context.actor_user_id(),"task_id":context.task_id()})).map_err(schema_error)?);
         Ok(())
     }
 
@@ -400,6 +434,7 @@ impl MemoryState {
             Some(StorageSchemaActivationPolicy::RejectIncompatible),
         )
         .map_err(schema_error)?;
+        let revision = self.logical_identities.schema_revision(revision);
         self.schema_revisions
             .insert((class.id().id(), next.get()), revision);
         self.schema_active.insert(class.id().id(), next);
@@ -474,7 +509,12 @@ impl MemoryState {
                     object.revision(),
                     status == StorageComplianceStatus::Valid,
                     Utc::now(),
-                ),
+                )
+                .with_logical_identity(self.logical_identities.schema_evidence(
+                    object.id(),
+                    object.revision(),
+                    active,
+                )?),
             );
         } else {
             self.schema_evidence.remove(&object.id().id());
@@ -604,7 +644,7 @@ impl MemoryState {
             trace_link: request.context().trace_link().cloned(),
             claim_token: None,
         };
-        self.tasks.insert(task_id.id(), task);
+        self.store_task(task_id.id(), task);
         self.schema_work.insert(task_id.id(), work.clone());
         if record_queue_event {
             self.append_task_event_record(
@@ -727,7 +767,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
             .ensure_limits(self.schema_limits)
             .map_err(StorageValidationError::into_request_error)?;
         let mut guard = self.state.write().await;
-        let mut state = guard.schema_mutation_delta(request.class_id());
+        let mut state = guard.schema_mutation_delta(request.class_id(), request.context());
         state.check_schema_collection(request.class_id(), request.authorized_collection())?;
         let active = state.active_schema(request.class_id())?.reference();
         if let Some(existing) = state.schema_revisions.values().rev().find(|revision| {
@@ -759,6 +799,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
             request.context(),
             Utc::now(),
         );
+        let revision = state.logical_identities.schema_revision(revision);
         state.schema_revisions.insert(
             (request.class_id().id(), reference.revision().get()),
             revision.clone(),
@@ -780,7 +821,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageSchemaRevision>, StorageError> {
         let mut guard = self.state.write().await;
-        let mut state = guard.schema_mutation_delta(target.class_id());
+        let mut state = guard.schema_mutation_delta(target.class_id(), context);
         state.check_schema_collection(target.class_id(), authorized_collection)?;
         state.active_schema(target.class_id())?;
         let revision = state
@@ -817,7 +858,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
         let mut guard = self.state.write().await;
         let class_id = request.target().class_id();
         let (total, upper) = guard.schema_object_boundary(class_id);
-        let mut state = guard.schema_mutation_delta(class_id);
+        let mut state = guard.schema_mutation_delta(class_id, request.context());
         state.check_schema_collection(class_id, request.authorized_collection())?;
         let before = state.active_schema(class_id)?.clone();
         if before.reference().revision() != request.expected_active() {
@@ -917,7 +958,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
         )
         .schema_policy(active.policy().policy().clone())
         .build();
-        state.classes.insert(class_id.id(), updated.clone());
+        state.store_class(class_id.id(), updated.clone());
         state.append_history(
             MemoryHistoryValue::Class(updated),
             StorageHistoryOperation::Update,
@@ -948,7 +989,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
     ) -> Result<StorageMutationOutcome<StorageSchemaWork>, StorageError> {
         let mut guard = self.state.write().await;
         let (total, upper) = guard.schema_object_boundary(request.target().class_id());
-        let mut state = guard.schema_mutation_delta(request.target().class_id());
+        let mut state = guard.schema_mutation_delta(request.target().class_id(), request.context());
         state.check_schema_collection(
             request.target().class_id(),
             request.authorized_collection(),
@@ -1030,6 +1071,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
                 "Report source is not the requested impact analysis",
             ));
         }
+        state.capture_task_output(report.task_id());
         state
             .schema_repair_reports
             .insert(report.task_id().id(), request.into_report());
@@ -1195,6 +1237,26 @@ impl SchemaEvolutionStorage for MemoryStorage {
             .iter()
             .map(|(id, _, _, _)| id.id())
             .collect::<Vec<_>>();
+        let targets = std::iter::once(StorageIdentityTarget::Resource {
+            kind: StorageIdentityResourceKind::Class,
+            id: work.target().class_id().into(),
+        })
+        .chain(std::iter::once(StorageIdentityTarget::Task(live.id)))
+        .chain(touched.iter().map(|id| StorageIdentityTarget::Resource {
+            kind: StorageIdentityResourceKind::Object,
+            id: ResourceId::new(*id).expect("validated object key"),
+        }))
+        .chain(
+            context
+                .actor_user_id()
+                .map(StorageIdentityTarget::Principal),
+        )
+        .chain(
+            context
+                .initiator_user_id()
+                .map(StorageIdentityTarget::Principal),
+        );
+        state.logical_identities = guard.logical_identities.fork(targets);
         for id in &touched {
             if let Some(evidence) = guard.schema_evidence.get(id) {
                 state.schema_evidence.insert(*id, evidence.clone());
@@ -1308,7 +1370,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
             .ok_or_else(|| StorageError::not_found("Schema work was not found"))?
             .target()
             .class_id();
-        let mut state = guard.schema_mutation_delta(class_id);
+        let mut state = guard.schema_mutation_delta(class_id, context);
         let work = state
             .schema_work
             .get(&task_id.id())
@@ -1329,6 +1391,8 @@ impl SchemaEvolutionStorage for MemoryStorage {
                 context.actor_user_id(),
                 None,
             ));
+        let task = task.clone();
+        state.logical_identities.capture(&task);
         state.finish_stopped_task(task_id, now, Some(context))?;
         let receipt = state.schema_event(
             work.target().class_id(),
@@ -1460,7 +1524,7 @@ impl MemoryState {
             Utc::now(),
         )
         .map_err(schema_error)?;
-        self.tasks.insert(task_id.id(), task);
+        self.store_task(task_id.id(), task);
         self.computation_states.insert(class_id.id(), state);
         self.computed_rebuild_tasks.insert(task_id.id(), class_id);
         self.append_task_event_record(
