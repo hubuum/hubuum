@@ -124,6 +124,7 @@ nav = [
     { "Architecture" = [
       { "Application & storage boundary" = "storage_boundary.md" },
       { "Lifecycle delivery plan" = "lifecycle_delivery_plan.md" },
+      { "Logical identity across restore" = "logical_identity.md" },
       { "Task execution" = "task_system.md" },
       { "Computed-field locking" = "computed_field_locking.md" },
       { "Project inventory" = "generated/project_inventory.md" },
