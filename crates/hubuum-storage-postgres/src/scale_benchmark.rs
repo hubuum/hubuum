@@ -1,3 +1,5 @@
+mod lifecycle;
+
 use std::collections::{BTreeMap, VecDeque};
 use std::time::Instant;
 
@@ -1353,7 +1355,7 @@ async fn load_database_settings(pool: &PostgresPool) -> Result<BTreeMap<String, 
         pool,
         async |connection| -> std::result::Result<_, diesel::result::Error> {
             diesel::sql_query(
-                "SELECT name || '=' || setting || coalesce(unit, '') AS value FROM pg_settings\n\
+                "SELECT name || '=' || current_setting(name) AS value FROM pg_settings\n\
                  WHERE name IN (\n\
                    'max_connections', 'shared_buffers', 'work_mem', 'maintenance_work_mem',\n\
                    'effective_cache_size', 'random_page_cost', 'max_parallel_workers_per_gather'\n\

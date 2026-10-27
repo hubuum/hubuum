@@ -1,0 +1,444 @@
+{
+  "measurement_version": 1,
+  "date": "2026-10-27",
+  "baseline_commit": "19db1547936f9a3844544085243e6d64b8e318a0",
+  "implementation": "Initial #504 implementation in this change; baseline_commit identifies its parent, not the measured unmodified implementation.",
+  "environment_profile": "lifecycle-unconstrained-local-v1",
+  "acceptance_status": "diagnostic_storage_baseline_only",
+  "environment": {
+    "rust": "1.98.0",
+    "optimization": "dev, unoptimized with debuginfo",
+    "command": "cargo build --locked -p hubuum-scale-benchmark",
+    "runner_os": "Linux 5.14.0-687.44.1.el9_8.x86_64; glibc 2.34",
+    "cpu_model": "Intel Xeon Silver 4216 @ 2.10GHz",
+    "available_logical_cpus": 32,
+    "host_memory_bytes": 66613567488,
+    "container_image": "docker.io/library/postgres@sha256:0377e72c5289ed2f98cf61b1a9c2db9eb9d300317fe14244492fbc94343b3d04",
+    "topology": "Rootless Podman, isolated PostgreSQL instance, same-host loopback; no API or task workers. Pool size 8.",
+    "limits": "Cgroup CPU controller is unavailable; no CPU/memory caps were enforced. Concurrent compilation makes elapsed time diagnostic.",
+    "storage": "Rootless container overlay; physical storage latency and medium not measured.",
+    "backend": {
+      "name": "postgres",
+      "settings": {
+        "effective_cache_size": "4GB",
+        "maintenance_work_mem": "64MB",
+        "max_connections": "200",
+        "max_parallel_workers_per_gather": "2",
+        "random_page_cost": "4",
+        "shared_buffers": "256MB",
+        "work_mem": "4MB"
+      },
+      "version": "18.6 (Debian 18.6-1.pgdg13+2)"
+    }
+  },
+  "fixture": {
+    "base_manifest_sha256": "269ffdacb0224dc4185d3a390f59d08800aa8f372192b829b2ef5016c1a14fd5",
+    "inputs": {
+      "scale-benchmarks/lifecycle/dataset-v1.toml": "cc90f4f649fae8245065c6b4e481aae69f7cde3c2e3e20be773eceda5f52713b",
+      "scale-benchmarks/lifecycle/workload-v1.toml": "c66abde4161721144ae9a32057c60235854901b1a1eeb9865a6ce2e47cd30348"
+    },
+    "objects": 10000,
+    "object_relations": 20000,
+    "tasks": 10000,
+    "task_principals": 32,
+    "dominant_principal_percent": 80,
+    "stored_output_count": 100,
+    "stored_output_payload_bytes": 104857600
+  },
+  "measurements": {
+    "elapsed_ms": 48366,
+    "inventory_client_peak_rss_bytes": 36687872,
+    "database": {
+      "cluster_wal_delta_bytes": 276133408,
+      "database_bytes": 213156367
+    },
+    "before": {
+      "relation_count": 71,
+      "rows": 89998,
+      "logical_encoded_bytes": 37965571,
+      "allocated_table_bytes": 16932864,
+      "allocated_index_bytes": 30973952
+    },
+    "after": {
+      "relation_count": 71,
+      "rows": 100098,
+      "logical_encoded_bytes": 168506283,
+      "allocated_table_bytes": 155713536,
+      "allocated_index_bytes": 46981120
+    }
+  },
+  "selected_relations": {
+    "public.backup_task_outputs": {
+      "before": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 32768
+      },
+      "after": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 32768
+      }
+    },
+    "public.class_schema_history": {
+      "before": {
+        "rows": 128,
+        "encoded_bytes": 52240,
+        "allocated_bytes": 98304
+      },
+      "after": {
+        "rows": 128,
+        "encoded_bytes": 52240,
+        "allocated_bytes": 98304
+      }
+    },
+    "public.collections_history": {
+      "before": {
+        "rows": 32,
+        "encoded_bytes": 13281,
+        "allocated_bytes": 81920
+      },
+      "after": {
+        "rows": 32,
+        "encoded_bytes": 13281,
+        "allocated_bytes": 81920
+      }
+    },
+    "public.computed_field_history": {
+      "before": {
+        "rows": 128,
+        "encoded_bytes": 20612,
+        "allocated_bytes": 98304
+      },
+      "after": {
+        "rows": 128,
+        "encoded_bytes": 20612,
+        "allocated_bytes": 98304
+      }
+    },
+    "public.event_deliveries": {
+      "before": {
+        "rows": 1000,
+        "encoded_bytes": 332231,
+        "allocated_bytes": 393216
+      },
+      "after": {
+        "rows": 1000,
+        "encoded_bytes": 332231,
+        "allocated_bytes": 393216
+      }
+    },
+    "public.events": {
+      "before": {
+        "rows": 1000,
+        "encoded_bytes": 758855,
+        "allocated_bytes": 794624
+      },
+      "after": {
+        "rows": 1000,
+        "encoded_bytes": 758855,
+        "allocated_bytes": 794624
+      }
+    },
+    "public.export_task_outputs": {
+      "before": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 40960
+      },
+      "after": {
+        "rows": 100,
+        "encoded_bytes": 104896668,
+        "allocated_bytes": 109076480
+      }
+    },
+    "public.export_templates_history": {
+      "before": {
+        "rows": 16,
+        "encoded_bytes": 10867,
+        "allocated_bytes": 81920
+      },
+      "after": {
+        "rows": 16,
+        "encoded_bytes": 10867,
+        "allocated_bytes": 81920
+      }
+    },
+    "public.hubuumclass_history": {
+      "before": {
+        "rows": 128,
+        "encoded_bytes": 53102,
+        "allocated_bytes": 139264
+      },
+      "after": {
+        "rows": 128,
+        "encoded_bytes": 53102,
+        "allocated_bytes": 139264
+      }
+    },
+    "public.hubuumclass_relation_history": {
+      "before": {
+        "rows": 208,
+        "encoded_bytes": 110722,
+        "allocated_bytes": 204800
+      },
+      "after": {
+        "rows": 208,
+        "encoded_bytes": 110722,
+        "allocated_bytes": 204800
+      }
+    },
+    "public.hubuumobject": {
+      "before": {
+        "rows": 10000,
+        "encoded_bytes": 4644597,
+        "allocated_bytes": 11591680
+      },
+      "after": {
+        "rows": 10000,
+        "encoded_bytes": 14051549,
+        "allocated_bytes": 30048256
+      }
+    },
+    "public.hubuumobject_history": {
+      "before": {
+        "rows": 10884,
+        "encoded_bytes": 7017871,
+        "allocated_bytes": 9428992
+      },
+      "after": {
+        "rows": 20884,
+        "encoded_bytes": 23187282,
+        "allocated_bytes": 31850496
+      }
+    },
+    "public.hubuumobject_relation_history": {
+      "before": {
+        "rows": 20000,
+        "encoded_bytes": 7703562,
+        "allocated_bytes": 8716288
+      },
+      "after": {
+        "rows": 20000,
+        "encoded_bytes": 7703562,
+        "allocated_bytes": 8724480
+      }
+    },
+    "public.import_task_results": {
+      "before": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 32768
+      },
+      "after": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 32768
+      }
+    },
+    "public.remote_call_results": {
+      "before": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 40960
+      },
+      "after": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 40960
+      }
+    },
+    "public.remote_targets_history": {
+      "before": {
+        "rows": 8,
+        "encoded_bytes": 4912,
+        "allocated_bytes": 81920
+      },
+      "after": {
+        "rows": 8,
+        "encoded_bytes": 4912,
+        "allocated_bytes": 81920
+      }
+    },
+    "public.restore_artifact_chunks": {
+      "before": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 16384
+      },
+      "after": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 16384
+      }
+    },
+    "public.restore_jobs": {
+      "before": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 32768
+      },
+      "after": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 32768
+      }
+    },
+    "public.restore_success_receipts": {
+      "before": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 16384
+      },
+      "after": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 16384
+      }
+    },
+    "public.schema_impact_findings": {
+      "before": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 16384
+      },
+      "after": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 16384
+      }
+    },
+    "public.schema_profile_outputs": {
+      "before": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 24576
+      },
+      "after": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 24576
+      }
+    },
+    "public.schema_repair_reports": {
+      "before": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 16384
+      },
+      "after": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 16384
+      }
+    },
+    "public.schema_validation_work": {
+      "before": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 32768
+      },
+      "after": {
+        "rows": 0,
+        "encoded_bytes": 0,
+        "allocated_bytes": 32768
+      }
+    },
+    "public.tasks": {
+      "before": {
+        "rows": 10000,
+        "encoded_bytes": 9977824,
+        "allocated_bytes": 5111808
+      },
+      "after": {
+        "rows": 10000,
+        "encoded_bytes": 10045389,
+        "allocated_bytes": 9527296
+      }
+    }
+  },
+  "inventory_coverage": [
+    "public.__diesel_schema_migrations",
+    "public.auth_sessions",
+    "public.backup_task_outputs",
+    "public.class_computation_state",
+    "public.class_schema_history",
+    "public.class_schema_revisions",
+    "public.class_schema_state",
+    "public.collection_authorization_state",
+    "public.collection_closure",
+    "public.collections",
+    "public.collections_history",
+    "public.computed_field_definitions",
+    "public.computed_field_history",
+    "public.credential_activity",
+    "public.credential_approvals",
+    "public.credential_sources",
+    "public.event_deliveries",
+    "public.event_related_collections",
+    "public.event_retention_batches",
+    "public.event_sink_collection_grants",
+    "public.event_sink_delivery_state",
+    "public.event_sinks",
+    "public.event_subscriptions",
+    "public.events",
+    "public.export_task_outputs",
+    "public.export_templates",
+    "public.export_templates_history",
+    "public.group_membership_sources",
+    "public.group_memberships",
+    "public.groups",
+    "public.hubuumclass",
+    "public.hubuumclass_history",
+    "public.hubuumclass_reachability",
+    "public.hubuumclass_relation",
+    "public.hubuumclass_relation_history",
+    "public.hubuumobject",
+    "public.hubuumobject_history",
+    "public.hubuumobject_relation",
+    "public.hubuumobject_relation_history",
+    "public.identity_scopes",
+    "public.import_task_results",
+    "public.object_computed_data",
+    "public.object_schema_evidence",
+    "public.permissions",
+    "public.principals",
+    "public.query_observation_control",
+    "public.query_usage_declarations",
+    "public.query_usage_executor_cursor",
+    "public.query_usage_resource_owners",
+    "public.query_usage_resources",
+    "public.refresh_tokens",
+    "public.remote_call_results",
+    "public.remote_targets",
+    "public.remote_targets_history",
+    "public.restore_artifact_chunks",
+    "public.restore_jobs",
+    "public.restore_success_receipts",
+    "public.schema_impact_findings",
+    "public.schema_profile_outputs",
+    "public.schema_repair_reports",
+    "public.schema_validation_work",
+    "public.server_instances",
+    "public.service_accounts",
+    "public.system_maintenance",
+    "public.tasks",
+    "public.token_class_scopes",
+    "public.token_collection_scopes",
+    "public.token_object_scopes",
+    "public.token_scopes",
+    "public.tokens",
+    "public.users"
+  ],
+  "limitations": [
+    "Logical bytes are UTF-8 PostgreSQL to_jsonb(row)::text, including metadata; bytea is hex encoded.",
+    "Table allocation includes TOAST and auxiliary forks; indexes are separate. No VACUUM compaction is implied.",
+    "Task durations are synthetic fixture inputs, not observed scheduling latency.",
+    "WAL is a cluster-wide delta; concurrent writers contaminate it.",
+    "Host-wide PostgreSQL CPU/RSS samples are omitted because they cannot identify the selected instance.",
+    "No archive, claim, streaming, expiry or cleanup acceptance result is asserted.",
+    "One diagnostic baseline run, not a five-run latency/throughput acceptance result.",
+    "Inventory client RSS is not task-worker RSS. Database CPU/RSS and filesystem spool allocation were not measured.",
+    "Empty result/staging tables establish inventory coverage, not their future retention or streaming resource cost."
+  ]
+}

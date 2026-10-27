@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use hubuum_scale_core::lifecycle::{
+    LifecycleBenchmarkBackend, LifecycleFixture, LifecycleWorkload,
+};
 use hubuum_scale_core::{
     BackendComparisonReport, DatasetManifest, LimitMode, LoadReport, ProfileName, ScaleAssessment,
     ScaleAxis, ScaleBenchmarkBackend, ScaleBenchmarkReport, ScaleImpactReport, ScaleProfile,
@@ -28,6 +31,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Load a fresh synthetic lifecycle fixture and report logical/physical growth.
+    LifecycleInventory(LifecycleInventoryArgs),
     /// Write the deterministic semantic manifest without loading a backend.
     Manifest(ManifestArgs),
     /// Verify the loaded fixture and measure only its backup/restore lifecycle.
@@ -48,6 +53,18 @@ enum Command {
     SummarizeSensitivity(SummarizeSensitivityArgs),
     /// Render matching reports from each selected storage backend side by side.
     CompareBackends(CompareBackendsArgs),
+}
+
+#[derive(Debug, Args)]
+struct LifecycleInventoryArgs {
+    #[arg(long)]
+    database_url: String,
+    #[arg(long, default_value = "scale-benchmarks/lifecycle/dataset-v1.toml")]
+    profile_spec: PathBuf,
+    #[arg(long)]
+    workload_spec: Option<PathBuf>,
+    #[arg(long)]
+    output: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -240,6 +257,7 @@ struct CompareBackendsArgs {
 #[tokio::main]
 async fn main() -> Result<()> {
     match Cli::parse().command {
+        Command::LifecycleInventory(args) => lifecycle_inventory(args).await,
         Command::Manifest(args) => manifest(args),
         Command::Lifecycle(args) => lifecycle(args).await,
         Command::Load(args) => load(args).await,
@@ -251,6 +269,54 @@ async fn main() -> Result<()> {
         Command::SummarizeSensitivity(args) => summarize_sensitivity(args),
         Command::CompareBackends(args) => compare_backends(args),
     }
+}
+
+async fn lifecycle_inventory(args: LifecycleInventoryArgs) -> Result<()> {
+    let profile = ScaleProfile::read(&args.profile_spec)?;
+    let workload = match args.workload_spec {
+        Some(path) => LifecycleWorkload::parse(&fs::read_to_string(path)?)?,
+        None => LifecycleWorkload::bundled()?,
+    };
+    let fixture = LifecycleFixture::new(profile, workload)?;
+    let profile = fixture.profile();
+    let backend = postgres_backend(&args.database_url, profile)?;
+    let started = std::time::Instant::now();
+    let baseline = backend.begin_resource_measurement().await?;
+    let before = backend.load_lifecycle_fixture(&fixture).await?;
+    let after = backend.lifecycle_inventory().await?;
+    let resources = backend.finish_resource_measurement(baseline).await?;
+    let preparation = backend.prepare_measurement().await?;
+    write_json(
+        &args.output,
+        &serde_json::json!({
+            "schema_version": 1,
+            "measurement": "synthetic_lifecycle_storage_inventory",
+            "profile": profile,
+            "workload": fixture.workload(),
+            "base_manifest": profile.manifest()?,
+            "backend": preparation.identity,
+            "elapsed_ms": started.elapsed().as_millis(),
+            "resources": {
+                "database_bytes": resources.storage_bytes,
+                "cluster_wal_delta_bytes": resources.write_ahead_bytes,
+            },
+            "before": before,
+            "after": after,
+            "limitations": [
+                "Logical bytes are UTF-8 PostgreSQL to_jsonb(row)::text, including metadata; bytea is hex encoded.",
+                "Table allocation includes TOAST and auxiliary forks; indexes are separate. No VACUUM compaction is implied.",
+                "Task durations are synthetic fixture inputs, not observed scheduling latency.",
+                "WAL is a cluster-wide delta; concurrent writers contaminate it.",
+                "Host-wide PostgreSQL CPU/RSS samples are omitted because they cannot identify the selected instance.",
+                "No archive, claim, streaming, expiry or cleanup acceptance result is asserted."
+            ],
+        }),
+    )?;
+    println!(
+        "Wrote synthetic lifecycle inventory to {}",
+        args.output.display()
+    );
+    Ok(())
 }
 
 fn manifest(args: ManifestArgs) -> Result<()> {
