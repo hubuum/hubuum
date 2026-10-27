@@ -20,6 +20,7 @@ rust-api = "internal-application"
 [workspace]
 default-members = [".", "crates/hubuum-templates"]
 members = [
+    "crates/hubuum-artifacts",
     "crates/hubuum-budget",
     "crates/hubuum-auth-core",
     "crates/hubuum-auth-ldap",

@@ -1,6 +1,40 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    artifact_attempts (artifact_id) {
+        artifact_id -> Uuid,
+        attempt_id -> Uuid,
+        destination_id -> Uuid,
+        object_version -> Uuid,
+        state -> Text,
+        block_bytes -> Int4,
+        max_bytes -> Int8,
+        max_blocks -> Int4,
+        max_manifest_bytes -> Int4,
+        byte_size -> Int8,
+        block_count -> Int4,
+        manifest -> Nullable<Bytea>,
+        manifest_sha256 -> Nullable<Bytea>,
+        expires_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
+    artifact_chunks (artifact_id, ordinal) {
+        artifact_id -> Uuid,
+        ordinal -> Int4,
+        content -> Bytea,
+    }
+}
+
+diesel::table! {
+    artifact_destinations (id) {
+        id -> Uuid,
+        name -> Text,
+    }
+}
+
+diesel::table! {
     auth_sessions (id) {
         id -> Uuid,
         principal_id -> Int4,
@@ -1111,6 +1145,8 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(artifact_attempts -> artifact_destinations (destination_id));
+diesel::joinable!(artifact_chunks -> artifact_attempts (artifact_id));
 diesel::joinable!(auth_sessions -> users (principal_id));
 diesel::joinable!(backup_task_outputs -> tasks (task_id));
 diesel::joinable!(class_computation_state -> hubuumclass (class_id));
@@ -1180,6 +1216,9 @@ diesel::joinable!(token_scopes -> tokens (token_id));
 diesel::joinable!(tokens -> principals (principal_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    artifact_attempts,
+    artifact_chunks,
+    artifact_destinations,
     auth_sessions,
     backup_task_outputs,
     class_computation_state,

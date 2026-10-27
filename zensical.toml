@@ -122,6 +122,7 @@ nav = [
     { "Documentation" = "contributing/documentation.md" },
     { "Documentation review & roadmap" = "contributing/documentation-review.md" },
     { "Architecture" = [
+      { "Artifact staging foundation" = "artifact_staging.md" },
       { "Application & storage boundary" = "storage_boundary.md" },
       { "Lifecycle delivery plan" = "lifecycle_delivery_plan.md" },
       { "Logical identity across restore" = "logical_identity.md" },

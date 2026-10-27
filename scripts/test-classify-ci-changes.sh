@@ -83,6 +83,18 @@ for cursor_input in crates/hubuum-storage-postgres/src/cursor/query_plan_tests.r
   assert_flag "$cursor_output" artifacts true
 done
 
+for artifact_input in crates/hubuum-artifacts/Cargo.toml \
+  crates/hubuum-artifacts/src/manifest.rs crates/hubuum-artifacts/tests/protocol.rs \
+  crates/hubuum-storage-postgres/src/artifacts.rs crates/hubuum-storage-postgres/tests/artifacts.rs \
+  crates/hubuum-storage-postgres/migrations/2026-10-27-000002_artifact_staging/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-10-27-000002_artifact_staging/down.sql; do
+  artifact_output="$(bash "$classifier" "$artifact_input")"
+  assert_flag "$artifact_output" code true
+  assert_flag "$artifact_output" rust true
+  assert_flag "$artifact_output" container true
+  assert_flag "$artifact_output" artifacts true
+done
+
 for regex_input in crates/hubuum-storage-postgres/tests/regex_pattern.rs \
   src/tests/storage_contract/regex.rs \
   crates/hubuum-regex/src/lib.rs crates/hubuum-regex/src/conformance.rs \
