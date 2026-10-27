@@ -151,7 +151,9 @@ that those features have been implemented.
 ## Upgrade and backup compatibility
 
 This change requires an offline upgrade. Stop API and worker replicas running an
-older binary and take a database backup before applying the migration. Run
+older binary and take a database backup before applying the migration. For split
+roles, first reapply the generated setup or grants SQL through the database
+administrator so the owner can create the protected control schema. Run
 `hubuum-admin --migrate` with the migration credentials. The command reconciles
 role ownership, then commits identity backfill in bounded batches and checks
 completion. If interrupted, rerun the same command; assigned identities remain

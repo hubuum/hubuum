@@ -30,7 +30,7 @@
       "migration": "crates/hubuum-storage-postgres/migrations/2026-10-27-000001_logical_identities/up.sql",
       "sha256": "6dcec8f1ad3e8c94579caf52f5ab6920abed4f4abcc063dd7d6ca0be6ac2f4bd",
       "reason": "Older restore executors cannot preserve the new logical identity evidence; identity initialization and history indexes require a coordinated upgrade.",
-      "upgrade_action": "Stop older API and worker replicas, back up the database, run hubuum-admin --migrate to completion including resumable identity backfill, then start matching binaries. Retain the pre-upgrade snapshot for rollback. See docs/logical_identity.md#upgrade-and-backup-compatibility.",
+      "upgrade_action": "Stop older API and worker replicas, back up the database, reapply generated setup/grants SQL as the database administrator for split roles, run hubuum-admin --migrate to completion including resumable identity backfill, then start matching binaries. Retain the pre-upgrade snapshot for rollback. See docs/logical_identity.md#upgrade-and-backup-compatibility.",
       "drop_constraints": {}
     }
   ]

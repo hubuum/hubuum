@@ -103,6 +103,11 @@ export HUBUUM_MIGRATION_DATABASE_URL='postgres://hubuum_migrator:.../hubuum'
 hubuum-admin --migrate
 ```
 
+The generated setup also grants database-local `CREATE` to the owner so it can
+install the protected `hubuum_control` schema. Before upgrading an existing split-role
+deployment, reapply the generated setup or grants SQL through the database
+administrator. Runtime grants remain unchanged.
+
 The migrator must be a member of the owner role. It connects under its own
 login and Hubuum explicitly runs `SET ROLE hubuum_owner` before applying
 migrations. The runtime login must not be a member of either privileged role.

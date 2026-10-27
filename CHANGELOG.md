@@ -10,7 +10,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Changed
 
 - **Breaking operational change:** logical identity migration requires an offline
-  upgrade. Stop older API and worker processes, take a database backup, run
+  upgrade. Stop older API and worker processes and take a database backup. For
+  split roles, reapply generated role setup/grants SQL as the database
+  administrator before migration so the owner can create the control schema. Run
   `hubuum-admin --migrate` to finish the resumable identity backfill, then start
   matching binaries. Internal resource, principal, task and historical-version
   UUIDs survive restore without replacing REST integer IDs or revision counters.

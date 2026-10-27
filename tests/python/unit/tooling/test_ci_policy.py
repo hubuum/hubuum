@@ -55,6 +55,36 @@ class CiTierTests(unittest.TestCase):
             self.assertEqual(result[key], "true", key)
 
 
+class DatabaseInitializationTests(unittest.TestCase):
+    def test_every_diesel_setup_finishes_production_backfills(self):
+        # Applying versioned SQL alone leaves legacy identity columns empty.
+        # Check every provisioning path, including the Windows retry database.
+        lines = WORKFLOW.splitlines()
+        setups = [index for index, line in enumerate(lines) if ' migration run ' in line]
+        self.assertTrue(setups)
+        for index in setups:
+            with self.subTest(line=index + 1):
+                following = '\n'.join(lines[index + 1:index + 4])
+                self.assertIn('--bin hubuum-admin -- --migrate', following)
+                if lines[index].lstrip().startswith('& '):
+                    self.assertIn('Migration backfill failed', '\n'.join(lines[index + 1:index + 5]))
+
+    def test_windows_initial_backfill_uses_the_current_step_database(self):
+        setup = job("test").split("      - name: Set up database (Windows)\n", 1)[1]
+        setup = setup.split("      - name:", 1)[0]
+        # GITHUB_ENV updates only subsequent steps, while this step selected a
+        # dynamic PostgreSQL port. The initial migration must use its local URL.
+        command = next(line for line in setup.splitlines() if '--bin hubuum-admin' in line)
+        self.assertIn('--migration-database-url "$dbUrl"', command)
+
+    def test_application_test_commands_receive_isolated_restore_authority(self):
+        smoke = WORKFLOW.split('      - name: Test (${{ matrix.feature.name }})\n', 1)[1].split('\n  valkey-', 1)[0]
+        self.assertIn('integration rust-tests -- cargo test', smoke)
+        native = job("test").split('      - name: Run tests (non-Windows, production features)\n', 1)[1]
+        self.assertIn('integration rust-tests -- cargo test --no-default-features', native)
+        self.assertEqual(native.count('integration rust-tests -- cargo @testArgs'), 2)
+
+
 class PublicationGateTests(unittest.TestCase):
     def test_candidates_can_build_before_validation_but_cannot_publish(self):
         for name in ("build-main-linux-artifacts", "build-main-native-artifacts"):

@@ -318,6 +318,14 @@ pub fn database_role_reconciliation_sql(names: &DatabaseRoleNames) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let mut sql = String::new();
+    // Bootstrap may run against an administrator-owned database. The schema
+    // owner needs database-local CREATE to install the protected control schema;
+    // subsequent reconciliation under that owner does not need grant authority.
+    writeln!(sql, "DO $database$ BEGIN
+  IF NOT pg_catalog.has_database_privilege('{owner_name}', pg_catalog.current_database(), 'CREATE') THEN
+    EXECUTE pg_catalog.format('GRANT CREATE ON DATABASE %I TO %I', pg_catalog.current_database(), '{owner_name}');
+  END IF;
+END $database$;", owner_name = names.owner().as_str()).unwrap();
     writeln!(
         sql,
         "REVOKE CREATE ON SCHEMA \"{}\" FROM PUBLIC;",

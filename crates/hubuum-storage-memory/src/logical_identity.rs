@@ -1559,6 +1559,71 @@ impl LogicalIdentityStorage for MemoryStorage {
     }
 }
 
+impl MemoryState {
+    pub(super) fn store_import_result(&mut self, result: StorageImportTaskResult) {
+        self.logical_identities.capture_association(
+            Association::ImportResult(result.id()),
+            references([("/task_id", Some(Target::Task(result.task_id())))]),
+        );
+        self.import_task_results
+            .entry(result.task_id().id())
+            .or_default()
+            .push(result);
+    }
+
+    pub(super) fn capture_task_output(&mut self, task_id: TaskId) {
+        self.logical_identities.capture_association(
+            Association::TaskOutput(task_id),
+            references([("/task_id", Some(Target::Task(task_id)))]),
+        );
+    }
+
+    pub(super) fn store_event_delivery(
+        &mut self,
+        id: i64,
+        delivery: StorageEventDelivery,
+    ) -> Option<StorageEventDelivery> {
+        if !self.event_deliveries.contains_key(&id) {
+            let event = self
+                .events
+                .iter()
+                .find(|event| event.as_parts().0.id() == delivery.event_id());
+            let reference = match event {
+                Some(event) => IdentityReference::Known {
+                    identity: event.as_parts().0.event_id().into(),
+                },
+                None => IdentityReference::Unresolved {
+                    legacy: UnresolvedIdentity::new(
+                        self.logical_identities.unresolved_cohort,
+                        LegacyRecordId::new(delivery.event_id().get())
+                            .expect("positive event sequence"),
+                    ),
+                },
+            };
+            let evidence = StorageIdentityEvidence::try_new(
+                None,
+                BTreeMap::from([
+                    (
+                        "/event_id".into(),
+                        StorageCapturedIdentity::Event { reference },
+                    ),
+                    (
+                        "/subscription_id".into(),
+                        self.logical_identities.reference(resource(
+                            Family::EventSubscription,
+                            delivery.subscription_id(),
+                        )),
+                    ),
+                ]),
+            )
+            .expect("bounded delivery dependencies");
+            self.logical_identities
+                .restore_association(Association::Delivery(delivery.id()), evidence);
+        }
+        self.event_deliveries.insert(id, delivery)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1659,70 +1724,5 @@ mod tests {
                     .resource()
             );
         });
-    }
-}
-
-impl MemoryState {
-    pub(super) fn store_import_result(&mut self, result: StorageImportTaskResult) {
-        self.logical_identities.capture_association(
-            Association::ImportResult(result.id()),
-            references([("/task_id", Some(Target::Task(result.task_id())))]),
-        );
-        self.import_task_results
-            .entry(result.task_id().id())
-            .or_default()
-            .push(result);
-    }
-
-    pub(super) fn capture_task_output(&mut self, task_id: TaskId) {
-        self.logical_identities.capture_association(
-            Association::TaskOutput(task_id),
-            references([("/task_id", Some(Target::Task(task_id)))]),
-        );
-    }
-
-    pub(super) fn store_event_delivery(
-        &mut self,
-        id: i64,
-        delivery: StorageEventDelivery,
-    ) -> Option<StorageEventDelivery> {
-        if !self.event_deliveries.contains_key(&id) {
-            let event = self
-                .events
-                .iter()
-                .find(|event| event.as_parts().0.id() == delivery.event_id());
-            let reference = match event {
-                Some(event) => IdentityReference::Known {
-                    identity: event.as_parts().0.event_id().into(),
-                },
-                None => IdentityReference::Unresolved {
-                    legacy: UnresolvedIdentity::new(
-                        self.logical_identities.unresolved_cohort,
-                        LegacyRecordId::new(delivery.event_id().get())
-                            .expect("positive event sequence"),
-                    ),
-                },
-            };
-            let evidence = StorageIdentityEvidence::try_new(
-                None,
-                BTreeMap::from([
-                    (
-                        "/event_id".into(),
-                        StorageCapturedIdentity::Event { reference },
-                    ),
-                    (
-                        "/subscription_id".into(),
-                        self.logical_identities.reference(resource(
-                            Family::EventSubscription,
-                            delivery.subscription_id(),
-                        )),
-                    ),
-                ]),
-            )
-            .expect("bounded delivery dependencies");
-            self.logical_identities
-                .restore_association(Association::Delivery(delivery.id()), evidence);
-        }
-        self.event_deliveries.insert(id, delivery)
     }
 }

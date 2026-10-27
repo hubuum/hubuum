@@ -256,7 +256,7 @@ for path in "$@"; do
       code=true
       openapi=true
       ;;
-    tests/python/integration/event_transports.py | src/tests/*)
+    tests/python/integration/event_transports.py | tests/python/integration/rust_tests.py | src/tests/*)
       code=true
       rust=true
       ;;
