@@ -388,7 +388,7 @@ mod tests {
                     serde_json::json!({}),
                     2,
                 )
-                .try_build(10)
+                .try_build()
                 .unwrap(),
             )
             .await

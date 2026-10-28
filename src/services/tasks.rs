@@ -39,7 +39,6 @@ pub(crate) struct TaskSubmission {
     submitted_by: PrincipalID,
     payload: serde_json::Value,
     total_items: i32,
-    maximum_active_tasks: usize,
     idempotency_key: Option<IdempotencyKey>,
     request_hash: Option<String>,
     scope_snapshot: StorageTaskScopeSnapshot,
@@ -323,7 +322,6 @@ impl TaskSubmission {
         submitted_by: PrincipalID,
         payload: serde_json::Value,
         total_items: i32,
-        maximum_active_tasks: usize,
     ) -> Self {
         Self {
             approval: None,
@@ -331,7 +329,6 @@ impl TaskSubmission {
             submitted_by,
             payload,
             total_items,
-            maximum_active_tasks,
             idempotency_key: None,
             request_hash: None,
             scope_snapshot: StorageTaskScopeSnapshot::unscoped(),
@@ -394,7 +391,7 @@ pub(crate) async fn submit_task(
     .request_hash(submission.request_hash)
     .scope_snapshot(submission.scope_snapshot)
     .trace_link(telemetry::trace_link_from_span(&span))
-    .try_build(submission.maximum_active_tasks)?
+    .try_build()?
     .with_approval(submission.approval);
     async move {
         let result = async {

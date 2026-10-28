@@ -204,6 +204,13 @@ for an exception.
   ordinary domain lifecycle shortcut.
 - Retention: `TokenRetentionStorage::purge_expired_tokens` applies configured
   expiry and emits the token-purge semantics owned by the retention worker.
+- Task policy maintenance: `TaskCapacityStorage::initialize_task_policy`
+  establishes deployment control state only once; subsequent initializers read
+  the existing policy. `TaskCapacityStorage::replace_task_policy` is an explicit
+  administrator action with a required revision token. Both serialize with
+  admission, retain control state across restore, and return the effective
+  revision. The application records the authorized administrator and resulting
+  revision through its common diagnostics.
 - Maintenance: `RestoreStorage::stage_restore_artifact`,
   `RestoreStorage::expire_restore_stage`,
   `RestoreStorage::start_restore_draining`, `RestoreStorage::apply_restore_replay`,

@@ -151,10 +151,14 @@ pub(super) fn capture(
         .map_err(invalid_contract_value)
 }
 
-pub(super) fn restore(snapshot: StorageBackupSnapshot) -> Result<MemoryState, StorageError> {
+pub(super) fn restore(
+    snapshot: StorageBackupSnapshot,
+    control: crate::task_capacity::MemoryTaskCapacity,
+) -> Result<MemoryState, StorageError> {
     let schema_limits = snapshot.schema_limits();
     let (sections, history) = snapshot.into_parts();
     let mut state = MemoryState::new();
+    state.task_capacity = control.restore_control()?;
     resources::restore(&sections, &mut state)?;
     schemas::restore(&sections, &mut state, schema_limits)?;
     identity::restore(&sections, &mut state)?;
@@ -165,6 +169,8 @@ pub(super) fn restore(snapshot: StorageBackupSnapshot) -> Result<MemoryState, St
     )?;
     enqueue_computed_rebuilds(&mut state)?;
     schemas::enqueue_revalidation(&mut state)?;
+    state.task_capacity = state.task_accounting_snapshot()?;
+    state.task_capacity.finish_restore();
     Ok(state)
 }
 
@@ -215,7 +221,7 @@ fn enqueue_computed_rebuilds(state: &mut MemoryState) -> Result<(), StorageError
             claim_token: None,
         };
         record.projection()?;
-        state.store_task(id.id(), record);
+        state.store_task(id.id(), record)?;
         state.computed_rebuild_tasks.insert(id.id(), class_id);
         state.computation_states.insert(
             class_id.id(),

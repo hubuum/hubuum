@@ -6,6 +6,7 @@ use actix_web::{
     web::Data,
     web::JsonConfig,
 };
+use hubuum_storage_core::TaskCapacityStorage;
 #[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
@@ -257,6 +258,22 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
             EXIT_CODE_DATABASE_ERROR,
         );
     }
+    let initial_policy = config
+        .initial_task_admission_policy()
+        .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
+    let task_policy = storage
+        .initialize_task_policy(initial_policy)
+        .await
+        .unwrap_or_else(|error| {
+            fatal_error(
+                &format!("Failed to initialize shared task policy: {error}"),
+                EXIT_CODE_DATABASE_ERROR,
+            )
+        });
+    info!(
+        task_policy_revision = task_policy.revision().get(),
+        "Shared task admission policy loaded"
+    );
     if config.storage_backend == StorageBackendKind::Postgres
         && config.database_role_mode.uses_split_roles()
     {
@@ -325,7 +342,6 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
 
     let backup_settings = BackupSettings::new(
         config.backup_output_retention_hours,
-        config.backup_max_active_tasks_per_user,
         config
             .backup_budget()
             .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR)),

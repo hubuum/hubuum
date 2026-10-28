@@ -1,5 +1,9 @@
 use super::*;
 
+fn restore(snapshot: StorageBackupSnapshot) -> Result<MemoryState, StorageError> {
+    super::restore(snapshot, Default::default())
+}
+
 pub(super) fn run(future: impl Future<Output = ()>) {
     tokio::runtime::Builder::new_current_thread()
         .build()
@@ -197,7 +201,7 @@ pub(super) async fn queued_task(storage: &MemoryStorage) -> TaskId {
                 json!({}),
                 0,
             )
-            .try_build(10)
+            .try_build()
             .unwrap(),
         )
         .await

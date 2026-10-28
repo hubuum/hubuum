@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.7`.
+Status: accepted; current experimental release train is `0.8`.
 
 ## Supported Crate Graph
 
@@ -16,7 +16,7 @@ The statically linked storage adapter SDK consists of these crates:
 | `hubuum-regex` | Bounded portable regex language, compiler interface, and conformance cases | Default only |
 | `hubuum-query` | Bounded, backend-neutral query parsing and values | Default only |
 | `hubuum-task-core` | Task identity, idempotency, validated execution limits and cooperative stop contexts | Default only |
-| `hubuum-storage-core` | Complete capability traits, DTOs, errors, transactions, and aggregate | Default only |
+| `hubuum-storage-core` | Complete capability traits, DTOs, errors, transactions, and aggregate | Default; `openapi` |
 | `hubuum-storage-conformance` | Reusable behavioral certification for complete adapters | Default only |
 
 The diagnostic crate is independently usable and has no Hubuum dependencies.
@@ -91,13 +91,14 @@ Raising the MSRV requires an incompatible coordinated release and migration
 notice during `0.x`; after `1.0.0`, it follows the project's documented major
 release policy unless a future policy explicitly establishes an MSRV window.
 
-The two optional features are additive:
+The optional schema features are additive:
 
-- `hubuum-domain/openapi` adds Utoipa schema implementations; and
+- `hubuum-domain/openapi` adds Utoipa schema implementations;
+- `hubuum-storage-core/openapi` adds schemas for task policy and accounting values; and
 - `hubuum-events-core/schema` adds Utoipa schema implementations and enables
   `hubuum-domain/openapi`.
 
-Default behavior must not change when either feature is disabled. Removing or
+Default behavior must not change when optional features are disabled. Removing or
 renaming a feature, making it mandatory, or changing a feature so it removes
 an API is incompatible. New additive features are compatible when existing
 feature combinations keep their behavior.
@@ -451,3 +452,25 @@ the confirmed `StorageRestoreIdentityContext`, allowing conformance checks to
 verify synthesized baseline identities against the actual restore stage. See the full
 [identity coverage and acceptance matrix](logical_identity.md) for retained
 relationships, schema dependencies, task outcomes, migration and restore tests.
+
+## Upgrading from 0.7 to 0.8
+
+This is a breaking coordinated SDK release. Advance all ten SDK dependencies
+and implement the required `TaskCapacityStorage` capability in every complete
+adapter. Policy initialization is atomic and first-writer-wins; later startup
+configuration cannot replace a committed revision. Explicit policy updates use
+`TaskPolicyRevision` as a compare-and-replace token.
+
+`StorageTaskCreateRequestBuilder::try_build()` no longer accepts a caller-chosen
+active-task limit. Remove that argument and initialize the shared
+`TaskAdmissionPolicy` instead. Enforce outstanding work, execution occupancy and
+resident bytes transactionally against the committed policy. Keep cumulative
+work owned by immutable task identities outside logical application restore.
+Follow the [task accounting contract](task_admission.md) for restoration,
+internal repair admission and administrative diagnostics.
+
+Preserve `StorageError::task_capacity_rejection()` when translating adapter
+errors. `into_parts()` now returns the optional structured capacity reason as
+its fourth element; update error destructuring and preserve that reason across
+adapter boundaries. Only application code translates the bounded rejection
+into HTTP.

@@ -345,6 +345,7 @@ impl MemoryTokenRecord {
 
 #[derive(Clone)]
 struct MemoryState {
+    task_capacity: task_capacity::MemoryTaskCapacity,
     logical_identities: logical_identity::MemoryLogicalIdentities,
     generation: Arc<()>,
     schema_history: Vec<StorageBackupRow>,
@@ -850,6 +851,7 @@ mod resources;
 mod schema_evolution;
 mod state;
 mod state_lock;
+mod task_capacity;
 mod task_control;
 use state_lock::MemoryStateLock;
 mod workflows;

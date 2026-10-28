@@ -4,7 +4,6 @@ use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::config::{DEFAULT_IMPORT_MAX_ACTIVE_TASKS_PER_USER, get_config};
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::search::parse_query_parameter;
@@ -31,7 +30,8 @@ use crate::tasks::{
         (status = 202, description = "Import task accepted", body = TaskResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 409, description = "Conflict", body = ApiErrorResponse),
-        (status = 429, description = "Too many active import tasks", body = ApiErrorResponse),
+        (status = 429, description = "Shared task admission or byte capacity exhausted", body = ApiErrorResponse),
+        (status = 503, description = "Task identity or control reconciliation unavailable", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse)
     )
@@ -80,7 +80,6 @@ pub async fn create_import(
             PrincipalID::new(requestor.principal.id().id())?,
             payload,
             import_request.total_items(),
-            max_active_import_tasks_per_user(),
         )
         .idempotency_key(idempotency_key)
         .request_hash(Some(hash))
@@ -96,12 +95,6 @@ pub async fn create_import(
         response,
         api_locations::task(task.id)?,
     ))
-}
-
-fn max_active_import_tasks_per_user() -> usize {
-    get_config()
-        .map(|config| config.import_max_active_tasks_per_user)
-        .unwrap_or(DEFAULT_IMPORT_MAX_ACTIVE_TASKS_PER_USER)
 }
 
 #[utoipa::path(

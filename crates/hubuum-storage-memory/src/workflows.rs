@@ -269,11 +269,6 @@ impl TaskQueueStorage for MemoryStorage {
                 "Idempotency-Key is already in use for a different task submission",
             ));
         }
-        state.ensure_task_capacity(
-            request.submitted_by(),
-            request.kind(),
-            request.maximum_active_tasks(),
-        )?;
         let id = TaskId::new(state.next_task_id)
             .map_err(|error| StorageError::internal(error.to_string()))?;
         state.next_task_id += 1;
@@ -306,7 +301,7 @@ impl TaskQueueStorage for MemoryStorage {
             claim_token: None,
         };
         let task = record.projection()?;
-        state.store_task(id.id(), record);
+        state.store_task(id.id(), record)?;
         state.append_task_event_record(
             id,
             StorageTaskEventInput::new(StorageTaskStatus::Queued.as_str(), "Task queued"),
@@ -580,18 +575,29 @@ impl TaskExecutionStorage for MemoryStorage {
         lease_duration: StorageTaskLeaseDuration,
     ) -> Result<Option<StorageTaskClaim>, StorageError> {
         let mut state = self.state.write().await;
-        let Some(task_id) = state
+        if state.maintenance_state != MaintenanceState::Normal {
+            return Ok(None);
+        }
+        state.task_capacity = state.task_accounting_snapshot()?;
+        let mut selected = None;
+        for task in state
             .tasks
             .values()
-            .find(|task| task.status == StorageTaskStatus::Queued)
-            .map(|task| task.id)
-        else {
+            .filter(|task| task.status == StorageTaskStatus::Queued)
+        {
+            if state.task_claim_has_capacity(task.id)? {
+                selected = Some(task.id);
+                break;
+            }
+        }
+        let Some(task_id) = selected else {
             return Ok(None);
         };
         let now = Utc::now();
         let expires_at = now
             .checked_add_signed(Duration::milliseconds(lease_duration.milliseconds()))
             .ok_or_else(|| StorageError::invalid_input("Task lease duration is too large"))?;
+        state.charge_task_claim(task_id)?;
         let claim_token = Uuid::new_v4().to_string();
         let task = state
             .tasks
@@ -646,6 +652,7 @@ impl TaskExecutionStorage for MemoryStorage {
             return Ok(Vec::new());
         }
         let mut state = self.state.write().await;
+        state.task_capacity = state.task_accounting_snapshot()?;
         let now = Utc::now();
         let task_ids = state
             .tasks
@@ -745,6 +752,7 @@ impl TaskExecutionStorage for MemoryStorage {
                 StorageTaskEventInput::new(status.as_str(), summary),
             )?;
         }
+        state.task_capacity = state.task_accounting_snapshot()?;
         Ok(recovered)
     }
 
@@ -786,7 +794,9 @@ impl TaskExecutionStorage for MemoryStorage {
         .map_err(invalid_contract_value)?;
         task.started_at = started_at.or(task.started_at).or(Some(now));
         task.updated_at = now;
-        task.projection()
+        let projection = task.projection()?;
+        state.task_capacity = state.task_accounting_snapshot()?;
+        Ok(projection)
     }
 
     async fn complete_task(
@@ -795,8 +805,15 @@ impl TaskExecutionStorage for MemoryStorage {
     ) -> Result<StorageTask, StorageError> {
         let (update, event, payload) = completion.into_parts();
         let expected_kind = payload.task_kind();
+        let produces_output = !matches!(
+            &payload,
+            StorageTaskCompletionPayload::Import
+                | StorageTaskCompletionPayload::Reindex
+                | StorageTaskCompletionPayload::SchemaValidation
+        );
         let (lease, status, summary, counts, started_at) = update.into_parts();
-        let mut state = self.state.write().await;
+        let mut guard = self.state.write().await;
+        let mut state = guard.clone();
         let stored = state
             .tasks
             .get(&lease.task_id().id())
@@ -820,8 +837,11 @@ impl TaskExecutionStorage for MemoryStorage {
                     artifact,
                     now,
                 )?;
+                state.account_task_output(lease.task_id())?;
             }
-            return state.finish_stopped_task(lease.task_id(), now, None);
+            let stopped = state.finish_stopped_task(lease.task_id(), now, None)?;
+            *guard = state;
+            return Ok(stopped);
         }
         match payload {
             StorageTaskCompletionPayload::Import
@@ -924,6 +944,9 @@ impl TaskExecutionStorage for MemoryStorage {
                 state.backup_outputs.insert(lease.task_id().id(), output);
             }
         }
+        if produces_output {
+            state.account_task_output(lease.task_id())?;
+        }
         let task = state
             .tasks
             .get_mut(&lease.task_id().id())
@@ -945,7 +968,9 @@ impl TaskExecutionStorage for MemoryStorage {
         task.claim_token = None;
         task.updated_at = now;
         let projection = task.projection()?;
+        state.task_capacity = state.task_accounting_snapshot()?;
         state.append_task_event_record(lease.task_id(), event)?;
+        *guard = state;
         Ok(projection)
     }
 
@@ -1217,6 +1242,7 @@ impl RestoreStorage for MemoryStorage {
                 .with_schema_limits(self.schema_limits)?
                 .into_replay()
                 .materialize()?,
+            state.task_accounting_snapshot()?,
         )?;
         replacement.credential_approvals = state.credential_approvals.clone();
         replacement.query_observation_control = state.query_observation_control;
@@ -2116,30 +2142,6 @@ impl MemoryStorage {
 }
 
 impl MemoryState {
-    pub(super) fn ensure_task_capacity(
-        &self,
-        submitted_by: PrincipalId,
-        kind: StorageTaskKind,
-        maximum_active_tasks: usize,
-    ) -> Result<(), StorageError> {
-        let active_count = self
-            .tasks
-            .values()
-            .filter(|task| {
-                task.submitted_by == Some(submitted_by)
-                    && task.kind == kind
-                    && !task.status.is_terminal()
-            })
-            .count();
-        if active_count >= maximum_active_tasks {
-            return Err(StorageError::rate_limited(format!(
-                "Too many active {} tasks for user ({active_count} >= {maximum_active_tasks}); wait for queued or running tasks to finish",
-                kind.as_str(),
-            )));
-        }
-        Ok(())
-    }
-
     fn task_discovery_projection(
         &self,
         task: &MemoryTaskRecord,

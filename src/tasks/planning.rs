@@ -168,7 +168,8 @@ fn preflight_failure_kind(error: &ApiError) -> FailureKind {
         | ApiError::PayloadTooLarge(_)
         | ApiError::OperatorMismatch(_)
         | ApiError::InvalidIntegerRange(_) => FailureKind::Validation,
-        ApiError::TaskStopped(_)
+        ApiError::TaskCapacity(_)
+        | ApiError::TaskStopped(_)
         | ApiError::InternalServerError(_)
         | ApiError::DatabaseError(_)
         | ApiError::NotImplemented(_)

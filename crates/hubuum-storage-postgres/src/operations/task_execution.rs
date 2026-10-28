@@ -38,6 +38,7 @@ const LEASE_EXPIRED_MESSAGE: &str =
     "Task worker lease expired; task failed without automatic replay";
 
 const CLAIM_NEXT_QUEUED_TASK_SQL: &str = "\
+    WITH eligible AS MATERIALIZED (SELECT public.hubuum_task_claimable_tasks() AS id) \
     SELECT candidate.id \
     FROM unnest($2::text[]) WITH ORDINALITY AS claim_order(kind, priority) \
     CROSS JOIN LATERAL ( \
@@ -45,7 +46,8 @@ const CLAIM_NEXT_QUEUED_TASK_SQL: &str = "\
         FROM tasks \
         WHERE status = $1 \
           AND tasks.kind = claim_order.kind \
-        ORDER BY created_at ASC \
+          AND tasks.id IN (SELECT id FROM eligible) \
+        ORDER BY created_at ASC, id ASC \
         FOR UPDATE SKIP LOCKED \
         LIMIT 1 \
     ) AS candidate \
@@ -161,6 +163,9 @@ pub async fn claim_next_task(
             if !maintenance_is_normal(connection).await? {
                 return Ok(None);
             }
+            diesel::sql_query("SELECT public.hubuum_task_capacity_lock()")
+                .execute(connection)
+                .await?;
             let task_kinds = StorageTaskKind::ALL.map(StorageTaskKind::as_str);
             let first_kind = NEXT_TASK_KIND.fetch_add(1, Ordering::Relaxed) % task_kinds.len();
             let claim_order =

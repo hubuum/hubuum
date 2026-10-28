@@ -1427,7 +1427,7 @@ store_record!(
 store_record!(store_identity_scope, identity_scopes, StorageIdentityScope);
 store_record!(store_group, groups, StorageIdentityGroup);
 store_record!(store_principal, principals, StoragePrincipal);
-store_record!(store_task, tasks, MemoryTaskRecord);
+store_record!(store_task_record, tasks, MemoryTaskRecord);
 store_record!(
     store_export_template,
     export_templates,

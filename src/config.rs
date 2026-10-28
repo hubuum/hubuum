@@ -25,6 +25,7 @@ mod client_network;
 mod defaults;
 mod query_observations;
 mod schema_validation;
+mod task_admission;
 use hubuum_storage_core::StorageQueryObservationSettings;
 use query_observations::QueryObservationOptions;
 mod secret_source;
@@ -740,7 +741,7 @@ pub struct AppConfig {
     )]
     pub backup_output_retention_hours: i64,
 
-    /// Maximum active backup tasks one principal may own.
+    /// Initial shared-policy limit for active backup tasks per principal. Later changes use the administrator task-capacity endpoint.
     #[clap(
         long,
         env = "HUBUUM_BACKUP_MAX_ACTIVE_TASKS_PER_USER",
@@ -776,7 +777,7 @@ pub struct AppConfig {
     )]
     pub restore_max_upload_bytes: usize,
 
-    /// Maximum queued/validating/running import tasks one user may have at once.
+    /// Initial shared-policy limit for outstanding import tasks per principal. Later changes use the administrator task-capacity endpoint.
     #[clap(
         long,
         env = "HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER",
@@ -784,7 +785,7 @@ pub struct AppConfig {
     )]
     pub import_max_active_tasks_per_user: usize,
 
-    /// Maximum queued/validating/running export tasks one user may have at once.
+    /// Initial shared-policy limit for outstanding export tasks per principal. Later changes use the administrator task-capacity endpoint.
     #[clap(
         long,
         env = "HUBUUM_EXPORT_MAX_ACTIVE_TASKS_PER_USER",
@@ -873,7 +874,7 @@ pub struct AppConfig {
     )]
     pub remote_call_allow_private_targets: bool,
 
-    /// Maximum queued/validating/running remote call tasks one user may have at once.
+    /// Initial shared-policy limit for outstanding remote-call tasks per principal. Later changes use the administrator task-capacity endpoint.
     #[clap(
         long,
         env = "HUBUUM_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER",

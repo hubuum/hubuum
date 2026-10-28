@@ -365,20 +365,16 @@ impl RestoreContractFixture {
         restore_versioned_snapshot(&self.storage, snapshot, version).await
     }
 
+    pub fn task_request(&self, kind: StorageTaskKind) -> StorageTaskCreateRequestBuilder {
+        StorageTaskCreateRequest::builder(kind, self.actor_id, json!({"input": "retained"}), 1)
+    }
+
     pub async fn create_task(&self, kind: StorageTaskKind) -> Result<TaskId, ApiError> {
-        let task = self
+        Ok(self
             .storage
-            .create_task(
-                StorageTaskCreateRequest::builder(
-                    kind,
-                    self.actor_id,
-                    json!({"input": "retained"}),
-                    1,
-                )
-                .try_build(10)?,
-            )
-            .await?;
-        Ok(task.id())
+            .create_task(self.task_request(kind).try_build()?)
+            .await?
+            .id())
     }
 
     pub async fn seed_terminal_artifact(

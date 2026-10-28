@@ -613,12 +613,20 @@ async fn apply_restore_replay_parts(
                 enable_restore_session_settings(connection).await?;
                 replace_backend_replay(connection, snapshot.into_replay())
                     .await?;
+                diesel::sql_query("SELECT public.hubuum_reconcile_task_capacity()")
+                    .execute(connection).await?;
                 // Rebuilt work is new data, with new task identities. Only the
                 // validated replay itself is allowed to supply retained UUIDs.
                 diesel::sql_query("SELECT set_config('hubuum.restore_identities', 'off', true)")
                     .execute(connection).await?;
+                // Reconciliation must register all required repairs even when
+                // a recently lowered policy needs their scope to drain.
+                diesel::sql_query("SELECT set_config('hubuum.reconcile_task_capacity', 'on', true)")
+                    .execute(connection).await?;
                 enqueue_restored_computed_rebuilds_on_connection(connection).await?;
                 super::schema_evolution::enqueue_restored_schema_work_on(connection).await?;
+                diesel::sql_query("SELECT set_config('hubuum.reconcile_task_capacity', 'off', true)")
+                    .execute(connection).await?;
 
                 // Restored event rows must not fan out while they are inserted.
                 // This is the one deliberate post-restore provenance event.

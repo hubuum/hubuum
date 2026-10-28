@@ -807,7 +807,7 @@ mod tests {
                     1,
                 )
                 .metadata(Some(metadata))
-                .try_build(100)
+                .try_build()
                 .unwrap(),
             )
             .await
@@ -1070,7 +1070,7 @@ mod tests {
                         )
                         .metadata(Some(metadata))
                         .trace_link(Some(trace.clone()))
-                        .try_build(100)
+                        .try_build()
                         .unwrap(),
                     )
                     .await

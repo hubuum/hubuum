@@ -1,3 +1,4 @@
+use hubuum_storage_core::TaskCapacityRejection;
 use std::any::TypeId;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -1352,33 +1353,37 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             | "hubuum_trace_flushes_total",
             "outcome",
         ) => strings(&["success", "failure"]),
-        ("hubuum_api_errors_total", "class") => strings(&[
-            "cancel_requested",
-            "deadline_exceeded",
-            "unauthorized",
-            "reauthentication_required",
-            "internal_server_error",
-            "forbidden",
-            "not_acceptable",
-            "unsupported_media_type",
-            "payload_too_large",
-            "database_error",
-            "conflict",
-            "precondition_failed",
-            "revision_conflict",
-            "too_many_requests",
-            "service_unavailable",
-            "not_implemented",
-            "permission_backend_unavailable",
-            "not_found",
-            "gone",
-            "db_connection_error",
-            "hash_error",
-            "bad_request",
-            "operator_mismatch",
-            "invalid_integer_range",
-            "validation_error",
-        ]),
+        ("hubuum_api_errors_total", "class") => {
+            let mut values = strings(&[
+                "cancel_requested",
+                "deadline_exceeded",
+                "unauthorized",
+                "reauthentication_required",
+                "internal_server_error",
+                "forbidden",
+                "not_acceptable",
+                "unsupported_media_type",
+                "payload_too_large",
+                "database_error",
+                "conflict",
+                "precondition_failed",
+                "revision_conflict",
+                "too_many_requests",
+                "service_unavailable",
+                "not_implemented",
+                "permission_backend_unavailable",
+                "not_found",
+                "gone",
+                "db_connection_error",
+                "hash_error",
+                "bad_request",
+                "operator_mismatch",
+                "invalid_integer_range",
+                "validation_error",
+            ]);
+            values.extend(TaskCapacityRejection::ALL.map(|reason| reason.as_str().to_owned()));
+            values
+        }
         ("hubuum_client_allowlist_rejections_total", "reason") => {
             strings(&["disallowed_ip", "missing_ip"])
         }
@@ -3243,6 +3248,8 @@ mod tests {
     #[case(ApiError::ReauthenticationRequired)]
     #[case(ApiError::TaskStopped(TaskStopReason::Cancelled))]
     #[case(ApiError::TaskStopped(TaskStopReason::DeadlineExceeded))]
+    #[case(ApiError::TaskCapacity(TaskCapacityRejection::Deployment))]
+    #[case(ApiError::TaskCapacity(TaskCapacityRejection::IdentityUnavailable))]
     fn credential_and_task_error_classes_are_recordable(#[case] error: ApiError) {
         assert!(metric_label_value_is_allowed(
             "hubuum_api_errors_total",
