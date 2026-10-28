@@ -1168,7 +1168,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "createdb failed with exit code $LASTEXITCODE" }
           & $dieselBin migration run --database-url "$dbUrl"
           if ($LASTEXITCODE -ne 0) { throw "Diesel migrations failed with exit code $LASTEXITCODE" }
-          & cargo run --quiet --locked --release --features embedded-migrations --bin hubuum-admin -- --migrate --migration-database-url "$dbUrl"
+          & cargo run --quiet --locked --release --features embedded-migrations,vendored-openssl --bin hubuum-admin -- --migrate --migration-database-url "$dbUrl"
           if ($LASTEXITCODE -ne 0) { throw "Migration backfill failed with exit code $LASTEXITCODE" }
           & "$env:PG_BIN\psql.exe" -U postgres -h 127.0.0.1 -p $pgPort -d hubuum_rust_test -c "select * from users;"
           if ($LASTEXITCODE -ne 0) { throw "Database verification failed with exit code $LASTEXITCODE" }
@@ -1229,7 +1229,7 @@ jobs:
 
           & $env:DIESEL_BIN migration run --database-url $env:DATABASE_URL
           if ($LASTEXITCODE -ne 0) { throw "Diesel migrations failed with exit code $LASTEXITCODE" }
-          & cargo run --quiet --locked --release --features embedded-migrations --bin hubuum-admin -- --migrate
+          & cargo run --quiet --locked --release --features embedded-migrations,vendored-openssl --bin hubuum-admin -- --migrate
           if ($LASTEXITCODE -ne 0) { throw "Migration backfill failed with exit code $LASTEXITCODE" }
 
           & python3 tests/python/run.py integration rust-tests -- cargo @testArgs
