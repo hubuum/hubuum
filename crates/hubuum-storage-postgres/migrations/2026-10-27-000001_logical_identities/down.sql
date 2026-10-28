@@ -36,7 +36,9 @@ FOR EACH ROW EXECUTE FUNCTION public.validate_object_relation();
 CREATE OR REPLACE FUNCTION public.update_modified_column() RETURNS TRIGGER
 LANGUAGE plpgsql AS $function$
 BEGIN
-    NEW.updated_at := now();
+    IF current_setting('hubuum.preserve_imported_timestamps', TRUE) IS DISTINCT FROM 'on' THEN
+        NEW.updated_at := now();
+    END IF;
     RETURN NEW;
 END
 $function$;

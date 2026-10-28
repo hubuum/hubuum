@@ -667,7 +667,9 @@ BEGIN
         AND pg_has_role(session_user, (SELECT relowner FROM pg_class WHERE oid=TG_RELID), 'MEMBER') THEN
         RETURN NEW;
     END IF;
-    NEW.updated_at := now();
+    IF current_setting('hubuum.preserve_imported_timestamps', TRUE) IS DISTINCT FROM 'on' THEN
+        NEW.updated_at := now();
+    END IF;
     RETURN NEW;
 END
 $function$;
