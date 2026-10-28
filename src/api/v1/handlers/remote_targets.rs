@@ -9,7 +9,6 @@ use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::history::HistoryResponse;
 use crate::can;
-use crate::config::{DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER, get_config};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::collection::user_can_on_any;
@@ -332,7 +331,9 @@ pub async fn delete_remote_target(
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
         (status = 404, description = "Subject or remote target not found", body = ApiErrorResponse),
-        (status = 409, description = "Conflict", body = ApiErrorResponse)
+        (status = 409, description = "Conflict", body = ApiErrorResponse),
+        (status = 429, description = "Shared task admission or byte capacity exhausted", body = ApiErrorResponse),
+        (status = 503, description = "Task identity or control reconciliation unavailable", body = ApiErrorResponse)
     )
 )]
 #[post("/{target_id}/invoke")]
@@ -419,24 +420,12 @@ async fn find_or_create_remote_call_task(
     );
     submit_task(
         context,
-        TaskSubmission::new(
-            TaskKind::RemoteCall,
-            submitted_by,
-            payload,
-            1,
-            max_active_remote_call_tasks_per_user(),
-        )
-        .idempotency_key(idempotency_key)
-        .request_hash(Some(hash))
-        .scope_snapshot(snapshot),
+        TaskSubmission::new(TaskKind::RemoteCall, submitted_by, payload, 1)
+            .idempotency_key(idempotency_key)
+            .request_hash(Some(hash))
+            .scope_snapshot(snapshot),
     )
     .await
-}
-
-fn max_active_remote_call_tasks_per_user() -> usize {
-    get_config()
-        .map(|config| config.remote_call_max_active_tasks_per_user)
-        .unwrap_or(DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER)
 }
 
 #[utoipa::path(

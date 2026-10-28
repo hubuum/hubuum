@@ -27,7 +27,7 @@ and semantics. Group keys such as `domain_lifecycle` and `catalog_queries` are
 not operation-trait keys or metric labels. `hubuum_storage_core::capabilities`
 exposes broader discovery modules for resources, identity, queries, workflows,
 events, and operational capabilities;
-the 22 detailed groups below are not a one-to-one module map. Neither form
+the 23 detailed groups below are not a one-to-one module map. Neither form
 represents separately versioned or negotiable runtime features.
 
 Each discovery module reexports one method-free family bound with the matching
@@ -70,6 +70,7 @@ StorageBackend
 |   |-- remote targets
 |   |-- computed-field lifecycle
 |   |-- task queue
+|   |-- task capacity
 |   |-- task execution
 |   |-- backup snapshots
 |   |-- restores
@@ -379,7 +380,7 @@ the actual outbound call.
 
 Required trait: `TaskQueueStorage`.
 
-Owns idempotent submission under active-task limits, access facts, task pages,
+Owns idempotent submission under shared admission policy, access facts, task pages,
 events, import results, and retained export and backup outputs. It is the
 application-facing history of work, not the worker lease state machine.
 Task pages must honor the carrier's `excluded_kind` before counting or applying
@@ -396,6 +397,25 @@ start. Retained export outputs contain
 exactly one JSON or text representation and a nonnegative warning count.
 Retained backup outputs carry a canonical lowercase SHA-256 digest, and full
 outputs require their stored size and digest to match the document.
+
+### `task_capacity`
+
+Required trait: `TaskCapacityStorage`.
+
+Owns first-writer policy initialization, revision-checked policy replacement,
+and authoritative policy and accounting snapshots. Validated policy values
+cross the boundary through private-field types. Every backend atomically
+enforces deployment, principal, kind, collection, and internal repair limits
+when admitting and claiming work. Recognized duplicates consume no additional
+reservation; reduced limits allow existing work to drain.
+
+Logical reservations, execution occupancy, resident bytes, and cumulative work
+are distinct dimensions. Restore preserves control policy and cumulative work,
+invalidates obsolete occupancy, and reconciles current task identities before
+admission resumes. Unknown identity or incomplete reconciliation fails closed.
+The application supplies administrator authorization and common observations;
+adapter errors retain a bounded capacity rejection reason. See
+[task admission](../task_admission.md) for ownership and reconciliation rules.
 
 ### `task_execution`
 

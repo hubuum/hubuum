@@ -1,4 +1,8 @@
+use crate::storage::storage_handle;
 use actix_web::{Responder, get, http::StatusCode, put, web};
+use hubuum_storage_core::{
+    StorageTaskCapacitySnapshot, StorageTaskPolicy, StorageTaskPolicyUpdate, TaskCapacityStorage,
+};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
@@ -28,6 +32,7 @@ pub async fn get_running_config(
 ) -> Result<impl Responder, ApiError> {
     let mut config = config.get_ref().clone();
     config.query_observations = query_usage::observation_configuration(&context).await?;
+    config.apply_task_capacity(storage_handle(&context).task_capacity_snapshot().await?);
     Ok(ApiResponse::new(config, StatusCode::OK))
 }
 
@@ -80,8 +85,62 @@ pub async fn set_query_observations(
     Ok(ApiResponse::ok(config))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/task-capacity",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Authoritative shared task policy and capacity accounting", body = StorageTaskCapacitySnapshot),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse)
+    )
+)]
+#[get("/task-capacity")]
+pub async fn get_task_capacity(
+    context: AppContext,
+    _admin: AdminAccess,
+) -> Result<impl Responder, ApiError> {
+    Ok(ApiResponse::ok(
+        storage_handle(&context).task_capacity_snapshot().await?,
+    ))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/v1/admin/task-capacity",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    request_body = StorageTaskPolicyUpdate,
+    responses(
+        (status = 200, description = "Policy committed; reductions drain existing work", body = StorageTaskPolicy),
+        (status = 400, description = "Invalid policy", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse),
+        (status = 409, description = "Policy revision changed; refetch before updating", body = ApiErrorResponse)
+    )
+)]
+#[put("/task-capacity")]
+pub async fn set_task_capacity(
+    context: AppContext,
+    admin: AdminAccess,
+    request: web::Json<StorageTaskPolicyUpdate>,
+) -> Result<impl Responder, ApiError> {
+    let policy = storage_handle(&context)
+        .replace_task_policy(request.into_inner())
+        .await?;
+    tracing::info!(
+        actor_id = admin.user.id,
+        task_policy_revision = policy.revision().get(),
+        "Shared task admission policy updated"
+    );
+    Ok(ApiResponse::ok(policy))
+}
+
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(get_running_config)
         .service(get_query_observations)
-        .service(set_query_observations);
+        .service(set_query_observations)
+        .service(get_task_capacity)
+        .service(set_task_capacity);
 }

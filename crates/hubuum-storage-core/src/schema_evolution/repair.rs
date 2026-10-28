@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::{StorageSchemaWork, StorageSchemaWorkKind, StorageValidationError};
 
 /// A complete HTML artifact of an impact snapshot. Rendering limits fail closed.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "RepairReportSnapshot")]
 pub struct StorageSchemaRepairReport {
     task_id: TaskId,

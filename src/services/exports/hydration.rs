@@ -987,12 +987,6 @@ pub(super) fn max_hydrated_template_objects() -> usize {
         .unwrap_or(DEFAULT_EXPORT_TEMPLATE_MAX_OBJECTS)
 }
 
-pub(super) fn max_active_export_tasks_per_user() -> usize {
-    get_config()
-        .map(|config| config.export_max_active_tasks_per_user)
-        .unwrap_or(DEFAULT_EXPORT_MAX_ACTIVE_TASKS_PER_USER)
-}
-
 pub(super) fn configured_export_max_output_bytes() -> usize {
     get_config()
         .map(|config| config.export_max_output_bytes)

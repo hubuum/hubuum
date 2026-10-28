@@ -20,7 +20,8 @@ class RustCiFixtureTests(unittest.TestCase):
                 raise subprocess.CalledProcessError(17, command)
             return subprocess.CompletedProcess(command, 23 if command[0] == "cargo" else 0)
 
-        with patch.dict(os.environ, {"HUBUUM_DATABASE_URL": "postgres://root@localhost/application"}), patch(
+        with patch.dict(os.environ, {"HUBUUM_DATABASE_URL": "postgres://root@localhost/application",
+                                     "PG_BIN": "/test/postgres/bin"}), patch(
             "integration.rust_tests.subprocess.run", side_effect=run,
         ):
             try:

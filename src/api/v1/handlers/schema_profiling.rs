@@ -27,7 +27,8 @@ use crate::traits::{SelfAccessors, UserPermissions};
         (status = 403, description = "Class access denied", body = ApiErrorResponse),
         (status = 404, description = "Class not found", body = ApiErrorResponse),
         (status = 409, description = "Idempotency key conflict", body = ApiErrorResponse),
-        (status = 429, description = "Two profiling tasks are already active", body = ApiErrorResponse))) ]
+        (status = 429, description = "Shared task admission or byte capacity exhausted", body = ApiErrorResponse),
+        (status = 503, description = "Task identity or control reconciliation unavailable", body = ApiErrorResponse))) ]
 #[post("/{class_id}/schema/profiles")]
 pub(crate) async fn create_schema_profile(
     context: AppContext,

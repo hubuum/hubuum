@@ -16,24 +16,16 @@ use crate::traits::AuthzSubject;
 #[derive(Clone, Debug)]
 pub struct BackupSettings {
     output_retention: FutureRetention,
-    max_active_tasks_per_user: usize,
     budget: StorageBackupBudget,
 }
 
 impl BackupSettings {
-    pub fn new(
-        output_retention_hours: i64,
-        max_active_tasks_per_user: usize,
-        budget: StorageBackupBudget,
-    ) -> Result<Self, String> {
+    pub fn new(output_retention_hours: i64, budget: StorageBackupBudget) -> Result<Self, String> {
         let output_retention =
             FutureRetention::from_hours(output_retention_hours, "backup output retention")?;
-        if max_active_tasks_per_user == 0 {
-            return Err("backup active-task limit must be greater than zero".to_string());
-        }
+
         Ok(Self {
             output_retention,
-            max_active_tasks_per_user,
             budget,
         })
     }
@@ -45,10 +37,6 @@ impl BackupSettings {
         self.output_retention
             .expires_at(now)
             .map_err(ApiError::BadRequest)
-    }
-
-    pub fn max_active_tasks_per_user(&self) -> usize {
-        self.max_active_tasks_per_user
     }
 
     pub fn output_retention_hours(&self) -> i64 {
@@ -138,8 +126,6 @@ pub(crate) async fn authorize_backup_request(
 mod tests {
     use std::sync::Arc;
 
-    use rstest::rstest;
-
     use super::{BackupSettings, authorize_backup_request};
     use crate::errors::ApiError;
     use crate::permissions::test_support::MockTreetopBackend;
@@ -179,18 +165,13 @@ mod tests {
             .unwrap();
     }
 
-    #[rstest]
-    #[case::retention(0, 1, 1024)]
-    #[case::active_tasks(24, 0, 1024)]
-    fn backup_settings_reject_zero_limits(
-        #[case] retention_hours: i64,
-        #[case] active_tasks: usize,
-        #[case] output_bytes: usize,
-    ) {
+    #[test]
+    fn backup_settings_reject_zero_retention() {
+        let retention_hours = 0;
+        let output_bytes = 1024;
         assert!(
             BackupSettings::new(
                 retention_hours,
-                active_tasks,
                 StorageBackupBudget::new(output_bytes, 100).unwrap()
             )
             .is_err()
@@ -199,7 +180,7 @@ mod tests {
 
     #[test]
     fn backup_settings_reject_unrepresentable_retention() {
-        let error = BackupSettings::new(i64::MAX, 1, StorageBackupBudget::new(1024, 100).unwrap())
+        let error = BackupSettings::new(i64::MAX, StorageBackupBudget::new(1024, 100).unwrap())
             .unwrap_err();
 
         assert_eq!(

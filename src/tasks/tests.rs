@@ -92,7 +92,7 @@ async fn create_worker_test_task_with_trace(
             ))
             .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
             .trace_link(trace_link)
-            .try_build(100)
+            .try_build()
             .expect("worker test task request should be valid"),
         )
         .await

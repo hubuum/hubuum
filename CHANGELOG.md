@@ -7,7 +7,28 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Shared task admission and execution limits across API/worker replicas, with
+  separate resident-byte and cumulative-work accounting, internal repair
+  admission, and administrator policy/usage endpoints at
+  `/api/v1/admin/task-capacity`. Policy and cumulative charges survive logical
+  restore; stale claims cannot occupy capacity after reconciliation.
+
 ### Changed
+
+- **Breaking operational change:** task capacity requires an offline upgrade.
+  Stop API/worker replicas, back up the database, run `hubuum-admin --migrate`
+  through capacity backfill and role grants, then start matching binaries.
+  Per-kind active-task environment settings initialize the shared policy once;
+  later changes use the revision-checked administrator endpoint. Existing work
+  drains after limit reductions. See [task admission](docs/task_admission.md).
+- **Breaking (supported Rust crates / storage SDK):** advance the coordinated
+  train to `0.8.0`, implement `TaskCapacityStorage`, and remove the local quota
+  argument from `StorageTaskCreateRequestBuilder::try_build()`. Preserve the new
+  fourth element of `StorageError::into_parts()` when translating errors. Update all ten
+  SDK dependencies together and follow the
+  [0.8 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-07-to-08).
 
 - **Breaking operational change:** logical identity migration requires an offline
   upgrade. Stop older API and worker processes and take a database backup. For

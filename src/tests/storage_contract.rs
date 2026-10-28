@@ -18,6 +18,7 @@ mod login_events;
 mod regex;
 mod remote_targets;
 mod schema_evolution;
+mod task_capacity;
 mod task_control;
 mod webhook_notifications;
 
@@ -1299,7 +1300,7 @@ impl LeaseLossFaultFixture for PostgresLeaseLossFaultFixture {
                 ))
                 .request_hash(Some(prefix("lease_loss_hash")))
                 .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                .try_build(1)
+                .try_build()
                 .expect("lease-loss task request should be valid"),
             )
             .await?;
@@ -2140,7 +2141,7 @@ async fn postgres_rolls_back_task_finalization_at_an_injected_failure() {
             ))
             .request_hash(Some(prefix("task_failpoint_hash")))
             .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-            .try_build(10)
+            .try_build()
             .expect("failpoint task request should be valid"),
         )
         .await
@@ -2230,7 +2231,7 @@ async fn postgres_task_page_count_and_rows_share_one_snapshot() {
                     .expect("snapshot idempotency key should be valid"),
             ))
             .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-            .try_build(10)
+            .try_build()
             .expect("initial snapshot task request should be valid"),
         )
         .await
@@ -2271,7 +2272,7 @@ async fn postgres_task_page_count_and_rows_share_one_snapshot() {
                     .expect("snapshot idempotency key should be valid"),
             ))
             .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-            .try_build(10)
+            .try_build()
             .expect("concurrent snapshot task request should be valid"),
         )
         .await
@@ -3297,7 +3298,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                 ))
                 .request_hash(Some(prefix("identity_contract_sa_task_hash")))
                 .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                .try_build(10)
+                .try_build()
                 .expect("identity contract task request should be valid"),
             )
             .await
@@ -4000,7 +4001,7 @@ async fn every_available_storage_backend_commits_claimed_import_effects_and_rece
                     serde_json::json!({}),
                     1,
                 )
-                .try_build(10)
+                .try_build()
                 .unwrap(),
             )
             .await
@@ -4103,7 +4104,7 @@ async fn every_available_storage_backend_fences_planning_result_writes() {
                     serde_json::json!({}),
                     1,
                 )
-                .try_build(10)
+                .try_build()
                 .unwrap(),
             )
             .await
@@ -4174,7 +4175,7 @@ async fn every_available_storage_backend_supplies_the_complete_task_queue() {
                 ))
                 .request_hash(Some(prefix("task_queue_hash")))
                 .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                .try_build(10)
+                .try_build()
                 .expect("task queue request should be valid"),
             )
             .await
@@ -4303,7 +4304,7 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                         task_kind.as_str()
                     ))))
                     .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                    .try_build(10)
+                    .try_build()
                     .expect("task execution request should be valid"),
                 )
                 .await
@@ -4412,7 +4413,7 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                 ))
                 .request_hash(Some(prefix("task_execution_kind_mismatch_hash")))
                 .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                .try_build(10)
+                .try_build()
                 .expect("task kind mismatch request should be valid"),
             )
             .await
@@ -4481,7 +4482,7 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                         task_kind.as_str()
                     ))))
                     .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                    .try_build(10)
+                    .try_build()
                     .expect("task execution failure request should be valid"),
                 )
                 .await

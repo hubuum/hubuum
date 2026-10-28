@@ -4,7 +4,7 @@ use base64::Engine;
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::backups::{BackupSettings, authorize_backup_request};
+use crate::backups::authorize_backup_request;
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::{
@@ -60,13 +60,13 @@ fn invalid_stored_sha256() -> ApiError {
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Unscoped administrator access required", body = ApiErrorResponse),
         (status = 409, description = "Conflict", body = ApiErrorResponse),
-        (status = 429, description = "Too many active backup tasks", body = ApiErrorResponse)
+        (status = 429, description = "Shared task admission or byte capacity exhausted", body = ApiErrorResponse),
+        (status = 503, description = "Task identity or control reconciliation unavailable", body = ApiErrorResponse)
     )
 )]
 #[post("")]
 pub async fn create_backup(
     context: AppContext,
-    settings: web::Data<BackupSettings>,
     requestor: Authenticated,
     req: HttpRequest,
     request: web::Json<BackupRequest>,
@@ -86,7 +86,6 @@ pub async fn create_backup(
             PrincipalID::new(requestor.principal.id().id())?,
             payload,
             1,
-            settings.max_active_tasks_per_user(),
         )
         .idempotency_key(idempotency_key_from_headers(req.headers())?)
         .request_hash(Some(hash))

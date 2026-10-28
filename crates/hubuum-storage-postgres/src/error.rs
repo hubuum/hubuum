@@ -6,6 +6,7 @@ use hubuum_domain::{JsonSchemaError, JsonSchemaErrorKind, PositiveIdError, Resou
 use hubuum_events_core::{AuditDocumentError, EventIdentifierError};
 use hubuum_storage_core::{
     StorageCandidatePage, StorageCandidatePageLimit, StorageError, StorageErrorKind, StoragePage,
+    TaskCapacityRejection,
 };
 use hubuum_task_core::TaskStopReason;
 use tracing::{debug, error};
@@ -23,6 +24,7 @@ pub struct PostgresStorageError {
     kind: StorageErrorKind,
     message: String,
     current_revision: Option<ResourceRevision>,
+    task_capacity: Option<TaskCapacityRejection>,
 }
 
 impl PostgresStorageError {
@@ -50,6 +52,7 @@ impl PostgresStorageError {
             kind,
             message: message.into(),
             current_revision,
+            task_capacity: None,
         }
     }
 
@@ -224,7 +227,12 @@ impl std::error::Error for PostgresStorageError {}
 
 impl From<StorageError> for PostgresStorageError {
     fn from(error: StorageError) -> Self {
-        let (kind, message, current_revision) = error.into_parts();
+        let (kind, message, current_revision, task_capacity) = error.into_parts();
+        if let Some(reason) = task_capacity {
+            let mut converted = Self::new(kind, message, current_revision);
+            converted.task_capacity = Some(reason);
+            return converted;
+        }
         match kind {
             StorageErrorKind::TaskCancelled => {
                 Self::new(StorageErrorKind::TaskCancelled, message, None)
@@ -308,6 +316,9 @@ impl From<DieselError> for PostgresStorageError {
             }
             DieselError::DatabaseError(DatabaseErrorKind::Unknown, ref info) => {
                 let message = info.message();
+                if let Some(reason) = TaskCapacityRejection::from_persisted(message) {
+                    return Self::from(StorageError::task_capacity(reason));
+                }
                 if message == "hubuum_task_cancelled" {
                     return Self::task_stopped(TaskStopReason::Cancelled);
                 }
@@ -357,6 +368,9 @@ impl From<DieselError> for PostgresStorageError {
 
 impl From<PostgresStorageError> for StorageError {
     fn from(error: PostgresStorageError) -> Self {
+        if let Some(reason) = error.task_capacity {
+            return Self::task_capacity(reason);
+        }
         match error.kind {
             StorageErrorKind::TaskCancelled => Self::task_stopped(TaskStopReason::Cancelled),
             StorageErrorKind::TaskDeadlineExceeded => {
@@ -396,6 +410,22 @@ impl From<PostgresStorageError> for StorageError {
 mod tests {
     use super::*;
 
+    #[rstest::rstest]
+    #[case::capacity(TaskCapacityRejection::Deployment)]
+    #[case::unresolved(TaskCapacityRejection::IdentityUnavailable)]
+    fn capacity_reasons_survive_native_and_portable_boundaries(
+        #[case] reason: TaskCapacityRejection,
+    ) {
+        let error = DieselError::DatabaseError(
+            DatabaseErrorKind::Unknown,
+            Box::new(TestDatabaseErrorInformation::new(reason.as_str())),
+        );
+        let portable = StorageError::from(PostgresStorageError::from(error));
+        assert_eq!(portable.task_capacity_rejection(), Some(reason));
+        let roundtrip = StorageError::from(PostgresStorageError::from(portable));
+        assert_eq!(roundtrip.task_capacity_rejection(), Some(reason));
+    }
+
     #[test]
     fn postgres_errors_cross_the_boundary_as_storage_errors() {
         let error = StorageError::from(PostgresStorageError::revision_conflict(
@@ -403,7 +433,7 @@ mod tests {
             ResourceRevision::new(2).unwrap(),
         ));
 
-        let (kind, message, current_revision) = error.into_parts();
+        let (kind, message, current_revision, _) = error.into_parts();
         assert_eq!(kind, StorageErrorKind::RevisionConflict);
         assert_eq!(message, "stale resource");
         assert_eq!(current_revision, Some(ResourceRevision::new(2).unwrap()));

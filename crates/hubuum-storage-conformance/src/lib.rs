@@ -860,7 +860,7 @@ fn verify_committed_mutation(probe: CommittedMutationProbe) -> Result<(), Contra
 }
 
 fn verify_revision_conflict(probe: RevisionConflictProbe) -> Result<(), ContractViolation> {
-    let (kind, _, current_revision) = probe.error.into_parts();
+    let (kind, _, current_revision, _) = probe.error.into_parts();
     if !matches!(kind, StorageErrorKind::RevisionConflict) {
         return Err(ContractViolation::WrongRevisionConflictKind);
     }

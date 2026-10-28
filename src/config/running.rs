@@ -3,6 +3,7 @@
 //! This is deliberately not implemented by serializing `AppConfig`: newly
 //! added options are hidden until they are consciously classified here.
 
+use hubuum_storage_core::{StorageTaskCapacitySnapshot, StorageTaskKind};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -15,6 +16,9 @@ pub struct RunningConfig {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
     pub tasks: TaskConfig,
+    /// Authoritative shared policy and administrator-only usage, read on demand.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_capacity: Option<StorageTaskCapacitySnapshot>,
     pub events: EventConfig,
     pub exports: ExportConfig,
     pub backups: BackupConfig,
@@ -144,9 +148,9 @@ pub struct TaskConfig {
     pub heartbeat_seconds: u64,
     pub recovery_interval_seconds: u64,
     pub computed_reindex_batch_size: usize,
-    pub import_max_active_per_user: usize,
-    pub export_max_active_per_user: usize,
-    pub remote_call_max_active_per_user: usize,
+    pub import_max_active_per_user: u64,
+    pub export_max_active_per_user: u64,
+    pub remote_call_max_active_per_user: u64,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -194,7 +198,7 @@ pub struct ExportConfig {
 pub struct BackupConfig {
     pub max_capture_rows: usize,
     pub output_retention_hours: i64,
-    pub max_active_tasks_per_user: usize,
+    pub max_active_tasks_per_user: u64,
     pub max_output_bytes: usize,
 }
 
@@ -335,6 +339,27 @@ impl From<&RunningConfig> for ClientConfig {
 }
 
 impl RunningConfig {
+    pub fn apply_task_capacity(&mut self, snapshot: StorageTaskCapacitySnapshot) {
+        let policy = snapshot.policy().policy();
+        self.tasks.import_max_active_per_user = policy
+            .for_kind(StorageTaskKind::Import)
+            .principal_outstanding()
+            .get();
+        self.tasks.export_max_active_per_user = policy
+            .for_kind(StorageTaskKind::Export)
+            .principal_outstanding()
+            .get();
+        self.tasks.remote_call_max_active_per_user = policy
+            .for_kind(StorageTaskKind::RemoteCall)
+            .principal_outstanding()
+            .get();
+        self.backups.max_active_tasks_per_user = policy
+            .for_kind(StorageTaskKind::Backup)
+            .principal_outstanding()
+            .get();
+        self.task_capacity = Some(snapshot);
+    }
+
     pub(crate) fn from_app_config_and_storage(
         config: &AppConfig,
         storage: crate::storage::StorageBackendDescriptor,
@@ -398,6 +423,7 @@ impl RunningConfig {
                 migrator_role: config.database_migrator_role.clone(),
                 runtime_role: config.database_runtime_role.clone(),
             },
+            task_capacity: None,
             tasks: TaskConfig {
                 workers: config.task_workers,
                 poll_interval_ms: config.task_poll_interval_ms,
@@ -416,9 +442,10 @@ impl RunningConfig {
                 heartbeat_seconds: config.task_heartbeat_seconds,
                 recovery_interval_seconds: config.task_recovery_interval_seconds,
                 computed_reindex_batch_size: config.computed_reindex_batch_size,
-                import_max_active_per_user: config.import_max_active_tasks_per_user,
-                export_max_active_per_user: config.export_max_active_tasks_per_user,
-                remote_call_max_active_per_user: config.remote_call_max_active_tasks_per_user,
+                import_max_active_per_user: config.import_max_active_tasks_per_user as u64,
+                export_max_active_per_user: config.export_max_active_tasks_per_user as u64,
+                remote_call_max_active_per_user: config.remote_call_max_active_tasks_per_user
+                    as u64,
             },
             events: EventConfig {
                 fanout_workers: config.event_fanout_workers,
@@ -454,7 +481,7 @@ impl RunningConfig {
             },
             backups: BackupConfig {
                 output_retention_hours: config.backup_output_retention_hours,
-                max_active_tasks_per_user: config.backup_max_active_tasks_per_user,
+                max_active_tasks_per_user: config.backup_max_active_tasks_per_user as u64,
                 max_output_bytes: config.backup_max_output_bytes,
                 max_capture_rows: config.backup_max_capture_rows,
             },

@@ -59,7 +59,14 @@ mod resource_lifecycle;
 mod restore;
 mod restore_artifact;
 pub use restore_artifact::{StorageRestoreArtifact, StorageRestoreArtifactBuilder};
+mod task_capacity;
 mod task_control;
+pub use task_capacity::{
+    StorageTaskCapacitySnapshot, StorageTaskCapacityUsage, StorageTaskPolicy,
+    StorageTaskPolicyUpdate, TaskAdmissionPolicy, TaskByteLimit, TaskCapacityLimit,
+    TaskCapacityRejection, TaskCapacityStorage, TaskKindCapacity, TaskPolicyRevision,
+    TaskScopeCapacity,
+};
 mod task_execution;
 mod task_metadata;
 mod task_queue;
@@ -463,9 +470,26 @@ pub struct StorageError {
     kind: StorageErrorKind,
     message: String,
     current_revision: Option<ResourceRevision>,
+    task_capacity: Option<TaskCapacityRejection>,
 }
 
 impl StorageError {
+    #[must_use]
+    pub fn task_capacity(reason: TaskCapacityRejection) -> Self {
+        let kind = if reason.is_unavailable() {
+            StorageErrorKind::Unavailable
+        } else {
+            StorageErrorKind::RateLimited
+        };
+        let mut error = Self::new(kind, reason.as_str(), None);
+        error.task_capacity = Some(reason);
+        error
+    }
+
+    #[must_use]
+    pub const fn task_capacity_rejection(&self) -> Option<TaskCapacityRejection> {
+        self.task_capacity
+    }
     #[must_use]
     pub fn task_stopped(reason: hubuum_task_core::TaskStopReason) -> Self {
         let kind = match reason {
@@ -578,12 +602,25 @@ impl StorageError {
             kind,
             message: message.into(),
             current_revision,
+            task_capacity: None,
         }
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (StorageErrorKind, String, Option<ResourceRevision>) {
-        (self.kind, self.message, self.current_revision)
+    pub fn into_parts(
+        self,
+    ) -> (
+        StorageErrorKind,
+        String,
+        Option<ResourceRevision>,
+        Option<TaskCapacityRejection>,
+    ) {
+        (
+            self.kind,
+            self.message,
+            self.current_revision,
+            self.task_capacity,
+        )
     }
 
     #[must_use]
@@ -628,6 +665,7 @@ mod tests {
                 StorageErrorKind::RevisionConflict,
                 "stale resource".to_string(),
                 Some(current_revision),
+                None,
             )
         );
     }

@@ -105,7 +105,7 @@ hubuum-events-core = { path = "crates/hubuum-events-core", features = ["schema"]
 hubuum-outbound-http = { path = "crates/hubuum-outbound-http" }
 hubuum-query = { path = "crates/hubuum-query" }
 hubuum-secrets = { path = "crates/hubuum-secrets" }
-hubuum-storage-core = { path = "crates/hubuum-storage-core" }
+hubuum-storage-core = { path = "crates/hubuum-storage-core", features = ["openapi"] }
 hubuum-storage-memory = { path = "crates/hubuum-storage-memory" }
 hubuum-storage-postgres = { path = "crates/hubuum-storage-postgres" }
 hubuum-task-core = { path = "crates/hubuum-task-core" }

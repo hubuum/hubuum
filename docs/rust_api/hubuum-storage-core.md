@@ -175,7 +175,7 @@ receipts, no-op behavior, rollback, outbox-to-sink delivery, telemetry, exact
 revision conflicts, retention retry identity, delivery recovery, restore
 coordination rollback, and lease-loss finalization, while each backend owns
 native query, transaction, migration, connection-loss, and failure tests.
-External-crate integration tests implement all 44 complete-backend traits,
+External-crate integration tests implement all 45 complete-backend traits,
 compile every one of their 250 methods, exercise every transaction port, and
 name public construction paths for all current adapter-returned values. CI also
 packages the crate, builds rustdoc with warnings denied, and compares it with
@@ -241,3 +241,15 @@ variant. Every adapter implements `get_schema_profile_output` and
 `purge_expired_schema_profile_outputs`, fences publication with terminal task
 completion, and retains expiry metadata after removal. See the
 [0.6 upgrade guide](../storage_adapter_sdk.md#upgrading-from-05-to-06).
+
+## Shared task admission
+
+`TaskCapacityStorage` is a required workflow capability in SDK 0.8. Its
+private-field policy types validate capacity units and require one entry for
+every task kind. The optional `openapi` feature adds schemas without changing
+the default storage contract or depending on application HTTP code.
+
+Adapters return one consistent policy/usage snapshot and preserve policy and
+cumulative work outside logical restore. Admission requests carry no local
+quota override. See the [SDK upgrade notes](../storage_adapter_sdk.md#upgrading-from-07-to-08)
+and [restore ownership table](../task_admission.md#ownership-and-restore-reconciliation).

@@ -213,7 +213,6 @@ pub struct StorageTaskCreateRequest {
     request_hash: Option<String>,
     scope_snapshot: StorageTaskScopeSnapshot,
     trace_link: Option<TraceLink>,
-    maximum_active_tasks: usize,
 }
 
 impl StorageTaskCreateRequest {
@@ -291,11 +290,6 @@ impl StorageTaskCreateRequest {
     pub const fn trace_link(&self) -> Option<&TraceLink> {
         self.trace_link.as_ref()
     }
-
-    #[must_use]
-    pub const fn maximum_active_tasks(&self) -> usize {
-        self.maximum_active_tasks
-    }
 }
 
 impl fmt::Debug for StorageTaskCreateRequest {
@@ -308,7 +302,6 @@ impl fmt::Debug for StorageTaskCreateRequest {
             .field("has_request_hash", &self.request_hash.is_some())
             .field("scope", &self.scope_snapshot)
             .field("has_trace_link", &self.trace_link.is_some())
-            .field("maximum_active_tasks", &self.maximum_active_tasks)
             .field("identity_and_payload", &"[redacted]")
             .finish()
     }
@@ -357,10 +350,7 @@ impl StorageTaskCreateRequestBuilder {
         self
     }
 
-    pub fn try_build(
-        self,
-        maximum_active_tasks: usize,
-    ) -> Result<StorageTaskCreateRequest, StorageError> {
+    pub fn try_build(self) -> Result<StorageTaskCreateRequest, StorageError> {
         if self
             .metadata
             .as_ref()
@@ -371,11 +361,6 @@ impl StorageTaskCreateRequestBuilder {
         if self.total_items < 0 {
             return Err(StorageError::invalid_input(
                 "Task total_items must not be negative",
-            ));
-        }
-        if maximum_active_tasks == 0 {
-            return Err(StorageError::invalid_input(
-                "Task maximum_active_tasks must be greater than zero",
             ));
         }
 
@@ -390,7 +375,6 @@ impl StorageTaskCreateRequestBuilder {
             request_hash: self.request_hash,
             scope_snapshot: self.scope_snapshot,
             trace_link: self.trace_link,
-            maximum_active_tasks,
         })
     }
 }
@@ -1857,22 +1841,8 @@ mod tests {
             serde_json::json!({}),
             -1,
         )
-        .try_build(1)
+        .try_build()
         .expect_err("negative task totals must be rejected");
-
-        assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
-    }
-
-    #[test]
-    fn task_create_rejects_zero_capacity() {
-        let error = StorageTaskCreateRequest::builder(
-            StorageTaskKind::Import,
-            PrincipalId::new(91_001).unwrap(),
-            serde_json::json!({}),
-            0,
-        )
-        .try_build(0)
-        .expect_err("zero task capacity must be rejected");
 
         assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
     }
@@ -1888,7 +1858,7 @@ mod tests {
             0,
         )
         .trace_link(Some(link.clone()))
-        .try_build(1)
+        .try_build()
         .unwrap();
         assert_eq!(request.trace_link(), Some(&link));
 

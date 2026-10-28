@@ -59,7 +59,6 @@ pub(crate) async fn submit(
             requestor.principal.id(),
             payload,
             1,
-            2,
         )
         .idempotency_key(key)
         .request_hash(Some(hash))

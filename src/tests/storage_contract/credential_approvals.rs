@@ -240,7 +240,7 @@ async fn credential_import_consumption_commits_with_queue_admission_and_allows_i
         )
         .idempotency_key(Some(key))
         .request_hash(Some("b".repeat(64)))
-        .try_build(10)
+        .try_build()
         .unwrap()
         .with_approval(Some(StorageCredentialUse::new(
             f.claim.clone(),

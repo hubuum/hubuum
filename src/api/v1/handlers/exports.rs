@@ -56,7 +56,8 @@ fn render_export_task_output(output: ExportTaskOutput) -> Result<HttpResponse, A
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
         (status = 409, description = "Conflict", body = ApiErrorResponse),
-        (status = 429, description = "Too many active export tasks", body = ApiErrorResponse)
+        (status = 429, description = "Shared task admission or byte capacity exhausted", body = ApiErrorResponse),
+        (status = 503, description = "Task identity or control reconciliation unavailable", body = ApiErrorResponse)
     )
 )]
 #[post("")]

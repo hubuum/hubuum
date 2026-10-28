@@ -18,6 +18,7 @@ use hubuum_events_core::{EventCatalogError, EventIdentifierError};
 use crate::models::TokenPolicyError;
 use crate::observability::metrics;
 use crate::storage::{StorageError, StorageErrorKind};
+use hubuum_storage_core::TaskCapacityRejection;
 
 const PUBLIC_INTERNAL_ERROR: &str = "An internal error occurred";
 const PUBLIC_SERVICE_UNAVAILABLE: &str = "Service temporarily unavailable";
@@ -67,6 +68,7 @@ pub fn fatal_error(message: &str, exit_code: i32) -> ! {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub enum ApiError {
+    TaskCapacity(TaskCapacityRejection),
     TaskStopped(#[serde(serialize_with = "serialize_task_stop_reason")] TaskStopReason),
     Unauthorized(String),
     ReauthenticationRequired,
@@ -96,6 +98,7 @@ pub enum ApiError {
 impl ApiError {
     pub fn class(&self) -> &'static str {
         match self {
+            ApiError::TaskCapacity(reason) => reason.as_str(),
             ApiError::TaskStopped(reason) => reason.as_str(),
             ApiError::Unauthorized(_) => "unauthorized",
             ApiError::ReauthenticationRequired => "reauthentication_required",
@@ -147,6 +150,18 @@ impl ApiError {
     /// bodies and streaming events.
     pub fn public_message(&self) -> &str {
         match self {
+            ApiError::TaskCapacity(reason) if reason.is_unavailable() => {
+                "Task admission is unavailable until control reconciliation completes"
+            }
+            ApiError::TaskCapacity(TaskCapacityRejection::CumulativeWork) => {
+                "Task work budget is exhausted; reduce the request or ask an administrator to change the policy"
+            }
+            ApiError::TaskCapacity(TaskCapacityRejection::ResidentBytes) => {
+                "Task resident-byte capacity is exhausted; retry after retained content is cleaned up"
+            }
+            ApiError::TaskCapacity(_) => {
+                "Task capacity is exhausted; retry after outstanding work drains"
+            }
             ApiError::ReauthenticationRequired => hubuum_storage_core::CREDENTIAL_APPROVAL_REQUIRED,
             ApiError::TaskStopped(TaskStopReason::Cancelled) => "Task execution was cancelled",
             ApiError::TaskStopped(TaskStopReason::DeadlineExceeded) => {
@@ -180,7 +195,10 @@ impl ApiError {
 
 impl From<StorageError> for ApiError {
     fn from(error: StorageError) -> Self {
-        let (kind, message, current_revision) = error.into_parts();
+        let (kind, message, current_revision, task_capacity) = error.into_parts();
+        if let Some(reason) = task_capacity {
+            return Self::TaskCapacity(reason);
+        }
         match kind {
             StorageErrorKind::TaskCancelled => Self::TaskStopped(TaskStopReason::Cancelled),
             StorageErrorKind::TaskDeadlineExceeded => {
@@ -264,7 +282,9 @@ impl From<PositiveIdError> for ApiError {
 impl fmt::Display for ApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ApiError::TaskStopped(_) => f.write_str(self.public_message()),
+            ApiError::TaskStopped(_) | ApiError::TaskCapacity(_) => {
+                f.write_str(self.public_message())
+            }
             ApiError::HashError(message) => write!(f, "{message}"),
             ApiError::NotFound(message) => write!(f, "{message}"),
             ApiError::Gone(message) => write!(f, "{message}"),
@@ -296,6 +316,9 @@ impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
         metrics::api_error(self.class());
         match self {
+            ApiError::TaskCapacity(reason) => HttpResponse::build(self.status_code())
+                .insert_header(("Cache-Control", "no-store"))
+                .json(json!({"error":"Task Capacity", "reason":reason.as_str(), "message":self.public_message()})),
             ApiError::ReauthenticationRequired => HttpResponse::Forbidden()
                 .insert_header(("Cache-Control", "no-store"))
                 .json(json!({"error":"Forbidden", "reason":"reauthentication_required", "message":self.public_message()})),
@@ -378,6 +401,10 @@ impl ResponseError for ApiError {
     fn status_code(&self) -> StatusCode {
         match self {
             ApiError::TaskStopped(_) => StatusCode::CONFLICT,
+            ApiError::TaskCapacity(reason) if reason.is_unavailable() => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
+            ApiError::TaskCapacity(_) => StatusCode::TOO_MANY_REQUESTS,
             ApiError::Conflict(_) => StatusCode::CONFLICT,
             ApiError::PreconditionFailed(_, _) => StatusCode::PRECONDITION_FAILED,
             ApiError::RevisionConflict(_, _) => StatusCode::PRECONDITION_FAILED,
@@ -477,6 +504,31 @@ impl From<TemplateAliasError> for ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[rstest::rstest]
+    #[case::capacity(TaskCapacityRejection::Principal, StatusCode::TOO_MANY_REQUESTS)]
+    #[case::unresolved(
+        TaskCapacityRejection::IdentityUnavailable,
+        StatusCode::SERVICE_UNAVAILABLE
+    )]
+    #[actix_web::test]
+    async fn task_capacity_responses_expose_only_bounded_reason_codes(
+        #[case] reason: TaskCapacityRejection,
+        #[case] status: StatusCode,
+    ) {
+        let error = ApiError::from(StorageError::task_capacity(reason));
+        let response = error.error_response();
+        assert_eq!(response.status(), status);
+        assert_eq!(response.headers().get("Cache-Control").unwrap(), "no-store");
+        let bytes = actix_web::body::to_bytes(response.into_body())
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            body,
+            json!({"error":"Task Capacity", "reason":reason.as_str(), "message":error.public_message()})
+        );
+    }
 
     #[test]
     fn test_exit_codes_are_distinct() {

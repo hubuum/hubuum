@@ -555,6 +555,128 @@
         ]
       }
     },
+    "/api/v1/admin/task-capacity": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Api V1 Admin Task Capacity",
+        "description": "Auto-generated documentation for GET /api/v1/admin/task-capacity.",
+        "operationId": "getApiV1AdminTaskCapacity",
+        "responses": {
+          "200": {
+            "description": "Authoritative shared task policy and capacity accounting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageTaskCapacitySnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Put Api V1 Admin Task Capacity",
+        "description": "Auto-generated documentation for PUT /api/v1/admin/task-capacity.",
+        "operationId": "putApiV1AdminTaskCapacity",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageTaskPolicyUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Policy committed; reductions drain existing work",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageTaskPolicy"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid policy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy revision changed; refetch before updating",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/auth/login": {
       "post": {
         "tags": [
@@ -1026,7 +1148,17 @@
             }
           },
           "429": {
-            "description": "Too many active backup tasks",
+            "description": "Shared task admission or byte capacity exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Task identity or control reconciliation unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -7647,7 +7779,17 @@
             }
           },
           "429": {
-            "description": "Two profiling tasks are already active",
+            "description": "Shared task admission or byte capacity exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Task identity or control reconciliation unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -16274,7 +16416,17 @@
             }
           },
           "429": {
-            "description": "Too many active export tasks",
+            "description": "Shared task admission or byte capacity exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Task identity or control reconciliation unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -21213,7 +21365,17 @@
             }
           },
           "429": {
-            "description": "Too many active import tasks",
+            "description": "Shared task admission or byte capacity exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Task identity or control reconciliation unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -23153,6 +23315,26 @@
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared task admission or byte capacity exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Task identity or control reconciliation unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -25364,6 +25546,7 @@
         "properties": {
           "max_active_tasks_per_user": {
             "type": "integer",
+            "format": "int64",
             "minimum": 0
           },
           "max_capture_rows": {
@@ -36958,6 +37141,17 @@
           "server": {
             "$ref": "#/components/schemas/ServerConfig"
           },
+          "task_capacity": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StorageTaskCapacitySnapshot",
+                "description": "Authoritative shared policy and administrator-only usage, read on demand."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "tasks": {
             "$ref": "#/components/schemas/TaskConfig"
           },
@@ -38397,6 +38591,124 @@
           }
         }
       },
+      "StorageTaskCapacitySnapshot": {
+        "type": "object",
+        "description": "One consistent view of the policy, maintenance generation and accounting.",
+        "required": [
+          "policy",
+          "generation",
+          "ordinary",
+          "internal",
+          "blocked_owners",
+          "work_budget_blocked"
+        ],
+        "properties": {
+          "blocked_owners": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "generation": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "internal": {
+            "$ref": "#/components/schemas/StorageTaskCapacityUsage"
+          },
+          "ordinary": {
+            "$ref": "#/components/schemas/StorageTaskCapacityUsage"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/StorageTaskPolicy"
+          },
+          "work_budget_blocked": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "StorageTaskCapacityUsage": {
+        "type": "object",
+        "description": "Aggregate administrator diagnostics. These values never appear in public\ncapacity rejection responses. Cumulative charges include detached owners.",
+        "required": [
+          "outstanding",
+          "executing",
+          "resident_bytes",
+          "cumulative_input_bytes",
+          "cumulative_output_bytes",
+          "cumulative_items"
+        ],
+        "properties": {
+          "cumulative_input_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "cumulative_items": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "cumulative_output_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "executing": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "outstanding": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "resident_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "StorageTaskPolicy": {
+        "type": "object",
+        "description": "A committed policy, including its optimistic update token.",
+        "required": [
+          "revision",
+          "policy"
+        ],
+        "properties": {
+          "policy": {
+            "$ref": "#/components/schemas/TaskAdmissionPolicy"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/TaskPolicyRevision"
+          }
+        },
+        "additionalProperties": false
+      },
+      "StorageTaskPolicyUpdate": {
+        "type": "object",
+        "description": "Compare-and-replace request; a stale revision cannot silently overwrite a\nconcurrent administrator's policy change.",
+        "required": [
+          "expected_revision",
+          "policy"
+        ],
+        "properties": {
+          "expected_revision": {
+            "$ref": "#/components/schemas/TaskPolicyRevision"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/TaskAdmissionPolicy"
+          }
+        },
+        "additionalProperties": false
+      },
       "StructuredClassSelector": {
         "oneOf": [
           {
@@ -39235,6 +39547,48 @@
           }
         }
       },
+      "TaskAdmissionPolicy": {
+        "type": "object",
+        "description": "Complete deployment policy. No member binds an integer database identity.\nTask owners and collection membership are captured separately at admission.",
+        "required": [
+          "deployment",
+          "principal",
+          "collection",
+          "internal",
+          "kinds",
+          "cumulative_input_bytes_per_task"
+        ],
+        "properties": {
+          "collection": {
+            "$ref": "#/components/schemas/TaskScopeCapacity"
+          },
+          "cumulative_input_bytes_per_task": {
+            "$ref": "#/components/schemas/TaskByteLimit"
+          },
+          "deployment": {
+            "$ref": "#/components/schemas/TaskScopeCapacity"
+          },
+          "internal": {
+            "$ref": "#/components/schemas/TaskScopeCapacity"
+          },
+          "kinds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskKindCapacity"
+            }
+          },
+          "principal": {
+            "$ref": "#/components/schemas/TaskScopeCapacity"
+          }
+        }
+      },
+      "TaskByteLimit": {
+        "type": "integer",
+        "format": "int64",
+        "description": "Positive byte ceiling, distinct from a number of tasks or execution slots.",
+        "maximum": 9223372036854775807,
+        "minimum": 1
+      },
       "TaskCancelRequest": {
         "type": "object",
         "description": "An idempotent stop request. The optional expected status protects queued-only withdrawals.",
@@ -39258,6 +39612,13 @@
           }
         },
         "additionalProperties": false
+      },
+      "TaskCapacityLimit": {
+        "type": "integer",
+        "format": "int64",
+        "description": "Positive capacity representable by every supported persistence adapter.",
+        "maximum": 9223372036854775807,
+        "minimum": 1
       },
       "TaskConfig": {
         "type": "object",
@@ -39296,6 +39657,7 @@
           },
           "export_max_active_per_user": {
             "type": "integer",
+            "format": "int64",
             "minimum": 0
           },
           "heartbeat_seconds": {
@@ -39310,6 +39672,7 @@
           },
           "import_max_active_per_user": {
             "type": "integer",
+            "format": "int64",
             "minimum": 0
           },
           "lease_seconds": {
@@ -39339,6 +39702,7 @@
           },
           "remote_call_max_active_per_user": {
             "type": "integer",
+            "format": "int64",
             "minimum": 0
           },
           "schema_profiling_execution_timeout_seconds": {
@@ -39590,6 +39954,27 @@
           "schema_profiling"
         ]
       },
+      "TaskKindCapacity": {
+        "type": "object",
+        "description": "Kind-wide limits and the compatibility per-principal admission ceiling.",
+        "required": [
+          "kind",
+          "capacity",
+          "principal_outstanding"
+        ],
+        "properties": {
+          "capacity": {
+            "$ref": "#/components/schemas/TaskScopeCapacity"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/TaskKind"
+          },
+          "principal_outstanding": {
+            "$ref": "#/components/schemas/TaskCapacityLimit"
+          }
+        },
+        "additionalProperties": false
+      },
       "TaskLinks": {
         "type": "object",
         "required": [
@@ -39649,6 +40034,13 @@
           "not_produced",
           "unknown"
         ]
+      },
+      "TaskPolicyRevision": {
+        "type": "integer",
+        "format": "int64",
+        "description": "Optimistic concurrency token for a committed shared policy.",
+        "maximum": 9223372036854775807,
+        "minimum": 1
       },
       "TaskProgress": {
         "type": "object",
@@ -39916,6 +40308,27 @@
             "description": "Items without a committed result; authoritative for a terminal task."
           }
         }
+      },
+      "TaskScopeCapacity": {
+        "type": "object",
+        "description": "Independent ceilings for one admission scope. Reductions drain existing\nwork; a lower outstanding limit does not revoke existing execution claims.",
+        "required": [
+          "outstanding",
+          "executing",
+          "resident_bytes"
+        ],
+        "properties": {
+          "executing": {
+            "$ref": "#/components/schemas/TaskCapacityLimit"
+          },
+          "outstanding": {
+            "$ref": "#/components/schemas/TaskCapacityLimit"
+          },
+          "resident_bytes": {
+            "$ref": "#/components/schemas/TaskByteLimit"
+          }
+        },
+        "additionalProperties": false
       },
       "TaskStatus": {
         "type": "string",

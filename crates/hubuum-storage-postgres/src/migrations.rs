@@ -18,6 +18,7 @@ const OFFLINE_MIGRATIONS: &[&str] = &[
     "20261005000001",
     "20261021000002",
     "20261027000001",
+    "20261027000003",
 ];
 
 /// Whether pending migrations permit the previous API to remain online.
@@ -54,6 +55,15 @@ fn backfill_logical_identities(connection: &mut PgConnection) -> Result<(), Stor
     connection
         .batch_execute("SELECT public.hubuum_validate_logical_identities()")
         .map_err(PostgresStorageError::from)?;
+    loop {
+        let batch =
+            diesel::sql_query("SELECT public.hubuum_backfill_task_capacity(500) AS changed")
+                .get_result::<IdentityBackfillBatch>(connection)
+                .map_err(PostgresStorageError::from)?;
+        if batch.changed == 0 {
+            break;
+        }
+    }
     Ok(())
 }
 
@@ -302,7 +312,8 @@ mod tests {
     #[case::before_collection_sinks(vec!["20260919000001", "20261001000001"], MigrationMode::Offline)]
     #[case::before_interactive_sessions(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001"], MigrationMode::Offline)]
     #[case::before_identities(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002"], MigrationMode::Offline)]
-    #[case::current(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001"], MigrationMode::Rolling)]
+    #[case::before_capacity(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001"], MigrationMode::Offline)]
+    #[case::current(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003"], MigrationMode::Rolling)]
     fn pending_offline_migrations_determine_mode(
         #[case] applied: Vec<&str>,
         #[case] expected: MigrationMode,
@@ -315,6 +326,7 @@ mod tests {
             "20261021000001",
             "20261021000002",
             "20261027000001",
+            "20261027000003",
         ]
         .map(str::to_owned);
         assert_eq!(

@@ -33,6 +33,7 @@ mod query_usage;
 mod remote_targets;
 mod restores;
 mod schema_evolution;
+mod task_capacity;
 mod task_execution;
 mod task_queue;
 mod transaction;

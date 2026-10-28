@@ -59,8 +59,13 @@ impl ValidationObject {
 impl MemoryState {
     // Copy only lifecycle metadata for this class. Object documents and their
     // audit/history payloads never enter a schema mutation's staged delta.
-    fn schema_mutation_delta(&self, class_id: ClassId, context: &EventContext) -> Self {
+    fn schema_mutation_delta(
+        &self,
+        class_id: ClassId,
+        context: &EventContext,
+    ) -> Result<Self, StorageError> {
         let mut delta = Self::new();
+        delta.task_capacity = self.task_accounting_snapshot()?.for_delta();
         delta.history.clear();
         delta.next_event_sequence = self.next_event_sequence;
         delta.next_task_id = self.next_task_id;
@@ -135,10 +140,11 @@ impl MemoryState {
         )
         .chain(context.task_id().map(StorageIdentityTarget::Task));
         delta.logical_identities = self.logical_identities.fork(targets);
-        delta
+        Ok(delta)
     }
 
     fn commit_schema_delta(&mut self, delta: Self) {
+        self.task_capacity = delta.task_capacity.for_commit();
         self.logical_identities.merge(delta.logical_identities);
         self.next_event_sequence = delta.next_event_sequence;
         self.next_task_id = delta.next_task_id;
@@ -644,7 +650,7 @@ impl MemoryState {
             trace_link: request.context().trace_link().cloned(),
             claim_token: None,
         };
-        self.store_task(task_id.id(), task);
+        self.store_task(task_id.id(), task)?;
         self.schema_work.insert(task_id.id(), work.clone());
         if record_queue_event {
             self.append_task_event_record(
@@ -767,7 +773,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
             .ensure_limits(self.schema_limits)
             .map_err(StorageValidationError::into_request_error)?;
         let mut guard = self.state.write().await;
-        let mut state = guard.schema_mutation_delta(request.class_id(), request.context());
+        let mut state = guard.schema_mutation_delta(request.class_id(), request.context())?;
         state.check_schema_collection(request.class_id(), request.authorized_collection())?;
         let active = state.active_schema(request.class_id())?.reference();
         if let Some(existing) = state.schema_revisions.values().rev().find(|revision| {
@@ -821,7 +827,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageSchemaRevision>, StorageError> {
         let mut guard = self.state.write().await;
-        let mut state = guard.schema_mutation_delta(target.class_id(), context);
+        let mut state = guard.schema_mutation_delta(target.class_id(), context)?;
         state.check_schema_collection(target.class_id(), authorized_collection)?;
         state.active_schema(target.class_id())?;
         let revision = state
@@ -858,7 +864,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
         let mut guard = self.state.write().await;
         let class_id = request.target().class_id();
         let (total, upper) = guard.schema_object_boundary(class_id);
-        let mut state = guard.schema_mutation_delta(class_id, request.context());
+        let mut state = guard.schema_mutation_delta(class_id, request.context())?;
         state.check_schema_collection(class_id, request.authorized_collection())?;
         let before = state.active_schema(class_id)?.clone();
         if before.reference().revision() != request.expected_active() {
@@ -989,7 +995,8 @@ impl SchemaEvolutionStorage for MemoryStorage {
     ) -> Result<StorageMutationOutcome<StorageSchemaWork>, StorageError> {
         let mut guard = self.state.write().await;
         let (total, upper) = guard.schema_object_boundary(request.target().class_id());
-        let mut state = guard.schema_mutation_delta(request.target().class_id(), request.context());
+        let mut state =
+            guard.schema_mutation_delta(request.target().class_id(), request.context())?;
         state.check_schema_collection(
             request.target().class_id(),
             request.authorized_collection(),
@@ -1058,7 +1065,8 @@ impl SchemaEvolutionStorage for MemoryStorage {
         &self,
         request: StorageSchemaRepairReportWrite,
     ) -> Result<(), StorageError> {
-        let mut state = self.state.write().await;
+        let mut guard = self.state.write().await;
+        let mut state = guard.clone();
         let report = request.report();
         state
             .check_schema_collection(report.target().class_id(), request.authorized_collection())?;
@@ -1071,10 +1079,16 @@ impl SchemaEvolutionStorage for MemoryStorage {
                 "Report source is not the requested impact analysis",
             ));
         }
-        state.capture_task_output(report.task_id());
+        let task_id = report.task_id();
+        if state.schema_repair_reports.get(&task_id.id()) == Some(report) {
+            return Ok(());
+        }
+        state.capture_task_output(task_id);
         state
             .schema_repair_reports
             .insert(report.task_id().id(), request.into_report());
+        state.account_task_output(task_id)?;
+        *guard = state;
         Ok(())
     }
     async fn get_schema_repair_report(
@@ -1370,7 +1384,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
             .ok_or_else(|| StorageError::not_found("Schema work was not found"))?
             .target()
             .class_id();
-        let mut state = guard.schema_mutation_delta(class_id, context);
+        let mut state = guard.schema_mutation_delta(class_id, context)?;
         let work = state
             .schema_work
             .get(&task_id.id())
@@ -1524,7 +1538,7 @@ impl MemoryState {
             Utc::now(),
         )
         .map_err(schema_error)?;
-        self.store_task(task_id.id(), task);
+        self.store_task(task_id.id(), task)?;
         self.computation_states.insert(class_id.id(), state);
         self.computed_rebuild_tasks.insert(task_id.id(), class_id);
         self.append_task_event_record(

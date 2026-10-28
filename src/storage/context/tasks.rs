@@ -1,9 +1,61 @@
 use super::*;
 use hubuum_storage_core::{
     StorageBackupReplay, StorageSchemaProfileArtifact, StorageTaskCancellationOutcome,
-    StorageTaskCancellationRequest, StorageTaskExecutionAdmission, StorageTaskExecutionObservation,
-    StorageTaskRemoteDispatch,
+    StorageTaskCancellationRequest, StorageTaskCapacitySnapshot, StorageTaskExecutionAdmission,
+    StorageTaskExecutionObservation, StorageTaskPolicy, StorageTaskPolicyUpdate,
+    StorageTaskRemoteDispatch, TaskAdmissionPolicy, TaskCapacityStorage,
 };
+
+#[async_trait]
+impl TaskCapacityStorage for StorageHandle {
+    async fn initialize_task_policy(
+        &self,
+        policy: TaskAdmissionPolicy,
+    ) -> Result<StorageTaskPolicy, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::TaskCapacity,
+            "initialize_task_policy",
+            async {
+                dispatch_backend!(self, |backend| backend.initialize_task_policy(policy).await)
+            },
+        )
+        .await
+    }
+
+    async fn task_policy(&self) -> Result<StorageTaskPolicy, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::TaskCapacity,
+            "task_policy",
+            async { dispatch_backend!(self, |backend| backend.task_policy().await) },
+        )
+        .await
+    }
+
+    async fn task_capacity_snapshot(&self) -> Result<StorageTaskCapacitySnapshot, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::TaskCapacity,
+            "task_capacity_snapshot",
+            async { dispatch_backend!(self, |backend| backend.task_capacity_snapshot().await) },
+        )
+        .await
+    }
+
+    async fn replace_task_policy(
+        &self,
+        update: StorageTaskPolicyUpdate,
+    ) -> Result<StorageTaskPolicy, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::TaskCapacity,
+            "replace_task_policy",
+            async { dispatch_backend!(self, |backend| backend.replace_task_policy(update).await) },
+        )
+        .await
+    }
+}
 
 #[async_trait]
 impl TaskQueueStorage for StorageHandle {

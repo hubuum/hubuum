@@ -159,16 +159,10 @@ pub(super) async fn find_or_create_export_task(
 ) -> Result<TaskRecord, ApiError> {
     submit_task(
         pool,
-        TaskSubmission::new(
-            TaskKind::Export,
-            submitted_by,
-            payload,
-            1,
-            max_active_export_tasks_per_user(),
-        )
-        .idempotency_key(idempotency_key)
-        .request_hash(Some(request_hash_value))
-        .scope_snapshot(snapshot),
+        TaskSubmission::new(TaskKind::Export, submitted_by, payload, 1)
+            .idempotency_key(idempotency_key)
+            .request_hash(Some(request_hash_value))
+            .scope_snapshot(snapshot),
     )
     .await
 }

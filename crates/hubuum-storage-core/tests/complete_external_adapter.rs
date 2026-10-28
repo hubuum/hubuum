@@ -1672,6 +1672,28 @@ impl RemoteTargetStorage for CompleteExternalAdapter {
 }
 
 #[async_trait]
+impl TaskCapacityStorage for CompleteExternalAdapter {
+    async fn initialize_task_policy(
+        &self,
+        policy: TaskAdmissionPolicy,
+    ) -> Result<StorageTaskPolicy, StorageError> {
+        fixture_result()
+    }
+    async fn task_policy(&self) -> Result<StorageTaskPolicy, StorageError> {
+        fixture_result()
+    }
+    async fn replace_task_policy(
+        &self,
+        update: StorageTaskPolicyUpdate,
+    ) -> Result<StorageTaskPolicy, StorageError> {
+        fixture_result()
+    }
+    async fn task_capacity_snapshot(&self) -> Result<StorageTaskCapacitySnapshot, StorageError> {
+        fixture_result()
+    }
+}
+
+#[async_trait]
 impl TaskQueueStorage for CompleteExternalAdapter {
     async fn create_task(
         &self,

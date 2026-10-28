@@ -7,8 +7,8 @@
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use diesel::dsl::sql;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
-use diesel::sql_types::{BigInt, Bool};
-use diesel::{Insertable, Queryable, QueryableByName, Selectable, SelectableHelper};
+use diesel::sql_types::Bool;
+use diesel::{Insertable, Queryable, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{GroupId, ImportTaskResultId, PrincipalId, TaskId};
 use hubuum_events_core::{
@@ -316,12 +316,6 @@ impl BackupOutputSummaryRow {
     }
 }
 
-#[derive(QueryableByName)]
-struct AdvisoryLockRow {
-    #[diesel(sql_type = Bool)]
-    locked: bool,
-}
-
 pub async fn create_task(
     runtime: &PostgresRuntime,
     request: StorageTaskCreateRequest,
@@ -338,10 +332,11 @@ pub async fn create_task(
         return matching_idempotent_task(existing, kind, &request_hash, key);
     }
 
-    let maximum_active_tasks = i64::try_from(request.maximum_active_tasks()).unwrap_or(i64::MAX);
     let create_result = runtime
         .with_transaction(async move |connection| {
-            acquire_capacity_lock(connection, submitted_by, kind).await?;
+            diesel::sql_query("SELECT public.hubuum_task_capacity_lock()")
+                .execute(connection)
+                .await?;
             // A concurrent matching submission may have committed while this
             // transaction waited. Reading it must not consume the approval again.
             if let Some(key) = new_task.idempotency_key.as_deref() {
@@ -350,26 +345,38 @@ pub async fn create_task(
                     .filter(stored::submitted_by.eq(Some(submitted_by)))
                     .filter(stored::idempotency_key.eq(key))
                     .select(TaskRow::as_select())
-                    .first::<TaskRow>(connection).await.optional()? {
-                    if existing.kind != kind.as_str() || existing.request_hash != new_task.request_hash {
-                        return Err(PostgresStorageError::conflict("Idempotency-Key is already in use for a different task submission"));
+                    .first::<TaskRow>(connection)
+                    .await
+                    .optional()?
+                {
+                    if existing.kind != kind.as_str()
+                        || existing.request_hash != new_task.request_hash
+                    {
+                        return Err(PostgresStorageError::conflict(
+                            "Idempotency-Key is already in use for a different task submission",
+                        ));
                     }
                     return Ok(existing);
                 }
             }
-            let active_count = count_active_tasks(connection, submitted_by, kind).await?;
-            if active_count >= maximum_active_tasks {
-                return Err(PostgresStorageError::rate_limited(format!(
-                    "Too many active {} tasks for user ({active_count} >= {maximum_active_tasks}); wait for queued or running tasks to finish",
-                    kind.as_str()
-                )));
-            }
             let task = insert_queued_task(connection, new_task).await?;
             if let Some(approval) = request.approval() {
-                if kind != hubuum_storage_core::StorageTaskKind::Import || approval.claim().actor_id() != request.submitted_by() {
+                if kind != hubuum_storage_core::StorageTaskKind::Import
+                    || approval.claim().actor_id() != request.submitted_by()
+                {
                     return Err(PostgresStorageError::reauthentication_required());
                 }
-                super::credential_approval::consume(connection, Some(approval.claim()), hubuum_storage_core::StorageCredentialOperation::ImportCredentials, None, &approval.context().clone().with_task_id(TaskId::new(task.id)?)).await?;
+                super::credential_approval::consume(
+                    connection,
+                    Some(approval.claim()),
+                    hubuum_storage_core::StorageCredentialOperation::ImportCredentials,
+                    None,
+                    &approval
+                        .context()
+                        .clone()
+                        .with_task_id(TaskId::new(task.id)?),
+                )
+                .await?;
             }
             Ok(task)
         })
@@ -889,58 +896,6 @@ fn matching_idempotent_task(
     }
 }
 
-async fn acquire_capacity_lock(
-    connection: &mut PostgresConnection,
-    submitted_by: i32,
-    kind: StorageTaskKind,
-) -> Result<(), PostgresStorageError> {
-    let lock = diesel::sql_query("SELECT TRUE AS locked FROM pg_advisory_xact_lock($1)")
-        .bind::<BigInt, _>(task_capacity_lock_key(submitted_by, kind))
-        .get_result::<AdvisoryLockRow>(connection)
-        .await?;
-    if lock.locked {
-        Ok(())
-    } else {
-        Err(PostgresStorageError::database(
-            "Failed to acquire task capacity lock",
-        ))
-    }
-}
-
-fn task_capacity_lock_key(submitted_by: i32, kind: StorageTaskKind) -> i64 {
-    const BASE_KEY: i64 = 4_801_000_000_000;
-    const KIND_STRIDE: i64 = 1_i64 << 32;
-    let kind_slot = match kind {
-        StorageTaskKind::Export => 1,
-        StorageTaskKind::RemoteCall => 2,
-        StorageTaskKind::Backup => 3,
-        StorageTaskKind::SchemaProfiling => 4,
-        StorageTaskKind::Import | StorageTaskKind::Reindex | StorageTaskKind::SchemaValidation => 9,
-    };
-    BASE_KEY + (kind_slot * KIND_STRIDE) + i64::from(submitted_by)
-}
-
-async fn count_active_tasks(
-    connection: &mut PostgresConnection,
-    submitted_by: i32,
-    task_kind: StorageTaskKind,
-) -> Result<i64, PostgresStorageError> {
-    use crate::schema::tasks::dsl as stored;
-    let non_terminal = [
-        StorageTaskStatus::Queued.as_str(),
-        StorageTaskStatus::Validating.as_str(),
-        StorageTaskStatus::Running.as_str(),
-    ];
-    Ok(stored::tasks
-        .filter(stored::kind.eq(task_kind.as_str()))
-        .filter(stored::submitted_by.eq(Some(submitted_by)))
-        .filter(stored::status.eq_any(non_terminal))
-        .filter(stored::deleted_at.is_null())
-        .count()
-        .get_result::<i64>(connection)
-        .await?)
-}
-
 async fn insert_queued_task(
     connection: &mut PostgresConnection,
     row: NewTaskRow,
@@ -1303,16 +1258,6 @@ mod tests {
         let error = normalize_task_child_page_options(options, "task events").unwrap_err();
 
         assert_eq!(error.kind(), StorageErrorKind::InvalidInput);
-    }
-
-    #[test]
-    fn capacity_lock_partitions_kinds_and_submitters() {
-        let export = task_capacity_lock_key(7, StorageTaskKind::Export);
-        let backup = task_capacity_lock_key(7, StorageTaskKind::Backup);
-        let other_submitter = task_capacity_lock_key(8, StorageTaskKind::Export);
-
-        assert_ne!(export, backup);
-        assert_ne!(export, other_submitter);
     }
 
     #[test]
