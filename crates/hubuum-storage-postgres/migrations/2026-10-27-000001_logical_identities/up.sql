@@ -636,6 +636,28 @@ $triggers$;
 
 -- Each call is one bounded transaction. SKIP LOCKED lets concurrent migrators
 -- cooperate; unique mapping keys arbitrate identity assignment across tables.
+-- Identity-only updates cannot change topology. Avoid running the legacy
+-- graph rebuild and endpoint validator inside catalog-only backfill functions.
+CREATE OR REPLACE TRIGGER refresh_class_reachability_cache
+AFTER INSERT OR UPDATE OF from_hubuum_class_id,to_hubuum_class_id ON public.hubuumclass_relation
+FOR EACH STATEMENT EXECUTE FUNCTION public.refresh_class_reachability_cache();
+CREATE OR REPLACE TRIGGER check_object_relation
+BEFORE INSERT OR UPDATE OF from_hubuum_object_id,to_hubuum_object_id,class_relation_id ON public.hubuumobject_relation
+FOR EACH ROW EXECUTE FUNCTION public.validate_object_relation();
+
+-- Identity initialization must not change the recorded modification time.
+CREATE OR REPLACE FUNCTION public.update_modified_column() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path = pg_catalog AS $function$
+BEGIN
+    IF current_setting('hubuum.restore_identities', TRUE) IS NOT DISTINCT FROM 'on'
+        AND pg_has_role(session_user, (SELECT relowner FROM pg_class WHERE oid=TG_RELID), 'MEMBER') THEN
+        RETURN NEW;
+    END IF;
+    NEW.updated_at := now();
+    RETURN NEW;
+END
+$function$;
+
 CREATE FUNCTION hubuum_backfill_logical_identities(batch_size INTEGER)
 RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $function$
 DECLARE layout RECORD; candidate RECORD; changed INTEGER := 0;

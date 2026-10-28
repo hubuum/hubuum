@@ -140,6 +140,77 @@ async fn bounded_backfill_preserves_versions_and_converges_after_retry(#[case] d
     }).await.unwrap();
 }
 
+#[derive(QueryableByName)]
+struct RowDocument {
+    #[diesel(sql_type = Jsonb)]
+    document: Value,
+}
+
+#[tokio::test]
+async fn backfill_preserves_legacy_graph_rows_and_modification_times() {
+    let _serial = BACKFILL_FIXTURES.lock().await;
+    let pool = if database_role_tests_enabled() {
+        integration_test_migration_pool(1)
+    } else {
+        integration_test_pool(1)
+    };
+    with_transaction(&pool, async |connection| -> Result<(), PostgresStorageError> {
+        assume_owner(connection).await?;
+        connection.batch_execute("SAVEPOINT legacy_graph;
+            UPDATE hubuum_control.identity_backfill SET completed=FALSE;
+            DO $fixture$ DECLARE relation TEXT; BEGIN
+                FOREACH relation IN ARRAY ARRAY['hubuumclass','hubuumclass_history',
+                    'hubuumobject','hubuumobject_history','hubuumclass_relation',
+                    'hubuumclass_relation_history','hubuumobject_relation','hubuumobject_relation_history'] LOOP
+                    EXECUTE format('ALTER TABLE public.%I DISABLE TRIGGER zz_logical_identity',relation);
+                END LOOP;
+            END $fixture$;").await?;
+        let name = format!("legacy_graph_{}",Uuid::new_v4().simple());
+        for suffix in ["a", "b"] {
+            diesel::sql_query("INSERT INTO public.hubuumclass(name,description,collection_id,updated_at)
+                SELECT $1,'legacy graph',id,'2001-01-01' FROM public.collections WHERE parent_collection_id IS NULL")
+                .bind::<Text,_>(format!("{name}_{suffix}")).execute(connection).await?;
+        }
+        diesel::sql_query("INSERT INTO public.hubuumobject(name,description,collection_id,hubuum_class_id,data,updated_at)
+            SELECT name,'legacy graph',collection_id,id,'{}','2001-01-01' FROM public.hubuumclass
+            WHERE name IN ($1 || '_a',$1 || '_b')")
+            .bind::<Text,_>(&name).execute(connection).await?;
+        diesel::sql_query("INSERT INTO public.hubuumclass_relation(from_hubuum_class_id,to_hubuum_class_id,updated_at)
+            SELECT a.id,b.id,'2001-01-01' FROM public.hubuumclass a CROSS JOIN public.hubuumclass b
+            WHERE a.name=$1 || '_a' AND b.name=$1 || '_b'")
+            .bind::<Text,_>(&name).execute(connection).await?;
+        diesel::sql_query("INSERT INTO public.hubuumobject_relation(from_hubuum_object_id,to_hubuum_object_id,class_relation_id,updated_at)
+            SELECT a.id,b.id,r.id,'2001-01-01' FROM public.hubuumobject a CROSS JOIN public.hubuumobject b
+            JOIN public.hubuumclass_relation r ON r.to_hubuum_class_id=b.hubuum_class_id
+            WHERE a.name=$1 || '_a' AND b.name=$1 || '_b' AND r.from_hubuum_class_id=a.hubuum_class_id")
+            .bind::<Text,_>(&name).execute(connection).await?;
+        connection.batch_execute("DO $fixture$ DECLARE relation TEXT; BEGIN
+                FOREACH relation IN ARRAY ARRAY['hubuumclass','hubuumclass_history',
+                    'hubuumobject','hubuumobject_history','hubuumclass_relation',
+                    'hubuumclass_relation_history','hubuumobject_relation','hubuumobject_relation_history'] LOOP
+                    EXECUTE format('ALTER TABLE public.%I ENABLE TRIGGER zz_logical_identity',relation);
+                END LOOP;
+            END $fixture$;").await?;
+        let snapshot = "SELECT jsonb_agg(document ORDER BY document::text) AS document FROM (
+            SELECT to_jsonb(c)-'logical_identity' AS document FROM public.hubuumclass c WHERE name IN ($1 || '_a',$1 || '_b')
+            UNION ALL SELECT to_jsonb(o)-'logical_identity' FROM public.hubuumobject o WHERE name IN ($1 || '_a',$1 || '_b')
+            UNION ALL SELECT to_jsonb(r)-'logical_identity' FROM public.hubuumclass_relation r JOIN public.hubuumclass c ON c.id=r.from_hubuum_class_id WHERE c.name=$1 || '_a'
+            UNION ALL SELECT to_jsonb(r)-'logical_identity' FROM public.hubuumobject_relation r JOIN public.hubuumobject o ON o.id=r.from_hubuum_object_id WHERE o.name=$1 || '_a'
+        ) rows";
+        let before = diesel::sql_query(snapshot).bind::<Text,_>(&name).get_result::<RowDocument>(connection).await?.document;
+        loop {
+            let changed = diesel::sql_query("SELECT public.hubuum_backfill_logical_identities(1000) AS count")
+                .get_result::<Count>(connection).await?.count;
+            if changed == 0 { break; }
+        }
+        connection.batch_execute("SELECT public.hubuum_validate_logical_identities()").await?;
+        let after = diesel::sql_query(snapshot).bind::<Text,_>(&name).get_result::<RowDocument>(connection).await?.document;
+        assert_eq!(after,before,"identity initialization must preserve legacy graph data");
+        connection.batch_execute("ROLLBACK TO SAVEPOINT legacy_graph").await?;
+        Ok(())
+    }).await.unwrap();
+}
+
 /// Race the first update of an unassigned incarnation against bounded backfill.
 /// Both paths must use the same uniqueness-enforced legacy mapping.
 #[tokio::test]

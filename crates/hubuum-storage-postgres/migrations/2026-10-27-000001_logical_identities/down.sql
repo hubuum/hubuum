@@ -26,3 +26,18 @@ DROP TABLE hubuum_control.identity_mapping;
 DROP TABLE hubuum_control.identity_versions;
 DROP TABLE hubuum_control.identity_backfill;
 DROP SCHEMA hubuum_control;
+
+CREATE OR REPLACE TRIGGER refresh_class_reachability_cache
+AFTER INSERT OR UPDATE ON public.hubuumclass_relation
+FOR EACH STATEMENT EXECUTE FUNCTION public.refresh_class_reachability_cache();
+CREATE OR REPLACE TRIGGER check_object_relation
+BEFORE INSERT OR UPDATE ON public.hubuumobject_relation
+FOR EACH ROW EXECUTE FUNCTION public.validate_object_relation();
+CREATE OR REPLACE FUNCTION public.update_modified_column() RETURNS TRIGGER
+LANGUAGE plpgsql AS $function$
+BEGIN
+    NEW.updated_at := now();
+    RETURN NEW;
+END
+$function$;
+ALTER FUNCTION public.update_modified_column() RESET search_path;
