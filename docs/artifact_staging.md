@@ -75,6 +75,38 @@ The encoded plaintext is the application digest input. Provider checksums,
 echoed upload metadata, and encryption metadata are not independent read-back
 evidence. No compression or encryption format is introduced here.
 
+## Producer integration
+
+`stage_producer` runs a synchronous serializer on a blocking worker and passes
+bounded blocks through a one-block channel. Slow destinations apply backpressure
+to serialization. The producer, channel, and consumer retain at most five data
+blocks in total, plus the bounded manifest and the producer's own input state.
+The callback returns metadata separately from output bytes. Verification returns
+a private-field proof; this operation never publishes the artifact or completes
+a task.
+
+`BackupArtifactProducer` captures an authorized backup using the existing
+`StorageBackupReplayBuilder` spool. Its staging method serializes that exact
+snapshot row by row into the channel, without an intermediate complete artifact.
+The spool is disposable and is released after serialization. A producer failure,
+panic, byte-limit violation, seal failure, or verification failure aborts the
+attempt after the blocking producer exits. Ignoring a sink limit error cannot
+seal a shorter successful output. Failed aborts remain explicit cleanup
+obligations and the staging deadline remains a recovery backstop.
+
+Dropping the staging future disconnects a producer blocked on output, but cannot
+interrupt arbitrary computation inside its callback or run asynchronous cleanup.
+Owners must await cooperative cancellation before releasing reservations.
+Abandoned attempts require deadline-based cleanup. This bridge does not yet
+implement task cancellation, task ownership, or physical-space accounting.
+
+The production backup executor still uses the explicitly named legacy
+serialization method and its existing finite output limit. Production export
+query/hydration, template rendering, publication, and downloads are unchanged.
+Neither the bridge's block bound nor a replay round trip establishes H1/H2/P7
+acceptance for the complete producer pipeline. Capture validation, maximum-row
+memory, export production, and real resource measurements remain activation gates.
+
 ## Resource and activation gates
 
 The [#504 budgets](https://github.com/hubuum/hubuum/issues/504) supply the H3

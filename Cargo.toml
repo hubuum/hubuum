@@ -92,6 +92,7 @@ serde_json = { version = "1", features = ["arbitrary_precision"] }
 sha2 = "0.11"
 hmac = "0.13"
 hubuum-budget = { path = "crates/hubuum-budget" }
+hubuum-artifacts = { path = "crates/hubuum-artifacts" }
 hubuum-auth-core = { path = "crates/hubuum-auth-core" }
 hubuum-auth-ldap = { path = "crates/hubuum-auth-ldap" }
 hubuum-computed-fields = { path = "crates/hubuum-computed-fields" }

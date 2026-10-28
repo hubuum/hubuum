@@ -13,9 +13,11 @@ rust-api = "workspace-internal"
 
 [dependencies]
 async-trait = "0.1"
+hubuum-budget = { path = "../hubuum-budget" }
 sha2 = "0.11"
+tokio = { version = "1", features = ["rt", "sync"] }
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 rstest = "0.28"
-tokio = { version = "1", features = ["macros", "rt"] }
+tokio = { version = "1", features = ["macros", "rt", "time"] }

@@ -85,6 +85,8 @@ done
 
 for artifact_input in crates/hubuum-artifacts/Cargo.toml \
   crates/hubuum-artifacts/src/manifest.rs crates/hubuum-artifacts/tests/protocol.rs \
+  crates/hubuum-artifacts/src/producer.rs src/backups/producer.rs \
+  src/backups/producer/tests.rs \
   crates/hubuum-storage-postgres/src/artifacts.rs crates/hubuum-storage-postgres/tests/artifacts.rs \
   crates/hubuum-storage-postgres/migrations/2026-10-27-000002_artifact_staging/up.sql \
   crates/hubuum-storage-postgres/migrations/2026-10-27-000002_artifact_staging/down.sql; do

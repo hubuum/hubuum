@@ -727,7 +727,9 @@ name = "hubuum-artifacts"
 version = "0.0.1"
 dependencies = [
  "async-trait",
+ "hubuum-budget",
  "sha2",
+ "tokio",
  "uuid",
 ]
 
