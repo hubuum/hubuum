@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use hubuum_domain::{
     ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId, PrincipalId, ResourceId,
+    TaskId,
 };
 use hubuum_storage_core::*;
 use hubuum_storage_postgres::{PostgresFaultController, PostgresFaultPoint, PostgresPool};
@@ -49,6 +50,22 @@ pub struct RestoreContractFixture {
 }
 
 impl RestoreContractFixture {
+    pub fn storage(&self) -> &StorageHandle {
+        &self.storage
+    }
+
+    pub async fn create_class(&self, name: &str) -> Result<StorageClass, ApiError> {
+        Ok(self
+            .storage
+            .class_store()
+            .create_class(
+                StorageClassCreate::builder(name, self.collection_id, "identity reuse").build(),
+                &EventContext::system(),
+            )
+            .await?
+            .into_value())
+    }
+
     pub async fn new(kind: StorageBackendKind, pool: PostgresPool) -> Result<Self, ApiError> {
         let storage = super::restore_contract_storage(kind, pool);
         let original = storage
@@ -315,7 +332,9 @@ impl RestoreContractFixture {
 
 impl RestoreContractFixture {
     pub async fn restore_original(&self) -> Result<(), ApiError> {
-        restore_snapshot(&self.storage, self.original.clone()).await
+        restore_snapshot(&self.storage, self.original.clone())
+            .await
+            .map(|_| ())
     }
     pub async fn capture(&self, include_history: bool) -> Result<StorageBackupSnapshot, ApiError> {
         let document = capture_backup_document(
@@ -331,19 +350,27 @@ impl RestoreContractFixture {
         .map_err(StorageValidationError::into_request_error)?)
     }
 
-    pub async fn restore(&self, snapshot: StorageBackupSnapshot) -> Result<(), ApiError> {
+    pub async fn restore(
+        &self,
+        snapshot: StorageBackupSnapshot,
+    ) -> Result<StorageRestoreIdentityContext, ApiError> {
         restore_snapshot(&self.storage, snapshot).await
     }
 
-    pub async fn seed_terminal_artifact(
+    pub async fn restore_legacy(
         &self,
-        payload: StorageTaskCompletionPayload,
-    ) -> Result<(), ApiError> {
+        snapshot: StorageBackupSnapshot,
+        version: i32,
+    ) -> Result<StorageRestoreIdentityContext, ApiError> {
+        restore_versioned_snapshot(&self.storage, snapshot, version).await
+    }
+
+    pub async fn create_task(&self, kind: StorageTaskKind) -> Result<TaskId, ApiError> {
         let task = self
             .storage
             .create_task(
                 StorageTaskCreateRequest::builder(
-                    payload.task_kind(),
+                    kind,
                     self.actor_id,
                     json!({"input": "retained"}),
                     1,
@@ -351,12 +378,20 @@ impl RestoreContractFixture {
                 .try_build(10)?,
             )
             .await?;
+        Ok(task.id())
+    }
+
+    pub async fn seed_terminal_artifact(
+        &self,
+        payload: StorageTaskCompletionPayload,
+    ) -> Result<(), ApiError> {
+        let task_id = self.create_task(payload.task_kind()).await?;
         let claim = self
             .storage
             .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
             .await?
             .unwrap();
-        assert_eq!(claim.task().id(), task.id());
+        assert_eq!(claim.task().id(), task_id);
         self.storage
             .complete_task(StorageTaskCompletion::new(
                 StorageTaskTerminalUpdate::new(
@@ -373,9 +408,10 @@ impl RestoreContractFixture {
 
     /// Adapter-native failure seam; shared tests own the rollback expectations.
     pub async fn fail_restore(&self, snapshot: StorageBackupSnapshot) -> Result<(), ApiError> {
-        let (id, _) = stage_and_confirm_snapshot(&self.storage, snapshot.clone())
-            .await
-            .expect("stage and confirm the valid rollback fixture");
+        let (id, _) =
+            stage_and_confirm_snapshot(&self.storage, snapshot.clone(), CURRENT_BACKUP_VERSION)
+                .await
+                .expect("stage and confirm the valid rollback fixture");
         let job_id = id;
         let snapshot = match self.kind {
             StorageBackendKind::Postgres => snapshot,
@@ -390,14 +426,19 @@ impl RestoreContractFixture {
                 StorageBackupSnapshot::try_new(state, history).unwrap()
             }
         };
+        let context = self
+            .storage
+            .get_restore_artifact(job_id)
+            .await?
+            .identity_context()
+            .map_err(|error| ApiError::Conflict(error.to_string()))?;
         let request = StorageRestoreReplayApply::at_restore_boundary(
-            job_id,
+            context,
             StorageRestoreDocumentMetadata::new(CURRENT_BACKUP_VERSION, Utc::now(), "test"),
             StorageBackupReplay::from_snapshot(
                 snapshot,
                 StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
             )?,
-            Utc::now(),
         )?;
         let result = match self.kind {
             StorageBackendKind::Postgres => {
@@ -597,8 +638,21 @@ impl RestoreContractFixture {
 async fn restore_snapshot(
     storage: &StorageHandle,
     snapshot: StorageBackupSnapshot,
-) -> Result<(), ApiError> {
-    let (id, capability) = stage_and_confirm_snapshot(storage, snapshot).await?;
+) -> Result<StorageRestoreIdentityContext, ApiError> {
+    restore_versioned_snapshot(storage, snapshot, CURRENT_BACKUP_VERSION).await
+}
+
+async fn restore_versioned_snapshot(
+    storage: &StorageHandle,
+    snapshot: StorageBackupSnapshot,
+    version: i32,
+) -> Result<StorageRestoreIdentityContext, ApiError> {
+    let (id, capability) = stage_and_confirm_snapshot(storage, snapshot, version).await?;
+    let context = storage
+        .get_restore_artifact(id)
+        .await?
+        .identity_context()
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
     if !execute_confirmed_restore(storage).await? {
         return Err(ApiError::InternalServerError(
             "restore did not execute".to_string(),
@@ -609,19 +663,20 @@ async fn restore_snapshot(
             "restore did not succeed".to_string(),
         ));
     }
-    Ok(())
+    Ok(context)
 }
 
 async fn stage_and_confirm_snapshot(
     storage: &StorageHandle,
     snapshot: StorageBackupSnapshot,
+    version: i32,
 ) -> Result<(RestoreJobID, String), ApiError> {
     let (state, history) = snapshot.into_parts();
     let state = BackupState { sections: state };
     let history = history.map(|sections| BackupHistory { sections });
     let manifest = BackupManifest::from_sections(&state, history.as_ref());
     let document = BackupDocument {
-        backup_version: CURRENT_BACKUP_VERSION,
+        backup_version: version,
         created_at: Utc::now(),
         source_version: env!("CARGO_PKG_VERSION").to_string(),
         state,

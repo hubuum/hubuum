@@ -38,6 +38,8 @@ impl MemoryStorage {
                 request.cancellation_reason().cloned(),
             ));
         task.updated_at = now;
+        let task = task.clone();
+        state.logical_identities.capture(&task);
         if task.status == StorageTaskStatus::Queued {
             let task =
                 state.finish_stopped_task(request.task_id(), now, Some(request.event_context()))?;
@@ -307,10 +309,7 @@ impl MemoryState {
                 serde_json::json!({"count": unattempted, "reason": reason.as_str()}),
             ))
             .build();
-            self.import_task_results
-                .entry(id.id())
-                .or_default()
-                .push(result);
+            self.store_import_result(result);
         }
         if remote_possible {
             for row in &mut self.remote_call_results {

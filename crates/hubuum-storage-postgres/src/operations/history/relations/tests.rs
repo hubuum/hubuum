@@ -3,6 +3,17 @@ use crate::{test_support::integration_test_pool, with_transaction};
 use diesel::sql_types::Json;
 use rstest::rstest;
 
+const ENDPOINT_IDENTITY: &str = "11111111-1111-4111-8111-111111111111";
+
+async fn assign_endpoint_identities(
+    connection: &mut crate::PostgresConnection,
+    table: &str,
+) -> Result<(), PostgresStorageError> {
+    sql_query(format!("UPDATE {table} SET logical_identity = jsonb_build_object('subject', jsonb_build_object('kind', 'resource', 'identity', jsonb_build_object('state', 'known', 'identity', $1::text), 'version', gen_random_uuid()), 'references', '{{}}'::jsonb)"))
+        .bind::<Text, _>(ENDPOINT_IDENTITY).execute(connection).await?;
+    Ok(())
+}
+
 #[derive(QueryableByName)]
 struct Explain {
     #[diesel(sql_type = Json, column_name = "QUERY PLAN")]
@@ -72,17 +83,25 @@ async fn relationship_history_seeks_each_endpoint_index(
     }).await.unwrap();
 }
 
+#[rstest]
+#[case::missing(43, Some(ENDPOINT_IDENTITY))]
+#[case::unresolved(42, None)]
+#[case::reused_integer(42, Some("22222222-2222-4222-8222-222222222222"))]
 #[tokio::test]
-async fn endpoint_batch_omits_unavailable_history_without_live_fallback() {
+async fn endpoint_batch_omits_unavailable_history_without_live_fallback(
+    #[case] unavailable_id: i32,
+    #[case] unavailable_identity: Option<&str>,
+) {
     let pool = integration_test_pool(1);
     with_transaction(&pool, async |connection| {
         sql_query("CREATE TEMP TABLE hubuumclass_history (LIKE public.hubuumclass_history INCLUDING INDEXES) ON COMMIT DROP").execute(connection).await?;
         sql_query("INSERT INTO hubuumclass_history (id, name, collection_id, validate_schema, description, created_at, updated_at, op, valid_from, valid_to, history_id, revision)
             VALUES (42, 'old', 1, false, '', '2026-01-01', '2026-01-01', 'I', '2026-01-01', '2026-01-02', 1, 1),
                    (42, 'new', 2, false, '', '2026-01-02', '2026-01-02', 'U', '2026-01-02', NULL, 2, 2)").execute(connection).await?;
+        assign_endpoint_identities(connection, "hubuumclass_history").await?;
         let (tables, _) = RelationTables::for_resource(StorageRelationHistoryResource::Class(ClassId::new(42).unwrap()));
         let times = ["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", "2026-01-02T00:00:00Z"].into_iter().map(|value| DateTime::parse_from_rfc3339(value).unwrap().to_utc()).collect::<Vec<_>>();
-        let rows = sql_query(tables.endpoint_sql()).bind::<Array<Integer>, _>(vec![42, 42, 43]).bind::<Array<Timestamptz>, _>(times).load::<EndpointRow>(connection).await?;
+        let rows = sql_query(tables.endpoint_sql()).bind::<Array<Integer>, _>(vec![42, 42, unavailable_id]).bind::<Array<Timestamptz>, _>(times).bind::<Array<Nullable<Text>>, _>(vec![Some(ENDPOINT_IDENTITY), Some(ENDPOINT_IDENTITY), unavailable_identity]).load::<EndpointRow>(connection).await?;
         assert_eq!(rows.into_iter().map(|row| (row.ordinal, row.name, row.collection_id)).collect::<Vec<_>>(), [(1, "old".into(), 1), (2, "new".into(), 2)]);
         Ok::<_, PostgresStorageError>(())
     }).await.unwrap();
@@ -108,11 +127,12 @@ async fn endpoint_hydration_seeks_the_selected_version_in_long_history(#[case] o
             '2026-01-01T00:00:00Z'::timestamptz + n * interval '1 second',
             '2026-01-01T00:00:00Z'::timestamptz + (n+1) * interval '1 second', n, n, {values}
             FROM generate_series(1, 12000) n", tables.endpoints)).execute(connection).await?;
+        assign_endpoint_identities(connection, tables.endpoints).await?;
         sql_query(format!("ANALYZE {}", tables.endpoints)).execute(connection).await?;
         let at = DateTime::parse_from_rfc3339("2026-01-01T01:40:00.5Z").unwrap().to_utc();
-        let rows = sql_query(tables.endpoint_sql()).bind::<Array<Integer>, _>(vec![42]).bind::<Array<Timestamptz>, _>(vec![at]).load::<EndpointRow>(connection).await?;
+        let rows = sql_query(tables.endpoint_sql()).bind::<Array<Integer>, _>(vec![42]).bind::<Array<Timestamptz>, _>(vec![at]).bind::<Array<Nullable<Text>>, _>(vec![Some(ENDPOINT_IDENTITY)]).load::<EndpointRow>(connection).await?;
         assert_eq!(rows.into_iter().map(|row| row.metadata.history_id).collect::<Vec<_>>(), [6000]);
-        let plan = sql_query(format!("EXPLAIN (ANALYZE, FORMAT JSON) {}", tables.endpoint_sql())).bind::<Array<Integer>, _>(vec![42]).bind::<Array<Timestamptz>, _>(vec![at]).get_result::<Explain>(connection).await?.plan;
+        let plan = sql_query(format!("EXPLAIN (ANALYZE, FORMAT JSON) {}", tables.endpoint_sql())).bind::<Array<Integer>, _>(vec![42]).bind::<Array<Timestamptz>, _>(vec![at]).bind::<Array<Nullable<Text>>, _>(vec![Some(ENDPOINT_IDENTITY)]).get_result::<Explain>(connection).await?.plan;
         let mut found = Vec::new();
         scans(&plan[0]["Plan"], &mut found);
         assert_eq!(found.len(), 1, "{plan:#}");

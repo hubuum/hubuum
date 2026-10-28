@@ -37,6 +37,15 @@ cargo fmt --all --check
 
 The runner includes PostgreSQL adapter tests and a resource-limited JSON Schema
 probe. Python applies the probe's process limits; its assertions remain in Rust.
+Destructive restore contracts use a second runner-owned database with the same
+split owner, migrator and runtime roles. This keeps their backup budgets and
+deadlines independent of history retained by other suites. The runner migrates
+and removes both databases, including on test failure.
+CI's direct Cargo jobs use `python3 tests/python/run.py integration rust-tests --`
+before the Cargo command to provision equivalent isolated restore authority on
+Linux, macOS and Windows. The driver uses the built migration binary, preserves
+the application database settings and test exit status, and removes its temporary
+database and roles even when migration or testing fails.
 Use Rust's shared fixtures and scoped names for application data. Never replace
 database concurrency or migration coverage with a Python mock.
 

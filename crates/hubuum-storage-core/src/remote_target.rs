@@ -304,6 +304,10 @@ pub struct StorageRemoteTarget {
 
 impl StorageRemoteTarget {
     #[must_use]
+    pub const fn class_id(&self) -> Option<ClassId> {
+        self.definition.policy.class_id
+    }
+    #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }

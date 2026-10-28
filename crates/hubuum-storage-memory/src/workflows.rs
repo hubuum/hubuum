@@ -67,7 +67,7 @@ impl RemoteTargetStorage for MemoryStorage {
         )
         .map_err(invalid_contract_value)?;
         let target = StorageRemoteTarget::new(metadata, collection_id, &name, definition);
-        state.remote_targets.insert(id, target.clone());
+        state.store_remote_target(id, target.clone());
         let receipt = state.append_simple_event(
             EntityType::RemoteTarget,
             id,
@@ -165,7 +165,7 @@ impl RemoteTargetStorage for MemoryStorage {
             &name,
             StorageRemoteTargetDefinition::new(description, updated_transport, updated_policy),
         );
-        state.remote_targets.insert(target_id.id(), target.clone());
+        state.store_remote_target(target_id.id(), target.clone());
         let receipt = state.append_simple_event(
             EntityType::RemoteTarget,
             target_id.id(),
@@ -306,7 +306,7 @@ impl TaskQueueStorage for MemoryStorage {
             claim_token: None,
         };
         let task = record.projection()?;
-        state.tasks.insert(id.id(), record);
+        state.store_task(id.id(), record);
         state.append_task_event_record(
             id,
             StorageTaskEventInput::new(StorageTaskStatus::Queued.as_str(), "Task queued"),
@@ -846,6 +846,7 @@ impl TaskExecutionStorage for MemoryStorage {
                     })
                     .record_schema_profile(artifact.expires_at())
                     .map_err(invalid_contract_value)?;
+                state.capture_task_output(lease.task_id());
                 state
                     .schema_profile_outputs
                     .insert(lease.task_id().id(), artifact);
@@ -893,6 +894,7 @@ impl TaskExecutionStorage for MemoryStorage {
                         .record_export(warning_count, truncated, output_expires_at)
                         .map_err(invalid_contract_value)?;
                 }
+                state.capture_task_output(lease.task_id());
                 state.export_outputs.insert(lease.task_id().id(), output);
             }
             StorageTaskCompletionPayload::Backup(artifact) => {
@@ -918,6 +920,7 @@ impl TaskExecutionStorage for MemoryStorage {
                         .record_backup(output_expires_at)
                         .map_err(invalid_contract_value)?;
                 }
+                state.capture_task_output(lease.task_id());
                 state.backup_outputs.insert(lease.task_id().id(), output);
             }
         }
@@ -1036,6 +1039,9 @@ impl RestoreStorage for MemoryStorage {
         let (initiator, artifact, capability_hash, validation_summary, expires_at) =
             request.into_parts();
         let mut state = self.state.write().await;
+        let logical_identity = state
+            .logical_identities
+            .restore_requester(initiator.clone().into_parts().principal_id());
         let id = RestoreJobId::new(state.next_restore_job_id)
             .map_err(|error| StorageError::internal(error.to_string()))?;
         state.next_restore_job_id += 1;
@@ -1060,6 +1066,7 @@ impl RestoreStorage for MemoryStorage {
         state.restore_jobs.insert(
             id.id(),
             MemoryRestoreRecord {
+                logical_identity,
                 job: job.clone(),
                 validation_summary: validation_summary.clone(),
             },
@@ -1208,6 +1215,7 @@ impl RestoreStorage for MemoryStorage {
         let mut replacement = crate::backup::restore(
             snapshot
                 .with_schema_limits(self.schema_limits)?
+                .into_replay()
                 .materialize()?,
         )?;
         replacement.credential_approvals = state.credential_approvals.clone();
@@ -1772,11 +1780,7 @@ impl ImportStorage for MemoryStorage {
             .error(error)
             .details(details)
             .build();
-            state
-                .import_task_results
-                .entry(task_id.id())
-                .or_default()
-                .push(stored);
+            state.store_import_result(stored);
         }
         Ok(())
     }
@@ -1877,7 +1881,7 @@ impl ExportTemplateStorage for MemoryStorage {
         )
         .map_err(invalid_contract_value)?;
         let template = StorageExportTemplate::new(metadata, collection_id, &name, definition);
-        state.export_templates.insert(id, template.clone());
+        state.store_export_template(id, template.clone());
         let receipt = state.append_simple_event(
             EntityType::ExportTemplate,
             id,
@@ -1928,9 +1932,7 @@ impl ExportTemplateStorage for MemoryStorage {
         )
         .map_err(invalid_contract_value)?;
         let template = StorageExportTemplate::new(metadata, collection_id, &name, definition);
-        state
-            .export_templates
-            .insert(template_id.id(), template.clone());
+        state.store_export_template(template_id.id(), template.clone());
         let receipt = state.append_simple_event(
             EntityType::ExportTemplate,
             template_id.id(),

@@ -13,6 +13,7 @@ mod history_name;
 mod history_navigation;
 mod history_population;
 mod history_relations;
+mod logical_identity;
 mod login_events;
 mod regex;
 mod remote_targets;
@@ -6124,13 +6125,25 @@ async fn every_available_storage_backend_supplies_complete_temporal_history() {
                 .is_none()
         );
 
+        let evidence = hubuum_storage_core::LogicalIdentityStorage::resolve_logical_identity(
+            &backend,
+            hubuum_storage_core::StorageIdentityTarget::Principal(actor.principal_id),
+        )
+        .await
+        .unwrap();
+        let Some(hubuum_storage_core::StorageIdentitySubject::Principal {
+            identity: hubuum_domain::IdentityReference::Known { identity },
+        }) = evidence.subject()
+        else {
+            panic!("native principal UUID");
+        };
         let names = backend
-            .resolve_history_principal_names(vec![actor.principal_id])
+            .resolve_history_principal_names(vec![identity])
             .await
             .expect("certified backend should resolve history principal names");
         assert!(names.into_iter().any(|row| {
             let (principal_id, name) = row.into_parts();
-            principal_id == actor.principal_id && name == actor_name
+            principal_id == identity && name == actor_name
         }));
         delete_backend_object_fixture(&backend, fixture).await;
         delete_backend_user(&backend, actor).await;

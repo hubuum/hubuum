@@ -6,6 +6,8 @@
 
 #![allow(unused_variables)]
 
+use hubuum_domain::PrincipalIdentity;
+
 use hubuum_storage_core::{StorageExternalSyncFailure, StorageQueryObservationControl};
 use std::future::Future;
 use std::pin::Pin;
@@ -1301,7 +1303,7 @@ impl HistoryStorage for CompleteExternalAdapter {
 
     async fn resolve_history_principal_names(
         &self,
-        principal_ids: Vec<PrincipalId>,
+        principal_ids: Vec<PrincipalIdentity>,
     ) -> Result<Vec<StorageHistoryPrincipalName>, StorageError> {
         fixture_result()
     }
@@ -2262,6 +2264,16 @@ impl SchemaEvolutionStorage for CompleteExternalAdapter {
 }
 
 impl StorageBackend for CompleteExternalAdapter {}
+
+#[async_trait]
+impl LogicalIdentityStorage for CompleteExternalAdapter {
+    async fn resolve_logical_identity(
+        &self,
+        target: StorageIdentityTarget,
+    ) -> Result<StorageIdentityEvidence, StorageError> {
+        fixture_result()
+    }
+}
 
 #[test]
 fn an_external_crate_can_implement_the_complete_backend_contract() {

@@ -583,11 +583,11 @@ impl MemoryStorage {
                     updated_at,
                 )
                 .map_err(invalid_contract_value)?;
-                state.service_accounts.insert(id.id(), account);
+                state.store_service_account(id.id(), account);
                 state.users.remove(&id.id());
             }
         }
-        state.principals.insert(id.id(), principal);
+        state.store_principal(id.id(), principal);
         if let Some(reference) = parts.reference {
             references.insert(reference, MemoryImportReference::Principal(id));
         }

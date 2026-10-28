@@ -1,6 +1,8 @@
 //! Memory-owned projection of the logical backup contract.
 
 use super::*;
+use crate::logical_identity::{Association, IdentityRecord};
+use hubuum_storage_core::StorageIdentityTarget;
 use serde_json::{Map, Value, json};
 
 mod identity;
@@ -17,6 +19,34 @@ fn row(value: Value) -> Result<StorageBackupRow, StorageError> {
     StorageBackupRow::try_from_value(value).map_err(invalid_contract_value)
 }
 
+fn identified_row(
+    state: &MemoryState,
+    value: &impl IdentityRecord,
+    snapshot: Result<StorageBackupRow, StorageError>,
+) -> Result<StorageBackupRow, StorageError> {
+    identity_row(snapshot, state.logical_identities.record(value.target())?)
+}
+
+fn identity_row(
+    snapshot: Result<StorageBackupRow, StorageError>,
+    evidence: StorageIdentityEvidence,
+) -> Result<StorageBackupRow, StorageError> {
+    let mut fields = snapshot?.fields().clone();
+    fields.insert(
+        "logical_identity".into(),
+        serde_json::to_value(evidence).map_err(|_| invalid("logical_identity"))?,
+    );
+    row(Value::Object(fields))
+}
+
+fn associated_row(
+    state: &MemoryState,
+    key: Association,
+    snapshot: Result<StorageBackupRow, StorageError>,
+) -> Result<StorageBackupRow, StorageError> {
+    identity_row(snapshot, state.logical_identities.association(key)?)
+}
+
 fn invalid(field: &str) -> StorageError {
     StorageError::backend_failure(format!("Invalid logical backup field '{field}'"))
 }
@@ -24,6 +54,10 @@ fn invalid(field: &str) -> StorageError {
 struct Row<'a>(&'a StorageBackupRow);
 
 impl Row<'_> {
+    fn identity(&self) -> Result<StorageIdentityEvidence, StorageError> {
+        serde_json::from_value(self.value("logical_identity")?.clone())
+            .map_err(|_| invalid("logical_identity"))
+    }
     fn value(&self, field: &str) -> Result<&Value, StorageError> {
         self.0.get(field).ok_or_else(|| invalid(field))
     }
@@ -181,7 +215,7 @@ fn enqueue_computed_rebuilds(state: &mut MemoryState) -> Result<(), StorageError
             claim_token: None,
         };
         record.projection()?;
-        state.tasks.insert(id.id(), record);
+        state.store_task(id.id(), record);
         state.computed_rebuild_tasks.insert(id.id(), class_id);
         state.computation_states.insert(
             class_id.id(),
@@ -247,9 +281,19 @@ pub(super) fn append_restore_event(
         .next_event_sequence
         .checked_add(1)
         .ok_or_else(|| invalid("event sequence"))?;
+    let identity = state.logical_identities.event(&envelope, None, None);
+    let references = job
+        .logical_identity
+        .references()
+        .get("/requested_by")
+        .into_iter()
+        .map(|reference| ("/metadata/initiated_by/principal_id".into(), *reference))
+        .collect();
+    let identity = StorageIdentityEvidence::try_new(identity.subject(), references)
+        .map_err(invalid_contract_value)?;
     state
         .events
-        .push(StorageRecordedEvent::new(envelope, None, None));
+        .push(StorageRecordedEvent::new(envelope, None, None).with_logical_identity(identity));
     Ok(())
 }
 
@@ -259,10 +303,16 @@ pub(super) fn record_class_relation_history(
     operation: StorageHistoryOperation,
     context: &EventContext,
 ) -> Result<(), StorageError> {
+    let identity = state
+        .logical_identities
+        .history(value, operation, Some(context));
+    let mut snapshot = resources::classrelations(value)?.into_value();
+    snapshot["logical_identity"] =
+        serde_json::to_value(identity).map_err(|_| invalid("logical_identity"))?;
     record_relation_history(
         state,
         StorageBackupHistorySection::ClassRelationHistory,
-        resources::classrelations(value)?,
+        row(snapshot)?,
         operation,
         context,
     )
@@ -274,10 +324,16 @@ pub(super) fn record_object_relation_history(
     operation: StorageHistoryOperation,
     context: &EventContext,
 ) -> Result<(), StorageError> {
+    let identity = state
+        .logical_identities
+        .history(value, operation, Some(context));
+    let mut snapshot = resources::objectrelations(value)?.into_value();
+    snapshot["logical_identity"] =
+        serde_json::to_value(identity).map_err(|_| invalid("logical_identity"))?;
     record_relation_history(
         state,
         StorageBackupHistorySection::ObjectRelationHistory,
-        resources::objectrelations(value)?,
+        row(snapshot)?,
         operation,
         context,
     )
@@ -357,10 +413,21 @@ pub(super) fn store_remote_call_result(
     } else {
         "not_sent"
     };
+    let evidence = previous
+        .and_then(|row| row.get("logical_identity"))
+        .cloned()
+        .unwrap_or_else(|| {
+            json!(state.logical_identities.task_outcome(
+                task_id,
+                target.target_id(),
+                Some((target.subject_type(), target.subject_id()))
+            ))
+        });
     state
         .remote_call_results
         .retain(|row| row.get("task_id").and_then(Value::as_i64) != Some(i64::from(task_id.id())));
     state.remote_call_results.push(row(json!({
+        "logical_identity": evidence,
         "id": id, "task_id": task_id.id(), "target_id": target.target_id().map(RemoteTargetId::id),
         "subject_type": target.subject_type().as_str(), "subject_id": target.subject_id().id(),
         "method": target.method().map_or("unknown", |method| method.as_str()), "rendered_url": target.rendered_url(),

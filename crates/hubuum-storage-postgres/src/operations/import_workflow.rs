@@ -1,6 +1,7 @@
 //! PostgreSQL implementation of backend-neutral import lookup and result I/O.
 
 use diesel::Insertable;
+use diesel::SelectableHelper;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel_async::RunQueryDsl;
 use hubuum_storage_core::{
@@ -64,6 +65,7 @@ pub async fn collection_by_id(
         .with_connection(async move |connection| {
             crate::schema::collections::table
                 .filter(crate::schema::collections::id.eq(collection_id))
+                .select(CollectionRow::as_select())
                 .first::<CollectionRow>(connection)
                 .await
                 .optional()
@@ -145,6 +147,7 @@ pub async fn classes_by_names(
                 .filter(crate::schema::hubuumclass::collection_id.eq(collection_id))
                 .filter(crate::schema::hubuumclass::name.eq_any(names))
                 .order(crate::schema::hubuumclass::id.asc())
+                .select(ClassRow::as_select())
                 .load::<ClassRow>(connection)
                 .await
         })
@@ -184,6 +187,7 @@ pub async fn objects_by_names(
                 .filter(crate::schema::hubuumobject::hubuum_class_id.eq(class_id))
                 .filter(crate::schema::hubuumobject::name.eq_any(names))
                 .order(crate::schema::hubuumobject::id.asc())
+                .select(ObjectRow::as_select())
                 .load::<ObjectRow>(connection)
                 .await
         })
@@ -289,6 +293,7 @@ pub(crate) async fn root_collection_on_connection(
 ) -> Result<StorageCollection, PostgresStorageError> {
     crate::schema::collections::table
         .filter(crate::schema::collections::parent_collection_id.is_null())
+        .select(CollectionRow::as_select())
         .first::<CollectionRow>(connection)
         .await?
         .into_storage()
@@ -326,6 +331,7 @@ pub(crate) async fn class_by_name_on_connection(
     crate::schema::hubuumclass::table
         .filter(crate::schema::hubuumclass::collection_id.eq(collection_id))
         .filter(crate::schema::hubuumclass::name.eq(name))
+        .select(ClassRow::as_select())
         .first::<ClassRow>(connection)
         .await
         .optional()
@@ -342,6 +348,7 @@ pub(crate) async fn object_by_name_on_connection(
     crate::schema::hubuumobject::table
         .filter(crate::schema::hubuumobject::hubuum_class_id.eq(class_id))
         .filter(crate::schema::hubuumobject::name.eq(name))
+        .select(ObjectRow::as_select())
         .first::<ObjectRow>(connection)
         .await
         .optional()
@@ -371,6 +378,7 @@ async fn collections_by_name_on_connection(
     crate::schema::collections::table
         .filter(crate::schema::collections::name.eq(name))
         .order(crate::schema::collections::id.asc())
+        .select(CollectionRow::as_select())
         .load::<CollectionRow>(connection)
         .await?
         .into_iter()
@@ -386,6 +394,7 @@ async fn collection_child_by_name_on_connection(
     crate::schema::collections::table
         .filter(crate::schema::collections::parent_collection_id.eq(parent_collection_id))
         .filter(crate::schema::collections::name.eq(name))
+        .select(CollectionRow::as_select())
         .first::<CollectionRow>(connection)
         .await
         .optional()?

@@ -27,6 +27,7 @@ mod capabilities;
 mod computed_fields;
 mod export_templates;
 mod imports;
+mod logical_identity;
 mod notifications;
 mod query_usage;
 mod remote_targets;

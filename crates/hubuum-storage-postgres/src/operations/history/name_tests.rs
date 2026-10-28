@@ -43,7 +43,7 @@ async fn name_history_seeks_installed_index_with_timestamp_ties(
         crate::apply_query_options_with_fields!(records, options, fields,
             crate::cursor::CursorTieBreaker::new(FilterField::HistoryId, false,
                 history_cursor_field(&FilterField::HistoryId, "hubuumobject_history")?));
-        let rows = records.load::<ObjectHistoryRow>(connection).await?;
+        let rows = records.select(ObjectHistoryRow::as_select()).load::<ObjectHistoryRow>(connection).await?;
         assert_eq!(rows.iter().map(|row| row.history_id).collect::<Vec<_>>(), expected);
         assert!(rows.windows(2).all(|pair| pair[0].valid_from == pair[1].valid_from));
 

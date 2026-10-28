@@ -36729,6 +36729,10 @@
             "type": "integer",
             "format": "int32"
           },
+          "identity_quarantine": {
+            "type": "boolean",
+            "description": "Legacy formats are upgraded in an isolated cohort before replacement."
+          },
           "includes_history": {
             "type": "boolean"
           },
@@ -36738,6 +36742,12 @@
           "total_items": {
             "type": "integer",
             "format": "int64"
+          },
+          "unresolved_identity_references": {
+            "type": "integer",
+            "format": "int64",
+            "description": "References whose correspondence cannot be established from the backup.",
+            "minimum": 0
           }
         }
       },

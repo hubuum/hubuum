@@ -246,13 +246,25 @@ visibility, preserving ascending relation IDs; zero returns no rows and
 `None` retains complete results. ID sets are typed inputs and must not be
 restricted by public integer-filter list limits.
 
+### `logical_identity`
+
+Required trait: `LogicalIdentityStorage` in `QueryStorage`.
+
+Resolve a typed resource, principal, task, historical entry or schema revision
+inside the selected backend. Return private-field `StorageIdentityEvidence` with
+its immutable subject identity and captured dependencies. An unresolved legacy
+reference remains unresolved; current integer matches cannot establish identity.
+Missing targets return `NotFound`. The common observer records this operation
+under the `logical_identity` capability.
+
 ### `temporal_history`
 
 Required trait: `HistoryStorage`.
 
 Owns revision-filtered pages and point-in-time reads for collections, classes,
 objects, export templates, and remote targets. Visibility applies before
-filtering, counting, and paging. Provenance-name resolution is batched.
+filtering, counting, and paging. Provenance-name resolution is batched by captured principal UUID. A missing or
+unresolved UUID cannot fall back to a current integer ID.
 
 `list_object_history_by_name` matches the stored class ID and exact historical
 name across identities. `StorageObjectHistoryNameQuery` validates query fields

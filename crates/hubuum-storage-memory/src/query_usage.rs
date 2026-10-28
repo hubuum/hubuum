@@ -167,6 +167,7 @@ impl QueryUsageStorage for MemoryStorage {
             request.context().actor_user_id(),
             request.context().actor_user_id(),
         );
+        let record = state.store_query_usage(record);
         let receipt = record_event(
             &mut state,
             request.scope(),
@@ -175,7 +176,6 @@ impl QueryUsageStorage for MemoryStorage {
             Some(&record),
         )?;
         state.next_query_usage_id = next_id;
-        state.query_usage.insert(id.id(), record.clone());
         Ok(StorageMutationOutcome::committed(record, receipt))
     }
 
@@ -217,6 +217,7 @@ impl QueryUsageStorage for MemoryStorage {
             before.created_by(),
             request.context().actor_user_id(),
         );
+        let after = state.store_query_usage(after);
         let receipt = record_event(
             &mut state,
             request.scope(),
@@ -224,7 +225,6 @@ impl QueryUsageStorage for MemoryStorage {
             Some(&before),
             Some(&after),
         )?;
-        state.query_usage.insert(request.id().id(), after.clone());
         Ok(StorageMutationOutcome::committed(after, receipt))
     }
 

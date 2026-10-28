@@ -4,8 +4,6 @@
 //! application receives only storage-core DTOs and never needs to translate a
 //! PostgreSQL row or classify output-retention state.
 
-use std::collections::HashMap;
-
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use diesel::dsl::sql;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
@@ -100,6 +98,7 @@ impl NewTaskRow {
 
 #[derive(Queryable)]
 struct TaskEventRow {
+    logical_identity: Option<Value>,
     id: i64,
     entity_id: Option<i32>,
     action: String,
@@ -130,6 +129,7 @@ impl TaskEventRow {
             self.actor_kind,
         )
         .data(data)
+        .logical_identity(super::history::history_identity(self.logical_identity)?)
         .actor_principal_id(self.actor_user_id.map(PrincipalId::new).transpose()?)
         .provenance(
             self.initiator_user_id.map(PrincipalId::new).transpose()?,
@@ -791,6 +791,7 @@ async fn list_tasks_on(
         )
     );
     let mut tasks = storage_query
+        .select(TaskRow::as_select())
         .load::<TaskRow>(connection)
         .await?
         .into_iter()
@@ -1010,8 +1011,7 @@ async fn list_task_events_on(
     } else {
         None
     };
-    let mut events = load_task_events(connection, task_id, options).await?;
-    enrich_legacy_event_initiators(connection, &mut events).await?;
+    let events = load_task_events(connection, task_id, options).await?;
     let events = events
         .into_iter()
         .map(TaskEventRow::into_storage)
@@ -1040,6 +1040,7 @@ async fn load_task_events(
         };
     }
     let selection = (
+        stored::logical_identity,
         stored::id,
         stored::entity_id,
         stored::action,
@@ -1066,47 +1067,6 @@ async fn load_task_events(
             .load::<TaskEventRow>(connection)
             .await?)
     }
-}
-
-async fn enrich_legacy_event_initiators(
-    connection: &mut PostgresConnection,
-    events: &mut [TaskEventRow],
-) -> Result<(), PostgresStorageError> {
-    let task_ids = events
-        .iter()
-        .filter(|event| event.initiator_user_id.is_none())
-        .filter_map(|event| event.entity_id)
-        .collect::<Vec<_>>();
-    if task_ids.is_empty() {
-        return Ok(());
-    }
-    use crate::schema::events::dsl as stored;
-    let queued = stored::events
-        .filter(stored::entity_type.eq(EntityType::Task.as_str()))
-        .filter(stored::action.eq(Action::Queued.as_str()))
-        .filter(stored::entity_id.eq_any(task_ids.into_iter().map(Some)))
-        .order(stored::id.asc())
-        .select((
-            stored::entity_id,
-            stored::initiator_user_id,
-            stored::actor_user_id,
-        ))
-        .load::<(Option<i32>, Option<i32>, Option<i32>)>(connection)
-        .await?;
-    let initiators = queued
-        .into_iter()
-        .filter_map(|(task_id, initiator, actor)| {
-            task_id.map(|task_id| (task_id, initiator.or(actor)))
-        })
-        .collect::<HashMap<_, _>>();
-    for event in events {
-        if event.initiator_user_id.is_none()
-            && let Some(task_id) = event.entity_id
-        {
-            event.initiator_user_id = initiators.get(&task_id).copied().flatten();
-        }
-    }
-    Ok(())
 }
 
 async fn list_import_task_results_on(

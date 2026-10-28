@@ -844,6 +844,8 @@ jobs:
           PGPASSWORD=postgres createdb -U postgres -h localhost -p 5432 hubuum_rust_test
           echo "Running database setup and migrations"
           "$DIESEL_BIN" migration run --database-url ${{ env.DATABASE_URL }}
+          cargo run --quiet --locked --release --features embedded-migrations --bin hubuum-admin -- --migrate
+          cp target/release/hubuum-admin "$RUNNER_TEMP/hubuum-admin-migrate"
           echo "Checking database setup"
           PGPASSWORD=postgres psql -U postgres -h localhost -p 5432 -d hubuum_rust_test -c "select * from users;"
       - name: Compile tests (${{ matrix.feature.name }})
@@ -857,7 +859,10 @@ jobs:
         if: matrix.feature.name == 'default'
         run: cargo test --workspace --exclude hubuum --exclude hubuum-storage-postgres --all-features --locked --release
       - name: Test (${{ matrix.feature.name }})
-        run: cargo test ${{ matrix.feature.args }} -F integration-test-support --locked --release
+        run: >-
+          python3 tests/python/run.py integration rust-tests
+          --admin-binary "$RUNNER_TEMP/hubuum-admin-migrate" --
+          cargo test ${{ matrix.feature.args }} -F integration-test-support --locked --release
 
   valkey-rate-limit-contract:
     name: Valkey login limiter contract
@@ -957,6 +962,7 @@ jobs:
           DIESEL_BIN="${CARGO_HOME:-$HOME/.cargo}/bin/diesel"
           PGPASSWORD=postgres createdb -U postgres -h localhost -p 5432 hubuum_rust_test
           "$DIESEL_BIN" migration run --database-url "$DATABASE_URL"
+          cargo run --quiet --locked --release --features embedded-migrations --bin hubuum-admin -- --migrate
       - name: Run the hermetic Treetop contract
         env:
           HUBUUM_TREETOP_REPORT_DIR: treetop-conformance
@@ -1059,6 +1065,7 @@ jobs:
           PGPASSWORD=postgres createdb -U postgres -h localhost -p 5432 hubuum_rust_test
           echo "Running database setup and migrations"
           "$DIESEL_BIN" migration run --database-url ${{ env.DATABASE_URL }}
+          cargo run --quiet --locked --release --features embedded-migrations --bin hubuum-admin -- --migrate
           echo "Checking database setup"
           PGPASSWORD=postgres psql -U postgres -h localhost -p 5432 -d hubuum_rust_test -c "select * from users;"
 
@@ -1165,6 +1172,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "createdb failed with exit code $LASTEXITCODE" }
           & $dieselBin migration run --database-url "$dbUrl"
           if ($LASTEXITCODE -ne 0) { throw "Diesel migrations failed with exit code $LASTEXITCODE" }
+          & cargo run --quiet --locked --release --features embedded-migrations,vendored-openssl --bin hubuum-admin -- --migrate --migration-database-url "$dbUrl"
+          if ($LASTEXITCODE -ne 0) { throw "Migration backfill failed with exit code $LASTEXITCODE" }
           & "$env:PG_BIN\psql.exe" -U postgres -h 127.0.0.1 -p $pgPort -d hubuum_rust_test -c "select * from users;"
           if ($LASTEXITCODE -ne 0) { throw "Database verification failed with exit code $LASTEXITCODE" }
       
@@ -1185,7 +1194,7 @@ jobs:
       - name: Run tests (non-Windows, production features)
         if: "!contains(matrix.platform.os, 'windows')"
         run: >-
-          cargo test --no-default-features
+          python3 tests/python/run.py integration rust-tests -- cargo test --no-default-features
           -F production-all,integration-test-support
           --locked --release
 
@@ -1202,7 +1211,7 @@ jobs:
             '--target', '${{ matrix.platform.target }}'
           )
 
-          & cargo @testArgs
+          & python3 tests/python/run.py integration rust-tests -- cargo @testArgs
           $firstExitCode = $LASTEXITCODE
           if ($firstExitCode -eq 0) {
             exit 0
@@ -1224,8 +1233,10 @@ jobs:
 
           & $env:DIESEL_BIN migration run --database-url $env:DATABASE_URL
           if ($LASTEXITCODE -ne 0) { throw "Diesel migrations failed with exit code $LASTEXITCODE" }
+          & cargo run --quiet --locked --release --features embedded-migrations,vendored-openssl --bin hubuum-admin -- --migrate
+          if ($LASTEXITCODE -ne 0) { throw "Migration backfill failed with exit code $LASTEXITCODE" }
 
-          & cargo @testArgs
+          & python3 tests/python/run.py integration rust-tests -- cargo @testArgs
           exit $LASTEXITCODE
 
   all-features-release-build:

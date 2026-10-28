@@ -799,8 +799,8 @@ profile = "event_delivery"
 
 [methods."HistoryStorage::resolve_history_principal_names"]
 effect = "batch_read"
-carrier = "Vec<PrincipalId>"
-profile = "sparse_id_names"
+carrier = "Vec<PrincipalIdentity>"
+profile = "captured_principal_names"
 
 [methods."HistoryStorage::list_collection_history"]
 effect = "page_read"
@@ -1100,3 +1100,16 @@ unsupported_error = "InvalidInput"
 effect = "page_read"
 carrier = "StorageActivityQuery"
 profile = "credential_activity"
+
+[collection_profiles.captured_principal_names]
+shape = "batch"
+ordering = "principal UUID ascending"
+duplicate_inputs = "coalesced"
+missing_inputs = "absent principal UUIDs are omitted; integers are never fallback keys"
+multiplicity = "at most one pair per unique input UUID"
+completeness = "all existing unique principal UUIDs"
+bounds = "bounded by the input vector"
+visibility = "internal identity projection; no additional authorization filtering"
+snapshot = "one native read"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"

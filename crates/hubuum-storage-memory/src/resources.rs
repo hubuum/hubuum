@@ -64,6 +64,7 @@ impl CollectionStorage for MemoryStorage {
                 .metadata(serde_json::json!({"owner_group_id": command.owner_group_id().id()}))
                 .try_build()
                 .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        state.store_collection(id, collection.clone());
         let receipt = append_memory_event!(
             state,
             EntityType::Collection,
@@ -76,7 +77,6 @@ impl CollectionStorage for MemoryStorage {
             None,
             Some(collection.revision()),
         )?;
-        state.collections.insert(id, collection.clone());
         state.append_history(
             MemoryHistoryValue::Collection(collection.clone()),
             StorageHistoryOperation::Create,
@@ -133,6 +133,7 @@ impl CollectionStorage for MemoryStorage {
             .after(updated.audit_snapshot())
             .try_build()
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        state.store_collection(id.id(), updated.clone());
         let receipt = append_memory_event!(
             state,
             EntityType::Collection,
@@ -145,7 +146,6 @@ impl CollectionStorage for MemoryStorage {
             Some(current.revision()),
             Some(updated.revision()),
         )?;
-        state.collections.insert(id.id(), updated.clone());
         state.append_history(
             MemoryHistoryValue::Collection(updated.clone()),
             StorageHistoryOperation::Update,
@@ -371,6 +371,7 @@ impl CollectionStorage for MemoryStorage {
             .after(moved.audit_snapshot())
             .try_build()
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        state.store_collection(id.id(), moved.clone());
         let receipt = append_memory_event!(
             state,
             EntityType::Collection,
@@ -383,7 +384,6 @@ impl CollectionStorage for MemoryStorage {
             Some(current.revision()),
             Some(moved.revision()),
         )?;
-        state.collections.insert(id.id(), moved.clone());
         state.append_history(
             MemoryHistoryValue::Collection(moved.clone()),
             StorageHistoryOperation::Update,
@@ -465,6 +465,7 @@ impl ClassStorage for MemoryStorage {
             .after(class.audit_snapshot())
             .try_build()
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        state.store_class(id, class.clone());
         let receipt = append_memory_event!(
             state,
             EntityType::Class,
@@ -477,7 +478,6 @@ impl ClassStorage for MemoryStorage {
             None,
             Some(class.revision()),
         )?;
-        state.classes.insert(id, class.clone());
         state.schema_record_class(&class, StorageHistoryOperation::Create, context, policy)?;
         state.record_computed_history(class.id())?;
         state.append_history(
@@ -566,6 +566,7 @@ impl ClassStorage for MemoryStorage {
             .after(updated.audit_snapshot())
             .try_build()
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        state.store_class(id.id(), updated.clone());
         let receipt = append_memory_event!(
             state,
             EntityType::Class,
@@ -578,7 +579,6 @@ impl ClassStorage for MemoryStorage {
             Some(current.revision()),
             Some(updated.revision()),
         )?;
-        state.classes.insert(id.id(), updated.clone());
         state.schema_record_class(&updated, StorageHistoryOperation::Update, context, policy)?;
         state.append_history(
             MemoryHistoryValue::Class(updated.clone()),
@@ -750,6 +750,7 @@ impl ObjectStorage for MemoryStorage {
             .metadata(serde_json::json!({"class_id": object.class_id().id()}))
             .try_build()
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        state.store_object(id, object.clone());
         let receipt = append_memory_event!(
             state,
             EntityType::Object,
@@ -762,7 +763,6 @@ impl ObjectStorage for MemoryStorage {
             None,
             Some(object.revision()),
         )?;
-        state.objects.insert(id, object.clone());
         state.append_history(
             MemoryHistoryValue::Object(object.clone()),
             StorageHistoryOperation::Create,
@@ -849,6 +849,7 @@ impl ObjectStorage for MemoryStorage {
             .metadata(serde_json::json!({"class_id": updated.class_id().id()}))
             .try_build()
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        state.store_object(id.id(), updated.clone());
         let receipt = append_memory_event!(
             state,
             EntityType::Object,
@@ -861,7 +862,6 @@ impl ObjectStorage for MemoryStorage {
             Some(current.revision()),
             Some(updated.revision()),
         )?;
-        state.objects.insert(id.id(), updated.clone());
         state.append_history(
             MemoryHistoryValue::Object(updated.clone()),
             StorageHistoryOperation::Update,
@@ -1128,6 +1128,7 @@ impl ClassRelationStorage for MemoryStorage {
         }))
         .try_build()
         .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        state.store_class_relation(id, relation.clone());
         let receipt = append_memory_event!(
             state,
             EntityType::ClassRelation,
@@ -1146,7 +1147,7 @@ impl ClassRelationStorage for MemoryStorage {
             StorageHistoryOperation::Create,
             context,
         )?;
-        state.class_relations.insert(id, relation);
+
         Ok(StorageMutationOutcome::committed(resolved, receipt))
     }
 
@@ -1210,6 +1211,7 @@ impl ClassRelationStorage for MemoryStorage {
             .metadata(serde_json::json!({"from_class_id": relation.from_class_id().id(), "to_class_id": relation.to_class_id().id(),
                 "related_collection_ids": [target.from_class().collection_id().id(), target.to_class().collection_id().id()]}))
             .try_build().map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        state.store_class_relation(id.id(), relation.clone());
         let receipt = append_memory_event!(
             state,
             EntityType::ClassRelation,
@@ -1228,7 +1230,7 @@ impl ClassRelationStorage for MemoryStorage {
             StorageHistoryOperation::Update,
             context,
         )?;
-        state.class_relations.insert(id.id(), relation);
+
         Ok(StorageMutationOutcome::committed(resolved, receipt))
     }
 
@@ -1486,6 +1488,7 @@ impl ObjectRelationStorage for MemoryStorage {
         }))
         .try_build()
         .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        state.store_object_relation(id, relation.clone());
         let receipt = append_memory_event!(
             state,
             EntityType::ObjectRelation,
@@ -1504,7 +1507,7 @@ impl ObjectRelationStorage for MemoryStorage {
             StorageHistoryOperation::Create,
             context,
         )?;
-        state.object_relations.insert(id, relation);
+
         Ok(StorageMutationOutcome::committed(resolved, receipt))
     }
 

@@ -972,6 +972,7 @@ impl StorageTaskChildListQuery {
 
 #[derive(Clone, PartialEq)]
 pub struct StorageTaskEvent {
+    logical_identity: Option<crate::StorageIdentityEvidence>,
     id: EventSequence,
     task_id: TaskId,
     event_type: String,
@@ -986,6 +987,10 @@ pub struct StorageTaskEvent {
 
 impl StorageTaskEvent {
     #[must_use]
+    pub const fn logical_identity(&self) -> Option<&crate::StorageIdentityEvidence> {
+        self.logical_identity.as_ref()
+    }
+    #[must_use]
     pub fn builder(
         id: EventSequence,
         task_id: TaskId,
@@ -996,6 +1001,7 @@ impl StorageTaskEvent {
     ) -> StorageTaskEventBuilder {
         StorageTaskEventBuilder {
             event: Self {
+                logical_identity: None,
                 id,
                 task_id,
                 event_type: event_type.into(),
@@ -1066,6 +1072,12 @@ pub struct StorageTaskEventBuilder {
 }
 
 impl StorageTaskEventBuilder {
+    #[must_use]
+    pub fn logical_identity(mut self, evidence: crate::StorageIdentityEvidence) -> Self {
+        self.event.logical_identity = Some(evidence);
+        self
+    }
+
     #[must_use]
     pub fn data(mut self, data: Option<Value>) -> Self {
         self.event.data = data;

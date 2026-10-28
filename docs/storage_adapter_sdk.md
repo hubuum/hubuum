@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.6`.
+Status: accepted; current experimental release train is `0.7`.
 
 ## Supported Crate Graph
 
@@ -39,6 +39,8 @@ hubuum-storage-core
     +---------------------------------- hubuum-computed-fields
 
 hubuum-storage-core --> hubuum-budget
+hubuum-storage-conformance --> hubuum-events-core
+hubuum-storage-conformance --> hubuum-query
 hubuum-domain --> hubuum-schema-diagnostics
 hubuum-query --> hubuum-regex
 ```
@@ -114,7 +116,7 @@ closed set is:
 
 - `hubuum-computed-fields`: `DefinitionError`, `FieldErrorCode`, `Operation`, and
   `ResultType`;
-- `hubuum-domain`: `EventDeliveryStatus`, `JsonPatchErrorKind`,
+- `hubuum-domain`: `EventDeliveryStatus`, `IdentityReference`, `JsonPatchErrorKind`,
   `JsonSchemaErrorKind`, `MaintenanceState`, `PrincipalKind`,
   `ResourceRevisionError`, and `StorageJsonValidationError`;
 - `hubuum-schema-diagnostics`: `SchemaActualValue`, `SchemaDiagnosticInspection`,
@@ -416,3 +418,36 @@ The PostgreSQL adapter requires migration
 `2026-10-25-000002_schema_profiling`. Drain old workers before submitting the new
 task kind. The server uses `json-schema-profiler` 0.0.1; the SDK does not depend
 on it and retains its Rust 1.88 minimum version.
+
+## Upgrading from 0.6 to 0.7
+
+Upgrade all ten SDK crates together. `QueryStorage` now requires
+`LogicalIdentityStorage`; every selectable adapter must implement the complete
+contract. Resolve `StorageIdentityTarget` to `StorageIdentityEvidence` inside a
+consistent backend view, preserving typed resource, principal, task and version
+identities across projections and backup replay. Assign new identities at writes,
+keep historical versions immutable on interval closure, and capture reference
+identities before integer IDs can be reused. Return `NotFound` for absent targets.
+
+`HistoryStorage::resolve_history_principal_names` now accepts
+`Vec<PrincipalIdentity>` and returns names keyed by that identity. Preserve the
+identity evidence in history and task-event projections. Resolve actor and
+initiator names only from captured, known UUIDs. Unresolved legacy attribution
+must remain unnamed even if a current principal has the same integer ID.
+
+`StorageRestoreReplayApply::at_restore_boundary` takes a
+`StorageRestoreIdentityContext` obtained from the confirmed artifact job. It
+prepares a `StorageIdentityReplay` before entering the adapter's fenced restore
+transaction. Preserve that proof until replay. Format 11 requires identity
+metadata; formats 6–10 undergo a quarantined upgrade with a stable per-stage
+cohort. Restore existing identities, mint fresh versions only for synthesized
+history baselines, and keep retained control-plane requester evidence across
+application replacement. The context does not replace the adapter's transaction,
+maintenance ownership, or execution fences.
+
+Use `verify_collection_version_identity` with an isolated collection, its read
+capabilities and mutation capability. `BackupRestoreFixture::restore` now returns
+the confirmed `StorageRestoreIdentityContext`, allowing conformance checks to
+verify synthesized baseline identities against the actual restore stage. See the full
+[identity coverage and acceptance matrix](logical_identity.md) for retained
+relationships, schema dependencies, task outcomes, migration and restore tests.

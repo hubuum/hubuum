@@ -43,13 +43,13 @@ use uuid::Uuid;
 static RESTORE_TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
 fn database_url() -> String {
-    std::env::var("HUBUUM_MIGRATION_DATABASE_URL")
-        .expect("HUBUUM_MIGRATION_DATABASE_URL must provide destructive restore authority")
+    std::env::var("HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL")
+        .expect("The test runner must provide isolated destructive restore authority")
 }
 
 fn runtime_database_url() -> String {
-    std::env::var("HUBUUM_DATABASE_URL")
-        .expect("HUBUUM_DATABASE_URL must provide runtime restore-coordination authority")
+    std::env::var("HUBUUM_RESTORE_TEST_DATABASE_URL")
+        .expect("The test runner must provide isolated runtime restore-coordination authority")
 }
 
 #[tokio::test]

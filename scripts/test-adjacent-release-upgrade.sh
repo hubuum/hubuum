@@ -453,10 +453,11 @@ verify_restore_artifact() {
   backup_name="$(basename -- "$backup_path")"
   source_version="$(jq --exit-status '.backup_version' "$backup_path")"
   candidate_version="$(jq --exit-status '.backup_version' "$current_backup_file")"
-  # Formats 7 through 10 accept their supported predecessors directly, backfilling
+  # Formats 7 through 11 accept their supported predecessors directly, backfilling
   # legacy defaults, sink grants, an empty query usage declaration set, and
-  # computed definition history at the restore boundary. The isolated restore
-  # below must prove those paths work without an older binary.
+  # computed definition history and isolated legacy identities at the restore
+  # boundary. The isolated restore below must prove those paths work without
+  # an older binary.
   if [[ "$source_version" != "$candidate_version" &&
     "$source_version:$candidate_version" != "6:7" &&
     "$source_version:$candidate_version" != "6:8" &&
@@ -467,7 +468,12 @@ verify_restore_artifact() {
     "$source_version:$candidate_version" != "6:10" &&
     "$source_version:$candidate_version" != "7:10" &&
     "$source_version:$candidate_version" != "8:10" &&
-    "$source_version:$candidate_version" != "9:10" ]]; then
+    "$source_version:$candidate_version" != "9:10" &&
+    "$source_version:$candidate_version" != "6:11" &&
+    "$source_version:$candidate_version" != "7:11" &&
+    "$source_version:$candidate_version" != "8:11" &&
+    "$source_version:$candidate_version" != "9:11" &&
+    "$source_version:$candidate_version" != "10:11" ]]; then
     [[ "$source_version" == 5 && "$candidate_version" == 6 ]] || {
       echo "ERROR: untested backup format transition $source_version -> $candidate_version" >&2
       return 1

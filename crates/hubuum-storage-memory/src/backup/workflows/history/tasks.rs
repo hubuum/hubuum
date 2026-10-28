@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_storage_core::StorageIdentityTarget;
 
 pub(super) fn capture(
     state: &MemoryState,
@@ -26,6 +27,15 @@ pub(super) fn capture(
             fields.insert("discovery_metadata".to_string(), metadata.to_value());
         }
         fields.extend(t.control.snapshot_fields());
+        fields.insert(
+            "logical_identity".into(),
+            serde_json::to_value(
+                state
+                    .logical_identities
+                    .record(StorageIdentityTarget::Task(t.id))?,
+            )
+            .map_err(|_| invalid("logical_identity"))?,
+        );
         add_trace(&mut fields, t.trace_link.as_ref());
         tasks.push(retain_row(progress, row(Value::Object(fields)))?);
     }
@@ -37,6 +47,7 @@ pub(super) fn capture(
             continue;
         }
         results.push(retain_row(progress, row(json!({
+            "logical_identity": state.logical_identities.association(Association::ImportResult(r.id()))?,
             "id": r.id().id(), "task_id": r.task_id().id(), "item_ref": r.item_ref(), "entity_kind": r.entity_kind(), "action": r.action(), "identifier": r.identifier(),
             "outcome": r.outcome(), "error": r.error(), "details": r.details(), "created_at": r.created_at()
         })))?);
@@ -49,6 +60,7 @@ pub(super) fn capture(
             continue;
         }
         outputs.push(retain_row(progress, row(json!({
+            "logical_identity": state.logical_identities.association(Association::TaskOutput(o.task_id()))?,
             "id": state.export_output_ids.get(&o.task_id().id()).copied().unwrap_or(o.task_id().id()), "task_id": o.task_id().id(), "template_name": o.template_name(), "content_type": o.content_type(), "json_output": o.json_output(), "text_output": o.text_output(),
             "meta_json": o.metadata(), "warnings_json": o.warnings(), "warning_count": o.warning_count(), "truncated": o.truncated(), "output_expires_at": o.output_expires_at(),
             "total_duration_ms": o.durations().total_ms(), "query_duration_ms": o.durations().query_ms(), "hydration_duration_ms": o.durations().hydration_ms(), "render_duration_ms": o.durations().render_ms(), "created_at": o.created_at()
@@ -143,6 +155,9 @@ pub(super) fn restore(
             trace_link: trace(&r)?,
         };
         task.projection()?;
+        state
+            .logical_identities
+            .restore_record(&task, r.identity()?);
         state.tasks.insert(id.id(), task);
     }
     for row in &sections[&StorageBackupHistorySection::ImportResults] {
@@ -160,6 +175,9 @@ pub(super) fn restore(
         .error(r.optional_text("error")?)
         .details(r.optional_value("details").cloned())
         .build();
+        state
+            .logical_identities
+            .restore_association(Association::ImportResult(result.id()), r.identity()?);
         state
             .import_task_results
             .entry(result.task_id().id())
@@ -199,6 +217,9 @@ pub(super) fn restore(
         state
             .export_output_ids
             .insert(output.task_id().id(), r.integer("id")?);
+        state
+            .logical_identities
+            .restore_association(Association::TaskOutput(output.task_id()), r.identity()?);
         state.export_outputs.insert(output.task_id().id(), output);
     }
     state.remote_call_results = sections[&StorageBackupHistorySection::RemoteCallResults].clone();

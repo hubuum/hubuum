@@ -3,11 +3,14 @@
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import tempfile
 import textwrap
 import unittest
+from unittest.mock import patch
 
+from integration import rust_tests
 from support import ROOT
 
 
@@ -53,6 +56,59 @@ class CiTierTests(unittest.TestCase):
         result = self.policy(FORCE_FULL="true", IS_DRAFT="true")
         for key in ("run_rust_ci", "run_full_ci", "run_container", "run_default_suite"):
             self.assertEqual(result[key], "true", key)
+
+
+class DatabaseInitializationTests(unittest.TestCase):
+    def test_every_diesel_setup_finishes_production_backfills(self):
+        # Applying versioned SQL alone leaves legacy identity columns empty.
+        # Check every provisioning path, including the Windows retry database.
+        lines = WORKFLOW.splitlines()
+        setups = [index for index, line in enumerate(lines) if ' migration run ' in line]
+        self.assertTrue(setups)
+        for index in setups:
+            with self.subTest(line=index + 1):
+                following = '\n'.join(lines[index + 1:index + 4])
+                self.assertIn('--bin hubuum-admin -- --migrate', following)
+                if lines[index].lstrip().startswith('& '):
+                    self.assertIn('Migration backfill failed', '\n'.join(lines[index + 1:index + 5]))
+
+    def test_windows_initial_backfill_uses_the_current_step_database(self):
+        setup = job("test").split("      - name: Set up database (Windows)\n", 1)[1]
+        setup = setup.split("      - name:", 1)[0]
+        # GITHUB_ENV updates only subsequent steps, while this step selected a
+        # dynamic PostgreSQL port. The initial migration must use its local URL.
+        command = next(line for line in setup.splitlines() if '--bin hubuum-admin' in line)
+        self.assertIn('--migration-database-url "$dbUrl"', command)
+
+    def test_application_test_commands_receive_isolated_restore_authority(self):
+        smoke = WORKFLOW.split('      - name: Test (${{ matrix.feature.name }})\n', 1)[1].split('\n  valkey-', 1)[0]
+        self.assertIn('integration rust-tests', smoke)
+        native = job("test").split('      - name: Run tests (non-Windows, production features)\n', 1)[1]
+        self.assertIn('integration rust-tests -- cargo test --no-default-features', native)
+        self.assertEqual(native.count('integration rust-tests -- cargo @testArgs'), 2)
+
+    def test_feature_compilation_cannot_replace_the_restore_migration_helper(self):
+        smoke = job("feature-permutations")
+        setup = smoke.split('      - name: Set up database\n', 1)[1].split('      - name:', 1)[0]
+        preserve = next(line.strip() for line in setup.splitlines() if line.strip().startswith('cp '))
+        test = smoke.split('      - name: Test (${{ matrix.feature.name }})\n', 1)[1]
+        command = test.split('        run: >-\n', 1)[1].replace('${{ matrix.feature.args }}', '')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / 'target/release/hubuum-admin'
+            binary.parent.mkdir(parents=True)
+            binary.write_text('migration enabled')
+            subprocess.run(['bash', '-eu', '-c', preserve], cwd=root, check=True,
+                           env={**os.environ, 'RUNNER_TEMP': directory})
+            binary.write_text('feature matrix without migrations')
+            argv = shlex.split(command.replace('$RUNNER_TEMP', directory))
+            with patch.object(rust_tests, 'run_tests') as run:
+                rust_tests.main(['--database-url', 'postgres://localhost/test',
+                                 *argv[argv.index('rust-tests') + 1:]])
+            args = run.call_args.args
+            self.assertEqual(args[1].read_text(), 'migration enabled')
+            self.assertEqual(args[0], ['cargo', 'test', '-F', 'integration-test-support',
+                                      '--locked', '--release'])
 
 
 class PublicationGateTests(unittest.TestCase):

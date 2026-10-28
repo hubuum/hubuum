@@ -41,6 +41,7 @@ verify_restore_artifact "$test_root/source.json" postgres://fixture/disposable "
         for source, candidate in (
             (6, 7), (6, 8), (7, 8), (6, 9), (7, 9), (8, 9), (9, 9),
             (6, 10), (7, 10), (8, 10), (9, 10), (10, 10),
+            (6, 11), (7, 11), (8, 11), (9, 11), (10, 11), (11, 11),
         ):
             with self.subTest(source=source, candidate=candidate):
                 result, report, commands = self.restore(source, candidate)
@@ -53,7 +54,9 @@ verify_restore_artifact "$test_root/source.json" postgres://fixture/disposable "
                 })
 
     def test_unreviewed_transitions_do_not_attempt_restore(self):
-        for source, candidate in ((5, 9), (9, 8), (5, 10), (10, 9), (9, 11)):
+        for source, candidate in (
+            (5, 9), (9, 8), (5, 10), (10, 9), (5, 11), (11, 10), (10, 12), (11, 12),
+        ):
             with self.subTest(source=source, candidate=candidate):
                 result, _, commands = self.restore(source, candidate)
                 self.assertNotEqual(result.returncode, 0)

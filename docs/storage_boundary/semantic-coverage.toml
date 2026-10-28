@@ -479,3 +479,9 @@ scenarios = ["src/tests/storage_contract/history_relations.rs::every_backend_rel
 source = "crates/hubuum-storage-core/src/history/relations.rs"
 variants = ["Changes", "At"]
 scenarios = ["src/tests/storage_contract/history_relations.rs::every_backend_relation_validity_is_half_open", "src/tests/storage_contract/history_relations.rs::relationship_deleted_history_requires_unscoped_administrator"]
+
+[traits.LogicalIdentityStorage]
+source = "crates/hubuum-storage-core/src/logical_identity.rs"
+methods = ["resolve_logical_identity"]
+effects = { point_read = ["resolve_logical_identity"] }
+shared_scenarios = ["src/tests/storage_contract/logical_identity.rs::every_backend_preserves_identity_when_closing_history", "crates/hubuum-storage-conformance/src/logical_identity.rs::verify_collection_version_identity"]

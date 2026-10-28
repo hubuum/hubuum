@@ -19,9 +19,10 @@ use hubuum_storage_core::capabilities::{
     workflows::*,
 };
 use hubuum_storage_core::{
-    StorageAuthenticationCredential, StorageQueryObservationControl, StorageTaskMetadata,
-    StorageTokenDigest, StorageTokenFormat, StorageTokenHashAlgorithm, StorageTokenHashKeyId,
-    StorageTokenMigrationOutcome, StorageValidationError, TaskMetadataDetails,
+    StorageAuthenticationCredential, StorageIdentityEvidence, StorageQueryObservationControl,
+    StorageTaskMetadata, StorageTokenDigest, StorageTokenFormat, StorageTokenHashAlgorithm,
+    StorageTokenHashKeyId, StorageTokenMigrationOutcome, StorageValidationError,
+    TaskMetadataDetails,
 };
 use uuid::Uuid;
 
@@ -142,6 +143,7 @@ impl MemoryHistoryValue {
 
 #[derive(Clone)]
 struct MemoryHistoryEntry {
+    logical_identity: StorageIdentityEvidence,
     id: HistoryRecordId,
     value: MemoryHistoryValue,
     operation: StorageHistoryOperation,
@@ -155,6 +157,7 @@ struct MemoryHistoryEntry {
 
 #[derive(Clone)]
 struct MemoryRestoreRecord {
+    logical_identity: StorageIdentityEvidence,
     job: StorageRestoreArtifactJob,
     validation_summary: serde_json::Value,
 }
@@ -235,6 +238,7 @@ impl MemoryHistoryEntry {
                 .actor(self.actor_id, self.actor_kind.clone())
                 .initiator_principal_id(self.initiator_principal_id)
                 .task_id(self.task_id)
+                .with_logical_identity(self.logical_identity.clone())
         })
         .map_err(invalid_contract_value)
     }
@@ -341,6 +345,7 @@ impl MemoryTokenRecord {
 
 #[derive(Clone)]
 struct MemoryState {
+    logical_identities: logical_identity::MemoryLogicalIdentities,
     generation: Arc<()>,
     schema_history: Vec<StorageBackupRow>,
     schema_revisions: BTreeMap<(i32, i64), StorageSchemaRevision>,
@@ -489,8 +494,12 @@ impl MemoryState {
             .schema_version(document.schema_version())
             .try_build()
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
-        self.index_task_event(&envelope)?;
-        let recorded = StorageRecordedEvent::new(envelope, before_revision, after_revision);
+        let identity = self
+            .logical_identities
+            .event(&envelope, before_revision, after_revision);
+        self.index_task_event(&envelope, &identity)?;
+        let recorded = StorageRecordedEvent::new(envelope, before_revision, after_revision)
+            .with_logical_identity(identity);
         let receipt = recorded.clone().into_audit_receipt();
         self.events.push(recorded);
         Ok(receipt)
@@ -586,7 +595,11 @@ impl MemoryState {
                 previous.valid_to = Some(now);
             }
         }
+        let logical_identity = self
+            .logical_identities
+            .history(&value, operation, Some(context));
         self.history.push(MemoryHistoryEntry {
+            logical_identity,
             id,
             value,
             operation,
@@ -705,7 +718,11 @@ impl MemoryState {
         Ok(())
     }
 
-    fn index_task_event(&mut self, envelope: &EventEnvelope) -> Result<(), StorageError> {
+    fn index_task_event(
+        &mut self,
+        envelope: &EventEnvelope,
+        identity: &StorageIdentityEvidence,
+    ) -> Result<(), StorageError> {
         if envelope.entity_type() != EntityType::Task {
             return Ok(());
         }
@@ -729,6 +746,7 @@ impl MemoryState {
                 .filter(|v| !v.is_null())
                 .cloned(),
         )
+        .logical_identity(identity.clone())
         .actor_principal_id(envelope.actor_user_id())
         .provenance(
             envelope
@@ -823,6 +841,7 @@ mod events;
 mod execution;
 mod identity;
 mod imports;
+mod logical_identity;
 mod object_filters;
 mod operational;
 mod queries;

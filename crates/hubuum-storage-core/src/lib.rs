@@ -38,12 +38,20 @@ mod identity_tokens;
 mod identity_users;
 mod import_workflow;
 mod inventory;
+mod logical_identity;
+pub use logical_identity::{
+    LogicalIdentityStorage, StorageCapturedIdentity, StorageIdentityEvidence,
+    StorageIdentityHistoryKind, StorageIdentityResourceKind, StorageIdentitySubject,
+    StorageIdentityTarget,
+};
 mod metrics;
 mod mutation;
 mod object_aggregate;
 mod operational;
 mod page;
 mod record;
+mod record_identity;
+pub use record_identity::StorageRecordIdentity;
 mod relation_lifecycle;
 mod relation_query;
 mod remote_target;
@@ -87,7 +95,8 @@ pub use backup_snapshot::{
     BackupSnapshotStorage, StorageBackupBudget, StorageBackupCaptureProgress,
     StorageBackupHistorySection, StorageBackupHistorySections, StorageBackupReplay,
     StorageBackupReplayBuilder, StorageBackupReplayRows, StorageBackupRow, StorageBackupSnapshot,
-    StorageBackupStateSection, StorageBackupStateSections,
+    StorageBackupStateSection, StorageBackupStateSections, StorageIdentityReplay,
+    StorageIdentityUpgrade,
 };
 pub use catalog::{CatalogStorage, StorageCatalogListQuery};
 pub use collection_authorization::{
@@ -296,10 +305,10 @@ pub use restore::{
     RestoreStorage, StorageRestoreArtifactJob, StorageRestoreArtifactSummary,
     StorageRestoreArtifactSummaryParts, StorageRestoreCompletion,
     StorageRestoreCoordinatorSnapshot, StorageRestoreDocumentMetadata, StorageRestoreDrainState,
-    StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreInitiatorParts,
-    StorageRestoreInstance, StorageRestoreJobStatus, StorageRestoreJobSummary,
-    StorageRestoreReplayApply, StorageRestoreStageArtifact, StorageRestoreStatus,
-    StorageRestoreTimestamps, StorageRestoreTimestampsParts,
+    StorageRestoreFailure, StorageRestoreIdentityContext, StorageRestoreInitiator,
+    StorageRestoreInitiatorParts, StorageRestoreInstance, StorageRestoreJobStatus,
+    StorageRestoreJobSummary, StorageRestoreReplayApply, StorageRestoreStageArtifact,
+    StorageRestoreStatus, StorageRestoreTimestamps, StorageRestoreTimestampsParts,
 };
 pub use task_execution::{
     StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageExportTaskArtifactBuilder,

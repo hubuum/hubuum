@@ -10,6 +10,7 @@ pub use impact::{
 };
 pub use repair::{StorageSchemaRepairReport, StorageSchemaRepairReportWrite};
 
+use crate::StorageIdentityEvidence;
 use async_trait::async_trait;
 use chrono::{DateTime, SubsecRound, Utc};
 use hubuum_domain::{
@@ -148,6 +149,7 @@ pub struct StorageSchemaRevision {
     created_by: Option<PrincipalId>,
     activated_at: Option<DateTime<Utc>>,
     activation_policy: Option<StorageSchemaActivationPolicy>,
+    logical_identity: Option<StorageIdentityEvidence>,
 }
 
 impl StorageSchemaRevision {
@@ -170,6 +172,7 @@ impl StorageSchemaRevision {
             created_by: Option<PrincipalId>,
             activated_at: Option<DateTime<Utc>>,
             activation_policy: Option<StorageSchemaActivationPolicy>,
+            logical_identity: Option<StorageIdentityEvidence>,
         }
         let raw: Snapshot = serde_json::from_value(value)
             .map_err(|_| StorageValidationError::invalid("Invalid schema revision snapshot"))?;
@@ -185,12 +188,18 @@ impl StorageSchemaRevision {
             created_by: raw.created_by,
             activated_at: None,
             activation_policy: None,
+            logical_identity: raw.logical_identity,
         }
         .restore_lifecycle(raw.status, raw.activated_at, raw.activation_policy)
     }
     #[must_use]
     pub fn snapshot(&self) -> Value {
-        serde_json::json!({"class_id":self.reference.class_id(),"revision":self.reference.revision(),"json_schema":self.policy.policy().json_schema(),"validate_schema":self.policy.policy().validates_schema(),"status":self.status,"created_at":self.created_at,"created_by":self.created_by,"activated_at":self.activated_at,"activation_policy":self.activation_policy})
+        let mut snapshot = serde_json::json!({"class_id":self.reference.class_id(),"revision":self.reference.revision(),"json_schema":self.policy.policy().json_schema(),"validate_schema":self.policy.policy().validates_schema(),"status":self.status,"created_at":self.created_at,"created_by":self.created_by,"activated_at":self.activated_at,"activation_policy":self.activation_policy});
+        if let Some(evidence) = &self.logical_identity {
+            snapshot["logical_identity"] =
+                serde_json::to_value(evidence).expect("identity evidence serializes");
+        }
+        snapshot
     }
     #[must_use]
     pub fn staged(
@@ -207,6 +216,7 @@ impl StorageSchemaRevision {
             created_by: context.actor_user_id(),
             activated_at: None,
             activation_policy: None,
+            logical_identity: None,
         }
     }
     pub fn restore_lifecycle(
@@ -233,6 +243,15 @@ impl StorageSchemaRevision {
     #[must_use]
     pub const fn reference(&self) -> SchemaReference {
         self.reference
+    }
+    #[must_use]
+    pub fn with_logical_identity(mut self, evidence: StorageIdentityEvidence) -> Self {
+        self.logical_identity = Some(evidence);
+        self
+    }
+    #[must_use]
+    pub fn logical_identity(&self) -> Option<&StorageIdentityEvidence> {
+        self.logical_identity.as_ref()
     }
     #[must_use]
     pub const fn policy(&self) -> &StorageValidatedSchemaPolicy {
@@ -383,6 +402,8 @@ impl StorageSchemaActivationResult {
 /// Evidence can only describe an inspected object revision; pending is a read projection.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StorageSchemaEvidence {
+    #[serde(skip_serializing)]
+    logical_identity: Option<StorageIdentityEvidence>,
     schema: SchemaReference,
     object_revision: ResourceRevision,
     valid: bool,
@@ -398,11 +419,21 @@ impl StorageSchemaEvidence {
         validated_at: DateTime<Utc>,
     ) -> Self {
         Self {
+            logical_identity: None,
             schema,
             object_revision,
             valid,
             validated_at: validated_at.trunc_subsecs(6),
         }
+    }
+    #[must_use]
+    pub fn with_logical_identity(mut self, identity: StorageIdentityEvidence) -> Self {
+        self.logical_identity = Some(identity);
+        self
+    }
+    #[must_use]
+    pub fn logical_identity(&self) -> Option<&StorageIdentityEvidence> {
+        self.logical_identity.as_ref()
     }
     #[must_use]
     pub const fn schema(&self) -> SchemaReference {

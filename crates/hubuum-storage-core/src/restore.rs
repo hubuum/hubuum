@@ -2,8 +2,9 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use hubuum_domain::{MaintenanceState, PrincipalId, RestoreJobId};
+use hubuum_domain::{LegacyIdentityCohort, MaintenanceState, PrincipalId, RestoreJobId};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{StorageError, StorageValidationError};
@@ -481,7 +482,59 @@ pub struct StorageRestoreArtifactJob {
     artifact: Option<crate::StorageRestoreArtifact>,
     capability_hash: String,
 }
+
+/// Stable identity namespace and boundary of one confirmed restore stage.
+/// Only a validated, confirmed stage can produce this value. It carries no
+/// execution authority; the adapter must still enforce its transaction fence.
+#[derive(Clone, Copy, Debug)]
+pub struct StorageRestoreIdentityContext {
+    job_id: RestoreJobId,
+    cohort: LegacyIdentityCohort,
+    confirmed_at: DateTime<Utc>,
+}
+
+impl StorageRestoreIdentityContext {
+    #[must_use]
+    pub const fn job_id(self) -> RestoreJobId {
+        self.job_id
+    }
+    #[must_use]
+    pub const fn cohort(self) -> LegacyIdentityCohort {
+        self.cohort
+    }
+    #[must_use]
+    pub const fn confirmed_at(self) -> DateTime<Utc> {
+        self.confirmed_at
+    }
+}
+
 impl StorageRestoreArtifactJob {
+    pub fn identity_context(
+        &self,
+    ) -> Result<StorageRestoreIdentityContext, StorageValidationError> {
+        if self.summary.status != StorageRestoreJobStatus::Confirmed {
+            return Err(StorageValidationError::invalid(
+                "Identity replay requires a confirmed restore stage",
+            ));
+        }
+        let confirmed_at = self.summary.timestamps.confirmed_at.ok_or_else(|| {
+            StorageValidationError::invalid("Confirmed restore stage has no boundary timestamp")
+        })?;
+        // The capability digest is already durable and unique to this stage.
+        // Domain separation derives an independent namespace without storing a
+        // second random value or exposing the capability itself in backup rows.
+        let mut digest = Sha256::new();
+        digest.update(b"hubuum.restore-identity-cohort.v1\0");
+        digest.update(self.capability_hash.as_bytes());
+        let mut bytes: [u8; 16] = digest.finalize()[..16].try_into().expect("digest prefix");
+        bytes[6] = (bytes[6] & 0x0f) | 0x80;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        Ok(StorageRestoreIdentityContext {
+            job_id: self.summary.id,
+            cohort: LegacyIdentityCohort::from_bytes(bytes).expect("derived RFC UUID"),
+            confirmed_at,
+        })
+    }
     pub fn summary(&self) -> &StorageRestoreJobSummary {
         &self.summary
     }
@@ -637,21 +690,32 @@ impl fmt::Debug for StorageRestoreDocumentMetadata {
 pub struct StorageRestoreReplayApply {
     job_id: RestoreJobId,
     metadata: StorageRestoreDocumentMetadata,
-    snapshot: crate::StorageBackupReplay,
+    snapshot: crate::StorageIdentityReplay,
     source_includes_history: bool,
 }
 impl StorageRestoreReplayApply {
     pub fn at_restore_boundary(
-        job_id: RestoreJobId,
+        context: StorageRestoreIdentityContext,
         metadata: StorageRestoreDocumentMetadata,
         snapshot: crate::StorageBackupReplay,
-        at: DateTime<Utc>,
     ) -> Result<Self, StorageError> {
         let source_includes_history = snapshot.includes_history();
+        let upgrade = match metadata.backup_version {
+            6..=10 => crate::StorageIdentityUpgrade::Legacy(context.cohort()),
+            11 => crate::StorageIdentityUpgrade::Native,
+            _ => {
+                return Err(StorageError::invalid_input(
+                    "Unsupported logical backup version",
+                ));
+            }
+        };
+        let snapshot = snapshot
+            .upgrade_logical_identities(upgrade)?
+            .at_restore_boundary(context)?;
         Ok(Self {
-            job_id,
+            job_id: context.job_id(),
             metadata,
-            snapshot: snapshot.at_restore_boundary(at)?,
+            snapshot,
             source_includes_history,
         })
     }
@@ -660,7 +724,7 @@ impl StorageRestoreReplayApply {
     ) -> (
         RestoreJobId,
         StorageRestoreDocumentMetadata,
-        crate::StorageBackupReplay,
+        crate::StorageIdentityReplay,
         bool,
     ) {
         (
@@ -1020,8 +1084,8 @@ mod tests {
         )
         .unwrap();
         let document = StorageRestoreReplayApply::at_restore_boundary(
-            RestoreJobId::new(1).unwrap(),
-            StorageRestoreDocumentMetadata::new(5, timestamp(), "secret-version"),
+            StorageRestoreIdentityContext { job_id: RestoreJobId::new(1).unwrap(), cohort: LegacyIdentityCohort::generate(), confirmed_at: timestamp() },
+            StorageRestoreDocumentMetadata::new(10, timestamp(), "secret-version"),
             crate::StorageBackupReplay::from_snapshot(
                 crate::StorageBackupSnapshot::try_new(
                     crate::backup_snapshot::with_test_schema_sections(
@@ -1032,7 +1096,7 @@ mod tests {
                                 let rows = if section == StorageBackupStateSection::Classes {
                                     vec![
                                 StorageBackupRow::try_from_value(
-                                    serde_json::json!({"id": 1, "revision": 7, "secret-row": true}),
+                                    serde_json::json!({"id": 1, "revision": 7, "secret-row": true, "created_at": "2026-01-01T00:00:00Z"}),
                                 )
                                 .expect("object backup row"),
                             ]
@@ -1049,7 +1113,6 @@ mod tests {
                 crate::StorageBackupBudget::new(16 * 1024 * 1024, 10000).unwrap(),
             )
             .unwrap(),
-            timestamp(),
         )
         .unwrap();
 

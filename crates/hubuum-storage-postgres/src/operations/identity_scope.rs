@@ -1,3 +1,4 @@
+use diesel::SelectableHelper;
 use std::collections::{HashMap, HashSet};
 
 use crate::schema::identity_scopes;
@@ -107,6 +108,7 @@ pub async fn ensure_identity_scope_on_connection(
         .on_conflict(name)
         .do_update()
         .set(identity_scopes::provider_kind.eq(provider))
+        .returning(IdentityScopeRow::as_select())
         .get_result::<IdentityScopeRow>(connection)
         .await
         .optional()?;
@@ -114,6 +116,7 @@ pub async fn ensure_identity_scope_on_connection(
         Some(scope) => scope.try_into(),
         None => scopes
             .filter(name.eq(scope_name))
+            .select(IdentityScopeRow::as_select())
             .first::<IdentityScopeRow>(connection)
             .await
             .map_err(PostgresStorageError::from)?

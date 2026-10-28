@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 
 use chrono::{Duration, NaiveDate};
+use hubuum_domain::{IdentityReference, ResourceIdentity, VersionIdentity};
 #[cfg(feature = "embedded-migrations")]
 use hubuum_storage_core::StorageBackupBudget;
-use hubuum_storage_core::StorageBackupSnapshot;
+use hubuum_storage_core::{StorageBackupSnapshot, StorageIdentityEvidence, StorageIdentitySubject};
 use rstest::rstest;
 use serde_json::json;
 
@@ -56,6 +57,34 @@ fn backup_instant() -> chrono::DateTime<chrono::Utc> {
         .and_utc()
 }
 
+fn resource_identity() -> StorageIdentityEvidence {
+    StorageIdentityEvidence::try_new(
+        Some(StorageIdentitySubject::Resource {
+            identity: IdentityReference::Known {
+                identity: ResourceIdentity::generate(),
+            },
+            version: VersionIdentity::generate(),
+        }),
+        BTreeMap::new(),
+    )
+    .unwrap()
+}
+
+#[cfg(feature = "embedded-migrations")]
+fn audit_row(id: i32, entity_type: &str, action: &str) -> StorageBackupRow {
+    let event_id = hubuum_events_core::EventId::from(uuid::Uuid::new_v4());
+    let evidence = StorageIdentityEvidence::try_new(
+        Some(StorageIdentitySubject::Event { identity: event_id }),
+        BTreeMap::new(),
+    )
+    .unwrap();
+    StorageBackupRow::try_from_value(json!({
+        "id": id, "event_id": event_id, "entity_type": entity_type, "action": action,
+        "logical_identity": evidence,
+    }))
+    .unwrap()
+}
+
 fn minimally_valid_document() -> BackupDocument {
     let mut sections = StorageBackupStateSection::ALL
         .iter()
@@ -69,6 +98,7 @@ fn minimally_valid_document() -> BackupDocument {
             StorageBackupRow::try_from_value(json!({
                 "id": 1,
                 "name": "local",
+                "logical_identity": resource_identity(),
                 "provider_kind": "local",
                 "created_at": "2026-07-16T00:00:00Z",
                 "updated_at": "2026-07-16T00:00:00Z",
@@ -83,6 +113,7 @@ fn minimally_valid_document() -> BackupDocument {
             StorageBackupRow::try_from_value(json!({
                 "id": 1,
                 "name": "root",
+                "logical_identity": resource_identity(),
                 "parent_collection_id": null,
                 "created_at": "2026-07-16T00:00:00Z",
                 "updated_at": "2026-07-16T00:00:00Z",
@@ -133,6 +164,7 @@ fn offline_backup_verification_returns_only_sanitized_artifact_evidence() {
         .unwrap()[0] = StorageBackupRow::try_from_value(json!({
         "id": 1,
         "name": "verification-canary",
+        "logical_identity": resource_identity(),
         "parent_collection_id": null,
         "created_at": "2026-07-16T00:00:00Z",
         "updated_at": "2026-07-16T00:00:00Z",
@@ -169,6 +201,7 @@ fn offline_backup_verification_rejects_manifest_count_drift() {
 #[case::seven(7)]
 #[case::eight(8)]
 #[case::nine(9)]
+#[case::ten(10)]
 #[case::current(CURRENT_BACKUP_VERSION)]
 fn offline_backup_verification_accepts_supported_versions(#[case] version: i32) {
     let mut document = minimally_valid_document();
@@ -356,12 +389,7 @@ fn streaming_comparison_requires_exactly_one_success_provenance_event(
         .get_mut(&StorageBackupHistorySection::AuditEvents)
         .unwrap();
     for id in 1..=count {
-        events.push(
-            StorageBackupRow::try_from_value(
-                json!({"id":id,"entity_type":entity_type,"action":action}),
-            )
-            .unwrap(),
-        );
+        events.push(audit_row(id, entity_type, action));
     }
     assert_eq!(compare_backups(source, restored).is_ok(), accepted);
 }
@@ -375,17 +403,12 @@ fn streaming_comparison_rejects_retained_history_drift() {
     history
         .get_mut(&StorageBackupHistorySection::AuditEvents)
         .unwrap()
-        .push(
-            StorageBackupRow::try_from_value(
-                json!({"id":1,"entity_type":"restore","action":"succeeded"}),
-            )
-            .unwrap(),
-        );
+        .push(audit_row(1, "restore", "succeeded"));
     let rows = history
         .get_mut(&StorageBackupHistorySection::CollectionHistory)
         .unwrap();
     let mut row = rows[0].clone().into_value();
-    row["task_id"] = json!(1);
+    row["origin"] = json!("changed historical provenance");
     rows[0] = StorageBackupRow::try_from_value(row).unwrap();
     let error = compare_backups(source, restored).unwrap_err();
     assert!(error.to_string().contains("collection_history"), "{error}");

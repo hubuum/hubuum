@@ -37,12 +37,22 @@ fi
 UNIQUE_SUFFIX="$(date +%s)_$$_${RANDOM}${RANDOM}"
 TEST_DB_NAME="${TEST_DB_PREFIX}${UNIQUE_SUFFIX}"
 SINGLE_TEST_DB_NAME="${TEST_DB_NAME}_single"
+RESTORE_TEST_DB_NAME="${TEST_DB_NAME}_restore"
 OWNER_ROLE="hubuum_test_owner_${UNIQUE_SUFFIX}"
 MIGRATOR_ROLE="hubuum_test_migrator_${UNIQUE_SUFFIX}"
 RUNTIME_ROLE="hubuum_test_runtime_${UNIQUE_SUFFIX}"
-ADMIN_TEST_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$TEST_DB_NAME$SSL_MODE"
 
 cleanup() {
+    if [ -n "${RESTORE_TEST_DB_NAME:-}" ]; then
+        PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$RESTORE_TEST_DB_NAME' AND pid <> pg_backend_pid();" \
+            > /dev/null 2>&1 || true
+        PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "DROP DATABASE IF EXISTS $RESTORE_TEST_DB_NAME;" \
+            > /dev/null 2>&1 || true
+    fi
     if [ -n "${SINGLE_TEST_DB_NAME:-}" ]; then
         PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" \
             -v ON_ERROR_STOP=1 \
@@ -125,14 +135,21 @@ PGOPTIONS="-c role=$OWNER_ROLE" diesel migration run \
     --database-url "$HUBUUM_MIGRATION_DATABASE_URL" \
     --locked-schema
 
-# Apply the same generated manifest used by production migration tooling.
-ROLE_SETUP_SQL="$(cargo run --quiet --bin hubuum-admin -- \
-    --database-role-setup-sql \
-    --database-owner-role "$OWNER_ROLE" \
-    --database-migrator-role "$MIGRATOR_ROLE" \
-    --database-runtime-role "$RUNTIME_ROLE")"
-PGPASSWORD=$DB_PASSWORD psql "$ADMIN_TEST_URL" \
-    -v ON_ERROR_STOP=1 -c "$ROLE_SETUP_SQL" > /dev/null
+# Run production role reconciliation and resumable post-migration backfills.
+# Diesel above still verifies the committed schema under --locked-schema.
+cargo run --quiet --features embedded-migrations --bin hubuum-admin -- \
+    --migrate > /dev/null
+
+# Destructive recovery contracts own a separate database. Their backup size and
+# execution time must not depend on retained history from unrelated test suites.
+PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
+    -c "CREATE DATABASE $RESTORE_TEST_DB_NAME OWNER $OWNER_ROLE;" > /dev/null
+export HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL="postgres://$MIGRATOR_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$RESTORE_TEST_DB_NAME$SSL_MODE"
+export HUBUUM_RESTORE_TEST_DATABASE_URL="postgres://$RUNTIME_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$RESTORE_TEST_DB_NAME$SSL_MODE"
+HUBUUM_DATABASE_URL="$HUBUUM_RESTORE_TEST_DATABASE_URL" \
+    HUBUUM_MIGRATION_DATABASE_URL="$HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL" \
+    cargo run --quiet --features embedded-migrations --bin hubuum-admin -- \
+        --migrate > /dev/null
 
 # Run adapter-native tests before the application suite while the isolated,
 # migrated database is available.

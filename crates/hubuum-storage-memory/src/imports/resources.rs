@@ -368,7 +368,7 @@ impl MemoryStorage {
             )),
             StorageComputedFieldProvenance::new(Some(actor_id), Some(actor_id)),
         );
-        state.computed_fields.insert(id.id(), definition);
+        state.store_computed_field(id.id(), definition);
         if visibility == StorageComputedFieldVisibility::Shared {
             state.record_computed_history(class_id)?;
         }

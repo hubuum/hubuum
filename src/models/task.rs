@@ -2,13 +2,12 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
+use hubuum_storage_core::StorageIdentityEvidence;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use utoipa::{PartialSchema, ToSchema};
 
 use crate::errors::ApiError;
-use crate::events::{
-    Event, MutationProvenance, PrincipalNames, Provenance, StoredProvenance, TraceLink,
-};
+use crate::events::{Event, MutationProvenance, Provenance, StoredProvenance, TraceLink};
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     BackupOutputLookup, REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_option,
@@ -262,6 +261,7 @@ impl TaskRecord {
 
 #[derive(Clone)]
 pub struct TaskEventRecord {
+    pub(crate) logical_identity: Option<StorageIdentityEvidence>,
     pub id: i64,
     pub task_id: i32,
     pub event_type: String,
@@ -1306,20 +1306,11 @@ impl TaskRecord {
 
 impl From<TaskEventRecord> for TaskEventResponse {
     fn from(value: TaskEventRecord) -> Self {
-        Self::from_record_with_names(value, &PrincipalNames::default())
-    }
-}
-
-impl TaskEventResponse {
-    pub(crate) fn from_record_with_names(
-        value: TaskEventRecord,
-        principal_names: &PrincipalNames,
-    ) -> Self {
         let provenance = StoredProvenance::from_actor_kind(Some(&value.actor_kind))
             .with_actor_user_id(value.actor_user_id)
             .with_initiator_user_id(value.initiator_user_id)
             .with_task_id(value.provenance_task_id)
-            .resolve(principal_names);
+            .without_names();
         Self {
             id: value.id,
             task_id: value.task_id,
@@ -1347,6 +1338,7 @@ impl TryFrom<Event> for TaskEventRecord {
         };
 
         Ok(Self {
+            logical_identity: None,
             id: value.id,
             task_id,
             event_type: value.action,

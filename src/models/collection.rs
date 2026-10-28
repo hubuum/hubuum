@@ -1,5 +1,6 @@
 use crate::models::token_scope::TokenScope;
 use hubuum_domain::{CollectionId, GroupId};
+use hubuum_storage_core::StorageIdentityEvidence;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -582,6 +583,9 @@ where
 
 #[derive(serde::Serialize, Clone, Debug, ToSchema)]
 pub struct CollectionHistory {
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub(crate) logical_identity: Option<StorageIdentityEvidence>,
     pub id: i32,
     pub name: String,
     pub description: String,

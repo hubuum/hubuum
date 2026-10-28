@@ -2162,14 +2162,14 @@ dependencies = [
 
 [[package]]
 name = "hubuum-budget"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "rstest",
 ]
 
 [[package]]
 name = "hubuum-computed-fields"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "bigdecimal",
  "rstest",
@@ -2180,7 +2180,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-domain"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "bigdecimal",
  "chrono",
@@ -2193,6 +2193,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "utoipa",
+ "uuid",
 ]
 
 [[package]]
@@ -2283,7 +2284,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-events-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "hubuum-domain",
@@ -2310,7 +2311,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-query"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "base64 0.23.1",
  "bigdecimal",
@@ -2325,7 +2326,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-regex"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "regex-syntax",
  "rstest",
@@ -2362,7 +2363,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-schema-diagnostics"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "jsonschema 0.59.0",
  "rstest",
@@ -2383,17 +2384,18 @@ dependencies = [
 
 [[package]]
 name = "hubuum-storage-conformance"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "hubuum-domain",
  "hubuum-events-core",
+ "hubuum-query",
  "hubuum-storage-core",
 ]
 
 [[package]]
 name = "hubuum-storage-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -2474,7 +2476,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-task-core"
-version = "0.6.0"
+version = "0.7.0"
 
 [[package]]
 name = "hubuum-templates"

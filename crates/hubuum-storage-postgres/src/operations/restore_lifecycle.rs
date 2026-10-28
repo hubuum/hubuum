@@ -10,11 +10,11 @@ use hubuum_domain::{MaintenanceState, PrincipalId, RestoreJobId};
 use hubuum_events_core::{Action, ActorKind, AuditDocument, EntityType, NewEvent};
 use hubuum_storage_core::{
     StorageBackupHistorySection, StorageBackupReplay, StorageBackupStateSection, StorageCallSite,
-    StorageRestoreArtifactJob, StorageRestoreArtifactSummary, StorageRestoreCompletion,
-    StorageRestoreCoordinatorSnapshot, StorageRestoreDrainState, StorageRestoreFailure,
-    StorageRestoreInitiator, StorageRestoreInstance, StorageRestoreJobStatus,
-    StorageRestoreJobSummary, StorageRestoreReplayApply, StorageRestoreStageArtifact,
-    StorageRestoreStatus, StorageRestoreTimestamps,
+    StorageIdentityReplay, StorageRestoreArtifactJob, StorageRestoreArtifactSummary,
+    StorageRestoreCompletion, StorageRestoreCoordinatorSnapshot, StorageRestoreDrainState,
+    StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreInstance,
+    StorageRestoreJobStatus, StorageRestoreJobSummary, StorageRestoreReplayApply,
+    StorageRestoreStageArtifact, StorageRestoreStatus, StorageRestoreTimestamps,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -563,7 +563,7 @@ async fn apply_restore_replay_parts(
     runtime: &PostgresRuntime,
     job_id: i64,
     metadata: (i32, DateTime<Utc>, String),
-    snapshot: StorageBackupReplay,
+    snapshot: StorageIdentityReplay,
     includes_history: bool,
 ) -> Result<StorageRestoreCompletion, PostgresStorageError> {
     let (backup_version, backup_created_at, backup_source_version) = metadata;
@@ -611,8 +611,12 @@ async fn apply_restore_replay_parts(
                 let started_at = Utc::now().naive_utc();
                 diesel::sql_query("UPDATE credential_approvals SET invalidated_at=timezone('UTC', clock_timestamp()) WHERE consumed_at IS NULL AND invalidated_at IS NULL").execute(connection).await?;
                 enable_restore_session_settings(connection).await?;
-                replace_backend_replay(connection, snapshot)
+                replace_backend_replay(connection, snapshot.into_replay())
                     .await?;
+                // Rebuilt work is new data, with new task identities. Only the
+                // validated replay itself is allowed to supply retained UUIDs.
+                diesel::sql_query("SELECT set_config('hubuum.restore_identities', 'off', true)")
+                    .execute(connection).await?;
                 enqueue_restored_computed_rebuilds_on_connection(connection).await?;
                 super::schema_evolution::enqueue_restored_schema_work_on(connection).await?;
 
@@ -669,6 +673,7 @@ async fn enable_restore_session_settings(
         "hubuum.restore_history",
         "hubuum.restore_events",
         "hubuum.restore_revisions",
+        "hubuum.restore_identities",
     ] {
         diesel::sql_query("SELECT set_config($1, 'on', true)")
             .bind::<diesel::sql_types::Text, _>(setting)
@@ -887,11 +892,11 @@ async fn finish_restore(
         .await?;
     let completed = diesel::sql_query(
         "INSERT INTO restore_success_receipts (\
-             id, requested_by, requested_by_identity_scope, requested_by_name, \
+             id, requested_by, requested_by_identity_scope, requested_by_name, logical_identity, \
              byte_size, sha256, capability_hash, validation_summary, expires_at, \
              confirmed_at, finished_at, created_at, updated_at\
          ) \
-         SELECT id, requested_by, requested_by_identity_scope, requested_by_name, \
+         SELECT id, requested_by, requested_by_identity_scope, requested_by_name, logical_identity, \
                 byte_size, sha256, capability_hash, validation_summary, expires_at, \
                 confirmed_at, $2, created_at, $2 \
          FROM restore_jobs \

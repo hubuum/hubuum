@@ -14,7 +14,7 @@ use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
 
 use super::principal::Principal;
 
-pub const CURRENT_BACKUP_VERSION: i32 = 10;
+pub const CURRENT_BACKUP_VERSION: i32 = 11;
 pub(crate) const BACKUP_MANIFEST_EXCLUSIONS: &[&str] = &[
     "backup_task_outputs (backup artifacts never recursively contain prior backups)",
     "authentication tokens and token scopes (credentials must be reissued after restore)",
@@ -239,7 +239,7 @@ impl BackupDocument {
                 "Backup version 9 requires query_usage_declarations".into(),
             ));
         }
-        if ![6, 7, 8, 9, CURRENT_BACKUP_VERSION].contains(&self.backup_version) {
+        if ![6, 7, 8, 9, 10, CURRENT_BACKUP_VERSION].contains(&self.backup_version) {
             return Err(ApiError::BadRequest(format!(
                 "Unsupported backup version '{}'; expected 6, 7, 8, 9 or {}",
                 self.backup_version, CURRENT_BACKUP_VERSION
@@ -372,6 +372,12 @@ pub struct RestoreValidationSummary {
     pub source_version: String,
     pub includes_history: bool,
     pub total_items: i64,
+    /// Legacy formats are upgraded in an isolated cohort before replacement.
+    #[serde(default)]
+    pub identity_quarantine: bool,
+    /// References whose correspondence cannot be established from the backup.
+    #[serde(default)]
+    pub unresolved_identity_references: u64,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -526,6 +532,8 @@ mod sensitive_debug_tests {
                 source_version: "test".to_string(),
                 includes_history: true,
                 total_items: 1,
+                identity_quarantine: false,
+                unresolved_identity_references: 0,
             },
             restore_capability: Some("restore-capability-secret".to_string()),
         };

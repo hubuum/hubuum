@@ -11,6 +11,7 @@ pub mod common {
     pub use crate::mutation::*;
     pub use crate::page::*;
     pub use crate::record::*;
+    pub use crate::record_identity::*;
     pub use crate::{StorageError, StorageErrorKind};
 }
 
@@ -52,6 +53,7 @@ pub mod queries {
     pub use crate::computed_objects::*;
     pub use crate::history::*;
     pub use crate::inventory::*;
+    pub use crate::logical_identity::*;
     pub use crate::object_aggregate::*;
     pub use crate::relation_query::*;
     pub use crate::unified_search::*;
