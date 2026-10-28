@@ -211,6 +211,62 @@ async fn backfill_preserves_legacy_graph_rows_and_modification_times() {
     }).await.unwrap();
 }
 
+#[rstest]
+#[case::export(
+    "export",
+    "export_task_outputs",
+    "INSERT INTO public.export_task_outputs(task_id,content_type,text_output,meta_json,warnings_json,output_expires_at) VALUES ($1,'text/plain','retained','{}','[]','2030-01-01')"
+)]
+#[case::backup(
+    "backup",
+    "backup_task_outputs",
+    "INSERT INTO public.backup_task_outputs(task_id,document,byte_size,sha256,output_expires_at) VALUES ($1,'retained',8,repeat('0',64),'2030-01-01')"
+)]
+#[case::schema_profile(
+    "schema_profiling",
+    "schema_profile_outputs",
+    "INSERT INTO public.schema_profile_outputs(task_id,report,output_expires_at) VALUES ($1,'{}','2030-01-01')"
+)]
+#[tokio::test]
+async fn backfill_preserves_retained_task_output_data(
+    #[case] kind: &str,
+    #[case] table: &str,
+    #[case] insert_output: &str,
+) {
+    let _serial = BACKFILL_FIXTURES.lock().await;
+    let pool = if database_role_tests_enabled() {
+        integration_test_migration_pool(1)
+    } else {
+        integration_test_pool(1)
+    };
+    with_transaction(&pool, async |connection| -> Result<(), PostgresStorageError> {
+        assume_owner(connection).await?;
+        connection.batch_execute(&format!("SAVEPOINT legacy_output;
+            UPDATE hubuum_control.identity_backfill SET completed=FALSE;
+            ALTER TABLE public.tasks DISABLE TRIGGER USER;
+            ALTER TABLE public.{table} DISABLE TRIGGER USER;")).await?;
+        let task = diesel::sql_query("INSERT INTO public.tasks(kind,status,request_payload,updated_at)
+            VALUES ($1,'succeeded','{}','2001-01-01') RETURNING id AS count")
+            .bind::<Text,_>(kind).get_result::<Count>(connection).await?.count;
+        diesel::sql_query(insert_output).bind::<Integer,_>(task).execute(connection).await?;
+        connection.batch_execute(&format!("ALTER TABLE public.tasks ENABLE TRIGGER USER;
+            ALTER TABLE public.{table} ENABLE TRIGGER USER;")).await?;
+        let snapshot = format!("SELECT jsonb_build_array(to_jsonb(t)-'logical_identity',to_jsonb(o)-'logical_identity') AS document
+            FROM public.tasks t JOIN public.{table} o ON o.task_id=t.id WHERE t.id=$1");
+        let before = diesel::sql_query(&snapshot).bind::<Integer,_>(task).get_result::<RowDocument>(connection).await?.document;
+        loop {
+            let changed = diesel::sql_query("SELECT public.hubuum_backfill_logical_identities(1000) AS count")
+                .get_result::<Count>(connection).await?.count;
+            if changed == 0 { break; }
+        }
+        connection.batch_execute("SELECT public.hubuum_validate_logical_identities()").await?;
+        let after = diesel::sql_query(&snapshot).bind::<Integer,_>(task).get_result::<RowDocument>(connection).await?.document;
+        assert_eq!(after,before,"identity initialization must preserve retained task output data");
+        connection.batch_execute("ROLLBACK TO SAVEPOINT legacy_output").await?;
+        Ok(())
+    }).await.unwrap();
+}
+
 /// Race the first update of an unassigned incarnation against bounded backfill.
 /// Both paths must use the same uniqueness-enforced legacy mapping.
 #[tokio::test]

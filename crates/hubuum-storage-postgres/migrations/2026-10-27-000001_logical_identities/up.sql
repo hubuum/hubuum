@@ -645,6 +645,20 @@ CREATE OR REPLACE TRIGGER check_object_relation
 BEFORE INSERT OR UPDATE OF from_hubuum_object_id,to_hubuum_object_id,class_relation_id ON public.hubuumobject_relation
 FOR EACH ROW EXECUTE FUNCTION public.validate_object_relation();
 
+-- Retained task summaries also depend only on their source fields.
+CREATE OR REPLACE TRIGGER retain_export_discovery
+AFTER INSERT OR UPDATE OF task_id,output_expires_at,warning_count,truncated ON public.export_task_outputs
+FOR EACH ROW EXECUTE FUNCTION public.retain_task_output_discovery();
+CREATE OR REPLACE TRIGGER retain_backup_discovery
+AFTER INSERT OR UPDATE OF task_id,output_expires_at ON public.backup_task_outputs
+FOR EACH ROW EXECUTE FUNCTION public.retain_task_output_discovery();
+CREATE OR REPLACE TRIGGER retain_schema_profile_output
+AFTER INSERT OR UPDATE OF task_id,output_expires_at ON public.schema_profile_outputs
+FOR EACH ROW EXECUTE FUNCTION public.retain_schema_profile_output();
+CREATE OR REPLACE TRIGGER retain_task_terminal_discovery
+BEFORE INSERT OR UPDATE OF kind,status,discovery_metadata,failed_items ON public.tasks
+FOR EACH ROW EXECUTE FUNCTION public.retain_task_terminal_discovery();
+
 -- Identity initialization must not change the recorded modification time.
 CREATE OR REPLACE FUNCTION public.update_modified_column() RETURNS TRIGGER
 LANGUAGE plpgsql SET search_path = pg_catalog AS $function$
@@ -658,6 +672,18 @@ BEGIN
 END
 $function$;
 
+CREATE OR REPLACE FUNCTION public.update_task_modified_column() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path = pg_catalog AS $function$
+BEGIN
+    IF current_setting('hubuum.restore_identities', TRUE) IS NOT DISTINCT FROM 'on'
+        AND pg_has_role(session_user, (SELECT relowner FROM pg_class WHERE oid=TG_RELID), 'MEMBER') THEN
+        RETURN NEW;
+    END IF;
+    NEW.updated_at := clock_timestamp() AT TIME ZONE 'UTC';
+    RETURN NEW;
+END
+$function$;
+
 CREATE FUNCTION hubuum_backfill_logical_identities(batch_size INTEGER)
 RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $function$
 DECLARE layout RECORD; candidate RECORD; changed INTEGER := 0;
@@ -666,6 +692,7 @@ DECLARE layout RECORD; candidate RECORD; changed INTEGER := 0;
     previous_events TEXT := current_setting('hubuum.restore_events', TRUE);
     previous_identities TEXT := current_setting('hubuum.restore_identities', TRUE);
     previous_seqscan TEXT := current_setting('enable_seqscan');
+    previous_timestamps TEXT := current_setting('hubuum.preserve_imported_timestamps', TRUE);
 BEGIN
     IF NOT pg_has_role(session_user, current_user, 'MEMBER') THEN
         RAISE EXCEPTION 'Logical identity backfill requires schema-owner authority' USING ERRCODE = '42501';
@@ -676,7 +703,8 @@ BEGIN
     IF (SELECT completed FROM hubuum_control.identity_backfill WHERE singleton) THEN RETURN 0; END IF;
     PERFORM set_config('hubuum.restore_history', 'on', TRUE),
         set_config('hubuum.restore_revisions', 'on', TRUE), set_config('hubuum.restore_events', 'on', TRUE),
-        set_config('hubuum.restore_identities', 'on', TRUE);
+        set_config('hubuum.restore_identities', 'on', TRUE),
+        set_config('hubuum.preserve_imported_timestamps', 'on', TRUE);
     -- Statistics describe the pre-upgrade population until autovacuum catches
     -- up. Prefer the pending-row index even before its shrinking size is known.
     PERFORM set_config('enable_seqscan', 'off', TRUE);
@@ -694,7 +722,8 @@ BEGIN
         set_config('hubuum.restore_revisions', COALESCE(previous_revisions, ''), TRUE),
         set_config('hubuum.restore_events', COALESCE(previous_events, ''), TRUE),
         set_config('hubuum.restore_identities', COALESCE(previous_identities, ''), TRUE),
-        set_config('enable_seqscan', previous_seqscan, TRUE);
+        set_config('enable_seqscan', previous_seqscan, TRUE),
+        set_config('hubuum.preserve_imported_timestamps', COALESCE(previous_timestamps, ''), TRUE);
     RETURN changed;
 END
 $function$;

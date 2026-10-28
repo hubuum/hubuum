@@ -41,3 +41,20 @@ BEGIN
 END
 $function$;
 ALTER FUNCTION public.update_modified_column() RESET search_path;
+
+CREATE OR REPLACE TRIGGER retain_export_discovery AFTER INSERT OR UPDATE ON public.export_task_outputs
+FOR EACH ROW EXECUTE FUNCTION public.retain_task_output_discovery();
+CREATE OR REPLACE TRIGGER retain_backup_discovery AFTER INSERT OR UPDATE ON public.backup_task_outputs
+FOR EACH ROW EXECUTE FUNCTION public.retain_task_output_discovery();
+CREATE OR REPLACE TRIGGER retain_schema_profile_output AFTER INSERT OR UPDATE ON public.schema_profile_outputs
+FOR EACH ROW EXECUTE FUNCTION public.retain_schema_profile_output();
+CREATE OR REPLACE TRIGGER retain_task_terminal_discovery BEFORE INSERT OR UPDATE ON public.tasks
+FOR EACH ROW EXECUTE FUNCTION public.retain_task_terminal_discovery();
+CREATE OR REPLACE FUNCTION public.update_task_modified_column() RETURNS TRIGGER
+LANGUAGE plpgsql AS $function$
+BEGIN
+    NEW.updated_at := clock_timestamp() AT TIME ZONE 'UTC';
+    RETURN NEW;
+END
+$function$;
+ALTER FUNCTION public.update_task_modified_column() RESET search_path;
