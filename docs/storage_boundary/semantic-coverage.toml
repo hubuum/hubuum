@@ -69,6 +69,7 @@ event_coordination = [
 ]
 retention = ["TokenRetentionStorage::purge_expired_tokens", "AuthenticationStorage::purge_credential_sources", "AuthenticationStorage::purge_auth_sessions"]
 maintenance = [
+    "DeletionControlStorage::commit_deletion_control",
     "TaskCapacityStorage::initialize_task_policy",
     "TaskCapacityStorage::replace_task_policy",
     "QueryUsageStorage::set_query_observation_control",
@@ -281,6 +282,13 @@ source = "crates/hubuum-storage-core/src/operational.rs"
 methods = ["get_readiness_snapshot", "get_maintenance_state", "get_task_queue_snapshot", "load_export_template_health", "load_export_templates_for_audit"]
 effects = { point_read = ["get_readiness_snapshot", "get_maintenance_state", "get_task_queue_snapshot"], complete_read = ["load_export_template_health", "load_export_templates_for_audit"] }
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_operational_state"]
+
+[traits.DeletionControlStorage]
+source = "crates/hubuum-storage-core/src/deletion_control.rs"
+methods = ["capture_deletion_control", "commit_deletion_control"]
+effects = { point_read = ["capture_deletion_control"], workflow_mutation = ["commit_deletion_control"] }
+shared_scenarios = ["crates/hubuum-storage-memory/src/deletion_control.rs::competing_control_changes_cannot_both_commit"]
+native_scenarios = ["crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_restore_gate_rejects_retained_decisions", "crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_authority_has_no_cascading_application_references", "crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_authority_compare_and_swap_rejects_old_snapshot"]
 
 [traits.TokenRetentionStorage]
 source = "crates/hubuum-storage-core/src/operational.rs"

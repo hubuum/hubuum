@@ -69,6 +69,28 @@ fn parse_query_usage_class(value: &str) -> Result<ClassId, String> {
     long_about = None
 )]
 struct AdminCli {
+    /// Publish independent deletion recovery evidence (does not execute deletion)
+    #[arg(
+        long,
+        value_name = "DIRECTORY",
+        requires = "control_checkpoint_key",
+        conflicts_with_all = ["verify_control_recovery", "backup", "restore", "restore_executor", "verify_backup", "reconcile_query_usage", "database_ready", "reset_password", "audit_templates", "export_template_health", "token_key_status", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges"]
+    )]
+    #[cfg_attr(feature = "embedded-migrations", arg(conflicts_with_all = ["migrate", "migration_mode"]))]
+    control_checkpoint: Option<PathBuf>,
+
+    /// Verify that local control covers the latest independently stored checkpoint
+    #[arg(long, value_name = "DIRECTORY", requires = "control_checkpoint_key", conflicts_with_all = ["control_checkpoint", "backup", "restore", "restore_executor", "verify_backup", "reconcile_query_usage", "database_ready", "reset_password", "audit_templates", "export_template_health", "token_key_status", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges"])]
+    #[cfg_attr(feature = "embedded-migrations", arg(conflicts_with_all = ["migrate", "migration_mode"]))]
+    verify_control_recovery: Option<PathBuf>,
+
+    /// Owner-only file containing exactly 32 random signing-key bytes
+    #[arg(long, value_name = "PATH", required_if_eq_any = [("initialize_control_checkpoint", "true")])]
+    control_checkpoint_key: Option<PathBuf>,
+
+    /// Bootstrap an empty independent repository from empty deletion authority
+    #[arg(long, requires = "control_checkpoint")]
+    initialize_control_checkpoint: bool,
     #[command(flatten)]
     schema_validation: SchemaValidationOptions,
     #[command(flatten)]
@@ -305,7 +327,12 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let database_url_override = CommandLineDatabaseUrl::from_matches(&matches, "database_url");
     let migration_url_override =
         CommandLineDatabaseUrl::from_matches(&matches, "migration_database_url");
-    init_logging(&admin_cli.log_level, admin_cli.reconcile_query_usage);
+    init_logging(
+        &admin_cli.log_level,
+        admin_cli.reconcile_query_usage
+            || admin_cli.control_checkpoint.is_some()
+            || admin_cli.verify_control_recovery.is_some(),
+    );
 
     if let Some(path) = admin_cli.verify_backup.as_deref() {
         verify_backup_file(BackupVerificationOptions {
@@ -363,6 +390,8 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
         ));
     }
     let privileged_database_operation = migration_requested
+        || admin_cli.control_checkpoint.is_some()
+        || admin_cli.verify_control_recovery.is_some()
         || admin_cli.restore.is_some()
         || admin_cli.restore_executor
         || admin_cli.reconcile_query_usage;
@@ -508,6 +537,40 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     }
 
     let storage = initialize_storage(&storage_settings)?;
+
+    if admin_cli.control_checkpoint.is_some() || admin_cli.verify_control_recovery.is_some() {
+        let key = admin_cli.control_checkpoint_key.as_deref().ok_or_else(|| {
+            ApiError::BadRequest(
+                "--control-checkpoint-key is required for independent recovery evidence".into(),
+            )
+        })?;
+        let report = if let Some(directory) = admin_cli.control_checkpoint.as_deref() {
+            crate::services::deletion_recovery::checkpoint(
+                &storage,
+                directory,
+                key,
+                admin_cli.initialize_control_checkpoint,
+            )
+            .await?
+        } else {
+            crate::services::deletion_recovery::verify(
+                &storage,
+                admin_cli
+                    .verify_control_recovery
+                    .as_deref()
+                    .expect("selected verification"),
+                key,
+            )
+            .await?
+        };
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|_| ApiError::InternalServerError(
+                "Cannot encode control recovery report".into()
+            ))?
+        );
+        return Ok(());
+    }
 
     if admin_cli.restore_executor {
         if !matches!(admin_cli.storage_backend, StorageBackendKind::Postgres) {

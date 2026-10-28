@@ -13,6 +13,8 @@ pub use auth_sessions::*;
 mod authorization;
 mod authorization_resources;
 mod backend;
+mod deletion_control;
+pub use deletion_control::*;
 mod backup_snapshot;
 pub mod capabilities;
 mod catalog;

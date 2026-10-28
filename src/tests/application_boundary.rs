@@ -193,6 +193,7 @@ fn scenario_asserts_an_effect(body: &str) -> bool {
 
 #[cfg(test)]
 const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
+    "DeletionControlStorage",
     "CollectionStorage",
     "ClassStorage",
     "ObjectStorage",

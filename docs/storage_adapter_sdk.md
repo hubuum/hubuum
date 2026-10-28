@@ -197,6 +197,18 @@ maintainer-controlled operation because crates.io versions cannot be replaced.
 
 ## Adapter Upgrade Process
 
+### Deletion authority foundation: 0.8 to 0.9
+
+Update all ten supported SDK crates together to 0.9.0. The complete operational
+family now requires `DeletionControlStorage`. Implement privileged, bounded
+capture and atomic exact-predecessor transitions for `DeletionControlState`.
+Keep its records outside logical application replacement. Retained decisions
+must prevent restored exposure until restriction reapplication is implemented;
+the initial adapters conservatively reject replacement whenever intents exist.
+See [deletion recovery](deletion_recovery.md) for the independent repository
+contract and the remaining activation gates. This is a breaking Rust SDK change;
+it does not enable a deletion endpoint or promise permanent-erasure completion.
+
 Adapter authors should upgrade `hubuum-storage-core` and
 `hubuum-storage-conformance` to the same exact SDK version, update every direct
 SDK dependency to that version, and then:

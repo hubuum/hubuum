@@ -26,6 +26,7 @@ use crate::{
 mod backup_snapshot;
 mod capabilities;
 mod computed_fields;
+mod deletion_control;
 mod export_templates;
 mod imports;
 mod logical_identity;

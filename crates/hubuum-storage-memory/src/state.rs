@@ -86,6 +86,8 @@ impl MemoryState {
         let mut state = Self {
             task_capacity: Default::default(),
             artifacts: Default::default(),
+            deletion_control: DeletionControlState::empty(Uuid::new_v4(), Uuid::new_v4())
+                .expect("generated control identities"),
             logical_identities,
             schema_repair_reports: Default::default(),
             generation: Arc::new(()),

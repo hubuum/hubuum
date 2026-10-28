@@ -14,6 +14,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Templates replay indexed temporary files; backup capture reuses its row spool.
   Configure spool and worker resident limits with
   `HUBUUM_ARTIFACT_MAX_SPOOL_BYTES` and `HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES`.
+- Administrator commands can publish authenticated deletion-control checkpoints
+  to an independent durable directory and verify recovered authority against the
+  latest checkpoint. This foundation keeps permanent deletion and recovery
+  quarantine release disabled; see [deletion recovery](docs/deletion_recovery.md).
 
 - Shared task admission and execution limits across API/worker replicas, with
   separate resident-byte and cumulative-work accounting, internal repair
@@ -40,6 +44,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Reconcile task-owned artifacts before downgrading. New export replay rows and
   backup source rows are capped at 4 MiB; related template input is capped at
   8 MiB per batch and hydrated output at 4 MiB per row. Narrow oversized queries.
+- **Breaking Rust SDK change:** the storage SDK moves to 0.9.0 and requires
+  `DeletionControlStorage` for complete adapters. Upgrade all ten SDK crates
+  together, preserve control authority across logical replacement, and implement
+  the restore gate described in the [upgrade guide](docs/storage_adapter_sdk.md).
 
 - **Breaking operational change:** task capacity requires an offline upgrade.
   Stop API/worker replicas, back up the database, run `hubuum-admin --migrate`

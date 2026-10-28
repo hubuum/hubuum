@@ -26,6 +26,19 @@ use uuid::Uuid;
 #[derive(Clone)]
 struct CompleteExternalAdapter;
 
+#[async_trait]
+impl DeletionControlStorage for CompleteExternalAdapter {
+    async fn capture_deletion_control(&self) -> Result<DeletionControlCapture, StorageError> {
+        fixture_result()
+    }
+    async fn commit_deletion_control(
+        &self,
+        change: DeletionControlChange,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+}
+
 fn fixture_result<T>() -> Result<T, StorageError> {
     Err(StorageError::internal("external adapter compile fixture"))
 }
