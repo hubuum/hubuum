@@ -4,6 +4,8 @@ from pathlib import Path
 from unittest.mock import patch
 import copy
 import io
+import json
+import shutil
 import tempfile
 import unittest
 import urllib.error
@@ -20,6 +22,22 @@ class CorpusValidationTests(unittest.TestCase):
 
     def test_committed_corpus_matches_recipe(self):
         CORPUS.inspect_corpus(CORPUS.CORPORA, self.recipe)
+
+    def test_generation_fits_compact_backup_with_complete_identity_evidence(self):
+        compact_size = len(json.dumps(self.document, ensure_ascii=False,
+                                      separators=(",", ":")).encode("utf-8")) + 1
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(CORPUS, "Deployment") as deployment, \
+                patch.object(CORPUS, "seed", return_value=self.manifest["anchors"]), \
+                patch.object(CORPUS, "MAX_BYTES", compact_size), \
+                patch.object(CORPUS, "verify", side_effect=lambda directory, recipe, *_:
+                             CORPUS.inspect_corpus(directory, recipe)):
+            deployment.return_value.__enter__.return_value.backup.side_effect = \
+                lambda _, destination: shutil.copyfile(CORPUS.CORPORA / CORPUS.BACKUP, destination)
+            destination = Path(temporary) / "generated"
+            CORPUS.generate(destination, CORPUS.CORPORA / "recipe.json", "fixture", "postgres")
+            self.assertEqual(CORPUS.read_json(destination / CORPUS.BACKUP), self.document)
+            self.assertEqual((destination / CORPUS.BACKUP).stat().st_size, compact_size)
 
     def test_corrupt_bytes_fail_the_checksum(self):
         with tempfile.TemporaryDirectory() as temporary:

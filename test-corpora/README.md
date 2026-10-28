@@ -238,6 +238,7 @@ python3 tests/python/run.py integration corpus generate --directory target/gener
 python3 tests/python/run.py unit tooling.test_corpus
 ```
 
+The generated backup uses compact JSON, retaining every field and logical identity.
 The uncompressed file must remain below 25 MiB. CI restores the committed file
 before independently testing regeneration. Required container checks cover PRs,
 main and release tags; corpus and relevant server inputs select those checks.

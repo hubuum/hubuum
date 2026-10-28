@@ -43,8 +43,10 @@ def read_json(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def write_json(path, value):
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+def write_json(path, value, *, compact=False):
+    formatting = {"separators": (",", ":")} if compact else {"indent": 2}
+    path.write_text(json.dumps(value, ensure_ascii=False, **formatting) + "\n",
+                    encoding="utf-8", newline="\n")
 
 
 def digest(path):
@@ -701,6 +703,9 @@ def generate(destination, recipe_path, image, postgres_image):
             anchors = seed(deployment, recipe)
             deployment.backup("source", directory / BACKUP)
         document = read_json(directory / BACKUP)
+        # Identity evidence is nested and pretty-printing more than doubles its
+        # size. Keep every backup field while bounding the downloadable fixture.
+        write_json(directory / BACKUP, document, compact=True)
         manifest = {
             "name": recipe["name"], "description": recipe["description"],
             "recipe_revision": recipe["revision"], "recipe_sha256": digest(recipe_path),
