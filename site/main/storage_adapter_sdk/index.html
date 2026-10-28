@@ -3505,6 +3505,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../logical_identity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Logical identity across restore
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../task_system/" class="md-nav__link">
         
   
@@ -3868,6 +3895,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Upgrading from 0.5 to 0.6
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrading-from-06-to-07" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.6 to 0.7
       </span>
     </span>
   </a>
@@ -4987,6 +5025,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#upgrading-from-06-to-07" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.6 to 0.7
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5068,7 +5117,7 @@
 
 
 <h1 id="storage-adapter-sdk-compatibility">Storage Adapter SDK Compatibility<a class="headerlink" href="#storage-adapter-sdk-compatibility" title="Permanent link">&para;</a></h1>
-<p>Status: accepted; current experimental release train is <code>0.6</code>.</p>
+<p>Status: accepted; current experimental release train is <code>0.7</code>.</p>
 <h2 id="supported-crate-graph">Supported Crate Graph<a class="headerlink" href="#supported-crate-graph" title="Permanent link">&para;</a></h2>
 <p>The statically linked storage adapter SDK consists of these crates:</p>
 <table>
@@ -5149,8 +5198,10 @@ publication and a separate release cadence require a later review.</p>
 <a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    +---------------------------------- hubuum-computed-fields
 <a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
 <a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>hubuum-storage-core --&gt; hubuum-budget
-<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>hubuum-domain --&gt; hubuum-schema-diagnostics
-<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>hubuum-query --&gt; hubuum-regex
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>hubuum-storage-conformance --&gt; hubuum-events-core
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>hubuum-storage-conformance --&gt; hubuum-query
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>hubuum-domain --&gt; hubuum-schema-diagnostics
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>hubuum-query --&gt; hubuum-regex
 </code></pre></div>
 <p>Every in-graph dependency uses an exact version requirement. The ten packages
 share one version and are released together. The root application and
@@ -5211,7 +5262,7 @@ closed set is:</p>
 <ul>
 <li><code>hubuum-computed-fields</code>: <code>DefinitionError</code>, <code>FieldErrorCode</code>, <code>Operation</code>, and
   <code>ResultType</code>;</li>
-<li><code>hubuum-domain</code>: <code>EventDeliveryStatus</code>, <code>JsonPatchErrorKind</code>,
+<li><code>hubuum-domain</code>: <code>EventDeliveryStatus</code>, <code>IdentityReference</code>, <code>JsonPatchErrorKind</code>,
   <code>JsonSchemaErrorKind</code>, <code>MaintenanceState</code>, <code>PrincipalKind</code>,
   <code>ResourceRevisionError</code>, and <code>StorageJsonValidationError</code>;</li>
 <li><code>hubuum-schema-diagnostics</code>: <code>SchemaActualValue</code>, <code>SchemaDiagnosticInspection</code>,
@@ -5468,6 +5519,34 @@ local reports. Run the complete adapter conformance and task-control suites.</p>
 <code>2026-10-25-000002_schema_profiling</code>. Drain old workers before submitting the new
 task kind. The server uses <code>json-schema-profiler</code> 0.0.1; the SDK does not depend
 on it and retains its Rust 1.88 minimum version.</p>
+<h2 id="upgrading-from-06-to-07">Upgrading from 0.6 to 0.7<a class="headerlink" href="#upgrading-from-06-to-07" title="Permanent link">&para;</a></h2>
+<p>Upgrade all ten SDK crates together. <code>QueryStorage</code> now requires
+<code>LogicalIdentityStorage</code>; every selectable adapter must implement the complete
+contract. Resolve <code>StorageIdentityTarget</code> to <code>StorageIdentityEvidence</code> inside a
+consistent backend view, preserving typed resource, principal, task and version
+identities across projections and backup replay. Assign new identities at writes,
+keep historical versions immutable on interval closure, and capture reference
+identities before integer IDs can be reused. Return <code>NotFound</code> for absent targets.</p>
+<p><code>HistoryStorage::resolve_history_principal_names</code> now accepts
+<code>Vec&lt;PrincipalIdentity&gt;</code> and returns names keyed by that identity. Preserve the
+identity evidence in history and task-event projections. Resolve actor and
+initiator names only from captured, known UUIDs. Unresolved legacy attribution
+must remain unnamed even if a current principal has the same integer ID.</p>
+<p><code>StorageRestoreReplayApply::at_restore_boundary</code> takes a
+<code>StorageRestoreIdentityContext</code> obtained from the confirmed artifact job. It
+prepares a <code>StorageIdentityReplay</code> before entering the adapter's fenced restore
+transaction. Preserve that proof until replay. Format 11 requires identity
+metadata; formats 6–10 undergo a quarantined upgrade with a stable per-stage
+cohort. Restore existing identities, mint fresh versions only for synthesized
+history baselines, and keep retained control-plane requester evidence across
+application replacement. The context does not replace the adapter's transaction,
+maintenance ownership, or execution fences.</p>
+<p>Use <code>verify_collection_version_identity</code> with an isolated collection, its read
+capabilities and mutation capability. <code>BackupRestoreFixture::restore</code> now returns
+the confirmed <code>StorageRestoreIdentityContext</code>, allowing conformance checks to
+verify synthesized baseline identities against the actual restore stage. See the full
+<a href="../logical_identity/">identity coverage and acceptance matrix</a> for retained
+relationships, schema dependencies, task outcomes, migration and restore tests.</p>
 
 
 

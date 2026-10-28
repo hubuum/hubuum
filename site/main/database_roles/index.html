@@ -3676,6 +3676,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../logical_identity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Logical identity across restore
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../task_system/" class="md-nav__link">
         
   
@@ -5073,6 +5100,10 @@ URL:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">HUBUUM_MIGRATION_DATABASE_URL</span><span class="o">=</span><span class="s1">'postgres://hubuum_migrator:.../hubuum'</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>hubuum-admin<span class="w"> </span>--migrate
 </code></pre></div>
+<p>The generated setup also grants database-local <code>CREATE</code> to the owner so it can
+install the protected <code>hubuum_control</code> schema. Before upgrading an existing split-role
+deployment, reapply the generated setup or grants SQL through the database
+administrator. Runtime grants remain unchanged.</p>
 <p>The migrator must be a member of the owner role. It connects under its own
 login and Hubuum explicitly runs <code>SET ROLE hubuum_owner</code> before applying
 migrations. The runtime login must not be a member of either privileged role.</p>

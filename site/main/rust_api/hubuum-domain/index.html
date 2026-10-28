@@ -3505,6 +3505,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../logical_identity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Logical identity across restore
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../task_system/" class="md-nav__link">
         
   
@@ -4826,7 +4853,7 @@
 
 
 <h1 id="hubuum-domain-rust-api-policy"><code>hubuum-domain</code> Rust API Policy<a class="headerlink" href="#hubuum-domain-rust-api-policy" title="Permanent link">&para;</a></h1>
-<p>Status: experimental public API in the storage SDK <code>0.6</code> release train.</p>
+<p>Status: experimental public API in the storage SDK <code>0.7</code> release train.</p>
 <h2 id="purpose-and-callers">Purpose and Callers<a class="headerlink" href="#purpose-and-callers" title="Permanent link">&para;</a></h2>
 <p><code>hubuum-domain</code> provides validated, persistence-neutral policy values shared by
 Hubuum applications and storage adapters. External backend crates may depend on
@@ -4842,7 +4869,12 @@ type's documentation explicitly says otherwise. The optional <code>openapi</code
 implements Utoipa 6 schema traits for values also used by Hubuum's HTTP API.</p>
 <h2 id="errors-runtime-and-security">Errors, Runtime, and Security<a class="headerlink" href="#errors-runtime-and-security" title="Permanent link">&para;</a></h2>
 <p>Validation returns crate-owned errors and does not panic for caller input.
-There is no asynchronous runtime requirement, I/O, or cancellation behavior.
+There is no asynchronous runtime requirement or cancellation behavior. Logical
+identity generation uses operating-system entropy and can panic if that source
+fails; parsing and byte validation do not access it. Resource, principal, task,
+version, and legacy-cohort UUIDs are distinct private-field types. Their serialized
+representations are UUID strings; unresolved references retain an explicit cohort
+and validated legacy identifier rather than claiming known correspondence.
 <code>PlaintextPassword</code> validates nonempty passwords up to 4096 Unicode characters,
 preserves their exact contents, and redacts debug output. Hashing and verification
 belong to consumers; plaintext is accessible only through its explicit accessor.

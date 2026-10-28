@@ -3505,6 +3505,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../logical_identity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Logical identity across restore
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../task_system/" class="md-nav__link">
         
   
@@ -3939,6 +3966,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         <code>relation_queries</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#logical_identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>logical_identity</code>
       </span>
     </span>
   </a>
@@ -5129,6 +5167,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#logical_identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>logical_identity</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#temporal_history" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5651,11 +5700,20 @@ between queries. Apply it in the native read after endpoint selection and
 visibility, preserving ascending relation IDs; zero returns no rows and
 <code>None</code> retains complete results. ID sets are typed inputs and must not be
 restricted by public integer-filter list limits.</p>
+<h3 id="logical_identity"><code>logical_identity</code><a class="headerlink" href="#logical_identity" title="Permanent link">&para;</a></h3>
+<p>Required trait: <code>LogicalIdentityStorage</code> in <code>QueryStorage</code>.</p>
+<p>Resolve a typed resource, principal, task, historical entry or schema revision
+inside the selected backend. Return private-field <code>StorageIdentityEvidence</code> with
+its immutable subject identity and captured dependencies. An unresolved legacy
+reference remains unresolved; current integer matches cannot establish identity.
+Missing targets return <code>NotFound</code>. The common observer records this operation
+under the <code>logical_identity</code> capability.</p>
 <h3 id="temporal_history"><code>temporal_history</code><a class="headerlink" href="#temporal_history" title="Permanent link">&para;</a></h3>
 <p>Required trait: <code>HistoryStorage</code>.</p>
 <p>Owns revision-filtered pages and point-in-time reads for collections, classes,
 objects, export templates, and remote targets. Visibility applies before
-filtering, counting, and paging. Provenance-name resolution is batched.</p>
+filtering, counting, and paging. Provenance-name resolution is batched by captured principal UUID. A missing or
+unresolved UUID cannot fall back to a current integer ID.</p>
 <p><code>list_object_history_by_name</code> matches the stored class ID and exact historical
 name across identities. <code>StorageObjectHistoryNameQuery</code> validates query fields
 and normalizes the default descending history-ID order and missing tie-breaker;
