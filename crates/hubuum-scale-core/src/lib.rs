@@ -4,6 +4,8 @@
 //! workload documents are immutable inputs, and reports contain only aggregate
 //! measurements and stable fixture identifiers.
 
+pub mod lifecycle;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;

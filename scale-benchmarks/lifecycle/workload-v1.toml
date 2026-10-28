@@ -1,0 +1,12 @@
+version = 1
+tasks = 10000
+principals = 32
+dominant_principal_percent = 80
+long_task_every = 10
+short_task_ms = 100
+long_task_ms = 30000
+large_row_every = 100
+small_row_bytes = 256
+large_row_bytes = 65536
+output_every = 100
+output_bytes = 1048576

@@ -500,17 +500,32 @@ scale_benchmark_output="$(bash "$classifier" \
   scale-benchmarks/profiles/huge.toml \
   scale-benchmarks/sensitivity-v1.toml \
   scale-benchmarks/workloads/v1.toml \
+  scale-benchmarks/lifecycle/dataset-v1.toml \
+  scale-benchmarks/lifecycle/workload-v1.toml \
   crates/hubuum-scale-benchmark/src/runner.rs \
   crates/hubuum-scale-benchmark/src/lifecycle_process.rs \
   crates/hubuum-scale-core/src/lib.rs \
+  crates/hubuum-scale-core/src/lifecycle.rs \
   crates/hubuum-storage-postgres/src/scale_benchmark.rs \
-  crates/hubuum-storage-postgres/src/scale_benchmark/history_baselines.sql)"
+  crates/hubuum-storage-postgres/src/scale_benchmark/history_baselines.sql \
+  crates/hubuum-storage-postgres/src/scale_benchmark/lifecycle.rs)"
 assert_flag "$scale_benchmark_output" code true
 assert_flag "$scale_benchmark_output" benchmarks true
 assert_flag "$scale_benchmark_output" runtime_benchmark false
 assert_flag "$scale_benchmark_output" scale_benchmark true
 assert_flag "$scale_benchmark_output" container false
 assert_flag "$scale_benchmark_output" artifacts false
+
+for lifecycle_input in \
+  scale-benchmarks/lifecycle/dataset-v1.toml \
+  scale-benchmarks/lifecycle/workload-v1.toml \
+  crates/hubuum-scale-core/src/lifecycle.rs \
+  crates/hubuum-storage-postgres/src/scale_benchmark/lifecycle.rs; do
+  lifecycle_output="$(bash "$classifier" "$lifecycle_input")"
+  assert_flag "$lifecycle_output" rust true
+  assert_flag "$lifecycle_output" scale_benchmark true
+  assert_flag "$lifecycle_output" container false
+done
 
 for scale_manifest in crates/hubuum-scale-benchmark/Cargo.toml crates/hubuum-scale-core/Cargo.toml; do
   scale_manifest_output="$(bash "$classifier" "$scale_manifest")"
