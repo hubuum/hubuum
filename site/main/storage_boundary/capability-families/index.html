@@ -3559,6 +3559,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../task_admission/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task admission and capacity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../computed_field_locking/" class="md-nav__link">
         
   
@@ -4071,6 +4098,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         <code>task_queue</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task_capacity" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>task_capacity</code>
       </span>
     </span>
   </a>
@@ -5272,6 +5310,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#task_capacity" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>task_capacity</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#task_execution" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5497,7 +5546,7 @@ and semantics. Group keys such as <code>domain_lifecycle</code> and <code>catalo
 not operation-trait keys or metric labels. <code>hubuum_storage_core::capabilities</code>
 exposes broader discovery modules for resources, identity, queries, workflows,
 events, and operational capabilities;
-the 22 detailed groups below are not a one-to-one module map. Neither form
+the 23 detailed groups below are not a one-to-one module map. Neither form
 represents separately versioned or negotiable runtime features.</p>
 <p>Each discovery module reexports one method-free family bound with the matching
 singular name: <code>ResourceStorage</code>, <code>IdentityStorage</code>, <code>QueryStorage</code>,
@@ -5535,16 +5584,17 @@ which complete implementations administrators can select.</p>
 <a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>|   |-- remote targets
 <a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>|   |-- computed-field lifecycle
 <a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>|   |-- task queue
-<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>|   |-- task execution
-<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>|   |-- backup snapshots
-<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>|   |-- restores
-<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>|   |-- imports
-<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>|   |-- export queries
-<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>|   `-- export-template lifecycle
-<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>|
-<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>`-- event and operational control
-<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>    |-- event administration
-<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>    `-- operational state and execution
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>|   |-- task capacity
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>|   |-- task execution
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>|   |-- backup snapshots
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>|   |-- restores
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>|   |-- imports
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>|   |-- export queries
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>|   `-- export-template lifecycle
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>|
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>`-- event and operational control
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>    |-- event administration
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>    `-- operational state and execution
 </code></pre></div>
 <p>The tree groups responsibilities; it is not a runtime call graph. The important
 runtime relationships are shown next.</p>
@@ -5805,7 +5855,7 @@ redacted-debug DTOs. The application owns template and policy validation plus
 the actual outbound call.</p>
 <h3 id="task_queue"><code>task_queue</code><a class="headerlink" href="#task_queue" title="Permanent link">&para;</a></h3>
 <p>Required trait: <code>TaskQueueStorage</code>.</p>
-<p>Owns idempotent submission under active-task limits, access facts, task pages,
+<p>Owns idempotent submission under shared admission policy, access facts, task pages,
 events, import results, and retained export and backup outputs. It is the
 application-facing history of work, not the worker lease state machine.
 Task pages must honor the carrier's <code>excluded_kind</code> before counting or applying
@@ -5822,6 +5872,21 @@ start. Retained export outputs contain
 exactly one JSON or text representation and a nonnegative warning count.
 Retained backup outputs carry a canonical lowercase SHA-256 digest, and full
 outputs require their stored size and digest to match the document.</p>
+<h3 id="task_capacity"><code>task_capacity</code><a class="headerlink" href="#task_capacity" title="Permanent link">&para;</a></h3>
+<p>Required trait: <code>TaskCapacityStorage</code>.</p>
+<p>Owns first-writer policy initialization, revision-checked policy replacement,
+and authoritative policy and accounting snapshots. Validated policy values
+cross the boundary through private-field types. Every backend atomically
+enforces deployment, principal, kind, collection, and internal repair limits
+when admitting and claiming work. Recognized duplicates consume no additional
+reservation; reduced limits allow existing work to drain.</p>
+<p>Logical reservations, execution occupancy, resident bytes, and cumulative work
+are distinct dimensions. Restore preserves control policy and cumulative work,
+invalidates obsolete occupancy, and reconciles current task identities before
+admission resumes. Unknown identity or incomplete reconciliation fails closed.
+The application supplies administrator authorization and common observations;
+adapter errors retain a bounded capacity rejection reason. See
+<a href="../../task_admission/">task admission</a> for ownership and reconciliation rules.</p>
 <h3 id="task_execution"><code>task_execution</code><a class="headerlink" href="#task_execution" title="Permanent link">&para;</a></h3>
 <p>Required trait: <code>TaskExecutionStorage</code>.</p>
 <p>Owns claims, lease renewal and recovery, claim-checked events and state

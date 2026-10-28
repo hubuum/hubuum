@@ -61,6 +61,8 @@ event_coordination = [
 ]
 retention = ["TokenRetentionStorage::purge_expired_tokens", "AuthenticationStorage::purge_credential_sources", "AuthenticationStorage::purge_auth_sessions"]
 maintenance = [
+    "TaskCapacityStorage::initialize_task_policy",
+    "TaskCapacityStorage::replace_task_policy",
     "QueryUsageStorage::set_query_observation_control",
     "RestoreStorage::stage_restore_artifact",
     "RestoreStorage::expire_restore_stage",
@@ -307,6 +309,13 @@ source = "crates/hubuum-storage-core/src/remote_target.rs"
 methods = ["get_remote_target", "list_remote_targets", "create_remote_target", "update_remote_target", "delete_remote_target", "record_remote_target_invocation"]
 effects = { point_read = ["get_remote_target"], page_read = ["list_remote_targets"], audited_mutation = ["create_remote_target", "update_remote_target", "delete_remote_target", "record_remote_target_invocation"] }
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_remote_target_lifecycle"]
+
+[traits.TaskCapacityStorage]
+source = "crates/hubuum-storage-core/src/task_capacity.rs"
+methods = ["initialize_task_policy", "task_policy", "task_capacity_snapshot", "replace_task_policy"]
+effects = { point_read = ["task_policy", "task_capacity_snapshot"], workflow_mutation = ["initialize_task_policy", "replace_task_policy"] }
+shared_scenarios = ["tests/restore_contract/task_capacity.rs::replicas_atomically_enforce_each_admission_boundary", "tests/restore_contract/task_capacity.rs::stale_policy_revision_cannot_replace_a_committed_change", "tests/restore_contract/task_capacity.rs::older_restore_preserves_policy_and_work_for_absent_owners"]
+native_scenarios = ["tests/restore_contract/task_capacity.rs::runtime_role_cannot_read_protected_capacity_owners", "tests/restore_contract/task_capacity.rs::missing_capacity_backfill_blocks_initialization_until_reconciled_once"]
 
 [traits.TaskQueueStorage]
 source = "crates/hubuum-storage-core/src/task_queue.rs"

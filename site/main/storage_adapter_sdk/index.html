@@ -3559,6 +3559,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../task_admission/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task admission and capacity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../computed_field_locking/" class="md-nav__link">
         
   
@@ -3906,6 +3933,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Upgrading from 0.6 to 0.7
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrading-from-07-to-08" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.7 to 0.8
       </span>
     </span>
   </a>
@@ -5036,6 +5074,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#upgrading-from-07-to-08" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.7 to 0.8
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5117,7 +5166,7 @@
 
 
 <h1 id="storage-adapter-sdk-compatibility">Storage Adapter SDK Compatibility<a class="headerlink" href="#storage-adapter-sdk-compatibility" title="Permanent link">&para;</a></h1>
-<p>Status: accepted; current experimental release train is <code>0.7</code>.</p>
+<p>Status: accepted; current experimental release train is <code>0.8</code>.</p>
 <h2 id="supported-crate-graph">Supported Crate Graph<a class="headerlink" href="#supported-crate-graph" title="Permanent link">&para;</a></h2>
 <p>The statically linked storage adapter SDK consists of these crates:</p>
 <table>
@@ -5172,7 +5221,7 @@
 <tr>
 <td><code>hubuum-storage-core</code></td>
 <td>Complete capability traits, DTOs, errors, transactions, and aggregate</td>
-<td>Default only</td>
+<td>Default; <code>openapi</code></td>
 </tr>
 <tr>
 <td><code>hubuum-storage-conformance</code></td>
@@ -5241,13 +5290,14 @@ Every documented feature combination must build and be usable on that version.
 Raising the MSRV requires an incompatible coordinated release and migration
 notice during <code>0.x</code>; after <code>1.0.0</code>, it follows the project's documented major
 release policy unless a future policy explicitly establishes an MSRV window.</p>
-<p>The two optional features are additive:</p>
+<p>The optional schema features are additive:</p>
 <ul>
-<li><code>hubuum-domain/openapi</code> adds Utoipa schema implementations; and</li>
+<li><code>hubuum-domain/openapi</code> adds Utoipa schema implementations;</li>
+<li><code>hubuum-storage-core/openapi</code> adds schemas for task policy and accounting values; and</li>
 <li><code>hubuum-events-core/schema</code> adds Utoipa schema implementations and enables
   <code>hubuum-domain/openapi</code>.</li>
 </ul>
-<p>Default behavior must not change when either feature is disabled. Removing or
+<p>Default behavior must not change when optional features are disabled. Removing or
 renaming a feature, making it mandatory, or changing a feature so it removes
 an API is incompatible. New additive features are compatible when existing
 feature combinations keep their behavior.</p>
@@ -5547,6 +5597,24 @@ the confirmed <code>StorageRestoreIdentityContext</code>, allowing conformance c
 verify synthesized baseline identities against the actual restore stage. See the full
 <a href="../logical_identity/">identity coverage and acceptance matrix</a> for retained
 relationships, schema dependencies, task outcomes, migration and restore tests.</p>
+<h2 id="upgrading-from-07-to-08">Upgrading from 0.7 to 0.8<a class="headerlink" href="#upgrading-from-07-to-08" title="Permanent link">&para;</a></h2>
+<p>This is a breaking coordinated SDK release. Advance all ten SDK dependencies
+and implement the required <code>TaskCapacityStorage</code> capability in every complete
+adapter. Policy initialization is atomic and first-writer-wins; later startup
+configuration cannot replace a committed revision. Explicit policy updates use
+<code>TaskPolicyRevision</code> as a compare-and-replace token.</p>
+<p><code>StorageTaskCreateRequestBuilder::try_build()</code> no longer accepts a caller-chosen
+active-task limit. Remove that argument and initialize the shared
+<code>TaskAdmissionPolicy</code> instead. Enforce outstanding work, execution occupancy and
+resident bytes transactionally against the committed policy. Keep cumulative
+work owned by immutable task identities outside logical application restore.
+Follow the <a href="../task_admission/">task accounting contract</a> for restoration,
+internal repair admission and administrative diagnostics.</p>
+<p>Preserve <code>StorageError::task_capacity_rejection()</code> when translating adapter
+errors. <code>into_parts()</code> now returns the optional structured capacity reason as
+its fourth element; update error destructuring and preserve that reason across
+adapter boundaries. Only application code translates the bounded rejection
+into HTTP.</p>
 
 
 

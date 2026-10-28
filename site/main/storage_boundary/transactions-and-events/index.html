@@ -3559,6 +3559,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../task_admission/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task admission and capacity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../computed_field_locking/" class="md-nav__link">
         
   
@@ -5210,6 +5237,13 @@ for an exception.</p>
   ordinary domain lifecycle shortcut.</li>
 <li>Retention: <code>TokenRetentionStorage::purge_expired_tokens</code> applies configured
   expiry and emits the token-purge semantics owned by the retention worker.</li>
+<li>Task policy maintenance: <code>TaskCapacityStorage::initialize_task_policy</code>
+  establishes deployment control state only once; subsequent initializers read
+  the existing policy. <code>TaskCapacityStorage::replace_task_policy</code> is an explicit
+  administrator action with a required revision token. Both serialize with
+  admission, retain control state across restore, and return the effective
+  revision. The application records the authorized administrator and resulting
+  revision through its common diagnostics.</li>
 <li>Maintenance: <code>RestoreStorage::stage_restore_artifact</code>,
   <code>RestoreStorage::expire_restore_stage</code>,
   <code>RestoreStorage::start_restore_draining</code>, <code>RestoreStorage::apply_restore_replay</code>,
