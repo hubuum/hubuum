@@ -65,6 +65,7 @@ nav = [
       { "Configuration reference" = "quick_start.md" },
       { "PostgreSQL roles" = "database_roles.md" },
       { "Backup & restore" = "backup-restore.md" },
+      { "Deletion recovery checkpoints" = "deletion_recovery.md" },
       { "Verify release artifacts" = "supply-chain-security.md" },
     ] },
     { "Identity & security" = [
