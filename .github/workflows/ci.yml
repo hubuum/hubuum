@@ -845,6 +845,7 @@ jobs:
           echo "Running database setup and migrations"
           "$DIESEL_BIN" migration run --database-url ${{ env.DATABASE_URL }}
           cargo run --quiet --locked --release --features embedded-migrations --bin hubuum-admin -- --migrate
+          cp target/release/hubuum-admin "$RUNNER_TEMP/hubuum-admin-migrate"
           echo "Checking database setup"
           PGPASSWORD=postgres psql -U postgres -h localhost -p 5432 -d hubuum_rust_test -c "select * from users;"
       - name: Compile tests (${{ matrix.feature.name }})
@@ -858,7 +859,10 @@ jobs:
         if: matrix.feature.name == 'default'
         run: cargo test --workspace --exclude hubuum --exclude hubuum-storage-postgres --all-features --locked --release
       - name: Test (${{ matrix.feature.name }})
-        run: python3 tests/python/run.py integration rust-tests -- cargo test ${{ matrix.feature.args }} -F integration-test-support --locked --release
+        run: >-
+          python3 tests/python/run.py integration rust-tests
+          --admin-binary "$RUNNER_TEMP/hubuum-admin-migrate" --
+          cargo test ${{ matrix.feature.args }} -F integration-test-support --locked --release
 
   valkey-rate-limit-contract:
     name: Valkey login limiter contract
