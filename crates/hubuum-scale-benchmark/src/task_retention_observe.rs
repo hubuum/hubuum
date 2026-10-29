@@ -64,21 +64,61 @@ struct Lifetime {
     detail_removal_observed_ms: Option<i64>,
     output_expires_at_ms: Option<i64>,
     output_removal_observed_ms: Option<i64>,
+    // Query-start lower bounds, never the later time the result was received.
     last_observed_ms: Option<i64>,
     last_observed_nonterminal_ms: Option<i64>,
 }
 
+#[derive(Clone, Copy)]
+struct ObservationTimes {
+    started_ms: i64,
+    completed_ms: i64,
+}
+
+impl ObservationTimes {
+    /// Both arguments are truncated epoch milliseconds from `now_ms`. Keep the
+    /// query start as a lower bound and add one millisecond to completion so its
+    /// fractional part cannot understate the removal observation's upper bound.
+    fn new(started_ms: i64, completed_ms: i64) -> Result<Self> {
+        if completed_ms < started_ms {
+            return Err("Observation clock moved backwards during a database query".into());
+        }
+        Ok(Self {
+            started_ms,
+            completed_ms: completed_ms
+                .checked_add(1)
+                .ok_or("Observation completion upper bound overflowed")?,
+        })
+    }
+
+    fn record_removal(self, observed: &mut Option<i64>) {
+        observed.get_or_insert(self.completed_ms);
+    }
+}
+
 impl Lifetime {
-    fn observe(&mut self, row: &PostgresTaskRetentionObservation, at: i64) -> Result<()> {
+    fn observe(
+        &mut self,
+        row: &PostgresTaskRetentionObservation,
+        times: ObservationTimes,
+    ) -> Result<()> {
         stable_anchor(&mut self.terminal_at_ms, row.terminal_at_ms())?;
         stable_anchor(&mut self.receipt_expires_at_ms, row.receipt_expires_at_ms())?;
         stable_anchor(&mut self.details_expires_at_ms, row.details_expires_at_ms())?;
         stable_anchor(&mut self.output_expires_at_ms, row.output_expires_at_ms())?;
-        self.last_observed_ms = Some(at);
-        self.last_observed_nonterminal_ms =
-            (row.task_id().is_some() && row.receipt_present() && row.terminal_at_ms().is_none())
-                .then_some(at);
+        self.record_observation_time(
+            times,
+            row.is_nonterminal()
+                && row.task_id().is_some()
+                && row.receipt_present()
+                && row.terminal_at_ms().is_none(),
+        );
         Ok(())
+    }
+
+    fn record_observation_time(&mut self, times: ObservationTimes, nonterminal: bool) {
+        self.last_observed_ms = Some(times.started_ms);
+        self.last_observed_nonterminal_ms = nonterminal.then_some(times.started_ms);
     }
 
     fn nonterminal_through(&self, at: i64) -> bool {
@@ -306,11 +346,14 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
     loop {
         // Observe original clocks before cleanup can retire the receipt that carries them.
         for batch in identities.chunks(1000) {
-            for observed in backend.observe_task_retention(batch).await? {
+            let query_started_ms = now_ms()?;
+            let observations = backend.observe_task_retention(batch).await?;
+            let times = ObservationTimes::new(query_started_ms, now_ms()?)?;
+            for observed in observations {
                 let sample = samples
                     .get_mut(&observed.identity())
                     .ok_or("Unexpected observed task identity")?;
-                sample.observe(&observed, now_ms()?)?;
+                sample.observe(&observed, times)?;
                 if options.output_only
                     && sample.terminal_at_ms.is_some()
                     && sample.output_expires_at_ms.is_none()
@@ -377,13 +420,15 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
             })
             .flat_map(|batch| batch.ticket().manifest().tasks().iter().copied())
             .collect::<BTreeSet<_>>();
-        let observed_at = now_ms()?;
         for batch in identities.chunks(1000) {
-            for observed in backend.observe_task_retention(batch).await? {
+            let query_started_ms = now_ms()?;
+            let observations = backend.observe_task_retention(batch).await?;
+            let times = ObservationTimes::new(query_started_ms, now_ms()?)?;
+            for observed in observations {
                 let sample = samples
                     .get_mut(&observed.identity())
                     .ok_or("Unexpected observed task identity")?;
-                sample.observe(&observed, now_ms()?)?;
+                sample.observe(&observed, times)?;
                 if options.output_only
                     && observed.output_rows() == 0
                     && observed.outputs_removed() == Some(true)
@@ -392,7 +437,7 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
                     if observed.task_id().is_none() {
                         return Err("Output-only expiry unexpectedly removed task details".into());
                     }
-                    sample.output_removal_observed_ms.get_or_insert(observed_at);
+                    times.record_removal(&mut sample.output_removal_observed_ms);
                 }
                 if !options.output_only
                     && observed.task_id().is_none()
@@ -401,7 +446,7 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
                     && observed.details_removed() == Some(true)
                     && removed.contains(&observed.identity())
                 {
-                    sample.detail_removal_observed_ms.get_or_insert(observed_at);
+                    times.record_removal(&mut sample.detail_removal_observed_ms);
                 }
                 if !observed.receipt_present()
                     && protected.receipt_for_task(observed.identity()).is_none()
@@ -409,9 +454,7 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
                         expiry <= protected.receipt_expiry_floor().timestamp_millis()
                     })
                 {
-                    sample
-                        .receipt_retirement_observed_ms
-                        .get_or_insert(observed_at);
+                    times.record_removal(&mut sample.receipt_retirement_observed_ms);
                 }
             }
         }
@@ -419,7 +462,7 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
             &options.artifact_directory.join("latest-lifetimes.json"),
             &samples,
         )?;
-        passes.push(json!({"observed_at_ms":observed_at,"artifact":process_report}));
+        passes.push(json!({"observed_at_ms":now_ms()?,"artifact":process_report}));
         if started.elapsed() < Duration::from_secs(options.steady_seconds) {
             let refill = target_receipts
                 .saturating_sub(protected.receipts().len())
@@ -588,6 +631,7 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
         "observation_finished_ms":observation_finished_ms,
         "full_drain_outcome":if completed {"complete"} else {"incomplete_timeout"},
         "full_drain_note":"A drain timeout is not itself an eligible-expiry percentile breach; inspect each denominator and p95_status",
+        "observation_time_bounds":"source clocks and query starts round down to milliseconds; removal observations add a checked one-millisecond margin to query completion for an upper bound",
         "steady_seconds":options.steady_seconds,"steady_started_ms":steady_started_ms,"steady_until_ms":steady_until_ms,"occupancy":occupancy,
         "steady_receipt_expiry":steady_receipt_lags,"steady_detail_expiry":steady_detail_lags,
         "database_environment":database_environment,"database_round_trip_nanos":database_round_trip_nanos,
@@ -609,6 +653,54 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[rstest]
+    #[case::crossed_cutoff(1999, 3000, true, false)]
+    #[case::at_cutoff(2000, 3000, true, true)]
+    #[case::missing_or_terminal_row(2000, 3000, false, false)]
+    fn nonterminal_proof_cannot_extend_to_query_completion(
+        #[case] started_ms: i64,
+        #[case] completed_ms: i64,
+        #[case] nonterminal: bool,
+        #[case] expected: bool,
+    ) {
+        let mut sample = Lifetime::default();
+        sample.record_observation_time(
+            ObservationTimes::new(started_ms, completed_ms).unwrap(),
+            nonterminal,
+        );
+        assert_eq!(sample.nonterminal_through(2000), expected);
+    }
+
+    #[test]
+    fn query_duration_cannot_understate_a_removal_lag_breach() {
+        let mut sample = Lifetime {
+            receipt_expires_at_ms: Some(1000),
+            ..Lifetime::default()
+        };
+        ObservationTimes::new(60000, 62001)
+            .unwrap()
+            .record_removal(&mut sample.receipt_retirement_observed_ms);
+        let report = eligible_lags(
+            &BTreeMap::from([(TaskIdentity::generate(), sample)]),
+            true,
+            0,
+            2000,
+            62002,
+        );
+        assert_eq!(report["distribution"]["p95_ms"], 61002);
+        assert_eq!(report["p95_status"], "breach");
+    }
+
+    #[rstest]
+    #[case::backwards(2000, 1999)]
+    #[case::upper_bound_overflow(i64::MAX, i64::MAX)]
+    fn invalid_observation_clock_cannot_produce_evidence(
+        #[case] started_ms: i64,
+        #[case] completed_ms: i64,
+    ) {
+        assert!(ObservationTimes::new(started_ms, completed_ms).is_err());
+    }
 
     #[rstest]
     #[case::still_incomplete(3000, 2000, "incomplete")]

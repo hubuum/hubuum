@@ -195,6 +195,11 @@ checkpoint absence plus a protected expiry floor covering the original deadline.
 The observation interval and administrator publication delay remain in the
 reported lag; samples are conservative upper bounds. A timeout retains eligible
 unfinished items instead of dropping them from the denominator.
+Database deadlines round down to milliseconds, and removal observations use the
+query completion time with an upper rounding margin. Nonterminal evidence uses
+the query start time and an explicit active status, so a read crossing the steady
+window boundary cannot extend that evidence to its later completion. Lags end
+at the first verified removal observation.
 The report distinguishes freshly observed nonterminal work from missing deadline
 evidence. Censored samples contribute lower bounds and an explicit incomplete
 or breached percentile status. Full cohort drain has its own outcome: a drain
