@@ -166,6 +166,8 @@ for corpus_path in .gitattributes test-corpora/comprehensive.json test-corpora/c
   assert_flag "$corpus_output" scale_benchmark false
 done
 
+assert_flag "$(bash "$classifier" test-corpora/comprehensive.json)" rust true
+
 docs_output="$(bash "$classifier" README.md AGENTS.md docs/development.md)"
 assert_flag "$docs_output" markdown true
 assert_flag "$docs_output" documentation true

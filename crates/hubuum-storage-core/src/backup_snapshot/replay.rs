@@ -619,7 +619,6 @@ impl StorageBackupReplay {
         builder.seal()
     }
     fn normalize(self, version: Option<i32>) -> Result<Self, StorageError> {
-        self.validate_artifacts()?;
         for &section in State::ALL {
             if !self.state.contains_key(&section)
                 && !matches!(
@@ -758,6 +757,7 @@ impl StorageBackupReplay {
         }
         let normalized = builder.seal()?;
         normalized.validate(version.is_some())?;
+        normalized.validate_artifacts()?;
         Ok(normalized)
     }
 }
@@ -861,6 +861,46 @@ mod tests {
             StorageBackupBudget::new(100_000, 100).unwrap(),
         )
         .unwrap()
+    }
+    #[test]
+    fn legacy_history_without_artifacts_is_normalized_before_validation() {
+        let mut builder = StorageBackupReplayBuilder::new(
+            StorageBackupBudget::new(100_000, 100).unwrap(),
+            JsonSchemaLimits::default(),
+            true,
+        )
+        .unwrap();
+        for &section in State::ALL {
+            builder.begin_state(section).unwrap();
+        }
+        for &section in History::ALL {
+            if section != History::ExportArtifacts {
+                builder.begin_history(section).unwrap();
+            }
+        }
+        let replay = builder.finish().unwrap();
+        assert_eq!(replay.history_rows(History::ExportArtifacts).count(), 0);
+    }
+    #[test]
+    fn missing_required_export_history_returns_validation_error() {
+        let mut builder = StorageBackupReplayBuilder::new(
+            StorageBackupBudget::new(100_000, 100).unwrap(),
+            JsonSchemaLimits::default(),
+            true,
+        )
+        .unwrap();
+        for &section in State::ALL {
+            builder.begin_state(section).unwrap();
+        }
+        for &section in History::ALL {
+            if section != History::ExportOutputs {
+                builder.begin_history(section).unwrap();
+            }
+        }
+        assert_eq!(
+            builder.finish_for_restore(11).unwrap_err().kind(),
+            StorageErrorKind::InvalidInput
+        );
     }
     #[test]
     fn independent_replay_cursors_do_not_share_offsets() {

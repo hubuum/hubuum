@@ -512,6 +512,12 @@ fn restore_status_preserves_public_safe_errors(#[case] error: ApiError, #[case] 
 }
 
 #[test]
+fn replay_parser_accepts_committed_legacy_corpus() {
+    let bytes = include_bytes!("../../test-corpora/comprehensive.json");
+    verify_backup_document(bytes, bytes.len()).expect("committed legacy corpus remains readable");
+}
+
+#[test]
 fn replay_parser_accepts_reordered_members_and_single_byte_reads() {
     use std::io::Read;
     struct OneByte<'a>(&'a [u8]);
@@ -582,8 +588,13 @@ fn replay_parser_enforces_input_limit_including_trailing_whitespace() {
     assert!(matches!(error, ApiError::PayloadTooLarge(_)));
 }
 
-#[test]
-fn streaming_restore_accepts_legacy_missing_computed_history() {
+#[rstest]
+#[case::computed_history(9, StorageBackupHistorySection::ComputedFieldHistory)]
+#[case::export_artifacts(11, StorageBackupHistorySection::ExportArtifacts)]
+fn streaming_restore_accepts_legacy_missing_optional_history(
+    #[case] version: i32,
+    #[case] section: StorageBackupHistorySection,
+) {
     let mut document = minimally_valid_document();
     let bytes = serde_json::to_vec(&document).unwrap();
     let (replay, _, _) = super::replay::parse(
@@ -599,14 +610,11 @@ fn streaming_restore_accepts_legacy_missing_computed_history() {
         .materialize()
         .unwrap()
         .into_parts();
-    history
-        .as_mut()
-        .unwrap()
-        .remove(&StorageBackupHistorySection::ComputedFieldHistory);
+    history.as_mut().unwrap().remove(&section);
     document.state = BackupState { sections: state };
     document.history = history.map(|sections| BackupHistory { sections });
-    document.backup_version = 9;
+    document.backup_version = version;
     document.manifest = BackupManifest::from_sections(&document.state, document.history.as_ref());
     let bytes = serde_json::to_vec(&document).unwrap();
-    verify_backup_document(&bytes, bytes.len()).expect("legacy computed history is optional");
+    verify_backup_document(&bytes, bytes.len()).expect("legacy optional history remains readable");
 }
