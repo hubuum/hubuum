@@ -22,8 +22,7 @@ use crate::revision::revision_owner_key;
 use crate::{PostgresConnection, PostgresPool, PostgresPooledConnection, PostgresStorageError};
 
 /// Latest migration required by this adapter.
-pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str =
-    env!("HUBUUM_REQUIRED_DATABASE_MIGRATION_VERSION");
+pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = env!("PACKAGED_POSTGRES_MIGRATION_VERSION");
 // These migrations were added on a parallel branch and precede the latest
 // checkpoint. Its presence alone does not prove that tracing is installed.
 const REQUIRED_DATABASE_MIGRATION_VERSIONS: &[&str] = &[

@@ -24,5 +24,5 @@ fn main() {
         .split_once('_')
         .map_or(latest.as_str(), |(version, _)| version)
         .replace('-', "");
-    println!("cargo:rustc-env=HUBUUM_REQUIRED_DATABASE_MIGRATION_VERSION={version}");
+    println!("cargo:rustc-env=PACKAGED_POSTGRES_MIGRATION_VERSION={version}");
 }
