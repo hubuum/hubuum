@@ -13,6 +13,7 @@ use rstest::rstest;
 use serde_json::Value;
 
 use super::*;
+use crate::models::HISTORICAL_BACKUP_MANIFEST_EXCLUSIONS;
 use crate::restores::replay;
 use crate::services::deletion_recovery::{reapply, require_runtime_permit};
 
@@ -29,6 +30,7 @@ async fn backup(fixture: &Fixture, legacy: bool, history: bool) -> Vec<u8> {
     let mut document = serde_json::to_value(document).unwrap();
     if legacy {
         document["backup_version"] = json!(10);
+        document["manifest"]["exclusions"] = json!(HISTORICAL_BACKUP_MANIFEST_EXCLUSIONS);
         // A genuine pre-identity row has no UUID evidence. Remove only backup
         // envelope fields, never similarly named keys in user payloads.
         for section in ["state", "history"] {

@@ -2262,11 +2262,8 @@
             "load_groups_with_collection_permission",
             "load_principal_collection_permissions",
             "load_token_metadata_by_ids",
-<<<<<<< HEAD
             "manifest",
-=======
             "lookup_task_submission",
->>>>>>> ce1b04ba (Preserve idempotency receipts while expiring task details)
             "mark_event_delivery_dead",
             "mark_event_delivery_failed",
             "mark_event_delivery_succeeded",
@@ -2744,11 +2741,8 @@
             "load_groups_with_collection_permission",
             "load_principal_collection_permissions",
             "load_token_metadata_by_ids",
-<<<<<<< HEAD
             "manifest",
-=======
             "lookup_task_submission",
->>>>>>> ce1b04ba (Preserve idempotency receipts while expiring task details)
             "mark_event_delivery_dead",
             "mark_event_delivery_failed",
             "mark_event_delivery_succeeded",
