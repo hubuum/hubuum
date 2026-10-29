@@ -203,6 +203,7 @@ has yet been measured.
 | Revision | Previous target | New target | Evidence and rationale |
 | --- | --- | --- | --- |
 | 1, 2026-10-27 | None | H1–H5, P1–P8 above | Initial one/four-slot profiles and bounded-block contracts. Latency/throughput targets are hypotheses, not measurements of unimplemented archives. |
+| 2, 2026-10-29 | #508's `artifact-slow-v1`, H2 2 GiB/worker | `artifact-remote-v2`, H2 4 GiB/worker, 8 GiB/deployment; H1 and P7 unchanged | Separate repeated slow transfer from maximum-row/output qualification; account for two overlapping spool/output reservations per worker. See the profile and evidence below. |
 
 Never overwrite a target to make a failing measurement pass. Append old/new
 values, fixture, evidence, rationale and approval context, retaining this revision.
@@ -211,3 +212,84 @@ through real export hydration/rendering, backup capture/serialization, verificat
 and download. #514 adds H1–H5/P1/P2; movement/erasure/cleanup add P5/P6/P8.
 Legacy-reader exceptions require finite limits and separate measurements. Empty
 tables and synthetic timestamps cannot satisfy those implementation gates.
+
+## Revision 2: artifact acceptance and production tuning
+
+Revision **2**, dated **2026-10-29**, applies to #508. Other consumers retain
+revision 1 until their own measured revision. The issue's acceptance ceilings are
+engineering profiles; administrators can tune production admission within the
+stable format envelope described in [verified task artifacts](../artifact_staging.md).
+Changing write policy cannot weaken verification, invalidate retained output, or
+release outstanding cleanup obligations.
+
+| Contract | Revision 2 for #508 | Reason |
+| --- | --- | --- |
+| H1 | Keep 512 MiB per two-slot worker, including renderer children and process baseline. Require both 20 ms RSS sampling and native process/child high-water measurements. | A separate renderer must not hide memory outside the parent process. |
+| H2 | 4 GiB spool/staging reservations per worker; keep 8 GiB deployment-wide. Include abandoned attempts through local-producer quiescence and physical cleanup. | Two concurrent 1 GiB outputs can each overlap a replay spool. Revision 1's 2 GiB worker allowance could not admit both full reservations. |
+| H3 | Keep the 1 GiB qualification ceiling, 4 MiB encoded row, 1 MiB block, 1,024 blocks and 256 KiB manifest for this profile. | The finite 64 GiB reader envelope permits production tuning; it is not a claim that the largest format value was benchmarked. |
+| P7 | Keep at least 0.8 MiB/s upload per stream with a 1 MiB/s artificial destination rate. | Report capture/render, upload, independent verification, publication and download separately. |
+
+`artifact-remote-v2` measures these contracts on a macOS 27.2 ARM64 host
+(Mac14,12, 12 logical CPUs, 32 GiB RAM), Rust 1.99, local APFS temporary storage,
+and a remote PostgreSQL 18.6 server. Each process has a pool of eight connections
+and two executing output slots; two fresh worker processes share each disposable
+database. The driver sets the persisted deployment/principal/collection/kind
+resident limits to 8 GiB. Worker CPU and cgroup memory limits are not imposed;
+the 512 MiB RSS ceiling is an asserted measurement. The server reports 128 MiB
+shared buffers, 4 MiB work memory and 100 connections. Server CPU/memory limits
+and peak server RSS are unavailable and are recorded as unknown, separately from
+worker RSS. Connection-plus-query wall time is sampled five times per database;
+it includes process and connection setup and must not be described as pure RTT.
+Results apply to this named remote profile; they do not qualify the original
+constrained local host.
+
+The acceptance fixture separates sustained slow transfer from maximum-size
+qualification:
+
+- One warm-up and five fresh measured runs use 1,024 rows with 64 KiB source-row
+  targets, a 128 MiB output ceiling, and four concurrent real producers: JSON,
+  two text templates, and a backup. Exports contain about 63 MiB; the backup
+  captures both worker datasets and contains about 127 MiB. Writes, independent
+  read-back, and streamed download each receive the 1 MiB/s delay.
+- Fresh bulk runs use 4 MiB source-row targets and a 1 GiB-minus-1 MiB output
+  ceiling, leaving a small allowance for task metadata in shared admission.
+  Two export workers use 255 rows each; a mixed export/backup pair uses 127 rows
+  each so the backup of both datasets fits. These runs remove artificial delay
+  to exercise producer memory at full speed near the output ceiling.
+- Exact 4 MiB encoded-row and one-byte-overflow tests include JSON framing.
+  Protocol tests separately cover empty output, final partial blocks, exact and
+  exceeded manifest/block limits, interrupted verification and corruption.
+  Lifecycle contracts cover cancellation and worker loss at publication phases.
+
+The smaller repeated slow fixture still traverses dozens of full blocks per
+stream and hundreds of blocks for the backup's upload/read-back/download. The
+bulk runs prevent that smaller fixture from concealing an output-sized allocation.
+Five-run throughput distributions apply to the sustained slow fixture; bulk runs
+are resource/integrity qualification, not a latency distribution. This reduces a
+multi-hour throttled repetition while preserving separate pressure from slow
+consumers, maximum rows, maximum profile output, and concurrent production paths.
+Production sizes, deadlines, storage media or concurrency beyond this profile
+require rerunning the driver with those settings; integrity and finite admission
+bounds remain mandatory at every setting.
+
+Reproduce the profiles with Python 3.11+ and the test connection variables from
+`.env`. The account needs `CREATEDB` and does not need `CREATEROLE`:
+
+```bash
+source .env
+python3 -I -S tests/python/run.py integration artifact-pipeline \
+  --release --runs 5 --warmup 1 --output /tmp/artifact-slow.jsonl
+python3 -I -S tests/python/run.py integration artifact-pipeline \
+  --release --modes export export --rows 255 --row-bytes 4194304 \
+  --output-limit 1072693248 --rate 0 --runs 1 --warmup 0 \
+  --output /tmp/artifact-large-exports.jsonl
+python3 -I -S tests/python/run.py integration artifact-pipeline \
+  --release --rows 127 --row-bytes 4194304 --output-limit 1072693248 \
+  --rate 0 --runs 1 --warmup 0 --output /tmp/artifact-large-backup.jsonl
+```
+
+The resource driver invokes real task executors and production download streams;
+it does not run a complete HTTP server or initialize the global metrics exporter.
+Legacy inline readers remain the separately documented finite compatibility
+exception. Protocol, application/API, migration, split-role and production
+container checks remain independent required gates.

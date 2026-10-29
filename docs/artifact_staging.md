@@ -109,9 +109,9 @@ Lowering current write settings does not make previously stored output unreadabl
 | --- | --- | --- |
 | `HUBUUM_ARTIFACT_MAX_SPOOL_BYTES` | 256 MiB | Maximum export row/index spool. |
 | `HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES` | 4 GiB | Per-process reservation ceiling for concurrent staging and local spools. |
-| `HUBUUM_EXPORT_MAX_OUTPUT_BYTES` | Existing export default | Admission ceiling for a new export; requests may choose a smaller limit. |
-| `HUBUUM_BACKUP_MAX_OUTPUT_BYTES` | Existing backup default | Backup capture/serialization ceiling. |
-| `HUBUUM_EXPORT_STAGE_TIMEOUT_MS` | Existing export default | Query/hydration and render/transfer stage deadline; tune for large, slow output. |
+| `HUBUUM_EXPORT_MAX_OUTPUT_BYTES` | 256 KiB | Admission ceiling for a new export; requests may choose a smaller limit. |
+| `HUBUUM_BACKUP_MAX_OUTPUT_BYTES` | 256 MiB | Backup capture/serialization ceiling. |
+| `HUBUUM_EXPORT_STAGE_TIMEOUT_MS` | 10 seconds | Query/hydration and render/transfer stage deadline; tune for large, slow output. |
 
 Reservations precede producer capture. An export reserves its output ceiling plus
 `max(spool ceiling, output ceiling)`; a backup reserves twice its output ceiling.
@@ -132,6 +132,8 @@ artifact, 1 MiB block, 65,536 blocks, 4 MiB manifest. The default transfer profi
 is 1 GiB, 1,024 blocks and 256 KiB manifest. Readers use the retained format
 envelope, independently of the current write policy. The 4 MiB row bound remains
 fixed. Production tuning changes admission, not integrity or cancellation fences.
+The isolated renderer retains its fixed 128 MiB heap and five-second execution
+limits. A larger output allowance does not grant a template more computation.
 
 ## Backup, restore and upgrades
 
