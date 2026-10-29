@@ -71,7 +71,26 @@ the changelog in every PR; explicitly document supported API/backup/configuratio
 breaks and upgrade actions. Internal benchmark-only work has no user-facing
 changelog entry and must say so in its PR description.
 
-- #504: implemented with a reproducible synthetic baseline, initial targets and
-  acceptance gates; pending review/merge. See
-  [lifecycle budgets](performance/lifecycle_budgets.md).
-- #505–#521: pending; no completion or destructive-feature enablement is implied.
+Progress snapshot, 2026-10-29; GitHub issues and pull requests retain the live
+status and acceptance evidence:
+
+- #504: merged in [#522](https://github.com/hubuum/hubuum/pull/522), with a
+  reproducible synthetic baseline, initial targets and acceptance gates. See
+  [lifecycle budgets](performance/lifecycle_budgets.md); real scheduler, artifact
+  and archive acceptance measurements remain their consumers' responsibility.
+- #505: merged in [#524](https://github.com/hubuum/hubuum/pull/524), preserving
+  durable identities and historical references across supported logical restore.
+- #506: merged in [#525](https://github.com/hubuum/hubuum/pull/525), providing
+  [shared task admission and accounting](task_admission.md).
+- #507: active in [#527](https://github.com/hubuum/hubuum/pull/527).
+- #508: active in [#523](https://github.com/hubuum/hubuum/pull/523) and
+  [#528](https://github.com/hubuum/hubuum/pull/528).
+- #511: active in [#530](https://github.com/hubuum/hubuum/pull/530) and
+  [#531](https://github.com/hubuum/hubuum/pull/531).
+- #521: [measurement and acceptance work](performance/api_admission.md) is
+  available independently of those branches. Shared synchronous-request
+  reservations and their recovery guarantees remain to be implemented.
+- #509, #510, #512–#520: pending; use the delivery-order table to distinguish
+  available independent work from unmet prerequisites. No completion or
+  destructive-feature enablement is implied by an active branch or measurement
+  slice.
