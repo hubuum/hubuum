@@ -19,6 +19,7 @@ use crate::{PostgresStorageError, with_connection};
 pub struct PostgresTaskRetentionObservation {
     identity: TaskIdentity,
     task_id: Option<TaskId>,
+    nonterminal: bool,
     terminal_at_ms: Option<i64>,
     receipt_expires_at_ms: Option<i64>,
     details_expires_at_ms: Option<i64>,
@@ -35,6 +36,11 @@ impl PostgresTaskRetentionObservation {
     }
     pub const fn task_id(&self) -> Option<TaskId> {
         self.task_id
+    }
+    /// True only for an existing queued, validating or running task without a
+    /// terminal clock. Missing clocks alone do not prove a task is nonterminal.
+    pub const fn is_nonterminal(&self) -> bool {
+        self.nonterminal
     }
     pub const fn terminal_at_ms(&self) -> Option<i64> {
         self.terminal_at_ms
@@ -80,6 +86,8 @@ struct ObservationRow {
     identity: String,
     #[diesel(sql_type=Nullable<Integer>)]
     task_id: Option<i32>,
+    #[diesel(sql_type=Bool)]
+    nonterminal: bool,
     #[diesel(sql_type=Nullable<BigInt>)]
     terminal_at_ms: Option<i64>,
     #[diesel(sql_type=Nullable<BigInt>)]
@@ -105,6 +113,7 @@ impl TryFrom<ObservationRow> for PostgresTaskRetentionObservation {
         Ok(Self {
             identity: row.identity.parse()?,
             task_id: row.task_id.map(TaskId::new).transpose()?,
+            nonterminal: row.nonterminal,
             terminal_at_ms: row.terminal_at_ms,
             receipt_expires_at_ms: row.receipt_expires_at_ms,
             details_expires_at_ms: row.details_expires_at_ms,
@@ -186,7 +195,8 @@ impl PostgresScaleBackend {
     }
 
     /// One statement observes all clocks and physical child presence at the
-    /// same snapshot, including tasks already physically absent.
+    /// same snapshot, including tasks already physically absent. Epoch clocks
+    /// round down to milliseconds so derived expiry lag is never understated.
     pub async fn observe_task_retention(
         &self,
         identities: &[TaskIdentity],
@@ -198,10 +208,11 @@ impl PostgresScaleBackend {
             .collect::<Vec<_>>();
         let rows=with_connection(&self.pool,async move |connection| {
             diesel::sql_query("SELECT wanted.identity::text AS identity,t.id AS task_id, \
-                (extract(epoch FROM COALESCE((r.material #>> '{outcome,finished_at}')::timestamptz,(r.material #>> '{outcome,settled_at}')::timestamptz,t.finished_at AT TIME ZONE 'UTC'))*1000)::bigint AS terminal_at_ms, \
-                (extract(epoch FROM r.expires_at)*1000)::bigint AS receipt_expires_at_ms, \
-                (extract(epoch FROM COALESCE(t.detail_expires_at AT TIME ZONE 'UTC',COALESCE((r.material #>> '{outcome,finished_at}')::timestamptz,(r.material #>> '{outcome,settled_at}')::timestamptz)+make_interval(secs=>(r.material->>'details_after_terminal_secs')::double precision)))*1000)::bigint AS details_expires_at_ms, \
-                (extract(epoch FROM GREATEST((SELECT output_expires_at FROM public.export_task_outputs WHERE task_id=t.id),(SELECT output_expires_at FROM public.backup_task_outputs WHERE task_id=t.id),(SELECT output_expires_at FROM public.schema_profile_outputs WHERE task_id=t.id)) AT TIME ZONE 'UTC')*1000)::bigint AS output_expires_at_ms, \
+                COALESCE(t.status IN ('queued','validating','running') AND t.finished_at IS NULL,false) AS nonterminal, \
+                floor(extract(epoch FROM COALESCE((r.material #>> '{outcome,finished_at}')::timestamptz,(r.material #>> '{outcome,settled_at}')::timestamptz,t.finished_at AT TIME ZONE 'UTC'))*1000)::bigint AS terminal_at_ms, \
+                floor(extract(epoch FROM r.expires_at)*1000)::bigint AS receipt_expires_at_ms, \
+                floor(extract(epoch FROM COALESCE(t.detail_expires_at AT TIME ZONE 'UTC',COALESCE((r.material #>> '{outcome,finished_at}')::timestamptz,(r.material #>> '{outcome,settled_at}')::timestamptz)+make_interval(secs=>(r.material->>'details_after_terminal_secs')::double precision)))*1000)::bigint AS details_expires_at_ms, \
+                floor(extract(epoch FROM GREATEST((SELECT output_expires_at FROM public.export_task_outputs WHERE task_id=t.id),(SELECT output_expires_at FROM public.backup_task_outputs WHERE task_id=t.id),(SELECT output_expires_at FROM public.schema_profile_outputs WHERE task_id=t.id)) AT TIME ZONE 'UTC')*1000)::bigint AS output_expires_at_ms, \
                 r.task_identity IS NOT NULL AS receipt_present, \
                 ((SELECT count(*) FROM public.import_task_results WHERE task_id=t.id)+(SELECT count(*) FROM public.remote_call_results WHERE task_id=t.id)+(SELECT count(*) FROM public.schema_validation_work WHERE task_id=t.id)+(SELECT count(*) FROM public.schema_impact_findings WHERE task_id=t.id))::bigint AS child_rows, \
                 ((SELECT count(*) FROM public.export_task_outputs WHERE task_id=t.id)+(SELECT count(*) FROM public.backup_task_outputs WHERE task_id=t.id)+(SELECT count(*) FROM public.schema_profile_outputs WHERE task_id=t.id)+(SELECT count(*) FROM public.schema_repair_reports WHERE task_id=t.id))::bigint AS output_rows, \
