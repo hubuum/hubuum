@@ -84,13 +84,6 @@ async fn an_empty_output_still_retains_manifest_space() {
     )
     .await;
     let lease = fixture.claim().await;
-    let before = fixture
-        .backend
-        .task_capacity_snapshot()
-        .await
-        .unwrap()
-        .ordinary()
-        .resident_bytes();
     let (identity, limits) = stage(&fixture, &lease, 0).await;
     let store = fixture.backend.artifact_store();
     let writer = ArtifactWriter::new(store.as_ref(), identity, limits)
@@ -111,7 +104,7 @@ async fn an_empty_output_still_retains_manifest_space() {
             .unwrap()
             .ordinary()
             .resident_bytes(),
-        before + 117
+        117 + 4 // Empty manifest plus retained {} metadata and [] warnings.
     );
     fixture.cleanup().await;
 }
