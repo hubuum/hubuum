@@ -2221,10 +2221,12 @@ fn argument_value_kind(argument: &clap::Arg) -> &'static str {
 
 fn cli_requirements(command: &str, argument: &str) -> &'static [&'static str] {
     match (command, argument) {
-        ("hubuum-admin", "control_checkpoint" | "verify_control_recovery") => {
+        ("hubuum-admin", "control_checkpoint" | "verify_control_recovery" | "recover_control") => {
             &["control_checkpoint_key"]
         }
         ("hubuum-admin", "initialize_control_checkpoint") => &["control_checkpoint"],
+        ("hubuum-server", "control_recovery_directory") => &["control_recovery_key"],
+        ("hubuum-server", "control_recovery_key") => &["control_recovery_directory"],
         ("hubuum-admin", "backup_without_history") => &["backup"],
         ("hubuum-admin", "query_usage_class") => &["reconcile_query_usage"],
         ("hubuum-admin", "restore_test_database_url") => &["verify_backup"],

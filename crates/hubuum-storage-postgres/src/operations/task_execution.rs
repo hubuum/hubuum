@@ -953,13 +953,11 @@ fn active_statuses() -> [&'static str; 2] {
 async fn maintenance_is_normal(
     connection: &mut PostgresConnection,
 ) -> Result<bool, PostgresStorageError> {
-    use crate::schema::system_maintenance::dsl as maintenance;
-    let state = maintenance::system_maintenance
-        .filter(maintenance::id.eq(1_i16))
-        .select(maintenance::state)
-        .first::<String>(connection)
-        .await?;
-    Ok(state == "normal")
+    Ok(
+        crate::operations::maintenance::maintenance_state_on_connection(connection)
+            .await?
+            .is_normal(),
+    )
 }
 
 pub(super) async fn database_now(

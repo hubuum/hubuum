@@ -23,8 +23,30 @@ struct CaptureRow {
     lsn: String,
 }
 
+#[derive(QueryableByName)]
+struct ControlRow {
+    #[diesel(sql_type = Jsonb)]
+    material: Value,
+}
+
 #[async_trait]
 impl DeletionControlStorage for PostgresStorage {
+    async fn read_deletion_control(&self) -> Result<DeletionControlState, StorageError> {
+        self.runtime()
+            .with_connection(async |connection| {
+                let row = sql_query("SELECT public.hubuum_deletion_control_read() AS material")
+                    .get_result::<ControlRow>(connection)
+                    .await?;
+                serde_json::from_value(row.material).map_err(|_| {
+                    PostgresStorageError::database(
+                        "Persisted deletion authority is invalid; keep recovery quarantined",
+                    )
+                })
+            })
+            .await
+            .map_err(StorageError::from)
+    }
+
     async fn capture_deletion_control(&self) -> Result<DeletionControlCapture, StorageError> {
         self.runtime().with_connection(async |connection| {
             // One statement binds a committed control snapshot to the physical

@@ -1,8 +1,10 @@
+use diesel::dsl::sql;
 use diesel::prelude::{ExpressionMethods, QueryDsl};
+use diesel::sql_types::Text;
 use diesel_async::RunQueryDsl;
 use hubuum_domain::MaintenanceState;
 
-use crate::schema::system_maintenance::dsl::{id, state, system_maintenance};
+use crate::schema::system_maintenance::dsl::{id, system_maintenance};
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
 pub async fn maintenance_state_on_connection(
@@ -10,7 +12,9 @@ pub async fn maintenance_state_on_connection(
 ) -> Result<MaintenanceState, PostgresStorageError> {
     let state_value = system_maintenance
         .filter(id.eq(1_i16))
-        .select(state)
+        .select(sql::<Text>(
+            "CASE WHEN public.hubuum_deletion_exposure_allowed() THEN state ELSE 'recovery_quarantine' END",
+        ))
         .first::<String>(connection)
         .await?;
     MaintenanceState::try_from(state_value.as_str()).map_err(|error| {

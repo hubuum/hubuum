@@ -1,8 +1,8 @@
 //! Independent recovery evidence for protected deletion authority.
 //!
-//! This first slice deliberately does not release application quarantine or
-//! execute deletion. Lifecycle consumers must reapply restrictions before
-//! exposing restored data, even when the authority coverage check succeeds.
+//! Recovery restores only authenticated control material. Retained decisions
+//! impose deployment-wide restrictions until lifecycle consumers can reapply
+//! narrower restrictions; importing authority never releases those restrictions.
 
 mod repository;
 
@@ -11,10 +11,73 @@ use std::path::Path;
 use hubuum_storage_core::{DeletionControlState, DeletionControlStorage};
 use serde::Serialize;
 
+use crate::config::ControlRecoveryOptions;
 use crate::errors::ApiError;
 use crate::storage::{StorageContext, storage_handle};
 
-use repository::CheckpointRepository;
+use repository::{CheckpointRepository, RecoveryEvidence};
+
+/// Startup composition requires a successful authority/exposure check before
+/// it may construct services that serve traffic or originate background work.
+pub(crate) struct RuntimeRecoveryPermit(());
+
+async fn evidence(directory: &Path, key_file: &Path) -> Result<RecoveryEvidence, ApiError> {
+    let directory = directory.to_owned();
+    let key_file = key_file.to_owned();
+    tokio::task::spawn_blocking(move || {
+        CheckpointRepository::open(&directory, &key_file)?.recovery_evidence()
+    })
+    .await
+    .map_err(|_| unavailable("Recovery evidence worker failed"))?
+}
+
+pub(crate) async fn require_runtime_permit(
+    context: &impl StorageContext,
+    options: &ControlRecoveryOptions,
+) -> Result<RuntimeRecoveryPermit, ApiError> {
+    let required = match options.paths()? {
+        Some((directory, key)) => Some(evidence(directory, key).await?),
+        None => None,
+    };
+    let current = storage_handle(context).read_deletion_control().await?;
+    if required
+        .as_ref()
+        .is_some_and(|required| !current.covers(required.state()))
+    {
+        return Err(unavailable(
+            "Recovered control does not cover the latest independent checkpoint; run hubuum-admin --recover-control while all replicas remain stopped",
+        ));
+    }
+    if !current.permits_exposure() {
+        return Err(unavailable(
+            "Retained deletion decisions restrict application exposure and worker execution; keep the deployment quarantined until lifecycle restrictions can be reapplied",
+        ));
+    }
+    Ok(RuntimeRecoveryPermit(()))
+}
+
+pub(crate) async fn recover(
+    context: &impl StorageContext,
+    directory: &Path,
+    key_file: &Path,
+) -> Result<ControlRecoveryReport, ApiError> {
+    // Hold the independent publication lock through commit and read-back.
+    // The exact predecessor fences a concurrent primary transition; any error
+    // leaves the independent checkpoint intact and can be retried after restart.
+    let required = evidence(directory, key_file).await?;
+    let storage = storage_handle(context);
+    let before = storage.read_deletion_control().await?;
+    let change = before.recover_from(required.state())
+        .map_err(|_| unavailable("Control recovery conflicts with local lineage, epoch, or decisions; keep the deployment quarantined"))?;
+    storage.commit_deletion_control(change).await?;
+    let recovered = storage.read_deletion_control().await?;
+    if !recovered.covers(required.state()) {
+        return Err(unavailable(
+            "Recovered authority read-back did not cover the checkpoint; keep the deployment quarantined",
+        ));
+    }
+    Ok(report(&recovered, required.state()))
+}
 
 #[derive(Serialize)]
 pub(crate) struct ControlRecoveryReport {
@@ -48,16 +111,14 @@ pub(crate) async fn verify(
     directory: &Path,
     key_file: &Path,
 ) -> Result<ControlRecoveryReport, ApiError> {
-    let capture = storage_handle(context).capture_deletion_control().await?;
-    let directory = directory.to_owned();
-    let key_file = key_file.to_owned();
-    tokio::task::spawn_blocking(move || {
-        let checkpoint = CheckpointRepository::open(&directory, &key_file)?.latest()?;
-        if !capture.state().covers(checkpoint.state()) {
-            return Err(unavailable("Recovered control does not cover the latest independent checkpoint; keep the deployment quarantined"));
-        }
-        Ok(report(capture.state(), checkpoint.state()))
-    }).await.map_err(|_| unavailable("Recovery verification worker failed"))?
+    let required = evidence(directory, key_file).await?;
+    let current = storage_handle(context).read_deletion_control().await?;
+    if !current.covers(required.state()) {
+        return Err(unavailable(
+            "Recovered control does not cover the latest independent checkpoint; keep the deployment quarantined",
+        ));
+    }
+    Ok(report(&current, required.state()))
 }
 
 fn report(
@@ -76,3 +137,6 @@ fn report(
 fn unavailable(message: &str) -> ApiError {
     ApiError::ServiceUnavailable(message.into())
 }
+
+#[cfg(all(test, unix))]
+mod tests;

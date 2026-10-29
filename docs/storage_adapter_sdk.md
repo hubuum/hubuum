@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.10`.
+Status: accepted; current experimental release train is `0.11`.
 
 ## Supported Crate Graph
 
@@ -510,3 +510,23 @@ and block frames. Restore these into fresh physical identities, independently
 verify destination bytes, and remap output references. Retain prior cleanup
 obligations and shared capacity policy across restore. Format 11 identities remain
 native; formats 6–10 still require the quarantined legacy identity upgrade.
+
+## Upgrading from 0.10 to 0.11
+
+This is a breaking coordinated SDK release. Upgrade all ten SDK dependencies
+and handle `MaintenanceState::RecoveryQuarantine` in exhaustive matches. It
+restricts exposure independently of restore draining; restore status endpoints
+must not bypass this restriction. Return this state from maintenance and readiness
+checks while any deletion intent remains, including completed intents. Block
+new task/event claims and retention work under the same restriction.
+
+`DeletionControlStorage::read_deletion_control()` provides minimal authority
+without physical backup coordinates. Its default implementation uses capture;
+adapters with privileged capture must override it with a read-only runtime
+capability. `DeletionControlState::recover_from()` constructs an exact-predecessor
+transition that preserves newer local decisions and rejects conflicting histories.
+Adapters must accept validated recovery transitions that advance several revisions
+under the same exact-predecessor transaction, rather than requiring an increment
+of exactly one.
+Only trusted services holding authenticated latest evidence may use it for recovery.
+See the [recovery procedure](deletion_recovery.md) for the offline boundary.

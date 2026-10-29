@@ -84,6 +84,11 @@ struct AdminCli {
     #[cfg_attr(feature = "embedded-migrations", arg(conflicts_with_all = ["migrate", "migration_mode"]))]
     verify_control_recovery: Option<PathBuf>,
 
+    /// Recover the latest authenticated control checkpoint; all runtime replicas must be stopped
+    #[arg(long, value_name = "DIRECTORY", requires = "control_checkpoint_key", conflicts_with_all = ["control_checkpoint", "verify_control_recovery", "backup", "restore", "restore_executor", "verify_backup", "reconcile_query_usage", "database_ready", "reset_password", "audit_templates", "export_template_health", "token_key_status", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges"])]
+    #[cfg_attr(feature = "embedded-migrations", arg(conflicts_with_all = ["migrate", "migration_mode"]))]
+    recover_control: Option<PathBuf>,
+
     /// Owner-only file containing exactly 32 random signing-key bytes
     #[arg(long, value_name = "PATH", required_if_eq_any = [("initialize_control_checkpoint", "true")])]
     control_checkpoint_key: Option<PathBuf>,
@@ -331,6 +336,7 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
         &admin_cli.log_level,
         admin_cli.reconcile_query_usage
             || admin_cli.control_checkpoint.is_some()
+            || admin_cli.recover_control.is_some()
             || admin_cli.verify_control_recovery.is_some(),
     );
 
@@ -391,6 +397,7 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     }
     let privileged_database_operation = migration_requested
         || admin_cli.control_checkpoint.is_some()
+        || admin_cli.recover_control.is_some()
         || admin_cli.verify_control_recovery.is_some()
         || admin_cli.restore.is_some()
         || admin_cli.restore_executor
@@ -538,7 +545,10 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
 
     let storage = initialize_storage(&storage_settings)?;
 
-    if admin_cli.control_checkpoint.is_some() || admin_cli.verify_control_recovery.is_some() {
+    if admin_cli.control_checkpoint.is_some()
+        || admin_cli.recover_control.is_some()
+        || admin_cli.verify_control_recovery.is_some()
+    {
         let key = admin_cli.control_checkpoint_key.as_deref().ok_or_else(|| {
             ApiError::BadRequest(
                 "--control-checkpoint-key is required for independent recovery evidence".into(),
@@ -552,6 +562,8 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
                 admin_cli.initialize_control_checkpoint,
             )
             .await?
+        } else if let Some(directory) = admin_cli.recover_control.as_deref() {
+            crate::services::deletion_recovery::recover(&storage, directory, key).await?
         } else {
             crate::services::deletion_recovery::verify(
                 &storage,

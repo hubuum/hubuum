@@ -7,6 +7,7 @@ use actix_web::{Error, ResponseError};
 use crate::config::DEFAULT_METRICS_PATH;
 use crate::config::running::RunningConfig;
 use crate::errors::ApiError;
+use crate::models::MaintenanceState;
 use crate::permissions::AppContext;
 use crate::restores::{MaintenanceActivityGuard, current_maintenance_state};
 use crate::storage::{StorageCallSite, with_storage_call_site};
@@ -33,7 +34,11 @@ pub async fn reject_during_maintenance(
         let metrics_path = req
             .app_data::<Data<RunningConfig>>()
             .map(|config| config.server.metrics_path.as_str());
-        if !allowed_during_maintenance(req.path(), metrics_path) {
+        // Restore status remains available during restore draining, but must not
+        // become an exposure bypass during deletion recovery quarantine.
+        if !allowed_during_maintenance(req.path(), metrics_path)
+            || (req.path().starts_with("/api/v1/restores/") && req.path().ends_with("/status"))
+        {
             // Begin before reading maintenance state. If draining wins the race,
             // this request is rejected; if the request saw normal first, the
             // coordinator must wait for this guard to drop.
@@ -48,9 +53,12 @@ pub async fn reject_during_maintenance(
                 current_maintenance_state(backend.backend()),
             )
             .await?;
-            if !state.is_normal() {
+            if !state.is_normal()
+                && !(state == MaintenanceState::Draining
+                    && allowed_during_maintenance(req.path(), metrics_path))
+            {
                 let response = ApiError::ServiceUnavailable(format!(
-                    "Hubuum is in '{state}' maintenance for a destructive restore"
+                    "Hubuum is in '{state}' maintenance for restore or deletion recovery"
                 ))
                 .error_response();
                 return Ok(req.into_response(response).map_into_boxed_body());

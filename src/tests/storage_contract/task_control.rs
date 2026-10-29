@@ -8,6 +8,44 @@ use hubuum_task_core::{TaskCancellationReason, TaskExecutionLimit, TaskStopReaso
 use rstest::rstest;
 use tokio::time::{sleep, timeout};
 
+#[tokio::test]
+async fn recovered_deletion_authority_prevents_memory_task_claims() {
+    use hubuum_storage_core::{DeletionControlStorage, DeletionSubject};
+    use uuid::Uuid;
+
+    let fixture = Fixture::new(
+        BackendTestEnvironment::Memory {
+            storage: MemoryStorage::new(),
+        },
+        StorageTaskKind::Import,
+    )
+    .await;
+    assert_eq!(fixture.task.status(), StorageTaskStatus::Queued);
+    let before = fixture.backend.read_deletion_control().await.unwrap();
+    let required = before
+        .record_intent(
+            Uuid::new_v4(),
+            DeletionSubject::Version {
+                identity: serde_json::from_value(serde_json::json!(Uuid::new_v4())).unwrap(),
+            },
+            vec![Uuid::new_v4()],
+        )
+        .unwrap();
+    fixture
+        .backend
+        .commit_deletion_control(before.recover_from(required.next()).unwrap())
+        .await
+        .unwrap();
+    assert!(
+        fixture
+            .backend
+            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
 pub(super) struct Fixture {
     pub(super) environment: BackendTestEnvironment,
     pub(super) backend: StorageHandle,
