@@ -82,6 +82,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Startup readiness requires the latest migration packaged with the adapter,
+  preventing an incomplete schema from passing after parallel migrations are
+  integrated.
 - Artifact cleanup backs off after an empty batch using the configured output
   cleanup interval, avoiding an extra database acquisition on every idle worker
   poll while retaining bounded draining and retries when work remains.
