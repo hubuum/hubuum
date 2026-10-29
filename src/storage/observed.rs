@@ -143,13 +143,34 @@ impl<S> ObservedStorage<S> {
     }
 }
 
-pub(super) async fn observe_storage_call_with<T>(
+pub(super) trait ObservationError: std::fmt::Display {
+    fn diagnostic_kind(&self) -> hubuum_storage_core::StorageErrorKind;
+}
+impl ObservationError for StorageError {
+    fn diagnostic_kind(&self) -> hubuum_storage_core::StorageErrorKind {
+        self.kind()
+    }
+}
+impl ObservationError for hubuum_storage_core::artifacts::ArtifactError {
+    fn diagnostic_kind(&self) -> hubuum_storage_core::StorageErrorKind {
+        use hubuum_storage_core::{StorageErrorKind, artifacts::ArtifactError};
+        match self {
+            ArtifactError::Invalid(_) => StorageErrorKind::InvalidInput,
+            ArtifactError::Limit(_) => StorageErrorKind::InputTooLarge,
+            ArtifactError::Conflict(_) => StorageErrorKind::Conflict,
+            ArtifactError::NotFound => StorageErrorKind::NotFound,
+            ArtifactError::Corrupt(_) | ArtifactError::Backend(_) => StorageErrorKind::Backend,
+        }
+    }
+}
+
+pub(super) async fn observe_storage_call_with<T, E: ObservationError>(
     observer: &dyn StorageObserver,
     backend: &'static str,
     capability: StorageCapability,
     operation: &'static str,
-    future: impl Future<Output = Result<T, StorageError>>,
-) -> Result<T, StorageError> {
+    future: impl Future<Output = Result<T, E>>,
+) -> Result<T, E> {
     let span = debug_span!(
         "storage_operation",
         backend,
@@ -167,7 +188,7 @@ pub(super) async fn observe_storage_call_with<T>(
         let result_kind = result
             .as_ref()
             .map(|_| "ok")
-            .unwrap_or_else(|error| error.kind().as_str());
+            .unwrap_or_else(|error| error.diagnostic_kind().as_str());
         let span = Span::current();
         span.record("storage.result", result_kind);
         span.record(
@@ -191,15 +212,15 @@ pub(super) async fn observe_storage_call_with<T>(
                 message = "storage operation complete",
                 elapsed_ms = duration.as_millis(),
             ),
-            Err(error) if error.kind().is_backend_failure() => warn!(
+            Err(error) if error.diagnostic_kind().is_backend_failure() => warn!(
                 message = "storage operation failed",
-                error_kind = error.kind().as_str(),
+                error_kind = error.diagnostic_kind().as_str(),
                 elapsed_ms = duration.as_millis(),
                 error = %error,
             ),
             Err(error) => debug!(
                 message = "storage operation rejected",
-                error_kind = error.kind().as_str(),
+                error_kind = error.diagnostic_kind().as_str(),
                 elapsed_ms = duration.as_millis(),
                 error = %error,
             ),

@@ -61,12 +61,18 @@ pub(super) fn capture(
         }
         outputs.push(retain_row(progress, row(json!({
             "logical_identity": state.logical_identities.association(Association::TaskOutput(o.task_id()))?,
-            "id": state.export_output_ids.get(&o.task_id().id()).copied().unwrap_or(o.task_id().id()), "task_id": o.task_id().id(), "template_name": o.template_name(), "content_type": o.content_type(), "json_output": o.json_output(), "text_output": o.text_output(),
+            "id": state.export_output_ids.get(&o.task_id().id()).copied().unwrap_or(o.task_id().id()), "task_id": o.task_id().id(), "template_name": o.template_name(), "content_type": o.content_type(), "artifact_reference": o.artifact_reference(), "json_output": o.json_output(), "text_output": o.text_output(),
             "meta_json": o.metadata(), "warnings_json": o.warnings(), "warning_count": o.warning_count(), "truncated": o.truncated(), "output_expires_at": o.output_expires_at(),
             "total_duration_ms": o.durations().total_ms(), "query_duration_ms": o.durations().query_ms(), "hydration_duration_ms": o.durations().hydration_ms(), "render_duration_ms": o.durations().render_ms(), "created_at": o.created_at()
         })))?);
     }
     sections.insert(StorageBackupHistorySection::ExportOutputs, outputs);
+    let mut artifacts = Vec::new();
+    for frame in state.capture_export_artifacts()? {
+        progress.scan_row()?;
+        artifacts.push(retain_row(progress, Ok(frame))?);
+    }
+    sections.insert(StorageBackupHistorySection::ExportArtifacts, artifacts);
     let mut remote = Vec::new();
     for r in &state.remote_call_results {
         progress.scan_row()?;
@@ -184,10 +190,24 @@ pub(super) fn restore(
             .or_default()
             .push(result);
     }
+    let artifact_references =
+        state.restore_export_artifacts(&sections[&StorageBackupHistorySection::ExportArtifacts])?;
     for row in &sections[&StorageBackupHistorySection::ExportOutputs] {
         let r = Row(row);
         let text_output = r.optional_text("text_output")?;
-        let json_output = if text_output.is_none() {
+        let artifact_reference = r
+            .optional_value("artifact_reference")
+            .map(|value| {
+                let source: hubuum_storage_core::artifacts::ArtifactReference =
+                    serde_json::from_value(value.clone())
+                        .map_err(|_| invalid("artifact_reference"))?;
+                artifact_references
+                    .get(&source.identity().artifact())
+                    .cloned()
+                    .ok_or_else(|| invalid("artifact_reference"))
+            })
+            .transpose()?;
+        let json_output = if text_output.is_none() && artifact_reference.is_none() {
             Some(r.value("json_output")?.clone())
         } else {
             r.optional_value("json_output").cloned()
@@ -202,6 +222,7 @@ pub(super) fn restore(
         )
         .template_name(r.optional_text("template_name")?)
         .output(json_output, text_output)
+        .artifact_reference(artifact_reference)
         .warning_state(r.integer("warning_count")?, r.boolean("truncated")?)
         .durations(
             StorageTaskDurations::try_new(

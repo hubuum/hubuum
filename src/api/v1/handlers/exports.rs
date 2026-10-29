@@ -161,7 +161,24 @@ pub async fn get_export_output(
         return Err(ApiError::NotFound("Export output not found".into()));
     }
     match export_output(&context, &task, requestor.scopes()).await? {
-        ExportOutputLookup::Available(output) => render_export_task_output(output),
+        ExportOutputLookup::Available(output) => {
+            if let Some(reference) = output.artifact_reference {
+                let stream = crate::services::artifacts::download(&context, reference);
+                Ok(HttpResponse::Ok()
+                    .content_type(output.content_type)
+                    .insert_header((
+                        EXPORT_WARNINGS_HEADER,
+                        serde_json::from_value::<Vec<ExportWarning>>(output.warnings_json)?
+                            .len()
+                            .to_string(),
+                    ))
+                    .insert_header((EXPORT_TRUNCATED_HEADER, output.truncated.to_string()))
+                    .insert_header(("Cache-Control", "no-store"))
+                    .streaming(stream))
+            } else {
+                render_export_task_output(output)
+            }
+        }
         ExportOutputLookup::Expired { expires_at } => Err(ApiError::Gone(format!(
             "Export output expired at {expires_at} UTC"
         ))),
@@ -178,6 +195,7 @@ mod tests {
 
     fn text_export_output(meta_truncated: bool, output_truncated: bool) -> ExportTaskOutput {
         ExportTaskOutput {
+            artifact_reference: None,
             content_type: ExportContentType::TextPlain.as_mime().to_string(),
             json_output: None,
             text_output: Some("ok".to_string()),

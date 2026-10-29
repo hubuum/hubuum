@@ -1,3 +1,4 @@
+use crate::artifacts::ArtifactReference;
 use std::fmt;
 
 use async_trait::async_trait;
@@ -1403,6 +1404,7 @@ impl StorageBackupOutputSummary {
 
 #[derive(Clone, PartialEq)]
 pub struct StorageExportOutput {
+    artifact_reference: Option<ArtifactReference>,
     task_id: TaskId,
     template_name: Option<String>,
     content_type: String,
@@ -1418,6 +1420,9 @@ pub struct StorageExportOutput {
 }
 
 impl StorageExportOutput {
+    pub fn artifact_reference(&self) -> Option<&ArtifactReference> {
+        self.artifact_reference.as_ref()
+    }
     #[must_use]
     pub fn builder(
         task_id: TaskId,
@@ -1429,6 +1434,7 @@ impl StorageExportOutput {
     ) -> StorageExportOutputBuilder {
         StorageExportOutputBuilder {
             output: Self {
+                artifact_reference: None,
                 task_id,
                 template_name: None,
                 content_type: content_type.into(),
@@ -1478,6 +1484,10 @@ pub struct StorageExportOutputBuilder {
 }
 
 impl StorageExportOutputBuilder {
+    pub fn artifact_reference(mut self, reference: Option<ArtifactReference>) -> Self {
+        self.output.artifact_reference = reference;
+        self
+    }
     #[must_use]
     pub fn template_name(mut self, template_name: Option<String>) -> Self {
         self.output.template_name = template_name;
@@ -1510,8 +1520,14 @@ impl StorageExportOutputBuilder {
                 "Export output warning count must not be negative",
             ));
         }
-        match (&self.output.json_output, &self.output.text_output) {
-            (Some(_), None) | (None, Some(_)) => Ok(self.output),
+        match (
+            &self.output.json_output,
+            &self.output.text_output,
+            &self.output.artifact_reference,
+        ) {
+            (Some(_), None, None) | (None, Some(_), None) | (None, None, Some(_)) => {
+                Ok(self.output)
+            }
             _ => Err(StorageValidationError::invalid(
                 "Export output must contain exactly one of JSON or text output",
             )),
@@ -1521,6 +1537,7 @@ impl StorageExportOutputBuilder {
 
 #[derive(Clone, PartialEq)]
 pub struct StorageBackupOutput {
+    artifact_reference: Option<ArtifactReference>,
     task_id: TaskId,
     document: Vec<u8>,
     byte_size: i64,
@@ -1530,6 +1547,28 @@ pub struct StorageBackupOutput {
 }
 
 impl StorageBackupOutput {
+    pub fn artifact_reference(&self) -> Option<&ArtifactReference> {
+        self.artifact_reference.as_ref()
+    }
+    pub fn from_reference(
+        task_id: TaskId,
+        reference: ArtifactReference,
+        byte_size: i64,
+        sha256: String,
+        output_expires_at: DateTime<Utc>,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, StorageValidationError> {
+        validate_backup_output_identity(byte_size, &sha256)?;
+        Ok(Self {
+            task_id,
+            artifact_reference: Some(reference),
+            document: Vec::new(),
+            byte_size,
+            sha256,
+            output_expires_at,
+            created_at,
+        })
+    }
     pub fn try_new(
         task_id: TaskId,
         document: Vec<u8>,
@@ -1560,6 +1599,7 @@ impl StorageBackupOutput {
             ));
         }
         Ok(Self {
+            artifact_reference: None,
             task_id,
             document,
             byte_size,
@@ -1572,8 +1612,10 @@ impl StorageBackupOutput {
     backup_output_accessors!();
 
     #[must_use]
-    pub fn document(&self) -> &[u8] {
-        &self.document
+    pub fn document(&self) -> Option<&[u8]> {
+        self.artifact_reference
+            .is_none()
+            .then_some(self.document.as_slice())
     }
 
     #[must_use]

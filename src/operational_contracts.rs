@@ -46,6 +46,7 @@ const BACKGROUND_BUCKETS_SECONDS: &[f64] = &[
 ];
 const STORAGE_OPERATION_SOURCES: &[&str] = &[
     include_str!("storage/observed.rs"),
+    include_str!("storage/context/artifacts.rs"),
     include_str!("storage/context/schema_evolution.rs"),
     include_str!("storage/context/query_usage.rs"),
     include_str!("storage/context/api.rs"),

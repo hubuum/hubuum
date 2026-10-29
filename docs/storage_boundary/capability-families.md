@@ -596,3 +596,16 @@ Query observation control notifications are wake-up hints for the shared overrid
 `WorkerNotificationProvider` accepts a boxed callback so each process can refresh
 its own collector. Providers invoke it on registration/reconnection and changes;
 periodic reads remain the recovery path if notification delivery is interrupted.
+
+## Verified artifacts
+
+Required traits: `ArtifactStore` and `TaskArtifactStore`. Every selectable adapter
+must implement bounded staging, sealing, independent reads, fenced publication,
+and idempotent cleanup. `bind_task` admits physical reservations against the exact
+stable task identity and live lease. Task-owned `publish` calls are rejected;
+`complete_task` consumes the verification proof in the same atomic operation as
+output metadata and terminal status. Restore copies portable frames into fresh
+identities and preserves all pre-existing physical obligations.
+
+The [artifact contract](../artifact_staging.md) defines wire integrity, spool
+lifetime, finite limits, retained-reader compatibility, and cleanup accounting.

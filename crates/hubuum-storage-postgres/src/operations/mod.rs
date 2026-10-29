@@ -3,6 +3,7 @@
 pub mod authentication;
 pub mod authorization;
 pub mod backup;
+mod backup_artifacts;
 pub mod bootstrap;
 pub mod catalog;
 pub mod class;

@@ -68,6 +68,7 @@ pub(crate) const fn history_table(section: StorageBackupHistorySection) -> &'sta
         StorageBackupHistorySection::RemoteTargetHistory => "remote_targets_history",
         StorageBackupHistorySection::TerminalTasks => "tasks",
         StorageBackupHistorySection::ImportResults => "import_task_results",
+        StorageBackupHistorySection::ExportArtifacts => "artifact_chunks",
         StorageBackupHistorySection::ExportOutputs => "export_task_outputs",
         StorageBackupHistorySection::RemoteCallResults => "remote_call_results",
         StorageBackupHistorySection::AuditEvents => "events",
@@ -592,6 +593,7 @@ fn snapshot_key(table: &str) -> Result<&'static str, PostgresStorageError> {
     validate_snapshot_table(table)?;
     Ok(match table {
         "group_memberships" => "principal_id, group_id",
+        "artifact_chunks" => "artifact_id, ordinal",
         "event_sink_collection_grants" => "sink_id, collection_id",
         "group_membership_sources" => "principal_id, group_id, source, source_scope_id, source_key",
         "collection_authorization_state" => "collection_id",
@@ -625,6 +627,7 @@ async fn stream_capture_rows(
     // A NO SCROLL, WITHOUT HOLD cursor cannot materialize a held snapshot.
     let max_chars = progress
         .max_bytes()
+        .min(4 * 1024 * 1024)
         .saturating_add(1)
         .min(i32::MAX as usize);
     diesel::sql_query(format!(
@@ -648,7 +651,7 @@ async fn stream_capture_rows(
         let Some(text) = captured.row else {
             continue;
         };
-        if text.len() > progress.max_bytes() {
+        if text.len() > progress.max_bytes().min(4 * 1024 * 1024) {
             return Err(PostgresStorageError::from(
                 progress.limit_error("source row byte"),
             ));
@@ -754,6 +757,10 @@ pub async fn capture_backup_replay(
             if include_history {
                 for &section in StorageBackupHistorySection::ALL {
                     builder.begin_history(section)?;
+                    if section == StorageBackupHistorySection::ExportArtifacts {
+                        super::backup_artifacts::capture(conn, &mut builder, &mut progress).await?;
+                        continue;
+                    }
                     let filter = match section {
                         StorageBackupHistorySection::TerminalTasks => SnapshotFilter::TerminalTasks,
                         StorageBackupHistorySection::ImportResults

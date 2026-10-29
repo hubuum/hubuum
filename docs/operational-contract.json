@@ -1783,6 +1783,7 @@
           "name": "capability",
           "bounded_by": "enumerated values",
           "values": [
+            "artifact",
             "audit_event",
             "authentication",
             "authorization_data",
@@ -1837,6 +1838,7 @@
           "bounded_by": "enumerated values",
           "values": [
             "abandon_schema_revision",
+            "abort",
             "acknowledge_task_stop",
             "activate_schema_revision",
             "add_group_member",
@@ -1844,6 +1846,7 @@
             "aggregate_objects",
             "analyze_query_usage",
             "anonymize_user",
+            "append",
             "append_task_event",
             "apply_claimed_import_best_effort",
             "apply_claimed_import_strict",
@@ -1857,6 +1860,8 @@
             "authorize_local_collections",
             "begin_event_delivery",
             "begin_remote_dispatch",
+            "bind_task",
+            "block",
             "bootstrap_default_admin",
             "cancel_schema_work",
             "capture_backup_replay",
@@ -1864,6 +1869,7 @@
             "claim_event_delivery_batch",
             "claim_event_retention_batch",
             "claim_next_task",
+            "cleanup",
             "complete_event_retention_batch",
             "complete_task",
             "count_enabled_event_sinks",
@@ -2057,6 +2063,7 @@
             "load_groups_with_collection_permission",
             "load_principal_collection_permissions",
             "load_token_metadata_by_ids",
+            "manifest",
             "mark_event_delivery_dead",
             "mark_event_delivery_failed",
             "mark_event_delivery_succeeded",
@@ -2070,6 +2077,8 @@
             "prepare_object_relation",
             "process_event_fanout_batch",
             "process_schema_work",
+            "publish",
+            "published_manifest",
             "purge_auth_sessions",
             "purge_credential_sources",
             "purge_expired_backup_outputs",
@@ -2083,6 +2092,7 @@
             "record_remote_target_invocation",
             "recover_expired_task_leases",
             "refresh_principal",
+            "register_destination",
             "release_event_delivery_for_retry",
             "remove_group_member",
             "remove_restore_instance",
@@ -2117,11 +2127,13 @@
             "rotate_auth_session",
             "save_schema_repair_report",
             "schema_compliance_counts",
+            "seal",
             "search_classes",
             "search_collections",
             "search_objects",
             "set_query_observation_control",
             "set_user_password",
+            "stage",
             "stage_restore_artifact",
             "stage_schema_revision",
             "start_restore_draining",
@@ -2213,6 +2225,7 @@
           "name": "capability",
           "bounded_by": "enumerated values",
           "values": [
+            "artifact",
             "audit_event",
             "authentication",
             "authorization_data",
@@ -2267,6 +2280,7 @@
           "bounded_by": "enumerated values",
           "values": [
             "abandon_schema_revision",
+            "abort",
             "acknowledge_task_stop",
             "activate_schema_revision",
             "add_group_member",
@@ -2274,6 +2288,7 @@
             "aggregate_objects",
             "analyze_query_usage",
             "anonymize_user",
+            "append",
             "append_task_event",
             "apply_claimed_import_best_effort",
             "apply_claimed_import_strict",
@@ -2287,6 +2302,8 @@
             "authorize_local_collections",
             "begin_event_delivery",
             "begin_remote_dispatch",
+            "bind_task",
+            "block",
             "bootstrap_default_admin",
             "cancel_schema_work",
             "capture_backup_replay",
@@ -2294,6 +2311,7 @@
             "claim_event_delivery_batch",
             "claim_event_retention_batch",
             "claim_next_task",
+            "cleanup",
             "complete_event_retention_batch",
             "complete_task",
             "count_enabled_event_sinks",
@@ -2487,6 +2505,7 @@
             "load_groups_with_collection_permission",
             "load_principal_collection_permissions",
             "load_token_metadata_by_ids",
+            "manifest",
             "mark_event_delivery_dead",
             "mark_event_delivery_failed",
             "mark_event_delivery_succeeded",
@@ -2500,6 +2519,8 @@
             "prepare_object_relation",
             "process_event_fanout_batch",
             "process_schema_work",
+            "publish",
+            "published_manifest",
             "purge_auth_sessions",
             "purge_credential_sources",
             "purge_expired_backup_outputs",
@@ -2513,6 +2534,7 @@
             "record_remote_target_invocation",
             "recover_expired_task_leases",
             "refresh_principal",
+            "register_destination",
             "release_event_delivery_for_retry",
             "remove_group_member",
             "remove_restore_instance",
@@ -2547,11 +2569,13 @@
             "rotate_auth_session",
             "save_schema_repair_report",
             "schema_compliance_counts",
+            "seal",
             "search_classes",
             "search_collections",
             "search_objects",
             "set_query_observation_control",
             "set_user_password",
+            "stage",
             "stage_restore_artifact",
             "stage_schema_revision",
             "start_restore_draining",
@@ -3612,6 +3636,50 @@
       "dynamic_prefix": false
     },
     {
+      "name": "HUBUUM_ARTIFACT_MAX_SPOOL_BYTES",
+      "owner": "exports",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "268435456"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 68719476736,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES",
+      "owner": "exports",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "4294967296"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 9223372036854775807,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
       "name": "HUBUUM_AUTH_CONFIG_HOST_PATH",
       "owner": "operations",
       "exposure": "sensitive_metadata",
@@ -3708,7 +3776,7 @@
       "dynamic_default": null,
       "allowed_values": [],
       "minimum": 1,
-      "maximum": null,
+      "maximum": 68719476736,
       "runtime_roles": [
         "all",
         "api",
@@ -4652,7 +4720,7 @@
       "dynamic_default": null,
       "allowed_values": [],
       "minimum": 1,
-      "maximum": null,
+      "maximum": 68719476736,
       "runtime_roles": [
         "all",
         "api",
@@ -5322,6 +5390,106 @@
       ],
       "appears_in_running_configuration": true,
       "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_PROBE_MODE",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_PROBE_RATE",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_PROBE_ROWS",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_PROBE_ROW_BYTES",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_PROBE_SLOTS",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
       "dynamic_prefix": false
     },
     {
@@ -7604,7 +7772,7 @@
   },
   "documents": {
     "backup": {
-      "version": 11,
+      "version": 12,
       "required_fields": [
         "backup_version",
         "created_at",
@@ -7652,6 +7820,7 @@
         "remote_target_history",
         "terminal_tasks",
         "import_results",
+        "export_artifacts",
         "export_outputs",
         "remote_call_results",
         "audit_events",
@@ -7718,6 +7887,44 @@
     {
       "command": "hubuum-server",
       "options": [
+        {
+          "id": "max_spool_bytes",
+          "long": "max-spool-bytes",
+          "short": null,
+          "environment": "HUBUUM_ARTIFACT_MAX_SPOOL_BYTES",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "268435456"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "worker_resident_bytes",
+          "long": "worker-resident-bytes",
+          "short": null,
+          "environment": "HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "4294967296"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
         {
           "id": "schema_max_bytes",
           "long": "schema-max-bytes",

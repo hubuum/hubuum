@@ -85,6 +85,7 @@ impl MemoryState {
         );
         let mut state = Self {
             task_capacity: Default::default(),
+            artifacts: Default::default(),
             logical_identities,
             schema_repair_reports: Default::default(),
             generation: Arc::new(()),

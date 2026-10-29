@@ -1,6 +1,6 @@
 # `hubuum-storage-core` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.7` release train.
+Status: experimental public API in the storage SDK `0.9` release train.
 
 ## Purpose and Callers
 
@@ -15,6 +15,13 @@ no runtime contract version handshake.
 The normative semantics of that Rust surface are documented in the
 [storage contract](../storage_boundary/contract.md). The Rust declarations,
 semantic coverage inventory, and contract documentation must change together.
+
+The 0.9 train adds mandatory `artifacts::TaskArtifactStore`, including
+`ArtifactStore`, to the complete backend. Verified task completion carries a
+private-field proof, and output records carry either inline legacy content or a
+trusted artifact reference. Backup format 12 adds portable `ExportArtifacts`
+frames. Implement publication, cleanup accounting and replay before upgrading;
+see [verified artifacts](../artifact_staging.md).
 
 The crate also exposes the mandatory `TransactionStorage` unit of work.
 Applications compose safe lifecycle semantics through the crate-owned

@@ -3,6 +3,7 @@ use std::panic::{AssertUnwindSafe, resume_unwind};
 use futures_util::FutureExt;
 use hubuum::events::EventContext;
 use hubuum_query::QueryOptions;
+use hubuum_storage_core::artifacts::ArtifactStore;
 use hubuum_task_core::IdempotencyKey;
 use tokio::task::JoinSet;
 
@@ -10,7 +11,10 @@ use super::*;
 
 // Shared policy changes and restore replace deployment-wide state. Use the
 // runner's isolated restore database and its existing serialization boundary.
-async fn with_fixture(kind: StorageBackendKind, test: impl AsyncFnOnce(&RestoreContractFixture)) {
+pub(super) async fn with_fixture(
+    kind: StorageBackendKind,
+    test: impl AsyncFnOnce(&RestoreContractFixture),
+) {
     let _guard = RESTORE_TEST_LOCK.lock().await;
     let pool = postgres_test_pool_with_timeout(&database_url(), 8, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
     let fixture = RestoreContractFixture::new(kind, pool).await.unwrap();
@@ -43,12 +47,15 @@ async fn with_fixture(kind: StorageBackendKind, test: impl AsyncFnOnce(&RestoreC
     let result = AssertUnwindSafe(test(&fixture)).catch_unwind().await;
     set_policy(fixture.storage(), original.policy().clone()).await;
     fixture.restore_original().await.unwrap();
+    // Logical restore preserves physical artifact cleanup obligations. Drain
+    // the fixture's retired copies before another test installs a tiny quota.
+    while fixture.storage().cleanup().await.unwrap() > 0 {}
     if let Err(panic) = result {
         resume_unwind(panic);
     }
 }
 
-async fn set_policy(
+pub(super) async fn set_policy(
     storage: &impl TaskCapacityStorage,
     policy: TaskAdmissionPolicy,
 ) -> StorageTaskPolicy {

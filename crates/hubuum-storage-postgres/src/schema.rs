@@ -35,6 +35,20 @@ diesel::table! {
 }
 
 diesel::table! {
+    artifact_task_owners (artifact_id) {
+        artifact_id -> Uuid,
+        task_identity -> Uuid,
+        task_id -> Int4,
+        lease_token -> Uuid,
+        worker_identity -> Uuid,
+        spool_bytes -> Int8,
+        cleanup_after -> Nullable<Timestamptz>,
+        reserved_bytes -> Int8,
+        output_expires_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
     auth_sessions (id) {
         id -> Uuid,
         principal_id -> Int4,
@@ -63,6 +77,7 @@ diesel::table! {
         output_expires_at -> Timestamp,
         created_at -> Timestamp,
         logical_identity -> Nullable<Jsonb>,
+        artifact_reference -> Nullable<Jsonb>,
     }
 }
 
@@ -390,6 +405,7 @@ diesel::table! {
         render_duration_ms -> Int4,
         created_at -> Timestamp,
         logical_identity -> Nullable<Jsonb>,
+        artifact_reference -> Nullable<Jsonb>,
     }
 }
 
@@ -1147,6 +1163,7 @@ diesel::table! {
 
 diesel::joinable!(artifact_attempts -> artifact_destinations (destination_id));
 diesel::joinable!(artifact_chunks -> artifact_attempts (artifact_id));
+diesel::joinable!(artifact_task_owners -> artifact_attempts (artifact_id));
 diesel::joinable!(auth_sessions -> users (principal_id));
 diesel::joinable!(backup_task_outputs -> tasks (task_id));
 diesel::joinable!(class_computation_state -> hubuumclass (class_id));
@@ -1219,6 +1236,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     artifact_attempts,
     artifact_chunks,
     artifact_destinations,
+    artifact_task_owners,
     auth_sessions,
     backup_task_outputs,
     class_computation_state,

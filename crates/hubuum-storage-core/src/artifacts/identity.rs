@@ -1,12 +1,40 @@
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{ArtifactError, ArtifactResult};
+use super::{ArtifactError, ArtifactResult};
 
 macro_rules! identity {
     ($name:ident) => {
-        #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+        #[derive(
+            Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize,
+        )]
+        #[serde(try_from = "String", into = "String")]
         pub struct $name([u8; 16]);
 
+        impl TryFrom<[u8; 16]> for $name {
+            type Error = ArtifactError;
+            fn try_from(bytes: [u8; 16]) -> ArtifactResult<Self> {
+                Self::from_bytes(bytes)
+            }
+        }
+        impl From<$name> for [u8; 16] {
+            fn from(value: $name) -> Self {
+                value.0
+            }
+        }
+        impl TryFrom<String> for $name {
+            type Error = ArtifactError;
+            fn try_from(value: String) -> ArtifactResult<Self> {
+                let id = Uuid::parse_str(&value)
+                    .map_err(|_| ArtifactError::Invalid("Invalid artifact identity".into()))?;
+                Self::from_bytes(*id.as_bytes())
+            }
+        }
+        impl From<$name> for String {
+            fn from(value: $name) -> Self {
+                Uuid::from_bytes(value.0).to_string()
+            }
+        }
         impl $name {
             pub fn generate() -> Self {
                 Self(*Uuid::new_v4().as_bytes())
@@ -61,7 +89,8 @@ impl Destination {
 }
 
 /// Logical artifact, attempt and physical location are intentionally distinct.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ArtifactIdentity {
     artifact: ArtifactId,
     attempt: AttemptId,

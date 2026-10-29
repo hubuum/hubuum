@@ -33,7 +33,7 @@ use crate::models::search::{FilterField, QueryOptions};
 use crate::models::{MaintenanceState, TokenRetentionSettings};
 use crate::permissions::AppContext;
 use crate::storage::observed::{
-    ApplicationStorageObserver, ObservedStorage, observe_storage_call_with,
+    ApplicationStorageObserver, ObservationError, ObservedStorage, observe_storage_call_with,
 };
 use crate::storage::{
     AuditEventStorage, AuthenticationStorage, AuthorizationDataStorage, BackupSnapshotStorage,
@@ -140,6 +140,8 @@ mod private {
 #[derive(Clone)]
 pub struct StorageHandle {
     inner: Arc<StorageHandleInner>,
+    #[cfg(test)]
+    artifact_test_store: Option<Arc<dyn hubuum_storage_core::artifacts::TaskArtifactStore>>,
 }
 
 struct StorageHandleInner {
@@ -227,6 +229,7 @@ macro_rules! dispatch_backend {
 }
 
 mod api;
+mod artifacts;
 mod computed_fields;
 mod events;
 mod execution;
@@ -246,6 +249,25 @@ pub use api::StorageContext;
 pub(crate) use api::storage_handle;
 
 impl StorageHandle {
+    pub(crate) fn artifact_store(
+        &self,
+    ) -> Arc<dyn hubuum_storage_core::artifacts::TaskArtifactStore> {
+        #[cfg(test)]
+        if let Some(store) = &self.artifact_test_store {
+            return store.clone();
+        }
+        Arc::new(self.clone())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_artifact_test_store(
+        mut self,
+        store: Arc<dyn hubuum_storage_core::artifacts::TaskArtifactStore>,
+    ) -> Self {
+        self.artifact_test_store = Some(store);
+        self
+    }
+
     #[cfg(any(test, feature = "integration-test-support"))]
     pub(crate) fn memory() -> Self {
         Self::memory_with_schema_limits(JsonSchemaLimits::default())
@@ -325,6 +347,8 @@ impl StorageHandle {
         let resource_ports =
             ResourceStoragePorts::observed(backend.clone(), kind.as_str(), observer.clone());
         Self {
+            #[cfg(test)]
+            artifact_test_store: None,
             inner: Arc::new(StorageHandleInner {
                 descriptor: StorageBackendDescriptor::new(kind),
                 implementation: backend.into_implementation(),
@@ -417,13 +441,13 @@ impl StorageHandle {
         self.descriptor().kind().as_str()
     }
 
-    async fn observe_storage_call<T>(
+    async fn observe_storage_call<T, E: ObservationError>(
         &self,
         backend: &'static str,
         capability: StorageCapability,
         operation: &'static str,
-        future: impl Future<Output = Result<T, StorageError>>,
-    ) -> Result<T, StorageError> {
+        future: impl Future<Output = Result<T, E>>,
+    ) -> Result<T, E> {
         observe_storage_call_with(
             self.inner.observer.as_ref(),
             backend,

@@ -27,6 +27,14 @@ bootstrap_and_provider_reconciliation = [
     "ExternalIdentityStorage::sync_external_user",
 ]
 workflow_state_machine = [
+    "ArtifactStore::register_destination",
+    "ArtifactStore::stage",
+    "ArtifactStore::append",
+    "ArtifactStore::seal",
+    "ArtifactStore::publish",
+    "ArtifactStore::abort",
+    "ArtifactStore::cleanup",
+    "TaskArtifactStore::bind_task",
     "SchemaEvolutionStorage::process_schema_work",
     "SchemaEvolutionStorage::save_schema_repair_report",
     "ComputedFieldStorage::request_computed_field_rebuild",
@@ -494,3 +502,16 @@ source = "crates/hubuum-storage-core/src/logical_identity.rs"
 methods = ["resolve_logical_identity"]
 effects = { point_read = ["resolve_logical_identity"] }
 shared_scenarios = ["src/tests/storage_contract/logical_identity.rs::every_backend_preserves_identity_when_closing_history", "crates/hubuum-storage-conformance/src/logical_identity.rs::verify_collection_version_identity"]
+
+[traits.ArtifactStore]
+source = "crates/hubuum-storage-core/src/artifacts/mod.rs"
+methods = ["register_destination", "stage", "append", "seal", "manifest", "published_manifest", "block", "publish", "abort", "cleanup"]
+effects = { point_read = ["manifest", "published_manifest", "block"], workflow_mutation = ["register_destination", "stage", "append", "seal", "publish", "abort", "cleanup"] }
+shared_scenarios = ["src/tests/storage_contract/artifacts.rs::published_bytes_are_immutable_and_repeatedly_verifiable", "src/tests/storage_contract/artifacts.rs::admitted_artifact_cannot_be_rebound_to_another_task", "src/tests/storage_contract/artifacts.rs::replica_can_verify_and_atomically_publish_without_the_producer_spool", "src/tests/storage_contract/artifacts.rs::cancellation_fences_each_publication_boundary", "tests/restore_contract/artifacts.rs::portable_export_restore_uses_fresh_identity_and_preserves_cleanup"]
+native_scenarios = ["src/tests/storage_contract/artifacts.rs::artifact_publication_rolls_back_with_task_finalization"]
+
+[traits.TaskArtifactStore]
+source = "crates/hubuum-storage-core/src/artifacts/mod.rs"
+methods = ["bind_task"]
+effects = { workflow_mutation = ["bind_task"] }
+shared_scenarios = ["src/tests/storage_contract/artifacts.rs::published_bytes_are_immutable_and_repeatedly_verifiable", "src/tests/storage_contract/artifacts.rs::admitted_artifact_cannot_be_rebound_to_another_task", "src/tests/storage_contract/artifacts.rs::replica_can_verify_and_atomically_publish_without_the_producer_spool", "src/tests/storage_contract/artifacts.rs::lost_worker_fails_without_replaying_and_reconciles_its_bytes"]

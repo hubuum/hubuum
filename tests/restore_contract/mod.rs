@@ -1,3 +1,4 @@
+mod artifacts;
 mod task_capacity;
 use std::collections::BTreeSet;
 

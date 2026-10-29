@@ -1,3 +1,4 @@
+use crate::artifacts::VerifiedArtifact;
 use hubuum_budget::{ByteLimit, LimitedWriter};
 use std::{fmt, io};
 
@@ -487,14 +488,16 @@ impl StorageExportTaskArtifactIdentity {
 pub enum StorageExportTaskArtifactContent {
     Json(Value),
     Text(String),
+    Verified(VerifiedArtifact),
 }
 
 impl StorageExportTaskArtifactContent {
     #[must_use]
-    pub fn into_parts(self) -> (Option<Value>, Option<String>) {
+    pub fn into_parts(self) -> (Option<Value>, Option<String>, Option<VerifiedArtifact>) {
         match self {
-            Self::Json(output) => (Some(output), None),
-            Self::Text(output) => (None, Some(output)),
+            Self::Json(output) => (Some(output), None, None),
+            Self::Text(output) => (None, Some(output), None),
+            Self::Verified(proof) => (None, None, Some(proof)),
         }
     }
 }
@@ -620,13 +623,35 @@ impl StorageExportTaskArtifactBuilder {
 /// Backup artifact stored atomically with the terminal task transition.
 #[derive(Clone, PartialEq)]
 pub struct StorageBackupTaskArtifact {
-    document: Vec<u8>,
+    document: StorageBackupTaskContent,
     byte_size: i64,
     sha256: String,
     output_expires_at: DateTime<Utc>,
 }
 
+#[derive(Clone, PartialEq)]
+pub enum StorageBackupTaskContent {
+    Inline(Vec<u8>),
+    Verified(VerifiedArtifact),
+}
+
 impl StorageBackupTaskArtifact {
+    pub fn verified(proof: VerifiedArtifact, output_expires_at: DateTime<Utc>) -> Self {
+        let byte_size = proof.manifest().byte_size() as i64;
+        let sha256 = proof
+            .manifest()
+            .stream_digest()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        Self {
+            document: StorageBackupTaskContent::Verified(proof),
+            byte_size,
+            sha256,
+            output_expires_at,
+        }
+    }
+
     pub fn try_new(
         document: Vec<u8>,
         output_expires_at: DateTime<Utc>,
@@ -639,7 +664,7 @@ impl StorageBackupTaskArtifact {
             .map(|byte| format!("{byte:02x}"))
             .collect();
         Ok(Self {
-            document,
+            document: StorageBackupTaskContent::Inline(document),
             byte_size,
             sha256,
             output_expires_at,
@@ -647,7 +672,7 @@ impl StorageBackupTaskArtifact {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (Vec<u8>, i64, String, DateTime<Utc>) {
+    pub fn into_parts(self) -> (StorageBackupTaskContent, i64, String, DateTime<Utc>) {
         (
             self.document,
             self.byte_size,

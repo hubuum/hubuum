@@ -2,7 +2,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use hubuum_templates::MAX_WORKER_HEAP_BYTES;
+use hubuum_templates::{MAX_WORKER_EXECUTION_TIME, MAX_WORKER_HEAP_BYTES};
 
 struct BudgetAllocator;
 static PEAK: AtomicUsize = AtomicUsize::new(0);
@@ -74,6 +74,12 @@ fn main() {
         );
         return;
     }
+    // A dead parent cannot supervise its child. Keep the same finite execution
+    // lifetime locally so inherited anonymous spool handles are always closed.
+    std::thread::spawn(|| {
+        std::thread::sleep(MAX_WORKER_EXECUTION_TIME);
+        std::process::exit(71);
+    });
     if hubuum_templates::serve_template_worker(|| PEAK.load(Ordering::Relaxed)).is_err() {
         std::process::exit(1);
     }

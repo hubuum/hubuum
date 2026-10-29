@@ -396,3 +396,14 @@ not a domain resource. It atomically replaces the shared override and publishes 
 commit-ordered wake-up on notification-capable adapters. The administrator handler
 logs the actor and enabled state; this operation does not create a domain audit
 event. Logical restores preserve the setting and portable backups exclude it.
+
+### Artifact workflow mutations
+
+`ArtifactStore::register_destination`, `ArtifactStore::stage`,
+`ArtifactStore::append`, `ArtifactStore::seal`, `ArtifactStore::publish`,
+`ArtifactStore::abort`, `ArtifactStore::cleanup`, and
+`TaskArtifactStore::bind_task` are context-free workflow operations. They change
+physical storage state and durable ownership, not ordinary domain resources.
+Task completion owns the terminal task event and atomic output publication.
+Cleanup retains obligations and reservations until bounded physical deletion
+finishes, independently of application task deletion and logical restore.

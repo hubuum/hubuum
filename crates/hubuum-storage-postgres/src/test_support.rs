@@ -752,7 +752,12 @@ pub async fn store_export_output(
 ) -> Result<(), PostgresStorageError> {
     let (identity, content, report, output_expires_at, durations) = artifact.into_parts();
     let (template_name, content_type) = identity.into_parts();
-    let (json_output, text_output) = content.into_parts();
+    let (json_output, text_output, proof) = content.into_parts();
+    if proof.is_some() {
+        return Err(PostgresStorageError::invalid_input(
+            "Verified fixtures must use fenced task completion",
+        ));
+    }
     let (meta_json, warnings_json, warning_count, truncated) = report.into_parts();
     let row = TestExportOutputRow {
         task_id: task_id_value.id(),

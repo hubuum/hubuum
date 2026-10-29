@@ -84,9 +84,16 @@ for cursor_input in crates/hubuum-storage-postgres/src/cursor/query_plan_tests.r
 done
 
 for artifact_input in crates/hubuum-artifacts/Cargo.toml \
-  crates/hubuum-artifacts/src/manifest.rs crates/hubuum-artifacts/tests/protocol.rs \
+  crates/hubuum-storage-core/src/artifacts/manifest.rs crates/hubuum-artifacts/tests/protocol.rs \
   crates/hubuum-artifacts/src/producer.rs src/backups/producer.rs \
   src/backups/producer/tests.rs \
+  crates/hubuum-storage-core/src/artifacts/backup.rs crates/hubuum-storage-memory/src/artifacts.rs \
+  crates/hubuum-storage-postgres/src/operations/backup_artifacts.rs \
+  crates/hubuum-templates/src/spool.rs crates/hubuum-templates/src/spool/file.rs \
+  src/config/artifacts.rs src/services/artifacts.rs \
+  src/storage/context/artifacts.rs src/tasks/tests/artifact_pipeline.rs \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000001_artifact_outputs/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000001_artifact_outputs/down.sql \
   crates/hubuum-storage-postgres/src/artifacts.rs crates/hubuum-storage-postgres/tests/artifacts.rs \
   crates/hubuum-storage-postgres/migrations/2026-10-27-000002_artifact_staging/up.sql \
   crates/hubuum-storage-postgres/migrations/2026-10-27-000002_artifact_staging/down.sql; do
@@ -96,6 +103,16 @@ for artifact_input in crates/hubuum-artifacts/Cargo.toml \
   assert_flag "$artifact_output" container true
   assert_flag "$artifact_output" artifacts true
 done
+
+artifact_restore_output="$(bash "$classifier" src/tests/storage_contract/artifacts.rs tests/restore_contract/artifacts.rs)"
+assert_flag "$artifact_restore_output" code true
+assert_flag "$artifact_restore_output" rust true
+artifact_driver_output="$(bash "$classifier" tests/python/integration/artifact_pipeline.py)"
+assert_flag "$artifact_driver_output" code true
+assert_flag "$artifact_driver_output" container true
+artifact_driver_unit_output="$(bash "$classifier" tests/python/unit/tooling/test_artifact_pipeline.py)"
+assert_flag "$artifact_driver_unit_output" code true
+assert_flag "$artifact_driver_unit_output" rust false
 
 for regex_input in crates/hubuum-storage-postgres/tests/regex_pattern.rs \
   src/tests/storage_contract/regex.rs \
@@ -148,6 +165,8 @@ for corpus_path in .gitattributes test-corpora/comprehensive.json test-corpora/c
   assert_flag "$corpus_output" container true
   assert_flag "$corpus_output" scale_benchmark false
 done
+
+assert_flag "$(bash "$classifier" test-corpora/comprehensive.json)" rust true
 
 docs_output="$(bash "$classifier" README.md AGENTS.md docs/development.md)"
 assert_flag "$docs_output" markdown true

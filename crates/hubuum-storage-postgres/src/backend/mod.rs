@@ -1,5 +1,6 @@
 //! Complete PostgreSQL implementation of the backend-neutral storage contract.
 
+mod artifacts;
 use hubuum_domain::JsonSchemaLimits;
 use std::future::Future;
 use std::num::NonZeroUsize;

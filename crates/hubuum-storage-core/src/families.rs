@@ -4,6 +4,7 @@
 //! give adapter authors and focused application services stable bounds without
 //! duplicating or wrapping any operation.
 
+use crate::artifacts::{ArtifactStore, TaskArtifactStore};
 use crate::{
     AuditEventStorage, AuthenticationStorage, AuthorizationDataStorage, BackupSnapshotStorage,
     CatalogStorage, ClassRelationStorage, ClassStorage, CollectionAuthorizationQueryStorage,
@@ -109,6 +110,8 @@ pub trait WorkflowStorage:
     + QueryUsageStorage
     + TaskQueueStorage
     + TaskCapacityStorage
+    + ArtifactStore
+    + TaskArtifactStore
     + TaskExecutionStorage
     + BackupSnapshotStorage
     + ImportStorage
@@ -124,6 +127,8 @@ impl<T> WorkflowStorage for T where
         + QueryUsageStorage
         + TaskQueueStorage
         + TaskCapacityStorage
+        + ArtifactStore
+        + TaskArtifactStore
         + TaskExecutionStorage
         + BackupSnapshotStorage
         + ImportStorage

@@ -11,6 +11,7 @@ use super::{AppConfig, ClientAllowlist, token_hash_key_ring};
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct RunningConfig {
+    pub artifacts: super::artifacts::ArtifactOptions,
     pub schema_validation: SchemaValidationConfig,
     pub query_observations: QueryObservationConfig,
     pub server: ServerConfig,
@@ -380,6 +381,7 @@ impl RunningConfig {
 
         Self {
             query_observations: config.query_observation_settings().into(),
+            artifacts: config.artifacts.clone(),
             schema_validation: SchemaValidationConfig {
                 max_schema_bytes: config.schema_limits().schema_bytes(),
                 max_expanded_work: config.schema_limits().expanded_work(),

@@ -345,6 +345,7 @@ impl MemoryTokenRecord {
 
 #[derive(Clone)]
 struct MemoryState {
+    artifacts: artifacts::Artifacts,
     task_capacity: task_capacity::MemoryTaskCapacity,
     logical_identities: logical_identity::MemoryLogicalIdentities,
     generation: Arc<()>,
@@ -833,6 +834,7 @@ pub mod regex_compiler;
 mod support;
 use support::*;
 
+mod artifacts;
 mod auth_sessions;
 mod backup;
 mod computed_history;

@@ -4,6 +4,7 @@
 //! asynchronous-runtime dependencies. Application services and adapters share
 //! these values without reversing the dependency from storage into the server.
 
+pub mod artifacts;
 mod credential_activity;
 pub use credential_activity::*;
 mod auth_sessions;
@@ -318,16 +319,16 @@ pub use restore::{
     StorageRestoreStatus, StorageRestoreTimestamps, StorageRestoreTimestampsParts,
 };
 pub use task_execution::{
-    StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageExportTaskArtifactBuilder,
-    StorageExportTaskArtifactContent, StorageExportTaskArtifactIdentity,
-    StorageExportTaskArtifactReport, StorageRemoteCallArtifactOutcome,
-    StorageRemoteCallArtifactResponse, StorageRemoteCallArtifactTarget,
-    StorageRemoteCallArtifactTargetParts, StorageRemoteCallTaskArtifact,
-    StorageSchemaProfileArtifact, StorageTaskActiveStatus, StorageTaskActiveUpdate,
-    StorageTaskClaim, StorageTaskClaimToken, StorageTaskCompletion, StorageTaskCompletionPayload,
-    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskLease,
-    StorageTaskLeaseDuration, StorageTaskResultCounts, StorageTaskTerminalStatus,
-    StorageTaskTerminalUpdate, TaskExecutionStorage,
+    StorageBackupTaskArtifact, StorageBackupTaskContent, StorageExportTaskArtifact,
+    StorageExportTaskArtifactBuilder, StorageExportTaskArtifactContent,
+    StorageExportTaskArtifactIdentity, StorageExportTaskArtifactReport,
+    StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
+    StorageRemoteCallArtifactTarget, StorageRemoteCallArtifactTargetParts,
+    StorageRemoteCallTaskArtifact, StorageSchemaProfileArtifact, StorageTaskActiveStatus,
+    StorageTaskActiveUpdate, StorageTaskClaim, StorageTaskClaimToken, StorageTaskCompletion,
+    StorageTaskCompletionPayload, StorageTaskEventAppend, StorageTaskEventInput,
+    StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskResultCounts,
+    StorageTaskTerminalStatus, StorageTaskTerminalUpdate, TaskExecutionStorage,
 };
 pub use task_queue::{
     StorageBackupOutput, StorageBackupOutputSummary, StorageExportOutput,

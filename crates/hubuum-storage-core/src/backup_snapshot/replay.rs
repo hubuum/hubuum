@@ -294,7 +294,7 @@ impl StorageBackupReplay {
                         identity: IdentityReference::Known { identity },
                         version,
                     }) = identities::legacy_subject(
-                        identities::history_family(history),
+                        identities::history_family(history).expect("resource history has identity"),
                         history.as_str(),
                         &row,
                         cohort,
@@ -397,12 +397,10 @@ impl StorageBackupReplay {
                     builder.begin_history(section)?;
                 }
                 for row in self.history_rows(section) {
-                    let row = prepare(
-                        identities::history_family(section),
-                        section.as_str(),
-                        row?,
-                        None,
-                    )?;
+                    let row = match identities::history_family(section) {
+                        Some(family) => prepare(family, section.as_str(), row?, None)?,
+                        None => row?,
+                    };
                     if let Some(builder) = &mut builder {
                         builder.push(row)?;
                     }
@@ -635,7 +633,12 @@ impl StorageBackupReplay {
         }
         if let Some(history) = &self.history {
             for &section in History::ALL {
-                if !history.contains_key(&section) && section != History::ComputedFieldHistory {
+                if !history.contains_key(&section)
+                    && !matches!(
+                        section,
+                        History::ComputedFieldHistory | History::ExportArtifacts
+                    )
+                {
                     return Err(invalid(format!(
                         "Backup snapshot is missing required history section '{section}'"
                     )));
@@ -754,6 +757,7 @@ impl StorageBackupReplay {
         }
         let normalized = builder.seal()?;
         normalized.validate(version.is_some())?;
+        normalized.validate_artifacts()?;
         Ok(normalized)
     }
 }
@@ -857,6 +861,46 @@ mod tests {
             StorageBackupBudget::new(100_000, 100).unwrap(),
         )
         .unwrap()
+    }
+    #[test]
+    fn legacy_history_without_artifacts_is_normalized_before_validation() {
+        let mut builder = StorageBackupReplayBuilder::new(
+            StorageBackupBudget::new(100_000, 100).unwrap(),
+            JsonSchemaLimits::default(),
+            true,
+        )
+        .unwrap();
+        for &section in State::ALL {
+            builder.begin_state(section).unwrap();
+        }
+        for &section in History::ALL {
+            if section != History::ExportArtifacts {
+                builder.begin_history(section).unwrap();
+            }
+        }
+        let replay = builder.finish().unwrap();
+        assert_eq!(replay.history_rows(History::ExportArtifacts).count(), 0);
+    }
+    #[test]
+    fn missing_required_export_history_returns_validation_error() {
+        let mut builder = StorageBackupReplayBuilder::new(
+            StorageBackupBudget::new(100_000, 100).unwrap(),
+            JsonSchemaLimits::default(),
+            true,
+        )
+        .unwrap();
+        for &section in State::ALL {
+            builder.begin_state(section).unwrap();
+        }
+        for &section in History::ALL {
+            if section != History::ExportOutputs {
+                builder.begin_history(section).unwrap();
+            }
+        }
+        assert_eq!(
+            builder.finish_for_restore(11).unwrap_err().kind(),
+            StorageErrorKind::InvalidInput
+        );
     }
     #[test]
     fn independent_replay_cursors_do_not_share_offsets() {

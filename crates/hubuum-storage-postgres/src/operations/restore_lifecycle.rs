@@ -717,7 +717,19 @@ async fn replace_backend_replay(
     }
     if snapshot.includes_history() {
         for section in StorageBackupHistorySection::ALL.iter().copied() {
+            if section == StorageBackupHistorySection::ExportArtifacts {
+                super::backup_artifacts::restore(connection, &snapshot).await?;
+                continue;
+            }
             let table = history_table(section);
+            if section == StorageBackupHistorySection::ExportOutputs {
+                for row in snapshot.history_rows(section) {
+                    let row = history_row_to_postgres(section, row?.into_value())?;
+                    let row = super::backup_artifacts::remap_output(connection, row).await?;
+                    insert_restore_rows(connection, table, std::iter::once(Ok(row))).await?;
+                }
+                continue;
+            }
             let rows = snapshot
                 .history_rows(section)
                 .map(|row| history_row_to_postgres(section, row?.into_value()));

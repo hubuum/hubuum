@@ -1,5 +1,5 @@
-use crate::manifest::ManifestVerifier;
-use crate::{
+use super::manifest::ManifestVerifier;
+use super::{
     ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactManifest, ArtifactReference,
     ArtifactResult, ArtifactStore, ManifestBuilder, VerifiedArtifact,
 };
@@ -145,8 +145,11 @@ pub struct ArtifactReader<'a, S: ArtifactStore + ?Sized> {
 impl<'a, S: ArtifactStore + ?Sized> ArtifactReader<'a, S> {
     pub async fn open(store: &'a S, reference: &ArtifactReference) -> ArtifactResult<Self> {
         let bytes = store.published_manifest(reference).await?;
-        let manifest =
-            ArtifactManifest::decode(&bytes, reference.identity(), ArtifactLimits::default())?;
+        let manifest = ArtifactManifest::decode(
+            &bytes,
+            reference.identity(),
+            ArtifactLimits::format_ceiling(),
+        )?;
         if &manifest.manifest_digest() != reference.manifest_digest() {
             return Err(ArtifactError::Corrupt(
                 "Published manifest digest mismatch".into(),

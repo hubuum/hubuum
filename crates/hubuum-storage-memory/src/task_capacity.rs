@@ -176,7 +176,7 @@ impl MemoryTaskCapacity {
         }
         let others = || {
             self.owners.values().filter(|entry| {
-                entry.task_id.is_some()
+                (entry.task_id.is_some() || entry.resident_output > 0)
                     && entry.task_id != candidate.task_id
                     && entry.owner.internal() == candidate.owner.internal()
             })
@@ -265,7 +265,7 @@ impl MemoryTaskCapacity {
 }
 
 impl MemoryState {
-    fn task_identity(&self, id: TaskId) -> Result<TaskIdentity, StorageError> {
+    pub(super) fn task_identity(&self, id: TaskId) -> Result<TaskIdentity, StorageError> {
         match self
             .logical_identities
             .record(StorageIdentityTarget::Task(id))?
@@ -378,6 +378,7 @@ impl MemoryState {
         let mut capacity = self.task_capacity.clone();
         if !capacity.partial {
             for (identity, entry) in &mut capacity.owners {
+                entry.resident_output = 0;
                 if entry.task_id.is_some_and(|id| {
                     !self.tasks.contains_key(&id.id())
                         || self.task_identity(id).ok().as_ref() != Some(identity)
@@ -435,7 +436,57 @@ impl MemoryState {
                 .ok_or_else(|| StorageError::internal("Task work accounting overflow"))?;
             entry.processed_items = processed;
         }
+        for (identity, bytes) in self.artifacts.reservations() {
+            let entry = capacity
+                .owners
+                .get_mut(&identity)
+                .ok_or_else(unknown_identity)?;
+            entry.resident_output = entry
+                .resident_output
+                .checked_add(bytes)
+                .ok_or_else(|| StorageError::internal("Artifact accounting overflow"))?;
+        }
         Ok(capacity)
+    }
+
+    pub(super) fn check_restored_artifact_space(
+        &self,
+        additional: u64,
+    ) -> Result<(), StorageError> {
+        let capacity = self.task_accounting_snapshot()?;
+        let occupied: u128 = capacity
+            .owners
+            .values()
+            .filter(|entry| !entry.owner.internal())
+            .map(|entry| u128::from(entry.resident_input) + u128::from(entry.resident_output))
+            .sum();
+        if occupied + u128::from(additional)
+            > u128::from(
+                capacity
+                    .policy
+                    .policy()
+                    .deployment()
+                    .resident_bytes()
+                    .bytes(),
+            )
+        {
+            return Err(StorageError::task_capacity(
+                TaskCapacityRejection::ResidentBytes,
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn check_artifact_capacity(&self, id: TaskId) -> Result<(), StorageError> {
+        let capacity = self.task_accounting_snapshot()?;
+        let identity = self.task_identity(id)?;
+        capacity.check(
+            capacity
+                .owners
+                .get(&identity)
+                .ok_or_else(unknown_identity)?,
+            CapacityChange::Output,
+        )
     }
 
     pub(super) fn store_task(
@@ -522,7 +573,7 @@ impl MemoryState {
     fn task_output_bytes(&self, id: TaskId) -> Result<u64, StorageError> {
         let mut bytes = 0;
         if let Some(output) = self.backup_outputs.get(&id.id()) {
-            bytes += output.document().len() as u64;
+            bytes += output.document().map_or(0, |bytes| bytes.len()) as u64;
         }
         if let Some(output) = self.export_outputs.get(&id.id()) {
             bytes += output

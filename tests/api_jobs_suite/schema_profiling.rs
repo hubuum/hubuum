@@ -64,7 +64,7 @@ async fn wait(context: &TestContext, id: i32) {
     wait_for_status(context, id, TaskStatus::Succeeded).await;
 }
 async fn wait_for_status(context: &TestContext, id: i32, expected: TaskStatus) {
-    for _ in 0..200 {
+    for _ in 0..crate::tests::task_poll_attempts() {
         let response = get_request(
             &context.pool,
             &context.admin_token,

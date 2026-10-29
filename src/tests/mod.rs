@@ -231,8 +231,12 @@ pub struct TestScope {
 
 impl TestScope {
     pub fn new() -> Self {
+        Self::with_pool(get_test_pool())
+    }
+
+    fn with_pool(pool: web::Data<PostgresPool>) -> Self {
         Self {
-            pool: get_test_pool(),
+            pool,
             scope_id: generate_random_password(12).to_ascii_lowercase(),
         }
     }
@@ -307,7 +311,11 @@ pub struct TestContext {
 
 impl TestContext {
     pub async fn new() -> Self {
-        let scope = TestScope::new();
+        Self::with_pool(new_test_pool()).await
+    }
+
+    pub(crate) async fn with_pool(pool: PostgresPool) -> Self {
+        let scope = TestScope::with_pool(web::Data::new(pool));
         let pool = scope.pool.clone();
         let admin_user = create_test_admin(&pool).await;
         let admin_token = admin_user.create_token(&pool).await.unwrap().get_token();

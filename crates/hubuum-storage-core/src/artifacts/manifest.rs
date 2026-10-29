@@ -1,6 +1,6 @@
 use sha2::{Digest, Sha256};
 
-use crate::{
+use super::{
     ArtifactError, ArtifactId, ArtifactIdentity, ArtifactResult, AttemptId, DestinationId,
     ObjectVersion,
 };
@@ -9,12 +9,13 @@ const MAGIC: &[u8; 5] = b"HUBA\x01";
 const HEADER_BYTES: usize = 117;
 const ENTRY_BYTES: usize = 36;
 pub const MAX_BLOCK_BYTES: u32 = 1024 * 1024;
-pub const MAX_ARTIFACT_BYTES: u64 = 1024 * 1024 * 1024;
-pub const MAX_BLOCKS: u32 = 1024;
-pub const MAX_MANIFEST_BYTES: u32 = 256 * 1024;
+pub const MAX_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024 * 1024;
+pub const MAX_BLOCKS: u32 = 65_536;
+pub const MAX_MANIFEST_BYTES: u32 = 4 * 1024 * 1024;
 
-/// #504 H3 ceilings. Smaller limits support a workload; larger values require
-/// an explicit budget/format revision rather than unchecked allocation.
+/// Per-attempt resource limits. Defaults match the #504 acceptance profile;
+/// deployments can tune them within the finite version-1 reader envelope.
+/// Readers use the retained format envelope, never the current write policy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ArtifactLimits {
     block_bytes: u32,
@@ -27,21 +28,31 @@ impl Default for ArtifactLimits {
     fn default() -> Self {
         Self {
             block_bytes: MAX_BLOCK_BYTES,
-            artifact_bytes: MAX_ARTIFACT_BYTES,
-            blocks: MAX_BLOCKS,
-            manifest_bytes: MAX_MANIFEST_BYTES,
+            artifact_bytes: 1024 * 1024 * 1024,
+            blocks: 1024,
+            manifest_bytes: 256 * 1024,
         }
     }
 }
 
 impl ArtifactLimits {
+    /// Stable, finite decoding envelope for retained version-1 artifacts.
+    /// Lowering a deployment's write limits must not invalidate old outputs.
+    pub const fn format_ceiling() -> Self {
+        Self {
+            block_bytes: MAX_BLOCK_BYTES,
+            artifact_bytes: MAX_ARTIFACT_BYTES,
+            blocks: MAX_BLOCKS,
+            manifest_bytes: MAX_MANIFEST_BYTES,
+        }
+    }
     pub fn builder() -> ArtifactLimitsBuilder {
         ArtifactLimitsBuilder(Self::default())
     }
     pub fn block_bytes(self) -> u32 {
         self.block_bytes
     }
-    pub fn artifact_bytes(self) -> u64 {
+    pub const fn artifact_bytes(self) -> u64 {
         self.artifact_bytes
     }
     pub fn blocks(self) -> u32 {
@@ -125,6 +136,10 @@ impl ArtifactManifest {
     }
     pub fn block_count(&self) -> u32 {
         self.blocks.len() as u32
+    }
+    /// Encoded payload plus its canonical manifest; excludes database page/WAL overhead.
+    pub fn stored_bytes(&self) -> u64 {
+        self.byte_size + self.encoded_len() as u64
     }
     pub fn stream_digest(&self) -> &[u8; 32] {
         &self.digest
@@ -235,7 +250,7 @@ impl ArtifactManifest {
         Ok(())
     }
 
-    pub(crate) fn verifier(&self) -> ManifestVerifier {
+    pub fn verifier(&self) -> ManifestVerifier {
         ManifestVerifier {
             manifest: self.clone(),
             next: 0,
@@ -332,19 +347,19 @@ impl ManifestBuilder {
     }
 }
 
-pub(crate) struct ManifestVerifier {
+pub struct ManifestVerifier {
     manifest: ArtifactManifest,
     next: u32,
     hash: Sha256,
 }
 impl ManifestVerifier {
-    pub(crate) fn push(&mut self, bytes: &[u8]) -> ArtifactResult<()> {
+    pub fn push(&mut self, bytes: &[u8]) -> ArtifactResult<()> {
         self.manifest.verify_block(self.next, bytes)?;
         self.hash.update(bytes);
         self.next += 1;
         Ok(())
     }
-    pub(crate) fn finish(self) -> ArtifactResult<VerifiedArtifact> {
+    pub fn finish(self) -> ArtifactResult<VerifiedArtifact> {
         if self.next != self.manifest.block_count()
             || <[u8; 32]>::from(self.hash.finalize()) != self.manifest.digest
         {
@@ -360,10 +375,18 @@ impl ManifestVerifier {
 
 /// Proof obtainable only by reading and hashing the entire destination stream.
 /// Persistence adapters must still check sealed ownership and publication fences.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedArtifact {
     manifest: ArtifactManifest,
 }
 impl VerifiedArtifact {
+    pub fn reference(&self) -> super::ArtifactReference {
+        super::ArtifactReference::from_catalog(
+            self.manifest.identity().clone(),
+            self.manifest.manifest_digest(),
+        )
+    }
+
     pub fn manifest(&self) -> &ArtifactManifest {
         &self.manifest
     }
