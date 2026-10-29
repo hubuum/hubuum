@@ -75,8 +75,8 @@ for history_handler in src/models/history/computed.rs src/api/v1/handlers/classe
 done
 
 for cursor_input in crates/hubuum-storage-postgres/src/cursor/query_plan_tests.rs \
-  crates/hubuum-storage-postgres/migrations/2026-10-29-000001_deletion_authority/up.sql \
-  crates/hubuum-storage-postgres/migrations/2026-10-29-000001_deletion_authority/down.sql \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000002_deletion_authority/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000002_deletion_authority/down.sql \
   crates/hubuum-storage-postgres/migrations/2026-09-13-000001_byte_ordered_cursor_indexes/up.sql \
   crates/hubuum-storage-postgres/migrations/2026-09-13-000001_byte_ordered_cursor_indexes/down.sql; do
   cursor_output="$(bash "$classifier" "$cursor_input")"

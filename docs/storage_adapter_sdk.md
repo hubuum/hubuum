@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.9`.
+Status: accepted; current experimental release train is `0.10`.
 
 ## Supported Crate Graph
 
@@ -197,9 +197,9 @@ maintainer-controlled operation because crates.io versions cannot be replaced.
 
 ## Adapter Upgrade Process
 
-### Deletion authority foundation: 0.8 to 0.9
+### Deletion authority foundation: 0.9 to 0.10
 
-Update all ten supported SDK crates together to 0.9.0. The complete operational
+Update all ten supported SDK crates together to 0.10.0. The complete operational
 family now requires `DeletionControlStorage`. Implement privileged, bounded
 capture and atomic exact-predecessor transitions for `DeletionControlState`.
 Keep its records outside logical application replacement. Retained decisions
