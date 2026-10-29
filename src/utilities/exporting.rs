@@ -2,7 +2,8 @@ use crate::config::get_config;
 use crate::errors::ApiError;
 use crate::models::{ExportContentType, ExportMissingDataPolicy, ExportTemplate, ExportWarning};
 use hubuum_templates::{
-    MissingDataPolicy, TemplateAutoEscape, TemplateExecution, TemplateLimits, prepare_template,
+    MissingDataPolicy, TemplateAutoEscape, TemplateError, TemplateExecution, TemplateLimits,
+    prepare_template,
 };
 use std::collections::HashMap;
 
@@ -121,15 +122,7 @@ pub async fn render_template(
     .max_output_bytes(max_output_bytes)
     .render(context)
     .await
-    .map_err(|error| {
-        if error.to_string().contains("output limit") {
-            ApiError::PayloadTooLarge(format!(
-                "Rendered export exceeded max_output_bytes (> {max_output_bytes})"
-            ))
-        } else {
-            ApiError::BadRequest(format!("Template render failed: {error}"))
-        }
-    })?
+    .map_err(|error| template_render_error(error, max_output_bytes))?
     .into_parts();
     let warnings = missing
         .into_iter()
@@ -177,7 +170,17 @@ pub(crate) async fn render_template_spooled(
     .max_output_bytes(max_output_bytes)
     .render_spooled(context, rows)
     .await
-    .map_err(|error| ApiError::BadRequest(format!("Template render failed: {error}")))
+    .map_err(|error| template_render_error(error, max_output_bytes))
+}
+
+fn template_render_error(error: TemplateError, max_output_bytes: usize) -> ApiError {
+    if error.to_string().contains("output limit") {
+        ApiError::PayloadTooLarge(format!(
+            "Rendered export exceeded max_output_bytes (> {max_output_bytes})"
+        ))
+    } else {
+        ApiError::BadRequest(format!("Template render failed: {error}"))
+    }
 }
 
 fn template_auto_escape(content_type: ExportContentType) -> TemplateAutoEscape {

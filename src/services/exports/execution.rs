@@ -180,6 +180,18 @@ where
     let export_storage = storage_handle(pool);
     let mut query_options = prepare_query_options(&runtime.export)?;
     let relation_hydration = resolve_relation_hydration_plan(runtime, &mut query_options)?;
+    if runtime.template.is_some() {
+        append_task_event(
+            pool,
+            task,
+            NewTaskEventRecord {
+                event_type: "running".to_string(),
+                message: "Hydrating relation-aware template context".to_string(),
+                data: None,
+            },
+        )
+        .await?;
+    }
     let query_metric =
         metrics::export_phase_timer(metrics::ExportMetricPhase::Query, metric_template_id);
     let mut rows = hubuum_templates::TemplateRows::new(crate::services::artifacts::spool_limit())
