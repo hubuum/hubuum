@@ -38,9 +38,27 @@ cargo fmt --all --check
 The runner includes PostgreSQL adapter tests and a resource-limited JSON Schema
 probe. Python applies the probe's process limits; its assertions remain in Rust.
 Destructive restore contracts use a second runner-owned database with the same
-split owner, migrator and runtime roles. This keeps their backup budgets and
+database role configuration. This keeps their backup budgets and
 deadlines independent of history retained by other suites. The runner migrates
 and removes both databases, including on test failure.
+
+By default, the runner provisions separate owner, migrator and runtime roles,
+requiring a test login with `CREATEDB` and `CREATEROLE`. For a disposable instance
+where the login can create databases but cannot create roles, run:
+
+```bash
+source .env && HUBUUM_DATABASE_ROLE_TESTS=false ./run_tests.sh
+```
+
+This uses the existing login to own, migrate and access both test databases. It
+keeps the workspace, PostgreSQL adapter, application, schema-budget and restore
+suites, but disables assertions guarded by the database-role fixture and the
+serial split-role reconciliation test. Those guards cover privilege isolation
+and some readiness and integrity checks; Rust reports early-returning guarded
+tests as passed even though their assertions were skipped. The runner announces
+this reduced coverage. Full split-role verification remains required in CI.
+Only `true` and `false` are accepted; an unset flag defaults to `true`.
+
 CI's direct Cargo jobs use `python3 tests/python/run.py integration rust-tests --`
 before the Cargo command to provision equivalent isolated restore authority on
 Linux, macOS and Windows. The driver uses the built migration binary, preserves

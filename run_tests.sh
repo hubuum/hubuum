@@ -2,6 +2,19 @@
 
 set -euo pipefail
 
+export HUBUUM_DATABASE_ROLE_TESTS="${HUBUUM_DATABASE_ROLE_TESTS-true}"
+case "$HUBUUM_DATABASE_ROLE_TESTS" in
+    true) ;;
+    false)
+        unset PGOPTIONS
+        echo "Single-login tests: database role-fixture assertions are skipped; full split-role coverage remains required in CI."
+        ;;
+    *)
+        echo "Error: HUBUUM_DATABASE_ROLE_TESTS must be true or false." >&2
+        exit 1
+        ;;
+esac
+
 python3 scripts/check-python-version.py
 
 # Rendering tests use the same isolated executable shipped in production.
@@ -72,10 +85,12 @@ cleanup() {
             -v ON_ERROR_STOP=1 \
             -c "DROP DATABASE IF EXISTS $TEST_DB_NAME;" \
             > /dev/null 2>&1 || true
-        PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" \
-            -v ON_ERROR_STOP=1 \
-            -c "REVOKE $OWNER_ROLE FROM $MIGRATOR_ROLE; DROP ROLE IF EXISTS $RUNTIME_ROLE; DROP ROLE IF EXISTS $MIGRATOR_ROLE; DROP ROLE IF EXISTS $OWNER_ROLE;" \
-            > /dev/null 2>&1 || true
+        if [ "$HUBUUM_DATABASE_ROLE_TESTS" = true ]; then
+            PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" \
+                -v ON_ERROR_STOP=1 \
+                -c "REVOKE $OWNER_ROLE FROM $MIGRATOR_ROLE; DROP ROLE IF EXISTS $RUNTIME_ROLE; DROP ROLE IF EXISTS $MIGRATOR_ROLE; DROP ROLE IF EXISTS $OWNER_ROLE;" \
+                > /dev/null 2>&1 || true
+        fi
     fi
 }
 
@@ -100,29 +115,39 @@ PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
     -c "DROP DATABASE $SINGLE_TEST_DB_NAME;" > /dev/null
 SINGLE_TEST_DB_NAME=""
 
-# Create distinct cluster roles and a database owned by the non-login schema
-# owner. Password interpolation is handled by psql, not by SQL string assembly.
-PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
-    -v owner_role="$OWNER_ROLE" \
-    -v migrator_role="$MIGRATOR_ROLE" \
-    -v runtime_role="$RUNTIME_ROLE" \
-    -v role_password="$DB_PASSWORD" \
-    -f scripts/create-test-database-roles.sql \
-    > /dev/null
-PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
-    -c "CREATE DATABASE $TEST_DB_NAME OWNER $OWNER_ROLE;" > /dev/null
+MIGRATION_PGOPTIONS=""
+if [ "$HUBUUM_DATABASE_ROLE_TESTS" = true ]; then
+    # Password interpolation is handled by psql, not by SQL string assembly.
+    PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
+        -v owner_role="$OWNER_ROLE" \
+        -v migrator_role="$MIGRATOR_ROLE" \
+        -v runtime_role="$RUNTIME_ROLE" \
+        -v role_password="$DB_PASSWORD" \
+        -f scripts/create-test-database-roles.sql \
+        > /dev/null
+    PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
+        -c "CREATE DATABASE $TEST_DB_NAME OWNER $OWNER_ROLE;" > /dev/null
+
+    export HUBUUM_MIGRATION_DATABASE_URL="postgres://$MIGRATOR_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$TEST_DB_NAME$SSL_MODE"
+    export HUBUUM_DATABASE_URL="postgres://$RUNTIME_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$TEST_DB_NAME$SSL_MODE"
+    export HUBUUM_DATABASE_ROLE_MODE="split"
+    export HUBUUM_DATABASE_OWNER_ROLE="$OWNER_ROLE"
+    export HUBUUM_DATABASE_MIGRATOR_ROLE="$MIGRATOR_ROLE"
+    export HUBUUM_DATABASE_RUNTIME_ROLE="$RUNTIME_ROLE"
+    export HUBUUM_DATABASE_PRIVILEGE_MODE="strict"
+    MIGRATION_PGOPTIONS="-c role=$OWNER_ROLE"
+else
+    PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
+        -c "CREATE DATABASE $TEST_DB_NAME;" > /dev/null
+    export HUBUUM_DATABASE_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$TEST_DB_NAME$SSL_MODE"
+    export HUBUUM_MIGRATION_DATABASE_URL="$HUBUUM_DATABASE_URL"
+    export HUBUUM_DATABASE_ROLE_MODE="single"
+    export HUBUUM_DATABASE_PRIVILEGE_MODE="warn"
+    unset HUBUUM_DATABASE_OWNER_ROLE HUBUUM_DATABASE_MIGRATOR_ROLE HUBUUM_DATABASE_RUNTIME_ROLE
+fi
 
 echo "Created test database: $TEST_DB_NAME"
 
-
-export HUBUUM_MIGRATION_DATABASE_URL="postgres://$MIGRATOR_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$TEST_DB_NAME$SSL_MODE"
-export HUBUUM_DATABASE_URL="postgres://$RUNTIME_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$TEST_DB_NAME$SSL_MODE"
-export HUBUUM_DATABASE_ROLE_MODE="split"
-export HUBUUM_DATABASE_OWNER_ROLE="$OWNER_ROLE"
-export HUBUUM_DATABASE_MIGRATOR_ROLE="$MIGRATOR_ROLE"
-export HUBUUM_DATABASE_RUNTIME_ROLE="$RUNTIME_ROLE"
-export HUBUUM_DATABASE_PRIVILEGE_MODE="strict"
-export HUBUUM_DATABASE_ROLE_TESTS="true"
 # Every integration test owns a small connection pool. Bound parallelism so a
 # high-core test host cannot exhaust PostgreSQL while retaining parallel tests.
 export RUST_TEST_THREADS="$TEST_THREADS"
@@ -130,7 +155,7 @@ export RUST_TEST_THREADS="$TEST_THREADS"
 
 # Run migrations, lock the schema as we define views in the sql and those go bye-bye with print-schema.
 # See https://github.com/diesel-rs/diesel/issues/1482.
-PGOPTIONS="-c role=$OWNER_ROLE" diesel migration run \
+PGOPTIONS="$MIGRATION_PGOPTIONS" diesel migration run \
     --migration-dir "$MIGRATIONS_DIR" \
     --database-url "$HUBUUM_MIGRATION_DATABASE_URL" \
     --locked-schema
@@ -142,10 +167,17 @@ cargo run --quiet --features embedded-migrations --bin hubuum-admin -- \
 
 # Destructive recovery contracts own a separate database. Their backup size and
 # execution time must not depend on retained history from unrelated test suites.
-PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
-    -c "CREATE DATABASE $RESTORE_TEST_DB_NAME OWNER $OWNER_ROLE;" > /dev/null
-export HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL="postgres://$MIGRATOR_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$RESTORE_TEST_DB_NAME$SSL_MODE"
-export HUBUUM_RESTORE_TEST_DATABASE_URL="postgres://$RUNTIME_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$RESTORE_TEST_DB_NAME$SSL_MODE"
+if [ "$HUBUUM_DATABASE_ROLE_TESTS" = true ]; then
+    PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
+        -c "CREATE DATABASE $RESTORE_TEST_DB_NAME OWNER $OWNER_ROLE;" > /dev/null
+    export HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL="postgres://$MIGRATOR_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$RESTORE_TEST_DB_NAME$SSL_MODE"
+    export HUBUUM_RESTORE_TEST_DATABASE_URL="postgres://$RUNTIME_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$RESTORE_TEST_DB_NAME$SSL_MODE"
+else
+    PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
+        -c "CREATE DATABASE $RESTORE_TEST_DB_NAME;" > /dev/null
+    export HUBUUM_RESTORE_TEST_DATABASE_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$RESTORE_TEST_DB_NAME$SSL_MODE"
+    export HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL="$HUBUUM_RESTORE_TEST_DATABASE_URL"
+fi
 HUBUUM_DATABASE_URL="$HUBUUM_RESTORE_TEST_DATABASE_URL" \
     HUBUUM_MIGRATION_DATABASE_URL="$HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL" \
     cargo run --quiet --features embedded-migrations --bin hubuum-admin -- \
@@ -157,7 +189,7 @@ cargo test --workspace --exclude hubuum --exclude hubuum-storage-postgres "$@"
 if [ "$#" -eq 0 ]; then
     python3 tests/python/run.py integration schema-budget
 fi
-if [ "$#" -eq 0 ]; then
+if [ "$#" -eq 0 ] && [ "$HUBUUM_DATABASE_ROLE_TESTS" = true ]; then
     cargo test -p hubuum-storage-postgres \
         --features integration-test-support \
         --test database_privileges \
