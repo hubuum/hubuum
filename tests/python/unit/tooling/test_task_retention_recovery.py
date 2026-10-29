@@ -95,4 +95,3 @@ class TaskRetentionRecoveryTests(unittest.TestCase):
                     archive.addfile(tarfile.TarInfo(name))
             RECOVERY._validate_archive(path)
             self.assertEqual(len(RECOVERY._digest(path)), 64)
-

@@ -12,6 +12,21 @@ from integration import task_retention as RETENTION
 
 
 class TaskRetentionMeasurementTests(unittest.TestCase):
+    def test_failed_captured_administrator_retains_private_redacted_diagnostics(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            deployment = SimpleNamespace(root=Path(temporary), password="fixture-password",
+                                         token_key="fixture-token-key", host_command=lambda command: command,
+                                         host_environment=lambda: {})
+            failure = subprocess.CalledProcessError(1, ["hubuum-admin"],
+                                                   output="stdout fixture-password\n", stderr="stderr fixture-token-key\n")
+            with patch.object(RETENTION.subprocess, "run", side_effect=failure), \
+                    self.assertRaisesRegex(RuntimeError, "inspect retained artifacts"):
+                RETENTION.run_native(deployment, ["hubuum-admin"], timeout=1, capture_output=True)
+            files = list(Path(temporary).glob("failed-hubuum-admin-*.log"))
+            self.assertEqual(len(files), 1)
+            self.assertEqual(files[0].read_text(encoding="utf-8"), "stdout [redacted]\nstderr [redacted]\n")
+            self.assertEqual(files[0].stat().st_mode & 0o777, 0o600)
+
     def test_native_administration_cannot_inherit_another_migration_database(self):
         deployment = RETENTION.RetentionDeployment.__new__(RETENTION.RetentionDeployment)
         deployment.host_url = "postgres://owned-fixture/source"

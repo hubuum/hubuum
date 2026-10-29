@@ -33,13 +33,35 @@ class EffectFixture:
     def __enter__(self):
         self.directory.mkdir(mode=0o700)
         self.certificate = self.directory / "ca.pem"
+        ca_key = self.directory / "ca.key"
+        server_certificate = self.directory / "server.pem"
         key = self.directory / "server.key"
+        request = self.directory / "server.csr"
+        extensions = self.directory / "server.ext"
+        extensions.write_text(
+            "basicConstraints=critical,CA:FALSE\n"
+            "keyUsage=critical,digitalSignature,keyEncipherment\n"
+            "extendedKeyUsage=serverAuth\n"
+            "subjectAltName=DNS:retention-effect,DNS:localhost\n",
+            encoding="ascii",
+        )
         subprocess.run([
             "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2",
-            "-subj", "/CN=retention-effect",
-            "-addext", "subjectAltName=DNS:retention-effect,DNS:localhost",
-            "-keyout", str(key), "-out", str(self.certificate),
+            "-subj", "/CN=Hubuum retention fixture CA",
+            "-addext", "basicConstraints=critical,CA:TRUE",
+            "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+            "-keyout", str(ca_key), "-out", str(self.certificate),
         ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        subprocess.run([
+            "openssl", "req", "-new", "-newkey", "rsa:2048", "-nodes",
+            "-subj", "/CN=retention-effect", "-keyout", str(key), "-out", str(request),
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        subprocess.run([
+            "openssl", "x509", "-req", "-in", str(request), "-CA", str(self.certificate),
+            "-CAkey", str(ca_key), "-set_serial", "1", "-days", "2",
+            "-extfile", str(extensions), "-out", str(server_certificate),
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        ca_key.chmod(0o600)
         key.chmod(0o600)
         fixture = self
 
@@ -90,7 +112,7 @@ class EffectFixture:
                 self.servers.append(server)
                 if tls:
                     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-                    context.load_cert_chain(self.certificate, key)
+                    context.load_cert_chain(server_certificate, key)
                     server.socket = context.wrap_socket(server.socket, server_side=True)
                     self.remote_url = f"https://retention-effect:{server.server_port}/hook"
                 else:

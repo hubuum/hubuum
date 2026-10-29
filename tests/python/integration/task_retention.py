@@ -31,6 +31,12 @@ def run_native(deployment, command, *, timeout, capture_output=False):
                               capture_output=capture_output, text=capture_output,
                               env=deployment.host_environment())
     except subprocess.CalledProcessError as error:
+        if capture_output:
+            diagnostic = (error.stdout or "") + (error.stderr or "")
+            diagnostic = diagnostic.replace(deployment.password, "[redacted]").replace(deployment.token_key, "[redacted]")
+            path = deployment.root / f"failed-{Path(command[0]).name}-{uuid.uuid4().hex[:8]}.log"
+            path.write_text(diagnostic, encoding="utf-8")
+            path.chmod(0o600)
         raise RuntimeError(f"Measured {Path(command[0]).name} failed (exit {error.returncode}); inspect retained artifacts") from None
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"Measured {Path(command[0]).name} exceeded its declared timeout") from None
@@ -446,6 +452,8 @@ def prepare_recovery_probe(arguments, deployment, origins, root, api):
     target = api.post("/api/v1/remote-targets", {
         "collection_id": collection["id"], "class_id": None, "name": "retention-probe",
         "description": "Synthetic counted effect", "method": "post", "url_template": deployment.effects.remote_url,
+        "headers_template": {"Content-Type": "application/json"},
+        "body_template": "{{ body_override | tojson }}",
         "allowed_subject_types": ["collection"],
     })
     probe = uuid.uuid4().hex

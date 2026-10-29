@@ -485,6 +485,17 @@ pub(crate) fn history_row_to_postgres(
             "Logical backup history row contains adapter-private field '{field}'"
         )));
     }
+    if section == StorageBackupHistorySection::TerminalTasks {
+        // Replay projects every physical column, so omitted fields do not use
+        // database defaults. A terminal backup restores neither pending receipt
+        // activation nor purge acknowledgement; retained control is reapplied
+        // separately before exposure, including when receipts are enabled.
+        object.insert("receipt_legacy".to_string(), Value::Bool(false));
+        object.insert("details_purge_pending".to_string(), Value::Bool(false));
+        object
+            .entry("recovery_unavailable".to_string())
+            .or_insert(Value::Bool(false));
+    }
     if matches!(
         section,
         StorageBackupHistorySection::CollectionHistory

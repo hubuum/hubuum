@@ -322,7 +322,7 @@ async fn activation_response_keeps_receipt_read_separate_from_task_read(
                 async move {
                     let version = json!({"hash":"test", "loaded_at":"2025-01-01T00:00:00Z", "label_set":null, "generation":1});
                     HttpResponse::Ok().json(json!({
-                        "results":[{"index":0,"status":"success","result":{"decision":if receipt { "Allow" } else { "Deny" },"version":version,"policy_id":"receipt-only"}}],
+                        "results":[{"index":0,"status":"success","result":{"decision":if receipt { "Allow" } else { "Deny" },"version":version,"policy_id":if receipt { "receipt-only" } else { "" }}}],
                         "version":version,"successful":1,"failed":0
                     }))
                 }
@@ -385,8 +385,9 @@ async fn activation_response_keeps_receipt_read_separate_from_task_read(
     stop.stop(true).await;
     server.await.unwrap().unwrap();
     if duplicate {
-        let response = result.unwrap_err().error_response();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let error = result.unwrap_err();
+        let response = error.error_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{error}");
         let body: Value =
             serde_json::from_slice(&to_bytes(response.into_body()).await.unwrap()).unwrap();
         assert!(

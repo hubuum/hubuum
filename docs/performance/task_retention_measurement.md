@@ -60,6 +60,11 @@ two API processes, two workers with two slots each, and a 4 CPU/4 GiB database.
 `--steady-seconds 360` refills up to the initial receipt occupancy for three
 120-second windows, in batches of at most 256 actual submissions, then drains.
 Every occupancy observation and eligible deadline remains in the report.
+Occupancy separates executable, terminal and recovery-unknown receipt outcomes,
+unexpired terminal receipts and eligible receipts. An executable receipt can
+still await terminal settlement; it does not identify queued versus running
+work. Required refill follows observed receipt retirement, since the reuse
+window starts at completion and does not age queued work.
 
 ```bash
 python3 -I -S tests/python/run.py integration task-retention \
@@ -190,6 +195,10 @@ checkpoint absence plus a protected expiry floor covering the original deadline.
 The observation interval and administrator publication delay remain in the
 reported lag; samples are conservative upper bounds. A timeout retains eligible
 unfinished items instead of dropping them from the denominator.
+The report distinguishes freshly observed nonterminal work from missing deadline
+evidence. Censored samples contribute lower bounds and an explicit incomplete
+or breached percentile status. Full cohort drain has its own outcome: a drain
+timeout does not by itself establish an eligible-expiry percentile breach.
 
 ## Encoding proofs and remaining acceptance work
 
