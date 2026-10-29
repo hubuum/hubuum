@@ -180,7 +180,6 @@ pub(super) fn restore_without_repairs(
         &mut state,
     )?;
     state.task_capacity = state.task_accounting_snapshot()?;
-    state.task_capacity.finish_restore();
     Ok(state)
 }
 
@@ -188,6 +187,9 @@ pub(super) fn enqueue_restored_repairs(state: &mut MemoryState) -> Result<(), St
     enqueue_computed_rebuilds(state)?;
     schemas::enqueue_revalidation(state)?;
     state.task_capacity = state.task_accounting_snapshot()?;
+    // Required repairs belong to restore reconciliation, including when their
+    // registration waits for protected reapplication and exposure release.
+    state.task_capacity.finish_restore();
     Ok(())
 }
 
