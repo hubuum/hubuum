@@ -1,6 +1,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -25,6 +26,8 @@ use crate::observability::metrics::{
 pub(super) use crate::observability::metrics::{CheckpointMeasurement, checkpoint_measurement};
 
 mod measured_io;
+mod payload_cache;
+pub(super) use payload_cache::AuthenticatedPayloadCache;
 
 #[cfg(all(test, unix))]
 mod publication_tests;
@@ -48,6 +51,7 @@ pub(super) struct CheckpointRepository {
     root: PathBuf,
     directory: File,
     key: Vec<u8>,
+    payload_cache: Option<Arc<AuthenticatedPayloadCache>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -86,7 +90,7 @@ struct Signed<T> {
 
 /// Only independent authenticated read-back can construct this proof.
 pub(super) struct DurableCheckpoint {
-    payload: Payload,
+    payload: Arc<Payload>,
     sha256: String,
     previous_sha256: Option<String>,
 }
@@ -243,7 +247,13 @@ impl CheckpointRepository {
             root,
             directory,
             key,
+            payload_cache: None,
         })
+    }
+
+    pub(super) fn with_payload_cache(mut self, cache: Arc<AuthenticatedPayloadCache>) -> Self {
+        self.payload_cache = Some(cache);
+        self
     }
 
     fn signed<T: Serialize>(&self, payload: T) -> Result<Vec<u8>, ApiError> {
@@ -327,7 +337,20 @@ impl CheckpointRepository {
         if digest(&bytes) != head.sha256 {
             return Err(unavailable("Checkpoint recovery material digest mismatch"));
         }
-        let payload: Payload = self.verified(&bytes)?;
+        // A hit reuses only the immutable decoding of these exact independently
+        // read and authenticated bytes. HEAD, file checks, digest, correspondence
+        // and durability are established afresh for every returned proof.
+        let key_fingerprint = self.task_receipt_key()?.fingerprint()?;
+        let cached = self
+            .payload_cache
+            .as_ref()
+            .map(|cache| cache.get(&head.sha256, &key_fingerprint))
+            .transpose()?
+            .flatten();
+        let payload = match cached {
+            Some(payload) => payload,
+            None => Arc::new(self.verified::<Payload>(&bytes)?),
+        };
         if payload.state.lineage() != head.lineage
             || payload.state.epoch() != head.epoch
             || payload.state.revision() != head.revision
@@ -374,6 +397,9 @@ impl CheckpointRepository {
         // read/retry before returning a durable proof.
         measured_io::sync_directory(&self.directory)
             .map_err(|_| unavailable("Cannot establish latest checkpoint durability"))?;
+        if let Some(cache) = &self.payload_cache {
+            cache.remember(head.sha256.clone(), key_fingerprint, Arc::clone(&payload))?;
+        }
         Ok(DurableCheckpoint {
             payload,
             sha256: head.sha256,

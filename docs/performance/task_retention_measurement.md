@@ -217,8 +217,34 @@ Their synthetic timestamps are suitable for encoding tests only. Run with
 `--nocapture` to retain actual byte counts; successful test results are distinct
 from runtime throughput or expiry measurements.
 
-No constrained performance result is recorded here yet. P6 acceptance still
-requires five fresh runs with declared warm-up, demonstrated steady occupancy
+The first constrained local attempt on 2026-10-29 did not complete admission.
+It used production revision `95afd176`, measurement client `1ec1cb80`, the local
+CPU-affinity profile, and a 10,000-task target. The 1,200-second admission timeout
+left 8,741 receipts in the independently protected checkpoint. This count does
+not prove that every receipt's task activated. Workers and expiry observation
+had not started, so the attempt provides no expiry or recovery timing result.
+
+| Observation | Recorded value |
+| --- | --- |
+| Resource samples / monitor errors | 52,028 / 0 |
+| API sampled RSS and kernel high-water | 229,249,024 bytes (218.63 MiB) |
+| Sampled repository peak | 18,043,280 bytes / 7 files |
+| Diagnostic checkpoint reads / writes | 26,539,271,742 / 738,003,752 bytes |
+| Diagnostic verification / publication time | 760.467 / 104.942 seconds |
+| Diagnostic publication count | 260 |
+
+The diagnostic counters are deltas from the initial metrics snapshot to one
+separately identified scrape before the timeout; they are not final totals.
+Verification includes typed decoding, validation and canonical reserialization.
+Publication includes nested operations, so these times must not be added.
+Writes already coalesced roughly 32 protected records per publication, while
+each admission reread and verified the growing checkpoint. This evidence motivates
+bounded reuse of authenticated immutable contents with fresh independent file,
+digest, reference, key and durability checks. It does not establish acceptance.
+The host exposes a MegaRAID controller with rotational-device metadata; physical
+SSD media and equivalence to the named SSD profile remain unverified.
+
+P6 acceptance still requires five fresh runs with declared warm-up, demonstrated steady occupancy
 near 10,000 receipts and continuous capacity release/refill for at least three windows.
 The acceptance topology and workload must include the declared principal skew,
 concurrent replicas, output expiry, held and dependent tasks, large child sets,
