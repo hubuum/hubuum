@@ -81,13 +81,29 @@ the changelog in every PR; explicitly document supported API/backup/configuratio
 breaks and upgrade actions. Internal benchmark-only work has no user-facing
 changelog entry and must say so in its PR description.
 
+Progress snapshot, 2026-11-01; GitHub issues and pull requests retain the live
+status and acceptance evidence:
+
 - #504: merged in #522 with a reproducible synthetic baseline, initial targets
-  and acceptance gates. See
-  [lifecycle budgets](performance/lifecycle_budgets.md).
+  and acceptance gates. See [lifecycle budgets](performance/lifecycle_budgets.md).
 - #505: durable logical identities and compatible backup/restore merged in #524.
 - #506: shared admission and restore-isolated capacity accounting merged in #525.
-- #507: implemented in draft #527; P3/P4 performance acceptance remains open.
-  See [scheduler measurements](task_scheduling.md#measurement).
-- #508: dormant artifact staging in draft #523, with dependent backup producer
-  staging in draft #528. Production activation and pipeline evidence remain open.
-- #509–#521: pending; no completion or destructive-feature enablement is implied.
+- #507: shared scheduling merged in #527, with constrained-profile qualification
+  in #556. See [scheduler measurements](task_scheduling.md#measurement) for
+  the measured profiles and remaining acceptance limits.
+- #508: artifact staging, backup producers and bounded outputs merged in #523,
+  #528 and #539. See [artifact measurements](performance/artifact_pipeline.md)
+  for the delivery boundary and remaining production acceptance work.
+- #511: deletion authority, recovery, cleanup and audit protection have landed.
+  See [deletion recovery](deletion_recovery.md) for activation and recovery rules.
+- #512: task retention is implemented; see [task retention](task_retention.md)
+  and its [measurements](performance/task_retention_measurement.md).
+- #514: an opt-in [history segment prototype](performance/history_segment_prototype.md)
+  provides experimental evidence; it does not enable production segmentation.
+- #516: durable waiting remains under review in #538 and is not enabled.
+- #521: [measurement and acceptance work](performance/api_admission.md) is
+  available independently of those branches. Shared synchronous-request
+  reservations and their recovery guarantees remain to be implemented.
+- #509, #510, #513, #515 and #517–#520: consult the delivery-order table and
+  linked issues for prerequisites and remaining work. A landed foundation or
+  measurement slice does not establish completion of its full issue.
