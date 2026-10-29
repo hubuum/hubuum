@@ -4576,6 +4576,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#revision-2-artifact-acceptance-and-production-tuning" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Revision 2: artifact acceptance and production tuning
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4864,6 +4875,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Revision ledger and downstream gates
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#revision-2-artifact-acceptance-and-production-tuning" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Revision 2: artifact acceptance and production tuning
       </span>
     </span>
   </a>
@@ -5316,6 +5338,12 @@ has yet been measured.</p>
 <td>H1–H5, P1–P8 above</td>
 <td>Initial one/four-slot profiles and bounded-block contracts. Latency/throughput targets are hypotheses, not measurements of unimplemented archives.</td>
 </tr>
+<tr>
+<td>2, 2026-10-29</td>
+<td>#508's <code>artifact-slow-v1</code>, H2 2 GiB/worker</td>
+<td><code>artifact-remote-v2</code>, H2 4 GiB/worker, 8 GiB/deployment; H1 and P7 unchanged</td>
+<td>Separate repeated slow transfer from maximum-row/output qualification; account for two overlapping spool/output reservations per worker. See the profile and evidence below.</td>
+</tr>
 </tbody>
 </table>
 <p>Never overwrite a target to make a failing measurement pass. Append old/new
@@ -5325,6 +5353,103 @@ through real export hydration/rendering, backup capture/serialization, verificat
 and download. #514 adds H1–H5/P1/P2; movement/erasure/cleanup add P5/P6/P8.
 Legacy-reader exceptions require finite limits and separate measurements. Empty
 tables and synthetic timestamps cannot satisfy those implementation gates.</p>
+<h2 id="revision-2-artifact-acceptance-and-production-tuning">Revision 2: artifact acceptance and production tuning<a class="headerlink" href="#revision-2-artifact-acceptance-and-production-tuning" title="Permanent link">&para;</a></h2>
+<p>Revision <strong>2</strong>, dated <strong>2026-10-29</strong>, applies to #508. Other consumers retain
+revision 1 until their own measured revision. The issue's acceptance ceilings are
+engineering profiles; administrators can tune production admission within the
+stable format envelope described in <a href="../../artifact_staging/">verified task artifacts</a>.
+Changing write policy cannot weaken verification, invalidate retained output, or
+release outstanding cleanup obligations.</p>
+<table>
+<thead>
+<tr>
+<th>Contract</th>
+<th>Revision 2 for #508</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>H1</td>
+<td>Keep 512 MiB per two-slot worker, including renderer children and process baseline. Require both 20 ms RSS sampling and native process/child high-water measurements.</td>
+<td>A separate renderer must not hide memory outside the parent process.</td>
+</tr>
+<tr>
+<td>H2</td>
+<td>4 GiB spool/staging reservations per worker; keep 8 GiB deployment-wide. Include abandoned attempts through local-producer quiescence and physical cleanup.</td>
+<td>Two concurrent 1 GiB outputs can each overlap a replay spool. Revision 1's 2 GiB worker allowance could not admit both full reservations.</td>
+</tr>
+<tr>
+<td>H3</td>
+<td>Keep the 1 GiB qualification ceiling, 4 MiB encoded row, 1 MiB block, 1,024 blocks and 256 KiB manifest for this profile.</td>
+<td>The finite 64 GiB reader envelope permits production tuning; it is not a claim that the largest format value was benchmarked.</td>
+</tr>
+<tr>
+<td>P7</td>
+<td>Keep at least 0.8 MiB/s upload per stream with a 1 MiB/s artificial destination rate.</td>
+<td>Report capture/render, upload, independent verification, publication and download separately.</td>
+</tr>
+</tbody>
+</table>
+<p><code>artifact-remote-v2</code> measures these contracts on a macOS 27.2 ARM64 host
+(Mac14,12, 12 logical CPUs, 32 GiB RAM), Rust 1.99, local APFS temporary storage,
+and a remote PostgreSQL 18.6 server. Each process has a pool of eight connections, a 30-second acquisition timeout,
+a 30-second statement timeout, and two executing output slots; two fresh worker processes share each disposable
+database. The driver sets the persisted deployment/principal/collection/kind
+resident limits to 8 GiB. Worker CPU and cgroup memory limits are not imposed;
+the 512 MiB RSS ceiling is an asserted measurement. The server reports 128 MiB
+shared buffers, 4 MiB work memory and 100 connections. Server CPU/memory limits
+and peak server RSS are unavailable and are recorded as unknown, separately from
+worker RSS. Connection-plus-query wall time is sampled five times per database;
+it includes process and connection setup and must not be described as pure RTT.
+Results apply to this named remote profile; they do not qualify the original
+constrained local host.</p>
+<p>The acceptance fixture separates sustained slow transfer from maximum-size
+qualification:</p>
+<ul>
+<li>One warm-up and five fresh measured runs use 1,024 rows with 64 KiB source-row
+  targets, a 128 MiB output ceiling, and four concurrent real producers: JSON,
+  two text templates, and a backup. Exports contain about 63 MiB; the backup
+  captures both worker datasets and contains about 127 MiB. Writes, independent
+  read-back, and streamed download each receive the 1 MiB/s delay.</li>
+<li>Fresh bulk runs use 4 MiB source-row targets and a 1 GiB-minus-1 MiB output
+  ceiling, leaving a small allowance for task metadata in shared admission.
+  Two export workers use 255 rows each; a mixed export/backup pair uses 127 rows
+  each so the backup of both datasets fits. These runs remove artificial delay
+  to exercise producer memory at full speed near the output ceiling.</li>
+<li>Exact 4 MiB encoded-row and one-byte-overflow tests include JSON framing.
+  Protocol tests separately cover empty output, final partial blocks, exact and
+  exceeded manifest/block limits, interrupted verification and corruption.
+  Lifecycle contracts cover cancellation and worker loss at publication phases.</li>
+</ul>
+<p>The smaller repeated slow fixture still traverses dozens of full blocks per
+stream and hundreds of blocks for the backup's upload/read-back/download. The
+bulk runs prevent that smaller fixture from concealing an output-sized allocation.
+Five-run throughput distributions apply to the sustained slow fixture; bulk runs
+are resource/integrity qualification, not a latency distribution. This reduces a
+multi-hour throttled repetition while preserving separate pressure from slow
+consumers, maximum rows, maximum profile output, and concurrent production paths.
+Production sizes, deadlines, storage media or concurrency beyond this profile
+require rerunning the driver with those settings; integrity and finite admission
+bounds remain mandatory at every setting.</p>
+<p>Reproduce the profiles with Python 3.11+ and the test connection variables from
+<code>.env</code>. The account needs <code>CREATEDB</code> and does not need <code>CREATEROLE</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nb">source</span><span class="w"> </span>.env
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>python3<span class="w"> </span>-I<span class="w"> </span>-S<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>artifact-pipeline<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--release<span class="w"> </span>--runs<span class="w"> </span><span class="m">5</span><span class="w"> </span>--warmup<span class="w"> </span><span class="m">1</span><span class="w"> </span>--output<span class="w"> </span>/tmp/artifact-slow.jsonl
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>python3<span class="w"> </span>-I<span class="w"> </span>-S<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>artifact-pipeline<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span>--release<span class="w"> </span>--modes<span class="w"> </span><span class="nb">export</span><span class="w"> </span><span class="nb">export</span><span class="w"> </span>--rows<span class="w"> </span><span class="m">255</span><span class="w"> </span>--row-bytes<span class="w"> </span><span class="m">4194304</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span>--output-limit<span class="w"> </span><span class="m">1072693248</span><span class="w"> </span>--rate<span class="w"> </span><span class="m">0</span><span class="w"> </span>--runs<span class="w"> </span><span class="m">1</span><span class="w"> </span>--warmup<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span>--output<span class="w"> </span>/tmp/artifact-large-exports.jsonl
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>python3<span class="w"> </span>-I<span class="w"> </span>-S<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>artifact-pipeline<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">  </span>--release<span class="w"> </span>--rows<span class="w"> </span><span class="m">127</span><span class="w"> </span>--row-bytes<span class="w"> </span><span class="m">4194304</span><span class="w"> </span>--output-limit<span class="w"> </span><span class="m">1072693248</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">  </span>--rate<span class="w"> </span><span class="m">0</span><span class="w"> </span>--runs<span class="w"> </span><span class="m">1</span><span class="w"> </span>--warmup<span class="w"> </span><span class="m">0</span><span class="w"> </span>--output<span class="w"> </span>/tmp/artifact-large-backup.jsonl
+</code></pre></div>
+<p>The resource driver invokes real task executors and production download streams;
+it does not run a complete HTTP server or initialize the global metrics exporter.
+Legacy inline readers remain the separately documented finite compatibility
+exception. Protocol, application/API, migration, split-role and production
+container checks remain independent required gates.</p>
 
 
 

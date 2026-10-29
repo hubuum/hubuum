@@ -79,7 +79,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#artifact-staging-foundation" class="md-skip">
+        <a href="#verified-task-artifacts" class="md-skip">
           Skip to content
         </a>
       
@@ -3512,10 +3512,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#ownership-and-compatibility" class="md-nav__link">
+  <a href="#ownership-and-publication" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Ownership and compatibility
+        Ownership and publication
       </span>
     </span>
   </a>
@@ -3523,10 +3523,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#lifecycle" class="md-nav__link">
+  <a href="#producer-bounds" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Lifecycle
+        Producer bounds
       </span>
     </span>
   </a>
@@ -3534,10 +3534,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#encoded-bytes-and-verification" class="md-nav__link">
+  <a href="#integrity-and-downloads" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Encoded bytes and verification
+        Integrity and downloads
       </span>
     </span>
   </a>
@@ -3545,10 +3545,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#producer-integration" class="md-nav__link">
+  <a href="#admission-and-production-settings" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Producer integration
+        Admission and production settings
       </span>
     </span>
   </a>
@@ -3556,10 +3556,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#resource-and-activation-gates" class="md-nav__link">
+  <a href="#backup-restore-and-upgrades" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Resource and activation gates
+        Backup, restore and upgrades
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Verification
       </span>
     </span>
   </a>
@@ -4794,10 +4805,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#ownership-and-compatibility" class="md-nav__link">
+  <a href="#ownership-and-publication" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Ownership and compatibility
+        Ownership and publication
       </span>
     </span>
   </a>
@@ -4805,10 +4816,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#lifecycle" class="md-nav__link">
+  <a href="#producer-bounds" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Lifecycle
+        Producer bounds
       </span>
     </span>
   </a>
@@ -4816,10 +4827,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#encoded-bytes-and-verification" class="md-nav__link">
+  <a href="#integrity-and-downloads" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Encoded bytes and verification
+        Integrity and downloads
       </span>
     </span>
   </a>
@@ -4827,10 +4838,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#producer-integration" class="md-nav__link">
+  <a href="#admission-and-production-settings" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Producer integration
+        Admission and production settings
       </span>
     </span>
   </a>
@@ -4838,10 +4849,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#resource-and-activation-gates" class="md-nav__link">
+  <a href="#backup-restore-and-upgrades" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Resource and activation gates
+        Backup, restore and upgrades
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Verification
       </span>
     </span>
   </a>
@@ -4928,29 +4950,27 @@
   
 
 
-<h1 id="artifact-staging-foundation">Artifact staging foundation<a class="headerlink" href="#artifact-staging-foundation" title="Permanent link">&para;</a></h1>
-<p>This is the first implementation slice of
-<a href="https://github.com/hubuum/hubuum/issues/508">#508</a>, following the immutable
-artifact contract in <a href="https://github.com/hubuum/hubuum/issues/503">#503</a>.
-It provides a bounded transfer protocol and PostgreSQL staging. Application
-output offloading is <strong>not enabled</strong>. Existing export and backup outputs keep
-their current representation and readers. There is no HTTP, backup-format,
-configuration, or supported storage-SDK change in this slice.</p>
-<h2 id="ownership-and-compatibility">Ownership and compatibility<a class="headerlink" href="#ownership-and-compatibility" title="Permanent link">&para;</a></h2>
-<p><code>hubuum-artifacts</code> is an unpublished workspace-internal crate. Its byte-store
-contract is separate from the complete hot <code>StorageBackend</code>. The PostgreSQL
-adapter implements it with its existing runtime and adapter error conversion;
-application callers do not acquire or select a PostgreSQL pool.</p>
-<p>Artifact, write-attempt, destination, and object-version IDs are distinct
-private-field types. A manifest binds all four. They are independent of
-resource/principal/task identities supplied by #505. The artifact tables have
-no foreign keys into replaceable application tables. Aborting or losing a
-task cannot cascade away a physical cleanup obligation.</p>
-<p>Destination registration is idempotent for an identical ID/name pair. Neither
-can be rebound, and the database rejects removal of a referenced destination.
-This slice has one adapter; configured default routing, credential rotation,
-and external provider composition belong to later integrations.</p>
-<h2 id="lifecycle">Lifecycle<a class="headerlink" href="#lifecycle" title="Permanent link">&para;</a></h2>
+<h1 id="verified-task-artifacts">Verified task artifacts<a class="headerlink" href="#verified-task-artifacts" title="Permanent link">&para;</a></h1>
+<p>Exports and backups use bounded producers, PostgreSQL chunks, independent
+read-back, and atomic task publication. This implements
+<a href="https://github.com/hubuum/hubuum/issues/508">#508</a> using the identities and
+lifecycle from <a href="https://github.com/hubuum/hubuum/issues/503">#503</a>.
+The <a href="../performance/lifecycle_budgets/">resource contracts</a> distinguish acceptance
+profiles from production configuration.</p>
+<h2 id="ownership-and-publication">Ownership and publication<a class="headerlink" href="#ownership-and-publication" title="Permanent link">&para;</a></h2>
+<p>The storage SDK's <code>artifacts</code> module owns the backend-neutral contract. Every
+selectable <code>StorageBackend</code> implements <code>TaskArtifactStore</code>; application code uses
+its configured opaque handle. Common tracing and metrics surround adapter calls.
+<code>hubuum-artifacts</code> owns the synchronous-producer/async-destination bridge.</p>
+<p>Artifact, attempt, destination and object-version UUIDs are distinct validated
+types. The manifest binds all four. The PostgreSQL destination is named
+<code>primary-artifacts</code>; changing credentials does not change its identity.
+Destination names and IDs cannot be rebound. There is no external provider or
+historical archive query dependency.</p>
+<p>Task ownership records bind an attempt to the stable task identity and exact
+lease. They deliberately have no foreign key to replaceable task rows. Deleting
+a task, restoring an older database snapshot, or reusing its integer ID cannot
+remove physical cleanup obligations or transfer ownership to a different task.</p>
 <table>
 <thead>
 <tr>
@@ -4963,118 +4983,191 @@ and external provider composition belong to later integrations.</p>
 <tr>
 <td>Staging</td>
 <td>Append the next bounded block; retry identical bytes at an existing ordinal.</td>
-<td>A failed producer explicitly aborts, or the one-hour staging deadline expires.</td>
+<td>Abort on producer failure; lost workers fail without producer replay.</td>
 </tr>
 <tr>
 <td>Sealed</td>
 <td>Read immutable blocks and the expected manifest for independent verification.</td>
-<td>Another replica reloads the bounded manifest and repeats full read-back; no local spool is required.</td>
+<td>A replica with the live claim can reload the manifest and verify without a local spool.</td>
 </tr>
 <tr>
 <td>Published</td>
-<td>Read verified blocks through the published catalog reference.</td>
-<td>An identical publication is idempotent. Staging expiry no longer applies.</td>
+<td>Read through the catalog reference.</td>
+<td>Task output and terminal success commit in the same fenced transaction.</td>
 </tr>
 <tr>
 <td>Deleting</td>
-<td>Remove at most 16 physical blocks per cleanup transaction.</td>
-<td>Repeat cleanup until all physical bytes and the manifest are gone.</td>
+<td>Remove at most 16 blocks per cleanup transaction.</td>
+<td>Repeat after interruption; retain reservations until the final physical block and manifest are removed.</td>
 </tr>
 <tr>
 <td>Discarded</td>
-<td>Retain a small attempt tombstone with no content or manifest.</td>
-<td>A delayed stage retry cannot recreate the cancelled attempt or reuse its object version.</td>
+<td>Retain a small tombstone without content.</td>
+<td>Delayed retries cannot recreate the cancelled attempt or reuse its object version.</td>
 </tr>
 </tbody>
 </table>
-<p>The deadline is fixed when an attempt starts; retries do not extend it.
-Cancellation and expiry fence publication through a locked attempt row.
-Publication requires a private-field verification proof and rechecks persisted
-identity, state, deadline, and manifest under the same lock. PostgreSQL triggers
-also reject post-seal chunk writes, identity changes, manifest replacement,
-invalid transitions, and removal of an obligation before its chunks are gone.
-Attempt tombstones are retained in this foundation; a future reclamation policy
-must prove that old owners cannot return before removing their cancellation
-fences. Cleanup does not silently turn a cancelled identity into a new write.</p>
-<p>One awaited block write provides producer backpressure. No transaction spans
-the complete upload or verification pass. An interrupted write poisons the
-local writer; ignoring an error cannot publish a shorter prefix. A verified
-sealed attempt is independently replayable, but this does not permit replaying
-producer side effects. Unsealed attempts are discarded on abort/expiry in
-this initial integration.</p>
-<h2 id="encoded-bytes-and-verification">Encoded bytes and verification<a class="headerlink" href="#encoded-bytes-and-verification" title="Permanent link">&para;</a></h2>
-<p>The version-1 manifest is a canonical binary record: five-byte magic/version,
-four 16-byte identities, a four-byte block size, an eight-byte total length,
-32-byte full-stream SHA-256, and a four-byte block count. Each ordered entry
-contains its four-byte exact length and 32-byte SHA-256. Integers use little
-endian encoding. Ordinal and offset follow from entry order and block size;
-only the final block may be short. An empty artifact has no blocks and the
-SHA-256 of an empty stream. Readers reject trailing manifest bytes.</p>
-<p>The manifest digest is retained in trusted catalog state and in the published
-reference. Decoding checks the encoded byte budget, identities, count, exact
-length, and positions before allocating the bounded hash vector. Every block
-is verified before release. The final block is withheld until the complete
-stream digest and exact EOF pass. A corrupt, truncated, substituted, duplicated,
-or reordered stream never produces a successful completion; a failed reader
-cannot become successful on retry. Range reads are not supported.</p>
-<p>The encoded plaintext is the application digest input. Provider checksums,
-echoed upload metadata, and encryption metadata are not independent read-back
-evidence. No compression or encryption format is introduced here.</p>
-<h2 id="producer-integration">Producer integration<a class="headerlink" href="#producer-integration" title="Permanent link">&para;</a></h2>
-<p><code>stage_producer</code> runs a synchronous serializer on a blocking worker and passes
-bounded blocks through a one-block channel. Slow destinations apply backpressure
-to serialization. The producer, channel, and consumer retain at most five data
-blocks in total, plus the bounded manifest and the producer's own input state.
-The callback returns metadata separately from output bytes. Verification returns
-a private-field proof; this operation never publishes the artifact or completes
-a task.</p>
-<p><code>BackupArtifactProducer</code> captures an authorized backup using the existing
-<code>StorageBackupReplayBuilder</code> spool. Its staging method serializes that exact
-snapshot row by row into the channel, without an intermediate complete artifact.
-The spool is disposable and is released after serialization. A producer failure,
-panic, byte-limit violation, seal failure, or verification failure aborts the
-attempt after the blocking producer exits. Ignoring a sink limit error cannot
-seal a shorter successful output. Failed aborts remain explicit cleanup
-obligations and the staging deadline remains a recovery backstop.</p>
-<p>Dropping the staging future disconnects a producer blocked on output, but cannot
-interrupt arbitrary computation inside its callback or run asynchronous cleanup.
-Owners must await cooperative cancellation before releasing reservations.
-Abandoned attempts require deadline-based cleanup. This bridge does not yet
-implement task cancellation, task ownership, or physical-space accounting.</p>
-<p>The production backup executor still uses the explicitly named legacy
-serialization method and its existing finite output limit. Production export
-query/hydration, template rendering, publication, and downloads are unchanged.
-Neither the bridge's block bound nor a replay round trip establishes H1/H2/P7
-acceptance for the complete producer pipeline. Capture validation, maximum-row
-memory, export production, and real resource measurements remain activation gates.</p>
-<h2 id="resource-and-activation-gates">Resource and activation gates<a class="headerlink" href="#resource-and-activation-gates" title="Permanent link">&para;</a></h2>
-<p>The <a href="https://github.com/hubuum/hubuum/issues/504">#504 budgets</a> supply the H3
-ceilings enforced here: 1 GiB per artifact, 1 MiB per block, 1,024 blocks, and
-256 KiB per manifest. Smaller explicit limits are supported. The fixed header
-is 117 bytes and each block adds 36 bytes, so a full 1,024-block manifest is
-36,981 bytes. Bounds use checked arithmetic and include framing overhead.</p>
-<p>The remaining #508 work is required before routing production outputs here:</p>
-<ul>
-<li>Connect real export hydration/rendering and backup serialization with bounded
-  producer memory. Reuse <code>StorageBackupReplayBuilder</code>; do not first materialize
-  an artifact and then spool it.</li>
-<li>Atomically associate a verified artifact with a fenced task completion,
-  stable task ownership, and the existing output-authorization boundary.
-  Preserve finite legacy-output readers and backup/restore compatibility.</li>
-<li>Integrate admission/resident-space accounting, independent cleanup scheduling,
-  task cancellation and replica recovery, and common metrics/tracing outside
-  individual adapters. Reconcile obligations before enabling restored work.</li>
-<li>Measure real concurrent workers, slow destinations/consumers, largest rows,
-  cancellation, and spool loss against the named <code>artifact-slow-v1</code> profile,
-  including H1/H2/P7. Protocol tests alone are not resource acceptance evidence.</li>
-</ul>
-<p>The new migration only adds unused tables, functions, and constraints. Apply
-normal migration and role reconciliation. The previous output paths remain
-readable while this foundation is dormant. Its down migration removes the
-foundation; it is suitable before feature activation, not a future procedure
-for discarding published application data.</p>
-<p>Changelog review: this dormant internal foundation has no user-facing entry.
-Its activation PR must describe resulting behavior and any upgrade actions.</p>
+<p>A staging attempt has a fixed one-hour lifetime. Retries do not extend it.
+Publication requires a private-field verification proof and rechecks identity,
+manifest, state, live lease and cancellation in the task transaction. A failure
+in task finalization rolls back both publication and output metadata. Byte-store
+publication alone is forbidden for task-owned attempts.</p>
+<h2 id="producer-bounds">Producer bounds<a class="headerlink" href="#producer-bounds" title="Permanent link">&para;</a></h2>
+<p>Exports fetch small pages, apply authorization and includes, hydrate one page,
+and append rows to an indexed temporary file. The row index is also on disk and
+charged to the spool limit. JSON serialization replays one row at a time. Text
+templates use the existing isolated renderer with lazy indexed rows and bounded
+file output. The input files remain pinned until the renderer is reaped.
+Related-object templates expose an aggregate graph and have a separate finite
+8 MiB source bound; every final hydrated row must still fit 4 MiB.</p>
+<p>Backups reuse <code>StorageBackupReplayBuilder</code>. PostgreSQL captures rows through
+bounded cursors in one consistent snapshot and checks each encoded source row
+against 4 MiB. Serialization reads that exact snapshot row by row. It does not
+materialize a complete backup document before writing the output.</p>
+<p><code>stage_producer</code> transfers one awaited block at a time through a one-block channel.
+The bridge retains at most five data blocks, the bounded manifest, and producer
+input state. Slow storage applies backpressure to serialization. A serializer
+error, panic, or exhausted output limit poisons the write; ignoring a sink error
+cannot publish a shorter successful prefix. Upload is followed by full independent
+read-back. Provider metadata and echoed checksums are never verification evidence.</p>
+<p>Spools are disposable. After process/host loss, ordinary export and backup tasks
+fail when their lease expires; the worker does not replay arbitrary producer
+side effects or claim to continue an old source snapshot. Staged bytes are then
+reconciled independently. Explicitly resubmitting creates a new task and snapshot.
+Template files are anonymous on Unix and use OS delete-on-close on Windows.
+The renderer inherits only its three spool descriptors on Unix and enforces its
+own five-second lifetime even if its parent dies. Kernel file ownership reclaims
+local bytes after abrupt exit; durable destination cleanup remains independent.
+Abandoned attempts retain their full reservation for at least ten seconds after cleanup
+fences them, allowing an orphaned renderer to exit before any capacity is released.
+Cancellation waits for active producer/render work to stop before acknowledging
+the task. Dropping a blocked bridge disconnects its channel; a callback performing
+arbitrary computation must still return cooperatively. Durable expiry remains
+the backstop for abandoned writes.</p>
+<h2 id="integrity-and-downloads">Integrity and downloads<a class="headerlink" href="#integrity-and-downloads" title="Permanent link">&para;</a></h2>
+<p>The version-1 canonical binary manifest contains a five-byte magic/version,
+four 16-byte identities, four-byte block size, eight-byte total encoded length,
+32-byte full-stream SHA-256, and four-byte block count. Each ordered entry contains
+its four-byte length and 32-byte SHA-256. Integers are little endian. Ordinal and
+offset follow from position and block size; only the final block may be short.
+An empty artifact has no blocks and the SHA-256 of an empty stream.</p>
+<p>The catalog retains the manifest digest independently of destination bytes.
+Readers validate the bounded manifest, identity, length and ordered blocks before
+release. They hold the last block until full-stream SHA-256 and exact EOF pass.
+Truncation, extra blocks, reordered/substituted content and manifest corruption
+cannot finish successfully. A failed or panicking reader cannot become a clean
+EOF. Range reads are outside this contract.</p>
+<p>Existing output authorization remains at the download boundary. Backups recheck
+administrator authorization before publication, and exports recheck template
+access. New downloads stream through a bounded channel and cancel further reads
+when the consumer disconnects.</p>
+<p><strong>Legacy exception:</strong> outputs stored inline by older binaries remain readable
+through their existing JSON/text/byte readers. Those readers materialize the old
+stored value and retain the old creation-time finite output bound; the new
+streaming memory guarantee applies to newly produced artifact-backed outputs.
+Lowering current write settings does not make previously stored output unreadable.</p>
+<h2 id="admission-and-production-settings">Admission and production settings<a class="headerlink" href="#admission-and-production-settings" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>HUBUUM_ARTIFACT_MAX_SPOOL_BYTES</code></td>
+<td>256 MiB</td>
+<td>Maximum export row/index spool.</td>
+</tr>
+<tr>
+<td><code>HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES</code></td>
+<td>4 GiB</td>
+<td>Per-process reservation ceiling for concurrent staging and local spools.</td>
+</tr>
+<tr>
+<td><code>HUBUUM_EXPORT_MAX_OUTPUT_BYTES</code></td>
+<td>256 KiB</td>
+<td>Admission ceiling for a new export; requests may choose a smaller limit.</td>
+</tr>
+<tr>
+<td><code>HUBUUM_BACKUP_MAX_OUTPUT_BYTES</code></td>
+<td>256 MiB</td>
+<td>Backup capture/serialization ceiling.</td>
+</tr>
+<tr>
+<td><code>HUBUUM_EXPORT_STAGE_TIMEOUT_MS</code></td>
+<td>10 seconds</td>
+<td>Query/hydration and render/transfer stage deadline; tune for large, slow output.</td>
+</tr>
+</tbody>
+</table>
+<p>Reservations precede producer capture. An export reserves its output ceiling plus
+<code>max(spool ceiling, output ceiling)</code>; a backup reserves twice its output ceiling.
+The manifest ceiling is reserved in addition to those payload/spool bytes.
+This covers overlapping spool and destination bytes. Publication drops the local
+reservation to the actual durable payload plus encoded manifest size. Cancellation, task purge and output
+expiry retain the physical reservation until cleanup finishes. The worker runs
+bounded cleanup independently of output metadata expiry scheduling. It drains
+one batch per worker tick while batches remove data. After an empty batch, it
+waits for <code>HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS</code> (300 seconds by default)
+before checking again. Failures remain eligible for retry on the next tick.
+Newly eligible or grace-fenced copies can therefore remain charged until the
+next scheduled check; lower the interval when faster reclamation is required.</p>
+<p>The authoritative deployment/principal/collection/kind limits from
+<a href="../task_admission/">task admission</a> also include these obligations. Configure them
+consistently with artifact limits and concurrency. Admission may reject a new task
+output when an applicable quota is exhausted; raising a per-output ceiling alone
+does not grant more shared capacity. Published outputs cease occupying a worker's
+staging budget but remain charged to shared capacity until reclaimed.</p>
+<p>Write ceilings are configurable within a stable finite format envelope: 64 GiB
+artifact, 1 MiB block, 65,536 blocks, 4 MiB manifest. The default transfer profile
+is 1 GiB, 1,024 blocks and 256 KiB manifest. Readers use the retained format
+envelope, independently of the current write policy. The 4 MiB row bound remains
+fixed. Production tuning changes admission, not integrity or cancellation fences.
+The isolated renderer retains its fixed 128 MiB heap and five-second execution
+limits. A larger output allowance does not grant a template more computation.</p>
+<h2 id="backup-restore-and-upgrades">Backup, restore and upgrades<a class="headerlink" href="#backup-restore-and-upgrades" title="Permanent link">&para;</a></h2>
+<p>Backup format 12 adds portable export-artifact records: a bounded manifest header
+followed by bounded base64 blocks. Restore validates ownership, ordering, all
+hashes and exact EOF before replacing application state. It writes fresh physical
+identities, independently reads the newly stored destination, and remaps output
+references. Existing destination obligations survive logical restore and remain
+charged until cleanup. Restore reserves space for the additional physical copy
+against the deployment resident limit before writing its blocks; finish cleanup
+or raise that shared limit if the copy cannot fit. Backups do not recursively
+embed retained backup outputs.
+Formats 6–11 remain readable; format 11 preserves its native logical identities.</p>
+<p>Stop older API/worker processes, take a database backup, and run
+<code>hubuum-admin --migrate</code> before starting matching binaries. This applies the new
+artifact-output migration and reconciles grants. Storage SDK implementers must
+follow the <a href="../storage_adapter_sdk/#upgrading-from-08-to-09">0.9 upgrade guide</a>.
+Before restarting, reduce <code>HUBUUM_EXPORT_MAX_OUTPUT_BYTES</code> and
+<code>HUBUUM_BACKUP_MAX_OUTPUT_BYTES</code> settings above <code>68719476736</code> (64 GiB); upgraded
+processes reject them. Partition larger workloads and tune shared capacity
+consistently. This format ceiling is not a measured resource qualification.
+Do not downgrade while artifact-backed output or cleanup obligations remain:
+expire/purge the output and finish cleanup first. The down migration refuses to
+discard them. Artifacts above the older format ceiling also prevent downgrade.</p>
+<h2 id="verification">Verification<a class="headerlink" href="#verification" title="Permanent link">&para;</a></h2>
+<p>Protocol tests exercise empty/final-partial output, manifest and block corruption,
+identity substitution, poisoned writers/readers, limits, cancellation and retries.
+Cross-adapter contracts test atomic task publication, rollback, replica handoff,
+worker loss and cancellation at staging/upload/seal/verification boundaries.
+Portable restore tests check fresh identities and preserved cleanup obligations.</p>
+<p>The explicit resource driver runs actual producers and streamed downloads in two
+fresh worker processes with slow PostgreSQL writes/read-back and slow consumers:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">source</span><span class="w"> </span>.env
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>python3<span class="w"> </span>-I<span class="w"> </span>-S<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>artifact-pipeline<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>--release<span class="w"> </span>--output<span class="w"> </span>/tmp/artifact-pipeline.jsonl
+</code></pre></div>
+<p>It creates and drops isolated databases using the test connection settings,
+requires <code>CREATEDB</code>, and does not require <code>CREATEROLE</code>. It records every warm-up
+and measured sample, RSS including renderer children, shared reservations, and
+producer/upload/verification/publication/download timings. Resource results and
+any revised acceptance profile must be recorded with the lifecycle budget ledger;
+passing protocol tests alone is not resource acceptance.</p>
 
 
 

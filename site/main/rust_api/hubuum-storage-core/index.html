@@ -4995,7 +4995,7 @@
 
 
 <h1 id="hubuum-storage-core-rust-api-policy"><code>hubuum-storage-core</code> Rust API Policy<a class="headerlink" href="#hubuum-storage-core-rust-api-policy" title="Permanent link">&para;</a></h1>
-<p>Status: experimental public API in the storage SDK <code>0.7</code> release train.</p>
+<p>Status: experimental public API in the storage SDK <code>0.9</code> release train.</p>
 <h2 id="purpose-and-callers">Purpose and Callers<a class="headerlink" href="#purpose-and-callers" title="Permanent link">&para;</a></h2>
 <p><code>hubuum-storage-core</code> is the complete backend-neutral storage extension
 contract. It exposes capability traits, private-field DTOs, the bounded
@@ -5007,6 +5007,12 @@ no runtime contract version handshake.</p>
 <p>The normative semantics of that Rust surface are documented in the
 <a href="../../storage_boundary/contract/">storage contract</a>. The Rust declarations,
 semantic coverage inventory, and contract documentation must change together.</p>
+<p>The 0.9 train adds mandatory <code>artifacts::TaskArtifactStore</code>, including
+<code>ArtifactStore</code>, to the complete backend. Verified task completion carries a
+private-field proof, and output records carry either inline legacy content or a
+trusted artifact reference. Backup format 12 adds portable <code>ExportArtifacts</code>
+frames. Implement publication, cleanup accounting and replay before upgrading;
+see <a href="../../artifact_staging/">verified artifacts</a>.</p>
 <p>The crate also exposes the mandatory <code>TransactionStorage</code> unit of work.
 Applications compose safe lifecycle semantics through the crate-owned
 operation types returned by <code>StorageTransaction</code>; native connections and query

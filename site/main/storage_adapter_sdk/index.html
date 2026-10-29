@@ -3977,6 +3977,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#upgrading-from-08-to-09" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.8 to 0.9
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5112,6 +5123,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#upgrading-from-08-to-09" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.8 to 0.9
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5193,7 +5215,7 @@
 
 
 <h1 id="storage-adapter-sdk-compatibility">Storage Adapter SDK Compatibility<a class="headerlink" href="#storage-adapter-sdk-compatibility" title="Permanent link">&para;</a></h1>
-<p>Status: accepted; current experimental release train is <code>0.8</code>.</p>
+<p>Status: accepted; current experimental release train is <code>0.9</code>.</p>
 <h2 id="supported-crate-graph">Supported Crate Graph<a class="headerlink" href="#supported-crate-graph" title="Permanent link">&para;</a></h2>
 <p>The statically linked storage adapter SDK consists of these crates:</p>
 <table>
@@ -5642,6 +5664,26 @@ errors. <code>into_parts()</code> now returns the optional structured capacity r
 its fourth element; update error destructuring and preserve that reason across
 adapter boundaries. Only application code translates the bounded rejection
 into HTTP.</p>
+<h2 id="upgrading-from-08-to-09">Upgrading from 0.8 to 0.9<a class="headerlink" href="#upgrading-from-08-to-09" title="Permanent link">&para;</a></h2>
+<p>Update all ten SDK dependencies together. <code>StorageBackend</code> now requires
+<code>artifacts::TaskArtifactStore</code>: implement immutable staged chunks, independent
+read-back verification, task-incarnation ownership, atomic reference publication,
+resident-byte admission, and idempotent cleanup. The memory and PostgreSQL
+adapters implement the complete contract. The standalone <code>ArtifactStore</code> trait
+remains usable without task execution or an archive provider.
+Local producers must stop within <code>LOCAL_SPOOL_CLEANUP_GRACE</code> after ownership
+loss. Keep their reservation through that interval after fencing an abandoned
+attempt; a cleanup call returning zero can still have deferred physical work.</p>
+<p>Export and backup completion can carry <code>VerifiedArtifact</code> rather than complete
+values. Preserve the proof through the completion transaction and fence the
+claim, cancellation, output retention and attempt state before publishing it.
+<code>StorageBackupOutput::document()</code> is optional; use its artifact reference for new
+outputs. Continue supporting the inline variants for retained legacy outputs.</p>
+<p>Backups use format 12 and include <code>history.export_artifacts</code> as bounded manifest
+and block frames. Restore these into fresh physical identities, independently
+verify destination bytes, and remap output references. Retain prior cleanup
+obligations and shared capacity policy across restore. Format 11 identities remain
+native; formats 6–10 still require the quarantined legacy identity upgrade.</p>
 
 
 

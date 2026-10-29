@@ -4940,6 +4940,12 @@ the established parallel suite:</p>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>cargo<span class="w"> </span>clippy<span class="w"> </span>--all-targets<span class="w"> </span>--<span class="w"> </span>-D<span class="w"> </span>warnings
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>cargo<span class="w"> </span>fmt<span class="w"> </span>--all<span class="w"> </span>--check
 </code></pre></div>
+<p>API task tests use 200 completion polls by default. A remote database containing
+the full suite's fixtures can need a longer wait, especially when a full backup
+occupies the shared test worker. Set <code>HUBUUM_TEST_TASK_POLL_ATTEMPTS=2000</code> for such
+runs. This positive-integer setting changes the functional tests' polling budget;
+production deadlines and the tests' result, authorization and cancellation
+assertions stay unchanged.</p>
 <p>The runner includes PostgreSQL adapter tests and a resource-limited JSON Schema
 probe. Python applies the probe's process limits; its assertions remain in Rust.
 Destructive restore contracts use a second runner-owned database with the same

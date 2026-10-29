@@ -4082,6 +4082,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Runtime observation control">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#artifact-workflow-mutations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Artifact workflow mutations
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -5000,6 +5017,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Runtime observation control">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#artifact-workflow-mutations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Artifact workflow mutations
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -5433,6 +5467,15 @@ not a domain resource. It atomically replaces the shared override and publishes 
 commit-ordered wake-up on notification-capable adapters. The administrator handler
 logs the actor and enabled state; this operation does not create a domain audit
 event. Logical restores preserve the setting and portable backups exclude it.</p>
+<h3 id="artifact-workflow-mutations">Artifact workflow mutations<a class="headerlink" href="#artifact-workflow-mutations" title="Permanent link">&para;</a></h3>
+<p><code>ArtifactStore::register_destination</code>, <code>ArtifactStore::stage</code>,
+<code>ArtifactStore::append</code>, <code>ArtifactStore::seal</code>, <code>ArtifactStore::publish</code>,
+<code>ArtifactStore::abort</code>, <code>ArtifactStore::cleanup</code>, and
+<code>TaskArtifactStore::bind_task</code> are context-free workflow operations. They change
+physical storage state and durable ownership, not ordinary domain resources.
+Task completion owns the terminal task event and atomic output publication.
+Cleanup retains obligations and reservations until bounded physical deletion
+finishes, independently of application task deletion and logical restore.</p>
 
 
 

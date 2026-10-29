@@ -4263,6 +4263,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#verified-artifacts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Verified artifacts
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5468,6 +5479,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#verified-artifacts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Verified artifacts
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6086,6 +6108,16 @@ but the application selects and links it at compile time.</p>
 <code>WorkerNotificationProvider</code> accepts a boxed callback so each process can refresh
 its own collector. Providers invoke it on registration/reconnection and changes;
 periodic reads remain the recovery path if notification delivery is interrupted.</p>
+<h2 id="verified-artifacts">Verified artifacts<a class="headerlink" href="#verified-artifacts" title="Permanent link">&para;</a></h2>
+<p>Required traits: <code>ArtifactStore</code> and <code>TaskArtifactStore</code>. Every selectable adapter
+must implement bounded staging, sealing, independent reads, fenced publication,
+and idempotent cleanup. <code>bind_task</code> admits physical reservations against the exact
+stable task identity and live lease. Task-owned <code>publish</code> calls are rejected;
+<code>complete_task</code> consumes the verification proof in the same atomic operation as
+output metadata and terminal status. Restore copies portable frames into fresh
+identities and preserves all pre-existing physical obligations.</p>
+<p>The <a href="../../artifact_staging/">artifact contract</a> defines wire integrity, spool
+lifetime, finite limits, retained-reader compatibility, and cleanup accounting.</p>
 
 
 
