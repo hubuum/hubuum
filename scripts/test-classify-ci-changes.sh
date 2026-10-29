@@ -1018,6 +1018,28 @@ for session_schema in src/api/v1/handlers/auth.rs src/models/auth_session.rs src
   assert_flag "$session_output" openapi true
   assert_flag "$session_output" container true
 done
+
+# Durable-wait state and diagnostics are public response schemas. The storage
+# implementations and migration retain full native/container verification.
+for wait_schema in src/models/task.rs src/api/handlers/meta.rs; do
+  wait_output="$(bash "$classifier" "$wait_schema")"
+  assert_flag "$wait_output" rust true
+  assert_flag "$wait_output" openapi true
+done
+for wait_input in crates/hubuum-storage-core/src/task_waiting.rs \
+  crates/hubuum-storage-conformance/src/task_waiting.rs \
+  crates/hubuum-storage-memory/src/task_waits.rs \
+  crates/hubuum-storage-postgres/src/operations/task_control.rs \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000001_task_waiting/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000001_task_waiting/down.sql; do
+  wait_output="$(bash "$classifier" "$wait_input")"
+  assert_flag "$wait_output" rust true
+  assert_flag "$wait_output" container true
+done
+wait_contract_output="$(bash "$classifier" src/tests/storage_contract/task_waiting.rs)"
+assert_flag "$wait_contract_output" rust true
+assert_flag "$wait_contract_output" container false
+
 for session_input in src/services/auth_sessions.rs src/services/credential_activity.rs \
   src/tests/storage_contract/auth_sessions.rs tests/api_identity_suite/sessions.rs \
   crates/hubuum-storage-core/src/auth_sessions.rs crates/hubuum-storage-core/src/credential_activity.rs \

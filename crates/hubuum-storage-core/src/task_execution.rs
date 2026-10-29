@@ -14,6 +14,7 @@ use crate::{
     StorageTask, StorageTaskCancellationOutcome, StorageTaskCancellationRequest,
     StorageTaskDurations, StorageTaskExecutionAdmission, StorageTaskExecutionObservation,
     StorageTaskKind, StorageTaskOutputLookup, StorageTaskRemoteDispatch, StorageTaskStatus,
+    StorageTaskResumeOutcome, StorageTaskResumeRequest, StorageTaskWait, StorageTaskWaitRequest,
     StorageValidationError,
 };
 
@@ -1085,8 +1086,22 @@ impl StorageTaskFailure {
 /// Mandatory worker state-machine behavior for every selectable backend.
 #[async_trait]
 pub trait TaskExecutionStorage: Send + Sync {
-    /// Persist an authorized request; queued cancellation is terminal in the
-    /// same transaction, while active execution retains its fenced lease.
+    /// Persist a bounded continuation under a live lease and release execution
+    /// capacity while retaining the task's admission and original deadline.
+    async fn wait_task(
+        &self,
+        request: StorageTaskWaitRequest,
+    ) -> Result<StorageTaskWait, StorageError>;
+
+    /// Queue the exact waiting continuation once. A normal scheduler claim is
+    /// still required; a matching stop request or deadline settles it instead.
+    async fn resume_task(
+        &self,
+        request: StorageTaskResumeRequest,
+    ) -> Result<StorageTaskResumeOutcome, StorageError>;
+
+    /// Persist an authorized request; queued and waiting cancellation is terminal
+    /// in the same transaction, while active execution retains its fenced lease.
     async fn request_task_cancellation(
         &self,
         request: StorageTaskCancellationRequest,

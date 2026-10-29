@@ -209,6 +209,8 @@ fn enqueue_computed_rebuilds(state: &mut MemoryState) -> Result<(), StorageError
             .checked_add(1)
             .ok_or_else(|| invalid("task sequence"))?;
         let record = MemoryTaskRecord {
+            checkpoint: None,
+            wait_token: None,
             control: StorageTaskControl::new(StorageTaskKind::Reindex),
             id,
             kind: StorageTaskKind::Reindex,

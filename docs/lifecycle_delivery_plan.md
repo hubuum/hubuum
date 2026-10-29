@@ -90,4 +90,6 @@ changelog entry and must say so in its PR description.
   See [scheduler measurements](task_scheduling.md#measurement).
 - #508: dormant artifact staging in draft #523, with dependent backup producer
   staging in draft #528. Production activation and pipeline evidence remain open.
-- #509–#521: pending; no completion or destructive-feature enablement is implied.
+- #516: dormant durable-wait foundation adds checkpoints and fenced wake tokens.
+  Built-in producers remain disabled; see [durable waiting](task_admission.md#durable-waiting-foundation).
+- Other #509–#521 milestones retain their issue-specific acceptance gates.

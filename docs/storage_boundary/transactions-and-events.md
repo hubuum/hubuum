@@ -179,6 +179,8 @@ for an exception.
   Worker-only transitions are `TaskExecutionStorage::admit_task_execution`,
   `TaskExecutionStorage::acknowledge_task_stop`,
   `TaskExecutionStorage::begin_remote_dispatch`,
+  `TaskExecutionStorage::wait_task`,
+  `TaskExecutionStorage::resume_task`,
   `TaskExecutionStorage::claim_next_task`,
   `TaskExecutionStorage::renew_task_lease`,
   `TaskExecutionStorage::recover_expired_task_leases`,

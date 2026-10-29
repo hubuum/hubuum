@@ -81,6 +81,7 @@ mod task_queue;
 mod task_retention;
 pub use task_retention::*;
 mod task_search;
+mod task_waiting;
 mod telemetry;
 mod token_credentials;
 mod transaction;
@@ -349,6 +350,10 @@ pub use task_queue::{
     StorageTaskRemoteInvocation, StorageTaskScopeSnapshot, StorageTaskStatus, TaskQueueStorage,
 };
 pub use task_search::{StorageTaskSearch, TaskTimeRange};
+pub use task_waiting::{
+    StorageTaskCheckpoint, StorageTaskResumeOutcome, StorageTaskResumeRequest, StorageTaskWait,
+    StorageTaskWaitRequest, StorageTaskWaitToken,
+};
 pub use telemetry::{StorageCapability, StorageObservation, StorageObserver};
 pub use token_credentials::{
     MAX_TOKEN_HASH_KEYS, StorageAuthenticationCredential, StorageTokenDigest, StorageTokenFormat,

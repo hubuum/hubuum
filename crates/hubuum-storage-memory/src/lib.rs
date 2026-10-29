@@ -70,6 +70,8 @@ struct MemoryTaskRecord {
     recovery_unavailable: bool,
     invocation: Option<task_retention::MemoryTaskInvocation>,
     control: StorageTaskControl,
+    checkpoint: Option<StorageTaskCheckpoint>,
+    wait_token: Option<StorageTaskWaitToken>,
     id: TaskId,
     kind: StorageTaskKind,
     status: StorageTaskStatus,
@@ -262,6 +264,11 @@ impl MemoryTaskRecord {
         metadata
     }
     fn projection(&self) -> Result<StorageTask, StorageError> {
+        if (self.status == StorageTaskStatus::Waiting) != self.wait_token.is_some() {
+            return Err(StorageError::internal(
+                "A task wait token must be present exactly while waiting",
+            ));
+        }
         StorageTask::builder(
             self.id,
             self.kind,
@@ -271,6 +278,7 @@ impl MemoryTaskRecord {
         )
         .submitted_by(self.submitted_by)
         .control(self.control.clone())
+        .checkpoint(self.checkpoint.clone())
         .idempotency_key(self.idempotency_key.clone())
         .request_hash(self.request_hash.clone())
         .request_payload(self.request_payload.clone())
@@ -799,7 +807,10 @@ impl MemoryState {
         let mut kinds = Vec::new();
         for task in self.tasks.values_mut() {
             if task.submitted_by == Some(principal_id)
-                && matches!(task.status, StorageTaskStatus::Queued)
+                && matches!(
+                    task.status,
+                    StorageTaskStatus::Queued | StorageTaskStatus::Waiting
+                )
             {
                 task.status = StorageTaskStatus::Cancelled;
                 task.summary = Some("Service account disabled".to_string());
@@ -809,6 +820,8 @@ impl MemoryState {
                 task.request_redacted_at = Some(now);
                 task.lease_expires_at = None;
                 task.claim_token = None;
+                task.checkpoint = None;
+                task.wait_token = None;
                 kinds.push(task.kind);
             }
         }
@@ -891,5 +904,6 @@ mod task_capacity;
 mod task_control;
 mod task_retention;
 mod task_scheduling;
+mod task_waits;
 use state_lock::MemoryStateLock;
 mod workflows;

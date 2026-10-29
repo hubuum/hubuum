@@ -23,6 +23,7 @@ mod remote_targets;
 mod schema_evolution;
 mod task_capacity;
 mod task_control;
+mod task_waiting;
 mod webhook_notifications;
 
 use std::collections::HashSet;

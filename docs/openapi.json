@@ -40333,6 +40333,7 @@
           "queued_tasks",
           "validating_tasks",
           "running_tasks",
+          "waiting_tasks",
           "active_tasks",
           "succeeded_tasks",
           "failed_tasks",
@@ -40423,6 +40424,10 @@
             "format": "int64"
           },
           "validating_tasks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "waiting_tasks": {
             "type": "integer",
             "format": "int64"
           }
@@ -40723,6 +40728,7 @@
           "queued",
           "validating",
           "running",
+          "waiting",
           "succeeded",
           "failed",
           "partially_succeeded",

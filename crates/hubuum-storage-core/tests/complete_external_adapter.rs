@@ -1984,6 +1984,20 @@ impl TaskQueueStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl TaskExecutionStorage for CompleteExternalAdapter {
+    async fn wait_task(
+        &self,
+        request: StorageTaskWaitRequest,
+    ) -> Result<StorageTaskWait, StorageError> {
+        fixture_result()
+    }
+
+    async fn resume_task(
+        &self,
+        request: StorageTaskResumeRequest,
+    ) -> Result<StorageTaskResumeOutcome, StorageError> {
+        fixture_result()
+    }
+
     async fn get_schema_profile_output(
         &self,
         task_id: hubuum_domain::TaskId,
