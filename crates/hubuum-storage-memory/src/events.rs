@@ -16,7 +16,7 @@ impl AuditEventStorage for MemoryStorage {
         &self,
         query: StorageAuditEventListQuery,
     ) -> Result<StoragePage<StorageAuditEvent>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let filters = query.filters();
         let mut events = state
             .events
@@ -138,7 +138,7 @@ impl EventConfigurationStorage for MemoryStorage {
         collection_id: CollectionId,
         sink_id: EventSinkId,
     ) -> Result<StorageAuthorizedEventSink, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let sink = state
             .event_sinks
             .get(&sink_id.id())
@@ -156,7 +156,7 @@ impl EventConfigurationStorage for MemoryStorage {
         &self,
         sink_id: EventSinkId,
     ) -> Result<Vec<CollectionId>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         if !state.event_sinks.contains_key(&sink_id.id()) {
             return Err(StorageError::not_found("Event sink was not found"));
         }
@@ -174,7 +174,7 @@ impl EventConfigurationStorage for MemoryStorage {
         &self,
         request: StorageEventSinkGrantChange,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let sink = state
             .event_sinks
             .get(&request.sink_id().id())
@@ -230,7 +230,7 @@ impl EventConfigurationStorage for MemoryStorage {
         i64::try_from(
             self.state
                 .read()
-                .await
+                .await?
                 .event_sinks
                 .values()
                 .filter(|sink| sink.enabled())
@@ -243,7 +243,7 @@ impl EventConfigurationStorage for MemoryStorage {
         &self,
         query: StorageEventSinkListQuery,
     ) -> Result<StoragePage<StorageEventSink>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         page(
             state
                 .event_sinks
@@ -262,7 +262,7 @@ impl EventConfigurationStorage for MemoryStorage {
     async fn get_event_sink(&self, sink_id: EventSinkId) -> Result<StorageEventSink, StorageError> {
         self.state
             .read()
-            .await
+            .await?
             .event_sinks
             .get(&sink_id.id())
             .cloned()
@@ -275,7 +275,7 @@ impl EventConfigurationStorage for MemoryStorage {
         &self,
         request: StorageEventSinkCreate,
     ) -> Result<StorageMutationOutcome<StorageEventSink>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         if request
             .collection_id()
             .is_some_and(|id| !state.collections.contains_key(&id.id()))
@@ -330,7 +330,7 @@ impl EventConfigurationStorage for MemoryStorage {
         &self,
         request: StorageEventSinkUpdate,
     ) -> Result<StorageMutationOutcome<StorageEventSink>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let current = state
             .event_sinks
             .get(&request.id().id())
@@ -455,7 +455,7 @@ impl EventConfigurationStorage for MemoryStorage {
         &self,
         request: StorageEventSinkDelete,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         if state
             .event_subscriptions
             .values()
@@ -492,7 +492,7 @@ impl EventConfigurationStorage for MemoryStorage {
         let rows = self
             .state
             .read()
-            .await
+            .await?
             .event_subscriptions
             .values()
             .filter(|subscription| subscription.scope() == query.scope())
@@ -508,7 +508,7 @@ impl EventConfigurationStorage for MemoryStorage {
     ) -> Result<StorageEventSubscription, StorageError> {
         self.state
             .read()
-            .await
+            .await?
             .event_subscriptions
             .get(&subscription_id.id())
             .filter(|subscription| subscription.scope() == scope)
@@ -526,7 +526,7 @@ impl EventConfigurationStorage for MemoryStorage {
         &self,
         request: StorageEventSubscriptionCreate,
     ) -> Result<StorageMutationOutcome<StorageEventSubscription>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         if let Some(id) = request.scope().collection_id()
             && !state.collections.contains_key(&id.id())
         {
@@ -586,7 +586,7 @@ impl EventConfigurationStorage for MemoryStorage {
         &self,
         request: StorageEventSubscriptionUpdate,
     ) -> Result<StorageMutationOutcome<StorageEventSubscription>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let current = state
             .event_subscriptions
             .get(&request.id().id())
@@ -654,7 +654,7 @@ impl EventConfigurationStorage for MemoryStorage {
         &self,
         request: StorageEventSubscriptionDelete,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let subscription = state
             .event_subscriptions
             .remove(&request.id().id())
@@ -696,14 +696,14 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
         &self,
         selection: StorageEventNotificationSelection,
     ) -> Result<StorageEventNotificationInput, StorageError> {
-        memory_notification(&*self.state.read().await, selection)
+        memory_notification(&*self.state.read().await?, selection)
     }
     async fn enqueue_event_notification_test(
         &self,
         selection: StorageEventNotificationSelection,
         context: EventContext,
     ) -> Result<StorageMutationOutcome<StorageEventDelivery>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let input = memory_notification(&state, selection)?;
         let id = EventDeliveryId::new(state.next_event_delivery_id)
             .map_err(|e| StorageError::internal(e.to_string()))?;
@@ -753,7 +753,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
         &self,
         query: StorageEventDeliveryListQuery,
     ) -> Result<StoragePage<StorageEventDelivery>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let rows = state
             .event_deliveries
             .values()
@@ -773,7 +773,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
     ) -> Result<StorageEventDelivery, StorageError> {
         self.state
             .read()
-            .await
+            .await?
             .event_deliveries
             .get(&delivery_id.id())
             .cloned()
@@ -789,7 +789,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
         &self,
         delivery_id: EventDeliveryId,
     ) -> Result<StorageEventDelivery, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let current = state
             .event_deliveries
             .get(&delivery_id.id())
@@ -819,7 +819,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
         &self,
         delivery_id: EventDeliveryId,
     ) -> Result<StorageEventDelivery, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let current = state
             .event_deliveries
             .get(&delivery_id.id())
@@ -857,8 +857,11 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
         &self,
         settings: hubuum_domain::EventDeliverySettings,
     ) -> Result<StorageEventDeliveryBatch, StorageError> {
-        let mut state = self.state.write().await;
-        if !state.deletion_control.permits_exposure() {
+        let mut state = self.state.write().await?;
+        if !state
+            .application_control
+            .is_released_for(&state.deletion_control)
+        {
             return Ok(StorageEventDeliveryBatch::new(Vec::new(), None));
         }
         let now = Utc::now();
@@ -995,7 +998,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
         claim: &StorageEventDeliveryClaim,
     ) -> Result<Option<StorageEventDeliveryLease>, StorageError> {
         let check_started = Instant::now();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let Some(delivery) = state
             .event_deliveries
             .get(&claim.delivery_id().id())
@@ -1114,7 +1117,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
         claim: &StorageEventDeliveryClaim,
         disposition: StorageEventDeliveryDisposition,
     ) -> Result<(), StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let now = Utc::now();
         let current = state
             .event_deliveries
@@ -1180,7 +1183,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
         &self,
         claim: &StorageEventDeliveryClaim,
     ) -> Result<(), StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         if state.event_delivery_claims.get(&claim.delivery_id().id()) != Some(&claim.token()) {
             return Err(StorageError::conflict("Event delivery claim is stale"));
         }
@@ -1220,7 +1223,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
         settings: hubuum_domain::EventDeliverySettings,
         error: &str,
     ) -> Result<(), StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         if state.event_delivery_claims.get(&claim.delivery_id().id()) != Some(&claim.token()) {
             return Err(StorageError::conflict("Event delivery claim is stale"));
         }
@@ -1272,8 +1275,11 @@ impl EventFanoutStorage for MemoryStorage {
         &self,
         settings: EventFanoutSettings,
     ) -> Result<StorageEventFanoutOutcome, StorageError> {
-        let mut state = self.state.write().await;
-        if !state.deletion_control.permits_exposure() {
+        let mut state = self.state.write().await?;
+        if !state
+            .application_control
+            .is_released_for(&state.deletion_control)
+        {
             return Ok(StorageEventFanoutOutcome::new(0, Vec::new()));
         }
         let events = state
@@ -1348,7 +1354,7 @@ impl EventHealthStorage for MemoryStorage {
     async fn get_event_delivery_health(
         &self,
     ) -> Result<StorageEventDeliveryHealthSnapshot, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let pending_events = state
             .events
             .iter()
@@ -1435,8 +1441,11 @@ impl EventRetentionStorage for MemoryStorage {
             .event_cutoff(Utc::now().naive_utc())
             .map(|value| DateTime::from_naive_utc_and_offset(value, Utc))
             .ok_or_else(|| StorageError::internal("event retention cutoff overflowed"))?;
-        let mut state = self.state.write().await;
-        if !state.deletion_control.permits_exposure() {
+        let mut state = self.state.write().await?;
+        if !state
+            .application_control
+            .is_released_for(&state.deletion_control)
+        {
             return Ok(None);
         }
         let retained = state
@@ -1471,8 +1480,11 @@ impl EventRetentionStorage for MemoryStorage {
         &self,
         batch_id: StorageEventRetentionBatchId,
     ) -> Result<StorageEventRetentionSummary, StorageError> {
-        let mut state = self.state.write().await;
-        if !state.deletion_control.permits_exposure() {
+        let mut state = self.state.write().await?;
+        if !state
+            .application_control
+            .is_released_for(&state.deletion_control)
+        {
             return Ok(StorageEventRetentionSummary::default());
         }
         let Some(event_ids) = state.event_retention_batches.remove(&batch_id.as_uuid()) else {
@@ -1513,7 +1525,7 @@ impl HistoryStorage for MemoryStorage {
         &self,
         query: StorageComputedFieldHistoryQuery,
     ) -> Result<Option<StorageHistoricalComputedFields>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         state
             .computed_history
             .iter()
@@ -1530,7 +1542,7 @@ impl HistoryStorage for MemoryStorage {
         &self,
         query: StorageRelationHistoryQuery,
     ) -> Result<StoragePage<StorageRelationHistoryEntry>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         crate::backup::list_relation_history(&state, &query)
     }
 
@@ -1538,7 +1550,7 @@ impl HistoryStorage for MemoryStorage {
         &self,
         query: StorageHistoryNavigationQuery,
     ) -> Result<StoragePage<StorageHistoryMarker>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let options = query.options();
         let mut entries = state
             .history
@@ -1597,7 +1609,7 @@ impl HistoryStorage for MemoryStorage {
         &self,
         query: StorageHistoryEntryQuery,
     ) -> Result<Option<StorageHistoryEntry>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         state
             .history
             .iter()
@@ -1624,7 +1636,7 @@ impl HistoryStorage for MemoryStorage {
         &self,
         principal_ids: Vec<PrincipalIdentity>,
     ) -> Result<Vec<StorageHistoryPrincipalName>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let requested = principal_ids.into_iter().collect::<BTreeSet<_>>();
         let mut names = Vec::new();
         for principal in state.principals.values() {
@@ -1648,7 +1660,7 @@ impl HistoryStorage for MemoryStorage {
         query: StorageHistoryListQuery,
     ) -> Result<StoragePage<StorageCollectionHistoryRecord>, StorageError> {
         let (entity_id, options, scope) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut entries = state
             .history
             .iter()
@@ -1677,7 +1689,7 @@ impl HistoryStorage for MemoryStorage {
         query: StorageHistoryAsOfQuery,
     ) -> Result<Option<StorageCollectionHistoryRecord>, StorageError> {
         let (entity_id, at) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let entry = state.history.iter().rev().find(|entry| {
             entry.value.entity_id() == entity_id.id()
                 && matches!(entry.value, MemoryHistoryValue::Collection(_))
@@ -1704,7 +1716,7 @@ impl HistoryStorage for MemoryStorage {
         query: StorageHistoryListQuery,
     ) -> Result<StoragePage<StorageClassHistoryRecord>, StorageError> {
         let (entity_id, options, scope) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut entries = state
             .history
             .iter()
@@ -1733,7 +1745,7 @@ impl HistoryStorage for MemoryStorage {
         query: StorageHistoryAsOfQuery,
     ) -> Result<Option<StorageClassHistoryRecord>, StorageError> {
         let (entity_id, at) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let entry = state.history.iter().rev().find(|entry| {
             entry.value.entity_id() == entity_id.id()
                 && matches!(entry.value, MemoryHistoryValue::Class(_))
@@ -1760,7 +1772,7 @@ impl HistoryStorage for MemoryStorage {
         query: StorageObjectHistoryListQuery,
     ) -> Result<StoragePage<StorageObjectHistoryRecord>, StorageError> {
         let (object_id, class_id, options, scope) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut entries = state
             .history
             .iter()
@@ -1819,7 +1831,7 @@ impl HistoryStorage for MemoryStorage {
                     .collect::<Result<Vec<_>, StorageError>>()
             })
             .transpose()?;
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let limit = options.limit().unwrap_or(usize::MAX);
         let mut selected = BinaryHeap::new();
         let mut total = 0;
@@ -1915,7 +1927,7 @@ impl HistoryStorage for MemoryStorage {
                     .collect::<Result<Vec<_>, StorageError>>()
             })
             .transpose()?;
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let limit = options.limit().unwrap_or(usize::MAX);
         let mut selected = BinaryHeap::new();
         let mut total = 0;
@@ -1986,7 +1998,7 @@ impl HistoryStorage for MemoryStorage {
         query: StorageObjectHistoryAsOfQuery,
     ) -> Result<Option<StorageObjectHistoryRecord>, StorageError> {
         let (object_id, class_id, at) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let entry = state.history.iter().rev().find(|entry| match &entry.value {
             MemoryHistoryValue::Object(record) => {
                 record.id() == object_id && record.class_id() == class_id && entry.valid_from <= at
@@ -2014,7 +2026,7 @@ impl HistoryStorage for MemoryStorage {
         query: StorageHistoryListQuery,
     ) -> Result<StoragePage<StorageExportTemplateHistoryRecord>, StorageError> {
         let (entity_id, options, scope) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut entries = state
             .history
             .iter()
@@ -2043,7 +2055,7 @@ impl HistoryStorage for MemoryStorage {
         query: StorageHistoryAsOfQuery,
     ) -> Result<Option<StorageExportTemplateHistoryRecord>, StorageError> {
         let (entity_id, at) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let entry = state.history.iter().rev().find(|entry| {
             entry.value.entity_id() == entity_id.id()
                 && matches!(entry.value, MemoryHistoryValue::ExportTemplate(_))
@@ -2070,7 +2082,7 @@ impl HistoryStorage for MemoryStorage {
         query: StorageHistoryListQuery,
     ) -> Result<StoragePage<StorageRemoteTargetHistoryRecord>, StorageError> {
         let (entity_id, options, scope) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut entries = state
             .history
             .iter()
@@ -2099,7 +2111,7 @@ impl HistoryStorage for MemoryStorage {
         query: StorageHistoryAsOfQuery,
     ) -> Result<Option<StorageRemoteTargetHistoryRecord>, StorageError> {
         let (entity_id, at) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let entry = state.history.iter().rev().find(|entry| {
             entry.value.entity_id() == entity_id.id()
                 && matches!(entry.value, MemoryHistoryValue::RemoteTarget(_))

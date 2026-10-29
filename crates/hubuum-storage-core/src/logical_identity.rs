@@ -1,6 +1,6 @@
 //! Captured identity evidence, independent of a table layout or UUID implementation.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
 use hubuum_domain::{
@@ -142,6 +142,117 @@ impl StorageCapturedIdentity {
 pub struct StorageIdentityEvidence {
     subject: Option<StorageIdentitySubject>,
     references: BTreeMap<String, StorageCapturedIdentity>,
+    #[serde(skip)]
+    restore_source_versions: StorageRestoreVersionAncestry,
+}
+
+const RESTORE_SOURCE_PREFIX: &str = "/restore_source_versions";
+const UNKNOWN_RESTORE_SOURCE_PREFIX: &str = "/restore_unknown_source_versions";
+
+/// Validated source versions retained when a history-free restore synthesizes
+/// a new baseline. Unknown origins remain explicit across subsequent restores.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct StorageRestoreVersionAncestry {
+    versions: BTreeSet<VersionIdentity>,
+    unknown_sources: BTreeSet<VersionIdentity>,
+}
+
+impl StorageRestoreVersionAncestry {
+    /// Refuse further baseline synthesis rather than discard older provenance.
+    pub const MAX_VERSIONS: usize = 64;
+
+    #[must_use]
+    pub fn contains(&self, version: VersionIdentity) -> bool {
+        self.versions.contains(&version)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = VersionIdentity> + '_ {
+        self.versions.iter().copied()
+    }
+
+    fn capture(
+        subject: Option<StorageIdentitySubject>,
+        references: &BTreeMap<String, StorageCapturedIdentity>,
+    ) -> Result<Self, StorageValidationError> {
+        let mut ancestry = Self::default();
+        for (path, captured) in references {
+            let (prefix, unknown) = if path == RESTORE_SOURCE_PREFIX
+                || path.starts_with(&format!("{RESTORE_SOURCE_PREFIX}/"))
+            {
+                (RESTORE_SOURCE_PREFIX, false)
+            } else if path == UNKNOWN_RESTORE_SOURCE_PREFIX
+                || path.starts_with(&format!("{UNKNOWN_RESTORE_SOURCE_PREFIX}/"))
+            {
+                (UNKNOWN_RESTORE_SOURCE_PREFIX, true)
+            } else {
+                continue;
+            };
+            let StorageCapturedIdentity::Version {
+                reference: IdentityReference::Known { identity: source },
+            } = captured
+            else {
+                return Err(StorageValidationError::invalid(
+                    "Restore source must identify a known version",
+                ));
+            };
+            if path != &format!("{prefix}/{source}") {
+                return Err(StorageValidationError::invalid(
+                    "Restore source path must match its canonical version identity",
+                ));
+            }
+            let Some(StorageIdentitySubject::Resource { version, .. }) = subject else {
+                return Err(StorageValidationError::invalid(
+                    "Restore source ancestry requires a resource subject",
+                ));
+            };
+            if *source == version {
+                return Err(StorageValidationError::invalid(
+                    "Restore source ancestry cannot contain its current version",
+                ));
+            }
+            if unknown {
+                if !derived_version(*source) {
+                    return Err(StorageValidationError::invalid(
+                        "Unknown restore source must identify a derived version",
+                    ));
+                }
+                ancestry.unknown_sources.insert(*source);
+            } else {
+                ancestry.versions.insert(*source);
+            }
+        }
+        if ancestry.versions.len() > Self::MAX_VERSIONS {
+            return Err(StorageValidationError::invalid(
+                "Restore source ancestry exceeds its retained version limit",
+            ));
+        }
+        if !ancestry.unknown_sources.is_subset(&ancestry.versions) {
+            return Err(StorageValidationError::invalid(
+                "Unknown restore source must also be retained in source ancestry",
+            ));
+        }
+        Ok(ancestry)
+    }
+
+    fn extend_references(&self, references: &mut BTreeMap<String, StorageCapturedIdentity>) {
+        for (prefix, versions) in [
+            (RESTORE_SOURCE_PREFIX, &self.versions),
+            (UNKNOWN_RESTORE_SOURCE_PREFIX, &self.unknown_sources),
+        ] {
+            references.extend(versions.iter().map(|version| {
+                (
+                    format!("{prefix}/{version}"),
+                    StorageCapturedIdentity::Version {
+                        reference: IdentityReference::Known { identity: *version },
+                    },
+                )
+            }));
+        }
+    }
+}
+
+fn derived_version(version: VersionIdentity) -> bool {
+    version.as_bytes()[6] >> 4 == 8
 }
 
 #[derive(Deserialize)]
@@ -216,8 +327,62 @@ impl StorageIdentityEvidence {
         }
         Ok(Self {
             subject,
+            restore_source_versions: StorageRestoreVersionAncestry::capture(subject, &references)?,
             references,
         })
+    }
+
+    #[must_use]
+    pub const fn restore_source_versions(&self) -> &StorageRestoreVersionAncestry {
+        &self.restore_source_versions
+    }
+
+    /// Older derived baselines without provenance cannot establish that a
+    /// retained deletion on this resource targets an unrelated version.
+    #[must_use]
+    pub fn has_unknown_restore_source(&self) -> bool {
+        !self.restore_source_versions.unknown_sources.is_empty()
+            || matches!(self.subject,
+                Some(StorageIdentitySubject::Resource { version, .. })
+                    if derived_version(version) && self.restore_source_versions.versions.is_empty())
+    }
+
+    /// Preserve proven ancestry while refreshing references for the same version.
+    pub fn with_restore_source_versions(
+        self,
+        ancestry: &StorageRestoreVersionAncestry,
+    ) -> Result<Self, StorageValidationError> {
+        let mut references = self.references;
+        ancestry.extend_references(&mut references);
+        Self::try_new(self.subject, references)
+    }
+
+    /// Synthesize a new baseline without forgetting the source's immutable
+    /// version or uncertainty inherited from older backup writers.
+    pub fn at_restore_baseline(
+        self,
+        baseline_version: VersionIdentity,
+    ) -> Result<Self, StorageValidationError> {
+        let Some(StorageIdentitySubject::Resource { identity, version }) = self.subject else {
+            return Err(StorageValidationError::invalid(
+                "Restore baseline requires a resource subject",
+            ));
+        };
+        let unknown = derived_version(version) && self.restore_source_versions.versions.is_empty();
+        let mut ancestry = self.restore_source_versions;
+        ancestry.versions.insert(version);
+        if unknown {
+            ancestry.unknown_sources.insert(version);
+        }
+        let mut references = self.references;
+        ancestry.extend_references(&mut references);
+        Self::try_new(
+            Some(StorageIdentitySubject::Resource {
+                identity,
+                version: baseline_version,
+            }),
+            references,
+        )
     }
 
     #[must_use]
@@ -267,6 +432,152 @@ mod tests {
     use super::*;
     use hubuum_domain::{LegacyIdentityCohort, UnresolvedIdentity};
     use rstest::rstest;
+
+    fn resource(version: VersionIdentity) -> StorageIdentitySubject {
+        StorageIdentitySubject::Resource {
+            identity: IdentityReference::Known {
+                identity: ResourceIdentity::generate(),
+            },
+            version,
+        }
+    }
+
+    fn derived() -> VersionIdentity {
+        let mut bytes = *VersionIdentity::generate().as_bytes();
+        bytes[6] = (bytes[6] & 0x0f) | 0x80;
+        VersionIdentity::from_bytes(bytes).unwrap()
+    }
+
+    #[rstest]
+    #[case::namespace_root("root")]
+    #[case::mismatched_uuid("mismatch")]
+    #[case::wrong_kind("kind")]
+    #[case::unresolved_source("unresolved")]
+    #[case::nonresource_subject("subject")]
+    #[case::self_reference("cycle")]
+    #[case::unknown_not_in_sources("unknown")]
+    #[case::unknown_nonderived("nonderived")]
+    fn malformed_restore_source_evidence_is_rejected(#[case] fault: &str) {
+        let source = derived();
+        let reference = serde_json::to_value(StorageCapturedIdentity::Version {
+            reference: IdentityReference::Known { identity: source },
+        })
+        .unwrap();
+        let mut document = serde_json::json!({
+            "subject": resource(VersionIdentity::generate()),
+            "references": {
+                format!("{RESTORE_SOURCE_PREFIX}/{source}"): reference,
+            },
+        });
+        let references = document["references"].as_object_mut().unwrap();
+        match fault {
+            "root" => {
+                references.clear();
+                references.insert(RESTORE_SOURCE_PREFIX.into(), reference);
+            }
+            "mismatch" => {
+                references.clear();
+                references.insert(
+                    format!("{RESTORE_SOURCE_PREFIX}/{}", VersionIdentity::generate()),
+                    reference,
+                );
+            }
+            "kind" => {
+                references.insert(
+                    format!("{RESTORE_SOURCE_PREFIX}/{source}"),
+                    serde_json::to_value(StorageCapturedIdentity::Principal {
+                        reference: IdentityReference::Known {
+                            identity: PrincipalIdentity::generate(),
+                        },
+                    })
+                    .unwrap(),
+                );
+            }
+            "unresolved" => {
+                references.insert(
+                    format!("{RESTORE_SOURCE_PREFIX}/{source}"),
+                    serde_json::to_value(StorageCapturedIdentity::Version {
+                        reference: IdentityReference::Unresolved {
+                            legacy: UnresolvedIdentity::new(
+                                LegacyIdentityCohort::generate(),
+                                ResourceId::new(1).unwrap(),
+                            ),
+                        },
+                    })
+                    .unwrap(),
+                );
+            }
+            "subject" => document["subject"] = serde_json::Value::Null,
+            "cycle" => document["subject"] = serde_json::to_value(resource(source)).unwrap(),
+            "unknown" => {
+                references.clear();
+                references.insert(
+                    format!("{UNKNOWN_RESTORE_SOURCE_PREFIX}/{source}"),
+                    reference,
+                );
+            }
+            "nonderived" => {
+                let plain = VersionIdentity::generate();
+                let reference = serde_json::to_value(StorageCapturedIdentity::Version {
+                    reference: IdentityReference::Known { identity: plain },
+                })
+                .unwrap();
+                references.clear();
+                references.insert(
+                    format!("{RESTORE_SOURCE_PREFIX}/{plain}"),
+                    reference.clone(),
+                );
+                references.insert(
+                    format!("{UNKNOWN_RESTORE_SOURCE_PREFIX}/{plain}"),
+                    reference,
+                );
+            }
+            _ => unreachable!(),
+        }
+        assert!(serde_json::from_value::<StorageIdentityEvidence>(document).is_err());
+    }
+
+    #[test]
+    fn restore_source_ancestry_limit_refuses_to_forget_old_versions() {
+        let original = VersionIdentity::generate();
+        let mut evidence =
+            StorageIdentityEvidence::try_new(Some(resource(original)), BTreeMap::new()).unwrap();
+        for _ in 0..StorageRestoreVersionAncestry::MAX_VERSIONS {
+            evidence = evidence.at_restore_baseline(derived()).unwrap();
+        }
+        assert!(evidence.restore_source_versions().contains(original));
+        assert_eq!(
+            evidence.restore_source_versions().iter().count(),
+            StorageRestoreVersionAncestry::MAX_VERSIONS
+        );
+        assert!(evidence.at_restore_baseline(derived()).is_err());
+    }
+
+    #[rstest]
+    #[case::known_source(false)]
+    #[case::old_unknown_baseline(true)]
+    fn repeated_baselines_preserve_serialized_ancestry_and_uncertainty(#[case] unknown: bool) {
+        let original = if unknown {
+            derived()
+        } else {
+            VersionIdentity::generate()
+        };
+        let evidence =
+            StorageIdentityEvidence::try_new(Some(resource(original)), BTreeMap::new()).unwrap();
+        let first = derived();
+        let first_evidence = evidence.at_restore_baseline(first).unwrap();
+        let restored: StorageIdentityEvidence =
+            serde_json::from_value(serde_json::to_value(first_evidence).unwrap()).unwrap();
+        let latest = restored.at_restore_baseline(derived()).unwrap();
+        assert_eq!(
+            latest
+                .restore_source_versions()
+                .iter()
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([original, first])
+        );
+        assert_eq!(latest.has_unknown_restore_source(), unknown);
+    }
 
     #[rstest]
     #[case::not_pointer("class_id".to_owned())]

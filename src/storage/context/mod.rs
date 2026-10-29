@@ -8,7 +8,8 @@ use hubuum_domain::{
 };
 use hubuum_storage_core::{
     DeletionControlCapture, DeletionControlChange, DeletionControlState, DeletionControlStorage,
-    QueryUsageAnalysisProvider, QueryUsageStorage, StorageQueryObservationSettings,
+    QueryUsageAnalysisProvider, QueryUsageStorage, RuntimeOwner, StorageExecutionPermit,
+    StorageQueryObservationSettings,
 };
 use hubuum_storage_core::{StorageComputedFieldHistoryQuery, StorageHistoricalComputedFields};
 use hubuum_storage_core::{
@@ -146,6 +147,7 @@ pub struct StorageHandle {
 }
 
 struct StorageHandleInner {
+    runtime_owner: Option<RuntimeOwner>,
     descriptor: StorageBackendDescriptor,
     implementation: BackendImplementation,
     resource_ports: ResourceStoragePorts,
@@ -156,6 +158,7 @@ struct StorageHandleInner {
     worker_notification_provider: Option<Arc<dyn WorkerNotificationProvider>>,
 }
 
+#[derive(Clone)]
 pub(crate) enum BackendImplementation {
     Postgres(PostgresStorage),
     Memory(MemoryStorage),
@@ -194,7 +197,12 @@ struct ResourceStoragePorts {
 }
 
 impl ResourceStoragePorts {
-    fn observed<S>(storage: S, backend: &'static str, observer: Arc<dyn StorageObserver>) -> Self
+    fn observed<S>(
+        storage: S,
+        backend: &'static str,
+        observer: Arc<dyn StorageObserver>,
+        admission: Option<execution::ApplicationAdmission>,
+    ) -> Self
     where
         S: CollectionStorage
             + ClassStorage
@@ -203,7 +211,8 @@ impl ResourceStoragePorts {
             + ObjectRelationStorage
             + 'static,
     {
-        let observed = Arc::new(ObservedStorage::new(storage, backend, observer));
+        let observed =
+            Arc::new(ObservedStorage::new(storage, backend, observer).with_admission(admission));
         Self {
             collections: observed.clone(),
             classes: observed.clone(),
@@ -234,6 +243,7 @@ mod artifacts;
 mod computed_fields;
 mod events;
 mod execution;
+pub(crate) use execution::ApplicationAdmission;
 mod identity;
 mod identity_queries;
 mod operational;
@@ -346,11 +356,12 @@ impl StorageHandle {
     {
         let kind = S::KIND;
         let resource_ports =
-            ResourceStoragePorts::observed(backend.clone(), kind.as_str(), observer.clone());
+            ResourceStoragePorts::observed(backend.clone(), kind.as_str(), observer.clone(), None);
         Self {
             #[cfg(test)]
             artifact_test_store: None,
             inner: Arc::new(StorageHandleInner {
+                runtime_owner: None,
                 descriptor: StorageBackendDescriptor::new(kind),
                 implementation: backend.into_implementation(),
                 resource_ports,
@@ -442,21 +453,47 @@ impl StorageHandle {
         self.descriptor().kind().as_str()
     }
 
-    async fn observe_storage_call<T, E: ObservationError>(
+    async fn observe_storage_call<T: Send, E: ObservationError>(
         &self,
         backend: &'static str,
         capability: StorageCapability,
         operation: &'static str,
-        future: impl Future<Output = Result<T, E>>,
+        future: impl Future<Output = Result<T, E>> + Send,
     ) -> Result<T, E> {
-        observe_storage_call_with(
+        let observed = observe_storage_call_with(
             self.inner.observer.as_ref(),
             backend,
             capability,
             operation,
             future,
-        )
-        .await
+        );
+        // Control-plane and settlement operations must remain usable while
+        // ordinary admission is closed. Adapters still enforce their exact
+        // ownership, transaction and generation requirements.
+        if self.inner.runtime_owner.is_none()
+            || matches!(
+                capability,
+                StorageCapability::DeletionControl | StorageCapability::Restore
+            )
+            || matches!(
+                operation,
+                "get_readiness_snapshot"
+                    | "get_maintenance_state"
+                    | "poll_task_execution"
+                    | "acknowledge_task_stop"
+                    | "renew_task_lease"
+                    | "recover_expired_task_leases"
+                    | "fail_task"
+            )
+        {
+            return observed.await;
+        }
+        let scope = self.current_execution_scope().with_application_access(
+            self.admit_application_work()
+                .await
+                .map_err(E::admission_error)?,
+        );
+        self.run_in_scope_send(scope, observed).await
     }
 
     /// Return adapter-projected pool diagnostics for the legacy database endpoint.

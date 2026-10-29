@@ -44,16 +44,16 @@ impl MemoryStorage {
     ) -> Result<Option<ResourceRevision>, StorageError> {
         // Hold the live state lock until the complete item is published so
         // concurrent writes cannot be lost when replacing the staged state.
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let scratch = Self {
             schema_limits: self.schema_limits,
-            state: Arc::new(MemoryStateLock::new(state.clone())),
+            state: Arc::new(self.state.fork(state.clone())),
         };
         let mut next_references = references.clone();
         let revision = scratch
             .apply_import_operation(operation, &mut next_references)
             .await?;
-        *state = scratch.state.read().await.clone();
+        *state = scratch.state.read().await?.clone();
         *references = next_references;
         Ok(revision)
     }
@@ -81,7 +81,7 @@ impl MemoryStorage {
             .name;
         self.state
             .read()
-            .await
+            .await?
             .identity_scope_by_name(&name)
             .map(StorageIdentityScope::id)
             .ok_or_else(|| StorageError::not_found("Import identity scope was not found"))
@@ -105,7 +105,7 @@ impl MemoryStorage {
             .ok_or_else(|| StorageError::invalid_input("Import group selector is missing"))?
             .clone()
             .into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         state
             .groups
             .values()
@@ -138,7 +138,7 @@ impl MemoryStorage {
             .ok_or_else(|| StorageError::invalid_input("Import principal selector is missing"))?
             .clone()
             .into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         state
             .principals
             .values()
@@ -258,7 +258,7 @@ impl MemoryStorage {
             .name;
         self.state
             .read()
-            .await
+            .await?
             .event_sinks
             .values()
             .find(|sink| sink.name() == name && sink.collection_id().is_none())
@@ -366,7 +366,7 @@ impl MemoryStorage {
         let (from, to) = ordered_ids(first, second);
         self.state
             .read()
-            .await
+            .await?
             .class_relations
             .values()
             .find(|relation| relation.from_class_id() == from && relation.to_class_id() == to)
@@ -382,7 +382,7 @@ impl MemoryStorage {
         let (from, to) = ordered_ids(first, second);
         self.state
             .read()
-            .await
+            .await?
             .object_relations
             .values()
             .find(|relation| relation.from_object_id() == from && relation.to_object_id() == to)
@@ -457,7 +457,7 @@ impl MemoryStorage {
                 disabled_at,
             },
         };
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let existing = state
             .principals
             .values()

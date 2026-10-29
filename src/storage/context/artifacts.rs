@@ -140,3 +140,31 @@ impl TaskArtifactStore for StorageHandle {
         .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::active(false)]
+    #[case::retired(true)]
+    #[tokio::test]
+    async fn artifact_staging_requires_a_live_runtime_owner(#[case] retire: bool) {
+        let storage = StorageHandle::memory();
+        let destination = Destination::new(DestinationId::generate(), "runtime-fence").unwrap();
+        storage.register_destination(&destination).await.unwrap();
+        let registration = storage.register_runtime().await.unwrap();
+        let bound = storage.clone().with_runtime_owner(registration.owner());
+        if retire {
+            storage.unregister_runtime(registration).await.unwrap();
+        }
+        let identity = ArtifactIdentity::new(destination.id());
+        let result = bound.stage(&identity, ArtifactLimits::default()).await;
+        if retire {
+            assert!(matches!(result, Err(ArtifactError::Backend(_))));
+        } else {
+            result.unwrap();
+        }
+    }
+}

@@ -616,7 +616,7 @@ impl TaskCapacityStorage for MemoryStorage {
         &self,
         policy: TaskAdmissionPolicy,
     ) -> Result<StorageTaskPolicy, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let capacity = &mut state.task_capacity;
         if !capacity.initialized {
             capacity.policy = StorageTaskPolicy::new(capacity.policy.revision(), policy);
@@ -626,11 +626,11 @@ impl TaskCapacityStorage for MemoryStorage {
     }
 
     async fn task_policy(&self) -> Result<StorageTaskPolicy, StorageError> {
-        Ok(self.state.read().await.task_capacity.policy.clone())
+        Ok(self.state.read().await?.task_capacity.policy.clone())
     }
 
     async fn task_capacity_snapshot(&self) -> Result<StorageTaskCapacitySnapshot, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         state.task_capacity = state.task_accounting_snapshot()?;
         let capacity = &state.task_capacity;
         let usage = |internal| -> Result<StorageTaskCapacityUsage, StorageError> {
@@ -689,7 +689,7 @@ impl TaskCapacityStorage for MemoryStorage {
         &self,
         update: StorageTaskPolicyUpdate,
     ) -> Result<StorageTaskPolicy, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let capacity = &mut state.task_capacity;
         if capacity.policy.revision() != update.expected_revision() {
             return Err(StorageError::conflict(

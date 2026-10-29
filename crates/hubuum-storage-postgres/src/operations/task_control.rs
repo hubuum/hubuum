@@ -14,12 +14,12 @@ use hubuum_storage_core::{
 use hubuum_task_core::TaskStopReason;
 use serde_json::json;
 
+use super::task_execution::require_claimed_execution;
 use super::task_execution::{
     append_task_lifecycle_event, claimed_task, database_now, import_result_counts_connection,
     live_claimed_task, stored_task_kind, system_provenance,
 };
 use super::task_rows::TaskRow;
-use crate::runtime::require_deletion_execution;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
 /// Take computed-class locks before task/state locks, matching definition
@@ -52,7 +52,7 @@ pub async fn begin_remote_dispatch(
     let claimed = claimed_task(&lease)?;
     runtime
         .with_transaction(async move |connection| {
-            require_deletion_execution(connection).await?;
+            require_claimed_execution(connection, claimed).await?;
             let row = live_claimed_task(connection, claimed).await?;
             if stored_task_kind(&row)? != StorageTaskKind::RemoteCall {
                 return Err(PostgresStorageError::invalid_input(
@@ -86,7 +86,7 @@ pub async fn request_task_cancellation(
     runtime: &PostgresRuntime,
     request: StorageTaskCancellationRequest,
 ) -> Result<StorageTaskCancellationOutcome, PostgresStorageError> {
-    runtime.with_transaction(async move |connection| {
+    runtime.with_control_transaction(async move |connection| {
         use crate::schema::tasks::dsl as tasks;
         if request.kind() == StorageTaskKind::Reindex {
             lock_reindex_cleanup(connection, &[request.task_id().id()]).await?;
@@ -136,7 +136,7 @@ pub async fn admit_task_execution(
     let claimed = claimed_task(&lease)?;
     runtime
         .with_transaction(async move |connection| {
-            require_deletion_execution(connection).await?;
+            require_claimed_execution(connection, claimed).await?;
             let row = live_claimed_task(connection, claimed).await?;
             let kind = stored_task_kind(&row)?;
             let now = database_now(connection).await?;
@@ -200,7 +200,7 @@ pub async fn acknowledge_task_stop(
 ) -> Result<StorageTask, PostgresStorageError> {
     let claimed = claimed_task(&lease)?;
     let row = runtime
-        .with_transaction(async move |connection| {
+        .with_control_transaction(async move |connection| {
             lock_reindex_cleanup(connection, &[claimed.id]).await?;
             let row = live_claimed_task(connection, claimed).await?;
             let control = row.control(stored_task_kind(&row)?)?;

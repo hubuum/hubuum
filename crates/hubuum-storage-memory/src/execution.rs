@@ -1,6 +1,22 @@
 use super::*;
 
 impl ExecutionStorage for MemoryStorage {
+    fn current_execution_scope(&self) -> StorageExecutionScope {
+        MEMORY_EXECUTION_SCOPE
+            .try_with(Clone::clone)
+            .unwrap_or_default()
+    }
+
+    fn run_in_scope_sync<F, R>(&self, scope: StorageExecutionScope, operation: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let scope = MEMORY_EXECUTION_SCOPE
+            .try_with(|current| merge_memory_execution_scope(current, &scope))
+            .unwrap_or(scope);
+        MEMORY_EXECUTION_SCOPE.sync_scope(scope, operation)
+    }
+
     fn run_in_scope<'a, F, R>(
         &'a self,
         scope: StorageExecutionScope,
@@ -37,6 +53,14 @@ fn merge_memory_execution_scope(
     child: &StorageExecutionScope,
 ) -> StorageExecutionScope {
     let mut merged = StorageExecutionScope::default();
+    // Once a producer captures authority, nested calls cannot silently refresh
+    // it to a newer generation after deletion or application replacement.
+    if let Some(permit) = parent
+        .application_access_override()
+        .or_else(|| child.application_access_override())
+    {
+        merged = merged.with_application_access(permit.clone());
+    }
     if let Some(execution) = child
         .task_execution_override()
         .or_else(|| parent.task_execution_override())
@@ -132,7 +156,7 @@ impl TransactionStorage for MemoryStorage {
             + Send,
         R: Send,
     {
-        let mut committed = self.state.write().await;
+        let mut committed = self.state.write().await?;
         if MEMORY_EXECUTION_SCOPE
             .try_with(|scope| scope.task_execution_override().is_some_and(Option::is_some))
             .unwrap_or(false)
@@ -142,13 +166,13 @@ impl TransactionStorage for MemoryStorage {
         let transaction = MemoryTransaction {
             storage: Self {
                 schema_limits: self.schema_limits,
-                state: Arc::new(MemoryStateLock::new(committed.clone())),
+                state: Arc::new(self.state.fork(committed.clone())),
             },
             event_context,
         };
         let result = operation(&transaction).await;
         if result.is_ok() {
-            *committed = transaction.storage.state.read().await.clone();
+            *committed = transaction.storage.state.read().await?.clone();
         }
         result
     }

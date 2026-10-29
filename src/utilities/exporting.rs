@@ -1,6 +1,7 @@
 use crate::config::get_config;
 use crate::errors::ApiError;
 use crate::models::{ExportContentType, ExportMissingDataPolicy, ExportTemplate, ExportWarning};
+pub(crate) use hubuum_templates::template_workers_idle;
 use hubuum_templates::{
     MissingDataPolicy, TemplateAutoEscape, TemplateError, TemplateExecution, TemplateLimits,
     prepare_template,

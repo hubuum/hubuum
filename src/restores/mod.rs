@@ -1,11 +1,14 @@
 mod maintenance;
 pub(crate) mod replay;
 use hubuum_storage_core::{
-    StorageBackupReplay, StorageRestoreArtifact, StorageRestoreArtifactJob,
+    DeletionControlStorage, StorageBackupReplay, StorageRestoreArtifact, StorageRestoreArtifactJob,
     StorageRestoreIdentityContext, StorageRestoreReplayApply, StorageRestoreStageArtifact,
 };
 pub use maintenance::MaintenanceActivityGuard;
-pub(crate) use maintenance::active_maintenance_work;
+pub(crate) use maintenance::{
+    active_maintenance_work, application_work_is_settled, track_application_completion,
+    with_application_work,
+};
 
 use hubuum_domain::{JsonSchemaLimits, PrincipalId};
 use std::collections::BTreeMap;
@@ -19,6 +22,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use crate::config::ControlRecoveryOptions;
 use crate::errors::ApiError;
 use crate::lifecycle::spawn_background_worker;
 use crate::models::retention::FutureRetention;
@@ -669,7 +673,8 @@ pub async fn reconcile_interrupted_restore(
     let snapshot = storage_handle(pool)
         .get_restore_coordinator_snapshot()
         .await?;
-    reconcile_restore_from_snapshot(pool, snapshot, true)
+    let recovery = configured_recovery_options();
+    reconcile_restore_from_snapshot(pool, snapshot, true, &recovery)
         .await
         .map(|_| ())
 }
@@ -680,16 +685,30 @@ pub async fn reconcile_interrupted_restore(
 pub async fn execute_confirmed_restore(
     pool: &impl crate::storage::StorageContext,
 ) -> Result<bool, ApiError> {
+    execute_confirmed_restore_with_recovery(pool, &configured_recovery_options()).await
+}
+
+pub(crate) async fn execute_confirmed_restore_with_recovery(
+    pool: &impl StorageContext,
+    recovery: &ControlRecoveryOptions,
+) -> Result<bool, ApiError> {
     let snapshot = storage_handle(pool)
         .get_restore_coordinator_snapshot()
         .await?;
-    reconcile_restore_from_snapshot(pool, snapshot, false).await
+    reconcile_restore_from_snapshot(pool, snapshot, false, recovery).await
+}
+
+fn configured_recovery_options() -> ControlRecoveryOptions {
+    crate::config::get_config()
+        .map(|config| config.control_recovery.clone())
+        .unwrap_or_default()
 }
 
 async fn reconcile_restore_from_snapshot(
     pool: &impl crate::storage::StorageContext,
     snapshot: StorageRestoreCoordinatorSnapshot,
     require_stale_confirmation: bool,
+    recovery: &ControlRecoveryOptions,
 ) -> Result<bool, ApiError> {
     let maintenance_state = snapshot.maintenance_state();
     if maintenance_state.is_normal() {
@@ -724,6 +743,13 @@ async fn reconcile_restore_from_snapshot(
         document: document_bytes,
         capability_hash: _,
     } = job;
+    if job.status == RestoreJobStatus::Succeeded {
+        // A committed replay can remain draining until retained decisions and
+        // their exact reapplication receipt are independently protected. Retry
+        // that phase without replaying or marking the successful restore failed.
+        reapply_after_restore(pool, recovery).await?;
+        return Ok(true);
+    }
     if matches!(
         job.status,
         RestoreJobStatus::Failed | RestoreJobStatus::Expired
@@ -787,7 +813,28 @@ async fn reconcile_restore_from_snapshot(
         fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     }
+    reapply_after_restore(pool, recovery).await?;
     Ok(true)
+}
+
+async fn reapply_after_restore(
+    pool: &impl StorageContext,
+    recovery: &ControlRecoveryOptions,
+) -> Result<(), ApiError> {
+    let storage = storage_handle(pool);
+    let authority = storage.read_deletion_control().await?;
+    let application = storage.read_application_control().await?;
+    if application.is_released_for(&authority) {
+        return Ok(());
+    }
+    let (directory, key_file) = recovery.paths()?.ok_or_else(|| {
+        ApiError::ServiceUnavailable(
+            "Restore committed but retained deletion decisions require the independent recovery repository; application remains quarantined".into(),
+        )
+    })?;
+    crate::services::deletion_recovery::reapply(pool, directory, key_file)
+        .await
+        .map(|_| ())
 }
 
 async fn heartbeat_instance(
@@ -795,7 +842,7 @@ async fn heartbeat_instance(
     instance_id: Uuid,
     expire_validated_jobs: bool,
 ) -> Result<StorageRestoreCoordinatorSnapshot, ApiError> {
-    let local_work_is_idle = || active_maintenance_work() == 0;
+    let local_work_is_idle = maintenance::local_work_is_settled;
     storage_handle(pool)
         .tick_restore_coordinator(instance_id, &local_work_is_idle, expire_validated_jobs)
         .await

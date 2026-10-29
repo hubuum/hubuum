@@ -3,7 +3,9 @@ use rstest::rstest;
 
 use super::*;
 
-async fn fixture(closed: bool) -> (MemoryStorage, HotObjectHistoryDeletion, MemoryHistoryEntry) {
+pub(super) async fn fixture(
+    closed: bool,
+) -> (MemoryStorage, HotObjectHistoryDeletion, MemoryHistoryEntry) {
     let storage = MemoryStorage::new();
     let class = storage
         .create_class(
@@ -55,7 +57,7 @@ async fn fixture(closed: bool) -> (MemoryStorage, HotObjectHistoryDeletion, Memo
     let entry = storage
         .state
         .read()
-        .await
+        .await.unwrap()
         .history
         .iter()
         .find(|entry| matches!(&entry.value, MemoryHistoryValue::Object(value) if value.id() == object.id()))
@@ -71,7 +73,7 @@ async fn fixture(closed: bool) -> (MemoryStorage, HotObjectHistoryDeletion, Memo
     (storage, request, entry)
 }
 
-async fn prepare(
+pub(super) async fn prepare(
     storage: &MemoryStorage,
     request: &HotObjectHistoryDeletion,
 ) -> DeletionControlState {
@@ -84,7 +86,7 @@ async fn prepare(
         .unwrap()
 }
 
-fn cleanup(
+pub(super) fn cleanup(
     expected: DeletionControlState,
     request: HotObjectHistoryDeletion,
 ) -> HotObjectHistoryCleanup {
@@ -137,7 +139,7 @@ async fn preparation_rejects_invalid_history_copy(#[case] invalid: &str) {
             )
             .unwrap()
         }
-        "duplicate" => storage.state.write().await.history.push(entry),
+        "duplicate" => storage.state.write().await.unwrap().history.push(entry),
         "open" => (),
         _ => unreachable!(),
     }
@@ -158,7 +160,7 @@ async fn cleanup_commits_exact_removal_and_receipt_together() {
         .cleanup_hot_object_history(cleanup(prepared, request.clone()))
         .await
         .unwrap();
-    let state = storage.state.read().await;
+    let state = storage.state.read().await.unwrap();
     assert!(!state.history.iter().any(|row| row.id == entry.id));
     let intent = &completed.intents()[&request.intent()];
     assert_eq!(intent.copies()[&request.copy()], DeletionCopyState::Removed);
@@ -176,6 +178,7 @@ async fn cleanup_refuses_reopened_copy_without_recording_removal() {
         .state
         .write()
         .await
+        .unwrap()
         .history
         .iter_mut()
         .find(|row| row.id == entry.id)
@@ -209,7 +212,13 @@ async fn cleanup_retry_rechecks_removed_history_after_recovery() {
         .await
         .unwrap();
     // Model application data recovered independently of retained control evidence.
-    storage.state.write().await.history.push(entry.clone());
+    storage
+        .state
+        .write()
+        .await
+        .unwrap()
+        .history
+        .push(entry.clone());
     let retried = storage
         .cleanup_hot_object_history(cleanup(completed.clone(), request))
         .await
@@ -219,6 +228,7 @@ async fn cleanup_retry_rechecks_removed_history_after_recovery() {
             .state
             .read()
             .await
+            .unwrap()
             .history
             .iter()
             .any(|row| row.id == entry.id)
@@ -244,7 +254,7 @@ async fn cleanup_does_not_confuse_reused_integer_ids() {
         .await
         .unwrap()
         .into_value();
-    storage.state.write().await.next_object_id = original.id().id();
+    storage.state.write().await.unwrap().next_object_id = original.id().id();
     let class = storage
         .resolve_class(StorageClassSelector::Id(original.class_id()))
         .await
@@ -270,7 +280,7 @@ async fn cleanup_does_not_confuse_reused_integer_ids() {
         .cleanup_hot_object_history(cleanup(prepared, request))
         .await
         .unwrap();
-    let state = storage.state.read().await;
+    let state = storage.state.read().await.unwrap();
     assert_eq!(state.objects[&replacement.id().id()], replacement);
     assert!(state.history.iter().any(
         |row| matches!(&row.value, MemoryHistoryValue::Object(value) if value == &replacement)
@@ -301,43 +311,32 @@ async fn stale_cleanup_cannot_remove_history() {
             .state
             .read()
             .await
+            .unwrap()
             .history
             .iter()
             .any(|row| row.id == entry.id)
     );
 }
 
-#[rstest]
-#[case::prepare(false)]
-#[case::cleanup(true)]
 #[tokio::test]
-async fn registered_runtime_blocks_history_deletion(#[case] cleaning: bool) {
+async fn registered_runtime_blocks_cleanup_until_exact_drain() {
     let (storage, request, _) = fixture(true).await;
-    let expected = if cleaning {
-        let expected = prepare(&storage, &request).await;
-        // A retained registration recovered alongside authority must still block.
-        let registration = RuntimeRegistration::generate();
-        storage
-            .state
-            .write()
-            .await
-            .runtime_registrations
-            .insert(registration.id(), registration.ownership_token());
-        expected
-    } else {
-        storage.register_runtime().await.unwrap();
-        storage.read_deletion_control().await.unwrap()
-    };
-    let result = if cleaning {
-        storage
-            .cleanup_hot_object_history(cleanup(expected, request))
-            .await
-    } else {
-        storage
-            .prepare_hot_object_history_deletion(expected, request)
-            .await
-    };
-    assert_eq!(result.unwrap_err().kind(), StorageErrorKind::Unavailable);
+    let registration = storage.register_runtime().await.unwrap();
+    let expected = prepare(&storage, &request).await;
+    let error = storage
+        .cleanup_hot_object_history(cleanup(expected.clone(), request.clone()))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), StorageErrorKind::Unavailable);
+    let fence = storage.read_application_control().await.unwrap().fence();
+    storage
+        .acknowledge_runtime_drain(registration.owner(), fence)
+        .await
+        .unwrap();
+    storage
+        .cleanup_hot_object_history(cleanup(expected, request))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -359,15 +358,29 @@ async fn runtime_registration_capacity_never_evicts_an_owner() {
             .state
             .write()
             .await
+            .unwrap()
             .runtime_registrations
-            .insert(registration.id(), registration.ownership_token());
+            .insert(
+                registration.id(),
+                MemoryRuntimeRegistration {
+                    ownership_token: registration.ownership_token(),
+                    isolation: None,
+                    drained: None,
+                },
+            );
     }
     assert_eq!(
         storage.register_runtime().await.unwrap_err().kind(),
         StorageErrorKind::Unavailable
     );
     assert_eq!(
-        storage.state.read().await.runtime_registrations.len(),
+        storage
+            .state
+            .read()
+            .await
+            .unwrap()
+            .runtime_registrations
+            .len(),
         DELETION_CONTROL_MAX_RUNTIMES
     );
 }
@@ -381,8 +394,16 @@ async fn runtime_unregister_requires_ownership() {
         .state
         .write()
         .await
+        .unwrap()
         .runtime_registrations
-        .insert(id, Uuid::new_v4());
+        .insert(
+            id,
+            MemoryRuntimeRegistration {
+                ownership_token: Uuid::new_v4(),
+                isolation: None,
+                drained: None,
+            },
+        );
     assert_eq!(
         storage
             .unregister_runtime(registration)
@@ -396,6 +417,7 @@ async fn runtime_unregister_requires_ownership() {
             .state
             .read()
             .await
+            .unwrap()
             .runtime_registrations
             .contains_key(&id)
     );
@@ -463,6 +485,7 @@ async fn logical_restore_preserves_runtime_registration() {
             .state
             .read()
             .await
+            .unwrap()
             .runtime_registrations
             .contains_key(&id)
     );

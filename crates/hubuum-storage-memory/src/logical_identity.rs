@@ -1292,6 +1292,12 @@ impl MemoryLogicalIdentities {
         }
         let evidence = StorageIdentityEvidence::try_new(Some(subject), references)
             .expect("bounded, statically named references from validated records");
+        let evidence = match previous.filter(|entry| entry.revision == revision) {
+            Some(previous) => evidence
+                .with_restore_source_versions(previous.evidence.restore_source_versions())
+                .expect("unchanged version preserves its validated restore ancestry"),
+            None => evidence,
+        };
         self.retain_version(&evidence, revision);
         self.entries.insert(
             target,
@@ -1469,7 +1475,7 @@ impl LogicalIdentityStorage for MemoryStorage {
         &self,
         target: Target,
     ) -> Result<StorageIdentityEvidence, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let missing = || StorageError::not_found("Logical identity target was not found");
         match target {
             Target::History { kind, id } => {
@@ -1702,7 +1708,7 @@ mod tests {
                 .unwrap()
                 .into_value();
             assert!(storage.resolve_logical_identity(target).await.is_err());
-            storage.state.write().await.next_class_id = first.id().id();
+            storage.state.write().await.unwrap().next_class_id = first.id().id();
             storage
                 .create_class(create(), &EventContext::system())
                 .await

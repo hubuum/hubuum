@@ -10,7 +10,7 @@ use hubuum_domain::{
 use hubuum_events_core::MutationProvenance;
 use hubuum_task_core::TaskExecutionContext;
 
-use crate::StorageQueryBudget;
+use crate::{StorageExecutionPermit, StorageQueryBudget};
 
 /// Bounded attribution for storage work initiated by one application
 /// subsystem.
@@ -133,6 +133,7 @@ pub struct StorageRevisionPrecondition {
 /// without accidentally resetting each other.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StorageExecutionScope {
+    application_access: Option<StorageExecutionPermit>,
     call_site: Option<StorageCallSite>,
     mutation_provenance: Option<Option<MutationProvenance>>,
     revision_precondition: Option<Option<StorageRevisionPrecondition>>,
@@ -141,6 +142,17 @@ pub struct StorageExecutionScope {
 }
 
 impl StorageExecutionScope {
+    #[must_use]
+    pub fn with_application_access(mut self, permit: StorageExecutionPermit) -> Self {
+        self.application_access = Some(permit);
+        self
+    }
+
+    #[must_use]
+    pub const fn application_access_override(&self) -> Option<&StorageExecutionPermit> {
+        self.application_access.as_ref()
+    }
+
     #[must_use]
     pub fn with_task_execution(mut self, execution: Option<TaskExecutionContext>) -> Self {
         self.task_execution = Some(execution);
@@ -241,6 +253,11 @@ impl StorageRevisionPrecondition {
 /// and optimistic-concurrency assertions without exposing task locals,
 /// transaction settings, connections, or database-specific session state.
 pub trait ExecutionStorage: Send + Sync {
+    fn current_execution_scope(&self) -> StorageExecutionScope;
+    fn run_in_scope_sync<F, R>(&self, scope: StorageExecutionScope, operation: F) -> R
+    where
+        F: FnOnce() -> R;
+
     /// Run task-local work under the supplied composable scope overrides.
     fn run_in_scope<'a, F, R>(
         &'a self,

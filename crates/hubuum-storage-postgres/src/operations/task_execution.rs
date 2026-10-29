@@ -8,7 +8,7 @@ use std::time::Duration;
 use chrono::NaiveDateTime;
 use diesel::dsl::sql;
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, OptionalExtension, QueryDsl};
-use diesel::sql_types::{Array, BigInt, Bool, Integer, Nullable, Text, Timestamp};
+use diesel::sql_types::{Array, BigInt, Bool, Integer, Jsonb, Nullable, Text, Timestamp};
 use diesel::{Insertable, QueryableByName, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{PrincipalId, TaskId};
@@ -16,18 +16,17 @@ use hubuum_events_core::{
     Action, AuditDocument, EntityType, MutationProvenance, NewEvent, TraceLink,
 };
 use hubuum_storage_core::{
-    StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageRemoteCallTaskArtifact,
-    StorageSchemaProfileArtifact, StorageTask, StorageTaskActiveUpdate, StorageTaskClaim,
-    StorageTaskClaimToken, StorageTaskCompletion, StorageTaskCompletionPayload,
-    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
-    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskOutputLookup, StorageTaskResultCounts,
-    StorageTaskStatus, StorageTaskTerminalUpdate,
+    ApplicationFence, StorageBackupTaskArtifact, StorageExportTaskArtifact,
+    StorageRemoteCallTaskArtifact, StorageSchemaProfileArtifact, StorageTask,
+    StorageTaskActiveUpdate, StorageTaskClaim, StorageTaskClaimToken, StorageTaskCompletion,
+    StorageTaskCompletionPayload, StorageTaskEventAppend, StorageTaskEventInput,
+    StorageTaskFailure, StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration,
+    StorageTaskOutputLookup, StorageTaskResultCounts, StorageTaskStatus, StorageTaskTerminalUpdate,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::operations::event_record::append_event;
-use crate::runtime::require_deletion_execution;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
 use super::schema_evolution::mark_schema_work_failed_on;
@@ -63,6 +62,7 @@ static NEXT_TASK_KIND: AtomicUsize = AtomicUsize::new(0);
 pub(super) struct ClaimedTask {
     pub(super) id: i32,
     pub(super) token: Uuid,
+    execution_fence: Option<ApplicationFence>,
 }
 
 pub(super) async fn persist_remote_dispatch(
@@ -218,11 +218,12 @@ pub async fn claim_next_task(
                 &worker_provenance(&row)?,
             )
             .await?;
-            Ok::<_, PostgresStorageError>(Some(row))
+            let fence = record_task_execution_claim(connection, row.id, claim_token).await?;
+            Ok::<_, PostgresStorageError>(Some((row, fence)))
         })
         .await?;
 
-    row.map(|row| {
+    row.map(|(row, fence)| {
         let token = row.lease_token.ok_or_else(|| {
             PostgresStorageError::database("Claimed task did not include a backend claim token")
         })?;
@@ -239,13 +240,39 @@ pub async fn claim_next_task(
         let lease = StorageTaskLease::new(
             TaskId::new(row.id)?,
             StorageTaskClaimToken::new(token.to_string()),
-        );
+        )
+        .with_execution_fence(fence);
         crate::validate_persisted(
             "task claim",
             StorageTaskClaim::try_new(row.into_storage()?, lease),
         )
     })
     .transpose()
+}
+
+/// Persist the admitted image with the backend token while the claiming
+/// transaction still holds the authority lock. Integration fixtures use the
+/// same protocol even when selecting one exact task instead of queue order.
+pub(crate) async fn record_task_execution_claim(
+    connection: &mut PostgresConnection,
+    task_id: i32,
+    token: Uuid,
+) -> Result<ApplicationFence, PostgresStorageError> {
+    let material = diesel::select(
+        sql::<Jsonb>("public.hubuum_record_task_execution_claim(")
+            .bind::<Integer, _>(task_id)
+            .sql(",")
+            .bind::<diesel::sql_types::Uuid, _>(token)
+            .sql(")"),
+    )
+    .get_result::<Value>(connection)
+    .await?;
+    let incarnation = serde_json::from_value(material["incarnation"].clone())
+        .map_err(|_| PostgresStorageError::database("Invalid task claim incarnation"))?;
+    let revision = material["revision"]
+        .as_i64()
+        .ok_or_else(|| PostgresStorageError::database("Invalid task claim generation"))?;
+    Ok(ApplicationFence::new(incarnation, revision)?)
 }
 
 pub async fn renew_task_lease(
@@ -424,7 +451,7 @@ pub async fn append_task_event(
     let claimed = claimed_task(&lease)?;
     runtime
         .with_transaction(async move |connection| {
-            require_deletion_execution(connection).await?;
+            require_claimed_execution(connection, claimed).await?;
             let row = live_claimed_task(connection, claimed).await?;
             append_task_lifecycle_event(connection, &row, event, &worker_provenance(&row)?)
                 .await
@@ -518,7 +545,7 @@ pub(super) async fn complete_task_on_connection(
     event: StorageTaskEventInput,
 ) -> Result<TaskRow, PostgresStorageError> {
     let (claimed, update) = terminal_state_update(update)?;
-    require_deletion_execution(connection).await?;
+    require_claimed_execution(connection, claimed).await?;
     finalize_task_connection(connection, claimed, update, event).await
 }
 
@@ -528,10 +555,25 @@ pub async fn fail_task(
 ) -> Result<StorageTask, PostgresStorageError> {
     let (lease, summary, event) = failure.into_parts();
     let claimed = claimed_task(&lease)?;
-    let stored = find_task(runtime, claimed.id).await?;
+    let stored = runtime
+        .with_control_connection(async |connection| {
+            use crate::schema::tasks::dsl as tasks;
+            tasks::tasks
+                .filter(tasks::id.eq(claimed.id))
+                .select(TaskRow::as_select())
+                .first::<TaskRow>(connection)
+                .await
+        })
+        .await?;
     let kind = stored_task_kind(&stored)?;
     let counts = match kind {
-        StorageTaskKind::Import => import_result_counts(runtime, claimed.id).await?,
+        StorageTaskKind::Import => {
+            runtime
+                .with_control_connection(async |connection| {
+                    import_result_counts_connection(connection, claimed.id).await
+                })
+                .await?
+        }
         StorageTaskKind::SchemaProfiling
         | StorageTaskKind::Export
         | StorageTaskKind::Backup
@@ -548,7 +590,7 @@ pub async fn fail_task(
     };
     let row = if kind == StorageTaskKind::Reindex {
         let row = runtime
-            .with_transaction(async move |connection| {
+            .with_control_transaction(async move |connection| {
                 super::task_control::lock_reindex_cleanup(connection, &[claimed.id]).await?;
                 live_claimed_task(connection, claimed).await?;
                 mark_reindex_failed(connection, &stored, &summary).await?;
@@ -559,7 +601,7 @@ pub async fn fail_task(
         row
     } else if kind == StorageTaskKind::SchemaValidation {
         runtime
-            .with_transaction(async move |connection| {
+            .with_control_transaction(async move |connection| {
                 super::task_control::lock_reindex_cleanup(connection, &[claimed.id]).await?;
                 live_claimed_task(connection, claimed).await?;
                 mark_schema_work_failed_on(connection, TaskId::new(claimed.id)?).await?;
@@ -570,7 +612,7 @@ pub async fn fail_task(
         // Failure settlement publishes no artifact and remains available while
         // quarantine blocks productive completion.
         runtime
-            .with_transaction(async move |connection| {
+            .with_control_transaction(async move |connection| {
                 finalize_task_connection(connection, claimed, update, event).await
             })
             .await?
@@ -607,7 +649,7 @@ async fn finalize_task(
 ) -> Result<TaskRow, PostgresStorageError> {
     runtime
         .with_transaction(async move |connection| {
-            require_deletion_execution(connection).await?;
+            require_claimed_execution(connection, claimed).await?;
             super::task_control::lock_reindex_cleanup(connection, &[claimed.id]).await?;
             let row = live_claimed_task(connection, claimed).await?;
             if let Some(reason) = row
@@ -746,7 +788,7 @@ async fn update_task_state_row(
 ) -> Result<TaskRow, PostgresStorageError> {
     let row = runtime
         .with_transaction(async move |connection| {
-            require_deletion_execution(connection).await?;
+            require_claimed_execution(connection, claimed).await?;
             use crate::schema::tasks::dsl as tasks;
             diesel::update(
                 tasks::tasks
@@ -854,12 +896,39 @@ pub(super) async fn live_claimed_task(
         .map_err(PostgresStorageError::from)
 }
 
+pub(super) async fn require_claimed_execution(
+    connection: &mut PostgresConnection,
+    claimed: ClaimedTask,
+) -> Result<(), PostgresStorageError> {
+    let fence = claimed.execution_fence.ok_or_else(|| {
+        PostgresStorageError::unavailable("Task claim has no captured application generation")
+    })?;
+    let allowed = diesel::select(
+        sql::<Bool>("public.hubuum_task_execution_claim_allowed(")
+            .bind::<Integer, _>(claimed.id)
+            .sql(",")
+            .bind::<diesel::sql_types::Uuid, _>(claimed.token)
+            .sql(") AND (public.hubuum_application_control_read()->>'incarnation')::uuid=")
+            .bind::<diesel::sql_types::Uuid, _>(fence.incarnation())
+            .sql(" AND (public.hubuum_application_control_read()->>'revision')::bigint=")
+            .bind::<BigInt, _>(fence.revision()),
+    )
+    .get_result::<bool>(connection)
+    .await?;
+    if !allowed {
+        return Err(PostgresStorageError::unavailable(
+            "Task claim belongs to a retired or quarantined application generation",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) async fn runnable_claimed_task(
     connection: &mut PostgresConnection,
     claimed: ClaimedTask,
 ) -> Result<TaskRow, PostgresStorageError> {
     crate::runtime::task_execution_checkpoint()?;
-    require_deletion_execution(connection).await?;
+    require_claimed_execution(connection, claimed).await?;
     let row = live_claimed_task(connection, claimed).await?;
     if let Some(reason) = row
         .control(stored_task_kind(&row)?)?
@@ -923,6 +992,7 @@ pub(super) fn claimed_task(lease: &StorageTaskLease) -> Result<ClaimedTask, Post
     Ok(ClaimedTask {
         id: lease.task_id().id(),
         token,
+        execution_fence: lease.execution_fence(),
     })
 }
 
@@ -1003,17 +1073,6 @@ async fn recovered_counts(
             validated_counts(task.processed_items, task.success_items, task.failed_items)
         }
     }
-}
-
-async fn import_result_counts(
-    runtime: &PostgresRuntime,
-    task_id: i32,
-) -> Result<StorageTaskResultCounts, PostgresStorageError> {
-    runtime
-        .with_connection(async move |connection| {
-            import_result_counts_connection(connection, task_id).await
-        })
-        .await
 }
 
 pub(super) async fn import_result_counts_connection(

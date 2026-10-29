@@ -9,13 +9,29 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Add read-only `hubuum-admin --control-status` JSON reports for protected
+  deletion recovery, bounded copy blockers and operator actions. Completion
+  confirmation requires independently protected reapplication of the current
+  application and remains independent of task-detail retention.
+
 - Verified, chunked PostgreSQL export and backup outputs with bounded producer
   backpressure, streamed downloads, and durable cancellation/expiry cleanup.
   Templates replay indexed temporary files; backup capture reuses its row spool.
   Configure spool and worker resident limits with
   `HUBUUM_ARTIFACT_MAX_SPOOL_BYTES` and `HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES`.
+- `--reapply-control` verifies retained deletion decisions against the current
+  application image, independently protects completion, and reopens access.
+  Logical restore reapplies later supported decisions before exposing data;
+  unresolved identities and unsupported obligations remain quarantined.
+  History-free restores preserve source-version ancestry through later backups
+  so baseline version changes cannot bypass retained deletion decisions.
+- Offline control recovery can retire crashed runtimes only after proving that
+  every registered process in the same local repository domain has stopped.
+  Requests, streaming bodies, administrator output and background producers carry
+  their original application fence through completion.
+
 - Administrators can remove one exact closed object-history version through
-  `--delete-object-history-version`. The command requires stopped runtimes and
+  `--delete-object-history-version`. The command requires drained runtimes and
   independent protection of both its intent and completion receipt. It removes
   only that hot history copy and keeps recovery quarantine active.
 
@@ -53,6 +69,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Reconcile task-owned artifacts before downgrading. New export replay rows and
   backup source rows are capped at 4 MiB; related template input is capped at
   8 MiB per batch and hydrated output at 4 MiB per row. Narrow oversized queries.
+- **Breaking operational change:** stop every older API, worker and administrator
+  process, apply the application-reapplication migration and reconcile grants,
+  then start matching binaries. Configure the independent repository on all
+  producers. Keep its stable `RUNTIME_LOCK` file; do not copy, replace or unlink it
+  to clear registrations. Recovery always requires fresh application reapplication.
+  History-free restore refuses to discard ancestry after 64 source versions;
+  older derived versions without provenance remain quarantined when a retained
+  deletion targets the same resource. Use a backup with proven ancestry that
+  permits reapplication before reopening access.
+  See [deletion recovery](docs/deletion_recovery.md).
+- **Breaking Rust SDK change:** upgrade all ten SDK crates to 0.13.0 and implement
+  application permits, runtime drain acknowledgements, reapplication/release and
+  task-claim fencing in every adapter. See the
+  [0.13 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-012-to-013).
+
 - **Breaking Rust SDK change:** upgrade all ten SDK crates to 0.12.0 and implement
   protected runtime registrations and exact managed-copy prepare/cleanup in every
   complete adapter. Preserve registrations across logical restore and keep
@@ -123,6 +154,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Restore and offline verification accept the original manifest exclusions in
   backup formats 6–11, including backups created before protected deletion
   authority was introduced. New backups retain the current format-12 manifest.
+
+- Runtime safety checks reuse coordinator and worker database connections,
+  avoiding extra connection acquisitions while workers are idle.
+
+- Prevent an HTTP connection from being closed prematurely during graceful
+  shutdown by updating the server dependency's connection accounting.
 
 - Restore draining now waits for active HTTP handlers and streamed response
   bodies to finish or disconnect. Deletion recovery quarantine fences productive

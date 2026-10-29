@@ -1,8 +1,146 @@
 use super::*;
-use hubuum_storage_core::{HotObjectHistoryCleanup, HotObjectHistoryDeletion, RuntimeRegistration};
+use hubuum_storage_core::{
+    ApplicationControlState, ApplicationFence, ApplicationReapplication, ApplicationWorkAdmission,
+    DeletionCheckpointIdentity, HotObjectHistoryCleanup, HotObjectHistoryDeletion,
+    RuntimeIsolationDomain, RuntimeRegistration,
+};
 
 #[async_trait]
 impl DeletionControlStorage for StorageHandle {
+    async fn register_runtime_isolated(
+        &self,
+        isolation: Option<RuntimeIsolationDomain>,
+    ) -> Result<RuntimeRegistration, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::DeletionControl,
+            "register_runtime_isolated",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .register_runtime_isolated(isolation)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn capture_application_execution(
+        &self,
+        owner: Option<RuntimeOwner>,
+    ) -> Result<StorageExecutionPermit, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::DeletionControl,
+            "capture_application_execution",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .capture_application_execution(owner)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn capture_application_execution_with_maintenance(
+        &self,
+        owner: Option<RuntimeOwner>,
+    ) -> Result<ApplicationWorkAdmission, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::DeletionControl,
+            "capture_application_execution_with_maintenance",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .capture_application_execution_with_maintenance(owner)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn read_application_control(&self) -> Result<ApplicationControlState, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::DeletionControl,
+            "read_application_control",
+            async { dispatch_backend!(self, |backend| backend.read_application_control().await) },
+        )
+        .await
+    }
+
+    async fn acknowledge_runtime_drain(
+        &self,
+        owner: RuntimeOwner,
+        fence: ApplicationFence,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::DeletionControl,
+            "acknowledge_runtime_drain",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .acknowledge_runtime_drain(owner, fence)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn reapply_deletion_decisions(
+        &self,
+        expected: DeletionControlState,
+        fence: ApplicationFence,
+        checkpoint: DeletionCheckpointIdentity,
+    ) -> Result<ApplicationReapplication, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::DeletionControl,
+            "reapply_deletion_decisions",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .reapply_deletion_decisions(expected, fence, checkpoint)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn release_application_exposure(
+        &self,
+        receipt: ApplicationReapplication,
+        checkpoint: DeletionCheckpointIdentity,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::DeletionControl,
+            "release_application_exposure",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .release_application_exposure(receipt, checkpoint)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn recover_application_control(
+        &self,
+        change: DeletionControlChange,
+        isolation: RuntimeIsolationDomain,
+    ) -> Result<ApplicationFence, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::DeletionControl,
+            "recover_application_control",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .recover_application_control(change, isolation)
+                    .await)
+            },
+        )
+        .await
+    }
+
     async fn read_deletion_control(&self) -> Result<DeletionControlState, StorageError> {
         self.observe_storage_call(
             self.backend_name(),

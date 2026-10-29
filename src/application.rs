@@ -47,10 +47,11 @@ use crate::middlewares::rate_limit::{
 };
 use crate::permissions::{AppContext, build_permission_backend};
 use crate::restores::{
-    RestoreSettings, active_maintenance_work, ensure_restore_coordinator_running,
+    RestoreSettings, active_maintenance_work, application_work_is_settled,
+    ensure_restore_coordinator_running,
 };
 use crate::secrets::DatabaseCredential;
-use crate::services::deletion_recovery::{RuntimeRecoveryPermit, require_runtime_permit};
+use crate::services::deletion_recovery::{RuntimeRecoveryLifetime, require_runtime_permit};
 use crate::services::event_administration::count_enabled_event_sinks;
 use crate::storage::{
     OperationalStateStorage, StorageBackendKind, StorageDatabaseRole, StorageDatabaseRoleNames,
@@ -119,6 +120,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         templates,
         active_work: active_maintenance_work(),
         http_settled: http_work_is_settled(),
+        application_settled: application_work_is_settled(),
     }
     .finish(app_context.backend().unregister_runtime(registration))
     .await;
@@ -127,6 +129,8 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
             message = "Runtime shutdown or registration removal could not be confirmed; protected registrations continue to gate offline cleanup",
             reason = %error,
         );
+    } else {
+        _recovery.release();
     }
     drop(app_context);
     if let Err(error) = trace_runtime.shutdown().await {
@@ -144,6 +148,7 @@ struct RuntimeShutdown {
     templates: io::Result<()>,
     active_work: usize,
     http_settled: bool,
+    application_settled: bool,
 }
 
 impl RuntimeShutdown {
@@ -166,6 +171,11 @@ impl RuntimeShutdown {
         if !self.http_settled {
             return Err(io::Error::other(
                 "HTTP work did not settle; retaining protected runtime registration",
+            ));
+        }
+        if !self.application_settled {
+            return Err(io::Error::other(
+                "Application work did not settle; retaining protected runtime registration",
             ));
         }
         unregister
@@ -269,7 +279,7 @@ async fn initialize_runtime() -> (AppConfig, observability::tracing::TraceRuntim
 }
 
 struct RuntimeServices {
-    _recovery: RuntimeRecoveryPermit,
+    _recovery: RuntimeRecoveryLifetime,
     registration: RuntimeRegistration,
     app_context: AppContext,
     backup_settings: BackupSettings,
@@ -335,12 +345,17 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
     // Register under the authority lock before bootstrap writes, services,
     // workers or listeners can start. Failed initialization deliberately leaves
     // this durable membership blocking offline cleanup.
-    let registration = storage.register_runtime().await.unwrap_or_else(|error| {
-        fatal_error(
-            &format!("Protected runtime registration failed: {error}"),
-            EXIT_CODE_DATABASE_ERROR,
-        )
-    });
+    let registration = storage
+        .register_runtime_isolated(recovery.isolation_domain())
+        .await
+        .unwrap_or_else(|error| {
+            fatal_error(
+                &format!("Protected runtime registration failed: {error}"),
+                EXIT_CODE_DATABASE_ERROR,
+            )
+        });
+    let recovery = recovery.into_runtime_lifetime();
+    let storage = storage.with_runtime_owner(registration.owner());
     let initial_policy = config
         .initial_task_admission_policy()
         .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));

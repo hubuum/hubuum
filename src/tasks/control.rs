@@ -4,12 +4,13 @@ use std::future::Future;
 use std::time::Duration;
 
 use hubuum_storage_core::{
-    StorageExecutionScope, StorageTaskExecutionAdmission, TaskExecutionStorage,
+    ExecutionStorage, StorageExecutionScope, StorageTaskExecutionAdmission, TaskExecutionStorage,
 };
 use hubuum_task_core::{TaskExecutionContext, TaskExecutionLimit, TaskStopReason};
 
 use crate::errors::ApiError;
 use crate::permissions::AppContext;
+use crate::restores::track_application_completion;
 use crate::services::tasks::ClaimedTask;
 use crate::storage::{storage_handle, with_storage_execution_scope};
 
@@ -41,7 +42,7 @@ where
     };
     execution.check()?;
     tokio::select! {
-        result = future => result,
+        result = track_application_completion(future) => result,
         reason = wait_for_stop(&execution) => Err(ApiError::TaskStopped(reason)),
     }
 }
@@ -87,16 +88,21 @@ where
     }
     let backend = context.backend().clone();
     let lease = task.lease().clone();
+    let application_scope = backend.current_execution_scope();
     let _monitor = ControlMonitor(super::worker::task_lease_runtime().spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_millis(250)).await;
-            if let Ok(control) = backend.poll_task_execution(lease.clone()).await
-                && let Some(reason) = control.stop_reason()
-            {
-                stop.request_stop(reason);
-                break;
-            }
-        }
+        backend
+            .run_in_scope_send(application_scope, async {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    if let Ok(control) = backend.poll_task_execution(lease.clone()).await
+                        && let Some(reason) = control.stop_reason()
+                    {
+                        stop.request_stop(reason);
+                        break;
+                    }
+                }
+            })
+            .await
     }));
     let scope = StorageExecutionScope::default().with_task_execution(Some(execution.clone()));
     EXECUTION
@@ -104,7 +110,7 @@ where
             execution,
             with_storage_execution_scope(context, scope, async {
                 checkpoint()?;
-                future.await
+                track_application_completion(future).await
             }),
         )
         .await

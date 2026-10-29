@@ -7,7 +7,7 @@ use crate::config::get_config;
 use crate::errors::ApiError;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::TokenRetentionSettings;
-use crate::restores::MaintenanceActivityGuard;
+use crate::restores::{MaintenanceActivityGuard, with_application_work};
 use crate::storage::{
     AuthenticationStorage, StorageContext, StorageHandle, TokenRetentionStorage, storage_handle,
 };
@@ -68,17 +68,16 @@ async fn token_retention_worker_loop(
         let result = tokio::select! {
             biased;
             _ = shutdown.requested() => break,
-            result = with_storage_call_site(
+            result = with_application_work(&pool, with_storage_call_site(
                 &pool,
                 StorageCallSite::TokenRetention,
                 async {
-                    let _activity = MaintenanceActivityGuard::begin();
                     let policy = crate::config::get_config()?.credential_activity_policy()?;
                     let sources = pool.purge_credential_sources(policy, config.settings.batch_size().get()).await?;
                     let sessions = pool.purge_auth_sessions(config.settings.batch_size().get()).await?;
                     process_token_retention_batch(&pool, config.settings).await.map(|tokens| tokens + sessions + sources)
                 },
-            ) => result,
+            )) => result,
         };
         if retention_worker_should_continue(&result) {
             continue;

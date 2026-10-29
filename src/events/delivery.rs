@@ -23,7 +23,7 @@ use crate::events::sink::{DefaultSinkResolver, EventEnvelope, SinkError, SinkRes
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::{EventWorkerHealth, EventWorkerWakeupStats};
 use crate::observability::{metrics, tracing as telemetry};
-use crate::restores::MaintenanceActivityGuard;
+use crate::restores::with_application_work;
 use crate::storage::StorageContext;
 use crate::storage::{
     EventDeliveryWorkerStorage, StorageEventDeliverySink, StorageEventDeliverySubscription,
@@ -94,29 +94,31 @@ async fn process_event_delivery_batch_with_schedule(
     settings: EventDeliverySettings,
     resolver: &dyn SinkResolver,
 ) -> Result<EventDeliveryBatchOutcome, ApiError> {
-    let _activity = MaintenanceActivityGuard::begin();
     let storage = storage_handle(pool);
-    let settings = settings.with_execution_capacity(
-        NonZeroUsize::new(EVENT_DELIVERY_MAX_CONCURRENCY_PER_WORKER).unwrap(),
-    );
-    let (deliveries, next_wakeup_in) = storage
-        .claim_event_delivery_batch(settings)
-        .await?
-        .into_parts();
-    let processed = deliveries.len();
-    let results = futures_util::stream::iter(deliveries)
-        .map(|claimed| process_event_delivery_work_item(&storage, settings, resolver, claimed))
-        .buffer_unordered(EVENT_DELIVERY_MAX_CONCURRENCY_PER_WORKER)
-        .collect::<Vec<_>>()
-        .await;
-    for result in results {
-        result?;
-    }
+    with_application_work(&storage, async {
+        let settings = settings.with_execution_capacity(
+            NonZeroUsize::new(EVENT_DELIVERY_MAX_CONCURRENCY_PER_WORKER).unwrap(),
+        );
+        let (deliveries, next_wakeup_in) = storage
+            .claim_event_delivery_batch(settings)
+            .await?
+            .into_parts();
+        let processed = deliveries.len();
+        let results = futures_util::stream::iter(deliveries)
+            .map(|claimed| process_event_delivery_work_item(&storage, settings, resolver, claimed))
+            .buffer_unordered(EVENT_DELIVERY_MAX_CONCURRENCY_PER_WORKER)
+            .collect::<Vec<_>>()
+            .await;
+        for result in results {
+            result?;
+        }
 
-    Ok(EventDeliveryBatchOutcome {
-        processed,
-        next_wakeup_in,
+        Ok(EventDeliveryBatchOutcome {
+            processed,
+            next_wakeup_in,
+        })
     })
+    .await
 }
 
 #[cfg(test)]

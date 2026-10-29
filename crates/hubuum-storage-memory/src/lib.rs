@@ -19,6 +19,7 @@ use hubuum_storage_core::capabilities::{
     workflows::*,
 };
 use hubuum_storage_core::{
+    ApplicationControlState, ApplicationFence, RuntimeIsolationDomain, RuntimeOwner,
     StorageAuthenticationCredential, StorageIdentityEvidence, StorageQueryObservationControl,
     StorageTaskMetadata, StorageTokenDigest, StorageTokenFormat, StorageTokenHashAlgorithm,
     StorageTokenHashKeyId, StorageTokenMigrationOutcome, StorageValidationError,
@@ -87,6 +88,7 @@ struct MemoryTaskRecord {
     initiator_principal_id: Option<PrincipalId>,
     trace_link: Option<TraceLink>,
     claim_token: Option<String>,
+    execution_fence: Option<ApplicationFence>,
 }
 
 #[derive(Clone, Copy)]
@@ -286,6 +288,7 @@ impl MemoryTaskRecord {
     fn lease_matches(&self, lease: &StorageTaskLease) -> bool {
         self.id == lease.task_id()
             && self.claim_token.as_deref() == Some(lease.token().adapter_value())
+            && self.execution_fence == lease.execution_fence()
             && self
                 .lease_expires_at
                 .is_some_and(|expires_at| expires_at > Utc::now())
@@ -344,10 +347,19 @@ impl MemoryTokenRecord {
 }
 
 #[derive(Clone)]
+struct MemoryRuntimeRegistration {
+    ownership_token: Uuid,
+    isolation: Option<RuntimeIsolationDomain>,
+    drained: Option<ApplicationFence>,
+}
+
+#[derive(Clone)]
 struct MemoryState {
     artifacts: artifacts::Artifacts,
     deletion_control: DeletionControlState,
-    runtime_registrations: BTreeMap<Uuid, Uuid>,
+    application_control: ApplicationControlState,
+    pending_restore: bool,
+    runtime_registrations: BTreeMap<Uuid, MemoryRuntimeRegistration>,
     task_capacity: task_capacity::MemoryTaskCapacity,
     logical_identities: logical_identity::MemoryLogicalIdentities,
     generation: Arc<()>,
@@ -820,6 +832,14 @@ impl MemoryStorage {
 }
 
 impl MemoryStorage {
+    /// Bind ordinary operations to the registered owner while retaining a
+    /// separate unbound handle for trusted administration and fixtures.
+    #[must_use]
+    pub fn with_runtime_owner(mut self, owner: RuntimeOwner) -> Self {
+        self.state = Arc::new(self.state.with_runtime_owner(owner));
+        self
+    }
+
     #[must_use]
     pub const fn schema_limits(&self) -> JsonSchemaLimits {
         self.schema_limits

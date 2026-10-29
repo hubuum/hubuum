@@ -9,8 +9,8 @@ pub mod computed_lock_protocol;
 use chrono::NaiveDateTime;
 use diesel::sql_types::{Bool, Integer, Text, Timestamp};
 use diesel::{
-    ExpressionMethods, Insertable, NullableExpressionMethods, OptionalExtension, QueryDsl,
-    Queryable, QueryableByName, Selectable, SelectableHelper,
+    ExpressionMethods, Insertable, OptionalExtension, QueryDsl, Queryable, QueryableByName,
+    Selectable, SelectableHelper,
 };
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{
@@ -711,35 +711,49 @@ pub async fn claim_task_by_id_with_lease(
     };
 
     let token = uuid::Uuid::new_v4();
-    let mut connection = pool.get().await?;
-    let now = diesel::select(diesel::dsl::sql::<Timestamp>(
-        "clock_timestamp() AT TIME ZONE 'UTC'",
-    ))
-    .get_result::<NaiveDateTime>(&mut connection)
-    .await?;
-    let row = diesel::update(
-        tasks
-            .filter(id.eq(task_id_value.id()))
-            .filter(status.eq(StorageTaskStatus::Queued.as_str())),
-    )
-    .set((
-        status.eq(StorageTaskStatus::Validating.as_str()),
-        started_at.eq(Some(now)),
-        lease_token.eq(Some(token)),
-        lease_expires_at.eq(Some(
-            now + chrono::Duration::milliseconds(lease_duration.milliseconds()),
-        )),
-        attempt_count.eq(attempt_count + 1),
-        updated_at.eq(now),
-    ))
-    .returning(crate::operations::task_rows::TaskRow::as_returning())
-    .get_result::<crate::operations::task_rows::TaskRow>(&mut connection)
+    let (row, fence) = crate::with_transaction(pool, async |connection| {
+        crate::runtime::require_deletion_execution(connection).await?;
+        diesel::sql_query("SELECT public.hubuum_task_capacity_lock()")
+            .execute(connection)
+            .await?;
+        let now = diesel::select(diesel::dsl::sql::<Timestamp>(
+            "clock_timestamp() AT TIME ZONE 'UTC'",
+        ))
+        .get_result::<NaiveDateTime>(connection)
+        .await?;
+        let row = diesel::update(
+            tasks
+                .filter(id.eq(task_id_value.id()))
+                .filter(status.eq(StorageTaskStatus::Queued.as_str())),
+        )
+        .set((
+            status.eq(StorageTaskStatus::Validating.as_str()),
+            started_at.eq(Some(now)),
+            lease_token.eq(Some(token)),
+            lease_expires_at.eq(Some(
+                now + chrono::Duration::milliseconds(lease_duration.milliseconds()),
+            )),
+            attempt_count.eq(attempt_count + 1),
+            updated_at.eq(now),
+        ))
+        .returning(crate::operations::task_rows::TaskRow::as_returning())
+        .get_result::<crate::operations::task_rows::TaskRow>(connection)
+        .await?;
+        let fence = crate::operations::task_execution::record_task_execution_claim(
+            connection,
+            task_id_value.id(),
+            token,
+        )
+        .await?;
+        Ok::<_, PostgresStorageError>((row, fence))
+    })
     .await?;
     crate::validate_persisted(
         "task claim fixture",
         StorageTaskClaim::try_new(
             row.into_storage()?,
-            StorageTaskLease::new(task_id_value, StorageTaskClaimToken::new(token.to_string())),
+            StorageTaskLease::new(task_id_value, StorageTaskClaimToken::new(token.to_string()))
+                .with_execution_fence(fence),
         ),
     )
 }
@@ -1338,39 +1352,6 @@ pub async fn count_collection_events_by_name(
         .count()
         .get_result(&mut connection)
         .await?)
-}
-
-/// Put one task into an adapter-owned live-lease fixture state.
-pub async fn assign_task_lease(
-    pool: &PostgresPool,
-    task_id: TaskId,
-    status_value: StorageTaskStatus,
-    claim_token: uuid::Uuid,
-    expires_at: NaiveDateTime,
-) -> Result<(), PostgresStorageError> {
-    use crate::schema::tasks::dsl::{
-        created_at, id, lease_expires_at, lease_token, started_at, status, tasks, updated_at,
-    };
-
-    let mut connection = pool.get().await?;
-    let updated = diesel::update(tasks.filter(id.eq(task_id.id())))
-        .set((
-            status.eq(status_value.as_str()),
-            started_at.eq(created_at.nullable()),
-            lease_token.eq(Some(claim_token)),
-            lease_expires_at.eq(Some(expires_at)),
-            updated_at.eq(created_at),
-        ))
-        .execute(&mut connection)
-        .await?;
-    if updated == 1 {
-        Ok(())
-    } else {
-        Err(PostgresStorageError::not_found(format!(
-            "task {} was not available for lease assignment",
-            task_id.id()
-        )))
-    }
 }
 
 /// Delete several integration-test tasks while keeping SQL in the adapter.

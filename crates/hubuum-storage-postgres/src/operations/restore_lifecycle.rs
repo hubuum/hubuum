@@ -333,7 +333,7 @@ pub async fn stage_restore_artifact(
         validation_summary,
         expires_at: expires_at.naive_utc(),
     };
-    runtime.with_transaction(async move |connection| -> Result<_, PostgresStorageError> {
+    runtime.with_control_transaction(async move |connection| -> Result<_, PostgresStorageError> {
         let staged_at = sql::<Timestamp>("statement_timestamp() AT TIME ZONE 'UTC'");
         let row = diesel::insert_into(crate::schema::restore_jobs::table)
             .values((input, crate::schema::restore_jobs::created_at.eq(staged_at.clone()), crate::schema::restore_jobs::updated_at.eq(staged_at)))
@@ -370,10 +370,15 @@ pub async fn get_restore_artifact(
     job_id: i64,
 ) -> Result<StorageRestoreArtifactJob, PostgresStorageError> {
     use hubuum_storage_core::StorageRestoreArtifactBuilder;
-    runtime.with_read_only_snapshot(async |connection| -> Result<_, PostgresStorageError> {
+    runtime.with_control_snapshot(async |connection| -> Result<_, PostgresStorageError> {
         let row = crate::schema::restore_jobs::table.filter(crate::schema::restore_jobs::id.eq(job_id))
-            .select(RestoreJobStatusRow::as_select()).first::<RestoreJobStatusRow>(connection).await?;
-        let (summary, capability, _) = status_to_storage(row)?.into_parts();
+            .select(RestoreJobStatusRow::as_select()).first::<RestoreJobStatusRow>(connection).await.optional()?;
+        let status=if let Some(row)=row { status_to_storage(row)? } else {
+            let receipt=crate::schema::restore_success_receipts::table.filter(crate::schema::restore_success_receipts::id.eq(job_id))
+                .select(RestoreSuccessReceiptRow::as_select()).first::<RestoreSuccessReceiptRow>(connection).await?;
+            success_receipt_to_storage(receipt)?
+        };
+        let (summary, capability, _) = status.into_parts();
         let terminal = matches!(summary.status(), StorageRestoreJobStatus::Failed | StorageRestoreJobStatus::Expired | StorageRestoreJobStatus::Succeeded);
         let artifact = if terminal { None } else {
             let limit = usize::try_from(summary.artifact().byte_size()).map_err(|_| PostgresStorageError::database("Restore artifact size exceeds address space"))?;
@@ -409,7 +414,7 @@ pub async fn get_restore_status(
     job_id: i64,
 ) -> Result<StorageRestoreStatus, PostgresStorageError> {
     let row = runtime
-        .with_connection(async |connection| {
+        .with_control_connection(async |connection| {
             crate::schema::restore_jobs::table
                 .filter(crate::schema::restore_jobs::id.eq(job_id))
                 .select(RestoreJobStatusRow::as_select())
@@ -423,7 +428,7 @@ pub async fn get_restore_status(
     }
 
     let receipt = runtime
-        .with_connection(async |connection| {
+        .with_control_connection(async |connection| {
             crate::schema::restore_success_receipts::table
                 .filter(crate::schema::restore_success_receipts::id.eq(job_id))
                 .select(RestoreSuccessReceiptRow::as_select())
@@ -444,7 +449,7 @@ pub async fn expire_restore_stage(
     job_id: i64,
 ) -> Result<bool, PostgresStorageError> {
     runtime
-        .with_connection(async |connection| {
+        .with_control_connection(async |connection| {
             diesel::update(
                 crate::schema::restore_jobs::table
                     .filter(crate::schema::restore_jobs::id.eq(job_id))
@@ -471,7 +476,7 @@ pub async fn start_restore_draining(
 ) -> Result<DateTime<Utc>, PostgresStorageError> {
     let job_id = request.job_id().id();
     runtime
-        .with_transaction(async |connection| -> Result<_, PostgresStorageError> {
+        .with_control_transaction(async |connection| -> Result<_, PostgresStorageError> {
             diesel::sql_query("SELECT pg_advisory_xact_lock(4850188191125217)")
                 .execute(connection)
                 .await?;
@@ -569,8 +574,10 @@ async fn apply_restore_replay_parts(
     let (backup_version, backup_created_at, backup_source_version) = metadata;
 
     runtime
-        .with_transaction(
+        .with_control_transaction(
             async move |connection| -> Result<StorageRestoreCompletion, PostgresStorageError> {
+                let empty_authority=diesel::select(sql::<diesel::sql_types::Bool>("public.hubuum_rotate_application_for_restore()"))
+                    .get_result::<bool>(connection).await?;
                 diesel::sql_query("SELECT pg_advisory_xact_lock(4850188191125217)")
                     .execute(connection)
                     .await?;
@@ -611,14 +618,13 @@ async fn apply_restore_replay_parts(
                 let started_at = Utc::now().naive_utc();
                 diesel::sql_query("UPDATE credential_approvals SET invalidated_at=timezone('UTC', clock_timestamp()) WHERE consumed_at IS NULL AND invalidated_at IS NULL").execute(connection).await?;
                 enable_restore_session_settings(connection).await?;
-                // Retained authority is not part of the application snapshot.
-                // Until lifecycle consumers can reapply every restriction, fail
-                // inside the replacement transaction rather than expose erased
-                // identities from an older backup.
-                diesel::sql_query("SELECT public.hubuum_check_deletion_restore_gate()")
-                    .execute(connection).await?;
                 replace_backend_replay(connection, snapshot.into_replay())
                     .await?;
+                // Terminal settlement locks task rows before forgetting their
+                // claim. Replace/lock task tables before clearing this index to
+                // preserve that order. The rotated incarnation already fences it.
+                diesel::sql_query("DELETE FROM hubuum_control.task_execution_claims")
+                    .execute(connection).await?;
                 diesel::sql_query("SELECT public.hubuum_reconcile_task_capacity()")
                     .execute(connection).await?;
                 // Rebuilt work is new data, with new task identities. Only the
@@ -670,7 +676,7 @@ async fn apply_restore_replay_parts(
                 append_event(connection, &provenance).await?;
 
                 let finished_at = Utc::now().naive_utc();
-                finish_restore(connection, job.id, finished_at).await?;
+                finish_restore(connection, job.id, finished_at, empty_authority).await?;
                 crate::validate_persisted(
                     "restore completion",
                     StorageRestoreCompletion::try_new(started_at.and_utc(), finished_at.and_utc()),
@@ -899,20 +905,23 @@ async fn finish_restore(
     connection: &mut PostgresConnection,
     job_id: i64,
     finished_at: NaiveDateTime,
+    release_maintenance: bool,
 ) -> Result<(), PostgresStorageError> {
     // The shared updated-at trigger uses transaction-start time. Preserve the
     // explicit completion clock so the terminal receipt cannot appear to have
     // finished after its own updated_at value.
     preserve_explicit_timestamps(connection).await?;
-    diesel::sql_query(
-        "UPDATE system_maintenance \
+    if release_maintenance {
+        diesel::sql_query(
+            "UPDATE system_maintenance \
          SET generation=0, state='normal', restore_job_id=NULL, \
              entered_at=NULL, updated_at=$1 \
          WHERE id=1",
-    )
-    .bind::<Timestamp, _>(finished_at)
-    .execute(connection)
-    .await?;
+        )
+        .bind::<Timestamp, _>(finished_at)
+        .execute(connection)
+        .await?;
+    }
     diesel::sql_query("DELETE FROM restore_success_receipts")
         .execute(connection)
         .await?;
@@ -943,9 +952,11 @@ async fn finish_restore(
     diesel::sql_query("DELETE FROM server_instances")
         .execute(connection)
         .await?;
-    diesel::sql_query("SELECT pg_notify('hubuum_maintenance', 'normal')")
-        .execute(connection)
-        .await?;
+    if release_maintenance {
+        diesel::sql_query("SELECT pg_notify('hubuum_maintenance', 'normal')")
+            .execute(connection)
+            .await?;
+    }
     Ok(())
 }
 
@@ -966,7 +977,7 @@ pub async fn fail_restore_and_resume(
     let (job_id, public_error) = request.into_parts();
     let job_id = job_id.id();
     runtime
-        .with_transaction(async |connection| -> Result<_, PostgresStorageError> {
+        .with_control_transaction(async |connection| -> Result<_, PostgresStorageError> {
             diesel::sql_query(
                 "UPDATE restore_jobs \
                  SET status='failed', error=$2, finished_at=now(), document=''::bytea \
@@ -979,7 +990,7 @@ pub async fn fail_restore_and_resume(
             diesel::sql_query(
                 "UPDATE system_maintenance \
                  SET state='normal', restore_job_id=NULL, entered_at=NULL, updated_at=now() \
-                 WHERE id=1 AND restore_job_id=$1 AND state='draining'",
+                 WHERE id=1 AND restore_job_id=$1 AND state='draining' AND public.hubuum_deletion_exposure_allowed()",
             )
             .bind::<diesel::sql_types::BigInt, _>(job_id)
             .execute(connection)
@@ -997,12 +1008,12 @@ pub async fn get_restore_coordinator_snapshot(
     runtime: &PostgresRuntime,
 ) -> Result<StorageRestoreCoordinatorSnapshot, PostgresStorageError> {
     runtime
-        .with_connection(async |connection| -> Result<_, PostgresStorageError> {
+        .with_control_connection(async |connection| -> Result<_, PostgresStorageError> {
             let (state, restore_job_id, backend_now) = crate::schema::system_maintenance::table
                 .filter(crate::schema::system_maintenance::id.eq(1_i16))
                 .select((
                     crate::schema::system_maintenance::state,
-                    crate::schema::system_maintenance::restore_job_id,
+                    sql::<diesel::sql_types::Nullable<BigInt>>("COALESCE(system_maintenance.restore_job_id, public.hubuum_pending_restore_job())"),
                     sql::<Timestamp>(DATABASE_UTC_NOW_SQL),
                 ))
                 .first::<(String, Option<i64>, NaiveDateTime)>(connection)
@@ -1027,11 +1038,11 @@ pub async fn resume_maintenance_without_restore(
     runtime: &PostgresRuntime,
 ) -> Result<(), PostgresStorageError> {
     runtime
-        .with_transaction(async |connection| -> Result<_, PostgresStorageError> {
+        .with_control_transaction(async |connection| -> Result<_, PostgresStorageError> {
             diesel::sql_query(
                 "UPDATE system_maintenance \
                  SET state='normal', entered_at=NULL, updated_at=now() \
-                 WHERE id=1 AND restore_job_id IS NULL AND state='draining'",
+                 WHERE id=1 AND restore_job_id IS NULL AND state='draining' AND public.hubuum_deletion_exposure_allowed()",
             )
             .execute(connection)
             .await?;
@@ -1049,11 +1060,11 @@ pub async fn resume_terminal_restore(
     job_id: i64,
 ) -> Result<(), PostgresStorageError> {
     runtime
-        .with_transaction(async |connection| -> Result<_, PostgresStorageError> {
+        .with_control_transaction(async |connection| -> Result<_, PostgresStorageError> {
             diesel::sql_query(
                 "UPDATE system_maintenance \
                  SET state='normal', restore_job_id=NULL, entered_at=NULL, updated_at=now() \
-                 WHERE id=1 AND restore_job_id=$1 AND state='draining'",
+                 WHERE id=1 AND restore_job_id=$1 AND state='draining' AND public.hubuum_deletion_exposure_allowed()",
             )
             .bind::<diesel::sql_types::BigInt, _>(job_id)
             .execute(connection)
@@ -1075,7 +1086,12 @@ pub async fn tick_restore_coordinator(
 ) -> Result<StorageRestoreCoordinatorSnapshot, PostgresStorageError> {
     with_storage_call_site(StorageCallSite::RestoreCoordinator, async {
         runtime
-            .with_transaction(async |connection| -> Result<_, PostgresStorageError> {
+            .with_control_transaction(async |connection| -> Result<_, PostgresStorageError> {
+                if let Some(owner) = runtime.runtime_owner() {
+                    crate::backend::acknowledge_coordinator_drain_on(
+                        connection, owner, local_work_is_idle,
+                    ).await?;
+                }
                 if expire_validated_jobs {
                     diesel::sql_query(
                         "UPDATE restore_jobs \
@@ -1091,7 +1107,7 @@ pub async fn tick_restore_coordinator(
                         .select((
                             crate::schema::system_maintenance::generation,
                             crate::schema::system_maintenance::state,
-                            crate::schema::system_maintenance::restore_job_id,
+                            sql::<diesel::sql_types::Nullable<BigInt>>("COALESCE(system_maintenance.restore_job_id, public.hubuum_pending_restore_job())"),
                             sql::<Timestamp>(DATABASE_UTC_NOW_SQL),
                         ))
                         .first::<(i64, String, Option<i64>, NaiveDateTime)>(connection)
@@ -1146,7 +1162,7 @@ pub async fn get_restore_drain_state(
 ) -> Result<StorageRestoreDrainState, PostgresStorageError> {
     let heartbeat_cutoff = heartbeat_cutoff.naive_utc();
     let (generation, instances) = runtime
-        .with_connection(async |connection| {
+        .with_control_connection(async |connection| {
             let generation = crate::schema::system_maintenance::table
                 .filter(crate::schema::system_maintenance::id.eq(1_i16))
                 .select(crate::schema::system_maintenance::generation)
@@ -1175,7 +1191,7 @@ pub async fn remove_restore_instance(
     instance_id: Uuid,
 ) -> Result<(), PostgresStorageError> {
     runtime
-        .with_connection(async |connection| {
+        .with_control_connection(async |connection| {
             diesel::delete(
                 crate::schema::server_instances::table
                     .filter(crate::schema::server_instances::instance_id.eq(instance_id)),

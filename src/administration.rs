@@ -1,10 +1,10 @@
-use crate::config::SchemaValidationOptions;
+use crate::config::{ControlRecoveryOptions, SchemaValidationOptions};
 use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
 use hubuum_domain::ClassId;
 use hubuum_domain::{JsonSchemaLimits, ResourceIdentity, VersionIdentity};
 use hubuum_storage_core::{
-    StorageBackupBudget, StorageRecordIdentity, StorageRestoreArtifact,
-    StorageRestoreIdentityContext,
+    DeletionControlStorage, ExecutionStorage, StorageBackupBudget, StorageRecordIdentity,
+    StorageRestoreArtifact, StorageRestoreIdentityContext,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -30,8 +30,8 @@ use crate::models::{
     RestoreJobID, RestoreStageRequest,
 };
 use crate::restores::{
-    BackupVerificationReport, RestoreSettings, confirm_restore, execute_confirmed_restore,
-    restore_status, stage_restore,
+    BackupVerificationReport, RestoreSettings, confirm_restore,
+    execute_confirmed_restore_with_recovery, restore_status, stage_restore,
 };
 use crate::secrets::{self, DatabaseCredential};
 use crate::services::identity as identity_service;
@@ -78,6 +78,9 @@ fn parse_deletion_intent(value: &str) -> Result<Uuid, String> {
     long_about = None
 )]
 struct AdminCli {
+    #[command(flatten)]
+    control_recovery: crate::config::ControlRecoveryOptions,
+
     /// Publish independent deletion recovery evidence (does not execute deletion)
     #[arg(
         long,
@@ -93,10 +96,20 @@ struct AdminCli {
     #[cfg_attr(feature = "embedded-migrations", arg(conflicts_with_all = ["migrate", "migration_mode"]))]
     verify_control_recovery: Option<PathBuf>,
 
+    /// Read bounded deletion/recovery status as JSON without granting cleanup or exposure
+    #[arg(long, value_name = "DIRECTORY", requires = "control_checkpoint_key", conflicts_with_all = ["control_checkpoint", "verify_control_recovery", "recover_control", "reapply_control", "delete_object_history_version", "backup", "restore", "restore_executor", "verify_backup", "reconcile_query_usage", "database_ready", "reset_password", "audit_templates", "export_template_health", "token_key_status", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges"])]
+    #[cfg_attr(feature = "embedded-migrations", arg(conflicts_with_all = ["migrate", "migration_mode"]))]
+    control_status: Option<PathBuf>,
+
     /// Recover the latest authenticated control checkpoint; all runtime replicas must be stopped
     #[arg(long, value_name = "DIRECTORY", requires = "control_checkpoint_key", conflicts_with_all = ["control_checkpoint", "verify_control_recovery", "backup", "restore", "restore_executor", "verify_backup", "reconcile_query_usage", "database_ready", "reset_password", "audit_templates", "export_template_health", "token_key_status", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges"])]
     #[cfg_attr(feature = "embedded-migrations", arg(conflicts_with_all = ["migrate", "migration_mode"]))]
     recover_control: Option<PathBuf>,
+
+    /// Reapply retained deletion decisions and protect completion before reopening access
+    #[arg(long, value_name = "DIRECTORY", requires = "control_checkpoint_key", conflicts_with_all = ["control_checkpoint", "verify_control_recovery", "recover_control", "delete_object_history_version", "backup", "restore", "restore_executor", "verify_backup", "reconcile_query_usage", "database_ready", "reset_password", "audit_templates", "export_template_health", "token_key_status", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges"])]
+    #[cfg_attr(feature = "embedded-migrations", arg(conflicts_with_all = ["migrate", "migration_mode"]))]
+    reapply_control: Option<PathBuf>,
 
     /// Remove one closed object-history version while all runtimes are stopped; quarantine remains
     #[arg(long, value_name = "VERSION_UUID", requires_all = ["history_resource", "deletion_intent", "control_repository", "control_checkpoint_key"], conflicts_with_all = ["control_checkpoint", "verify_control_recovery", "recover_control", "backup", "restore", "restore_executor", "verify_backup", "reconcile_query_usage", "database_ready", "reset_password", "audit_templates", "export_template_health", "token_key_status", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges"])]
@@ -371,7 +384,9 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
         admin_cli.reconcile_query_usage
             || admin_cli.delete_object_history_version.is_some()
             || admin_cli.control_checkpoint.is_some()
+            || admin_cli.reapply_control.is_some()
             || admin_cli.recover_control.is_some()
+            || admin_cli.control_status.is_some()
             || admin_cli.verify_control_recovery.is_some(),
     );
 
@@ -433,7 +448,9 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let privileged_database_operation = migration_requested
         || admin_cli.delete_object_history_version.is_some()
         || admin_cli.control_checkpoint.is_some()
+        || admin_cli.reapply_control.is_some()
         || admin_cli.recover_control.is_some()
+        || admin_cli.control_status.is_some()
         || admin_cli.verify_control_recovery.is_some()
         || admin_cli.restore.is_some()
         || admin_cli.restore_executor
@@ -559,27 +576,56 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
         return Ok(());
     }
 
+    let storage = initialize_storage(&storage_settings)?;
+
     if admin_cli.reconcile_query_usage {
         let roles = database_role_mode
             .uses_split_roles()
             .then(|| configured_database_roles(&admin_cli))
             .transpose()?;
-        let report = crate::storage::reconcile_query_usage_resources(
-            &storage_settings,
-            roles.as_ref(),
-            admin_cli.query_usage_class,
+        // Native concurrent DDL cannot run inside the ordinary transaction
+        // wrapper. Its process registration excludes destructive cleanup until
+        // the complete executor pass and report have settled.
+        let recovery = crate::services::deletion_recovery::require_runtime_permit(
+            &storage,
+            &admin_cli.control_recovery,
         )
         .await?;
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&report).map_err(|_| ApiError::InternalServerError(
-                "Query usage executor report serialization failed".into()
-            ))?
-        );
-        return Ok(());
+        let registration = storage
+            .register_runtime_isolated(recovery.isolation_domain())
+            .await?;
+        let recovery = recovery.into_runtime_lifetime();
+        let storage = storage.with_runtime_owner(registration.owner());
+        let result = async {
+            let permit = storage.admit_application_work().await?;
+            let scope = storage
+                .current_execution_scope()
+                .with_application_access(permit);
+            let report = storage
+                .run_in_scope(
+                    scope,
+                    crate::storage::reconcile_query_usage_resources(
+                        &storage_settings,
+                        roles.as_ref(),
+                        admin_cli.query_usage_class,
+                    ),
+                )
+                .await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report).map_err(
+                    |_| ApiError::InternalServerError(
+                        "Query usage executor report serialization failed".into()
+                    )
+                )?
+            );
+            Ok::<(), ApiError>(())
+        }
+        .await;
+        storage.unregister_runtime(registration).await?;
+        recovery.release();
+        return result;
     }
-
-    let storage = initialize_storage(&storage_settings)?;
 
     if let Some(version) = admin_cli.delete_object_history_version {
         let report = crate::services::deletion_recovery::cleanup_object_history(
@@ -608,7 +654,23 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
         return Ok(());
     }
 
+    if let Some(directory) = admin_cli.control_status.as_deref() {
+        let key = admin_cli
+            .control_checkpoint_key
+            .as_deref()
+            .expect("Clap requires the status authentication key");
+        let report = crate::services::deletion_recovery::status(&storage, directory, key).await?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|_| {
+                ApiError::InternalServerError("Cannot encode deletion status".into())
+            })?
+        );
+        return Ok(());
+    }
+
     if admin_cli.control_checkpoint.is_some()
+        || admin_cli.reapply_control.is_some()
         || admin_cli.recover_control.is_some()
         || admin_cli.verify_control_recovery.is_some()
     {
@@ -625,6 +687,8 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
                 admin_cli.initialize_control_checkpoint,
             )
             .await?
+        } else if let Some(directory) = admin_cli.reapply_control.as_deref() {
+            crate::services::deletion_recovery::reapply(&storage, directory, key).await?
         } else if let Some(directory) = admin_cli.recover_control.as_deref() {
             crate::services::deletion_recovery::recover(&storage, directory, key).await?
         } else {
@@ -647,53 +711,143 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
         return Ok(());
     }
 
-    if admin_cli.restore_executor {
-        if !matches!(admin_cli.storage_backend, StorageBackendKind::Postgres) {
-            return Err(ApiError::BadRequest(
-                "The restore executor requires the PostgreSQL storage backend".to_string(),
-            ));
-        }
-        run_restore_executor(&storage).await?;
-    } else if let Some(path) = admin_cli.backup {
-        backup_database(
-            &storage,
-            &path,
-            !admin_cli.backup_without_history,
-            StorageBackupBudget::new(
-                admin_cli.backup_max_output_bytes,
-                admin_cli.backup_max_capture_rows,
+    let control_lifetime = if admin_cli.restore_executor || admin_cli.restore.is_some() {
+        Some(
+            crate::services::deletion_recovery::require_control_runtime_lifetime(
+                &storage,
+                &admin_cli.control_recovery,
             )
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+            .await?,
         )
-        .await?;
-    } else if let Some(path) = admin_cli.restore {
-        restore_database(
-            &storage,
-            &path,
-            admin_cli.restore_confirmation.as_deref(),
-            admin_cli.restore_max_upload_bytes,
-        )
-        .await?;
-    } else if let Some(username) = admin_cli.reset_password {
-        reset_password(&storage, &username).await?;
-    } else if admin_cli.audit_templates {
-        audit_templates(
-            &storage,
-            admin_cli.export_template_recursion_limit,
-            admin_cli.export_template_fuel,
-        )
-        .await?;
-    } else if admin_cli.export_template_health {
-        load_export_template_health(&storage).await?;
-    } else if admin_cli.database_ready {
-        storage_ready(&storage).await?;
-    } else if admin_cli.token_key_status {
-        print_token_key_status(&storage, admin_cli.token_lifetime_hours).await?;
     } else {
-        println!("No command specified. Use --help for usage information.");
-    }
+        None
+    };
 
-    Ok(())
+    // Ordinary administrator commands are producers too: hold registration
+    // until their output and child work settle, rather than recapturing access
+    // between database reads and writing a backup or printing a report.
+    let ordinary = admin_cli.backup.is_some()
+        || admin_cli.reset_password.is_some()
+        || admin_cli.audit_templates
+        || admin_cli.export_template_health
+        || admin_cli.token_key_status;
+    let recovery = if ordinary {
+        Some(
+            crate::services::deletion_recovery::require_runtime_permit(
+                &storage,
+                &admin_cli.control_recovery,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let mut registration = if let Some(recovery) = &recovery {
+        Some(
+            storage
+                .register_runtime_isolated(recovery.isolation_domain())
+                .await?,
+        )
+    } else {
+        None
+    };
+    let recovery = recovery.map(|permit| permit.into_runtime_lifetime());
+    let storage = match &registration {
+        Some(registration) => storage.with_runtime_owner(registration.owner()),
+        None => storage,
+    };
+    let scope = if ordinary {
+        let permit = match storage.admit_application_work().await {
+            Ok(permit) => permit,
+            Err(error) => {
+                if let Some(registration) = registration.take() {
+                    storage.unregister_runtime(registration).await?;
+                }
+                if let Some(recovery) = recovery {
+                    recovery.release();
+                }
+                return Err(error.into());
+            }
+        };
+        Some(
+            storage
+                .current_execution_scope()
+                .with_application_access(permit),
+        )
+    } else {
+        None
+    };
+    let operation = async {
+        if admin_cli.restore_executor {
+            if !matches!(admin_cli.storage_backend, StorageBackendKind::Postgres) {
+                return Err(ApiError::BadRequest(
+                    "The restore executor requires the PostgreSQL storage backend".to_string(),
+                ));
+            }
+            run_restore_executor(&storage, &admin_cli.control_recovery).await?;
+        } else if let Some(path) = admin_cli.backup {
+            backup_database(
+                &storage,
+                &path,
+                !admin_cli.backup_without_history,
+                StorageBackupBudget::new(
+                    admin_cli.backup_max_output_bytes,
+                    admin_cli.backup_max_capture_rows,
+                )
+                .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+            )
+            .await?;
+        } else if let Some(path) = admin_cli.restore {
+            restore_database(
+                &storage,
+                &path,
+                admin_cli.restore_confirmation.as_deref(),
+                admin_cli.restore_max_upload_bytes,
+                &admin_cli.control_recovery,
+            )
+            .await?;
+        } else if let Some(username) = admin_cli.reset_password {
+            reset_password(&storage, &username).await?;
+        } else if admin_cli.audit_templates {
+            audit_templates(
+                &storage,
+                admin_cli.export_template_recursion_limit,
+                admin_cli.export_template_fuel,
+            )
+            .await?;
+        } else if admin_cli.export_template_health {
+            load_export_template_health(&storage).await?;
+        } else if admin_cli.database_ready {
+            storage_ready(&storage).await?;
+        } else if admin_cli.token_key_status {
+            print_token_key_status(&storage, admin_cli.token_lifetime_hours).await?;
+        } else {
+            println!("No command specified. Use --help for usage information.");
+        }
+
+        Ok::<(), ApiError>(())
+    };
+    let result = match scope {
+        Some(scope) => storage.run_in_scope(scope, operation).await,
+        None => operation.await,
+    };
+    if let Some(registration) = registration {
+        // Any detached template child keeps the registration for offline
+        // recovery. A command error alone is not proof that its child stopped.
+        if crate::utilities::exporting::template_workers_idle() {
+            storage.unregister_runtime(registration).await?;
+        } else {
+            // The lifetime destructor retains OS exclusion until process exit.
+            return result;
+        }
+    }
+    if let Some(recovery) = recovery {
+        recovery.release();
+    }
+    if let Some(lifetime) = control_lifetime {
+        lifetime.release();
+    }
+    result
 }
 
 fn resolve_database_roles(
@@ -1058,7 +1212,12 @@ async fn verify_backup_restore(
         let storage = initialize_storage(&target)?;
         let started_at = std::time::Instant::now();
         // The report, staging and comparison all read the same immutable artifact.
-        let (_, context) = restore_database_artifact(&storage, artifact.clone()).await?;
+        let (_, context) = restore_database_artifact(
+            &storage,
+            artifact.clone(),
+            &ControlRecoveryOptions::default(),
+        )
+        .await?;
         let restore_duration = started_at.elapsed();
         let readiness = storage.get_readiness_snapshot().await?;
         if !readiness.storage_is_ready() {
@@ -1348,6 +1507,7 @@ async fn restore_database(
     path: &Path,
     confirmation: Option<&str>,
     max_bytes: usize,
+    recovery: &ControlRecoveryOptions,
 ) -> Result<(), ApiError> {
     if confirmation != Some(RESTORE_CONFIRMATION_PHRASE) {
         return Err(destructive_confirmation_error());
@@ -1361,7 +1521,7 @@ async fn restore_database(
         ))
     })?;
     let artifact = StorageRestoreArtifact::from_reader(file, max_bytes)?;
-    let (restored, _) = restore_database_artifact(storage, artifact).await?;
+    let (restored, _) = restore_database_artifact(storage, artifact, recovery).await?;
     println!(
         "Restore {} completed with status '{}'.",
         restored.id,
@@ -1373,6 +1533,7 @@ async fn restore_database(
 async fn restore_database_artifact(
     storage: &StorageHandle,
     artifact: StorageRestoreArtifact,
+    recovery: &ControlRecoveryOptions,
 ) -> Result<
     (
         crate::models::RestoreStageResponse,
@@ -1406,7 +1567,7 @@ async fn restore_database_artifact(
         .await?
         .identity_context()
         .map_err(|error| ApiError::Conflict(error.to_string()))?;
-    if !execute_confirmed_restore(storage).await? {
+    if !execute_confirmed_restore_with_recovery(storage, recovery).await? {
         return Err(ApiError::Conflict(format!(
             "Restore {} was confirmed but no longer owns draining maintenance",
             confirmed.id
@@ -1416,10 +1577,13 @@ async fn restore_database_artifact(
     Ok((restored, context))
 }
 
-async fn run_restore_executor(storage: &StorageHandle) -> Result<(), ApiError> {
+async fn run_restore_executor(
+    storage: &StorageHandle,
+    recovery: &ControlRecoveryOptions,
+) -> Result<(), ApiError> {
     println!("Restore executor is ready for confirmed web restores.");
     loop {
-        match execute_confirmed_restore(storage).await {
+        match execute_confirmed_restore_with_recovery(storage, recovery).await {
             Ok(true) => tracing::info!(message = "Confirmed restore completed"),
             Ok(false) => {}
             Err(error) => {
@@ -1690,6 +1854,7 @@ mod tests {
     #[rstest]
     #[case("--backup", "backup.json")]
     #[case("--recover-control", "/independent/control")]
+    #[case("--control-status", "/independent/control")]
     fn history_cleanup_cannot_run_with_another_administrator_operation(
         #[case] argument: &str,
         #[case] value: &str,
