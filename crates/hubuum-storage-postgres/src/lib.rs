@@ -4,7 +4,9 @@
 //! integration surface for Hubuum's PostgreSQL adapter. They must not cross
 //! the backend-neutral traits in `hubuum-storage-core`.
 
+mod artifacts;
 mod backend;
+pub use artifacts::PostgresArtifactStore;
 mod cursor;
 mod database_privileges;
 mod diagnostics;

@@ -20,6 +20,7 @@ rust-api = "internal-application"
 [workspace]
 default-members = [".", "crates/hubuum-templates"]
 members = [
+    "crates/hubuum-artifacts",
     "crates/hubuum-budget",
     "crates/hubuum-auth-core",
     "crates/hubuum-auth-ldap",
@@ -362,3 +363,7 @@ required-features = ["postgres-bench", "query-capture"]
 name = "computed_hash_criterion"
 harness = false
 required-features = ["postgres-bench"]
+
+# Keep SHA-256 throughput practical in debug backup/restore tests.
+[profile.dev.package.sha2]
+opt-level = 3

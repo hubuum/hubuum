@@ -12,6 +12,7 @@ publish = false
 rust-api = "workspace-internal"
 
 [dependencies]
+hubuum-artifacts = { path = "../hubuum-artifacts" }
 hubuum-regex = { version = "=0.8.0", path = "../hubuum-regex" }
 hubuum-task-core = { version = "=0.8.0", path = "../hubuum-task-core" }
 argon2 = "0.6.0"

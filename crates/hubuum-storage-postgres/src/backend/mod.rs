@@ -18,8 +18,8 @@ use hubuum_query::QueryOptions;
 use hubuum_storage_core::*;
 
 use crate::{
-    PostgresObserver, PostgresPool, PostgresPoolState, PostgresRuntime, PostgresStorageError,
-    PostgresStorageSnapshot,
+    PostgresArtifactStore, PostgresObserver, PostgresPool, PostgresPoolState, PostgresRuntime,
+    PostgresStorageError, PostgresStorageSnapshot,
 };
 
 mod backup_snapshot;
@@ -50,6 +50,12 @@ pub struct PostgresStorage {
 }
 
 impl PostgresStorage {
+    /// Compose the immutable artifact store with this adapter's configured
+    /// runtime and observer, without exposing its pool or runtime internals.
+    pub fn artifact_store(&self) -> PostgresArtifactStore {
+        PostgresArtifactStore::new(self.runtime.clone())
+    }
+
     #[must_use]
     pub fn new(pool: PostgresPool, observer: Arc<dyn PostgresObserver>) -> Self {
         Self {

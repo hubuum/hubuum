@@ -723,6 +723,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hubuum-artifacts"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "sha2",
+ "uuid",
+]
+
+[[package]]
 name = "hubuum-budget"
 version = "0.8.0"
 
@@ -857,6 +866,7 @@ dependencies = [
  "diesel",
  "diesel-async",
  "futures-util",
+ "hubuum-artifacts",
  "hubuum-computed-fields",
  "hubuum-domain",
  "hubuum-events-core",
