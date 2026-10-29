@@ -1,5 +1,10 @@
+mod fingerprints;
+pub(crate) use fingerprints::{TaskSubmissionOperation, legacy_task_fingerprint};
+mod submission;
+pub(crate) use submission::{AuthorizedExpiredTaskSubmission, TaskSubmissionAttempt};
+
 use crate::models::task::task_kind_from_db;
-use hubuum_domain::PrincipalId;
+use hubuum_domain::{GroupId, PrincipalId};
 use hubuum_storage_core::StorageTaskClaimRequest;
 use hubuum_task_core::IdempotencyKey;
 use std::ops::Deref;
@@ -32,7 +37,10 @@ use crate::storage::{
     StorageTaskTerminalUpdate, TaskExecutionStorage, TaskQueueStorage, storage_handle,
 };
 use crate::traits::AuthzSubject;
-use hubuum_storage_core::StorageTaskSearch;
+use hubuum_storage_core::{
+    StorageTaskRemoteInvocation, StorageTaskSearch, StorageTaskSubmissionOutcome,
+    TaskReceiptBinding,
+};
 
 pub(crate) struct TaskSubmission {
     approval: Option<hubuum_storage_core::StorageCredentialUse>,
@@ -43,6 +51,8 @@ pub(crate) struct TaskSubmission {
     idempotency_key: Option<IdempotencyKey>,
     request_hash: Option<String>,
     scope_snapshot: StorageTaskScopeSnapshot,
+    receipt_binding: Option<TaskReceiptBinding>,
+    remote_invocation: Option<StorageTaskRemoteInvocation>,
 }
 
 /// Application-owned task projection paired with an opaque backend claim.
@@ -326,6 +336,8 @@ impl TaskSubmission {
     ) -> Self {
         Self {
             approval: None,
+            receipt_binding: None,
+            remote_invocation: None,
             kind,
             submitted_by,
             payload,
@@ -334,6 +346,16 @@ impl TaskSubmission {
             request_hash: None,
             scope_snapshot: StorageTaskScopeSnapshot::unscoped(),
         }
+    }
+
+    pub(crate) fn receipt_binding(mut self, binding: Option<TaskReceiptBinding>) -> Self {
+        self.receipt_binding = binding;
+        self
+    }
+
+    pub(crate) fn remote_invocation(mut self, invocation: StorageTaskRemoteInvocation) -> Self {
+        self.remote_invocation = Some(invocation);
+        self
     }
 
     pub(crate) fn idempotency_key(mut self, idempotency_key: Option<IdempotencyKey>) -> Self {
@@ -368,7 +390,7 @@ pub(crate) fn task_scope_snapshot(
 pub(crate) async fn submit_task(
     backend: &impl StorageContext,
     submission: TaskSubmission,
-) -> Result<TaskRecord, ApiError> {
+) -> Result<StorageTaskSubmissionOutcome, ApiError> {
     let approval_actor = submission
         .approval
         .as_ref()
@@ -390,26 +412,20 @@ pub(crate) async fn submit_task(
     .metadata(Some(metadata))
     .idempotency_key(submission.idempotency_key)
     .request_hash(submission.request_hash)
+    .receipt_binding(submission.receipt_binding)
+    .remote_invocation(submission.remote_invocation)
     .scope_snapshot(submission.scope_snapshot)
     .trace_link(telemetry::trace_link_from_span(&span))
     .try_build()?
     .with_approval(submission.approval);
     async move {
-        let result = async {
-            let task = storage_handle(backend).create_task(request).await?;
-            if task.status().is_terminal() {
-                return find_task(backend, task.id()).await;
-            }
-            task_from_storage(task)
-        }
-        .await;
+        let result = storage_handle(backend)
+            .create_task(request)
+            .await
+            .map_err(ApiError::from);
         if let Some(actor_id) = approval_actor {
             match &result {
-                Ok(task) => tracing::info!(
-                    message = "Credential-approved import admitted",
-                    actor_id,
-                    task_id = task.id
-                ),
+                Ok(_) => tracing::info!(message = "Credential-approved import admitted", actor_id,),
                 Err(error) => tracing::warn!(
                     message = "Credential-approved import admission rejected",
                     actor_id,
@@ -451,6 +467,24 @@ where
     S: AuthzSubject + ?Sized,
 {
     load_authorized_task_of_kind(backend, requestor, task_id, None, "Task", false).await
+}
+
+/// Authorize the exact task captured by duplicate resolution. Looking up its
+/// integer ID again could cross a concurrent purge and later ID reuse.
+async fn authorize_submission_task<S: AuthzSubject + ?Sized>(
+    backend: &impl AuthorizationContext,
+    requestor: &S,
+    stored: StorageTask,
+) -> Result<TaskRecord, ApiError> {
+    authorize_task_record(
+        backend,
+        requestor,
+        task_from_storage(stored)?,
+        None,
+        "Task",
+        false,
+    )
+    .await
 }
 
 pub(crate) async fn load_authorized_import<S>(
@@ -533,6 +567,25 @@ where
         )));
     }
 
+    authorize_task_record(
+        backend,
+        requestor,
+        task,
+        submitter_owner_group_id,
+        label,
+        hide_external_denial,
+    )
+    .await
+}
+
+async fn authorize_task_record<S: AuthzSubject + ?Sized>(
+    backend: &impl AuthorizationContext,
+    requestor: &S,
+    task: TaskRecord,
+    submitter_owner_group_id: Option<GroupId>,
+    label: &str,
+    hide_external_denial: bool,
+) -> Result<TaskRecord, ApiError> {
     let principal = PrincipalRef::load(backend, requestor).await?;
     let authorization_mode = backend.authorization_mode();
     if task.kind == TaskKind::SchemaValidation.as_str() {

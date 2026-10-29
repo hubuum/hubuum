@@ -19,7 +19,6 @@ use crate::services::authentication::ExecutionPrincipal;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::time::Duration;
 
-use hubuum_task_core::IdempotencyKey;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -57,7 +56,7 @@ use crate::services::authorization_resources::{
 use crate::services::catalog as catalog_service;
 use crate::services::relation_queries;
 use crate::services::tasks::{
-    ClaimedTask, TaskStateChange, TaskSubmission, append_task_event, complete_task, submit_task,
+    ClaimedTask, TaskStateChange, TaskSubmission, append_task_event, complete_task,
     task_scope_snapshot, update_task_state,
 };
 use crate::storage::{

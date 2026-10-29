@@ -14,6 +14,13 @@ This file is generated from the typed operational-contract registry. Do not edit
 | `hubuum_computed_field_rebuild_batches_total` | counter | none | process | `items` | Computed-field rebuild batches |
 | `hubuum_computed_field_rebuild_completions_total` | counter | none | process | `status` | Computed-field rebuild terminal outcomes |
 | `hubuum_computed_field_rebuild_duration_seconds` | histogram | seconds | process | `status` | Computed-field rebuild duration |
+| `hubuum_control_checkpoint_gc_bytes_total` | counter | bytes | process | none | File lengths of authenticated superseded checkpoints removed |
+| `hubuum_control_checkpoint_gc_files_total` | counter | none | process | none | Authenticated superseded checkpoint files removed |
+| `hubuum_control_checkpoint_io_bytes_total` | counter | bytes | process | `operation` | Actual checkpoint file data bytes read or written, including partial operations |
+| `hubuum_control_checkpoint_lock_attempts_total` | counter | none | process | `outcome` | Nonblocking checkpoint publication lock attempts |
+| `hubuum_control_checkpoint_lock_duration_seconds` | histogram | seconds | process | `outcome` | Checkpoint publication lock attempt duration |
+| `hubuum_control_checkpoint_operation_duration_seconds` | histogram | seconds | process | `operation`, `outcome` | Checkpoint publisher operation duration |
+| `hubuum_control_checkpoint_operations_total` | counter | none | process | `operation`, `outcome` | Checkpoint publisher operation outcomes |
 | `hubuum_db_connection_acquire_duration_seconds` | histogram | seconds | process | `caller` | Database connection acquisition duration |
 | `hubuum_db_connection_acquire_failures_total` | counter | none | process | `caller` | Database connection acquisition failures |
 | `hubuum_db_operation_duration_seconds` | histogram | seconds | process | `caller`, `operation`, `result` | Database helper operation duration |

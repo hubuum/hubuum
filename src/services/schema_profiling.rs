@@ -5,7 +5,7 @@ use std::io;
 use chrono::{Duration, Utc};
 use hubuum_domain::{ClassId, ObjectId};
 use hubuum_storage_core::{StorageSchemaProfileArtifact, StorageTaskCompletionPayload};
-use hubuum_task_core::{IdempotencyKey, TaskExecutionContext};
+use hubuum_task_core::TaskExecutionContext;
 use json_schema_profiler::{
     Document, EvaluationOptions, EvaluationStatus, Profiler, SchemaOptions, Suggestion, ValueLimits,
 };
@@ -29,8 +29,8 @@ use crate::services::authentication::ExecutionPrincipal;
 use crate::services::authorization_resources::schema_compliance_authorization_resources;
 use crate::services::class_fields::AuthorizedObjectSample;
 use crate::services::tasks::{
-    ClaimedTask, TaskStateChange, TaskSubmission, complete_task, submit_task, task_scope_snapshot,
-    update_task_state,
+    ClaimedTask, TaskStateChange, TaskSubmission, TaskSubmissionAttempt, complete_task,
+    task_scope_snapshot, update_task_state,
 };
 use crate::tasks::{control, request_hash};
 use crate::traits::{SelfAccessors, UserPermissions, scope_allows};
@@ -46,29 +46,30 @@ pub(crate) async fn submit(
     requestor: &Authenticated,
     class: &HubuumClass,
     options: SchemaProfileRequest,
-    key: Option<IdempotencyKey>,
+    attempt: TaskSubmissionAttempt,
 ) -> Result<TaskRecord, ApiError> {
     let payload = serde_json::to_value(ProfileTaskPayload {
         class_id: ClassId::new(class.id)?,
         options,
     })?;
     let hash = request_hash(&payload)?;
-    submit_task(
-        context,
-        TaskSubmission::new(
-            TaskKind::SchemaProfiling,
-            requestor.principal.id(),
-            payload,
-            1,
+    attempt
+        .submit(
+            context,
+            &requestor.principal,
+            TaskSubmission::new(
+                TaskKind::SchemaProfiling,
+                requestor.principal.id(),
+                payload,
+                1,
+            )
+            .request_hash(Some(hash))
+            .scope_snapshot(task_scope_snapshot(
+                Some(requestor.token_meta.id()),
+                requestor.scopes(),
+            )),
         )
-        .idempotency_key(key)
-        .request_hash(Some(hash))
-        .scope_snapshot(task_scope_snapshot(
-            Some(requestor.token_meta.id()),
-            requestor.scopes(),
-        )),
-    )
-    .await
+        .await
 }
 
 pub(crate) async fn execute(

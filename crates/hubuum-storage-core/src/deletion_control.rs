@@ -670,7 +670,7 @@ pub trait DeletionControlStorage: Send + Sync {
     /// Root must have independently published and read back this exact receipt.
     async fn release_application_exposure(
         &self,
-        receipt: ApplicationReapplication,
+        receipt: crate::ApplicationExposureProof,
         checkpoint: DeletionCheckpointIdentity,
     ) -> Result<(), StorageError>;
     /// Root must hold actual exclusive process isolation for this exact domain.

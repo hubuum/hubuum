@@ -16,6 +16,10 @@ use hubuum_storage_postgres::scale_benchmark::PostgresScaleBackend;
 mod lifecycle_process;
 mod metrics;
 mod runner;
+mod task_retention;
+mod task_retention_observe;
+mod task_retention_probes;
+mod task_retention_safety;
 
 use runner::{LifecycleOptions, MeasureOptions, measure_scale_benchmark, run_lifecycle};
 
@@ -33,6 +37,14 @@ struct Cli {
 enum Command {
     /// Measure real task claims against a fresh disposable lifecycle queue.
     Scheduling(SchedulingArgs),
+    /// Measure protected submissions through running production API replicas.
+    TaskRetention(task_retention::TaskRetentionArgs),
+    /// Observe real task expiry through physical cleanup and verified checkpoints.
+    TaskRetentionObserve(task_retention_observe::ObserveArgs),
+    /// Check real remote effects across duplicate admission, purge, and recovery.
+    TaskRetentionProbe(task_retention_probes::ProbeArgs),
+    /// Verify live holds, dependencies and bounded cleanup around an interrupted effect
+    TaskRetentionSafety(task_retention_safety::SafetyArgs),
     /// Load a fresh synthetic lifecycle fixture and report logical/physical growth.
     LifecycleInventory(LifecycleInventoryArgs),
     /// Write the deterministic semantic manifest without loading a backend.
@@ -290,6 +302,10 @@ struct CompareBackendsArgs {
 async fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Scheduling(args) => scheduling(args).await,
+        Command::TaskRetention(args) => task_retention::run(args).await,
+        Command::TaskRetentionObserve(args) => task_retention_observe::run(args).await,
+        Command::TaskRetentionProbe(args) => task_retention_probes::run(args).await,
+        Command::TaskRetentionSafety(args) => task_retention_safety::run(args).await,
         Command::LifecycleInventory(args) => lifecycle_inventory(args).await,
         Command::Manifest(args) => manifest(args),
         Command::Lifecycle(args) => lifecycle(args).await,

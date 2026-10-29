@@ -171,7 +171,7 @@ impl LifecycleBenchmarkBackend for PostgresScaleBackend {
                    pg_table_size(c.oid)::bigint AS table_bytes, \
                    pg_indexes_size(c.oid)::bigint AS index_bytes \
                  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
-                 WHERE n.nspname = 'public' AND c.relkind = 'r' ORDER BY c.relname",
+                 WHERE n.nspname IN ('public','hubuum_control') AND c.relkind = 'r' ORDER BY n.nspname,c.relname",
             )
             .load::<RelationRow>(connection)
             .await?;

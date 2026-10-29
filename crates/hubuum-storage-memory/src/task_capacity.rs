@@ -521,8 +521,11 @@ impl MemoryState {
     pub(super) fn store_task(
         &mut self,
         id: i32,
-        task: MemoryTaskRecord,
+        mut task: MemoryTaskRecord,
     ) -> Result<(), StorageError> {
+        if !self.tasks.contains_key(&id) && self.task_control.activation().is_protected() {
+            task.retention_policy = Some(self.task_control.policy().revision());
+        }
         let mut capacity = self.task_accounting_snapshot()?;
         let owner = self.task_owner(&task)?;
         let candidate = TaskAccounting::new(owner, &task)?;

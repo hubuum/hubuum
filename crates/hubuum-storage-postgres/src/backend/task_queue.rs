@@ -3,21 +3,40 @@ use async_trait::async_trait;
 use hubuum_domain::TaskId;
 
 use hubuum_storage_core::{
-    StorageBackupOutput, StorageBackupOutputSummary, StorageError, StorageExportOutput,
-    StorageExportOutputSummary, StorageImportTaskResult, StoragePage, StorageTask,
-    StorageTaskAccess, StorageTaskChildListQuery, StorageTaskCreateRequest, StorageTaskEvent,
-    StorageTaskListQuery, StorageTaskOutputLookup, TaskQueueStorage,
+    ProtectedTaskAdmission, StorageBackupOutput, StorageBackupOutputSummary, StorageError,
+    StorageExportOutput, StorageExportOutputSummary, StorageImportTaskResult, StoragePage,
+    StorageTask, StorageTaskAccess, StorageTaskChildListQuery, StorageTaskCreateRequest,
+    StorageTaskEvent, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskSubmissionOutcome,
+    TaskActivationOutcome, TaskQueueStorage, TaskSubmissionLookup, TaskSubmissionResolution,
 };
 
 use super::PostgresStorage;
 
 #[async_trait]
 impl TaskQueueStorage for PostgresStorage {
+    async fn lookup_task_submission(
+        &self,
+        lookup: TaskSubmissionLookup,
+    ) -> Result<TaskSubmissionResolution, StorageError> {
+        crate::operations::task_retention::lookup_task_submission(self.runtime(), lookup)
+            .await
+            .map_err(StorageError::from)
+    }
+
     async fn create_task(
         &self,
         request: StorageTaskCreateRequest,
-    ) -> Result<StorageTask, StorageError> {
+    ) -> Result<StorageTaskSubmissionOutcome, StorageError> {
         postgres_task_queue::create_task(self.runtime(), request)
+            .await
+            .map_err(StorageError::from)
+    }
+
+    async fn activate_task_submission(
+        &self,
+        request: ProtectedTaskAdmission,
+    ) -> Result<TaskActivationOutcome, StorageError> {
+        crate::operations::task_retention::activate_task_submission(self.runtime(), request)
             .await
             .map_err(StorageError::from)
     }

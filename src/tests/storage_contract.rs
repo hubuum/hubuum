@@ -1,3 +1,4 @@
+use crate::tests::asserts::expect_legacy_task;
 use hubuum_storage_core::StorageRestoreStageArtifact;
 use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
 mod artifacts;
@@ -1305,7 +1306,8 @@ impl LeaseLossFaultFixture for PostgresLeaseLossFaultFixture {
                 .try_build()
                 .expect("lease-loss task request should be valid"),
             )
-            .await?;
+            .await
+            .map(expect_legacy_task)?;
         let lease_duration = StorageTaskLeaseDuration::from_milliseconds(50)
             .ok_or_else(|| std::io::Error::other("lease duration must be positive"))?;
         let first_claim = hubuum_storage_postgres::test_support::claim_task_by_id_with_lease(
@@ -2147,6 +2149,7 @@ async fn postgres_rolls_back_task_finalization_at_an_injected_failure() {
             .expect("failpoint task request should be valid"),
         )
         .await
+        .map(expect_legacy_task)
         .expect("task rollback fixture should be created");
     let claim = hubuum_storage_postgres::test_support::claim_task_by_id(pool.get_ref(), task.id())
         .await
@@ -2226,6 +2229,7 @@ async fn postgres_task_page_count_and_rows_share_one_snapshot() {
             .expect("initial snapshot task request should be valid"),
         )
         .await
+        .map(expect_legacy_task)
         .expect("initial snapshot task should be created");
 
     let controller = PostgresFaultController::pausing(PostgresFaultPoint::PageAfterCount);
@@ -2267,6 +2271,7 @@ async fn postgres_task_page_count_and_rows_share_one_snapshot() {
             .expect("concurrent snapshot task request should be valid"),
         )
         .await
+        .map(expect_legacy_task)
         .expect("concurrent snapshot task should be created");
     controller.resume();
 
@@ -3293,6 +3298,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                 .expect("identity contract task request should be valid"),
             )
             .await
+            .map(expect_legacy_task)
             .expect("certified backend should queue service-account work");
         let (disabled, cancelled_task_kinds) = backend
             .disable_service_account(StorageServiceAccountMutation::new(
@@ -4019,6 +4025,7 @@ async fn every_available_storage_backend_commits_claimed_import_effects_and_rece
                 .unwrap(),
             )
             .await
+            .map(expect_legacy_task)
             .unwrap();
         let duration = StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap();
         let claimed = match &environment {
@@ -4127,6 +4134,7 @@ async fn every_available_storage_backend_fences_planning_result_writes() {
                 .unwrap(),
             )
             .await
+            .map(expect_legacy_task)
             .unwrap();
         let lease = StorageTaskLease::new(
             task.id(),
@@ -4198,6 +4206,7 @@ async fn every_available_storage_backend_supplies_the_complete_task_queue() {
                 .expect("task queue request should be valid"),
             )
             .await
+            .map(expect_legacy_task)
             .expect("certified backend should create a task");
         let task_id = task.id();
         assert_eq!(task.kind(), StorageTaskKind::Import);
@@ -4327,6 +4336,7 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                     .expect("task execution request should be valid"),
                 )
                 .await
+                .map(expect_legacy_task)
                 .expect("certified backend should create an executable task");
             fixture_ids.push(task.id());
         }
@@ -4442,6 +4452,7 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                 .expect("task kind mismatch request should be valid"),
             )
             .await
+            .map(expect_legacy_task)
             .expect("certified backend should create a kind mismatch fixture");
         fixture_ids.push(mismatched_kind_task.id());
         // This subcase verifies completion validation, not queue scheduling. Claim the
@@ -4514,6 +4525,7 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                     .expect("task execution failure request should be valid"),
                 )
                 .await
+                .map(expect_legacy_task)
                 .expect("certified backend should create a failure fixture");
             failure_fixture_ids.push(task.id());
             fixture_ids.push(task.id());

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use hubuum_domain::PrincipalId;
+use hubuum_domain::{PrincipalId, TaskIdentity};
 
 use crate::errors::ApiError;
 use crate::models::Permissions;
@@ -106,6 +106,7 @@ impl ObjectResourceEndpoint {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ResourceIdentity {
     Existing(i32),
+    TaskReceipt(TaskIdentity),
     Prospective,
 }
 
@@ -244,6 +245,16 @@ impl ResourceRef {
     pub fn task(id: i32, submitted_by: Option<i32>) -> Self {
         Self::entity(Some(id), ResourceAttrs::Task { submitted_by })
     }
+    pub(crate) fn task_receipt(task: TaskIdentity, owner: PrincipalId) -> Self {
+        Self {
+            state: ResourceState::Entity {
+                identity: ResourceIdentity::TaskReceipt(task),
+                attrs: ResourceAttrs::Task {
+                    submitted_by: Some(owner.id()),
+                },
+            },
+        }
+    }
     pub fn system() -> Self {
         Self {
             state: ResourceState::System,
@@ -299,6 +310,10 @@ impl ResourceRef {
                 identity: ResourceIdentity::Existing(id),
                 ..
             } => id.to_string(),
+            ResourceState::Entity {
+                identity: ResourceIdentity::TaskReceipt(task),
+                ..
+            } => format!("receipt:{task}"),
             ResourceState::Entity {
                 identity: ResourceIdentity::Prospective,
                 ..

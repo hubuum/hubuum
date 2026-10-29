@@ -26,7 +26,7 @@ use crate::{
 mod backup_snapshot;
 mod capabilities;
 mod computed_fields;
-mod deletion_control;
+pub(crate) mod deletion_control;
 pub(crate) use deletion_control::acknowledge_coordinator_drain_on;
 mod export_templates;
 mod imports;
@@ -39,6 +39,7 @@ mod schema_evolution;
 mod task_capacity;
 mod task_execution;
 mod task_queue;
+mod task_retention;
 mod transaction;
 
 /// Complete statically linked PostgreSQL storage backend.

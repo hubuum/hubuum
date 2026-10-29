@@ -233,6 +233,13 @@ for path in "$@"; do
       container=true
       artifacts=true
       ;;
+    scale-benchmarks/lifecycle/affinity.Dockerfile)
+      code=true
+      rust=true
+      benchmarks=true
+      scale_benchmark=true
+      container=true
+      ;;
     .github/workflows/scale-benchmarks.yml | .github/workflows/scheduler-benchmarks.yml | scale-benchmarks/* | \
       crates/hubuum-scale-benchmark/* | crates/hubuum-scale-core/* | \
       crates/hubuum-storage-postgres/src/scale_benchmark.rs | \
@@ -362,6 +369,14 @@ for path in "$@"; do
       scripts/uninstall-single-host.sh | scripts/stop-single-host.sh)
       code=true
       container=true
+      ;;
+    tests/python/integration/task_retention.py | tests/python/support/task_effects.py | \
+      tests/python/support/task_retention_recovery.py | tests/python/support/task_retention_safety.py)
+      code=true
+      rust=true
+      container=true
+      benchmarks=true
+      scale_benchmark=true
       ;;
     tests/python/run.py | tests/python/support/__init__.py)
       # The shared runner also launches the resource-budget benchmark probe.

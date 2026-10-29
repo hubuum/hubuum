@@ -1,4 +1,5 @@
 use super::*;
+use crate::tests::asserts::expect_legacy_task;
 use hubuum_storage_core::{
     StorageTask, StorageTaskCancellationChange, StorageTaskCancellationRequest,
     StorageTaskExecutionAdmission, TaskAdmissionPolicy, TaskByteLimit, TaskCapacityLimit,
@@ -88,6 +89,7 @@ impl Fixture {
                 .unwrap(),
             )
             .await
+            .map(expect_legacy_task)
             .unwrap();
         Self {
             environment,
@@ -1359,6 +1361,7 @@ async fn postgres_task_discovery_projection_has_a_fixed_query_budget() {
                         .unwrap(),
                     )
                     .await
+                    .map(expect_legacy_task)
                     .unwrap()
                     .id(),
             );

@@ -1,9 +1,12 @@
+use crate::permissions::AppContext;
+use crate::services::tasks::TaskSubmissionAttempt;
+
 use super::*;
 
 pub(crate) struct ExportTaskSubmission {
     export: ExportRequest,
     template: Option<ExportTemplate>,
-    idempotency_key: Option<IdempotencyKey>,
+    attempt: TaskSubmissionAttempt,
     scope_snapshot: StorageTaskScopeSnapshot,
 }
 
@@ -12,11 +15,12 @@ impl ExportTaskSubmission {
         export: ExportRequest,
         token_id: TokenID,
         scopes: Option<&TokenScope>,
+        attempt: TaskSubmissionAttempt,
     ) -> Self {
         Self {
             export,
             template: None,
-            idempotency_key: None,
+            attempt,
             scope_snapshot: task_scope_snapshot(Some(token_id), scopes),
         }
     }
@@ -25,22 +29,17 @@ impl ExportTaskSubmission {
         self.template = Some(template);
         self
     }
-
-    pub(crate) fn idempotency_key(mut self, idempotency_key: Option<IdempotencyKey>) -> Self {
-        self.idempotency_key = idempotency_key;
-        self
-    }
 }
 
 pub(crate) async fn submit_export_task<S: AuthzSubject>(
-    pool: &impl crate::storage::StorageContext,
+    context: &AppContext,
     subject: &S,
     submission: ExportTaskSubmission,
 ) -> Result<TaskRecord, ApiError> {
     let ExportTaskSubmission {
         export,
         template,
-        idempotency_key,
+        attempt,
         scope_snapshot,
     } = submission;
     let task_payload = StoredExportTaskPayload {
@@ -50,23 +49,28 @@ pub(crate) async fn submit_export_task<S: AuthzSubject>(
     let payload = serde_json::to_value(&task_payload)?;
     let hash = request_hash(&payload)?;
 
-    let runtime = prepare_export_runtime(pool, task_payload.export.clone(), template).await?;
+    let runtime = prepare_export_runtime(context, task_payload.export.clone(), template).await?;
     validate_export_submission(&runtime)?;
     let task_payload = runtime_to_task_payload(&runtime)?;
 
-    find_or_create_export_task(
-        pool,
-        PrincipalID::new(subject.principal_id())?,
-        scope_snapshot,
-        idempotency_key,
-        serde_json::to_value(task_payload)?,
-        hash,
-    )
-    .await
+    attempt
+        .submit(
+            context,
+            subject,
+            TaskSubmission::new(
+                TaskKind::Export,
+                PrincipalID::new(subject.principal_id())?,
+                serde_json::to_value(task_payload)?,
+                1,
+            )
+            .request_hash(Some(hash))
+            .scope_snapshot(scope_snapshot),
+        )
+        .await
 }
 
 pub(super) async fn prepare_export_runtime(
-    pool: &impl crate::storage::StorageContext,
+    context: &impl crate::storage::StorageContext,
     export: ExportRequest,
     template: Option<ExportTemplate>,
 ) -> Result<ExportRuntime, ApiError> {
@@ -76,7 +80,7 @@ pub(super) async fn prepare_export_runtime(
     let collection_templates = match &template {
         Some(template) => {
             CollectionID::new(template.collection_id)?
-                .export_templates(pool, None)
+                .export_templates(context, None)
                 .await?
         }
         None => Vec::new(),
@@ -93,7 +97,7 @@ pub(super) async fn prepare_export_runtime(
 }
 
 pub(super) async fn resolve_template(
-    pool: &impl crate::storage::StorageContext,
+    context: &impl crate::storage::StorageContext,
     template_id: Option<i32>,
 ) -> Result<Option<ExportTemplate>, ApiError> {
     let Some(template_id) = template_id else {
@@ -101,7 +105,7 @@ pub(super) async fn resolve_template(
     };
 
     ExportTemplateID::new(template_id)?
-        .instance(pool)
+        .instance(context)
         .await
         .map(Some)
 }
@@ -147,22 +151,4 @@ pub(super) fn runtime_to_task_payload(
         export,
         template_id: runtime.template.as_ref().map(|template| template.id),
     })
-}
-
-pub(super) async fn find_or_create_export_task(
-    pool: &impl crate::storage::StorageContext,
-    submitted_by: PrincipalID,
-    snapshot: StorageTaskScopeSnapshot,
-    idempotency_key: Option<IdempotencyKey>,
-    payload: serde_json::Value,
-    request_hash_value: String,
-) -> Result<TaskRecord, ApiError> {
-    submit_task(
-        pool,
-        TaskSubmission::new(TaskKind::Export, submitted_by, payload, 1)
-            .idempotency_key(idempotency_key)
-            .request_hash(Some(request_hash_value))
-            .scope_snapshot(snapshot),
-    )
-    .await
 }

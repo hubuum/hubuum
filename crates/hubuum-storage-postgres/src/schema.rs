@@ -1093,6 +1093,17 @@ diesel::table! {
         terminal_reason -> Nullable<Varchar>,
         discovery_metadata -> Nullable<Jsonb>,
         logical_identity -> Nullable<Jsonb>,
+        receipt_generation -> Nullable<Uuid>,
+        receipt_incarnation -> Nullable<Uuid>,
+        receipt_created_revision -> Nullable<Int8>,
+        receipt_protection_deadline -> Nullable<Timestamp>,
+        receipt_checkpoint -> Nullable<Text>,
+        receipt_legacy -> Bool,
+        admission_event -> Nullable<Jsonb>,
+        retention_policy_revision -> Nullable<Int8>,
+        detail_expires_at -> Nullable<Timestamp>,
+        details_purge_pending -> Bool,
+        recovery_unavailable -> Bool,
     }
 }
 

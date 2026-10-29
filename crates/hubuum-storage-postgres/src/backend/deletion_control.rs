@@ -81,7 +81,9 @@ struct ApplicationRow {
     checkpoint: Option<DeletionCheckpointIdentity>,
 }
 
-fn decode_application(material: Value) -> Result<ApplicationControlState, PostgresStorageError> {
+pub(crate) fn decode_application(
+    material: Value,
+) -> Result<ApplicationControlState, PostgresStorageError> {
     let row: ApplicationRow = serde_json::from_value(material)
         .map_err(|_| PostgresStorageError::database("Persisted application control is invalid"))?;
     let fence = ApplicationFence::new(row.incarnation, row.revision)?;
@@ -199,7 +201,7 @@ async fn lock_authority(
     Ok(())
 }
 
-async fn require_drained(
+pub(crate) async fn require_drained(
     connection: &mut PostgresConnection,
     fence: ApplicationFence,
 ) -> Result<(), PostgresStorageError> {
@@ -538,7 +540,7 @@ impl DeletionControlStorage for PostgresStorage {
 
     async fn release_application_exposure(
         &self,
-        receipt: ApplicationReapplication,
+        proof: ApplicationExposureProof,
         checkpoint: DeletionCheckpointIdentity,
     ) -> Result<(), StorageError> {
         self.runtime().with_control_transaction(async move |connection| {
@@ -546,8 +548,23 @@ impl DeletionControlStorage for PostgresStorage {
             if !read_authority_on(connection).await?.has_required_audit_completion() {
                 return Err(PostgresStorageError::conflict("Required deletion audit completion remains unprotected"));
             }
+            let tasks=crate::operations::task_retention::lock_on(connection).await?;
+            let receipt=proof.deletion();
+            if !matches!(tasks.activation,TaskReceiptActivation::Disabled) {
+                let task_proof=proof.tasks().ok_or_else(||PostgresStorageError::conflict("Task retention reconciliation is required before exposure"))?;
+                let valid=sql_query("SELECT EXISTS(SELECT 1 FROM hubuum_control.task_retention_control WHERE id=1 AND revision=$1 AND reapplied_revision=$1 AND reapplied_incarnation=$2) AS allowed")
+                    .bind::<BigInt,_>(task_proof.task_revision().value()).bind::<SqlUuid,_>(task_proof.incarnation()).get_result::<AllowedRow>(connection).await?.allowed;
+                if !valid { return Err(PostgresStorageError::conflict("Task retention reconciliation does not cover the current application")); }
+            }
             let application=read_application_on(connection).await?;
-            application.release(&receipt, checkpoint.clone()).map_err(|error|PostgresStorageError::conflict(error.to_string()))?;
+            application.release(receipt, checkpoint.clone()).map_err(|error|PostgresStorageError::conflict(error.to_string()))?;
+            let pending=sql_query("SELECT pending_restore AS allowed FROM hubuum_control.application_control WHERE id=1").get_result::<AllowedRow>(connection).await?.allowed;
+            if pending {
+                sql_query("SELECT set_config('hubuum.reconcile_task_capacity','on',true)").execute(connection).await?;
+                crate::operations::computed_fields::enqueue_restored_computed_rebuilds_on_connection(connection).await?;
+                crate::operations::schema_evolution::enqueue_restored_schema_work_on(connection).await?;
+                sql_query("SELECT set_config('hubuum.reconcile_task_capacity','off',true)").execute(connection).await?;
+            }
             sql_query("UPDATE public.system_maintenance SET generation=0,state='normal',restore_job_id=NULL,entered_at=NULL,updated_at=timezone('UTC',clock_timestamp()) WHERE id=1 AND EXISTS (SELECT 1 FROM hubuum_control.application_control WHERE id=1 AND pending_restore)").execute(connection).await?;
             sql_query("SELECT pg_notify('hubuum_maintenance','normal') WHERE EXISTS (SELECT 1 FROM hubuum_control.application_control WHERE id=1 AND pending_restore)").execute(connection).await?;
             sql_query("UPDATE hubuum_control.application_control SET released_revision=$1,checkpoint=$2,pending_restore=FALSE WHERE id=1")
@@ -563,6 +580,7 @@ impl DeletionControlStorage for PostgresStorage {
     ) -> Result<ApplicationFence, StorageError> {
         self.runtime().with_control_transaction(async move |connection| {
             lock_authority(connection,change.previous()).await?;
+            crate::operations::task_retention::lock_on(connection).await?;
             sql_query("UPDATE hubuum_control.deletion_authority SET material=material WHERE id=1").execute(connection).await?;
             let domain=serde_json::to_value(isolation).map_err(|_|PostgresStorageError::internal("Cannot encode isolation domain"))?;
             let row=sql_query("SELECT NOT EXISTS (SELECT 1 FROM hubuum_control.runtime_registrations WHERE isolation IS DISTINCT FROM $1) AS allowed")
@@ -574,6 +592,7 @@ impl DeletionControlStorage for PostgresStorage {
             let fence=ApplicationFence::new(Uuid::new_v4(),change.next().revision())?;
             sql_query("UPDATE hubuum_control.application_control SET incarnation=$1,reapplication_revision=NULL,released_revision=NULL,checkpoint=NULL WHERE id=1")
                 .bind::<SqlUuid,_>(fence.incarnation()).execute(connection).await?;
+            sql_query("UPDATE hubuum_control.task_retention_control SET reapplied_incarnation=NULL,reapplied_revision=NULL WHERE id=1").execute(connection).await?;
             Ok::<_,PostgresStorageError>(fence)
         }).await.map_err(StorageError::from)
     }

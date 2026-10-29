@@ -1652,7 +1652,7 @@ mod managed_cleanup {
         fixture
             .storage()
             .release_application_exposure(
-                receipt,
+                hubuum_storage_core::ApplicationExposureProof::new(receipt, None).unwrap(),
                 DeletionCheckpointIdentity::new("c".repeat(64)).unwrap(),
             )
             .await
@@ -1715,7 +1715,7 @@ mod managed_cleanup {
         fixture
             .storage()
             .release_application_exposure(
-                first.clone(),
+                hubuum_storage_core::ApplicationExposureProof::new(first.clone(), None).unwrap(),
                 DeletionCheckpointIdentity::new("c".repeat(64)).unwrap(),
             )
             .await
@@ -1735,7 +1735,7 @@ mod managed_cleanup {
         let old_release = fixture
             .storage()
             .release_application_exposure(
-                first.clone(),
+                hubuum_storage_core::ApplicationExposureProof::new(first.clone(), None).unwrap(),
                 DeletionCheckpointIdentity::new("c".repeat(64)).unwrap(),
             )
             .await;
@@ -1754,7 +1754,7 @@ mod managed_cleanup {
         fixture
             .storage()
             .release_application_exposure(
-                receipt.clone(),
+                hubuum_storage_core::ApplicationExposureProof::new(receipt.clone(), None).unwrap(),
                 DeletionCheckpointIdentity::new("e".repeat(64)).unwrap(),
             )
             .await

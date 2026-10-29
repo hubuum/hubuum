@@ -151,10 +151,20 @@ pub(super) fn capture(
         .map_err(invalid_contract_value)
 }
 
+#[cfg(test)]
 pub(super) fn restore(
     snapshot: StorageBackupSnapshot,
     control: crate::task_capacity::MemoryTaskCapacity,
     artifacts: crate::artifacts::Artifacts,
+) -> Result<MemoryState, StorageError> {
+    let mut state = restore_without_repairs(snapshot, control)?;
+    enqueue_restored_repairs(&mut state)?;
+    Ok(state)
+}
+
+pub(super) fn restore_without_repairs(
+    snapshot: StorageBackupSnapshot,
+    control: crate::task_capacity::MemoryTaskCapacity,
 ) -> Result<MemoryState, StorageError> {
     let schema_limits = snapshot.schema_limits();
     let (sections, history) = snapshot.into_parts();
@@ -169,11 +179,16 @@ pub(super) fn restore(
         history.ok_or_else(|| invalid("prepared history"))?,
         &mut state,
     )?;
-    enqueue_computed_rebuilds(&mut state)?;
-    schemas::enqueue_revalidation(&mut state)?;
     state.task_capacity = state.task_accounting_snapshot()?;
     state.task_capacity.finish_restore();
     Ok(state)
+}
+
+pub(super) fn enqueue_restored_repairs(state: &mut MemoryState) -> Result<(), StorageError> {
+    enqueue_computed_rebuilds(state)?;
+    schemas::enqueue_revalidation(state)?;
+    state.task_capacity = state.task_accounting_snapshot()?;
+    Ok(())
 }
 
 fn enqueue_computed_rebuilds(state: &mut MemoryState) -> Result<(), StorageError> {
@@ -222,6 +237,11 @@ fn enqueue_computed_rebuilds(state: &mut MemoryState) -> Result<(), StorageError
             trace_link: None,
             claim_token: None,
             execution_fence: None,
+            receipt_admission: None,
+            retention_policy: None,
+            details_expires_at: None,
+            recovery_unavailable: false,
+            invocation: None,
         };
         record.projection()?;
         state.store_task(id.id(), record)?;

@@ -1147,6 +1147,16 @@
               }
             }
           },
+          "410": {
+            "description": "Submission recognized; task details expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDetailsExpiredResponse"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Shared task admission or byte capacity exhausted",
             "content": {
@@ -7774,6 +7784,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Submission recognized; task details expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDetailsExpiredResponse"
                 }
               }
             }
@@ -16109,8 +16129,28 @@
               }
             }
           },
+          "410": {
+            "description": "Submission recognized; task details expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDetailsExpiredResponse"
+                }
+              }
+            }
+          },
           "429": {
-            "description": "Too many active export tasks",
+            "description": "Shared task admission or byte capacity exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Task identity or control reconciliation unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -16411,6 +16451,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Submission recognized; task details expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDetailsExpiredResponse"
                 }
               }
             }
@@ -21364,6 +21414,16 @@
               }
             }
           },
+          "410": {
+            "description": "Submission recognized; task details expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDetailsExpiredResponse"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Shared task admission or byte capacity exhausted",
             "content": {
@@ -23319,6 +23379,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Submission recognized; task details expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDetailsExpiredResponse"
                 }
               }
             }
@@ -39831,6 +39901,34 @@
           }
         },
         "additionalProperties": false
+      },
+      "TaskDetailsExpiredResponse": {
+        "type": "object",
+        "description": "Minimal recognized submission response after its task details have expired.\nConstruction is restricted to the authorized receipt application path.",
+        "required": [
+          "reason",
+          "task_identity",
+          "kind"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/TaskKind"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "task_identity": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
       },
       "TaskDiscoveryTarget": {
         "oneOf": [

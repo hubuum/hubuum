@@ -78,6 +78,8 @@ pub use task_capacity::{
 mod task_execution;
 mod task_metadata;
 mod task_queue;
+mod task_retention;
+pub use task_retention::*;
 mod task_search;
 mod telemetry;
 mod token_credentials;
@@ -343,8 +345,8 @@ pub use task_queue::{
     StorageImportTaskResultBuilder, StorageTask, StorageTaskAccess, StorageTaskBuilder,
     StorageTaskChildListQuery, StorageTaskCreateRequest, StorageTaskCreateRequestBuilder,
     StorageTaskDurations, StorageTaskEvent, StorageTaskEventBuilder, StorageTaskKind,
-    StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskProgress, StorageTaskScopeSnapshot,
-    StorageTaskStatus, TaskQueueStorage,
+    StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskProgress,
+    StorageTaskRemoteInvocation, StorageTaskScopeSnapshot, StorageTaskStatus, TaskQueueStorage,
 };
 pub use task_search::{StorageTaskSearch, TaskTimeRange};
 pub use telemetry::{StorageCapability, StorageObservation, StorageObserver};

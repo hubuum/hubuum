@@ -487,7 +487,18 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
             )
         });
     storage.start_query_observation_control();
-    let app_context = AppContext::new(storage, permission_backend);
+    let task_receipts = crate::services::deletion_recovery::TaskReceiptService::configured(
+        &config.control_recovery,
+    )
+    .await
+    .unwrap_or_else(|error| {
+        fatal_error(
+            &format!("Task receipt configuration: {error}"),
+            EXIT_CODE_CONFIG_ERROR,
+        )
+    });
+    let app_context =
+        AppContext::new(storage, permission_backend).with_task_receipts(task_receipts);
     RuntimeServices {
         _recovery: recovery,
         registration,

@@ -409,7 +409,7 @@ mod tests {
     }
 
     async fn queued(storage: &MemoryStorage) -> StorageTask {
-        storage
+        let outcome = storage
             .create_task(
                 StorageTaskCreateRequest::builder(
                     StorageTaskKind::Import,
@@ -421,7 +421,11 @@ mod tests {
                 .unwrap(),
             )
             .await
-            .unwrap()
+            .unwrap();
+        let StorageTaskSubmissionOutcome::CreatedReady(task) = outcome else {
+            panic!("fresh unkeyed task")
+        };
+        task
     }
 
     async fn quarantine(storage: &MemoryStorage) {

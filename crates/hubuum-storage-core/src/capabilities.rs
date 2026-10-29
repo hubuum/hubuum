@@ -79,6 +79,7 @@ pub mod workflows {
     pub use crate::task_control::*;
     pub use crate::task_execution::*;
     pub use crate::task_queue::*;
+    pub use crate::task_retention::*;
     pub use crate::{
         StorageAuthorizationPermission, StorageClass, StorageCollection, StorageObject,
         WorkflowStorage,

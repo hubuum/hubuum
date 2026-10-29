@@ -15,7 +15,7 @@ use hubuum_domain::{
 };
 use hubuum_events_core::{EventCatalogError, EventIdentifierError};
 
-use crate::models::TokenPolicyError;
+use crate::models::{TaskDetailsExpiredResponse, TokenPolicyError};
 use crate::observability::metrics;
 use crate::storage::{StorageError, StorageErrorKind};
 use hubuum_storage_core::TaskCapacityRejection;
@@ -69,6 +69,8 @@ pub fn fatal_error(message: &str, exit_code: i32) -> ! {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub enum ApiError {
     TaskCapacity(TaskCapacityRejection),
+    TaskDetailsExpired(TaskDetailsExpiredResponse),
+    LegacyTaskRequestUnverifiable,
     TaskStopped(#[serde(serialize_with = "serialize_task_stop_reason")] TaskStopReason),
     Unauthorized(String),
     ReauthenticationRequired,
@@ -99,6 +101,8 @@ impl ApiError {
     pub fn class(&self) -> &'static str {
         match self {
             ApiError::TaskCapacity(reason) => reason.as_str(),
+            ApiError::TaskDetailsExpired(_) => "task_details_expired",
+            ApiError::LegacyTaskRequestUnverifiable => "legacy_request_unverifiable",
             ApiError::TaskStopped(reason) => reason.as_str(),
             ApiError::Unauthorized(_) => "unauthorized",
             ApiError::ReauthenticationRequired => "reauthentication_required",
@@ -150,6 +154,12 @@ impl ApiError {
     /// bodies and streaming events.
     pub fn public_message(&self) -> &str {
         match self {
+            ApiError::TaskDetailsExpired(_) => {
+                "Task details have expired; the original submission is still recognized"
+            }
+            ApiError::LegacyTaskRequestUnverifiable => {
+                "The legacy submission is recognized but its original request cannot be verified"
+            }
             ApiError::TaskCapacity(reason) if reason.is_unavailable() => {
                 "Task admission is unavailable until control reconciliation completes"
             }
@@ -282,9 +292,10 @@ impl From<PositiveIdError> for ApiError {
 impl fmt::Display for ApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ApiError::TaskStopped(_) | ApiError::TaskCapacity(_) => {
-                f.write_str(self.public_message())
-            }
+            ApiError::TaskStopped(_)
+            | ApiError::TaskCapacity(_)
+            | ApiError::TaskDetailsExpired(_)
+            | ApiError::LegacyTaskRequestUnverifiable => f.write_str(self.public_message()),
             ApiError::HashError(message) => write!(f, "{message}"),
             ApiError::NotFound(message) => write!(f, "{message}"),
             ApiError::Gone(message) => write!(f, "{message}"),
@@ -316,6 +327,12 @@ impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
         metrics::api_error(self.class());
         match self {
+            ApiError::TaskDetailsExpired(receipt) => HttpResponse::Gone()
+                .insert_header(("Cache-Control", "no-store"))
+                .json(receipt),
+            ApiError::LegacyTaskRequestUnverifiable => HttpResponse::Conflict()
+                .insert_header(("Cache-Control", "no-store"))
+                .json(json!({"error":"Conflict", "reason":self.class(), "message":self.public_message()})),
             ApiError::TaskCapacity(reason) => HttpResponse::build(self.status_code())
                 .insert_header(("Cache-Control", "no-store"))
                 .json(json!({"error":"Task Capacity", "reason":reason.as_str(), "message":self.public_message()})),
@@ -400,7 +417,10 @@ impl ResponseError for ApiError {
 
     fn status_code(&self) -> StatusCode {
         match self {
-            ApiError::TaskStopped(_) => StatusCode::CONFLICT,
+            ApiError::TaskStopped(_) | ApiError::LegacyTaskRequestUnverifiable => {
+                StatusCode::CONFLICT
+            }
+            ApiError::TaskDetailsExpired(_) => StatusCode::GONE,
             ApiError::TaskCapacity(reason) if reason.is_unavailable() => {
                 StatusCode::SERVICE_UNAVAILABLE
             }

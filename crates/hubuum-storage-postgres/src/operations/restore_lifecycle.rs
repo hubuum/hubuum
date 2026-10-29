@@ -635,8 +635,10 @@ async fn apply_restore_replay_parts(
                 // a recently lowered policy needs their scope to drain.
                 diesel::sql_query("SELECT set_config('hubuum.reconcile_task_capacity', 'on', true)")
                     .execute(connection).await?;
-                enqueue_restored_computed_rebuilds_on_connection(connection).await?;
-                super::schema_evolution::enqueue_restored_schema_work_on(connection).await?;
+                if empty_authority {
+                    enqueue_restored_computed_rebuilds_on_connection(connection).await?;
+                    super::schema_evolution::enqueue_restored_schema_work_on(connection).await?;
+                }
                 diesel::sql_query("SELECT set_config('hubuum.reconcile_task_capacity', 'off', true)")
                     .execute(connection).await?;
 
