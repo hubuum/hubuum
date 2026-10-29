@@ -1,5 +1,5 @@
 use super::*;
-use hubuum_domain::ServiceAccountId;
+use hubuum_domain::{GroupId, ServiceAccountId};
 use hubuum_storage_conformance::verify_task_wait_resume;
 use hubuum_storage_core::{
     StorageTask, StorageTaskCancellationChange, StorageTaskCancellationRequest,
@@ -15,6 +15,7 @@ struct Fixture {
     backend: StorageHandle,
     user: BackendUserFixture,
     service_account: Option<ServiceAccountId>,
+    service_account_owner: Option<GroupId>,
     task: StorageTask,
 }
 
@@ -30,23 +31,35 @@ impl Fixture {
     ) -> Self {
         let backend = environment.storage();
         let user = create_backend_user(&backend, &prefix("task_wait_user")).await;
-        let service_account = if service_account {
-            Some(
-                backend
-                    .create_service_account(StorageServiceAccountCreate::new(
-                        prefix("task_wait_service_account"),
-                        "durable wait contract",
-                        group_id(1),
-                        Some(user.principal_id),
-                        EventContext::system(),
-                    ))
-                    .await
-                    .unwrap()
-                    .into_value()
-                    .id(),
-            )
+        let (service_account, service_account_owner) = if service_account {
+            let owner = backend
+                .create_group(
+                    StorageGroupCreate::new(
+                        None,
+                        prefix("task_wait_owner"),
+                        Some("durable wait contract owner".to_string()),
+                    ),
+                    &EventContext::system(),
+                )
+                .await
+                .unwrap()
+                .into_value()
+                .id();
+            let id = backend
+                .create_service_account(StorageServiceAccountCreate::new(
+                    prefix("task_wait_service_account"),
+                    "durable wait contract",
+                    owner,
+                    Some(user.principal_id),
+                    EventContext::system(),
+                ))
+                .await
+                .unwrap()
+                .into_value()
+                .id();
+            (Some(id), Some(owner))
         } else {
-            None
+            (None, None)
         };
         let submitted_by = service_account
             .map(|id| principal_id(id.id()))
@@ -69,6 +82,7 @@ impl Fixture {
             backend,
             user,
             service_account,
+            service_account_owner,
             task,
         }
     }
@@ -147,6 +161,13 @@ impl Fixture {
                     id,
                     EventContext::system(),
                 ))
+                .await
+                .unwrap()
+                .into_value();
+        }
+        if let Some(id) = self.service_account_owner {
+            self.backend
+                .delete_group(id, &EventContext::system())
                 .await
                 .unwrap()
                 .into_value();
