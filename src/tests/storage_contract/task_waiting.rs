@@ -601,23 +601,39 @@ async fn waiting_deadlines_settle_without_reexecuting(#[case] notify: bool) {
             .to_std()
             .unwrap_or_default();
         tokio::time::sleep(remaining + Duration::from_millis(10)).await;
-        if notify {
-            assert!(matches!(
-                fixture
-                    .backend
-                    .resume_task(resume_request(&wait))
-                    .await
-                    .unwrap(),
-                StorageTaskResumeOutcome::Stopped(_)
-            ));
-        } else {
-            fixture
-                .backend
-                .recover_expired_task_leases(100)
-                .await
-                .unwrap();
-        }
-        let stopped = fixture.load().await;
+        // Parallel contracts run global recovery sweeps. A sweep may hold our
+        // expired task or finish it before its notification arrives; both paths
+        // must converge on the same terminal stop without replaying execution.
+        let stopped = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if notify {
+                    match fixture.backend.resume_task(resume_request(&wait)).await {
+                        Ok(StorageTaskResumeOutcome::Stopped(_)
+                        | StorageTaskResumeOutcome::Unchanged) => {
+                            let task = fixture.load().await;
+                            assert!(task.status().is_terminal(), "an expired notification must stop the task or observe completed recovery");
+                            break task;
+                        }
+                        Ok(StorageTaskResumeOutcome::Queued(_)) => {
+                            panic!("an expired notification must not requeue execution");
+                        }
+                        Err(error)
+                            if error.kind() == StorageErrorKind::Conflict
+                                && error.message() == "Task is busy; retry resuming" => {}
+                        Err(error) => panic!("unexpected expired-notification failure: {error}"),
+                    }
+                } else {
+                    fixture.backend.recover_expired_task_leases(100).await.unwrap();
+                    let task = fixture.load().await;
+                    if task.status().is_terminal() {
+                        break task;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("expired waiting work must settle despite concurrent recovery within five seconds");
         assert!(stopped.status().is_terminal());
         assert_eq!(
             stopped.control().terminal_reason(),
@@ -625,6 +641,23 @@ async fn waiting_deadlines_settle_without_reexecuting(#[case] notify: bool) {
         );
         assert!(stopped.checkpoint().is_none());
         assert!(!stopped.has_lease());
+        let events = fixture
+            .backend
+            .list_task_events(StorageTaskChildListQuery::new(
+                fixture.task.id(),
+                QueryOptions::new(vec![], vec![], Some(100), None, true).unwrap(),
+            ))
+            .await
+            .unwrap()
+            .into_parts()
+            .0;
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.event_type() == "cancelled")
+                .count(),
+            1
+        );
         fixture.cleanup().await;
     }
 }
