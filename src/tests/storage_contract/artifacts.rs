@@ -26,8 +26,12 @@ async fn stage(
         .bind_task(
             &identity,
             lease,
-            ArtifactReservation::new(*uuid::Uuid::new_v4().as_bytes(), size as u64, 1 << 20)
-                .unwrap(),
+            ArtifactReservation::new(
+                *uuid::Uuid::new_v4().as_bytes(),
+                size as u64,
+                2 * size as u64 + u64::from(limits.manifest_bytes()),
+            )
+            .unwrap(),
             Utc::now() + chrono::Duration::hours(1),
         )
         .await
@@ -146,12 +150,21 @@ async fn worker_admission_reserves_manifest_space_before_upload() {
 #[case::empty(0)]
 #[case::partial(123)]
 #[case::multiple_blocks(3500)]
+#[case::past_legacy_block_limit(1025 * 1024)]
 #[actix_web::test]
 async fn replica_can_verify_and_atomically_publish_without_the_producer_spool(#[case] size: usize) {
     let _permit = postgres_permit().await;
     for environment in available_backend_environments() {
         let fixture = Fixture::new(environment, StorageTaskKind::Export).await;
         let lease = fixture.claim().await;
+        fixture
+            .backend
+            .renew_task_lease(
+                lease.clone(),
+                StorageTaskLeaseDuration::from_milliseconds(600_000).unwrap(),
+            )
+            .await
+            .unwrap();
         let (identity, limits) = stage(&fixture, &lease, size).await;
         let store = fixture.backend.artifact_store();
         let content = vec![b'x'; size];
@@ -191,7 +204,7 @@ async fn replica_can_verify_and_atomically_publish_without_the_producer_spool(#[
         };
         assert_eq!(output.artifact_reference(), Some(&reference));
         fixture.cleanup().await;
-        store.cleanup().await.unwrap();
+        while store.cleanup().await.unwrap() > 0 {}
     }
 }
 

@@ -231,8 +231,8 @@ release outstanding cleanup obligations.
 
 `artifact-remote-v2` measures these contracts on a macOS 27.2 ARM64 host
 (Mac14,12, 12 logical CPUs, 32 GiB RAM), Rust 1.99, local APFS temporary storage,
-and a remote PostgreSQL 18.6 server. Each process has a pool of eight connections
-and two executing output slots; two fresh worker processes share each disposable
+and a remote PostgreSQL 18.6 server. Each process has a pool of eight connections, a 30-second acquisition timeout,
+a 30-second statement timeout, and two executing output slots; two fresh worker processes share each disposable
 database. The driver sets the persisted deployment/principal/collection/kind
 resident limits to 8 GiB. Worker CPU and cgroup memory limits are not imposed;
 the 512 MiB RSS ceiling is an asserted measurement. The server reports 128 MiB

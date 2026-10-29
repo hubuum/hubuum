@@ -130,7 +130,9 @@ async fn full_pipeline_resource_probe() {
         .with_max_level(tracing::Level::ERROR)
         .with_test_writer()
         .try_init();
-    let context = TestContext::new().await;
+    let config = crate::config::get_config().unwrap();
+    let pool = crate::tests::postgres_test_pool(&config.database_url, config.db_pool_size);
+    let context = TestContext::with_pool(pool).await;
     let collection = context.collection_fixture("artifact_resource").await;
     let class = NewHubuumClass {
         name: context.scoped_name("artifact_rows"),

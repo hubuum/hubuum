@@ -278,7 +278,7 @@ impl ArtifactStore for PostgresArtifactStore {
         identity: &ArtifactIdentity,
         ordinal: u32,
     ) -> ArtifactResult<Option<Vec<u8>>> {
-        if ordinal > 1024 {
+        if ordinal > ArtifactLimits::format_ceiling().blocks() {
             return Err(ArtifactError::Limit(
                 "Artifact block ordinal exceeds version 1 bounds".into(),
             ));

@@ -39,6 +39,8 @@ class ArtifactPipelineTests(unittest.TestCase):
                     else:
                         result = probe.run_pair("probe", Path("admin"), args, 0)
                         self.assertEqual(result["database"]["version"], "18.6")
+                        self.assertEqual(result["worker_pool_size"], 8)
+                        self.assertEqual(result["pool_acquire_timeout_ms"], 30000)
 
                 create = next(command[-1] for command, _ in commands
                               if command[-1].startswith("CREATE DATABASE "))
@@ -46,4 +48,6 @@ class ArtifactPipelineTests(unittest.TestCase):
                 self.assertRegex(database, r"^hubuum_artifact_probe_[0-9a-f]{32}$")
                 self.assertEqual(commands[-1][0][-1], f"DROP DATABASE {database} WITH (FORCE)")
                 self.assertEqual(commands[1][1]["PGDATABASE"], database)
+                self.assertEqual(commands[1][1]["HUBUUM_DB_POOL_SIZE"], "8")
+                self.assertEqual(commands[1][1]["HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS"], "30000")
                 self.assertEqual(len(processes), 2)
