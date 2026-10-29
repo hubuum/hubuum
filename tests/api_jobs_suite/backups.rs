@@ -28,7 +28,7 @@ mod tests {
 
     async fn wait_for_backup(context: &TestContext, task_id: i32) -> TaskResponse {
         let mut last_task = None;
-        for _ in 0..200 {
+        for _ in 0..crate::tests::task_poll_attempts() {
             let response = get_request(
                 &context.pool,
                 &context.admin_token,

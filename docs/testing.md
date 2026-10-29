@@ -35,6 +35,13 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --all --check
 ```
 
+API task tests use 200 completion polls by default. A remote database containing
+the full suite's fixtures can need a longer wait, especially when a full backup
+occupies the shared test worker. Set `HUBUUM_TEST_TASK_POLL_ATTEMPTS=2000` for such
+runs. This positive-integer setting changes the functional tests' polling budget;
+production deadlines and the tests' result, authorization and cancellation
+assertions stay unchanged.
+
 The runner includes PostgreSQL adapter tests and a resource-limited JSON Schema
 probe. Python applies the probe's process limits; its assertions remain in Rust.
 Destructive restore contracts use a second runner-owned database with the same

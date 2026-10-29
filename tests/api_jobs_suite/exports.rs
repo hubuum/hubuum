@@ -412,7 +412,7 @@ mod tests {
         expected_terminal_statuses: &[TaskStatus],
     ) -> TaskResponse {
         let mut last_task = None;
-        for _ in 0..200 {
+        for _ in 0..crate::tests::task_poll_attempts() {
             let resp = get_request(pool, token, &format!("/api/v1/tasks/{task_id}")).await;
             let resp = assert_response_status(resp, StatusCode::OK).await;
             let task: TaskResponse = test::read_body_json(resp).await;

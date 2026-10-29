@@ -523,7 +523,7 @@ mod tests {
         task_id: i32,
         expected: TaskStatus,
     ) -> TaskResponse {
-        for _ in 0..200 {
+        for _ in 0..crate::tests::task_poll_attempts() {
             let resp = get_request(
                 &context.pool,
                 &context.admin_token,
