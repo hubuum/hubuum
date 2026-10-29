@@ -733,6 +733,11 @@ async fn process_claimed_task(
     task: &ClaimedTask,
     backup_settings: &BackupSettings,
 ) -> Result<TaskStatus, ApiError> {
+    if task.checkpoint.is_some() {
+        return Err(ApiError::BadRequest(
+            "This worker does not support the task's stored checkpoint".to_string(),
+        ));
+    }
     let task_kind = task_kind_from_db(&task.kind)?;
     if task_kind == TaskKind::SchemaValidation {
         return crate::services::tasks::execute_schema_validation(context, task).await;
@@ -840,6 +845,63 @@ pub(super) async fn mark_claimed_task_failed(
     )
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod checkpoint_tests {
+    use std::sync::Arc;
+
+    use hubuum_domain::TaskId;
+    use hubuum_storage_core::{
+        StorageTask, StorageTaskCheckpoint, StorageTaskClaim, StorageTaskClaimToken,
+        StorageTaskControl, StorageTaskKind, StorageTaskLease, StorageTaskStatus,
+    };
+    use hubuum_storage_memory::MemoryStorage;
+    use rstest::rstest;
+
+    use super::*;
+    use crate::storage::StorageHandle;
+
+    #[rstest]
+    #[case::export(StorageTaskKind::Export)]
+    #[case::backup(StorageTaskKind::Backup)]
+    #[actix_web::test]
+    async fn unsupported_checkpoint_is_rejected_before_normal_execution(
+        #[case] kind: StorageTaskKind,
+    ) {
+        let now = Utc::now();
+        let deadline = now + chrono::Duration::minutes(1);
+        let id = TaskId::new(1).unwrap();
+        let mut control = StorageTaskControl::new(kind);
+        control.admit_deadline(deadline);
+        let task = StorageTask::builder(id, kind, StorageTaskStatus::Validating, now, now)
+            .control(control)
+            .checkpoint(Some(
+                StorageTaskCheckpoint::try_new(
+                    "future.provider",
+                    1,
+                    serde_json::json!({"secret": "provider checkpoint"}),
+                )
+                .unwrap(),
+            ))
+            .started_at(Some(now))
+            .lease_expires_at(Some(deadline))
+            .attempt_count(2)
+            .try_build()
+            .unwrap();
+        let lease = StorageTaskLease::new(id, StorageTaskClaimToken::new("opaque lease"));
+        let task =
+            ClaimedTask::from_storage(StorageTaskClaim::try_new(task, lease).unwrap()).unwrap();
+        let storage = StorageHandle::from_registered_backend(MemoryStorage::new());
+        let permissions = Arc::new(LocalPermissionBackend::new(storage.clone(), "admin".into()));
+        let context = AppContext::new(storage, permissions);
+        let error = process_claimed_task(&context, &task, &configured_backup_settings())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, ApiError::BadRequest(message) if message == "This worker does not support the task's stored checkpoint")
+        );
+    }
 }
 
 #[cfg(test)]

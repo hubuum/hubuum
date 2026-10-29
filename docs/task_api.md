@@ -54,10 +54,18 @@ Public task-producing endpoints today:
 - `queued`
 - `validating`
 - `running`
+- `waiting`
 - `succeeded`
 - `failed`
 - `partially_succeeded`
 - `cancelled`
+
+`waiting` is a durable, nonterminal state with no execution lease. Its original
+execution deadline continues to apply. The initial storage foundation supports
+private checkpoints for export and backup work; current built-in producers do
+not enter this state, and there is no public wait/resume endpoint or provider
+integration. Checkpoint contents and wake tokens are never part of task responses.
+See [durable waiting](task_admission.md#durable-waiting-foundation).
 
 Terminal statuses:
 
@@ -81,7 +89,7 @@ A reason must be a nonempty single line of at most 512 UTF-8 bytes. Unknown
 request fields are rejected. `expected_status` returns `409 Conflict` if a
 previously uncancelled, nonterminal task has moved to another status.
 
-A queued task becomes terminal atomically and returns `200 OK`. An active task
+A queued or waiting task becomes terminal atomically and returns `200 OK`. An active task
 retains its status and lease while its durable cancellation request returns
 `202 Accepted`. Poll the task until cleanup is acknowledged with a terminal
 status. Repeating a request returns the existing state without replacing the

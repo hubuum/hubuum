@@ -1547,7 +1547,7 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
         }
         (name, "result") if name.starts_with("hubuum_storage_operation") => storage_results(),
         ("hubuum_task_cancellation_requests_total", "result") => {
-            strings(&["queued", "active", "unchanged"])
+            strings(&["queued", "waiting", "active", "unchanged"])
         }
         (name, "reason") if name.starts_with("hubuum_task_") => {
             strings(&["cancel_requested", "deadline_exceeded"])

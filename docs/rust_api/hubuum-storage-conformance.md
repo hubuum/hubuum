@@ -1,6 +1,6 @@
 # `hubuum-storage-conformance` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.7` release train.
+Status: experimental public API in the storage SDK `0.9` release train.
 
 ## Purpose and Callers
 
@@ -12,6 +12,12 @@ without depending on the root server crate or PostgreSQL implementation.
 The supported entrypoints are the public fixture traits, probe types, recording
 observer and sink helpers, and `verify_*` functions exported by the crate.
 Application-owned HTTP fixture implementations remain outside this crate.
+
+The SDK 0.9 `verify_task_wait_resume` verifier accepts a complete task execution
+and queue adapter plus an admitted live-lease wait request. It checks durable
+checkpoint retention, execution-lease fencing, preservation of task input and
+deadline, and exactly-once wakeup. Callers provide isolated export/backup work
+and own cleanup; the verifier leaves the task queued with its checkpoint.
 
 ## Compatibility
 
@@ -27,9 +33,10 @@ release when an already conforming adapter needs source or behavior changes.
 
 ## Errors, Runtime, and Cancellation
 
-Fixture setup and verification return crate-owned `ConformanceError` values;
-invalid adapter results are reported rather than panicking. Panics are reserved
-for defects in the conformance harness itself.
+Fixture setup and verification return crate-owned `ConformanceError` values or
+the boxed `FixtureError` used by logical identity, recovery, and task-wait
+verifiers. Invalid adapter results are reported rather than panicking. Panics
+are reserved for defects in the conformance harness itself.
 
 The asynchronous fixture traits require Send-capable futures but do not select
 an executor. Dropping a verifier future requests cancellation. Fixtures own

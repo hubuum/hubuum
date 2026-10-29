@@ -1,6 +1,6 @@
 [package]
 name = "hubuum-query"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2024"
 rust-version = "1.88"
 description = "App-neutral query parsing and search parameter types for Hubuum."
@@ -15,7 +15,7 @@ policy-document = "docs/rust_api/hubuum-query.md"
 release-train = "storage-sdk"
 
 [dependencies]
-hubuum-regex = { version = "=0.8.0", path = "../hubuum-regex" }
+hubuum-regex = { version = "=0.9.0", path = "../hubuum-regex" }
 base64 = "0.23"
 bigdecimal = "0.4"
 chrono = { version = "0.4", features = ["serde"] }

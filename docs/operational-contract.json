@@ -2107,6 +2107,7 @@
             "resolve_object",
             "resolve_object_relation",
             "resume_maintenance_without_restore",
+            "resume_task",
             "resume_terminal_restore",
             "revoke_all_local_collection_grants",
             "revoke_all_principal_tokens",
@@ -2147,6 +2148,7 @@
             "validate_object",
             "validate_object_create",
             "validate_object_update",
+            "wait_task",
             "with_transaction"
           ]
         },
@@ -2537,6 +2539,7 @@
             "resolve_object",
             "resolve_object_relation",
             "resume_maintenance_without_restore",
+            "resume_task",
             "resume_terminal_restore",
             "revoke_all_local_collection_grants",
             "revoke_all_principal_tokens",
@@ -2577,6 +2580,7 @@
             "validate_object",
             "validate_object_create",
             "validate_object_update",
+            "wait_task",
             "with_transaction"
           ]
         },
@@ -2702,6 +2706,7 @@
           "bounded_by": "enumerated values",
           "values": [
             "queued",
+            "waiting",
             "active",
             "unchanged"
           ]
@@ -3111,6 +3116,7 @@
             "queued",
             "validating",
             "running",
+            "waiting",
             "succeeded",
             "failed",
             "partially_succeeded",
@@ -7536,6 +7542,7 @@
           "started",
           "validating",
           "running",
+          "waiting",
           "succeeded",
           "failed",
           "partially_succeeded",

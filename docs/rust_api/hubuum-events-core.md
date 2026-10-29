@@ -1,6 +1,6 @@
 # `hubuum-events-core` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.7` release train.
+Status: experimental public API in the storage SDK `0.9` release train.
 
 ## Purpose and Callers
 
@@ -36,6 +36,11 @@ The `Authentication` catalog variant and subject filter fields expand the Rust
 API: update exhaustive matches and use `Default` for omitted filter fields.
 
 ## Errors, Runtime, and Security
+
+SDK 0.9 adds the closed `Action::Waiting` task lifecycle action. Update exhaustive
+event-action matches and catalog validation when upgrading the coordinated SDK
+train. The event reports a committed wait transition without publishing its
+private checkpoint or wake token.
 
 The crate performs no I/O and requires no asynchronous runtime. Constructors
 return explicit errors for invalid caller input and do not intentionally panic.
