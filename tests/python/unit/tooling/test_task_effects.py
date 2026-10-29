@@ -3,6 +3,8 @@
 from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
+import ssl
+import subprocess
 import tempfile
 import time
 import unittest
@@ -12,6 +14,22 @@ from support.task_effects import EffectFixture
 
 
 class TaskEffectFixtureTests(unittest.TestCase):
+    def test_verified_https_uses_a_server_leaf_distinct_from_the_trust_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with EffectFixture(Path(temporary) / "effect") as fixture:
+                context = ssl.create_default_context(cafile=str(fixture.certificate))
+                request = urllib.request.Request(fixture.remote_url.replace("retention-effect", "localhost"),
+                                                 method="POST", data=b'{"probe":"tls"}',
+                                                 headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(request, context=context, timeout=5) as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(json.loads(response.read()), {"received": True})
+                leaf = fixture.directory / "server.pem"
+                self.assertNotEqual(leaf.read_bytes(), fixture.certificate.read_bytes())
+                constraints = subprocess.run(["openssl", "x509", "-in", str(leaf), "-noout", "-ext", "basicConstraints"],
+                                             check=True, capture_output=True, text=True, timeout=5)
+                self.assertIn("CA:FALSE", constraints.stdout)
+
     def test_counter_is_visible_while_effect_response_is_held(self):
         with tempfile.TemporaryDirectory() as temporary:
             with EffectFixture(Path(temporary) / "effect") as fixture:
@@ -47,4 +65,3 @@ class TaskEffectFixtureTests(unittest.TestCase):
         for probe in ("0", "ninth"):
             with self.subTest(probe=probe), self.assertRaisesRegex(ValueError, "unique and bounded"):
                 fixture.hold_response(probe)
-

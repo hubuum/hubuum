@@ -186,7 +186,7 @@ async fn expired_receipt_uses_real_external_read_task_policy(
                 async move {
                     let version = json!({"hash":"test", "loaded_at":"2025-01-01T00:00:00Z", "label_set":null, "generation":1});
                     HttpResponse::build(status).json(json!({
-                        "results":[{"index":0,"status":"success","result":{"decision":decision,"version":version,"policy_id":"receipt-policy"}}],
+                        "results":[{"index":0,"status":"success","result":{"decision":decision,"version":version,"policy_id":if decision == "Allow" { "receipt-policy" } else { "" }}}],
                         "version":version,"successful":1,"failed":0
                     }))
                 }

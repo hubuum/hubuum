@@ -97,6 +97,8 @@ def run_safety_drill(arguments, deployment, origins, root, monitor):
         "collection_id": collection, "class_id": None, "name": "safety-effect-" + probe,
         "description": "Response held after one external effect", "method": "post",
         "url_template": deployment.effects.remote_url, "timeout_ms": 900000,
+        "headers_template": {"Content-Type": "application/json"},
+        "body_template": "{{ body_override | tojson }}",
         "allowed_subject_types": ["collection"],
     })
     body = {"subject": {"type": "collection", "collection_id": collection},

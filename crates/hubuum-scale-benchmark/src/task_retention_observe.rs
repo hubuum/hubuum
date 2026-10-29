@@ -10,8 +10,10 @@ use clap::Args;
 use hubuum_domain::TaskIdentity;
 use hubuum_scale_core::ScaleBenchmarkBackend;
 use hubuum_scale_core::lifecycle::LifecycleBenchmarkBackend;
-use hubuum_storage_core::{TaskControlState, TaskPurgeScope};
-use hubuum_storage_postgres::scale_benchmark::PostgresScaleBackend;
+use hubuum_storage_core::{TaskControlState, TaskPurgeScope, TaskReceiptOutcome};
+use hubuum_storage_postgres::scale_benchmark::{
+    PostgresScaleBackend, PostgresTaskRetentionObservation,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -62,6 +64,55 @@ struct Lifetime {
     detail_removal_observed_ms: Option<i64>,
     output_expires_at_ms: Option<i64>,
     output_removal_observed_ms: Option<i64>,
+    last_observed_ms: Option<i64>,
+    last_observed_nonterminal_ms: Option<i64>,
+}
+
+impl Lifetime {
+    fn observe(&mut self, row: &PostgresTaskRetentionObservation, at: i64) -> Result<()> {
+        stable_anchor(&mut self.terminal_at_ms, row.terminal_at_ms())?;
+        stable_anchor(&mut self.receipt_expires_at_ms, row.receipt_expires_at_ms())?;
+        stable_anchor(&mut self.details_expires_at_ms, row.details_expires_at_ms())?;
+        stable_anchor(&mut self.output_expires_at_ms, row.output_expires_at_ms())?;
+        self.last_observed_ms = Some(at);
+        self.last_observed_nonterminal_ms =
+            (row.task_id().is_some() && row.receipt_present() && row.terminal_at_ms().is_none())
+                .then_some(at);
+        Ok(())
+    }
+
+    fn nonterminal_through(&self, at: i64) -> bool {
+        self.terminal_at_ms.is_none()
+            && self
+                .last_observed_nonterminal_ms
+                .is_some_and(|observed| observed >= at && Some(observed) == self.last_observed_ms)
+    }
+}
+
+fn receipt_occupancy(control: &TaskControlState, target: usize, at: i64) -> Value {
+    let mut may_execute = 0;
+    let mut terminal = 0;
+    let mut recovery_unknown = 0;
+    let mut eligible = 0;
+    let mut oldest_eligible_ms = 0;
+    for receipt in control.receipts() {
+        match receipt.outcome() {
+            TaskReceiptOutcome::MayExecute => may_execute += 1,
+            TaskReceiptOutcome::Terminal { .. } => terminal += 1,
+            TaskReceiptOutcome::RecoveryUnknown { .. } => recovery_unknown += 1,
+        }
+        if let Some(due) = receipt.expires_at().map(|at| at.timestamp_millis())
+            && due <= at
+        {
+            eligible += 1;
+            oldest_eligible_ms = oldest_eligible_ms.max(at - due);
+        }
+    }
+    json!({"at_ms":at,"receipts":control.receipts().len(),"target":target,
+        "may_execute":may_execute,"terminal":terminal,"recovery_unknown":recovery_unknown,
+        "terminal_unexpired":terminal+recovery_unknown-eligible,"eligible_receipts":eligible,
+        "oldest_eligible_ms":oldest_eligible_ms,
+        "scope":"verified checkpoint receipt outcomes; MayExecute does not distinguish queued/running or terminal catch-up"})
 }
 
 #[derive(Deserialize)]
@@ -138,6 +189,9 @@ fn eligible_lags(
     let mut lags = Vec::new();
     let mut eligible = 0;
     let mut oldest_pending_ms = 0;
+    let mut nonterminal = 0;
+    let mut unknown_deadlines = 0;
+    let mut lower_bounds = Vec::new();
     for sample in samples.values() {
         let (due, removed) = if receipts {
             (
@@ -150,19 +204,46 @@ fn eligible_lags(
                 sample.detail_removal_observed_ms,
             )
         };
+        if due.is_none() {
+            if sample.nonterminal_through(until_ms) {
+                nonterminal += 1;
+            } else {
+                unknown_deadlines += 1;
+            }
+        }
         if let Some(due) = due.filter(|due| *due >= from_ms && *due <= until_ms) {
             eligible += 1;
             if let Some(removed) = removed {
                 lags.push((removed - due).max(0));
+                lower_bounds.push((removed - due).max(0));
             } else {
-                oldest_pending_ms = oldest_pending_ms.max((observed_ms - due).max(0));
+                let lower_bound = (observed_ms - due).max(0);
+                oldest_pending_ms = oldest_pending_ms.max(lower_bound);
+                lower_bounds.push(lower_bound);
             }
         }
     }
+    let lower_bound_distribution = distribution(&mut lower_bounds);
     let distribution = distribution(&mut lags);
-    let complete = eligible > 0 && eligible == lags.len();
+    let complete = eligible > 0 && eligible == lags.len() && unknown_deadlines == 0;
+    let p95_status = if unknown_deadlines > 0 {
+        "incomplete"
+    } else if eligible == 0 {
+        "no_eligible_work"
+    } else if lower_bound_distribution["p95_ms"]
+        .as_i64()
+        .is_some_and(|lag| lag > 60000)
+    {
+        "breach"
+    } else if complete {
+        "pass"
+    } else {
+        "incomplete"
+    };
     json!({"eligible":eligible,"completed":lags.len(),"censored":eligible-lags.len(),
         "oldest_pending_ms":oldest_pending_ms,"distribution":distribution,
+        "nonterminal_not_eligible":nonterminal,"unknown_deadlines":unknown_deadlines,
+        "censored_lower_bound_distribution":lower_bound_distribution,"p95_status":p95_status,
         "p95_within_60_seconds":complete && distribution["p95_ms"].as_i64().is_some_and(|lag|lag <= 60000)})
 }
 
@@ -229,19 +310,7 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
                 let sample = samples
                     .get_mut(&observed.identity())
                     .ok_or("Unexpected observed task identity")?;
-                stable_anchor(&mut sample.terminal_at_ms, observed.terminal_at_ms())?;
-                stable_anchor(
-                    &mut sample.receipt_expires_at_ms,
-                    observed.receipt_expires_at_ms(),
-                )?;
-                stable_anchor(
-                    &mut sample.details_expires_at_ms,
-                    observed.details_expires_at_ms(),
-                )?;
-                stable_anchor(
-                    &mut sample.output_expires_at_ms,
-                    observed.output_expires_at_ms(),
-                )?;
+                sample.observe(&observed, now_ms()?)?;
                 if options.output_only
                     && sample.terminal_at_ms.is_some()
                     && sample.output_expires_at_ms.is_none()
@@ -293,7 +362,7 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
         }
         let report: Value = serde_json::from_slice(&result.stdout)?;
         let protected = protected_state(&options.repository, &report)?;
-        occupancy.push(json!({"at_ms":now_ms()?,"receipts":protected.receipts().len(),"target":target_receipts}));
+        occupancy.push(receipt_occupancy(&protected, target_receipts, now_ms()?));
         let removed = protected
             .purge_batches()
             .values()
@@ -314,6 +383,7 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
                 let sample = samples
                     .get_mut(&observed.identity())
                     .ok_or("Unexpected observed task identity")?;
+                sample.observe(&observed, now_ms()?)?;
                 if options.output_only
                     && observed.output_rows() == 0
                     && observed.outputs_removed() == Some(true)
@@ -486,19 +556,20 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
         })
         .collect::<Vec<_>>();
     let output_distribution = distribution(&mut output_lags);
+    let observation_finished_ms = now_ms()?;
     let steady_receipt_lags = eligible_lags(
         &samples,
         true,
         steady_started_ms,
         steady_until_ms,
-        now_ms()?,
+        observation_finished_ms,
     );
     let steady_detail_lags = eligible_lags(
         &samples,
         false,
         steady_started_ms,
         steady_until_ms,
-        now_ms()?,
+        observation_finished_ms,
     );
     let mut database_resources = backend
         .finish_resource_measurement(resource_baseline)
@@ -514,6 +585,9 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
         "receipt_expiry_lag":receipt_distribution,"detail_expiry_lag":detail_distribution,
         "output_expiry_lag":output_distribution,
         "raw_lifetimes":samples,"passes":passes,"elapsed_ms":started.elapsed().as_millis(),
+        "observation_finished_ms":observation_finished_ms,
+        "full_drain_outcome":if completed {"complete"} else {"incomplete_timeout"},
+        "full_drain_note":"A drain timeout is not itself an eligible-expiry percentile breach; inspect each denominator and p95_status",
         "steady_seconds":options.steady_seconds,"steady_started_ms":steady_started_ms,"steady_until_ms":steady_until_ms,"occupancy":occupancy,
         "steady_receipt_expiry":steady_receipt_lags,"steady_detail_expiry":steady_detail_lags,
         "database_environment":database_environment,"database_round_trip_nanos":database_round_trip_nanos,
@@ -523,7 +597,8 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
     )?;
     if !completed {
         return Err(
-            "Timed out with censored eligible tasks; observer report retains all samples".into(),
+            "Timed out before full cohort drain; report retains separate eligible-expiry evidence"
+                .into(),
         );
     }
     Ok(())
@@ -531,10 +606,18 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
-    #[test]
-    fn unfinished_eligible_work_cannot_pass_a_percentile_gate() {
+    #[rstest]
+    #[case::still_incomplete(3000, 2000, "incomplete")]
+    #[case::proven_breach(62000, 61000, "breach")]
+    fn unfinished_eligible_work_cannot_pass_a_percentile_gate(
+        #[case] observed_at: i64,
+        #[case] oldest: i64,
+        #[case] status: &str,
+    ) {
         let samples = BTreeMap::from([
             (
                 TaskIdentity::generate(),
@@ -559,10 +642,48 @@ mod tests {
                 },
             ),
         ]);
-        let report = eligible_lags(&samples, true, 0, 2000, 62000);
+        let report = eligible_lags(&samples, true, 0, 2000, observed_at);
         assert_eq!(report["eligible"], 2);
         assert_eq!(report["censored"], 1);
-        assert_eq!(report["oldest_pending_ms"], 61000);
+        assert_eq!(report["oldest_pending_ms"], oldest);
+        assert_eq!(report["p95_status"], status);
         assert_eq!(report["p95_within_60_seconds"], false);
+    }
+
+    #[rstest]
+    #[case::observed_nonterminal(Some(62000), 1, 0, "pass")]
+    #[case::missing_evidence(None, 0, 1, "incomplete")]
+    #[case::stale_nonterminal(Some(1000), 0, 1, "incomplete")]
+    fn unexpired_active_work_is_distinct_from_an_unknown_deadline(
+        #[case] nonterminal_at: Option<i64>,
+        #[case] nonterminal_count: i64,
+        #[case] unknown_count: i64,
+        #[case] status: &str,
+    ) {
+        let samples = BTreeMap::from([
+            (
+                TaskIdentity::generate(),
+                Lifetime {
+                    terminal_at_ms: Some(0),
+                    receipt_expires_at_ms: Some(1000),
+                    receipt_retirement_observed_ms: Some(1100),
+                    ..Lifetime::default()
+                },
+            ),
+            (
+                TaskIdentity::generate(),
+                Lifetime {
+                    last_observed_ms: Some(62000),
+                    last_observed_nonterminal_ms: nonterminal_at,
+                    ..Lifetime::default()
+                },
+            ),
+        ]);
+        let report = eligible_lags(&samples, true, 0, 2000, 62000);
+        assert_eq!(report["eligible"], 1);
+        assert_eq!(report["censored"], 0);
+        assert_eq!(report["nonterminal_not_eligible"], nonterminal_count);
+        assert_eq!(report["unknown_deadlines"], unknown_count);
+        assert_eq!(report["p95_status"], status);
     }
 }
