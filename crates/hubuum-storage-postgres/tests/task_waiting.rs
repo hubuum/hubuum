@@ -6,7 +6,7 @@ use diesel_async::{RunQueryDsl, SimpleAsyncConnection};
 use hubuum_domain::TaskId;
 use hubuum_storage_core::{
     StorageErrorKind, StorageTaskCheckpoint, StorageTaskClaimToken, StorageTaskLease,
-    StorageTaskResumeOutcome, StorageTaskResumeRequest, StorageTaskWaitRequest,
+    StorageTaskResumeOutcome, StorageTaskResumeRequest, StorageTaskStatus, StorageTaskWaitRequest,
     StorageTaskWaitToken, TaskExecutionStorage,
 };
 use hubuum_storage_postgres::test_support::{
@@ -14,8 +14,9 @@ use hubuum_storage_postgres::test_support::{
     integration_test_pool,
 };
 use hubuum_storage_postgres::{
-    PostgresConnection, PostgresStorage, PostgresStorageError, with_transaction,
+    PostgresConnection, PostgresPool, PostgresStorage, PostgresStorageError, with_transaction,
 };
+use hubuum_task_core::TaskStopReason;
 use rstest::rstest;
 use serde_json::json;
 use tokio::time::{Duration, timeout};
@@ -84,6 +85,77 @@ async fn accounting(
     .get_result::<Accounting>(connection)
     .await
     .map_err(Into::into)
+}
+
+async fn delete_committed_fixture(pool: &PostgresPool, id: i32) {
+    // Remove the detached accounting history these native-only tasks otherwise
+    // leave behind, as well as the task itself.
+    with_transaction(
+        pool,
+        async |connection| -> Result<(), PostgresStorageError> {
+            if database_role_tests_enabled() {
+                connection
+                    .batch_execute(&format!(
+                        "SET LOCAL ROLE \"{}\"",
+                        integration_test_database_roles().owner().as_str(),
+                    ))
+                    .await?;
+            }
+            diesel::sql_query("DELETE FROM hubuum_control.task_accounting WHERE task_id=$1")
+                .bind::<Integer, _>(id)
+                .execute(connection)
+                .await?;
+            diesel::sql_query("DELETE FROM tasks WHERE id=$1")
+                .bind::<Integer, _>(id)
+                .execute(connection)
+                .await?;
+            Ok(())
+        },
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn uncontended_expired_notification_returns_stopped() {
+    let owner_pool = if database_role_tests_enabled() {
+        integration_test_migration_pool(1)
+    } else {
+        integration_test_pool(1)
+    };
+    let storage = PostgresStorage::unobserved(integration_test_pool(1));
+    let token = Uuid::new_v4();
+    let checkpoint = StorageTaskCheckpoint::try_new("native.test", 1, json!({})).unwrap();
+    let id = with_transaction(&owner_pool, async |connection| -> Result<_, PostgresStorageError> {
+        let id = start_fixture(connection).await?;
+        // Represent an admitted execution whose deadline has already elapsed.
+        diesel::sql_query("UPDATE tasks SET status='waiting',task_checkpoint=$2,wait_token=$3,lease_token=NULL,lease_expires_at=NULL,
+            created_at=(clock_timestamp() AT TIME ZONE 'UTC')-INTERVAL '3 seconds',
+            started_at=(clock_timestamp() AT TIME ZONE 'UTC')-INTERVAL '2 seconds',
+            execution_deadline_at=(clock_timestamp() AT TIME ZONE 'UTC')-INTERVAL '1 second' WHERE id=$1")
+            .bind::<Integer, _>(id).bind::<Text, _>(checkpoint.encoded())
+            .bind::<SqlUuid, _>(token).execute(connection).await?;
+        Ok(id)
+    }).await.unwrap();
+    // This native binary has no recovery sweeps. The notification itself must
+    // settle the expired wait, rather than observe another executor's result.
+    let result = storage
+        .resume_task(StorageTaskResumeRequest::new(
+            TaskId::new(id).unwrap(),
+            StorageTaskWaitToken::try_new(token.to_string()).unwrap(),
+        ))
+        .await;
+    delete_committed_fixture(&owner_pool, id).await;
+    let StorageTaskResumeOutcome::Stopped(task) = result.unwrap() else {
+        panic!("an uncontended expired notification must return Stopped");
+    };
+    assert_eq!(task.status(), StorageTaskStatus::Cancelled);
+    assert_eq!(
+        task.control().terminal_reason(),
+        Some(TaskStopReason::DeadlineExceeded)
+    );
+    assert!(task.checkpoint().is_none());
+    assert!(!task.has_lease());
 }
 
 #[rstest]
@@ -332,32 +404,8 @@ async fn wait_operations_do_not_block_task_first_writers(
     )
     .await;
 
-    // Clean committed fixtures before asserting, including the detached
-    // accounting history these native-only tasks otherwise leave behind.
-    with_transaction(
-        &owner_pool,
-        async |connection| -> Result<(), PostgresStorageError> {
-            if database_role_tests_enabled() {
-                connection
-                    .batch_execute(&format!(
-                        "SET LOCAL ROLE \"{}\"",
-                        integration_test_database_roles().owner().as_str(),
-                    ))
-                    .await?;
-            }
-            diesel::sql_query("DELETE FROM hubuum_control.task_accounting WHERE task_id=$1")
-                .bind::<Integer, _>(id)
-                .execute(connection)
-                .await?;
-            diesel::sql_query("DELETE FROM tasks WHERE id=$1")
-                .bind::<Integer, _>(id)
-                .execute(connection)
-                .await?;
-            Ok(())
-        },
-    )
-    .await
-    .unwrap();
+    // Clean committed fixtures before asserting.
+    delete_committed_fixture(&owner_pool, id).await;
 
     let result = observed
         .unwrap()
