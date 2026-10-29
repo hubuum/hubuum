@@ -69,7 +69,7 @@ Template files are anonymous on Unix and use OS delete-on-close on Windows.
 The renderer inherits only its three spool descriptors on Unix and enforces its
 own five-second lifetime even if its parent dies. Kernel file ownership reclaims
 local bytes after abrupt exit; durable destination cleanup remains independent.
-Abandoned attempts retain their full reservation for ten seconds after cleanup
+Abandoned attempts retain their full reservation for at least ten seconds after cleanup
 fences them, allowing an orphaned renderer to exit before any capacity is released.
 Cancellation waits for active producer/render work to stop before acknowledging
 the task. Dropping a blocked bridge disconnects its channel; a callback performing
@@ -119,7 +119,12 @@ The manifest ceiling is reserved in addition to those payload/spool bytes.
 This covers overlapping spool and destination bytes. Publication drops the local
 reservation to the actual durable payload plus encoded manifest size. Cancellation, task purge and output
 expiry retain the physical reservation until cleanup finishes. The worker runs
-bounded cleanup independently of output metadata expiry scheduling.
+bounded cleanup independently of output metadata expiry scheduling. It drains
+one batch per worker tick while batches remove data. After an empty batch, it
+waits for `HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS` (300 seconds by default)
+before checking again. Failures remain eligible for retry on the next tick.
+Newly eligible or grace-fenced copies can therefore remain charged until the
+next scheduled check; lower the interval when faster reclamation is required.
 
 The authoritative deployment/principal/collection/kind limits from
 [task admission](task_admission.md) also include these obligations. Configure them

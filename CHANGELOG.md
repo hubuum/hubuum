@@ -74,6 +74,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Artifact cleanup backs off after an empty batch using the configured output
+  cleanup interval, avoiding an extra database acquisition on every idle worker
+  poll while retaining bounded draining and retries when work remains.
 - Retained history and task-event actor names no longer attach to a different
   principal when a restore timeline reuses an integer ID. Historical relation
   endpoint hydration also requires the captured endpoint identity.

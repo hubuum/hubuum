@@ -45,6 +45,8 @@ static TASK_WORKER: Once = Once::new();
 static TASK_WORKER_LISTENER: Once = Once::new();
 static TASK_WORKER_NOTIFY: OnceLock<Notify> = OnceLock::new();
 static TASK_OUTPUT_CLEANUP_STATE: OnceLock<Mutex<CleanupSchedule>> = OnceLock::new();
+static ARTIFACT_CLEANUP_STATE: LazyLock<Mutex<CleanupSchedule>> =
+    LazyLock::new(|| Mutex::new(CleanupSchedule::default()));
 static TASK_RECOVERY_STATE: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 static TASK_WORKER_SETTINGS: OnceLock<TaskWorkerSettings> = OnceLock::new();
 static TASK_LEASE_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
@@ -678,14 +680,15 @@ async fn maybe_recover_expired_task_leases(
 async fn maybe_cleanup_expired_task_outputs(
     backend: &impl crate::storage::StorageContext,
 ) -> Result<(), ApiError> {
-    // One bounded chunk batch per worker tick. Durable obligations survive task
-    // deletion and local spool loss; output metadata retention is independent.
-    storage_handle(backend)
-        .artifact_store()
-        .cleanup()
-        .await
-        .map_err(crate::services::artifacts::error)?;
     let cleanup_interval = task_worker_settings().export_output_cleanup_interval();
+    cleanup_artifacts_when_due(&ARTIFACT_CLEANUP_STATE, cleanup_interval, async {
+        storage_handle(backend)
+            .artifact_store()
+            .cleanup()
+            .await
+            .map_err(crate::services::artifacts::error)
+    })
+    .await?;
     let Some(reservation) = CleanupReservation::reserve(cleanup_state(), cleanup_interval)? else {
         return Ok(());
     };
@@ -724,6 +727,22 @@ async fn maybe_cleanup_expired_task_outputs(
     }
     reservation.commit()?;
 
+    Ok(())
+}
+
+async fn cleanup_artifacts_when_due(
+    state: &Mutex<CleanupSchedule>,
+    interval: Duration,
+    cleanup: impl Future<Output = Result<u32, ApiError>>,
+) -> Result<(), ApiError> {
+    let Some(reservation) = CleanupReservation::reserve(state, interval)? else {
+        return Ok(());
+    };
+    // Drain one bounded batch per worker tick. Once empty, avoid a database
+    // acquisition on every idle poll; failures remain eligible for retry.
+    if cleanup.await? == 0 {
+        reservation.commit()?;
+    }
     Ok(())
 }
 
@@ -851,12 +870,43 @@ pub(super) async fn mark_claimed_task_failed(
 
 #[cfg(test)]
 mod cleanup_tests {
+    use std::cell::Cell;
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
 
     use rstest::rstest;
 
-    use super::{CleanupReservation, CleanupSchedule};
+    use super::{CleanupReservation, CleanupSchedule, cleanup_artifacts_when_due};
+    use crate::errors::ApiError;
+
+    #[rstest]
+    #[case::drained(Some(0), 1)]
+    #[case::more_work(Some(16), 2)]
+    #[case::failure(None, 2)]
+    #[actix_web::test]
+    async fn artifact_cleanup_backs_off_only_after_an_empty_batch(
+        #[case] first_batch: Option<u32>,
+        #[case] expected_calls: u32,
+    ) {
+        let state = Mutex::new(CleanupSchedule::default());
+        let calls = Cell::new(0);
+        let interval = Duration::from_secs(300);
+        let first = cleanup_artifacts_when_due(&state, interval, async {
+            calls.set(calls.get() + 1);
+            first_batch.ok_or_else(|| ApiError::InternalServerError("cleanup failed".into()))
+        })
+        .await;
+        assert_eq!(first.is_ok(), first_batch.is_some());
+
+        cleanup_artifacts_when_due(&state, interval, async {
+            calls.set(calls.get() + 1);
+            Ok(0)
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(calls.get(), expected_calls);
+    }
 
     #[rstest]
     #[case::failure(false, false)]
