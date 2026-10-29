@@ -153,6 +153,10 @@ Stop older API/worker processes, take a database backup, and run
 `hubuum-admin --migrate` before starting matching binaries. This applies the new
 artifact-output migration and reconciles grants. Storage SDK implementers must
 follow the [0.9 upgrade guide](storage_adapter_sdk.md#upgrading-from-08-to-09).
+Before restarting, reduce `HUBUUM_EXPORT_MAX_OUTPUT_BYTES` and
+`HUBUUM_BACKUP_MAX_OUTPUT_BYTES` settings above `68719476736` (64 GiB); upgraded
+processes reject them. Partition larger workloads and tune shared capacity
+consistently. This format ceiling is not a measured resource qualification.
 Do not downgrade while artifact-backed output or cleanup obligations remain:
 expire/purge the output and finish cleanup first. The down migration refuses to
 discard them. Artifacts above the older format ceiling also prevent downgrade.

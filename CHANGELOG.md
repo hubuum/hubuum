@@ -23,6 +23,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking configuration limit:** export and backup output settings now have a
+  64 GiB format ceiling. Before restarting upgraded processes, reduce
+  `HUBUUM_EXPORT_MAX_OUTPUT_BYTES` and `HUBUUM_BACKUP_MAX_OUTPUT_BYTES` values above
+  `68719476736` and partition larger workloads. Tune shared capacity consistently;
+  the format ceiling does not imply resource qualification at that size.
 - **Breaking (storage SDK):** advance all ten SDK crates to `0.9.0` and implement
   the required artifact contract and verified completion variants. Follow the
   [0.9 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-08-to-09).

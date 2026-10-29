@@ -2,6 +2,18 @@
   "schema_version": 1,
   "exceptions": [
     {
+      "id": "artifact-output-format-ceiling",
+      "baseline": "v0.0.21",
+      "expires": "2027-01-31",
+      "reason": "Verified artifacts have a finite 64 GiB format envelope, so export and backup output configuration now rejects values above that ceiling.",
+      "migration": "Before restarting upgraded API and worker processes, reduce HUBUUM_EXPORT_MAX_OUTPUT_BYTES and HUBUUM_BACKUP_MAX_OUTPUT_BYTES to at most 68719476736. Partition larger workloads and tune shared capacity consistently; the format ceiling is not a resource qualification claim.",
+      "changelog_entry": "**Breaking configuration limit:** export and backup output settings now have a",
+      "fingerprints": [
+        "c1364737437b",
+        "dec1c657f964"
+      ]
+    },
+    {
       "id": "webhook-notification-backup-format-7",
       "baseline": "v0.0.16",
       "expires": "2027-01-31",
