@@ -22,6 +22,7 @@ CREATE TABLE artifact_task_owners (
     lease_token UUID NOT NULL,
     worker_identity UUID NOT NULL,
     spool_bytes BIGINT NOT NULL CHECK(spool_bytes >= 0),
+    cleanup_after TIMESTAMPTZ,
     reserved_bytes BIGINT NOT NULL CHECK(reserved_bytes >= 0),
     output_expires_at TIMESTAMPTZ NOT NULL
 );

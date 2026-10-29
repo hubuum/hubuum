@@ -14,6 +14,11 @@ mod manifest;
 mod transfer;
 
 use std::fmt;
+use std::time::Duration;
+
+/// Keep local-spool reservations while an abandoned bounded renderer exits.
+/// Producers must stop local work within this interval after losing ownership.
+pub const LOCAL_SPOOL_CLEANUP_GRACE: Duration = Duration::from_secs(10);
 
 use async_trait::async_trait;
 
@@ -128,6 +133,9 @@ pub trait ArtifactStore: Send + Sync {
     async fn abort(&self, identity: &ArtifactIdentity) -> ArtifactResult<()>;
     /// Reap expired/aborted staging and task-owned expired/orphaned publications.
     /// Delete at most 16 blocks per call. Independent publications are retained.
+    /// Fence abandoned local producers and retain their reservation through
+    /// LOCAL_SPOOL_CLEANUP_GRACE before releasing physical capacity. A zero
+    /// return can mean cleanup is waiting for that grace period.
     /// Return the number of physical blocks removed.
     async fn cleanup(&self) -> ArtifactResult<u32>;
 }

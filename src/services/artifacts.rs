@@ -15,6 +15,11 @@ use crate::errors::ApiError;
 use crate::services::tasks::ClaimedTask;
 use crate::storage::{StorageContext, storage_handle};
 
+const _: () = assert!(
+    hubuum_templates::MAX_WORKER_EXECUTION_TIME.as_secs()
+        < hubuum_storage_core::artifacts::LOCAL_SPOOL_CLEANUP_GRACE.as_secs()
+);
+
 pub(crate) fn error(error: ArtifactError) -> ApiError {
     match error {
         ArtifactError::Limit(message) => ApiError::PayloadTooLarge(message),

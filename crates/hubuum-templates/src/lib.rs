@@ -17,8 +17,9 @@ mod spool;
 mod worker;
 use hubuum_budget::{ByteLimit, LimitedWriter};
 pub use isolation::{
-    MAX_WORKER_HEAP_BYTES, MissingDataPolicy, RenderedTemplate, TemplateBatch, TemplateExecution,
-    WorkerEvent, set_worker_event_handler, shutdown_template_workers,
+    MAX_WORKER_EXECUTION_TIME, MAX_WORKER_HEAP_BYTES, MissingDataPolicy, RenderedTemplate,
+    TemplateBatch, TemplateExecution, WorkerEvent, set_worker_event_handler,
+    shutdown_template_workers,
 };
 use serde::{Deserialize, Serialize};
 pub use spool::{MAX_SPOOL_ROW_BYTES, RenderedSpool, TemplateRows};

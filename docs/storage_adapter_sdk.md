@@ -483,6 +483,9 @@ read-back verification, task-incarnation ownership, atomic reference publication
 resident-byte admission, and idempotent cleanup. The memory and PostgreSQL
 adapters implement the complete contract. The standalone `ArtifactStore` trait
 remains usable without task execution or an archive provider.
+Local producers must stop within `LOCAL_SPOOL_CLEANUP_GRACE` after ownership
+loss. Keep their reservation through that interval after fencing an abandoned
+attempt; a cleanup call returning zero can still have deferred physical work.
 
 Export and backup completion can carry `VerifiedArtifact` rather than complete
 values. Preserve the proof through the completion transaction and fence the

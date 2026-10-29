@@ -323,6 +323,28 @@ async fn real_worker_replays_sequence_access_into_a_spool() {
 }
 
 #[tokio::test]
+async fn real_worker_enforces_its_deadline_without_parent_supervision() {
+    let mut child = Command::new(worker_executable().unwrap())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    // Keep stdin open without completing the protocol. Only the child's own
+    // watchdog can stop it; no supervisor is involved in this test.
+    let _input = child.stdin.take().unwrap();
+    let status = timeout(
+        MAX_WORKER_EXECUTION_TIME + Duration::from_secs(3),
+        child.wait(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(status.code(), Some(71));
+}
+
+#[tokio::test]
 async fn real_worker_spools_output_beyond_legacy_string_limit() {
     let mut rows = crate::TemplateRows::new(128 * 1024).unwrap();
     rows.push(&serde_json::json!({"text":"x".repeat(64 * 1024)}))

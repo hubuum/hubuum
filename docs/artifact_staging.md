@@ -65,6 +65,12 @@ Spools are disposable. After process/host loss, ordinary export and backup tasks
 fail when their lease expires; the worker does not replay arbitrary producer
 side effects or claim to continue an old source snapshot. Staged bytes are then
 reconciled independently. Explicitly resubmitting creates a new task and snapshot.
+Template files are anonymous on Unix and use OS delete-on-close on Windows.
+The renderer inherits only its three spool descriptors on Unix and enforces its
+own five-second lifetime even if its parent dies. Kernel file ownership reclaims
+local bytes after abrupt exit; durable destination cleanup remains independent.
+Abandoned attempts retain their full reservation for ten seconds after cleanup
+fences them, allowing an orphaned renderer to exit before any capacity is released.
 Cancellation waits for active producer/render work to stop before acknowledging
 the task. Dropping a blocked bridge disconnects its channel; a callback performing
 arbitrary computation must still return cooperatively. Durable expiry remains

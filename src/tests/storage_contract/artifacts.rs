@@ -1,8 +1,8 @@
 use super::task_control::Fixture;
 use super::*;
 use chrono::Utc;
-use hubuum_storage_core::StorageExportTaskArtifactContent;
 use hubuum_storage_core::artifacts::*;
+use hubuum_storage_core::{StorageExportTaskArtifactContent, TaskCapacityStorage};
 use rstest::rstest;
 
 async fn stage(
@@ -55,6 +55,14 @@ fn completion(lease: StorageTaskLease, proof: VerifiedArtifact) -> StorageTaskCo
             .unwrap(),
         ),
     )
+}
+
+async fn reconcile(store: &dyn TaskArtifactStore) {
+    let deadline = tokio::time::Instant::now() + LOCAL_SPOOL_CLEANUP_GRACE + Duration::from_secs(2);
+    while tokio::time::Instant::now() < deadline {
+        assert!(store.cleanup().await.unwrap() <= 16);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 
 async fn drain(store: &dyn TaskArtifactStore, reference: &ArtifactReference) -> Vec<u8> {
@@ -168,6 +176,22 @@ async fn cancellation_fences_each_publication_boundary(#[case] boundary: u8) {
             .acknowledge_task_stop(lease.clone())
             .await
             .unwrap();
+        let before_cleanup = fixture.backend.task_capacity_snapshot().await.unwrap();
+        store.cleanup().await.unwrap();
+        if fixture.environment.kind() == StorageBackendKind::Memory {
+            // This fixture has a private store, so other tests cannot change
+            // its capacity between snapshots. Fencing must not free local bytes.
+            assert_eq!(
+                fixture
+                    .backend
+                    .task_capacity_snapshot()
+                    .await
+                    .unwrap()
+                    .ordinary()
+                    .resident_bytes(),
+                before_cleanup.ordinary().resident_bytes()
+            );
+        }
         if let Some(proof) = proof {
             assert!(
                 fixture
@@ -177,9 +201,20 @@ async fn cancellation_fences_each_publication_boundary(#[case] boundary: u8) {
                     .is_err()
             );
         }
-        // Each batch is bounded, and repeated cleanup cannot resurrect output.
-        for _ in 0..100 {
-            assert!(store.cleanup().await.unwrap() <= 16);
+        // Each batch is bounded, and reservations survive renderer quiescence.
+        reconcile(store.as_ref()).await;
+        if fixture.environment.kind() == StorageBackendKind::Memory {
+            assert_eq!(
+                fixture
+                    .backend
+                    .task_capacity_snapshot()
+                    .await
+                    .unwrap()
+                    .ordinary()
+                    .resident_bytes()
+                    + 2 * limits.artifact_bytes(),
+                before_cleanup.ordinary().resident_bytes()
+            );
         }
         assert!(store.manifest(&identity).await.is_err());
         assert!(store.stage(&identity, limits).await.is_err());
@@ -272,9 +307,7 @@ async fn lost_worker_fails_without_replaying_and_reconciles_its_bytes(#[case] se
         .await
         .unwrap();
         assert_eq!(recovered.status(), StorageTaskStatus::Failed);
-        for _ in 0..100 {
-            store.cleanup().await.unwrap();
-        }
+        reconcile(store.as_ref()).await;
         assert!(store.manifest(&identity).await.is_err());
         assert!(matches!(
             replica.get_export_output(fixture.task.id()).await.unwrap(),
@@ -339,7 +372,7 @@ async fn admitted_artifact_cannot_be_rebound_to_another_task() {
                 .is_err()
         );
         store.abort(&identity).await.unwrap();
-        store.cleanup().await.unwrap();
+        reconcile(store.as_ref()).await;
         second.cleanup().await;
         fixture.cleanup().await;
     }

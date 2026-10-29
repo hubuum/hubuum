@@ -20,6 +20,7 @@ struct Owner {
     task: TaskIdentity,
     reservation: ArtifactReservation,
     reserved: u64,
+    cleanup_after: Option<DateTime<Utc>>,
     expires: DateTime<Utc>,
 }
 #[derive(Clone)]
@@ -77,6 +78,12 @@ impl Artifacts {
         attempt.reference = Some(reference.clone());
         if let Some(owner) = &mut attempt.owner {
             owner.reserved = attempt.bytes;
+            owner.reservation = ArtifactReservation::new(
+                *owner.reservation.worker(),
+                0,
+                owner.reservation.worker_bytes(),
+            )
+            .expect("existing valid reservation");
         }
         Ok(reference)
     }
@@ -295,6 +302,14 @@ impl ArtifactStore for MemoryStorage {
             .attempts
             .iter()
             .find(|(_, attempt)| {
+                if attempt
+                    .owner
+                    .as_ref()
+                    .and_then(|owner| owner.cleanup_after)
+                    .is_some_and(|after| after > now)
+                {
+                    return false;
+                }
                 if attempt.phase == Phase::Discarded {
                     return false;
                 }
@@ -344,6 +359,15 @@ impl ArtifactStore for MemoryStorage {
             .get_mut(&id)
             .expect("selected attempt");
         attempt.phase = Phase::Deleting;
+        if let Some(owner) = &mut attempt.owner
+            && owner.reservation.spool_bytes() > 0
+            && owner.cleanup_after.is_none()
+        {
+            owner.cleanup_after = Some(
+                now + Duration::from_std(LOCAL_SPOOL_CLEANUP_GRACE).expect("finite cleanup grace"),
+            );
+            return Ok(0);
+        }
         let mut deleted = 0;
         while deleted < 16 && attempt.blocks.pop_first().is_some() {
             deleted += 1;
@@ -407,6 +431,7 @@ impl TaskArtifactStore for MemoryStorage {
             task: task_identity,
             reservation,
             reserved,
+            cleanup_after: None,
             expires: output_expires_at,
         });
         if let Err(error) = state.check_artifact_capacity(lease.task_id()) {
@@ -541,6 +566,7 @@ impl MemoryRestoreArtifact {
             )
             .map_err(archive_error)?,
             reserved: manifest.byte_size(),
+            cleanup_after: None,
             expires: self.header.expires_at(),
         };
         state

@@ -20,13 +20,14 @@ use tracing::{Instrument, debug, info_span, warn};
 
 use serde::{Deserialize, Serialize};
 
+use crate::spool::SpoolFile;
 use crate::{MissingValue, SizeLimitedWriter, TemplateAutoEscape, TemplateError, TemplateLimits};
 
 pub const MAX_WORKER_HEAP_BYTES: usize = 128 * 1024 * 1024;
 pub(crate) const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const MAX_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
 pub(crate) const MAX_BATCH_TEMPLATES: usize = 130;
-const DEADLINE: Duration = Duration::from_secs(5);
+pub const MAX_WORKER_EXECUTION_TIME: Duration = Duration::from_secs(5);
 const MAX_CONCURRENT_WORKERS: usize = 4;
 const MAX_WAITING_WORKERS: usize = 16;
 static RUNTIME: OnceLock<Result<WorkerRuntime, String>> = OnceLock::new();
@@ -185,7 +186,7 @@ impl<'a> TemplateExecution<'a> {
         rows: Arc<crate::TemplateRows>,
     ) -> Result<crate::RenderedSpool, TemplateError> {
         let output = Arc::new(
-            tempfile::NamedTempFile::new()
+            SpoolFile::new()
                 .map_err(|_| TemplateError::boundary("cannot create template output spool"))?,
         );
         let descriptor = rows.descriptor()?;
@@ -396,7 +397,7 @@ struct WorkerRuntime {
     stopping: watch::Sender<bool>,
     stopped: watch::Receiver<bool>,
 }
-type SpoolPins = (Arc<crate::TemplateRows>, Arc<tempfile::NamedTempFile>);
+type SpoolPins = (Arc<crate::TemplateRows>, Arc<SpoolFile>);
 
 struct Job {
     spool_pins: Option<SpoolPins>,
@@ -535,6 +536,23 @@ async fn execute_pinned(
         .map_err(|_| TemplateError::boundary("invalid template protocol input"))?;
     let mut command = Command::new(worker_executable()?);
     command.env_clear();
+    #[cfg(unix)]
+    if let Some((rows, output)) = &spool_pins {
+        let [data, index] = rows.raw_fds();
+        let descriptors = [data, index, output.raw_fd()];
+        // SAFETY: only async-signal-safe fcntl runs after fork. The supervisor
+        // pins all three files until the child is reaped; parent CLOEXEC stays set.
+        unsafe {
+            command.pre_exec(move || {
+                for descriptor in descriptors {
+                    if libc::fcntl(descriptor, libc::F_SETFD, 0) == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                Ok(())
+            });
+        }
+    }
     let (response, result) = oneshot::channel();
     let span = info_span!("template_execution", operation_id = NEXT_OPERATION.fetch_add(1, Ordering::Relaxed), operation = ?request.operation, pid = tracing::field::Empty);
     let job = Job {
@@ -543,7 +561,7 @@ async fn execute_pinned(
         max_response_bytes,
         expected_results: request.templates.len(),
         started,
-        deadline: started + DEADLINE,
+        deadline: started + MAX_WORKER_EXECUTION_TIME,
         response,
         capacity,
         span,
@@ -728,6 +746,9 @@ async fn supervise(mut job: Job, workers: Arc<Semaphore>, mut shutdown: watch::R
         ("completed", result)
     };
     event(kind, job.started);
+    // Release input files before waking a caller that can begin staging the
+    // rendered output. Their byte reservations must not overlap that transfer.
+    drop(_spool_pins);
     let _ = job.response.send(result);
 }
 

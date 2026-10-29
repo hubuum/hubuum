@@ -89,7 +89,8 @@ for artifact_input in crates/hubuum-artifacts/Cargo.toml \
   src/backups/producer/tests.rs \
   crates/hubuum-storage-core/src/artifacts/backup.rs crates/hubuum-storage-memory/src/artifacts.rs \
   crates/hubuum-storage-postgres/src/operations/backup_artifacts.rs \
-  crates/hubuum-templates/src/spool.rs src/config/artifacts.rs src/services/artifacts.rs \
+  crates/hubuum-templates/src/spool.rs crates/hubuum-templates/src/spool/file.rs \
+  src/config/artifacts.rs src/services/artifacts.rs \
   src/storage/context/artifacts.rs src/tasks/tests/artifact_pipeline.rs \
   crates/hubuum-storage-postgres/migrations/2026-10-29-000001_artifact_outputs/up.sql \
   crates/hubuum-storage-postgres/migrations/2026-10-29-000001_artifact_outputs/down.sql \

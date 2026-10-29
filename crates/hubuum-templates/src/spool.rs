@@ -2,15 +2,17 @@
 //! Backup capture continues to use StorageBackupReplayBuilder; template rows
 //! have a different representation and need indexed access for Jinja sequences.
 use std::fs::{File, OpenOptions};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 
 use hubuum_budget::{ByteLimit, LimitedWriter};
 use minijinja::value::{Enumerator, Object, ObjectRepr, Value};
 use serde::{Deserialize, Serialize};
-use tempfile::NamedTempFile;
+mod file;
+pub(crate) use file::SpoolFile;
+use file::read_exact_at;
 
 use crate::{TemplateError, json_value_to_template_value};
 
@@ -26,8 +28,8 @@ fn failure(error: impl std::fmt::Display) -> TemplateError {
 /// A failed append poisons the spool so a partial prefix cannot be rendered.
 #[derive(Debug)]
 pub struct TemplateRows {
-    data: NamedTempFile,
-    index: NamedTempFile,
+    data: SpoolFile,
+    index: SpoolFile,
     bytes: u64,
     rows: u64,
     limit: u64,
@@ -39,8 +41,8 @@ impl TemplateRows {
             return Err(failure("invalid byte limit"));
         }
         Ok(Self {
-            data: NamedTempFile::new().map_err(failure)?,
-            index: NamedTempFile::new().map_err(failure)?,
+            data: SpoolFile::new().map_err(failure)?,
+            index: SpoolFile::new().map_err(failure)?,
             bytes: 0,
             rows: 0,
             limit,
@@ -67,14 +69,23 @@ impl TemplateRows {
         writer.flush().map_err(failure)?;
         let size = writer.budget().used() as u64;
         self.index
+            .as_file_mut()
             .write_all(&self.bytes.to_le_bytes())
             .map_err(failure)?;
-        self.index.write_all(&size.to_le_bytes()).map_err(failure)?;
-        self.index.flush().map_err(failure)?;
+        self.index
+            .as_file_mut()
+            .write_all(&size.to_le_bytes())
+            .map_err(failure)?;
+        self.index.as_file_mut().flush().map_err(failure)?;
         self.bytes += size;
         self.rows += 1;
         self.failed = false;
         Ok(())
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn raw_fds(&self) -> [std::os::fd::RawFd; 2] {
+        [self.data.raw_fd(), self.index.raw_fd()]
     }
 
     pub fn len(&self) -> u64 {
@@ -108,7 +119,7 @@ impl TemplateRows {
 /// Successful isolated rendering retained as an owned, disposable file.
 /// Publication must still independently verify the destination after copying.
 pub struct RenderedSpool {
-    pub(crate) file: Arc<NamedTempFile>,
+    pub(crate) file: Arc<SpoolFile>,
     pub(crate) bytes: u64,
     pub(crate) missing: Vec<crate::MissingValue>,
     pub(crate) peak_heap_bytes: usize,
@@ -124,13 +135,17 @@ impl RenderedSpool {
         &self.missing
     }
     pub fn copy_to(&self, writer: &mut dyn Write) -> Result<(), TemplateError> {
-        let mut file = self.file.reopen().map_err(failure)?;
+        let file = self.file.as_file();
         if file.metadata().map_err(failure)?.len() != self.bytes {
             return Err(failure("rendered output length changed"));
         }
-        let copied = io::copy(&mut file, writer).map_err(failure)?;
-        if copied != self.bytes {
-            return Err(failure("rendered output was truncated"));
+        let mut offset = 0;
+        let mut buffer = [0; 64 * 1024];
+        while offset < self.bytes {
+            let count = (self.bytes - offset).min(buffer.len() as u64) as usize;
+            read_exact_at(file, &mut buffer[..count], offset).map_err(failure)?;
+            writer.write_all(&buffer[..count]).map_err(failure)?;
+            offset += count as u64;
         }
         Ok(())
     }
@@ -170,7 +185,7 @@ impl RowFiles {
             return Err(failure("input or index length changed"));
         }
         Ok(Arc::new(ReplayRows {
-            files: Mutex::new((data, index)),
+            files: (data, index),
             rows: self.rows,
             bytes: self.bytes,
             failed: AtomicBool::new(false),
@@ -180,7 +195,7 @@ impl RowFiles {
 
 #[derive(Debug)]
 pub(crate) struct ReplayRows {
-    files: Mutex<(File, File)>,
+    files: (File, File),
     rows: u64,
     bytes: u64,
     failed: AtomicBool,
@@ -190,14 +205,9 @@ impl ReplayRows {
         if ordinal >= self.rows {
             return Err(io::Error::other("row outside spool"));
         }
-        let mut files = self
-            .files
-            .lock()
-            .map_err(|_| io::Error::other("spool lock poisoned"))?;
-        let (data, index) = &mut *files;
-        index.seek(SeekFrom::Start(ordinal * 16))?;
+        let (data, index) = &self.files;
         let mut entry = [0; 16];
-        index.read_exact(&mut entry)?;
+        read_exact_at(index, &mut entry, ordinal * 16)?;
         let offset = u64::from_le_bytes(entry[..8].try_into().unwrap());
         let length = u64::from_le_bytes(entry[8..].try_into().unwrap());
         if length > MAX_SPOOL_ROW_BYTES as u64
@@ -207,9 +217,8 @@ impl ReplayRows {
         {
             return Err(io::Error::other("invalid spool row extent"));
         }
-        data.seek(SeekFrom::Start(offset))?;
         let mut bytes = vec![0; length as usize];
-        data.read_exact(&mut bytes)?;
+        read_exact_at(data, &mut bytes, offset)?;
         serde_json::from_slice(&bytes).map_err(io::Error::other)
     }
     pub(crate) fn failed(&self) -> bool {
@@ -295,10 +304,10 @@ mod tests {
     }
 
     #[test]
-    fn missing_local_spool_fails_closed() {
+    fn truncated_local_spool_fails_closed() {
         let mut rows = TemplateRows::new(1024).unwrap();
         rows.push(&json!(1)).unwrap();
-        std::fs::remove_file(rows.data.path()).unwrap();
+        rows.data.as_file().set_len(0).unwrap();
         assert!(rows.row(0).is_err());
     }
 }

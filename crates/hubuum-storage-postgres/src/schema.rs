@@ -42,6 +42,7 @@ diesel::table! {
         lease_token -> Uuid,
         worker_identity -> Uuid,
         spool_bytes -> Int8,
+        cleanup_after -> Nullable<Timestamptz>,
         reserved_bytes -> Int8,
         output_expires_at -> Timestamptz,
     }
