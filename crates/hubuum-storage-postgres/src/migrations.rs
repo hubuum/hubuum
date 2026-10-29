@@ -313,7 +313,8 @@ mod tests {
     #[case::before_interactive_sessions(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001"], MigrationMode::Offline)]
     #[case::before_identities(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002"], MigrationMode::Offline)]
     #[case::before_capacity(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001"], MigrationMode::Offline)]
-    #[case::current(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003"], MigrationMode::Rolling)]
+    #[case::before_waiting(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003"], MigrationMode::Rolling)]
+    #[case::current(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001"], MigrationMode::Rolling)]
     fn pending_offline_migrations_determine_mode(
         #[case] applied: Vec<&str>,
         #[case] expected: MigrationMode,
@@ -327,6 +328,7 @@ mod tests {
             "20261021000002",
             "20261027000001",
             "20261027000003",
+            "20261029000001",
         ]
         .map(str::to_owned);
         assert_eq!(

@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.8`.
+Status: accepted; current experimental release train is `0.9`.
 
 ## Supported Crate Graph
 
@@ -474,3 +474,46 @@ errors. `into_parts()` now returns the optional structured capacity reason as
 its fourth element; update error destructuring and preserve that reason across
 adapter boundaries. Only application code translates the bounded rejection
 into HTTP.
+
+## Upgrading from 0.8 to 0.9
+
+Advance all ten SDK dependencies together. Every complete adapter implements
+`TaskExecutionStorage::wait_task` and `resume_task`; there is no unsupported
+default. Handle the new closed variants `StorageTaskStatus::Waiting`,
+`StorageTaskCancellationChange::CancelledWaiting`, and `Action::Waiting`.
+`StorageTaskResumeOutcome` distinguishes newly queued work, stopped work, and an
+unchanged notification. Nonterminal operational counts now include a fourth
+`waiting` argument after `running` in `StorageOperationalTaskActiveCounts::try_new`.
+
+Carry `StorageTaskCheckpoint` intact through task projections and claims. Its
+validated format/version/object representation is bounded to 64 KiB. Persist a
+fresh opaque `StorageTaskWaitToken` atomically with the checkpoint and removal
+of the execution lease. Accept waiting only for uncommitted export/backup work
+with a pinned deadline. Preserve request bytes, original deadline, start time,
+progress, outstanding admission, and cumulative charges. Account for checkpoint
+bytes as resident input and charge them with the request on a subsequent claim.
+
+Compare a resume token atomically with the current waiting task. The winner
+queues the same logical task and consumes the token; ordinary queue claiming
+grants the next execution lease. Missing, stale, or repeated notifications
+return `Unchanged` without mutation or an event. Settle stop/deadline evidence
+before maintenance blocks an otherwise valid resume. Cancellation, principal
+disablement, and bounded deadline recovery must finalize waiting work without
+an execution lease, clear the checkpoint, and release its resident bytes.
+
+Waiting is nonterminal but not active execution. It must not be treated as an
+expired execution lease. Retain waiting tasks during ordinary draining; logical
+backups still export terminal tasks only, so restore must not recreate a wait
+token or allow it to target a reused integer ID. Preserve earlier cumulative
+charges through restore reconciliation as required by 0.8.
+
+This release provides a dormant foundation. Current built-in producers do not
+enter waiting, and existing executors reject checkpointed work before ordinary
+execution. Provider obligations, bounded polling, shared physical retrieval
+accounting, and activation remain subsequent work under #516. See the complete
+[waiting and downgrade contract](task_admission.md#durable-waiting-foundation)
+and run `hubuum_storage_conformance::verify_task_wait_resume` against isolated,
+admitted export and backup fixtures for each adapter. The shared `task_waiting`
+scenarios add cancellation, deadlines, concurrency, private projections, and
+capacity evidence; backend-native tests retain transactional accounting and
+rollback coverage.

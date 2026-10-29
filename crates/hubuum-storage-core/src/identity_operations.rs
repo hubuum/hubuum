@@ -837,7 +837,7 @@ pub struct StorageServiceAccountDetails {
 
 /// Result of atomically disabling one service account.
 ///
-/// Backends own credential revocation and queued-work cancellation because
+/// Backends own credential revocation and queued/waiting cancellation because
 /// those writes must commit with the account state change. The application
 /// receives only the non-sensitive task kinds needed for backend-neutral
 /// terminal-task metrics.

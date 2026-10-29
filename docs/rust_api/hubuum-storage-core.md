@@ -1,6 +1,6 @@
 # `hubuum-storage-core` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.7` release train.
+Status: experimental public API in the storage SDK `0.9` release train.
 
 ## Purpose and Callers
 
@@ -253,3 +253,19 @@ Adapters return one consistent policy/usage snapshot and preserve policy and
 cumulative work outside logical restore. Admission requests carry no local
 quota override. See the [SDK upgrade notes](../storage_adapter_sdk.md#upgrading-from-07-to-08)
 and [restore ownership table](../task_admission.md#ownership-and-restore-reconciliation).
+
+## Durable task waits
+
+SDK 0.9 adds required `TaskExecutionStorage::wait_task` and `resume_task`
+operations. Their private-field request/result types carry validated bounded
+checkpoints, opaque wait tokens, and existing lease proofs across boundaries.
+`StorageTaskStatus::Waiting` is nonterminal without execution ownership;
+`StorageTaskCancellationChange::CancelledWaiting` records immediate cancellation.
+Every adapter implements the full transition, accounting, expiry, cancellation,
+and restore behavior in the
+[0.9 upgrade guide](../storage_adapter_sdk.md#upgrading-from-08-to-09).
+
+Do not replace these operations with process-local bookkeeping or replay a
+dispatched remote effect. The first foundation supports uncommitted export and
+backup tasks, with no built-in producer activation or provider SDK. Checkpoint
+payloads and wait tokens are private implementation state, not public task data.

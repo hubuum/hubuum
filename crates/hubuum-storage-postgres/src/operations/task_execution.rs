@@ -300,7 +300,7 @@ pub async fn recover_expired_task_leases(
                 .filter(tasks::deleted_at.is_null())
                 .filter(
                     tasks::status.eq_any(active_statuses()).and(tasks::lease_expires_at.is_null().or(tasks::lease_expires_at.le(now)))
-                    .or(tasks::status.eq("queued").and(tasks::execution_deadline_at.le(now))),
+                    .or(tasks::status.eq_any(["queued", "waiting"]).and(tasks::execution_deadline_at.le(now))),
                 )
                 .order(tasks::id.asc())
                 .limit(batch_size)
@@ -313,7 +313,7 @@ pub async fn recover_expired_task_leases(
                 let stale_task = tasks::tasks.filter(tasks::id.eq(candidate.id))
                     .filter(tasks::deleted_at.is_null())
                     .filter(tasks::status.eq_any(active_statuses()).and(tasks::lease_expires_at.is_null().or(tasks::lease_expires_at.le(now)))
-                        .or(tasks::status.eq("queued").and(tasks::execution_deadline_at.le(now))))
+                        .or(tasks::status.eq_any(["queued", "waiting"]).and(tasks::execution_deadline_at.le(now))))
                     .for_update().skip_locked().select(TaskRow::as_select()).first::<TaskRow>(connection).await.optional()?;
                 let Some(stale_task) = stale_task else { continue; };
                 let kind = stored_task_kind(&stale_task)?;
@@ -933,7 +933,7 @@ fn active_statuses() -> [&'static str; 2] {
     ]
 }
 
-async fn maintenance_is_normal(
+pub(super) async fn maintenance_is_normal(
     connection: &mut PostgresConnection,
 ) -> Result<bool, PostgresStorageError> {
     use crate::schema::system_maintenance::dsl as maintenance;

@@ -5,8 +5,9 @@ use diesel::{Queryable, Selectable};
 use hubuum_domain::{PrincipalId, TaskId, TokenId};
 use hubuum_events_core::TraceLink;
 use hubuum_storage_core::{
-    StorageTask, StorageTaskCancellation, StorageTaskControl, StorageTaskExecutionPhase,
-    StorageTaskKind, StorageTaskProgress, StorageTaskScopeSnapshot, StorageTaskStatus,
+    StorageTask, StorageTaskCancellation, StorageTaskCheckpoint, StorageTaskControl,
+    StorageTaskExecutionPhase, StorageTaskKind, StorageTaskProgress, StorageTaskScopeSnapshot,
+    StorageTaskStatus,
 };
 use hubuum_task_core::{TaskCancellationReason, TaskStopReason};
 use serde_json::Value;
@@ -55,6 +56,8 @@ pub(crate) struct TaskRow {
     pub(super) remote_dispatched_at: Option<NaiveDateTime>,
     pub(super) terminal_reason: Option<String>,
     pub(super) discovery_metadata: Option<Value>,
+    pub(super) task_checkpoint: Option<String>,
+    pub(super) wait_token: Option<Uuid>,
 }
 
 impl TaskRow {
@@ -65,6 +68,21 @@ impl TaskRow {
         let status = StorageTaskStatus::from_persisted(&self.status).ok_or_else(|| {
             PostgresStorageError::database(format!("Unknown stored task status '{}'", self.status))
         })?;
+        if (status == StorageTaskStatus::Waiting) != self.wait_token.is_some() {
+            return Err(PostgresStorageError::database(
+                "A task wait token must be present exactly while waiting",
+            ));
+        }
+        let checkpoint = self
+            .task_checkpoint
+            .as_deref()
+            .map(|encoded| {
+                crate::validate_persisted(
+                    "task checkpoint",
+                    StorageTaskCheckpoint::from_persisted(encoded),
+                )
+            })
+            .transpose()?;
         let lease_expires_at = projected_lease_expiry(self.lease_token, self.lease_expires_at)?;
         let progress = crate::validate_persisted(
             "task progress",
@@ -95,6 +113,7 @@ impl TaskRow {
         )
         .submitted_by(self.submitted_by.map(PrincipalId::new).transpose()?)
         .control(control)
+        .checkpoint(checkpoint)
         .idempotency_key(self.idempotency_key)
         .request_hash(self.request_hash)
         .request_payload(self.request_payload)
@@ -277,6 +296,8 @@ mod tests {
             remote_dispatched_at: None,
             terminal_reason: None,
             discovery_metadata: None,
+            task_checkpoint: None,
+            wait_token: None,
         }
     }
 

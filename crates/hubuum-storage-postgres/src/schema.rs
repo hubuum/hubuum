@@ -1043,6 +1043,8 @@ diesel::table! {
         terminal_reason -> Nullable<Varchar>,
         discovery_metadata -> Nullable<Jsonb>,
         logical_identity -> Nullable<Jsonb>,
+        task_checkpoint -> Nullable<Text>,
+        wait_token -> Nullable<Uuid>,
     }
 }
 

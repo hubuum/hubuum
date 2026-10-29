@@ -74,4 +74,10 @@ changelog entry and must say so in its PR description.
 - #504: implemented with a reproducible synthetic baseline, initial targets and
   acceptance gates; pending review/merge. See
   [lifecycle budgets](performance/lifecycle_budgets.md).
-- #505–#521: pending; no completion or destructive-feature enablement is implied.
+- #516: first dormant foundation implements bounded export/backup checkpoints,
+  durable waits, fenced notification-to-queue transitions, and existing task
+  accounting. Current built-in executors reject stored checkpoints; provider
+  integration, physical obligations, polling, and shared retrieval accounting
+  remain pending. See [durable waiting](task_admission.md#durable-waiting-foundation).
+- Other #505–#521 milestones retain their issue-specific acceptance gates; no
+  archive or destructive-feature enablement is implied.
