@@ -6,6 +6,7 @@
 
 mod identity;
 mod manifest;
+mod producer;
 mod transfer;
 
 use std::fmt;
@@ -18,6 +19,7 @@ pub use identity::{
 pub use manifest::{
     ArtifactLimits, ArtifactLimitsBuilder, ArtifactManifest, ManifestBuilder, VerifiedArtifact,
 };
+pub use producer::stage_producer;
 pub use transfer::{ArtifactReader, ArtifactWriter, verify, verify_and_publish};
 
 #[derive(Clone, Debug, Eq, PartialEq)]

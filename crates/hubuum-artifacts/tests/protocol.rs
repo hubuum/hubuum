@@ -1,17 +1,23 @@
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use hubuum_artifacts::{
     ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactManifest, ArtifactReader,
     ArtifactReference, ArtifactResult, ArtifactStore, ArtifactWriter, Destination, DestinationId,
-    ManifestBuilder, VerifiedArtifact, verify_and_publish,
+    ManifestBuilder, VerifiedArtifact, stage_producer, verify_and_publish,
 };
 use rstest::rstest;
+use tokio::sync::{Notify, Semaphore, oneshot};
+use tokio::time::timeout;
 
 // A deliberately focused byte-store fault fixture, not a selectable backend.
 #[derive(Default)]
 struct FaultStore {
     state: Mutex<State>,
+    append_gate: Option<Arc<Semaphore>>,
+    append_started: Notify,
 }
 #[derive(Default)]
 struct State {
@@ -33,6 +39,9 @@ enum Fault {
     Manifest,
     StreamDigest,
     Unavailable,
+    Append,
+    Seal,
+    Abort,
 }
 
 #[async_trait]
@@ -44,7 +53,14 @@ impl ArtifactStore for FaultStore {
         Ok(())
     }
     async fn append(&self, _: &ArtifactIdentity, ordinal: u32, bytes: &[u8]) -> ArtifactResult<()> {
+        if let Some(gate) = &self.append_gate {
+            self.append_started.notify_one();
+            gate.acquire().await.unwrap().forget();
+        }
         let mut state = self.state.lock().unwrap();
+        if matches!(state.fault, Some(Fault::Append)) {
+            return Err(ArtifactError::Backend("append failed".into()));
+        }
         assert!(!state.sealed);
         assert_eq!(ordinal as usize, state.blocks.len());
         state.blocks.push(bytes.to_vec());
@@ -52,6 +68,9 @@ impl ArtifactStore for FaultStore {
     }
     async fn seal(&self, manifest: &ArtifactManifest) -> ArtifactResult<()> {
         let mut state = self.state.lock().unwrap();
+        if matches!(state.fault, Some(Fault::Seal)) {
+            return Err(ArtifactError::Backend("seal failed".into()));
+        }
         state.sealed = true;
         state.manifest = manifest.encode();
         Ok(())
@@ -112,7 +131,11 @@ impl ArtifactStore for FaultStore {
         ))
     }
     async fn abort(&self, _: &ArtifactIdentity) -> ArtifactResult<()> {
-        self.state.lock().unwrap().aborted = true;
+        let mut state = self.state.lock().unwrap();
+        if matches!(state.fault, Some(Fault::Abort)) {
+            return Err(ArtifactError::Backend("abort failed".into()));
+        }
+        state.aborted = true;
         Ok(())
     }
     async fn cleanup(&self) -> ArtifactResult<u32> {
@@ -404,4 +427,173 @@ async fn final_block_is_withheld_when_only_the_full_digest_is_wrong() {
     reader.next_block().await.unwrap();
     reader.next_block().await.unwrap();
     assert!(reader.next_block().await.is_err());
+}
+
+#[rstest]
+#[case::empty(b"".as_slice())]
+#[case::partial(b"abc".as_slice())]
+#[case::exact(b"abcdefghijkl".as_slice())]
+#[tokio::test]
+async fn synchronous_producer_stages_without_publishing(#[case] bytes: &'static [u8]) {
+    let store = FaultStore::default();
+    let (verified, count) = stage_producer(&store, identity(), limits(), move |sink| {
+        for byte in bytes {
+            sink.write_all(&[*byte])
+                .map_err(|error| ArtifactError::Backend(error.to_string()))?;
+        }
+        Ok(bytes.len())
+    })
+    .await
+    .unwrap();
+    assert_eq!(count, bytes.len());
+    assert!(!store.state.lock().unwrap().published);
+    let reference = store.publish(&verified).await.unwrap();
+    let mut reader = ArtifactReader::open(&store, &reference).await.unwrap();
+    let mut actual = Vec::new();
+    while let Some(block) = reader.next_block().await.unwrap() {
+        actual.extend(block);
+    }
+    assert_eq!(actual, bytes);
+}
+
+#[rstest]
+#[case::propagated(false)]
+#[case::ignored(true)]
+#[tokio::test]
+async fn producer_overflow_cannot_seal_a_shorter_artifact(#[case] ignore: bool) {
+    let store = FaultStore::default();
+    let result = stage_producer(&store, identity(), limits(), move |sink| {
+        sink.write_all(b"abcd").unwrap();
+        let error = sink.write_all(b"efghijklmnop").unwrap_err();
+        if ignore {
+            let _ = sink.write_all(b"x");
+            Ok(())
+        } else {
+            Err(ArtifactError::Backend(error.to_string()))
+        }
+    })
+    .await;
+    assert!(matches!(result, Err(ArtifactError::Limit(_))));
+    let state = store.state.lock().unwrap();
+    assert!(state.aborted);
+    assert!(!state.sealed);
+}
+
+#[rstest]
+#[case::error(false)]
+#[case::panic(true)]
+#[tokio::test]
+async fn failed_producer_is_aborted_without_publishing(#[case] panic: bool) {
+    let store = FaultStore::default();
+    let result = stage_producer(&store, identity(), limits(), move |sink| {
+        sink.write_all(b"abcd").unwrap();
+        assert!(!panic, "simulated producer panic");
+        Err::<(), _>(ArtifactError::Invalid("producer failed".into()))
+    })
+    .await;
+    assert!(result.is_err());
+    let state = store.state.lock().unwrap();
+    assert!(state.aborted);
+    assert!(!state.sealed);
+}
+
+#[rstest]
+#[case::append(Fault::Append)]
+#[case::seal(Fault::Seal)]
+#[case::verification(Fault::Unavailable)]
+#[tokio::test]
+async fn producer_destination_failure_joins_and_aborts(#[case] fault: Fault) {
+    let store = FaultStore::default();
+    store.state.lock().unwrap().fault = Some(fault);
+    let result = stage_producer(&store, identity(), limits(), |sink| {
+        sink.write_all(b"abcdefghijkl")
+            .map_err(|error| ArtifactError::Backend(error.to_string()))
+    })
+    .await;
+    assert!(result.is_err());
+    let state = store.state.lock().unwrap();
+    assert!(state.aborted);
+    assert!(!state.published);
+}
+
+#[tokio::test]
+async fn producer_abort_failure_preserves_cleanup_obligation() {
+    let store = FaultStore::default();
+    store.state.lock().unwrap().fault = Some(Fault::Abort);
+    let error = stage_producer(&store, identity(), limits(), |_| {
+        Err::<(), _>(ArtifactError::Invalid("producer failed".into()))
+    })
+    .await
+    .err()
+    .unwrap();
+    assert!(error.to_string().contains("abort failed"));
+    assert!(!store.state.lock().unwrap().published);
+}
+
+#[tokio::test]
+async fn slow_destination_backpressures_the_producer() {
+    let gate = Arc::new(Semaphore::new(0));
+    let store = Arc::new(FaultStore {
+        append_gate: Some(gate.clone()),
+        ..Default::default()
+    });
+    let writes = Arc::new(AtomicUsize::new(0));
+    let task_store = store.clone();
+    let progress = writes.clone();
+    let task = tokio::spawn(async move {
+        stage_producer(task_store.as_ref(), identity(), limits(), move |sink| {
+            for _ in 0..3 {
+                sink.write_all(b"abcd")
+                    .map_err(|error| ArtifactError::Backend(error.to_string()))?;
+                progress.fetch_add(1, Ordering::SeqCst);
+            }
+            Ok(())
+        })
+        .await
+    });
+    timeout(Duration::from_secs(5), store.append_started.notified())
+        .await
+        .unwrap();
+    // One block is in append, one can be queued; the third write must wait.
+    assert!(writes.load(Ordering::SeqCst) <= 2);
+    assert!(!task.is_finished());
+    gate.add_permits(3);
+    let (verified, ()) = timeout(Duration::from_secs(5), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(verified.manifest().byte_size(), 12);
+}
+
+#[tokio::test]
+async fn dropped_staging_disconnects_a_blocked_producer() {
+    let store = Arc::new(FaultStore {
+        append_gate: Some(Arc::new(Semaphore::new(0))),
+        ..Default::default()
+    });
+    let task_store = store.clone();
+    let (exited, exit) = oneshot::channel();
+    let task = tokio::spawn(async move {
+        stage_producer(task_store.as_ref(), identity(), limits(), move |sink| {
+            let result = sink
+                .write_all(b"abcdefghijkl")
+                .map_err(|error| ArtifactError::Backend(error.to_string()));
+            let _ = exited.send(result.is_err());
+            result
+        })
+        .await
+    });
+    timeout(Duration::from_secs(5), store.append_started.notified())
+        .await
+        .unwrap();
+    task.abort();
+    assert!(task.await.is_err());
+    assert!(
+        timeout(Duration::from_secs(5), exit)
+            .await
+            .unwrap()
+            .unwrap()
+    );
+    assert!(!store.state.lock().unwrap().sealed);
 }

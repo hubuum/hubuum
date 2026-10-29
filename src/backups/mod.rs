@@ -13,6 +13,9 @@ use crate::storage::{
 };
 use crate::traits::AuthzSubject;
 
+mod producer;
+pub use producer::BackupArtifactProducer;
+
 #[derive(Clone, Debug)]
 pub struct BackupSettings {
     output_retention: FutureRetention,
@@ -60,14 +63,17 @@ pub(crate) async fn execute_backup_task(
         .clone()
         .ok_or_else(|| ApiError::BadRequest("Backup task payload is missing".to_string()))?;
     let request: BackupRequest = serde_json::from_value(payload)?;
-    authorize_backup_request(context, user, scopes).await?;
-    let document =
-        crate::restores::replay::capture(context, request.include_history, settings.budget())
-            .await?;
+    let producer = BackupArtifactProducer::capture(
+        context,
+        user,
+        scopes,
+        request.include_history,
+        settings.budget(),
+    )
+    .await?;
     crate::tasks::control::checkpoint()?;
-    let bytes = settings.budget().serialize(&document)?;
-    let total_items = document.summary()?.total_items;
-    drop(document);
+    let total_items = producer.summary().total_items;
+    let bytes = producer.serialize_legacy()?;
     crate::tasks::control::checkpoint()?;
     let sha256 = Sha256::digest(&bytes)
         .iter()
