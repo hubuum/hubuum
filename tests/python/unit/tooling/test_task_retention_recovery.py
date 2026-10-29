@@ -1,6 +1,7 @@
 """The physical drill cannot select unrelated volumes or extract escaping files."""
 
 import io
+import json
 from pathlib import Path
 import tarfile
 import tempfile
@@ -11,6 +12,24 @@ from support import task_retention_recovery as RECOVERY
 
 
 class TaskRetentionRecoveryTests(unittest.TestCase):
+    def test_restart_refreshes_runtime_and_host_database_addresses(self):
+        name = "hubuum-corpus-0123456789ab"
+        info = {"NetworkSettings": {"Networks": {name: {"IPAddress": "10.89.0.18"}}}}
+
+        def docker(*args):
+            if args == ("inspect", name + "-db"):
+                return SimpleNamespace(stdout=json.dumps([info]))
+            self.assertEqual(args, ("port", name + "-db", "5432/tcp"))
+            return SimpleNamespace(stdout="127.0.0.1:32999\n")
+
+        deployment = SimpleNamespace(name=name, containers=[name + "-db"], docker=docker,
+                                     password="fixture-secret", database_ip="10.89.0.2",
+                                     host_url="postgres://old-endpoint/source")
+        RECOVERY._refresh_database_address(deployment)
+        self.assertEqual(deployment.database_ip, "10.89.0.18")
+        self.assertEqual(deployment.host_url,
+                         "postgres://corpus:fixture-secret@127.0.0.1:32999/source?sslmode=disable")
+
     def test_volume_helper_keeps_selinux_and_matches_only_owned_process_level(self):
         self.assertEqual(RECOVERY._volume_security({}), [])
         self.assertEqual(RECOVERY._volume_security({"ProcessLabel": "system_u:system_r:container_t:s0:c2,c5"}),

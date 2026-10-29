@@ -5,6 +5,7 @@ checkpoint repository and real remote-effect counter remain untouched.
 """
 
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -54,6 +55,24 @@ def _container(deployment):
     if len(value) != 1:
         raise ValueError("Database container identity is ambiguous")
     return name, value[0]
+
+
+def _refresh_database_address(deployment):
+    # A stopped rootless container can receive a different address on restart.
+    # Refresh both consumer endpoints before new runtimes inherit --add-host.
+    name, info = _container(deployment)
+    network = info.get("NetworkSettings", {}).get("Networks", {}).get(deployment.name)
+    if not network:
+        raise ValueError("Restored database is outside its managed fixture network")
+    address = ipaddress.ip_address(network.get("IPAddress", ""))
+    if address.is_unspecified or address.is_multicast:
+        raise ValueError("Restored database has no usable network address")
+    published = deployment.docker("port", name, "5432/tcp").stdout.strip()
+    match = re.fullmatch(r"127\.0\.0\.1:([0-9]{1,5})", published)
+    if not match or not 1 <= int(match[1]) <= 65535:
+        raise ValueError("Restored database has no single loopback port binding")
+    deployment.database_ip = str(address)
+    deployment.host_url = f"postgres://corpus:{deployment.password}@{published}/source?sslmode=disable"
 
 
 def _layout(info):
@@ -308,6 +327,7 @@ def rewind_primary(arguments, deployment, root, monitor, probe_callback):
     deployment.docker("start", name)
     _wait("physically restored PostgreSQL", lambda: deployment.docker(
         "exec", name, "pg_isready", "-h", "127.0.0.1", "-U", "corpus", "-d", "source", check=False).returncode == 0)
+    _refresh_database_address(deployment)
     monitor.add(name)
     if _sql(deployment, "SELECT system_identifier FROM pg_control_system()") != metadata["system_identifier"]:
         raise RuntimeError("Physical restore changed the PostgreSQL system identifier")
