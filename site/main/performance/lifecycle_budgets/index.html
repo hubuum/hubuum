@@ -16,7 +16,7 @@
         <link rel="prev" href="../../scale_benchmarks/">
       
       
-        <link rel="next" href="../release_profiles/">
+        <link rel="next" href="../artifact_pipeline/">
       
       
         
@@ -4587,10 +4587,48 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#recorded-revision-2-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Recorded revision 2 results
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
       
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../artifact_pipeline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Artifact pipeline measurements
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -4886,6 +4924,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Revision 2: artifact acceptance and production tuning
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recorded-revision-2-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Recorded revision 2 results
       </span>
     </span>
   </a>
@@ -5450,6 +5499,106 @@ it does not run a complete HTTP server or initialize the global metrics exporter
 Legacy inline readers remain the separately documented finite compatibility
 exception. Protocol, application/API, migration, split-role and production
 container checks remain independent required gates.</p>
+<h2 id="recorded-revision-2-results">Recorded revision 2 results<a class="headerlink" href="#recorded-revision-2-results" title="Permanent link">&para;</a></h2>
+<p>The <a href="../artifact_pipeline/">complete report</a> records one warm-up, five fresh
+slow-transfer samples, and two separate maximum-row/output runs. All runs use
+two worker processes with two concurrent production paths per process.
+Across the five measured samples and both bulk cases, native worker-plus-child
+peak RSS was <strong>428.95 MiB</strong> and the largest 20 ms RSS sample was
+<strong>394.09 MiB</strong>, both below H1's 512 MiB ceiling. Peak deployment
+reservation was <strong>7.9932 GiB</strong>, below H2's 8 GiB limit.</p>
+<table>
+<thead>
+<tr>
+<th>Slow-transfer path</th>
+<th>Minimum upload (MiB/s)</th>
+<th>Median upload (MiB/s)</th>
+<th>p95 upload (MiB/s)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>backup/backup</td>
+<td>0.886</td>
+<td>0.907</td>
+<td>0.927</td>
+</tr>
+<tr>
+<td>backup/template</td>
+<td>0.874</td>
+<td>0.899</td>
+<td>0.932</td>
+</tr>
+<tr>
+<td>export/json</td>
+<td>0.886</td>
+<td>0.902</td>
+<td>0.933</td>
+</tr>
+<tr>
+<td>export/template</td>
+<td>0.880</td>
+<td>0.904</td>
+<td>0.932</td>
+</tr>
+</tbody>
+</table>
+<p>Every measured stream exceeds P7's 0.8 MiB/s target. Upload, independent
+read-back and download were each throttled to 1 MiB/s; upload throughput
+excludes capture/render and independent verification. The raw report records
+every phase and all five samples. With five observations, nearest-rank p95
+is the maximum observation; it is not a high-confidence tail estimate.</p>
+<table>
+<thead>
+<tr>
+<th>Bulk fixture</th>
+<th>Largest JSON output (bytes)</th>
+<th>Largest template output (bytes)</th>
+<th>Backup output (bytes)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Two export workers</td>
+<td>1,069,338,784</td>
+<td>1,069,286,655</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Export and backup workers</td>
+<td>532,572,704</td>
+<td>532,546,687</td>
+<td>1,061,086,443</td>
+</tr>
+</tbody>
+</table>
+<p>Bulk fixtures use 4 MiB source-row targets and verify publication and complete
+download near the profile output ceiling. Exact encoded-row and one-byte
+overflow behavior remain covered by the separate boundary tests. These
+runs do not qualify 64 GiB artifacts or the original constrained-host profile.</p>
+<p>Slow samples were measured at <code>e9efba53f867becbbf31c3cc853981302e23fecd</code>.
+Bulk export qualification includes the export compatibility fixes at
+<code>6c1187916dac097345b409e826a68ec1fc3854c4</code>; the mixed bulk run uses
+<code>3ffc7ebcb5e4d16f308afbf13d96d7af906410c9</code>. The intervening
+changes add an optional functional-test polling budget, restore the hydration
+progress event, preserve the existing oversized-template error mapping, and
+accept format 12 at the restore boundary. That version guard is outside the
+measured creation/download path.
+The report pins the revision for every raw sample.</p>
+<p>The driver sets a one-hour export stage timeout and 10,000,000 template fuel
+units for these large remote fixtures; the isolated renderer retains its
+five-second deadline and 128 MiB heap ceiling. Output/spool limits vary by
+fixture as shown in the reproduction commands. These are explicit profile
+settings, not new production defaults.</p>
+<p>Repository tests ran concurrently in separate databases on the same PostgreSQL
+server, with local compilation during parts of qualification. The measurements
+include that contention; they do not establish dedicated-host latency.</p>
+<p>An earlier diagnostic series accidentally inherited the general fixture's
+20-connection pool and later hit a two-second pool acquisition timeout.
+Those samples are excluded. The reported runs use an actual eight-connection
+pool with explicit 30-second acquisition and statement timeouts. Legacy
+inline output readers remain outside the new streaming memory guarantee; see
+<a href="../../artifact_staging/#integrity-and-downloads">the finite compatibility exception</a>.</p>
 
 
 
@@ -5504,13 +5653,13 @@ container checks remain independent required gates.</p>
         
         
           
-          <a href="../release_profiles/" class="md-footer__link md-footer__link--next" aria-label="Next: Release profiles">
+          <a href="../artifact_pipeline/" class="md-footer__link md-footer__link--next" aria-label="Next: Artifact pipeline measurements">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Release profiles
+                Artifact pipeline measurements
               </div>
             </div>
             <div class="md-footer__button md-icon">
