@@ -1,5 +1,6 @@
 mod artifact_pipeline;
 use crate::models::HubuumClassID;
+use crate::tests::asserts::expect_legacy_task;
 use chrono::NaiveDateTime;
 use diesel::{ExpressionMethods, QueryDsl};
 use diesel_async::RunQueryDsl;
@@ -97,6 +98,7 @@ async fn create_worker_test_task_with_trace(
             .expect("worker test task request should be valid"),
         )
         .await
+        .map(expect_legacy_task)
         .expect("worker test task should be created");
     hubuum_storage_postgres::test_support::prioritize_task(context.pool.get_ref(), task.id())
         .await

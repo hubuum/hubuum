@@ -1,4 +1,5 @@
 use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
+use hubuum::tests::asserts::expect_legacy_task;
 use std::panic::{AssertUnwindSafe, resume_unwind};
 
 use futures_util::FutureExt;
@@ -142,7 +143,7 @@ async fn replicas_atomically_enforce_each_admission_boundary(
                     storage.initialize_task_policy(proposed).await.unwrap(),
                     expected
                 );
-                storage.create_task(request).await
+                storage.create_task(request).await.map(expect_legacy_task)
             });
         }
         let mut accepted = 0;
@@ -187,7 +188,14 @@ async fn concurrent_idempotent_duplicates_charge_one_reservation(
                 .request_hash(Some("same-request".into()))
                 .try_build()
                 .unwrap();
-            replicas.spawn(async move { storage.create_task(request).await.unwrap().id() });
+            replicas.spawn(async move {
+                storage
+                    .create_task(request)
+                    .await
+                    .map(expect_legacy_task)
+                    .unwrap()
+                    .id()
+            });
         }
         let mut ids = BTreeSet::new();
         while let Some(result) = replicas.join_next().await {
@@ -284,6 +292,7 @@ async fn cancellation_releases_admission_for_the_next_request(
                     .unwrap(),
             )
             .await
+            .map(expect_legacy_task)
             .unwrap();
         storage
             .request_task_cancellation(StorageTaskCancellationRequest::new(
@@ -548,7 +557,8 @@ async fn request_resident_budget_rejection_leaves_no_reservation(
                     .try_build()
                     .unwrap(),
             )
-            .await;
+            .await
+            .map(expect_legacy_task);
         assert_eq!(
             result.unwrap_err().task_capacity_rejection(),
             Some(TaskCapacityRejection::ResidentBytes)

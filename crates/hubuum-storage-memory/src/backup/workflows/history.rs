@@ -95,11 +95,15 @@ pub(in crate::backup) fn capture_history(
         progress.scan_row()?;
         let (event, before, after) = recorded.as_parts();
         if event.entity_type() == EntityType::Task
-            && !event.entity_id().is_some_and(|id| {
-                state
-                    .tasks
-                    .get(&id.get())
-                    .is_some_and(|task| task.status.is_terminal())
+            && event.entity_id().is_some_and(|id| {
+                state.tasks.get(&id.get()).is_some_and(|task| {
+                    !task.status.is_terminal()
+                        && recorded
+                            .logical_identity()
+                            .and_then(|proof| proof.task_reference("/entity_id"))
+                            .zip(state.task_identity(task.id).ok())
+                            .is_some_and(|(original, current)| original == current)
+                })
             })
         {
             continue;

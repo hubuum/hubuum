@@ -10,19 +10,19 @@ pub(super) fn capture(
         state
             .tasks
             .get(&id)
-            .is_some_and(|task| task.status.is_terminal())
+            .is_some_and(|task| task.status.is_terminal() && state.task_details_visible(task.id))
     };
     let mut tasks = Vec::new();
     for t in state.tasks.values() {
         progress.scan_row()?;
-        if !t.status.is_terminal() {
+        if !t.status.is_terminal() || !state.task_details_visible(t.id) {
             continue;
         }
         let mut fields = json!({"id": t.id.id(), "kind": t.kind.as_str(), "status": t.status.as_str(), "submitted_by": t.submitted_by.map(PrincipalId::id),
             "request_hash": t.request_hash, "request_payload": t.request_payload, "summary": t.summary, "total_items": t.progress.total(), "processed_items": t.progress.processed(),
             "success_items": t.progress.succeeded(), "failed_items": t.progress.failed(), "submitted_token_scoped": t.scope_snapshot.scoped(), "submitted_token_scopes": t.scope_snapshot.scopes(),
             "request_redacted_at": t.request_redacted_at, "started_at": t.started_at, "finished_at": t.finished_at, "deleted_at": t.deleted_at, "deleted_by": t.deleted_by.map(PrincipalId::id),
-            "created_at": t.created_at, "updated_at": t.updated_at, "attempt_count": t.attempt_count, "initiator_principal_id": t.initiator_principal_id.map(PrincipalId::id)}).as_object().expect("literal object").clone();
+            "created_at": t.created_at, "updated_at": t.updated_at, "attempt_count": t.attempt_count, "retention_policy_revision": t.retention_policy, "details_expires_at": t.details_expires_at, "recovery_unavailable": t.recovery_unavailable, "initiator_principal_id": t.initiator_principal_id.map(PrincipalId::id)}).as_object().expect("literal object").clone();
         if let Some(metadata) = t.discovery_metadata() {
             fields.insert("discovery_metadata".to_string(), metadata.to_value());
         }
@@ -56,7 +56,7 @@ pub(super) fn capture(
     let mut outputs = Vec::new();
     for o in state.export_outputs.values() {
         progress.scan_row()?;
-        if !terminal(o.task_id().id()) {
+        if !terminal(o.task_id().id()) || !state.task_outputs_visible(o.task_id()) {
             continue;
         }
         outputs.push(retain_row(progress, row(json!({
@@ -153,6 +153,21 @@ pub(super) fn restore(
             lease_expires_at: None,
             claim_token: None,
             execution_fence: None,
+            receipt_admission: None,
+            retention_policy: r
+                .optional_value("retention_policy_revision")
+                .map(|value| {
+                    serde_json::from_value(value.clone())
+                        .map_err(|_| invalid("retention_policy_revision"))
+                })
+                .transpose()?,
+            details_expires_at: r.optional_time("details_expires_at")?,
+            recovery_unavailable: r
+                .optional_value("recovery_unavailable")
+                .map(|_| r.boolean("recovery_unavailable"))
+                .transpose()?
+                .unwrap_or(false),
+            invocation: None,
             attempt_count: r.integer("attempt_count")?,
             initiator_principal_id: r
                 .optional_integer("initiator_principal_id")?

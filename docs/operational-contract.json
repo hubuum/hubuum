@@ -22,6 +22,8 @@
             "payload_too_large",
             "database_error",
             "conflict",
+            "task_details_expired",
+            "legacy_request_unverifiable",
             "precondition_failed",
             "revision_conflict",
             "too_many_requests",
@@ -265,6 +267,187 @@
       ],
       "scope": "process",
       "description": "Computed-field rebuild duration",
+      "feature": null
+    },
+    {
+      "name": "hubuum_control_checkpoint_gc_bytes_total",
+      "kind": "counter",
+      "unit": "bytes",
+      "labels": [],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "File lengths of authenticated superseded checkpoints removed",
+      "feature": null
+    },
+    {
+      "name": "hubuum_control_checkpoint_gc_files_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Authenticated superseded checkpoint files removed",
+      "feature": null
+    },
+    {
+      "name": "hubuum_control_checkpoint_io_bytes_total",
+      "kind": "counter",
+      "unit": "bytes",
+      "labels": [
+        {
+          "name": "operation",
+          "bounded_by": "enumerated values",
+          "values": [
+            "read",
+            "write"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Actual checkpoint file data bytes read or written, including partial operations",
+      "feature": null
+    },
+    {
+      "name": "hubuum_control_checkpoint_lock_attempts_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "outcome",
+          "bounded_by": "enumerated values",
+          "values": [
+            "acquired",
+            "contended",
+            "failure"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Nonblocking checkpoint publication lock attempts",
+      "feature": null
+    },
+    {
+      "name": "hubuum_control_checkpoint_lock_duration_seconds",
+      "kind": "histogram",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "outcome",
+          "bounded_by": "enumerated values",
+          "values": [
+            "acquired",
+            "contended",
+            "failure"
+          ]
+        }
+      ],
+      "histogram_buckets": [
+        0.0005,
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0
+      ],
+      "scope": "process",
+      "description": "Checkpoint publication lock attempt duration",
+      "feature": null
+    },
+    {
+      "name": "hubuum_control_checkpoint_operation_duration_seconds",
+      "kind": "histogram",
+      "unit": "seconds",
+      "labels": [
+        {
+          "name": "operation",
+          "bounded_by": "enumerated values",
+          "values": [
+            "read",
+            "write",
+            "encode_sign",
+            "verify",
+            "fsync_file",
+            "fsync_directory",
+            "publish",
+            "gc",
+            "coalescing_wait"
+          ]
+        },
+        {
+          "name": "outcome",
+          "bounded_by": "enumerated values",
+          "values": [
+            "success",
+            "failure"
+          ]
+        }
+      ],
+      "histogram_buckets": [
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0,
+        60.0,
+        120.0,
+        300.0,
+        600.0,
+        1800.0,
+        3600.0
+      ],
+      "scope": "process",
+      "description": "Checkpoint publisher operation duration",
+      "feature": null
+    },
+    {
+      "name": "hubuum_control_checkpoint_operations_total",
+      "kind": "counter",
+      "unit": null,
+      "labels": [
+        {
+          "name": "operation",
+          "bounded_by": "enumerated values",
+          "values": [
+            "read",
+            "write",
+            "encode_sign",
+            "verify",
+            "fsync_file",
+            "fsync_directory",
+            "publish",
+            "gc",
+            "coalescing_wait"
+          ]
+        },
+        {
+          "name": "outcome",
+          "bounded_by": "enumerated values",
+          "values": [
+            "success",
+            "failure"
+          ]
+        }
+      ],
+      "histogram_buckets": [],
+      "scope": "process",
+      "description": "Checkpoint publisher operation outcomes",
       "feature": null
     },
     {
@@ -1843,6 +2026,7 @@
             "acknowledge_runtime_drain",
             "acknowledge_task_stop",
             "activate_schema_revision",
+            "activate_task_submission",
             "add_group_member",
             "admit_task_execution",
             "aggregate_objects",
@@ -1860,6 +2044,7 @@
             "authorize_local_collection",
             "authorize_local_collection_batch",
             "authorize_local_collections",
+            "backfill_task_receipts",
             "begin_event_delivery",
             "begin_remote_dispatch",
             "bind_task",
@@ -1869,14 +2054,17 @@
             "capture_application_execution",
             "capture_application_execution_with_maintenance",
             "capture_backup_replay",
+            "capture_control_checkpoint",
             "capture_deletion_control",
             "change_event_sink_grant",
+            "change_task_hold",
             "claim_event_delivery_batch",
             "claim_event_retention_batch",
             "claim_next_task",
             "cleanup",
             "cleanup_hot_object_history",
             "commit_deletion_control",
+            "commit_task_control",
             "complete_event_retention_batch",
             "complete_task",
             "count_enabled_event_sinks",
@@ -1921,6 +2109,7 @@
             "ensure_identity_scope",
             "execute_computed_field_rebuild",
             "expire_restore_stage",
+            "expire_task_receipts",
             "fail_restore_and_resume",
             "fail_task",
             "finish_event_delivery",
@@ -2032,6 +2221,7 @@
             "list_import_collections_by_name",
             "list_import_objects_by_names",
             "list_import_task_results",
+            "list_legacy_task_receipts",
             "list_local_authorized_collections",
             "list_local_collection_grants",
             "list_manageable_service_accounts",
@@ -2042,6 +2232,8 @@
             "list_object_relations_touching",
             "list_object_relations_touching_ids",
             "list_objects",
+            "list_pending_task_admissions",
+            "list_pending_task_purges",
             "list_personal_computed_fields",
             "list_principal_collection_permissions",
             "list_principal_groups",
@@ -2070,7 +2262,11 @@
             "load_groups_with_collection_permission",
             "load_principal_collection_permissions",
             "load_token_metadata_by_ids",
+<<<<<<< HEAD
             "manifest",
+=======
+            "lookup_task_submission",
+>>>>>>> ce1b04ba (Preserve idempotency receipts while expiring task details)
             "mark_event_delivery_dead",
             "mark_event_delivery_failed",
             "mark_event_delivery_succeeded",
@@ -2082,8 +2278,10 @@
             "poll_task_execution",
             "preflight_import",
             "prepare_class_relation",
+            "prepare_expired_task_outputs",
             "prepare_hot_object_history_deletion",
             "prepare_object_relation",
+            "prepare_task_details_purge",
             "process_event_fanout_batch",
             "process_schema_work",
             "publish",
@@ -2094,16 +2292,22 @@
             "purge_expired_export_outputs",
             "purge_expired_schema_profile_outputs",
             "purge_expired_tokens",
+            "purge_task_details_batch",
             "query_observation_control",
             "read_application_control",
             "read_deletion_control",
+            "read_task_control",
+            "read_task_receipt_activation",
+            "read_task_retention_policy",
             "reapply_deletion_decisions",
+            "reapply_task_retention",
             "record_claimed_import_results",
             "record_credential_creation",
             "record_import_results",
             "record_remote_target_invocation",
             "recover_application_control",
             "recover_expired_task_leases",
+            "recover_task_control",
             "refresh_principal",
             "register_destination",
             "register_runtime",
@@ -2117,6 +2321,7 @@
             "replace_export_template",
             "replace_query_usage",
             "replace_task_policy",
+            "replace_task_retention_policy",
             "request_computed_field_rebuild",
             "request_schema_work",
             "request_task_cancellation",
@@ -2147,6 +2352,7 @@
             "search_classes",
             "search_collections",
             "search_objects",
+            "select_expired_task_receipts",
             "set_query_observation_control",
             "set_user_password",
             "stage",
@@ -2302,6 +2508,7 @@
             "acknowledge_runtime_drain",
             "acknowledge_task_stop",
             "activate_schema_revision",
+            "activate_task_submission",
             "add_group_member",
             "admit_task_execution",
             "aggregate_objects",
@@ -2319,6 +2526,7 @@
             "authorize_local_collection",
             "authorize_local_collection_batch",
             "authorize_local_collections",
+            "backfill_task_receipts",
             "begin_event_delivery",
             "begin_remote_dispatch",
             "bind_task",
@@ -2328,14 +2536,17 @@
             "capture_application_execution",
             "capture_application_execution_with_maintenance",
             "capture_backup_replay",
+            "capture_control_checkpoint",
             "capture_deletion_control",
             "change_event_sink_grant",
+            "change_task_hold",
             "claim_event_delivery_batch",
             "claim_event_retention_batch",
             "claim_next_task",
             "cleanup",
             "cleanup_hot_object_history",
             "commit_deletion_control",
+            "commit_task_control",
             "complete_event_retention_batch",
             "complete_task",
             "count_enabled_event_sinks",
@@ -2380,6 +2591,7 @@
             "ensure_identity_scope",
             "execute_computed_field_rebuild",
             "expire_restore_stage",
+            "expire_task_receipts",
             "fail_restore_and_resume",
             "fail_task",
             "finish_event_delivery",
@@ -2491,6 +2703,7 @@
             "list_import_collections_by_name",
             "list_import_objects_by_names",
             "list_import_task_results",
+            "list_legacy_task_receipts",
             "list_local_authorized_collections",
             "list_local_collection_grants",
             "list_manageable_service_accounts",
@@ -2501,6 +2714,8 @@
             "list_object_relations_touching",
             "list_object_relations_touching_ids",
             "list_objects",
+            "list_pending_task_admissions",
+            "list_pending_task_purges",
             "list_personal_computed_fields",
             "list_principal_collection_permissions",
             "list_principal_groups",
@@ -2529,7 +2744,11 @@
             "load_groups_with_collection_permission",
             "load_principal_collection_permissions",
             "load_token_metadata_by_ids",
+<<<<<<< HEAD
             "manifest",
+=======
+            "lookup_task_submission",
+>>>>>>> ce1b04ba (Preserve idempotency receipts while expiring task details)
             "mark_event_delivery_dead",
             "mark_event_delivery_failed",
             "mark_event_delivery_succeeded",
@@ -2541,8 +2760,10 @@
             "poll_task_execution",
             "preflight_import",
             "prepare_class_relation",
+            "prepare_expired_task_outputs",
             "prepare_hot_object_history_deletion",
             "prepare_object_relation",
+            "prepare_task_details_purge",
             "process_event_fanout_batch",
             "process_schema_work",
             "publish",
@@ -2553,16 +2774,22 @@
             "purge_expired_export_outputs",
             "purge_expired_schema_profile_outputs",
             "purge_expired_tokens",
+            "purge_task_details_batch",
             "query_observation_control",
             "read_application_control",
             "read_deletion_control",
+            "read_task_control",
+            "read_task_receipt_activation",
+            "read_task_retention_policy",
             "reapply_deletion_decisions",
+            "reapply_task_retention",
             "record_claimed_import_results",
             "record_credential_creation",
             "record_import_results",
             "record_remote_target_invocation",
             "recover_application_control",
             "recover_expired_task_leases",
+            "recover_task_control",
             "refresh_principal",
             "register_destination",
             "register_runtime",
@@ -2576,6 +2803,7 @@
             "replace_export_template",
             "replace_query_usage",
             "replace_task_policy",
+            "replace_task_retention_policy",
             "request_computed_field_rebuild",
             "request_schema_work",
             "request_task_cancellation",
@@ -2606,6 +2834,7 @@
             "search_classes",
             "search_collections",
             "search_objects",
+            "select_expired_task_receipts",
             "set_query_observation_control",
             "set_user_password",
             "stage",
@@ -3949,6 +4178,29 @@
       ],
       "appears_in_running_configuration": true,
       "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_CONTROL_CHECKPOINT_MEASURE",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "boolean",
+      "default_is_set": true,
+      "default": [
+        "false"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [
+        "true",
+        "false"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "admin"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
       "dynamic_prefix": false
     },
     {
@@ -5379,6 +5631,24 @@
       ],
       "appears_in_running_configuration": true,
       "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_MEASUREMENT_CPU_AFFINITY",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "cpu_set",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "benchmark"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
       "dynamic_prefix": false
     },
     {
@@ -10844,6 +11114,192 @@
     {
       "command": "hubuum-admin",
       "options": [
+        {
+          "id": "task_retention",
+          "long": "task-retention",
+          "short": null,
+          "environment": null,
+          "value_kind": "enum",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [
+            "status",
+            "preview",
+            "enable",
+            "set-policy",
+            "hold",
+            "release-hold",
+            "run"
+          ],
+          "required": false,
+          "conflicts_with": [
+            "audit_templates",
+            "backup",
+            "check_database_privileges",
+            "control_checkpoint",
+            "database_ready",
+            "database_role_grants_sql",
+            "database_role_setup_sql",
+            "delete_object_history_version",
+            "export_template_health",
+            "migrate",
+            "migration_mode",
+            "reapply_control",
+            "reconcile_query_usage",
+            "recover_control",
+            "reset_password",
+            "restore",
+            "restore_executor",
+            "token_key_status",
+            "verify_backup",
+            "verify_control_recovery"
+          ],
+          "requires": [
+            "control_recovery_directory",
+            "control_recovery_key"
+          ]
+        },
+        {
+          "id": "task_retention_confirmation",
+          "long": "task-retention-confirmation",
+          "short": null,
+          "environment": null,
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "task_retention"
+          ]
+        },
+        {
+          "id": "task_retention_deduplication_seconds",
+          "long": "task-retention-deduplication-seconds",
+          "short": null,
+          "environment": null,
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "task_retention"
+          ]
+        },
+        {
+          "id": "task_retention_details_seconds",
+          "long": "task-retention-details-seconds",
+          "short": null,
+          "environment": null,
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "task_retention"
+          ]
+        },
+        {
+          "id": "task_hold_id",
+          "long": "task-hold-id",
+          "short": null,
+          "environment": null,
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "task_retention"
+          ]
+        },
+        {
+          "id": "task_hold_task",
+          "long": "task-hold-task",
+          "short": null,
+          "environment": null,
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "task_retention"
+          ]
+        },
+        {
+          "id": "task_hold_expires_at",
+          "long": "task-hold-expires-at",
+          "short": null,
+          "environment": null,
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "task_hold_task"
+          ]
+        },
+        {
+          "id": "task_hold_reason",
+          "long": "task-hold-reason",
+          "short": null,
+          "environment": null,
+          "value_kind": "enum",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [
+            "legal",
+            "incident",
+            "operator"
+          ],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "task_hold_task"
+          ]
+        },
         {
           "id": "control_recovery_directory",
           "long": "control-recovery-directory",

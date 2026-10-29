@@ -64,6 +64,11 @@ struct MemoryTokenRecord {
 
 #[derive(Clone)]
 struct MemoryTaskRecord {
+    receipt_admission: Option<task_retention::MemoryTaskAdmission>,
+    retention_policy: Option<TaskRetentionPolicyRevision>,
+    details_expires_at: Option<DateTime<Utc>>,
+    recovery_unavailable: bool,
+    invocation: Option<task_retention::MemoryTaskInvocation>,
     control: StorageTaskControl,
     id: TaskId,
     kind: StorageTaskKind,
@@ -356,6 +361,11 @@ struct MemoryRuntimeRegistration {
 #[derive(Clone)]
 struct MemoryState {
     artifacts: artifacts::Artifacts,
+    task_control: TaskControlState,
+    task_reapplication: Option<TaskControlReapplication>,
+    restore_repairs_pending: bool,
+    task_purge_attempts: BTreeMap<TaskPurgeBatchId, u64>,
+    next_task_purge_attempt: u64,
     deletion_control: DeletionControlState,
     application_control: ApplicationControlState,
     pending_restore: bool,
@@ -696,6 +706,7 @@ impl MemoryState {
         input: StorageTaskEventInput,
         actor: Option<&EventContext>,
     ) -> Result<(), StorageError> {
+        self.settle_task_receipt(task_id)?;
         let (event_type, message, data) = input.into_parts();
         let action = Action::parse(&event_type).map_err(|_| {
             StorageError::internal(format!("Unknown task event type '{event_type}'"))
@@ -879,5 +890,6 @@ mod state_lock;
 mod task_capacity;
 mod task_control;
 mod task_scheduling;
+mod task_retention;
 use state_lock::MemoryStateLock;
 mod workflows;

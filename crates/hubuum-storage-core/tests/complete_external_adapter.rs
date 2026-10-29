@@ -100,7 +100,7 @@ impl DeletionControlStorage for CompleteExternalAdapter {
     }
     async fn release_application_exposure(
         &self,
-        receipt: ApplicationReapplication,
+        receipt: ApplicationExposureProof,
         checkpoint: DeletionCheckpointIdentity,
     ) -> Result<(), StorageError> {
         fixture_result()
@@ -1791,11 +1791,126 @@ impl TaskCapacityStorage for CompleteExternalAdapter {
 }
 
 #[async_trait]
+impl TaskRetentionStorage for CompleteExternalAdapter {
+    async fn prepare_expired_task_outputs(
+        &self,
+        selection: TaskPurgeSelection,
+    ) -> Result<Option<TaskPurgeTicket>, StorageError> {
+        fixture_result()
+    }
+    async fn read_task_receipt_activation(&self) -> Result<TaskReceiptActivation, StorageError> {
+        fixture_result()
+    }
+    async fn list_pending_task_admissions(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<TaskAdmissionTicket>, StorageError> {
+        fixture_result()
+    }
+    async fn read_task_control(&self) -> Result<TaskControlState, StorageError> {
+        fixture_result()
+    }
+    async fn capture_control_checkpoint(&self) -> Result<ControlCheckpointCapture, StorageError> {
+        fixture_result()
+    }
+    async fn commit_task_control(
+        &self,
+        change: TaskControlChange,
+    ) -> Result<TaskControlState, StorageError> {
+        fixture_result()
+    }
+    async fn recover_task_control(
+        &self,
+        change: TaskControlRecovery,
+    ) -> Result<TaskControlRevision, StorageError> {
+        fixture_result()
+    }
+    async fn read_task_retention_policy(&self) -> Result<TaskRetentionPolicy, StorageError> {
+        fixture_result()
+    }
+    async fn replace_task_retention_policy(
+        &self,
+        change: TaskRetentionPolicyChange,
+    ) -> Result<TaskControlRevision, StorageError> {
+        fixture_result()
+    }
+    async fn change_task_hold(
+        &self,
+        change: TaskHoldChange,
+    ) -> Result<TaskControlRevision, StorageError> {
+        fixture_result()
+    }
+    async fn select_expired_task_receipts(
+        &self,
+        request: ReceiptExpirySelection,
+    ) -> Result<Option<ReceiptExpiryBatch>, StorageError> {
+        fixture_result()
+    }
+    async fn expire_task_receipts(
+        &self,
+        request: ProtectedReceiptExpiry,
+    ) -> Result<TaskControlRevision, StorageError> {
+        fixture_result()
+    }
+    async fn prepare_task_details_purge(
+        &self,
+        selection: TaskPurgeSelection,
+    ) -> Result<Option<TaskPurgeTicket>, StorageError> {
+        fixture_result()
+    }
+    async fn purge_task_details_batch(
+        &self,
+        request: ProtectedTaskPurge,
+        budget: TaskPurgeBudget,
+    ) -> Result<TaskPurgeProgress, StorageError> {
+        fixture_result()
+    }
+    async fn list_pending_task_purges(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<TaskPurgeTicket>, StorageError> {
+        fixture_result()
+    }
+    async fn reapply_task_retention(
+        &self,
+        request: ProtectedTaskReapplication,
+        budget: TaskPurgeBudget,
+    ) -> Result<TaskReapplicationProgress, StorageError> {
+        fixture_result()
+    }
+    async fn list_legacy_task_receipts(
+        &self,
+        budget: TaskPurgeBudget,
+    ) -> Result<Vec<TaskLegacyReceiptCandidate>, StorageError> {
+        fixture_result()
+    }
+    async fn backfill_task_receipts(
+        &self,
+        expected: TaskControlRevision,
+        bindings: Vec<TaskLegacyReceiptBinding>,
+    ) -> Result<TaskControlRevision, StorageError> {
+        fixture_result()
+    }
+}
+
+#[async_trait]
 impl TaskQueueStorage for CompleteExternalAdapter {
+    async fn lookup_task_submission(
+        &self,
+        lookup: TaskSubmissionLookup,
+    ) -> Result<TaskSubmissionResolution, StorageError> {
+        fixture_result()
+    }
+    async fn activate_task_submission(
+        &self,
+        request: ProtectedTaskAdmission,
+    ) -> Result<TaskActivationOutcome, StorageError> {
+        fixture_result()
+    }
     async fn create_task(
         &self,
         request: StorageTaskCreateRequest,
-    ) -> Result<StorageTask, StorageError> {
+    ) -> Result<StorageTaskSubmissionOutcome, StorageError> {
         fixture_result()
     }
 

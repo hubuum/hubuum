@@ -4,6 +4,7 @@ use actix_web::{FromRequest, HttpRequest, dev::Payload, web::Data};
 use futures_util::future::{Ready, ready};
 
 use crate::errors::ApiError;
+use crate::services::deletion_recovery::TaskReceiptService;
 use crate::services::{
     ClassRelationService, ClassService, CollectionService, ObjectRelationService, ObjectService,
     Services,
@@ -40,6 +41,7 @@ pub struct AppContext {
     backend: StorageHandle,
     permissions: Arc<dyn PermissionBackend>,
     services: Services,
+    task_receipts: TaskReceiptService,
 }
 
 impl AppContext {
@@ -49,7 +51,17 @@ impl AppContext {
             backend,
             permissions,
             services,
+            task_receipts: TaskReceiptService::default(),
         }
+    }
+
+    pub(crate) fn with_task_receipts(mut self, service: TaskReceiptService) -> Self {
+        self.task_receipts = service;
+        self
+    }
+
+    pub(crate) fn task_receipts(&self) -> &TaskReceiptService {
+        &self.task_receipts
     }
 
     pub(crate) fn from_http_request(req: &HttpRequest) -> Result<Self, ApiError> {

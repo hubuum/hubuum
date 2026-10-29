@@ -28,6 +28,7 @@ use crate::permissions::LocalPermissionBackend;
 use crate::permissions::{AppContext, require_unscoped_runtime_admin};
 use crate::restores::{MaintenanceActivityGuard, track_application_completion};
 use crate::services::authentication::ExecutionPrincipal;
+use crate::services::deletion_recovery::TaskRetentionSweep;
 use crate::services::exports::execute_export_task;
 use crate::services::tasks::{
     ClaimedTask, claim_next_task, fail_task, purge_expired_backup_outputs,
@@ -481,11 +482,11 @@ impl<'a> CleanupReservation<'a> {
         }))
     }
 
-    fn commit(mut self) -> Result<(), ApiError> {
+    fn commit(mut self, more: bool) -> Result<(), ApiError> {
         let mut schedule = self.state.lock().map_err(|_| {
             ApiError::InternalServerError("Cleanup state lock poisoned".to_string())
         })?;
-        schedule.last_completed_at = Some(Instant::now());
+        schedule.last_completed_at = (!more).then(Instant::now);
         schedule.in_progress = false;
         self.finished = true;
         Ok(())
@@ -720,9 +721,7 @@ async fn maybe_recover_expired_task_leases(
     }
 }
 
-async fn maybe_cleanup_expired_task_outputs(
-    backend: &impl crate::storage::StorageContext,
-) -> Result<(), ApiError> {
+async fn maybe_cleanup_expired_task_outputs(backend: &AppContext) -> Result<(), ApiError> {
     let cleanup_interval = task_worker_settings().export_output_cleanup_interval();
     cleanup_artifacts_when_due(&ARTIFACT_CLEANUP_STATE, cleanup_interval, async {
         storage_handle(backend)
@@ -735,6 +734,23 @@ async fn maybe_cleanup_expired_task_outputs(
     let Some(reservation) = CleanupReservation::reserve(cleanup_state(), cleanup_interval)? else {
         return Ok(());
     };
+
+    match backend
+        .task_receipts()
+        .sweep_task_retention(backend)
+        .await?
+    {
+        TaskRetentionSweep::Disabled => {}
+        TaskRetentionSweep::Protected { more, .. } => {
+            reservation.commit(more)?;
+            if more {
+                // Keep bounded work in separate iterations while avoiding the
+                // ordinary cleanup interval between productive batches.
+                get_task_worker_notify().notify_one();
+            }
+            return Ok(());
+        }
+    }
 
     metrics::task_output_cleanup_run(metrics::TaskOutputKind::Export);
     let deleted_exports = match purge_expired_export_outputs(backend).await {
@@ -768,7 +784,7 @@ async fn maybe_cleanup_expired_task_outputs(
             return Err(error.into());
         }
     }
-    reservation.commit()?;
+    reservation.commit(false)?;
 
     Ok(())
 }
@@ -1028,10 +1044,12 @@ mod cleanup_tests {
     }
 
     #[rstest]
-    #[case::failure(false, false)]
-    #[case::success(true, true)]
+    #[case::failure(false, false, false)]
+    #[case::success(true, false, true)]
+    #[case::continuation(true, true, false)]
     fn cleanup_reservation_updates_schedule_only_after_commit(
         #[case] commit: bool,
+        #[case] more: bool,
         #[case] expected_scheduled: bool,
     ) {
         let state = Mutex::new(CleanupSchedule::default());
@@ -1039,7 +1057,9 @@ mod cleanup_tests {
             .expect("cleanup reservation")
             .expect("cleanup is due");
         if commit {
-            reservation.commit().expect("commit cleanup reservation");
+            reservation
+                .commit(more)
+                .expect("commit cleanup reservation");
         } else {
             drop(reservation);
         }

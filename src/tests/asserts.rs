@@ -3,7 +3,18 @@ use serde::de::DeserializeOwned;
 
 use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
 use crate::tests::api_operations::get_request;
+use hubuum_storage_core::{StorageTask, StorageTaskSubmissionOutcome};
 use hubuum_storage_postgres::PostgresPool;
+
+/// Extract task rows only from fixtures that deliberately use disabled receipt protection.
+/// Pending or expired outcomes must be handled by protected-lifecycle tests themselves.
+pub fn expect_legacy_task(outcome: StorageTaskSubmissionOutcome) -> StorageTask {
+    match outcome {
+        StorageTaskSubmissionOutcome::CreatedReady(task)
+        | StorageTaskSubmissionOutcome::DuplicateAvailable(task) => task,
+        other => panic!("legacy fixture unexpectedly used protected task admission: {other:?}"),
+    }
+}
 
 /// ## Asserts that a given item is found within the specified vector.
 ///

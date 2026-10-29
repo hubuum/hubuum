@@ -3,8 +3,10 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use hubuum_domain::{GroupId, ImportTaskResultId, PrincipalId, TaskId, TokenId};
-use hubuum_events_core::{EventSequence, TraceLink};
+use hubuum_domain::{
+    GroupId, ImportTaskResultId, PrincipalId, RemoteTargetId, ResourceId, TaskId, TokenId,
+};
+use hubuum_events_core::{EventContext, EventSequence, TraceLink};
 use hubuum_query::QueryOptions;
 use hubuum_task_core::IdempotencyKey;
 use serde_json::Value;
@@ -13,6 +15,63 @@ use sha2::{Digest, Sha256};
 use crate::{StorageError, StoragePage, StorageTaskControl, StorageValidationError};
 
 pub use hubuum_domain::TaskKind as StorageTaskKind;
+
+/// Invocation provenance stored with fresh admission and emitted only by its
+/// activation winner. Retry classification must precede construction.
+#[derive(Clone, PartialEq)]
+pub struct StorageTaskRemoteInvocation {
+    target_id: RemoteTargetId,
+    subject_type: crate::StorageRemoteTargetSubjectType,
+    subject_id: ResourceId,
+    event_context: EventContext,
+}
+
+impl StorageTaskRemoteInvocation {
+    pub const fn new(
+        target_id: RemoteTargetId,
+        subject_type: crate::StorageRemoteTargetSubjectType,
+        subject_id: ResourceId,
+        event_context: EventContext,
+    ) -> Self {
+        Self {
+            target_id,
+            subject_type,
+            subject_id,
+            event_context,
+        }
+    }
+    pub const fn target_id(&self) -> RemoteTargetId {
+        self.target_id
+    }
+    pub const fn subject_type(&self) -> crate::StorageRemoteTargetSubjectType {
+        self.subject_type
+    }
+    pub const fn subject_id(&self) -> ResourceId {
+        self.subject_id
+    }
+    pub const fn event_context(&self) -> &EventContext {
+        &self.event_context
+    }
+    pub fn with_task(self, task_id: TaskId) -> crate::StorageRemoteTargetInvocation {
+        crate::StorageRemoteTargetInvocation::new(
+            self.target_id,
+            task_id,
+            self.subject_type,
+            self.subject_id,
+            self.event_context,
+        )
+    }
+}
+
+impl fmt::Debug for StorageTaskRemoteInvocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StorageTaskRemoteInvocation")
+            .field("target_id", &self.target_id)
+            .field("subject_type", &self.subject_type)
+            .field("subject_id", &self.subject_id)
+            .finish_non_exhaustive()
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum StorageTaskStatus {
@@ -214,6 +273,8 @@ pub struct StorageTaskCreateRequest {
     request_hash: Option<String>,
     scope_snapshot: StorageTaskScopeSnapshot,
     trace_link: Option<TraceLink>,
+    receipt_binding: Option<crate::TaskReceiptBinding>,
+    remote_invocation: Option<StorageTaskRemoteInvocation>,
 }
 
 impl StorageTaskCreateRequest {
@@ -249,6 +310,8 @@ impl StorageTaskCreateRequest {
             request_hash: None,
             scope_snapshot: StorageTaskScopeSnapshot::unscoped(),
             trace_link: None,
+            receipt_binding: None,
+            remote_invocation: None,
         }
     }
 
@@ -291,6 +354,14 @@ impl StorageTaskCreateRequest {
     pub const fn trace_link(&self) -> Option<&TraceLink> {
         self.trace_link.as_ref()
     }
+
+    pub const fn receipt_binding(&self) -> Option<&crate::TaskReceiptBinding> {
+        self.receipt_binding.as_ref()
+    }
+
+    pub const fn remote_invocation(&self) -> Option<&StorageTaskRemoteInvocation> {
+        self.remote_invocation.as_ref()
+    }
 }
 
 impl fmt::Debug for StorageTaskCreateRequest {
@@ -318,9 +389,22 @@ pub struct StorageTaskCreateRequestBuilder {
     request_hash: Option<String>,
     scope_snapshot: StorageTaskScopeSnapshot,
     trace_link: Option<TraceLink>,
+    receipt_binding: Option<crate::TaskReceiptBinding>,
+    remote_invocation: Option<StorageTaskRemoteInvocation>,
 }
 
 impl StorageTaskCreateRequestBuilder {
+    #[must_use]
+    pub fn receipt_binding(mut self, binding: Option<crate::TaskReceiptBinding>) -> Self {
+        self.receipt_binding = binding;
+        self
+    }
+
+    #[must_use]
+    pub fn remote_invocation(mut self, invocation: Option<StorageTaskRemoteInvocation>) -> Self {
+        self.remote_invocation = invocation;
+        self
+    }
     #[must_use]
     pub fn metadata(mut self, metadata: Option<crate::StorageTaskMetadata>) -> Self {
         self.metadata = metadata;
@@ -352,6 +436,18 @@ impl StorageTaskCreateRequestBuilder {
     }
 
     pub fn try_build(self) -> Result<StorageTaskCreateRequest, StorageError> {
+        if self.receipt_binding.as_ref().is_some_and(|binding| {
+            binding.lookup().kind() != self.kind || self.idempotency_key.is_none()
+        }) {
+            return Err(StorageError::invalid_input(
+                "Task receipt binding requires its matching keyed task kind",
+            ));
+        }
+        if self.remote_invocation.is_some() && self.kind != StorageTaskKind::RemoteCall {
+            return Err(StorageError::invalid_input(
+                "Invocation event intent requires a remote task",
+            ));
+        }
         if self
             .metadata
             .as_ref()
@@ -376,6 +472,8 @@ impl StorageTaskCreateRequestBuilder {
             request_hash: self.request_hash,
             scope_snapshot: self.scope_snapshot,
             trace_link: self.trace_link,
+            receipt_binding: self.receipt_binding,
+            remote_invocation: self.remote_invocation,
         })
     }
 }
@@ -1654,10 +1752,20 @@ pub enum StorageTaskOutputLookup<T> {
 
 #[async_trait]
 pub trait TaskQueueStorage: Send + Sync {
+    async fn lookup_task_submission(
+        &self,
+        lookup: crate::TaskSubmissionLookup,
+    ) -> Result<crate::TaskSubmissionResolution, StorageError>;
+
     async fn create_task(
         &self,
         request: StorageTaskCreateRequest,
-    ) -> Result<StorageTask, StorageError>;
+    ) -> Result<crate::StorageTaskSubmissionOutcome, StorageError>;
+
+    async fn activate_task_submission(
+        &self,
+        request: crate::ProtectedTaskAdmission,
+    ) -> Result<crate::TaskActivationOutcome, StorageError>;
 
     async fn get_task_access(&self, task_id: TaskId) -> Result<StorageTaskAccess, StorageError>;
 

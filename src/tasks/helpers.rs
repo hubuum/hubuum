@@ -29,6 +29,11 @@ pub fn request_hash(payload: &serde_json::Value) -> Result<String, ApiError> {
 pub fn idempotency_key_from_headers(
     headers: &HeaderMap,
 ) -> Result<Option<IdempotencyKey>, ApiError> {
+    if headers.get_all("Idempotency-Key").count() > 1 {
+        return Err(ApiError::BadRequest(
+            "Idempotency-Key must occur exactly once".into(),
+        ));
+    }
     headers
         .get("Idempotency-Key")
         .map(|value| {
@@ -70,9 +75,10 @@ pub(super) fn sanitize_error_for_storage(err: &ApiError) -> String {
     debug!(message = "Detailed error for import execution", error = %err);
 
     match err {
-        ApiError::ReauthenticationRequired | ApiError::TaskCapacity(_) => {
-            err.public_message().to_string()
-        }
+        ApiError::ReauthenticationRequired
+        | ApiError::TaskCapacity(_)
+        | ApiError::TaskDetailsExpired(_)
+        | ApiError::LegacyTaskRequestUnverifiable => err.public_message().to_string(),
         ApiError::TaskStopped(reason) => reason.to_string(),
         ApiError::Conflict(msg) => format!("Conflict: {}", msg),
         ApiError::PreconditionFailed(msg, _) | ApiError::RevisionConflict(msg, _) => {
@@ -250,6 +256,18 @@ mod tests {
     use hubuum_task_core::MAX_IDEMPOTENCY_KEY_BYTES;
 
     use super::idempotency_key_from_headers;
+
+    #[test]
+    fn repeated_idempotency_keys_cannot_select_different_receipts() {
+        let mut headers = HeaderMap::new();
+        for key in ["first", "second"] {
+            headers.append(
+                HeaderName::from_static("idempotency-key"),
+                HeaderValue::from_static(key),
+            );
+        }
+        assert!(idempotency_key_from_headers(&headers).is_err());
+    }
 
     #[test]
     fn idempotency_key_from_headers_rejects_non_ascii_values() {

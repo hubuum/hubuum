@@ -24,6 +24,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Templates replay indexed temporary files; backup capture reuses its row spool.
   Configure spool and worker resident limits with
   `HUBUUM_ARTIFACT_MAX_SPOOL_BYTES` and `HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES`.
+- Protected idempotency receipts preserve retry behavior after task details expire.
+  Authorized matching retries receive a minimal HTTP 410 response; changed
+  requests conflict during their fixed deduplication window. Task/output cleanup
+  uses protected bounded batches, honors holds and available outputs, and
+  preserves retained decisions across backup recovery. Administrators can preview
+  and enable receipt protection, set prospective policy, manage holds and run
+  maintenance; see [task retention](docs/task_retention.md).
+
 - `--reapply-control` verifies retained deletion decisions against the current
   application image, independently protects completion, and reopens access.
   Logical restore reapplies later supported decisions before exposing data;
@@ -88,6 +96,20 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Reconcile task-owned artifacts before downgrading. New export replay rows and
   backup source rows are capped at 4 MiB; related template input is capped at
   8 MiB per batch and hydrated output at 4 MiB per row. Narrow oversized queries.
+- **Breaking operational change:** stop older producers, apply migration
+  `2026-10-29-000006_task_retention`, reconcile grants and deploy matching binaries.
+  Explicitly preview and enable finite legacy deduplication with the independent
+  repository configured on every producer. Original terminal timestamps remain
+  authoritative; old receipts may expire immediately. Existing task details
+  remain grandfathered out of new expiry policy.
+  Legacy backups with reminted task or principal identities remain quarantined
+  when correspondence to retained purges or receipt owners cannot be proven;
+  restore from a backup with matching stable identity evidence.
+- **Breaking Rust SDK change:** upgrade all ten SDK crates to 0.13.0 and implement
+  protected task admission, receipt/retention capabilities, composite checkpoints
+  and combined exposure proofs. See the
+  [0.13 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-012-to-013).
+
 - **Breaking operational change:** stop every older API, worker and administrator
   process, apply the application-reapplication migration and reconcile grants,
   then start matching binaries. Configure the independent repository on all

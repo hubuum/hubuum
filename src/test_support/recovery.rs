@@ -372,11 +372,11 @@ impl RestoreContractFixture {
     }
 
     pub async fn create_task(&self, kind: StorageTaskKind) -> Result<TaskId, ApiError> {
-        Ok(self
+        let outcome = self
             .storage
             .create_task(self.task_request(kind).try_build()?)
-            .await?
-            .id())
+            .await?;
+        Ok(crate::tests::asserts::expect_legacy_task(outcome).id())
     }
 
     pub async fn seed_terminal_artifact(

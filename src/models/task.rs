@@ -24,6 +24,31 @@ pub(crate) fn task_kind_from_db(value: &str) -> Result<TaskKind, ApiError> {
         .ok_or_else(|| ApiError::InternalServerError(format!("Unknown task kind '{value}'")))
 }
 
+/// Minimal recognized submission response after its task details have expired.
+/// Construction is restricted to the authorized receipt application path.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, ToSchema)]
+pub struct TaskDetailsExpiredResponse {
+    reason: &'static str,
+    #[schema(value_type = String, format = Uuid)]
+    task_identity: hubuum_domain::TaskIdentity,
+    kind: TaskKind,
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl TaskDetailsExpiredResponse {
+    pub(crate) fn authorized(
+        proof: &crate::services::tasks::AuthorizedExpiredTaskSubmission,
+    ) -> Self {
+        let receipt = proof.receipt();
+        Self {
+            reason: "task_details_expired",
+            task_identity: receipt.task(),
+            kind: receipt.kind(),
+            expires_at: receipt.expires_at(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {

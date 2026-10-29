@@ -142,6 +142,7 @@ pub async fn claim_next_task(
     let lease_milliseconds = validate_lease_duration(request.lease_duration())?;
     let row = runtime
         .with_transaction(async move |connection| {
+            super::task_retention::lock_on(connection).await?;
             if !maintenance_is_normal(connection).await? {
                 return Ok(None);
             }
@@ -285,31 +286,52 @@ pub async fn recover_expired_task_leases(
     runtime: &PostgresRuntime,
     batch_size: usize,
 ) -> Result<Vec<StorageTask>, PostgresStorageError> {
-    let batch_size = i64::try_from(batch_size).map_err(|_| {
+    let batch_size = i64::try_from(batch_size.min(1000)).map_err(|_| {
         PostgresStorageError::invalid_input("Task recovery batch size is too large")
     })?;
     let recovered = runtime
         .with_transaction(async move |connection| {
+            super::task_retention::lock_on(connection).await?;
             use crate::schema::tasks::dsl as tasks;
             let now = database_now(connection).await?;
+            let terminal=tasks::tasks.filter(tasks::receipt_generation.is_not_null())
+                .filter(tasks::status.eq_any(StorageTaskStatus::TERMINAL.map(StorageTaskStatus::as_str)))
+                .filter(sql::<Bool>("id IN (WITH candidates AS MATERIALIZED (SELECT t.id,octet_length(to_jsonb(t)::text)::bigint AS bytes FROM public.tasks t WHERE receipt_generation IS NOT NULL AND status IN ('succeeded','failed','partially_succeeded','cancelled') AND public.hubuum_task_receipt_settlement_pending(t.id) ORDER BY finished_at,id LIMIT ").bind::<BigInt,_>(batch_size)
+                    .sql("), bounded AS (SELECT id,bytes,sum(CASE WHEN bytes<=16777216 THEN bytes ELSE 0 END) OVER (ORDER BY id) AS total FROM candidates) SELECT id FROM bounded WHERE bytes<=16777216 AND total<=16777216)"))
+                .order((tasks::finished_at.asc(),tasks::id.asc())).limit(batch_size)
+                .for_update().skip_locked().select(TaskRow::as_select()).load::<TaskRow>(connection).await?;
+            let terminal_ids=terminal.iter().map(|task|task.id).collect::<Vec<_>>();
+            let used_bytes=diesel::select(sql::<BigInt>("(SELECT COALESCE(sum(octet_length(to_jsonb(t)::text)),0)::bigint FROM public.tasks t WHERE id=ANY(").bind::<Array<Integer>,_>(terminal_ids).sql("))")).get_result::<i64>(connection).await?;
+            for task in &terminal { super::task_retention::settle_on(connection,task).await?; }
+            let remaining=batch_size-terminal.len() as i64;
+            let remaining_bytes=16_777_216-used_bytes;
+            if remaining==0 || remaining_bytes<=0 { return Ok::<_,PostgresStorageError>(terminal); }
             let stale = tasks::tasks
                 .filter(tasks::deleted_at.is_null())
+                .filter(sql::<Bool>("id IN (WITH candidates AS MATERIALIZED (SELECT t.id,octet_length(to_jsonb(t)::text)::bigint AS bytes FROM public.tasks t WHERE deleted_at IS NULL AND ((status IN ('validating','running') AND (lease_expires_at IS NULL OR lease_expires_at<=").bind::<Timestamp,_>(now)
+                    .sql(")) OR (status='queued' AND (execution_deadline_at<=").bind::<Timestamp,_>(now)
+                    .sql(" OR (receipt_generation IS NOT NULL AND receipt_checkpoint IS NULL AND receipt_protection_deadline<=").bind::<Timestamp,_>(now)
+                    .sql(")))) ORDER BY id LIMIT ").bind::<BigInt,_>(remaining)
+                    .sql("), bounded AS (SELECT id,bytes,sum(CASE WHEN bytes<=").bind::<BigInt,_>(remaining_bytes)
+                    .sql(" THEN bytes ELSE 0 END) OVER (ORDER BY id) AS total FROM candidates) SELECT id FROM bounded WHERE bytes<=").bind::<BigInt,_>(remaining_bytes)
+                    .sql(" AND total<=").bind::<BigInt,_>(remaining_bytes).sql(")"))
                 .filter(
                     tasks::status.eq_any(active_statuses()).and(tasks::lease_expires_at.is_null().or(tasks::lease_expires_at.le(now)))
-                    .or(tasks::status.eq("queued").and(tasks::execution_deadline_at.le(now))),
+                    .or(tasks::status.eq("queued").and(tasks::execution_deadline_at.le(now).or(tasks::receipt_generation.is_not_null().and(tasks::receipt_checkpoint.is_null()).and(tasks::receipt_protection_deadline.le(now))))),
                 )
                 .order(tasks::id.asc())
-                .limit(batch_size)
+                .limit(remaining)
                 .select(TaskRow::as_select())
                 .load::<TaskRow>(connection)
                 .await?;
             super::task_control::lock_reindex_cleanup(connection, &stale.iter().map(|task| task.id).collect::<Vec<_>>()).await?;
-            let mut recovered = Vec::with_capacity(stale.len());
+            let mut recovered = terminal;
+            recovered.reserve(stale.len());
             for candidate in stale {
                 let stale_task = tasks::tasks.filter(tasks::id.eq(candidate.id))
                     .filter(tasks::deleted_at.is_null())
                     .filter(tasks::status.eq_any(active_statuses()).and(tasks::lease_expires_at.is_null().or(tasks::lease_expires_at.le(now)))
-                        .or(tasks::status.eq("queued").and(tasks::execution_deadline_at.le(now))))
+                        .or(tasks::status.eq("queued").and(tasks::execution_deadline_at.le(now).or(tasks::receipt_generation.is_not_null().and(tasks::receipt_checkpoint.is_null()).and(tasks::receipt_protection_deadline.le(now))))))
                     .for_update().skip_locked().select(TaskRow::as_select()).first::<TaskRow>(connection).await.optional()?;
                 let Some(stale_task) = stale_task else { continue; };
                 let kind = stored_task_kind(&stale_task)?;
@@ -318,7 +340,7 @@ pub async fn recover_expired_task_leases(
                     recovered.push(super::task_control::finish_stopped_on(connection, stale_task, reason, &provenance).await?);
                     continue;
                 }
-                if kind == StorageTaskKind::SchemaValidation && diesel::select(diesel::dsl::exists(crate::schema::schema_validation_work::table.filter(crate::schema::schema_validation_work::task_id.eq(stale_task.id)))).get_result::<bool>(connection).await? {
+                if stale_task.status != "queued" && kind == StorageTaskKind::SchemaValidation && diesel::select(diesel::dsl::exists(crate::schema::schema_validation_work::table.filter(crate::schema::schema_validation_work::task_id.eq(stale_task.id)))).get_result::<bool>(connection).await? {
                     append_task_lifecycle_event(connection, &stale_task,
                         StorageTaskEventInput::new("queued", "Schema validation resumed from durable checkpoint after lease expiry"),
                         &system_provenance(&stale_task)?).await?;
@@ -329,7 +351,7 @@ pub async fn recover_expired_task_leases(
                     recovered.push(row);
                     continue;
                 }
-                if super::computed_fields::read_repair::is_read_repair(&stale_task) {
+                if stale_task.status != "queued" && super::computed_fields::read_repair::is_read_repair(&stale_task) {
                     append_task_lifecycle_event(connection, &stale_task,
                         StorageTaskEventInput::new("queued", "Computed read repair resumed from its durable identity queue after lease expiry"),
                         &system_provenance(&stale_task)?).await?;
@@ -350,7 +372,7 @@ pub async fn recover_expired_task_leases(
                 } else if completed_import && counts.succeeded() > 0 {
                     StorageTaskStatus::PartiallySucceeded
                 } else { StorageTaskStatus::Failed };
-                let summary = if completed_import { "Recovered completed import from durable item results" } else { LEASE_EXPIRED_MESSAGE };
+                let summary = if completed_import { "Recovered completed import from durable item results" } else if stale_task.status == "queued" { "Task admission protection deadline expired before activation" } else { LEASE_EXPIRED_MESSAGE };
                 if kind == StorageTaskKind::Reindex {
                     mark_recovered_reindex_failed_on_connection(
                         connection,
@@ -389,6 +411,7 @@ pub async fn recover_expired_task_leases(
                     .returning(TaskRow::as_returning())
                     .get_result::<TaskRow>(connection)
                     .await?;
+                super::task_retention::settle_on(connection, &row).await?;
                 recovered.push(row);
             }
             Ok::<_, PostgresStorageError>(recovered)
@@ -555,6 +578,7 @@ pub async fn fail_task(
     let row = if kind == StorageTaskKind::Reindex {
         let row = runtime
             .with_control_transaction(async move |connection| {
+                super::task_retention::lock_on(connection).await?;
                 super::task_control::lock_reindex_cleanup(connection, &[claimed.id]).await?;
                 live_claimed_task(connection, claimed).await?;
                 mark_reindex_failed(connection, &stored, &summary).await?;
@@ -566,6 +590,7 @@ pub async fn fail_task(
     } else if kind == StorageTaskKind::SchemaValidation {
         runtime
             .with_control_transaction(async move |connection| {
+                super::task_retention::lock_on(connection).await?;
                 super::task_control::lock_reindex_cleanup(connection, &[claimed.id]).await?;
                 live_claimed_task(connection, claimed).await?;
                 mark_schema_work_failed_on(connection, TaskId::new(claimed.id)?).await?;
@@ -577,6 +602,7 @@ pub async fn fail_task(
         // quarantine blocks productive completion.
         runtime
             .with_control_transaction(async move |connection| {
+                super::task_retention::lock_on(connection).await?;
                 finalize_task_connection(connection, claimed, update, event).await
             })
             .await?
@@ -613,6 +639,7 @@ async fn finalize_task(
 ) -> Result<TaskRow, PostgresStorageError> {
     runtime
         .with_transaction(async move |connection| {
+            super::task_retention::lock_on(connection).await?;
             require_claimed_execution(connection, claimed).await?;
             super::task_control::lock_reindex_cleanup(connection, &[claimed.id]).await?;
             let row = live_claimed_task(connection, claimed).await?;
@@ -717,7 +744,7 @@ async fn finalize_task_connection(
         Some(connection),
     )
     .await?;
-    diesel::update(
+    let finalized = diesel::update(
         tasks::tasks
             .filter(tasks::id.eq(claimed.id))
             .filter(tasks::lease_token.eq(Some(claimed.token)))
@@ -741,8 +768,9 @@ async fn finalize_task_connection(
     ))
     .returning(TaskRow::as_returning())
     .get_result::<TaskRow>(connection)
-    .await
-    .map_err(PostgresStorageError::from)
+    .await?;
+    super::task_retention::settle_on(connection, &finalized).await?;
+    Ok(finalized)
 }
 
 async fn update_task_state_row(
@@ -1245,6 +1273,15 @@ async fn purge_expired_outputs(
 ) -> Result<usize, PostgresStorageError> {
     let cleaned = runtime
         .with_transaction(async move |connection| {
+            let control = super::task_retention::lock_on(connection).await?;
+            if !matches!(
+                control.activation,
+                hubuum_storage_core::TaskReceiptActivation::Disabled
+            ) {
+                return Err(PostgresStorageError::unavailable(
+                    "Expired outputs require a protected purge manifest",
+                ));
+            }
             let now = chrono::Utc::now().naive_utc();
             let task_ids = match table {
                 OutputTable::Export => {
@@ -1345,6 +1382,7 @@ pub async fn get_schema_profile_output(
             use crate::schema::schema_profile_outputs::dsl as outputs;
             let row = outputs::schema_profile_outputs
                 .filter(outputs::task_id.eq(task_id.id()))
+                .filter(sql::<Bool>("public.hubuum_task_outputs_visible(task_id)"))
                 .select((outputs::report, outputs::output_expires_at))
                 .first::<(Value, NaiveDateTime)>(connection)
                 .await
@@ -1371,7 +1409,16 @@ pub async fn purge_expired_schema_profile_outputs(
     runtime: &PostgresRuntime,
 ) -> Result<usize, PostgresStorageError> {
     runtime
-        .with_connection::<_, _, PostgresStorageError>(async move |connection| {
+        .with_transaction::<_, _, PostgresStorageError>(async move |connection| {
+            let control = super::task_retention::lock_on(connection).await?;
+            if !matches!(
+                control.activation,
+                hubuum_storage_core::TaskReceiptActivation::Disabled
+            ) {
+                return Err(PostgresStorageError::unavailable(
+                    "Expired outputs require a protected purge manifest",
+                ));
+            }
             use crate::schema::schema_profile_outputs::dsl as outputs;
             Ok(diesel::delete(
                 outputs::schema_profile_outputs.filter(outputs::output_expires_at.le(sql::<

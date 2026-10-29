@@ -600,13 +600,35 @@ assert_flag "$scale_benchmark_output" artifacts false
 for lifecycle_input in \
   scale-benchmarks/lifecycle/dataset-v1.toml \
   scale-benchmarks/lifecycle/workload-v1.toml \
+  scale-benchmarks/lifecycle/task-retention-v1.json \
+  crates/hubuum-scale-benchmark/src/task_retention.rs \
+  crates/hubuum-scale-benchmark/src/task_retention_observe.rs \
+  crates/hubuum-scale-benchmark/src/task_retention_probes.rs \
+  crates/hubuum-scale-benchmark/src/task_retention_safety.rs \
   crates/hubuum-scale-core/src/lifecycle.rs \
-  crates/hubuum-storage-postgres/src/scale_benchmark/lifecycle.rs; do
+  crates/hubuum-storage-postgres/src/scale_benchmark/lifecycle.rs \
+  crates/hubuum-storage-postgres/src/scale_benchmark/task_retention.rs; do
   lifecycle_output="$(bash "$classifier" "$lifecycle_input")"
   assert_flag "$lifecycle_output" rust true
   assert_flag "$lifecycle_output" scale_benchmark true
   assert_flag "$lifecycle_output" container false
 done
+
+for retention_driver in tests/python/integration/task_retention.py \
+  tests/python/support/task_effects.py tests/python/support/task_retention_recovery.py \
+  tests/python/support/task_retention_safety.py; do
+  retention_driver_output="$(bash "$classifier" "$retention_driver")"
+  assert_flag "$retention_driver_output" code true
+  assert_flag "$retention_driver_output" rust true
+  assert_flag "$retention_driver_output" container true
+  assert_flag "$retention_driver_output" scale_benchmark true
+done
+
+affinity_image_output="$(bash "$classifier" scale-benchmarks/lifecycle/affinity.Dockerfile)"
+assert_flag "$affinity_image_output" code true
+assert_flag "$affinity_image_output" rust true
+assert_flag "$affinity_image_output" container true
+assert_flag "$affinity_image_output" scale_benchmark true
 
 for scale_manifest in crates/hubuum-scale-benchmark/Cargo.toml crates/hubuum-scale-core/Cargo.toml; do
   scale_manifest_output="$(bash "$classifier" "$scale_manifest")"

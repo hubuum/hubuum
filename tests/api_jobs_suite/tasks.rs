@@ -9,7 +9,8 @@ mod tests {
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::get_request;
     use crate::tests::asserts::{
-        assert_paginated_collection_total_count, assert_response_status, header_value,
+        assert_paginated_collection_total_count, assert_response_status, expect_legacy_task,
+        header_value,
     };
     use crate::tests::{TestContext, create_test_user, test_context};
 
@@ -820,6 +821,7 @@ mod tests {
                 .unwrap(),
             )
             .await
+            .map(expect_legacy_task)
             .unwrap();
         let url = if cancel {
             format!("/api/v1/tasks/{}/cancel", task.id().id())
@@ -1083,6 +1085,7 @@ mod tests {
                         .unwrap(),
                     )
                     .await
+                    .map(expect_legacy_task)
                     .unwrap();
                 task_ids.push(task.id());
             }

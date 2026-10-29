@@ -242,10 +242,24 @@ impl RemoteTargetStorage for MemoryStorage {
 
 #[async_trait]
 impl TaskQueueStorage for MemoryStorage {
+    async fn lookup_task_submission(
+        &self,
+        lookup: TaskSubmissionLookup,
+    ) -> Result<TaskSubmissionResolution, StorageError> {
+        self.state.read().await?.receipt_lookup(&lookup)
+    }
+
+    async fn activate_task_submission(
+        &self,
+        request: ProtectedTaskAdmission,
+    ) -> Result<TaskActivationOutcome, StorageError> {
+        self.activate_receipt(request).await
+    }
+
     async fn create_task(
         &self,
         request: StorageTaskCreateRequest,
-    ) -> Result<StorageTask, StorageError> {
+    ) -> Result<StorageTaskSubmissionOutcome, StorageError> {
         let mut guard = self.state.write().await?;
         let mut state = guard.clone();
         if !state.principals.contains_key(&request.submitted_by().id()) {
@@ -255,7 +269,49 @@ impl TaskQueueStorage for MemoryStorage {
             )));
         }
         let idempotency_key = request.idempotency_key().map(|key| key.as_str().to_owned());
+        let protected = idempotency_key.is_some()
+            && !matches!(
+                state.task_control.activation(),
+                TaskReceiptActivation::Disabled
+            );
+        if protected {
+            state.validate_receipt_binding(&request)?;
+            let lookup = request
+                .receipt_binding()
+                .expect("validated receipt binding")
+                .lookup();
+            match state.receipt_lookup(lookup)? {
+                TaskSubmissionResolution::Fresh => {}
+                TaskSubmissionResolution::PendingProtection(ticket) => {
+                    return Ok(StorageTaskSubmissionOutcome::DuplicatePendingProtection(
+                        ticket,
+                    ));
+                }
+                TaskSubmissionResolution::Available(task) => {
+                    return Ok(StorageTaskSubmissionOutcome::DuplicateAvailable(*task));
+                }
+                TaskSubmissionResolution::DetailsExpired(receipt) => {
+                    return Ok(StorageTaskSubmissionOutcome::DuplicateDetailsExpired(
+                        receipt,
+                    ));
+                }
+                TaskSubmissionResolution::ExpiryProtectionRequired(receipt) => {
+                    return Ok(StorageTaskSubmissionOutcome::ExpiryProtectionRequired(
+                        receipt,
+                    ));
+                }
+                TaskSubmissionResolution::LegacyUnverifiable(receipt) => {
+                    return Ok(StorageTaskSubmissionOutcome::LegacyUnverifiable(receipt));
+                }
+                TaskSubmissionResolution::ProtectionDisabled => {
+                    return Err(StorageError::internal(
+                        "Receipt activation changed under the state lock",
+                    ));
+                }
+            }
+        }
         if let Some(key) = idempotency_key.as_deref()
+            && !protected
             && let Some(existing) = state.tasks.values().find(|task| {
                 task.submitted_by == Some(request.submitted_by())
                     && task.idempotency_key.as_deref() == Some(key)
@@ -264,7 +320,9 @@ impl TaskQueueStorage for MemoryStorage {
             if existing.kind == request.kind()
                 && existing.request_hash.as_deref() == request.request_hash()
             {
-                return existing.projection();
+                return existing
+                    .projection()
+                    .map(StorageTaskSubmissionOutcome::DuplicateAvailable);
             }
             return Err(StorageError::conflict(
                 "Idempotency-Key is already in use for a different task submission",
@@ -301,13 +359,57 @@ impl TaskQueueStorage for MemoryStorage {
             trace_link: request.trace_link().cloned(),
             claim_token: None,
             execution_fence: None,
+            receipt_admission: None,
+            retention_policy: None,
+            details_expires_at: None,
+            recovery_unavailable: false,
+            invocation: request
+                .remote_invocation()
+                .map(|invocation| state.capture_task_invocation(invocation))
+                .transpose()?,
         };
         let task = record.projection()?;
         state.store_task(id.id(), record)?;
-        state.append_task_event_record(
-            id,
-            StorageTaskEventInput::new(StorageTaskStatus::Queued.as_str(), "Task queued"),
-        )?;
+        let outcome = if protected {
+            let receipt = TaskReceipt::admit(
+                TaskReceiptAdmission::new(
+                    request
+                        .receipt_binding()
+                        .expect("protected binding")
+                        .lookup()
+                        .clone(),
+                    state.task_identity(id)?,
+                    state.application_control.fence().incarnation(),
+                    now,
+                )
+                .map_err(invalid_contract_value)?,
+                state.task_control.policy(),
+                state
+                    .task_control
+                    .revision()
+                    .next()
+                    .map_err(invalid_contract_value)?,
+            )
+            .map_err(invalid_contract_value)?;
+            let ticket = receipt.ticket().clone();
+            state.task_control = state
+                .task_control
+                .with_receipt(receipt)
+                .map_err(invalid_contract_value)?;
+            state
+                .tasks
+                .get_mut(&id.id())
+                .expect("created task")
+                .receipt_admission = Some(crate::task_retention::MemoryTaskAdmission {
+                ticket: ticket.clone(),
+                activated: None,
+                emit_admission_event: true,
+            });
+            StorageTaskSubmissionOutcome::PendingProtection(ticket)
+        } else {
+            state.emit_task_admission(id)?;
+            StorageTaskSubmissionOutcome::CreatedReady(task)
+        };
         if let Some(approval) = request.approval() {
             if request.kind() != StorageTaskKind::Import
                 || approval.claim().actor_id() != request.submitted_by()
@@ -322,11 +424,12 @@ impl TaskQueueStorage for MemoryStorage {
             )?;
         }
         *guard = state;
-        Ok(task)
+        Ok(outcome)
     }
 
     async fn get_task_access(&self, task_id: TaskId) -> Result<StorageTaskAccess, StorageError> {
         let state = self.state.read().await?;
+        state.require_task_details(task_id)?;
         let task = state.tasks.get(&task_id.id()).ok_or_else(|| {
             StorageError::not_found(format!("Task {} was not found", task_id.id()))
         })?;
@@ -354,6 +457,7 @@ impl TaskQueueStorage for MemoryStorage {
             .tasks
             .values()
             .filter(|task| task.deleted_at.is_none())
+            .filter(|task| state.task_details_visible(task.id))
             .filter(|task| submitted_by.is_none_or(|value| task.submitted_by == Some(value)))
             .filter(|task| kind.is_none_or(|value| task.kind == value))
             .filter(|task| excluded_kind != Some(task.kind))
@@ -374,6 +478,7 @@ impl TaskQueueStorage for MemoryStorage {
     ) -> Result<StoragePage<StorageTaskEvent>, StorageError> {
         let (task_id, options) = query.into_parts();
         let state = self.state.read().await?;
+        state.require_task_details(task_id)?;
         if !state.tasks.contains_key(&task_id.id()) {
             return Err(StorageError::not_found(format!(
                 "Task {} was not found",
@@ -384,8 +489,16 @@ impl TaskQueueStorage for MemoryStorage {
             state
                 .task_events
                 .get(&task_id.id())
+                .into_iter()
+                .flatten()
+                .filter(|event| {
+                    event
+                        .logical_identity()
+                        .and_then(|evidence| evidence.task_reference("/entity_id"))
+                        == state.task_identity(task_id).ok()
+                })
                 .cloned()
-                .unwrap_or_default(),
+                .collect(),
             &options,
         )
     }
@@ -396,6 +509,7 @@ impl TaskQueueStorage for MemoryStorage {
     ) -> Result<StoragePage<StorageImportTaskResult>, StorageError> {
         let (task_id, options) = query.into_parts();
         let state = self.state.read().await?;
+        state.require_task_details(task_id)?;
         if !state.tasks.contains_key(&task_id.id()) {
             return Err(StorageError::not_found(format!(
                 "Task {} was not found",
@@ -420,6 +534,7 @@ impl TaskQueueStorage for MemoryStorage {
         let now = Utc::now();
         task_ids
             .into_iter()
+            .filter(|task_id| state.task_outputs_visible(*task_id))
             .filter_map(|task_id| state.export_outputs.get(&task_id.id()))
             .filter(|output| output.output_expires_at() > now)
             .map(export_output_summary)
@@ -434,6 +549,7 @@ impl TaskQueueStorage for MemoryStorage {
         let now = Utc::now();
         task_ids
             .into_iter()
+            .filter(|task_id| state.task_outputs_visible(*task_id))
             .filter_map(|task_id| state.backup_outputs.get(&task_id.id()))
             .filter(|output| output.output_expires_at() > now)
             .map(backup_output_summary)
@@ -445,6 +561,9 @@ impl TaskQueueStorage for MemoryStorage {
         task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageExportOutputSummary>, StorageError> {
         let state = self.state.read().await?;
+        if !state.task_outputs_visible(task_id) {
+            return Ok(StorageTaskOutputLookup::Missing);
+        }
         let Some(output) = state.export_outputs.get(&task_id.id()) else {
             return Ok(StorageTaskOutputLookup::Missing);
         };
@@ -463,6 +582,9 @@ impl TaskQueueStorage for MemoryStorage {
         task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageBackupOutputSummary>, StorageError> {
         let state = self.state.read().await?;
+        if !state.task_outputs_visible(task_id) {
+            return Ok(StorageTaskOutputLookup::Missing);
+        }
         let Some(output) = state.backup_outputs.get(&task_id.id()) else {
             return Ok(StorageTaskOutputLookup::Missing);
         };
@@ -481,6 +603,9 @@ impl TaskQueueStorage for MemoryStorage {
         task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageExportOutput>, StorageError> {
         let state = self.state.read().await?;
+        if !state.task_outputs_visible(task_id) {
+            return Ok(StorageTaskOutputLookup::Missing);
+        }
         let Some(output) = state.export_outputs.get(&task_id.id()) else {
             return Ok(StorageTaskOutputLookup::Missing);
         };
@@ -497,6 +622,9 @@ impl TaskQueueStorage for MemoryStorage {
         task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageBackupOutput>, StorageError> {
         let state = self.state.read().await?;
+        if !state.task_outputs_visible(task_id) {
+            return Ok(StorageTaskOutputLookup::Missing);
+        }
         let Some(output) = state.backup_outputs.get(&task_id.id()) else {
             return Ok(StorageTaskOutputLookup::Missing);
         };
@@ -519,6 +647,9 @@ impl TaskExecutionStorage for MemoryStorage {
         StorageError,
     > {
         let state = self.state.read().await?;
+        if !state.task_outputs_visible(task_id) {
+            return Ok(StorageTaskOutputLookup::Missing);
+        }
         Ok(match state.schema_profile_outputs.get(&task_id.id()) {
             Some(output) if output.expires_at() <= Utc::now() => StorageTaskOutputLookup::Expired {
                 expires_at: output.expires_at(),
@@ -529,12 +660,7 @@ impl TaskExecutionStorage for MemoryStorage {
     }
     async fn purge_expired_schema_profile_outputs(&self) -> Result<usize, StorageError> {
         let mut state = self.state.write().await?;
-        let before = state.schema_profile_outputs.len();
-        let now = Utc::now();
-        state
-            .schema_profile_outputs
-            .retain(|_, output| output.expires_at() > now);
-        Ok(before - state.schema_profile_outputs.len())
+        state.sweep_expired_outputs(StorageTaskKind::SchemaProfiling)
     }
 
     async fn request_task_cancellation(
@@ -674,6 +800,11 @@ impl TaskExecutionStorage for MemoryStorage {
                             .control
                             .deadline()
                             .is_some_and(|deadline| deadline <= now))
+                    || (task.status == StorageTaskStatus::Queued
+                        && task.receipt_admission.as_ref().is_some_and(|admission| {
+                            admission.activated.is_none()
+                                && admission.ticket.protection_deadline() <= now
+                        }))
             })
             .take(batch_size)
             .map(|task| task.id)
@@ -759,6 +890,36 @@ impl TaskExecutionStorage for MemoryStorage {
                 StorageTaskEventInput::new(status.as_str(), summary),
             )?;
         }
+        let unsettled: Vec<_> = state
+            .tasks
+            .values()
+            .filter(|task| task.status.is_terminal() && !task.recovery_unavailable)
+            .filter(|task| {
+                state
+                    .task_identity(task.id)
+                    .ok()
+                    .and_then(|identity| state.task_control.receipt_for_task(identity))
+                    .is_some_and(|receipt| {
+                        matches!(receipt.outcome(), TaskReceiptOutcome::MayExecute)
+                    })
+            })
+            .take(
+                batch_size
+                    .saturating_sub(recovered.len())
+                    .min(TaskPurgeBudget::MAX_ROWS as usize),
+            )
+            .map(|task| task.id)
+            .collect();
+        let mut bytes = 0_u64;
+        for id in unsettled {
+            let size = state.tasks[&id.id()].detail_bytes()?;
+            if size > TaskPurgeBudget::MAX_BYTES || bytes + size > TaskPurgeBudget::MAX_BYTES {
+                break;
+            }
+            state.settle_task_receipt(id)?;
+            bytes += size;
+            recovered.push(state.tasks[&id.id()].projection()?);
+        }
         state.task_capacity = state.task_accounting_snapshot()?;
         Ok(recovered)
     }
@@ -823,6 +984,10 @@ impl TaskExecutionStorage for MemoryStorage {
         let (lease, status, summary, counts, started_at) = update.into_parts();
         let mut guard = self.state.write().await?;
         guard.ensure_task_lease_current(&lease)?;
+        guard.require_task_details(lease.task_id())?;
+        if produces_output {
+            guard.require_task_outputs(lease.task_id())?;
+        }
         let mut state = guard.clone();
         let stored = state
             .tasks
@@ -1049,22 +1214,12 @@ impl TaskExecutionStorage for MemoryStorage {
 
     async fn purge_expired_export_outputs(&self) -> Result<usize, StorageError> {
         let mut state = self.state.write().await?;
-        let before = state.export_outputs.len();
-        let now = Utc::now();
-        state
-            .export_outputs
-            .retain(|_, output| output.output_expires_at() > now);
-        Ok(before - state.export_outputs.len())
+        state.sweep_expired_outputs(StorageTaskKind::Export)
     }
 
     async fn purge_expired_backup_outputs(&self) -> Result<usize, StorageError> {
         let mut state = self.state.write().await?;
-        let before = state.backup_outputs.len();
-        let now = Utc::now();
-        state
-            .backup_outputs
-            .retain(|_, output| output.output_expires_at() > now);
-        Ok(before - state.backup_outputs.len())
+        state.sweep_expired_outputs(StorageTaskKind::Backup)
     }
 }
 
@@ -1265,7 +1420,7 @@ impl RestoreStorage for MemoryStorage {
             return Err(StorageError::conflict("The restore job is not confirmed"));
         }
         let started_at = Utc::now();
-        let mut replacement = crate::backup::restore(
+        let mut replacement = crate::backup::restore_without_repairs(
             snapshot
                 .with_schema_limits(self.schema_limits)?
                 .into_replay()
@@ -1275,11 +1430,22 @@ impl RestoreStorage for MemoryStorage {
         )?;
         replacement.credential_approvals = state.credential_approvals.clone();
         replacement.deletion_control = state.deletion_control.clone();
+        replacement.task_control = state.task_control.clone();
+        replacement.task_reapplication = None;
         replacement.application_control = ApplicationControlState::initial(&state.deletion_control);
-        replacement.pending_restore = !state.deletion_control.intents().is_empty();
+        replacement.pending_restore = !state.deletion_control.intents().is_empty()
+            || !matches!(
+                state.task_control.activation(),
+                TaskReceiptActivation::Disabled
+            );
+        replacement.restore_repairs_pending = replacement.pending_restore;
         if replacement.pending_restore {
+            replacement.application_control =
+                ApplicationControlState::quarantined(replacement.application_control.fence());
             replacement.maintenance_state = MaintenanceState::Draining;
             replacement.maintenance_restore_job_id = Some(job_id);
+        } else {
+            crate::backup::enqueue_restored_repairs(&mut replacement)?;
         }
         replacement.runtime_registrations = state.runtime_registrations.clone();
         replacement.query_observation_control = state.query_observation_control;
@@ -2188,7 +2354,7 @@ impl MemoryStorage {
 }
 
 impl MemoryState {
-    fn task_discovery_projection(
+    pub(super) fn task_discovery_projection(
         &self,
         task: &MemoryTaskRecord,
     ) -> Result<StorageTask, StorageError> {
@@ -2197,9 +2363,10 @@ impl MemoryState {
             self.schema_work
                 .get(&task.id.id())
                 .map(|work| (work.kind(), work.status())),
-            self.schema_profile_outputs.contains_key(&task.id.id())
-                || self.export_outputs.contains_key(&task.id.id())
-                || self.backup_outputs.contains_key(&task.id.id()),
+            self.task_outputs_visible(task.id)
+                && (self.schema_profile_outputs.contains_key(&task.id.id())
+                    || self.export_outputs.contains_key(&task.id.id())
+                    || self.backup_outputs.contains_key(&task.id.id())),
         ));
         Ok(projection)
     }

@@ -1,10 +1,12 @@
 use super::*;
 use hubuum_storage_core::StorageTaskClaimRequest;
 use hubuum_storage_core::{
-    StorageBackupReplay, StorageSchemaProfileArtifact, StorageTaskCancellationOutcome,
-    StorageTaskCancellationRequest, StorageTaskCapacitySnapshot, StorageTaskExecutionAdmission,
-    StorageTaskExecutionObservation, StorageTaskPolicy, StorageTaskPolicyUpdate,
-    StorageTaskRemoteDispatch, TaskAdmissionPolicy, TaskCapacityStorage,
+    ProtectedTaskAdmission, StorageBackupReplay, StorageSchemaProfileArtifact,
+    StorageTaskCancellationOutcome, StorageTaskCancellationRequest, StorageTaskCapacitySnapshot,
+    StorageTaskExecutionAdmission, StorageTaskExecutionObservation, StorageTaskPolicy,
+    StorageTaskPolicyUpdate, StorageTaskRemoteDispatch, StorageTaskSubmissionOutcome,
+    TaskActivationOutcome, TaskAdmissionPolicy, TaskCapacityStorage, TaskSubmissionLookup,
+    TaskSubmissionResolution,
 };
 
 #[async_trait]
@@ -60,10 +62,42 @@ impl TaskCapacityStorage for StorageHandle {
 
 #[async_trait]
 impl TaskQueueStorage for StorageHandle {
+    async fn lookup_task_submission(
+        &self,
+        lookup: TaskSubmissionLookup,
+    ) -> Result<TaskSubmissionResolution, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::TaskQueue,
+            "lookup_task_submission",
+            async {
+                dispatch_backend!(self, |backend| backend.lookup_task_submission(lookup).await)
+            },
+        )
+        .await
+    }
+
+    async fn activate_task_submission(
+        &self,
+        request: ProtectedTaskAdmission,
+    ) -> Result<TaskActivationOutcome, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::TaskQueue,
+            "activate_task_submission",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .activate_task_submission(request)
+                    .await)
+            },
+        )
+        .await
+    }
+
     async fn create_task(
         &self,
         request: StorageTaskCreateRequest,
-    ) -> Result<StorageTask, StorageError> {
+    ) -> Result<StorageTaskSubmissionOutcome, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::TaskQueue,

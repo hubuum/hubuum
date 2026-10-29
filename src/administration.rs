@@ -1,3 +1,5 @@
+mod task_retention;
+
 use crate::config::{ControlRecoveryOptions, SchemaValidationOptions};
 use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
 use hubuum_domain::ClassId;
@@ -78,6 +80,9 @@ fn parse_deletion_intent(value: &str) -> Result<Uuid, String> {
     long_about = None
 )]
 struct AdminCli {
+    #[command(flatten)]
+    task_retention: task_retention::TaskRetentionAdminOptions,
+
     #[command(flatten)]
     control_recovery: crate::config::ControlRecoveryOptions,
 
@@ -376,12 +381,14 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let matches = AdminCli::command().get_matches();
     let admin_cli = AdminCli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
     let schema_limits = admin_cli.schema_validation.validate()?;
+    let task_retention_action = admin_cli.task_retention.action()?;
     let database_url_override = CommandLineDatabaseUrl::from_matches(&matches, "database_url");
     let migration_url_override =
         CommandLineDatabaseUrl::from_matches(&matches, "migration_database_url");
     init_logging(
         &admin_cli.log_level,
-        admin_cli.reconcile_query_usage
+        admin_cli.task_retention.selected()
+            || admin_cli.reconcile_query_usage
             || admin_cli.delete_object_history_version.is_some()
             || admin_cli.control_checkpoint.is_some()
             || admin_cli.reapply_control.is_some()
@@ -445,7 +452,8 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
             "Query usage reconciliation must run separately from migrations".into(),
         ));
     }
-    let privileged_database_operation = migration_requested
+    let privileged_database_operation = admin_cli.task_retention.selected()
+        || migration_requested
         || admin_cli.delete_object_history_version.is_some()
         || admin_cli.control_checkpoint.is_some()
         || admin_cli.reapply_control.is_some()
@@ -625,6 +633,66 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
         storage.unregister_runtime(registration).await?;
         recovery.release();
         return result;
+    }
+
+    if let Some(action) = task_retention_action {
+        let lifetime = crate::services::deletion_recovery::require_control_runtime_lifetime(
+            &storage,
+            &admin_cli.control_recovery,
+        )
+        .await?;
+        let registration = if action.requires_execution() {
+            Some(
+                storage
+                    .register_runtime_isolated(lifetime.isolation_domain())
+                    .await?,
+            )
+        } else {
+            None
+        };
+        let storage = match &registration {
+            Some(registration) => storage.with_runtime_owner(registration.owner()),
+            None => storage,
+        };
+        let result = if registration.is_some() {
+            match storage.admit_application_work().await {
+                Ok(permit) => {
+                    let scope = storage
+                        .current_execution_scope()
+                        .with_application_access(permit);
+                    storage
+                        .run_in_scope(
+                            scope,
+                            crate::services::deletion_recovery::administer_task_retention(
+                                &storage,
+                                &admin_cli.control_recovery,
+                                action,
+                            ),
+                        )
+                        .await
+                }
+                Err(error) => Err(error.into()),
+            }
+        } else {
+            crate::services::deletion_recovery::administer_task_retention(
+                &storage,
+                &admin_cli.control_recovery,
+                action,
+            )
+            .await
+        };
+        if let Some(registration) = registration {
+            storage.unregister_runtime(registration).await?;
+        }
+        lifetime.release();
+        let report = result?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|_| ApiError::InternalServerError(
+                "Cannot encode task retention report".into()
+            ))?
+        );
+        return Ok(());
     }
 
     if let Some(version) = admin_cli.delete_object_history_version {

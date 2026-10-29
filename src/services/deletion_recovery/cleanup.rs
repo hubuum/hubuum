@@ -1,9 +1,9 @@
 use std::path::Path;
 
 use hubuum_storage_core::{
-    DeletionAudit, DeletionAuditObservation, DeletionAuditProtection, DeletionCheckpointIdentity,
-    DeletionControlCapture, DeletionControlState, DeletionControlStorage, HotObjectHistoryCleanup,
-    HotObjectHistoryDeletion, StorageRecordIdentity,
+    ControlCheckpointCapture, DeletionAudit, DeletionAuditObservation, DeletionAuditProtection,
+    DeletionCheckpointIdentity, DeletionControlState, DeletionControlStorage,
+    HotObjectHistoryCleanup, HotObjectHistoryDeletion, StorageRecordIdentity, TaskRetentionStorage,
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -65,12 +65,12 @@ pub(crate) struct HotHistoryCleanupReport {
 
 async fn publish(
     mut session: CheckpointSession,
-    capture: DeletionControlCapture,
+    capture: ControlCheckpointCapture,
 ) -> Result<CheckpointSession, ApiError> {
     // Moving ownership into the worker preserves the lock if this future is
     // cancelled while a file write, rename, or synchronization is still running.
     tokio::task::spawn_blocking(move || {
-        session.publish(&capture)?;
+        session.publish_control(&capture)?;
         Ok(session)
     })
     .await
@@ -100,8 +100,8 @@ pub(super) async fn protect_audit(
     if expected == current {
         return Ok((session, current));
     }
-    let capture = storage.capture_deletion_control().await?;
-    if !capture.state().covers(&expected) {
+    let capture = storage.capture_control_checkpoint().await?;
+    if !capture.deletion().state().covers(&expected) {
         return Err(unavailable(
             "Committed audit observation could not be read back",
         ));
@@ -148,8 +148,8 @@ pub(crate) async fn cleanup_object_history(
     let prepared = storage
         .prepare_hot_object_history_deletion(before, request.clone())
         .await?;
-    let capture = storage.capture_deletion_control().await?;
-    if !capture.state().covers(&prepared) {
+    let capture = storage.capture_control_checkpoint().await?;
+    if !capture.deletion().state().covers(&prepared) {
         return Err(unavailable(
             "Committed cleanup intent could not be read back",
         ));
@@ -169,8 +169,8 @@ async fn acknowledge_completion(
     request: HotObjectHistoryDeletion,
 ) -> Result<HotHistoryCleanupReport, ApiError> {
     let completion = async {
-        let capture = storage.capture_deletion_control().await?;
-        if !capture.state().covers(&removed) {
+        let capture = storage.capture_control_checkpoint().await?;
+        if !capture.deletion().state().covers(&removed) {
             return Err(unavailable("Committed copy removal could not be read back"));
         }
         let session = publish(session, capture).await?;

@@ -625,3 +625,26 @@ and fence/reset worker leases during restore while preserving service history.
 Execution caps and small-pool reservation fallback are part of the complete
 contract; see [shared scheduling](task_scheduling.md). Rerun conformance and
 production-adapter transaction/concurrency tests before deployment.
+
+## Upgrading from 0.15 to 0.16
+
+Upgrade all ten SDK crates together to 0.16.0. This is a breaking adapter change.
+Implement the complete `TaskRetentionStorage` contract, protected submission
+lookup and activation, and the typed `StorageTaskSubmissionOutcome` creation
+result. Preserve stable principal/task identities, original request fingerprints,
+terminal-anchored windows and exact admission tickets across adapter boundaries.
+
+Checkpoint capture now combines independent deletion and task authority through
+`ControlCheckpointCapture`. Exposure release takes `ApplicationExposureProof`;
+protected task authority requires an exact current-incarnation task reapplication
+proof. Retain historical reconciliation proofs during ordinary task revision
+changes, but require exact current revisions at exposure-release CAS.
+
+Implement both task-detail and expired-output purge scopes, aggregate row/byte
+budgets, child-write fencing, output/hold/dependency blockers, terminal expiry
+protection and recovery of retained decisions. Preserve audit provenance after
+parent deletion and grandfather legacy detail-retention anchors. No empty or
+unsupported fallback satisfies these required methods. Run the shared protected
+admission verifier and adapter-native transaction, locking, migration, recovery
+and bounded-purge tests. See [task retention](task_retention.md) for operational
+activation and client-visible retry behavior.

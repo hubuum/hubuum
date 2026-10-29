@@ -86,6 +86,16 @@ impl MemoryState {
         let deletion_control = DeletionControlState::empty(Uuid::new_v4(), Uuid::new_v4())
             .expect("generated control identities");
         let mut state = Self {
+            task_control: TaskControlState::initial(
+                deletion_control.lineage(),
+                deletion_control.epoch(),
+                TaskRetentionPolicy::disabled_default(),
+            )
+            .expect("generated task control identities"),
+            task_reapplication: None,
+            restore_repairs_pending: false,
+            task_purge_attempts: BTreeMap::new(),
+            next_task_purge_attempt: 1,
             task_capacity: Default::default(),
             artifacts: Default::default(),
             application_control: ApplicationControlState::initial(&deletion_control),

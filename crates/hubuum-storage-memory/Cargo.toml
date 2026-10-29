@@ -30,6 +30,7 @@ tokio = { version = "1", features = ["rt", "sync"] }
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+hubuum-storage-conformance = { path = "../hubuum-storage-conformance" }
 hubuum-task-core = { version = "=0.15.0", path = "../hubuum-task-core" }
 rstest = "0.28"
 tokio = { version = "1", features = ["macros"] }

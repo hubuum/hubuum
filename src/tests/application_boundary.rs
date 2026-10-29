@@ -234,6 +234,7 @@ const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
     "CollectionAuthorizationQueryStorage",
     "RemoteTargetStorage",
     "TaskQueueStorage",
+    "TaskRetentionStorage",
     "TaskCapacityStorage",
     "TaskExecutionStorage",
     "ArtifactStore",

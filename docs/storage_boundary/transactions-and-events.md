@@ -435,6 +435,7 @@ commit-ordered wake-up on notification-capable adapters. The administrator handl
 logs the actor and enabled state; this operation does not create a domain audit
 event. Logical restores preserve the setting and portable backups exclude it.
 
+<<<<<<< HEAD
 ### Artifact workflow mutations
 
 `ArtifactStore::register_destination`, `ArtifactStore::stage`,
@@ -445,3 +446,27 @@ physical storage state and durable ownership, not ordinary domain resources.
 Task completion owns the terminal task event and atomic output publication.
 Cleanup retains obligations and reservations until bounded physical deletion
 finishes, independently of application task deletion and logical restore.
+=======
+## Protected task-control mutations
+
+`TaskQueueStorage::activate_task_submission` atomically acknowledges an exact
+protected admission generation. It consumes no fresh capacity or approval and
+emits creation provenance once. The following administrator/worker state-machine
+operations carry canonical protected authority and generation preconditions
+instead of ordinary domain mutation event contexts:
+
+- `TaskRetentionStorage::prepare_expired_task_outputs`
+- `TaskRetentionStorage::commit_task_control`
+- `TaskRetentionStorage::recover_task_control`
+- `TaskRetentionStorage::replace_task_retention_policy`
+- `TaskRetentionStorage::change_task_hold`
+- `TaskRetentionStorage::expire_task_receipts`
+- `TaskRetentionStorage::prepare_task_details_purge`
+- `TaskRetentionStorage::purge_task_details_batch`
+- `TaskRetentionStorage::reapply_task_retention`
+- `TaskRetentionStorage::backfill_task_receipts`
+
+Their immutable manifests, receipt generations, policy revisions, holds and
+independently authenticated checkpoints provide recovery provenance. Normal
+domain mutations retain their existing event-context requirements.
+>>>>>>> ce1b04ba (Preserve idempotency receipts while expiring task details)
