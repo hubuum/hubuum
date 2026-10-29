@@ -40,6 +40,19 @@ def connection_environment(database):
     return env
 
 
+def database_environment(env):
+    query = "SELECT json_build_object('version',current_setting('server_version'),'shared_buffers',current_setting('shared_buffers'),'work_mem',current_setting('work_mem'),'max_connections',current_setting('max_connections'))"
+    timings = []
+    for _ in range(5):
+        started = time.monotonic()
+        result = subprocess.run(["psql", "-XAt", "-v", "ON_ERROR_STOP=1", "-c", query],
+                                env=env, check=True, capture_output=True, text=True)
+        timings.append((time.monotonic() - started) * 1000)
+    return {**json.loads(result.stdout), "connection_and_query_wall_ms": timings,
+            "server_cpu_limit": None, "server_memory_limit": None,
+            "server_peak_rss": None}
+
+
 def run_pair(binary, admin, args, sample):
     database = "hubuum_artifact_probe_" + uuid.uuid4().hex
     admin_env = connection_environment("postgres")
@@ -49,6 +62,7 @@ def run_pair(binary, admin, args, sample):
     url = f"postgres://{quote(env['PGUSER'], safe='')}:{quote(env['PGPASSWORD'], safe='')}@{env['PGHOST']}:{env['PGPORT']}/{database}"
     env.update({"HUBUUM_DATABASE_URL": url, "HUBUUM_MIGRATION_DATABASE_URL": url,
                 "HUBUUM_DATABASE_ROLE_MODE": "single", "HUBUUM_DATABASE_PRIVILEGE_MODE": "warn",
+                "HUBUUM_DB_POOL_SIZE": "8",
                 "HUBUUM_PROBE_ROWS": str(args.rows), "HUBUUM_PROBE_ROW_BYTES": str(args.row_bytes),
                 "HUBUUM_PROBE_SLOTS": str(args.slots), "HUBUUM_PROBE_RATE": str(args.rate),
                 "HUBUUM_MAX_PAGE_LIMIT": str(max(args.rows, 250)),
@@ -61,10 +75,22 @@ def run_pair(binary, admin, args, sample):
                 "HUBUUM_DATABASE_ROLE_TESTS": "false"})
     try:
         subprocess.run([str(admin), "--migrate"], env=env, check=True, stdout=subprocess.DEVNULL)
+        # A fresh benchmark database gets the declared 8 GiB deployment envelope.
+        # This is the same persisted policy used by production admission.
+        policy = """WITH current AS (SELECT public.hubuum_task_policy_read() AS value),
+        tuned AS (SELECT (value->>'revision')::BIGINT AS revision,
+        jsonb_set(jsonb_set(jsonb_set(value->'policy','{deployment,resident_bytes}','8589934592'),
+        '{principal,resident_bytes}','8589934592'),'{collection,resident_bytes}','8589934592') AS policy FROM current)
+        SELECT public.hubuum_task_policy_replace(revision,jsonb_set(policy,'{kinds}',
+        (SELECT jsonb_agg(jsonb_set(kind,'{capacity,resident_bytes}','8589934592'))
+        FROM jsonb_array_elements(policy->'kinds') AS kind))) FROM tuned"""
+        subprocess.run(["psql", "-X", "-v", "ON_ERROR_STOP=1", "-c", policy],
+                       env=env, check=True, stdout=subprocess.DEVNULL)
+        database_settings = database_environment(env)
         with tempfile.TemporaryDirectory(prefix="hubuum-artifact-probe-") as directory:
             processes = []
             started = time.monotonic()
-            for replica, mode in enumerate(("export", "backup")):
+            for replica, mode in enumerate(args.modes):
                 path = Path(directory) / f"worker-{replica}.log"
                 with path.open("w") as log:
                     process = subprocess.Popen([binary, "--exact", PROBE, "--ignored", "--nocapture", "--test-threads=1"],
@@ -89,6 +115,11 @@ def run_pair(binary, admin, args, sample):
                         process.wait(timeout=30)
             return {"profile": "artifact-remote-v2", "sample": sample,
                     "system": platform.platform(), "build": "release" if args.release else "debug",
+                    "logical_cpus": os.cpu_count(), "worker_cpu_limit": None,
+                    "worker_pool_size": 8,
+                    "worker_memory_limit": None, "rss_acceptance_bytes": 536870912,
+                    "deployment_resident_limit": 8589934592, "database": database_settings,
+                    "output_limit": args.output_limit, "modes": args.modes,
                     "elapsed_seconds": time.monotonic() - started, "workers": records}
     finally:
         subprocess.run(["psql", "-v", "ON_ERROR_STOP=1", "-c", f"DROP DATABASE {database} WITH (FORCE)"],
@@ -102,6 +133,7 @@ def main(argv=None):
     parser.add_argument("--rows", type=int, default=1024)
     parser.add_argument("--row-bytes", type=int, default=65536)
     parser.add_argument("--slots", type=int, default=2)
+    parser.add_argument("--modes", nargs=2, choices=("export", "backup"), default=("export", "backup"))
     parser.add_argument("--rate", type=int, default=1048576)
     parser.add_argument("--output-limit", type=int, default=134217728)
     parser.add_argument("--release", action="store_true")

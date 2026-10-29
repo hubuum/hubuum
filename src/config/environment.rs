@@ -10,6 +10,7 @@ use hubuum_domain::{
     TokenRetentionBatchSize,
 };
 use hubuum_query::MAX_TRAVERSAL_DEPTH;
+use hubuum_storage_core::artifacts::ArtifactLimits;
 
 use crate::models::retention::{MAX_FUTURE_RETENTION_HOURS, MAX_FUTURE_RETENTION_MINUTES};
 use crate::observability::tracing::{MAX_BATCH_SIZE, MAX_QUEUE_CAPACITY, MAX_TIMEOUT_MS};
@@ -343,6 +344,18 @@ macro_rules! configuration_bound {
 /// same entries, including the accessor for the value being validated.
 pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
     ConfigurationBound {
+        name: "HUBUUM_ARTIFACT_MAX_SPOOL_BYTES",
+        minimum: Some(1),
+        maximum: Some(ArtifactLimits::format_ceiling().artifact_bytes() as i64),
+        value: |config| config.artifacts.max_spool_bytes as i128,
+    },
+    ConfigurationBound {
+        name: "HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES",
+        minimum: Some(1),
+        maximum: Some(i64::MAX),
+        value: |config| config.artifacts.worker_resident_bytes as i128,
+    },
+    ConfigurationBound {
         name: "HUBUUM_QUERY_OBSERVATIONS_SAMPLE_EVERY",
         minimum: Some(1),
         maximum: Some(1000000),
@@ -555,7 +568,11 @@ pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
         "HUBUUM_BACKUP_MAX_ACTIVE_TASKS_PER_USER",
         backup_max_active_tasks_per_user
     ),
-    configuration_bound!("HUBUUM_BACKUP_MAX_OUTPUT_BYTES", backup_max_output_bytes),
+    configuration_bound!(
+        "HUBUUM_BACKUP_MAX_OUTPUT_BYTES",
+        backup_max_output_bytes,
+        maximum = ArtifactLimits::format_ceiling().artifact_bytes() as i64
+    ),
     configuration_bound!("HUBUUM_BACKUP_MAX_CAPTURE_ROWS", backup_max_capture_rows),
     configuration_bound!(
         "HUBUUM_RESTORE_STAGE_RETENTION_MINUTES",
@@ -580,7 +597,11 @@ pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
         "HUBUUM_EXPORT_TEMPLATE_MAX_OBJECTS",
         export_template_max_objects
     ),
-    configuration_bound!("HUBUUM_EXPORT_MAX_OUTPUT_BYTES", export_max_output_bytes),
+    configuration_bound!(
+        "HUBUUM_EXPORT_MAX_OUTPUT_BYTES",
+        export_max_output_bytes,
+        maximum = ArtifactLimits::format_ceiling().artifact_bytes() as i64
+    ),
     configuration_bound!("HUBUUM_EXPORT_STAGE_TIMEOUT_MS", export_stage_timeout_ms),
     configuration_bound!("HUBUUM_REMOTE_CALL_TIMEOUT_MS", remote_call_timeout_ms),
     configuration_bound!(

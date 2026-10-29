@@ -52,7 +52,7 @@ impl ArtifactLimits {
     pub fn block_bytes(self) -> u32 {
         self.block_bytes
     }
-    pub fn artifact_bytes(self) -> u64 {
+    pub const fn artifact_bytes(self) -> u64 {
         self.artifact_bytes
     }
     pub fn blocks(self) -> u32 {

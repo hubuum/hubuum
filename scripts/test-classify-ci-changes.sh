@@ -109,6 +109,9 @@ assert_flag "$artifact_restore_output" rust true
 artifact_driver_output="$(bash "$classifier" tests/python/integration/artifact_pipeline.py)"
 assert_flag "$artifact_driver_output" code true
 assert_flag "$artifact_driver_output" container true
+artifact_driver_unit_output="$(bash "$classifier" tests/python/unit/tooling/test_artifact_pipeline.py)"
+assert_flag "$artifact_driver_unit_output" code true
+assert_flag "$artifact_driver_unit_output" rust false
 
 for regex_input in crates/hubuum-storage-postgres/tests/regex_pattern.rs \
   src/tests/storage_contract/regex.rs \
