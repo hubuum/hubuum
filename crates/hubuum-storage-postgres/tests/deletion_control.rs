@@ -250,3 +250,171 @@ async fn deletion_authority_compare_and_swap_rejects_old_snapshot() {
     first.expect("initial adapter transition should commit");
     assert_eq!(stale.unwrap_err().kind(), StorageErrorKind::Conflict);
 }
+
+#[tokio::test]
+async fn admitted_task_transaction_blocks_a_later_deletion_intent() {
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let runtime = integration_test_pool(1);
+    let owner = integration_test_migration_pool(1);
+    with_transaction(&runtime, async |connection| {
+        let gate = sql_query("SELECT public.hubuum_deletion_execution_allowed() AS allowed")
+            .get_result::<Gate>(connection)
+            .await?;
+        assert!(gate.allowed, "fixture starts with unrestricted authority");
+        let update = with_transaction(&owner, async |connection| {
+            assume_owner(connection).await?;
+            // Match PostgreSQL's lock_not_available SQLSTATE (55P03), not
+            // translated adapter messages or a broad database-error category.
+            connection
+                .batch_execute(
+                    "DO $probe$ BEGIN
+                    PERFORM 1 FROM hubuum_control.deletion_authority WHERE id=1 FOR UPDATE NOWAIT;
+                    RAISE EXCEPTION 'Deletion intent acquired authority while task fence was held';
+                EXCEPTION WHEN lock_not_available THEN NULL;
+                END $probe$",
+                )
+                .await
+                .map_err(|error| {
+                    PostgresStorageError::internal(format!(
+                        "Deletion authority lock probe failed: {error:?}"
+                    ))
+                })
+        })
+        .await;
+        // NOWAIT establishes the incompatible lock without relying on sleeps
+        // or assuming that a spawned updater was scheduled promptly.
+        update.expect("only SQLSTATE 55P03 proves the task fence blocked the intent");
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
+    .unwrap();
+    let update = with_transaction(&owner, async |connection| {
+        assume_owner(connection).await?;
+        sql_query(
+            "SELECT material FROM hubuum_control.deletion_authority WHERE id=1 FOR UPDATE NOWAIT",
+        )
+        .get_result::<Material>(connection)
+        .await
+        .map(|_| ())
+        .map_err(PostgresStorageError::from)
+    })
+    .await;
+    update.expect("intent lock becomes available only after task transaction ends");
+}
+
+#[tokio::test]
+async fn prior_deletion_intent_prevents_task_transaction_body() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    use hubuum_storage_core::{ExecutionStorage, StorageExecutionScope};
+    use hubuum_task_core::TaskExecutionContext;
+
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let pool = integration_test_migration_pool(1);
+    let storage = PostgresStorage::unobserved(pool.clone());
+    let before = storage.read_deletion_control().await.unwrap();
+    let change = before
+        .record_intent(
+            Uuid::new_v4(),
+            DeletionSubject::Version {
+                identity: serde_json::from_value(serde_json::json!(Uuid::new_v4())).unwrap(),
+            },
+            vec![Uuid::new_v4()],
+        )
+        .unwrap();
+    storage.commit_deletion_control(change).await.unwrap();
+    let executed = AtomicBool::new(false);
+    let (execution, _) = TaskExecutionContext::new(Duration::from_secs(60)).unwrap();
+    let result = storage
+        .run_in_scope(
+            StorageExecutionScope::default().with_task_execution(Some(execution)),
+            with_transaction(&pool, async |_connection| {
+                executed.store(true, Ordering::Relaxed);
+                Ok::<_, PostgresStorageError>(())
+            }),
+        )
+        .await;
+    // Restore the deployment singleton before asserting the observed result.
+    with_transaction(&pool, async |connection| {
+        assume_owner(connection).await?;
+        sql_query("UPDATE hubuum_control.deletion_authority SET material=$1 WHERE id=1")
+            .bind::<Jsonb, _>(serde_json::to_value(before).unwrap())
+            .execute(connection)
+            .await?;
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
+    .unwrap();
+    assert_eq!(result.unwrap_err().kind(), StorageErrorKind::Unavailable);
+    assert!(!AtomicBool::load(&executed, Ordering::Relaxed));
+}
+
+#[tokio::test]
+async fn cancellation_interrupts_waiting_for_deletion_authority() {
+    use std::time::Duration;
+
+    use diesel::sql_types::Integer;
+    use hubuum_storage_core::{ExecutionStorage, StorageExecutionScope};
+    use hubuum_storage_postgres::{PostgresFaultController, PostgresFaultPoint};
+    use hubuum_task_core::{TaskExecutionContext, TaskStopReason};
+    use tokio::time::timeout;
+
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let owner_pool = integration_test_migration_pool(2);
+    let owner = PostgresStorage::unobserved(owner_pool.clone());
+    let before = owner.read_deletion_control().await.unwrap();
+    // An idempotent authority CAS takes the same exclusive row lock as an
+    // intent commit, without leaving a persistent restriction behind this test.
+    let change = before.recover_from(&before).unwrap();
+    let controller = PostgresFaultController::pausing(PostgresFaultPoint::TransactionBeforeCommit);
+    let writer_controller = controller.clone();
+    let writer = tokio::spawn(async move {
+        writer_controller
+            .run(owner.commit_deletion_control(change))
+            .await
+    });
+    let reached = timeout(Duration::from_secs(5), controller.wait_until_reached())
+        .await
+        .unwrap();
+    let writer_pid = reached.backend_pid().unwrap();
+    let pool = integration_test_pool(2);
+    let storage = PostgresStorage::unobserved(pool.clone());
+    let (execution, stop) = TaskExecutionContext::new(Duration::from_secs(60)).unwrap();
+    let task = tokio::spawn(async move {
+        storage
+            .run_in_scope_send(
+                StorageExecutionScope::default().with_task_execution(Some(execution)),
+                with_transaction(&pool, async |_connection| {
+                    Err::<(), _>(PostgresStorageError::internal(
+                        "task body must not run while the authority writer is locked",
+                    ))
+                }),
+            )
+            .await
+    });
+    let blocked = timeout(Duration::from_secs(5), async {
+        loop {
+            let waiting = with_transaction(&owner_pool, async |connection| {
+                Ok::<_, PostgresStorageError>(sql_query("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))) AS allowed")
+                    .bind::<Integer, _>(writer_pid)
+                    .get_result::<Gate>(connection).await?.allowed)
+            })
+            .await?;
+            if waiting {
+                return Ok::<_, PostgresStorageError>(());
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    stop.request_stop(TaskStopReason::Cancelled);
+    let cancelled = timeout(Duration::from_secs(5), task).await;
+    // The writer remains locked while cancellation must finish. Always release
+    // it before assertions, including when a regression makes cancellation time out.
+    controller.resume();
+    writer.await.unwrap().unwrap();
+    blocked.unwrap().unwrap();
+    let error = cancelled.unwrap().unwrap().unwrap_err();
+    assert_eq!(error.kind(), StorageErrorKind::TaskCancelled);
+}

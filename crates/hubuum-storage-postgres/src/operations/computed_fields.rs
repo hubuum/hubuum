@@ -805,7 +805,7 @@ pub async fn execute_computed_field_rebuild(
         )));
     }
     runtime
-        .with_connection(async move |connection| {
+        .with_transaction(async move |connection| {
             task_execution::runnable_claimed_task(connection, claimed).await
         })
         .await?;
@@ -880,6 +880,7 @@ pub async fn execute_computed_field_rebuild(
 
     let (status, finalized) = runtime
         .with_transaction(async move |connection| {
+            crate::runtime::require_deletion_execution(connection).await?;
             acquire_computed_class_shared_lock(connection, payload.class_id).await?;
             task_execution::runnable_claimed_task(connection, claimed).await?;
             use crate::schema::class_computation_state::dsl as state;
