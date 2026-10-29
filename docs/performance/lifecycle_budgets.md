@@ -293,3 +293,63 @@ it does not run a complete HTTP server or initialize the global metrics exporter
 Legacy inline readers remain the separately documented finite compatibility
 exception. Protocol, application/API, migration, split-role and production
 container checks remain independent required gates.
+
+## Recorded revision 2 results
+
+The [complete report](artifact_pipeline.md) records one warm-up, five fresh
+slow-transfer samples, and two separate maximum-row/output runs. All runs use
+two worker processes with two concurrent production paths per process.
+Across the five measured samples and both bulk cases, native worker-plus-child
+peak RSS was **428.95 MiB** and the largest 20 ms RSS sample was
+**394.09 MiB**, both below H1's 512 MiB ceiling. Peak deployment
+reservation was **7.9932 GiB**, below H2's 8 GiB limit.
+
+| Slow-transfer path | Minimum upload (MiB/s) | Median upload (MiB/s) | p95 upload (MiB/s) |
+| --- | --- | --- | --- |
+| backup/backup | 0.886 | 0.907 | 0.927 |
+| backup/template | 0.874 | 0.899 | 0.932 |
+| export/json | 0.886 | 0.902 | 0.933 |
+| export/template | 0.880 | 0.904 | 0.932 |
+
+Every measured stream exceeds P7's 0.8 MiB/s target. Upload, independent
+read-back and download were each throttled to 1 MiB/s; upload throughput
+excludes capture/render and independent verification. The raw report records
+every phase and all five samples. With five observations, nearest-rank p95
+is the maximum observation; it is not a high-confidence tail estimate.
+
+| Bulk fixture | Largest JSON output (bytes) | Largest template output (bytes) | Backup output (bytes) |
+| --- | --- | --- | --- |
+| Two export workers | 1,069,338,784 | 1,069,286,655 | — |
+| Export and backup workers | 532,572,704 | 532,546,687 | 1,061,086,443 |
+
+Bulk fixtures use 4 MiB source-row targets and verify publication and complete
+download near the profile output ceiling. Exact encoded-row and one-byte
+overflow behavior remain covered by the separate boundary tests. These
+runs do not qualify 64 GiB artifacts or the original constrained-host profile.
+
+Slow samples were measured at `e9efba53f867becbbf31c3cc853981302e23fecd`.
+Bulk export qualification includes the export compatibility fixes at
+`6c1187916dac097345b409e826a68ec1fc3854c4`; the mixed bulk run uses
+`3ffc7ebcb5e4d16f308afbf13d96d7af906410c9`. The intervening
+changes add an optional functional-test polling budget, restore the hydration
+progress event, preserve the existing oversized-template error mapping, and
+accept format 12 at the restore boundary. That version guard is outside the
+measured creation/download path.
+The report pins the revision for every raw sample.
+
+The driver sets a one-hour export stage timeout and 10,000,000 template fuel
+units for these large remote fixtures; the isolated renderer retains its
+five-second deadline and 128 MiB heap ceiling. Output/spool limits vary by
+fixture as shown in the reproduction commands. These are explicit profile
+settings, not new production defaults.
+
+Repository tests ran concurrently in separate databases on the same PostgreSQL
+server, with local compilation during parts of qualification. The measurements
+include that contention; they do not establish dedicated-host latency.
+
+An earlier diagnostic series accidentally inherited the general fixture's
+20-connection pool and later hit a two-second pool acquisition timeout.
+Those samples are excluded. The reported runs use an actual eight-connection
+pool with explicit 30-second acquisition and statement timeouts. Legacy
+inline output readers remain outside the new streaming memory guarantee; see
+[the finite compatibility exception](../artifact_staging.md#integrity-and-downloads).
