@@ -702,7 +702,7 @@ impl StorageRestoreReplayApply {
         let source_includes_history = snapshot.includes_history();
         let upgrade = match metadata.backup_version {
             6..=10 => crate::StorageIdentityUpgrade::Legacy(context.cohort()),
-            11 => crate::StorageIdentityUpgrade::Native,
+            11..=12 => crate::StorageIdentityUpgrade::Native,
             _ => {
                 return Err(StorageError::invalid_input(
                     "Unsupported logical backup version",
@@ -1023,10 +1023,56 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::{StorageBackupRow, StorageBackupStateSection};
+    use crate::{
+        StorageBackupBudget, StorageBackupReplay, StorageBackupRow, StorageBackupSnapshot,
+        StorageBackupStateSection,
+    };
 
     fn timestamp() -> DateTime<Utc> {
         chrono::DateTime::from_timestamp(1_700_000_000, 0).expect("valid timestamp")
+    }
+
+    #[rstest]
+    #[case::obsolete(5, false)]
+    #[case::six(6, true)]
+    #[case::seven(7, true)]
+    #[case::eight(8, true)]
+    #[case::nine(9, true)]
+    #[case::ten(10, true)]
+    #[case::native_identities(11, true)]
+    #[case::portable_artifacts(12, true)]
+    #[case::future(13, false)]
+    fn restore_boundary_accepts_supported_backup_versions(
+        #[case] version: i32,
+        #[case] accepted: bool,
+    ) {
+        let snapshot = StorageBackupSnapshot::try_new(
+            crate::backup_snapshot::with_test_schema_sections(
+                StorageBackupStateSection::ALL
+                    .iter()
+                    .copied()
+                    .map(|section| (section, Vec::new()))
+                    .collect(),
+            ),
+            None,
+        )
+        .unwrap();
+        let replay = StorageBackupReplay::from_snapshot(
+            snapshot,
+            StorageBackupBudget::new(1024 * 1024, 1000).unwrap(),
+        )
+        .unwrap();
+        let result = StorageRestoreReplayApply::at_restore_boundary(
+            StorageRestoreIdentityContext {
+                job_id: RestoreJobId::new(1).unwrap(),
+                cohort: LegacyIdentityCohort::generate(),
+                confirmed_at: timestamp(),
+            },
+            StorageRestoreDocumentMetadata::new(version, timestamp(), "test"),
+            replay,
+        );
+
+        assert_eq!(result.is_ok(), accepted, "{result:?}");
     }
 
     #[rstest]
