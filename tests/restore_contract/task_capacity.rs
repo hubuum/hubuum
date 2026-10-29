@@ -3,6 +3,7 @@ use std::panic::{AssertUnwindSafe, resume_unwind};
 use futures_util::FutureExt;
 use hubuum::events::EventContext;
 use hubuum_query::QueryOptions;
+use hubuum_storage_core::artifacts::ArtifactStore;
 use hubuum_task_core::IdempotencyKey;
 use tokio::task::JoinSet;
 
@@ -46,6 +47,9 @@ pub(super) async fn with_fixture(
     let result = AssertUnwindSafe(test(&fixture)).catch_unwind().await;
     set_policy(fixture.storage(), original.policy().clone()).await;
     fixture.restore_original().await.unwrap();
+    // Logical restore preserves physical artifact cleanup obligations. Drain
+    // the fixture's retired copies before another test installs a tiny quota.
+    while fixture.storage().cleanup().await.unwrap() > 0 {}
     if let Err(panic) = result {
         resume_unwind(panic);
     }
