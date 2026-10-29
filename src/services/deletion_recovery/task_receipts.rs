@@ -15,7 +15,7 @@ use hubuum_task_core::IdempotencyKey;
 use serde::Serialize;
 use tokio::sync::Mutex;
 
-use super::repository::{CheckpointRepository, CheckpointSession};
+use super::repository::{AuthenticatedPayloadCache, CheckpointRepository, CheckpointSession};
 use super::task_key::TaskReceiptKey;
 use super::{invalid_control, unavailable};
 use crate::config::ControlRecoveryOptions;
@@ -39,6 +39,7 @@ struct Configuration {
     // Coalesce work within this process. The owned repository session supplies
     // cross-process exclusion and survives cancellation during blocking IO.
     publication: Mutex<()>,
+    payload_cache: Arc<AuthenticatedPayloadCache>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -61,6 +62,7 @@ impl TaskReceiptService {
                 key_file,
                 key: repository.task_receipt_key()?,
                 publication: Mutex::new(()),
+                payload_cache: Arc::new(AuthenticatedPayloadCache::default()),
             })
         })
         .await
@@ -414,7 +416,9 @@ async fn open_session(configuration: &Arc<Configuration>) -> Result<CheckpointSe
                 "Control authentication key changed while task admission was running",
             ));
         }
-        repository.into_session()
+        repository
+            .with_payload_cache(Arc::clone(&configuration.payload_cache))
+            .into_session()
     })
     .await
     .map_err(|_| unavailable("Task control repository worker failed"))?
