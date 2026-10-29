@@ -46,6 +46,10 @@ pub enum MissingDataPolicy {
 pub(crate) enum Operation {
     Syntax,
     Render,
+    Spool {
+        rows: crate::spool::RowFiles,
+        output: PathBuf,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -79,6 +83,8 @@ pub struct RenderedTemplate {
     output: String,
     missing: Vec<MissingValue>,
     peak_heap_bytes: usize,
+    #[serde(default)]
+    output_bytes: u64,
 }
 impl RenderedTemplate {
     pub(crate) fn truncate_missing_values(&mut self, limit: usize) {
@@ -97,11 +103,16 @@ impl RenderedTemplate {
     pub fn into_parts(self) -> (String, Vec<MissingValue>) {
         (self.output, self.missing)
     }
+    pub(crate) fn set_output_bytes(&mut self, bytes: u64) {
+        self.output_bytes = bytes;
+    }
+
     pub(crate) fn new(output: String, missing: Vec<MissingValue>) -> Self {
         Self {
             output,
             missing,
             peak_heap_bytes: 0,
+            output_bytes: 0,
         }
     }
 }
@@ -150,7 +161,7 @@ impl<'a> TemplateExecution<'a> {
         self
     }
     pub fn max_output_bytes(mut self, value: usize) -> Self {
-        self.max_output_bytes = value.min(MAX_OUTPUT_BYTES);
+        self.max_output_bytes = value;
         self
     }
     pub async fn render(
@@ -164,6 +175,54 @@ impl<'a> TemplateExecution<'a> {
             .await?
             .pop()
             .ok_or_else(|| TemplateError::boundary("missing template worker result"))
+    }
+
+    /// Replay indexed rows in the existing isolated renderer and stream output
+    /// to a bounded file. The supervisor pins both files until the child is reaped.
+    pub async fn render_spooled(
+        self,
+        context: &serde_json::Value,
+        rows: Arc<crate::TemplateRows>,
+    ) -> Result<crate::RenderedSpool, TemplateError> {
+        let output = Arc::new(
+            tempfile::NamedTempFile::new()
+                .map_err(|_| TemplateError::boundary("cannot create template output spool"))?,
+        );
+        let descriptor = rows.descriptor()?;
+        let max_output_bytes = self.max_output_bytes;
+        if max_output_bytes as u64 > crate::spool::MAX_SPOOL_BYTES {
+            return Err(TemplateError::boundary(
+                "template output spool limit exceeded",
+            ));
+        }
+        let request = WorkerRequest {
+            operation: Operation::Spool {
+                rows: descriptor,
+                output: output.path().to_owned(),
+            },
+            templates: vec![self.into_request()],
+            context: Cow::Borrowed(context),
+            max_output_bytes,
+        };
+        let mut rendered = execute_pinned(request, Some((rows, output.clone()))).await?;
+        let rendered = rendered
+            .pop()
+            .ok_or_else(|| TemplateError::boundary("missing template output"))?;
+        if output
+            .as_file()
+            .metadata()
+            .map_err(|_| TemplateError::boundary("missing rendered spool"))?
+            .len()
+            != rendered.output_bytes
+        {
+            return Err(TemplateError::boundary("rendered spool length mismatch"));
+        }
+        Ok(crate::RenderedSpool {
+            file: output,
+            bytes: rendered.output_bytes,
+            missing: rendered.missing,
+            peak_heap_bytes: rendered.peak_heap_bytes,
+        })
     }
 
     fn source_bytes(&self) -> Option<usize> {
@@ -337,7 +396,10 @@ struct WorkerRuntime {
     stopping: watch::Sender<bool>,
     stopped: watch::Receiver<bool>,
 }
+type SpoolPins = (Arc<crate::TemplateRows>, Arc<tempfile::NamedTempFile>);
+
 struct Job {
+    spool_pins: Option<SpoolPins>,
     encoded: String,
     max_response_bytes: usize,
     expected_results: usize,
@@ -427,6 +489,13 @@ pub async fn shutdown_template_workers() {
 }
 
 async fn execute(request: WorkerRequest<'_>) -> Result<Vec<RenderedTemplate>, TemplateError> {
+    execute_pinned(request, None).await
+}
+
+async fn execute_pinned(
+    request: WorkerRequest<'_>,
+    spool_pins: Option<SpoolPins>,
+) -> Result<Vec<RenderedTemplate>, TemplateError> {
     let started = Instant::now();
     if SHUTTING_DOWN.load(Ordering::SeqCst) {
         return Err(TemplateError::boundary(
@@ -446,10 +515,14 @@ async fn execute(request: WorkerRequest<'_>) -> Result<Vec<RenderedTemplate>, Te
         ));
     }
     let capacity = runtime.admit(started)?;
-    let max_response_bytes = request
-        .max_output_bytes
-        .saturating_mul(6)
-        .saturating_add(1024 * 1024);
+    let max_response_bytes = if spool_pins.is_some() {
+        1024 * 1024
+    } else {
+        request
+            .max_output_bytes
+            .saturating_mul(6)
+            .saturating_add(1024 * 1024)
+    };
     // Borrowed input is encoded into a size-bounded buffer before transferring
     // ownership. No unbounded clone of the caller's context is made.
     let mut encoded = SizeLimitedWriter::new(MAX_REQUEST_BYTES);
@@ -465,6 +538,7 @@ async fn execute(request: WorkerRequest<'_>) -> Result<Vec<RenderedTemplate>, Te
     let (response, result) = oneshot::channel();
     let span = info_span!("template_execution", operation_id = NEXT_OPERATION.fetch_add(1, Ordering::Relaxed), operation = ?request.operation, pid = tracing::field::Empty);
     let job = Job {
+        spool_pins,
         encoded,
         max_response_bytes,
         expected_results: request.templates.len(),
@@ -489,6 +563,7 @@ async fn execute(request: WorkerRequest<'_>) -> Result<Vec<RenderedTemplate>, Te
 
 async fn supervise(mut job: Job, workers: Arc<Semaphore>, mut shutdown: watch::Receiver<bool>) {
     let _capacity = job.capacity;
+    let _spool_pins = job.spool_pins;
     event("admitted", job.started);
     let worker = tokio::select! {
         biased;

@@ -8,14 +8,14 @@ use hubuum_task_core::{TaskCancellationReason, TaskExecutionLimit, TaskStopReaso
 use rstest::rstest;
 use tokio::time::{sleep, timeout};
 
-struct Fixture {
-    environment: BackendTestEnvironment,
-    backend: StorageHandle,
+pub(super) struct Fixture {
+    pub(super) environment: BackendTestEnvironment,
+    pub(super) backend: StorageHandle,
     user: BackendUserFixture,
-    task: StorageTask,
+    pub(super) task: StorageTask,
 }
 impl Fixture {
-    async fn new(environment: BackendTestEnvironment, kind: StorageTaskKind) -> Self {
+    pub(super) async fn new(environment: BackendTestEnvironment, kind: StorageTaskKind) -> Self {
         Self::with_total(environment, kind, 1).await
     }
     async fn with_total(
@@ -54,12 +54,12 @@ impl Fixture {
             task,
         }
     }
-    fn request(&self) -> StorageTaskCancellationRequest {
+    pub(super) fn request(&self) -> StorageTaskCancellationRequest {
         StorageTaskCancellationRequest::new(&self.task, EventContext::system()).reason(Some(
             TaskCancellationReason::new("withdraw this task").unwrap(),
         ))
     }
-    async fn claim(&self) -> StorageTaskLease {
+    pub(super) async fn claim(&self) -> StorageTaskLease {
         self.claim_with_duration(60_000).await
     }
     async fn claim_with_duration(&self, millis: i64) -> StorageTaskLease {
@@ -98,7 +98,7 @@ impl Fixture {
             .map(|event| event.event_type().to_owned())
             .collect()
     }
-    async fn cleanup(self) {
+    pub(super) async fn cleanup(self) {
         if let BackendTestEnvironment::Postgres { pool } = self.environment {
             hubuum_storage_postgres::test_support::delete_task(&pool, self.task.id())
                 .await

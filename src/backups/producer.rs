@@ -43,12 +43,6 @@ impl BackupArtifactProducer {
         &self.summary
     }
 
-    /// Existing bounded legacy output storage still requires a complete byte
-    /// vector. Keep this exception explicit until task publication is integrated.
-    pub(super) fn serialize_legacy(self) -> Result<Vec<u8>, ApiError> {
-        self.budget.serialize(&self.document).map_err(Into::into)
-    }
-
     /// Serialize row-by-row with bounded backpressure, then independently verify
     /// durable chunks. The replay spool is dropped before this method returns.
     /// The returned proof is deliberately not a published output reference.

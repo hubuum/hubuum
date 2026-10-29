@@ -2342,3 +2342,85 @@ impl QueryUsageStorage for CompleteExternalAdapter {
         unimplemented!("compile-only adapter")
     }
 }
+
+use hubuum_storage_core::artifacts::*;
+#[async_trait]
+impl ArtifactStore for CompleteExternalAdapter {
+    async fn register_destination(&self, destination: &Destination) -> ArtifactResult<()> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+    async fn stage(
+        &self,
+        identity: &ArtifactIdentity,
+        limits: ArtifactLimits,
+    ) -> ArtifactResult<()> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+    async fn append(
+        &self,
+        identity: &ArtifactIdentity,
+        ordinal: u32,
+        bytes: &[u8],
+    ) -> ArtifactResult<()> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+    async fn seal(&self, manifest: &ArtifactManifest) -> ArtifactResult<()> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+    async fn manifest(&self, identity: &ArtifactIdentity) -> ArtifactResult<Vec<u8>> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+    async fn published_manifest(&self, reference: &ArtifactReference) -> ArtifactResult<Vec<u8>> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+    async fn block(
+        &self,
+        identity: &ArtifactIdentity,
+        ordinal: u32,
+    ) -> ArtifactResult<Option<Vec<u8>>> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+    async fn publish(&self, verified: &VerifiedArtifact) -> ArtifactResult<ArtifactReference> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+    async fn abort(&self, identity: &ArtifactIdentity) -> ArtifactResult<()> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+    async fn cleanup(&self) -> ArtifactResult<u32> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+}
+#[async_trait]
+impl TaskArtifactStore for CompleteExternalAdapter {
+    async fn bind_task(
+        &self,
+        identity: &ArtifactIdentity,
+        lease: &StorageTaskLease,
+        reservation: ArtifactReservation,
+        output_expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> ArtifactResult<()> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+}

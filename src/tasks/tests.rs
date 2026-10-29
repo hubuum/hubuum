@@ -1,3 +1,4 @@
+mod artifact_pipeline;
 use crate::models::HubuumClassID;
 use chrono::NaiveDateTime;
 use diesel::{ExpressionMethods, QueryDsl};

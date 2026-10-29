@@ -163,7 +163,8 @@ pub async fn get_backup_output(
     match backup_output(&context, task_id).await? {
         BackupOutputLookup::Available(output) => {
             let digest = digest_header_from_sha256(&output.sha256)?;
-            Ok(HttpResponse::Ok()
+            let mut response = HttpResponse::Ok();
+            response
                 .content_type("application/json")
                 .insert_header(("Cache-Control", "no-store"))
                 .insert_header((
@@ -174,8 +175,14 @@ pub async fn get_backup_output(
                     ),
                 ))
                 .insert_header(("Digest", digest))
-                .insert_header(("X-Hubuum-Backup-SHA256", output.sha256))
-                .body(output.document))
+                .insert_header(("X-Hubuum-Backup-SHA256", output.sha256));
+            if let Some(reference) = output.artifact_reference {
+                Ok(response.streaming(crate::services::artifacts::download(&context, reference)))
+            } else {
+                Ok(response.body(output.document.ok_or_else(|| {
+                    ApiError::InternalServerError("Missing backup document".into())
+                })?))
+            }
         }
         BackupOutputLookup::Expired { expires_at } => Err(ApiError::Gone(format!(
             "Backup output expired at {expires_at} UTC"

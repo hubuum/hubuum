@@ -1,7 +1,7 @@
 use super::*;
 
 fn restore(snapshot: StorageBackupSnapshot) -> Result<MemoryState, StorageError> {
-    super::restore(snapshot, Default::default())
+    super::restore(snapshot, Default::default(), Default::default())
 }
 
 pub(super) fn run(future: impl Future<Output = ()>) {

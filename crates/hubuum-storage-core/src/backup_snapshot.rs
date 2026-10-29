@@ -108,6 +108,7 @@ backup_sections! {
         RemoteTargetHistory => "remote_target_history",
         TerminalTasks => "terminal_tasks",
         ImportResults => "import_results",
+        ExportArtifacts => "export_artifacts",
         ExportOutputs => "export_outputs",
         RemoteCallResults => "remote_call_results",
         AuditEvents => "audit_events",
@@ -328,6 +329,24 @@ impl StorageBackupSnapshot {
         }
 
         if let Some(history) = &mut history_sections {
+            history
+                .entry(StorageBackupHistorySection::ExportArtifacts)
+                .or_default();
+            crate::artifacts::validate_backup_artifacts(
+                history
+                    .get(&StorageBackupHistorySection::ExportArtifacts)
+                    .into_iter()
+                    .flatten()
+                    .cloned()
+                    .map(Ok),
+                history
+                    .get(&StorageBackupHistorySection::ExportOutputs)
+                    .into_iter()
+                    .flatten()
+                    .cloned()
+                    .map(Ok),
+            )
+            .map_err(|error| StorageValidationError::invalid(error.to_string()))?;
             history
                 .entry(StorageBackupHistorySection::ComputedFieldHistory)
                 .or_default();

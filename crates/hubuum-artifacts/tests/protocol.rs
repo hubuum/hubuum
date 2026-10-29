@@ -379,10 +379,10 @@ fn manifest_count_cannot_allocate_beyond_budget() {
 #[rstest]
 #[case::zero_block(0, 0, 0, 117)]
 #[case::oversize_block(1_048_577, 0, 0, 117)]
-#[case::oversize_artifact(1_048_576, 1_073_741_825, 1024, 262_144)]
-#[case::oversize_count(1_048_576, 0, 1025, 117)]
+#[case::oversize_artifact(1_048_576, 68_719_476_737, 65_536, 4_194_304)]
+#[case::oversize_count(1_048_576, 0, 65_537, 117)]
 #[case::missing_header(4, 4, 1, 116)]
-#[case::oversize_manifest(4, 4, 1, 262_145)]
+#[case::oversize_manifest(4, 4, 1, 4_194_305)]
 #[case::insufficient_blocks(4, 5, 1, 262_144)]
 fn invalid_resource_limits_are_rejected(
     #[case] block_bytes: u32,
@@ -596,4 +596,28 @@ async fn dropped_staging_disconnects_a_blocked_producer() {
             .unwrap()
     );
     assert!(!store.state.lock().unwrap().sealed);
+}
+
+#[tokio::test]
+async fn retained_output_above_default_block_count_remains_readable() {
+    let store = FaultStore::default();
+    let limits = ArtifactLimits::builder()
+        .block_bytes(4)
+        .artifact_bytes(4100)
+        .blocks(1025)
+        .build()
+        .unwrap();
+    let mut writer = ArtifactWriter::new(&store, identity(), limits)
+        .await
+        .unwrap();
+    for _ in 0..1025 {
+        writer.write(b"abcd").await.unwrap();
+    }
+    let reference = writer.finish().await.unwrap();
+    let mut reader = ArtifactReader::open(&store, &reference).await.unwrap();
+    let mut length = 0;
+    while let Some(block) = reader.next_block().await.unwrap() {
+        length += block.len();
+    }
+    assert_eq!(length, 4100);
 }

@@ -25405,6 +25405,24 @@
           "message": "Authentication failure"
         }
       },
+      "ArtifactOptions": {
+        "type": "object",
+        "description": "Operational admission limits. Retained manifests use a stable format ceiling,\nso lowering these limits never changes which existing outputs can be read.",
+        "properties": {
+          "max_spool_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "default": 268435456,
+            "minimum": 0
+          },
+          "worker_resident_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "default": 4294967296,
+            "minimum": 0
+          }
+        }
+      },
       "AuthProvidersResponse": {
         "type": "object",
         "required": [
@@ -37081,6 +37099,7 @@
       "RunningConfig": {
         "type": "object",
         "required": [
+          "artifacts",
           "schema_validation",
           "query_observations",
           "server",
@@ -37099,6 +37118,9 @@
           "tracing"
         ],
         "properties": {
+          "artifacts": {
+            "$ref": "#/components/schemas/ArtifactOptions"
+          },
           "authentication": {
             "$ref": "#/components/schemas/AuthenticationConfig"
           },

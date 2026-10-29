@@ -28,6 +28,7 @@ INTEGRATION = {
     "corpus": "integration.corpus",
     "atlas": "integration.atlas",
     "schema-budget": "integration.schema_budget",
+    "artifact-pipeline": "integration.artifact_pipeline",
     "rust-tests": "integration.rust_tests",
     "class-field-discovery": "integration.class_field_discovery",
     "treetop-server": "support.treetop_server",

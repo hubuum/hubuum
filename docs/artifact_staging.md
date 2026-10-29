@@ -1,140 +1,173 @@
-# Artifact staging foundation
+# Verified task artifacts
 
-This is the first implementation slice of
-[#508](https://github.com/hubuum/hubuum/issues/508), following the immutable
-artifact contract in [#503](https://github.com/hubuum/hubuum/issues/503).
-It provides a bounded transfer protocol and PostgreSQL staging. Application
-output offloading is **not enabled**. Existing export and backup outputs keep
-their current representation and readers. There is no HTTP, backup-format,
-configuration, or supported storage-SDK change in this slice.
+Exports and backups use bounded producers, PostgreSQL chunks, independent
+read-back, and atomic task publication. This implements
+[#508](https://github.com/hubuum/hubuum/issues/508) using the identities and
+lifecycle from [#503](https://github.com/hubuum/hubuum/issues/503).
+The [resource contracts](performance/lifecycle_budgets.md) distinguish acceptance
+profiles from production configuration.
 
-## Ownership and compatibility
+## Ownership and publication
 
-`hubuum-artifacts` is an unpublished workspace-internal crate. Its byte-store
-contract is separate from the complete hot `StorageBackend`. The PostgreSQL
-adapter implements it with its existing runtime and adapter error conversion;
-application callers do not acquire or select a PostgreSQL pool.
+The storage SDK's `artifacts` module owns the backend-neutral contract. Every
+selectable `StorageBackend` implements `TaskArtifactStore`; application code uses
+its configured opaque handle. Common tracing and metrics surround adapter calls.
+`hubuum-artifacts` owns the synchronous-producer/async-destination bridge.
 
-Artifact, write-attempt, destination, and object-version IDs are distinct
-private-field types. A manifest binds all four. They are independent of
-resource/principal/task identities supplied by #505. The artifact tables have
-no foreign keys into replaceable application tables. Aborting or losing a
-task cannot cascade away a physical cleanup obligation.
+Artifact, attempt, destination and object-version UUIDs are distinct validated
+types. The manifest binds all four. The PostgreSQL destination is named
+`primary-artifacts`; changing credentials does not change its identity.
+Destination names and IDs cannot be rebound. There is no external provider or
+historical archive query dependency.
 
-Destination registration is idempotent for an identical ID/name pair. Neither
-can be rebound, and the database rejects removal of a referenced destination.
-This slice has one adapter; configured default routing, credential rotation,
-and external provider composition belong to later integrations.
-
-## Lifecycle
+Task ownership records bind an attempt to the stable task identity and exact
+lease. They deliberately have no foreign key to replaceable task rows. Deleting
+a task, restoring an older database snapshot, or reusing its integer ID cannot
+remove physical cleanup obligations or transfer ownership to a different task.
 
 | State | Allowed work | Recovery |
 | --- | --- | --- |
-| Staging | Append the next bounded block; retry identical bytes at an existing ordinal. | A failed producer explicitly aborts, or the one-hour staging deadline expires. |
-| Sealed | Read immutable blocks and the expected manifest for independent verification. | Another replica reloads the bounded manifest and repeats full read-back; no local spool is required. |
-| Published | Read verified blocks through the published catalog reference. | An identical publication is idempotent. Staging expiry no longer applies. |
-| Deleting | Remove at most 16 physical blocks per cleanup transaction. | Repeat cleanup until all physical bytes and the manifest are gone. |
-| Discarded | Retain a small attempt tombstone with no content or manifest. | A delayed stage retry cannot recreate the cancelled attempt or reuse its object version. |
+| Staging | Append the next bounded block; retry identical bytes at an existing ordinal. | Abort on producer failure; lost workers fail without producer replay. |
+| Sealed | Read immutable blocks and the expected manifest for independent verification. | A replica with the live claim can reload the manifest and verify without a local spool. |
+| Published | Read through the catalog reference. | Task output and terminal success commit in the same fenced transaction. |
+| Deleting | Remove at most 16 blocks per cleanup transaction. | Repeat after interruption; retain reservations until the final physical block and manifest are removed. |
+| Discarded | Retain a small tombstone without content. | Delayed retries cannot recreate the cancelled attempt or reuse its object version. |
 
-The deadline is fixed when an attempt starts; retries do not extend it.
-Cancellation and expiry fence publication through a locked attempt row.
-Publication requires a private-field verification proof and rechecks persisted
-identity, state, deadline, and manifest under the same lock. PostgreSQL triggers
-also reject post-seal chunk writes, identity changes, manifest replacement,
-invalid transitions, and removal of an obligation before its chunks are gone.
-Attempt tombstones are retained in this foundation; a future reclamation policy
-must prove that old owners cannot return before removing their cancellation
-fences. Cleanup does not silently turn a cancelled identity into a new write.
+A staging attempt has a fixed one-hour lifetime. Retries do not extend it.
+Publication requires a private-field verification proof and rechecks identity,
+manifest, state, live lease and cancellation in the task transaction. A failure
+in task finalization rolls back both publication and output metadata. Byte-store
+publication alone is forbidden for task-owned attempts.
 
-One awaited block write provides producer backpressure. No transaction spans
-the complete upload or verification pass. An interrupted write poisons the
-local writer; ignoring an error cannot publish a shorter prefix. A verified
-sealed attempt is independently replayable, but this does not permit replaying
-producer side effects. Unsealed attempts are discarded on abort/expiry in
-this initial integration.
+## Producer bounds
 
-## Encoded bytes and verification
+Exports fetch small pages, apply authorization and includes, hydrate one page,
+and append rows to an indexed temporary file. The row index is also on disk and
+charged to the spool limit. JSON serialization replays one row at a time. Text
+templates use the existing isolated renderer with lazy indexed rows and bounded
+file output. The input files remain pinned until the renderer is reaped.
+Related-object templates expose an aggregate graph and have a separate finite
+8 MiB source bound; every final hydrated row must still fit 4 MiB.
 
-The version-1 manifest is a canonical binary record: five-byte magic/version,
-four 16-byte identities, a four-byte block size, an eight-byte total length,
-32-byte full-stream SHA-256, and a four-byte block count. Each ordered entry
-contains its four-byte exact length and 32-byte SHA-256. Integers use little
-endian encoding. Ordinal and offset follow from entry order and block size;
-only the final block may be short. An empty artifact has no blocks and the
-SHA-256 of an empty stream. Readers reject trailing manifest bytes.
+Backups reuse `StorageBackupReplayBuilder`. PostgreSQL captures rows through
+bounded cursors in one consistent snapshot and checks each encoded source row
+against 4 MiB. Serialization reads that exact snapshot row by row. It does not
+materialize a complete backup document before writing the output.
 
-The manifest digest is retained in trusted catalog state and in the published
-reference. Decoding checks the encoded byte budget, identities, count, exact
-length, and positions before allocating the bounded hash vector. Every block
-is verified before release. The final block is withheld until the complete
-stream digest and exact EOF pass. A corrupt, truncated, substituted, duplicated,
-or reordered stream never produces a successful completion; a failed reader
-cannot become successful on retry. Range reads are not supported.
+`stage_producer` transfers one awaited block at a time through a one-block channel.
+The bridge retains at most five data blocks, the bounded manifest, and producer
+input state. Slow storage applies backpressure to serialization. A serializer
+error, panic, or exhausted output limit poisons the write; ignoring a sink error
+cannot publish a shorter successful prefix. Upload is followed by full independent
+read-back. Provider metadata and echoed checksums are never verification evidence.
 
-The encoded plaintext is the application digest input. Provider checksums,
-echoed upload metadata, and encryption metadata are not independent read-back
-evidence. No compression or encryption format is introduced here.
+Spools are disposable. After process/host loss, ordinary export and backup tasks
+fail when their lease expires; the worker does not replay arbitrary producer
+side effects or claim to continue an old source snapshot. Staged bytes are then
+reconciled independently. Explicitly resubmitting creates a new task and snapshot.
+Cancellation waits for active producer/render work to stop before acknowledging
+the task. Dropping a blocked bridge disconnects its channel; a callback performing
+arbitrary computation must still return cooperatively. Durable expiry remains
+the backstop for abandoned writes.
 
-## Producer integration
+## Integrity and downloads
 
-`stage_producer` runs a synchronous serializer on a blocking worker and passes
-bounded blocks through a one-block channel. Slow destinations apply backpressure
-to serialization. The producer, channel, and consumer retain at most five data
-blocks in total, plus the bounded manifest and the producer's own input state.
-The callback returns metadata separately from output bytes. Verification returns
-a private-field proof; this operation never publishes the artifact or completes
-a task.
+The version-1 canonical binary manifest contains a five-byte magic/version,
+four 16-byte identities, four-byte block size, eight-byte total encoded length,
+32-byte full-stream SHA-256, and four-byte block count. Each ordered entry contains
+its four-byte length and 32-byte SHA-256. Integers are little endian. Ordinal and
+offset follow from position and block size; only the final block may be short.
+An empty artifact has no blocks and the SHA-256 of an empty stream.
 
-`BackupArtifactProducer` captures an authorized backup using the existing
-`StorageBackupReplayBuilder` spool. Its staging method serializes that exact
-snapshot row by row into the channel, without an intermediate complete artifact.
-The spool is disposable and is released after serialization. A producer failure,
-panic, byte-limit violation, seal failure, or verification failure aborts the
-attempt after the blocking producer exits. Ignoring a sink limit error cannot
-seal a shorter successful output. Failed aborts remain explicit cleanup
-obligations and the staging deadline remains a recovery backstop.
+The catalog retains the manifest digest independently of destination bytes.
+Readers validate the bounded manifest, identity, length and ordered blocks before
+release. They hold the last block until full-stream SHA-256 and exact EOF pass.
+Truncation, extra blocks, reordered/substituted content and manifest corruption
+cannot finish successfully. A failed or panicking reader cannot become a clean
+EOF. Range reads are outside this contract.
 
-Dropping the staging future disconnects a producer blocked on output, but cannot
-interrupt arbitrary computation inside its callback or run asynchronous cleanup.
-Owners must await cooperative cancellation before releasing reservations.
-Abandoned attempts require deadline-based cleanup. This bridge does not yet
-implement task cancellation, task ownership, or physical-space accounting.
+Existing output authorization remains at the download boundary. Backups recheck
+administrator authorization before publication, and exports recheck template
+access. New downloads stream through a bounded channel and cancel further reads
+when the consumer disconnects.
 
-The production backup executor still uses the explicitly named legacy
-serialization method and its existing finite output limit. Production export
-query/hydration, template rendering, publication, and downloads are unchanged.
-Neither the bridge's block bound nor a replay round trip establishes H1/H2/P7
-acceptance for the complete producer pipeline. Capture validation, maximum-row
-memory, export production, and real resource measurements remain activation gates.
+**Legacy exception:** outputs stored inline by older binaries remain readable
+through their existing JSON/text/byte readers. Those readers materialize the old
+stored value and retain the old creation-time finite output bound; the new
+streaming memory guarantee applies to newly produced artifact-backed outputs.
+Lowering current write settings does not make previously stored output unreadable.
 
-## Resource and activation gates
+## Admission and production settings
 
-The [#504 budgets](https://github.com/hubuum/hubuum/issues/504) supply the H3
-ceilings enforced here: 1 GiB per artifact, 1 MiB per block, 1,024 blocks, and
-256 KiB per manifest. Smaller explicit limits are supported. The fixed header
-is 117 bytes and each block adds 36 bytes, so a full 1,024-block manifest is
-36,981 bytes. Bounds use checked arithmetic and include framing overhead.
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `HUBUUM_ARTIFACT_MAX_SPOOL_BYTES` | 256 MiB | Maximum export row/index spool. |
+| `HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES` | 4 GiB | Per-process reservation ceiling for concurrent staging and local spools. |
+| `HUBUUM_EXPORT_MAX_OUTPUT_BYTES` | Existing export default | Admission ceiling for a new export; requests may choose a smaller limit. |
+| `HUBUUM_BACKUP_MAX_OUTPUT_BYTES` | Existing backup default | Backup capture/serialization ceiling. |
+| `HUBUUM_EXPORT_STAGE_TIMEOUT_MS` | Existing export default | Query/hydration and render/transfer stage deadline; tune for large, slow output. |
 
-The remaining #508 work is required before routing production outputs here:
+Reservations precede producer capture. An export reserves its output ceiling plus
+`max(spool ceiling, output ceiling)`; a backup reserves twice its output ceiling.
+This covers overlapping spool and destination bytes. Publication drops the local
+reservation to the actual durable output size. Cancellation, task purge and output
+expiry retain the physical reservation until cleanup finishes. The worker runs
+bounded cleanup independently of output metadata expiry scheduling.
 
-- Connect real export hydration/rendering and backup serialization with bounded
-  producer memory. Reuse `StorageBackupReplayBuilder`; do not first materialize
-  an artifact and then spool it.
-- Atomically associate a verified artifact with a fenced task completion,
-  stable task ownership, and the existing output-authorization boundary.
-  Preserve finite legacy-output readers and backup/restore compatibility.
-- Integrate admission/resident-space accounting, independent cleanup scheduling,
-  task cancellation and replica recovery, and common metrics/tracing outside
-  individual adapters. Reconcile obligations before enabling restored work.
-- Measure real concurrent workers, slow destinations/consumers, largest rows,
-  cancellation, and spool loss against the named `artifact-slow-v1` profile,
-  including H1/H2/P7. Protocol tests alone are not resource acceptance evidence.
+The authoritative deployment/principal/collection/kind limits from
+[task admission](task_admission.md) also include these obligations. Configure them
+consistently with artifact limits and concurrency. Admission may reject a new task
+output when an applicable quota is exhausted; raising a per-output ceiling alone
+does not grant more shared capacity. Published outputs cease occupying a worker's
+staging budget but remain charged to shared capacity until reclaimed.
 
-The new migration only adds unused tables, functions, and constraints. Apply
-normal migration and role reconciliation. The previous output paths remain
-readable while this foundation is dormant. Its down migration removes the
-foundation; it is suitable before feature activation, not a future procedure
-for discarding published application data.
+Write ceilings are configurable within a stable finite format envelope: 64 GiB
+artifact, 1 MiB block, 65,536 blocks, 4 MiB manifest. The default transfer profile
+is 1 GiB, 1,024 blocks and 256 KiB manifest. Readers use the retained format
+envelope, independently of the current write policy. The 4 MiB row bound remains
+fixed. Production tuning changes admission, not integrity or cancellation fences.
 
-Changelog review: this dormant internal foundation has no user-facing entry.
-Its activation PR must describe resulting behavior and any upgrade actions.
+## Backup, restore and upgrades
+
+Backup format 12 adds portable export-artifact records: a bounded manifest header
+followed by bounded base64 blocks. Restore validates ownership, ordering, all
+hashes and exact EOF before replacing application state. It writes fresh physical
+identities, independently reads the newly stored destination, and remaps output
+references. Existing destination obligations survive logical restore and remain
+charged until cleanup. Restore reserves space for the additional physical copy
+against the deployment resident limit before writing its blocks; finish cleanup
+or raise that shared limit if the copy cannot fit. Backups do not recursively
+embed retained backup outputs.
+Formats 6–11 remain readable; format 11 preserves its native logical identities.
+
+Stop older API/worker processes, take a database backup, and run
+`hubuum-admin --migrate` before starting matching binaries. This applies the new
+artifact-output migration and reconciles grants. Storage SDK implementers must
+follow the [0.9 upgrade guide](storage_adapter_sdk.md#upgrading-from-08-to-09).
+Do not downgrade while artifact-backed output or cleanup obligations remain:
+expire/purge the output and finish cleanup first. The down migration refuses to
+discard them. Artifacts above the older format ceiling also prevent downgrade.
+
+## Verification
+
+Protocol tests exercise empty/final-partial output, manifest and block corruption,
+identity substitution, poisoned writers/readers, limits, cancellation and retries.
+Cross-adapter contracts test atomic task publication, rollback, replica handoff,
+worker loss and cancellation at staging/upload/seal/verification boundaries.
+Portable restore tests check fresh identities and preserved cleanup obligations.
+
+The explicit resource driver runs actual producers and streamed downloads in two
+fresh worker processes with slow PostgreSQL writes/read-back and slow consumers:
+
+```bash
+source .env
+python3 -I -S tests/python/run.py integration artifact-pipeline \
+  --release --output /tmp/artifact-pipeline.jsonl
+```
+
+It creates and drops isolated databases using the test connection settings,
+requires `CREATEDB`, and does not require `CREATEROLE`. It records every warm-up
+and measured sample, RSS including renderer children, shared reservations, and
+producer/upload/verification/publication/download timings. Resource results and
+any revised acceptance profile must be recorded with the lifecycle budget ledger;
+passing protocol tests alone is not resource acceptance.

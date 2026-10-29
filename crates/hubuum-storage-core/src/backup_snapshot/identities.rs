@@ -59,9 +59,10 @@ pub(super) fn state_family(section: State) -> Option<IdentityFamily> {
     })
 }
 
-pub(super) fn history_family(section: History) -> IdentityFamily {
+pub(super) fn history_family(section: History) -> Option<IdentityFamily> {
     use IdentityFamily as Kind;
-    match section {
+    Some(match section {
+        History::ExportArtifacts => return None,
         History::CollectionHistory => Kind::Resource(Family::Collection),
         History::ClassHistory => Kind::Resource(Family::Class),
         History::ObjectHistory => Kind::Resource(Family::Object),
@@ -76,7 +77,7 @@ pub(super) fn history_family(section: History) -> IdentityFamily {
         | History::ExportOutputs
         | History::RemoteCallResults
         | History::TerminalEventDeliveries => Kind::Association,
-    }
+    })
 }
 
 fn invalid(message: impl Into<String>) -> StorageError {

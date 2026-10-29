@@ -12,12 +12,12 @@ publish = false
 rust-api = "workspace-internal"
 
 [dependencies]
-async-trait = "0.1"
+hubuum-storage-core = { path = "../hubuum-storage-core" }
 hubuum-budget = { path = "../hubuum-budget" }
-sha2 = "0.11"
 tokio = { version = "1", features = ["rt", "sync"] }
-uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+async-trait = "0.1"
+sha2 = "0.11"
 rstest = "0.28"
 tokio = { version = "1", features = ["macros", "rt", "time"] }

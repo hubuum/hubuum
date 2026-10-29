@@ -1,7 +1,6 @@
 use crate::models::token_scope::TokenScope;
 use crate::services::authentication::ExecutionPrincipal;
 use chrono::Utc;
-use sha2::{Digest, Sha256};
 
 use crate::errors::ApiError;
 use crate::models::retention::FutureRetention;
@@ -63,55 +62,80 @@ pub(crate) async fn execute_backup_task(
         .clone()
         .ok_or_else(|| ApiError::BadRequest("Backup task payload is missing".to_string()))?;
     let request: BackupRequest = serde_json::from_value(payload)?;
-    let producer = BackupArtifactProducer::capture(
-        context,
-        user,
-        scopes,
-        request.include_history,
-        settings.budget(),
-    )
-    .await?;
-    crate::tasks::control::checkpoint()?;
-    let total_items = producer.summary().total_items;
-    let bytes = producer.serialize_legacy()?;
-    crate::tasks::control::checkpoint()?;
-    let sha256 = Sha256::digest(&bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
     let expires_at = settings.output_expires_at(Utc::now().naive_utc())?;
-    let total_items = i32::try_from(total_items).unwrap_or(i32::MAX);
-    let summary = format!(
-        "Full backup completed with {} logical rows ({} bytes)",
-        total_items,
-        bytes.len()
-    );
-    let finished = complete_task(
+    let output = crate::services::artifacts::TaskOutput::begin(
         context,
         task,
-        TaskStateChange::new(
-            TaskStatus::Succeeded,
-            TaskResultCounts::from_outcomes(total_items, 0)?,
-        )
-        .summary(summary.clone())
-        .started_at(task.started_at),
-        NewTaskEventRecord {
-            event_type: TaskStatus::Succeeded.as_str().to_string(),
-            message: summary,
-            data: Some(serde_json::json!({
-                "sha256": sha256,
-                "byte_size": bytes.len(),
-                "backup_kind": "full",
-                "include_history": request.include_history,
-            })),
-        },
-        StorageTaskCompletionPayload::Backup(StorageBackupTaskArtifact::try_new(
-            bytes,
-            expires_at.and_utc(),
-        )?),
+        settings.budget().max_bytes(),
+        settings.budget().max_bytes() as u64,
+        expires_at.and_utc(),
     )
     .await?;
-    TaskStatus::from_db(&finished.status)
+    let result = async {
+        let producer = BackupArtifactProducer::capture(
+            context,
+            user,
+            scopes,
+            request.include_history,
+            settings.budget(),
+        )
+        .await?;
+        crate::tasks::control::checkpoint()?;
+        let total_items = producer.summary().total_items;
+        let (proof, _) = producer
+            .stage(
+                output.store.as_ref(),
+                output.identity.clone(),
+                output.limits,
+            )
+            .await
+            .map_err(crate::services::artifacts::error)?;
+        crate::tasks::control::checkpoint()?;
+        authorize_backup_request(context, user, scopes).await?;
+        let byte_size = proof.manifest().byte_size();
+        let sha256 = proof
+            .manifest()
+            .stream_digest()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let total_items = i32::try_from(total_items).unwrap_or(i32::MAX);
+        let summary = format!(
+            "Full backup completed with {} logical rows ({} bytes)",
+            total_items, byte_size
+        );
+        let finished = complete_task(
+            context,
+            task,
+            TaskStateChange::new(
+                TaskStatus::Succeeded,
+                TaskResultCounts::from_outcomes(total_items, 0)?,
+            )
+            .summary(summary.clone())
+            .started_at(task.started_at),
+            NewTaskEventRecord {
+                event_type: TaskStatus::Succeeded.as_str().to_string(),
+                message: summary,
+                data: Some(serde_json::json!({
+                    "sha256": sha256,
+                    "byte_size": byte_size,
+                    "backup_kind": "full",
+                    "include_history": request.include_history,
+                })),
+            },
+            StorageTaskCompletionPayload::Backup(StorageBackupTaskArtifact::verified(
+                proof,
+                expires_at.and_utc(),
+            )),
+        )
+        .await?;
+        TaskStatus::from_db(&finished.status)
+    }
+    .await;
+    if result.is_err() || matches!(result, Ok(TaskStatus::Cancelled)) {
+        let _ = output.store.abort(&output.identity).await;
+    }
+    result
 }
 
 pub(crate) async fn authorize_backup_request(

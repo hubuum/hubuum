@@ -2,7 +2,7 @@ use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::pagination::{CursorBoundary, CursorPaginated, prepare_db_pagination};
 
-pub(super) const CANDIDATE_PAGE_SIZE: usize = 128;
+pub(super) const CANDIDATE_PAGE_SIZE: usize = 8;
 pub(super) const MAX_AUTHORIZATION_CANDIDATES: usize = 10_000;
 
 /// Scan candidates in storage order, retaining only the requested authorized
@@ -91,8 +91,8 @@ mod tests {
 
     #[rstest]
     #[case::early_stop(1, 1)]
-    #[case::sparse_permissions(257, 3)]
-    #[case::last_allowed_candidate(10_000, 79)]
+    #[case::sparse_permissions(257, 33)]
+    #[case::last_allowed_candidate(10_000, 1250)]
     #[actix_web::test]
     async fn export_scans_only_until_visible_page_is_full(
         #[case] allowed_from: i32,
@@ -127,7 +127,7 @@ mod tests {
 
     #[rstest]
     #[case::full_before_boundary(1, 1)]
-    #[case::denied_boundary(129, 2)]
+    #[case::denied_boundary(129, 17)]
     #[actix_web::test]
     async fn export_preserves_oversized_internal_sort_values(
         #[case] allowed_from: i32,
@@ -211,7 +211,7 @@ mod tests {
         assert_eq!(authorized_candidates.get(), MAX_AUTHORIZATION_CANDIDATES);
         assert_eq!(
             pages.get(),
-            MAX_AUTHORIZATION_CANDIDATES / CANDIDATE_PAGE_SIZE + 1
+            MAX_AUTHORIZATION_CANDIDATES.div_ceil(CANDIDATE_PAGE_SIZE)
         );
         eprintln!(
             "PERFORMANCE_EVIDENCE {}",

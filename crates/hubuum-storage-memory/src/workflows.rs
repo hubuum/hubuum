@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_storage_core::StorageBackupTaskContent;
 use hubuum_storage_core::{FencedImportItem, FencedImportPlan, FencedImportResults};
 
 #[async_trait]
@@ -875,7 +876,11 @@ impl TaskExecutionStorage for MemoryStorage {
                 let (identity, content, report, output_expires_at, durations) =
                     artifact.into_parts();
                 let (template_name, content_type) = identity.into_parts();
-                let (json_output, text_output) = content.into_parts();
+                let (json_output, text_output, proof) = content.into_parts();
+                let reference = proof
+                    .as_ref()
+                    .map(|proof| state.publish_task_artifact(&lease, proof))
+                    .transpose()?;
                 let (metadata, warnings, warning_count, truncated) = report.into_parts();
                 let output = StorageExportOutput::builder(
                     lease.task_id(),
@@ -887,6 +892,7 @@ impl TaskExecutionStorage for MemoryStorage {
                 )
                 .template_name(template_name)
                 .output(json_output, text_output)
+                .artifact_reference(reference)
                 .warning_state(warning_count, truncated)
                 .durations(durations)
                 .try_build()
@@ -919,14 +925,27 @@ impl TaskExecutionStorage for MemoryStorage {
             }
             StorageTaskCompletionPayload::Backup(artifact) => {
                 let (document, byte_size, sha256, output_expires_at) = artifact.into_parts();
-                let output = StorageBackupOutput::try_new(
-                    lease.task_id(),
-                    document,
-                    byte_size,
-                    sha256,
-                    output_expires_at,
-                    now,
-                )
+                let output = match document {
+                    StorageBackupTaskContent::Verified(proof) => {
+                        let reference = state.publish_task_artifact(&lease, &proof)?;
+                        StorageBackupOutput::from_reference(
+                            lease.task_id(),
+                            reference,
+                            byte_size,
+                            sha256,
+                            output_expires_at,
+                            now,
+                        )
+                    }
+                    StorageBackupTaskContent::Inline(document) => StorageBackupOutput::try_new(
+                        lease.task_id(),
+                        document,
+                        byte_size,
+                        sha256,
+                        output_expires_at,
+                        now,
+                    ),
+                }
                 .map_err(invalid_contract_value)?;
                 let task = state
                     .tasks
@@ -1243,6 +1262,7 @@ impl RestoreStorage for MemoryStorage {
                 .into_replay()
                 .materialize()?,
             state.task_accounting_snapshot()?,
+            state.artifacts.clone(),
         )?;
         replacement.credential_approvals = state.credential_approvals.clone();
         replacement.query_observation_control = state.query_observation_control;

@@ -1,3 +1,4 @@
+pub(crate) mod artifacts;
 pub mod authentication;
 pub(crate) mod authorization;
 pub(crate) mod authorization_resources;

@@ -235,6 +235,8 @@ const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
     "TaskQueueStorage",
     "TaskCapacityStorage",
     "TaskExecutionStorage",
+    "ArtifactStore",
+    "TaskArtifactStore",
     "BackupSnapshotStorage",
     "RestoreStorage",
     "ImportStorage",

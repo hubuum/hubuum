@@ -22,13 +22,14 @@ use crate::revision::revision_owner_key;
 use crate::{PostgresConnection, PostgresPool, PostgresPooledConnection, PostgresStorageError};
 
 /// Latest migration required by this adapter.
-pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20261027000003";
+pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20261029000001";
 // These migrations were added on a parallel branch and precede the latest
 // checkpoint. Its presence alone does not prove that tracing is installed.
 const REQUIRED_DATABASE_MIGRATION_VERSIONS: &[&str] = &[
     "20260903000002",
     "20260903000003",
     "20261027000002",
+    "20261027000003",
     REQUIRED_DATABASE_MIGRATION_VERSION,
 ];
 pub const DEFAULT_COMPUTED_REINDEX_BATCH_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();

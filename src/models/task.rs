@@ -1110,6 +1110,7 @@ pub struct ImportTaskResultResponse {
 
 /// Backend-neutral application projection of a retained export output.
 pub struct ExportTaskOutput {
+    pub artifact_reference: Option<hubuum_storage_core::artifacts::ArtifactReference>,
     pub content_type: String,
     pub json_output: Option<serde_json::Value>,
     pub text_output: Option<String>,
@@ -1166,7 +1167,8 @@ pub struct BackupTaskOutputSummary {
 }
 
 pub struct BackupTaskOutput {
-    pub document: Vec<u8>,
+    pub artifact_reference: Option<hubuum_storage_core::artifacts::ArtifactReference>,
+    pub document: Option<Vec<u8>>,
     pub sha256: String,
 }
 

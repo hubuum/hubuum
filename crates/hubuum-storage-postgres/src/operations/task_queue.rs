@@ -178,6 +178,7 @@ impl ImportTaskResultRow {
 #[derive(Queryable, Selectable)]
 #[diesel(table_name = crate::schema::export_task_outputs)]
 struct ExportOutputRow {
+    artifact_reference: Option<Value>,
     task_id: i32,
     template_name: Option<String>,
     content_type: String,
@@ -218,6 +219,12 @@ impl ExportOutputRow {
             )
             .template_name(self.template_name)
             .output(self.json_output, self.text_output)
+            .artifact_reference(
+                self.artifact_reference
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(|error| PostgresStorageError::database(error.to_string()))?,
+            )
             .warning_state(self.warning_count, self.truncated)
             .durations(durations)
             .try_build(),
@@ -269,6 +276,7 @@ impl ExportOutputSummaryRow {
 #[derive(Queryable, Selectable)]
 #[diesel(table_name = crate::schema::backup_task_outputs)]
 struct BackupOutputRow {
+    artifact_reference: Option<Value>,
     task_id: i32,
     document: Vec<u8>,
     byte_size: i64,
@@ -279,6 +287,25 @@ struct BackupOutputRow {
 
 impl BackupOutputRow {
     fn into_storage(self) -> Result<StorageBackupOutput, PostgresStorageError> {
+        if let Some(reference) = self.artifact_reference {
+            if !self.document.is_empty() {
+                return Err(PostgresStorageError::database(
+                    "Referenced backup contains inline bytes",
+                ));
+            }
+            return crate::validate_persisted(
+                "backup artifact reference",
+                StorageBackupOutput::from_reference(
+                    TaskId::new(self.task_id)?,
+                    serde_json::from_value(reference)
+                        .map_err(|error| PostgresStorageError::database(error.to_string()))?,
+                    self.byte_size,
+                    self.sha256,
+                    self.output_expires_at.and_utc(),
+                    self.created_at.and_utc(),
+                ),
+            );
+        }
         crate::validate_persisted(
             "backup output",
             StorageBackupOutput::try_new(
@@ -1266,6 +1293,7 @@ mod tests {
             .unwrap()
             .naive_utc();
         let row = ExportOutputRow {
+            artifact_reference: None,
             task_id: 1,
             template_name: None,
             content_type: "application/json".to_string(),
@@ -1297,6 +1325,7 @@ mod tests {
             .unwrap()
             .naive_utc();
         let row = BackupOutputRow {
+            artifact_reference: None,
             task_id: 1,
             document: b"{}".to_vec(),
             byte_size: 3,

@@ -154,11 +154,13 @@ pub(super) fn capture(
 pub(super) fn restore(
     snapshot: StorageBackupSnapshot,
     control: crate::task_capacity::MemoryTaskCapacity,
+    artifacts: crate::artifacts::Artifacts,
 ) -> Result<MemoryState, StorageError> {
     let schema_limits = snapshot.schema_limits();
     let (sections, history) = snapshot.into_parts();
     let mut state = MemoryState::new();
     state.task_capacity = control.restore_control()?;
+    state.artifacts = artifacts;
     resources::restore(&sections, &mut state)?;
     schemas::restore(&sections, &mut state, schema_limits)?;
     identity::restore(&sections, &mut state)?;

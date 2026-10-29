@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.8`.
+Status: accepted; current experimental release train is `0.9`.
 
 ## Supported Crate Graph
 
@@ -474,3 +474,24 @@ errors. `into_parts()` now returns the optional structured capacity reason as
 its fourth element; update error destructuring and preserve that reason across
 adapter boundaries. Only application code translates the bounded rejection
 into HTTP.
+
+## Upgrading from 0.8 to 0.9
+
+Update all ten SDK dependencies together. `StorageBackend` now requires
+`artifacts::TaskArtifactStore`: implement immutable staged chunks, independent
+read-back verification, task-incarnation ownership, atomic reference publication,
+resident-byte admission, and idempotent cleanup. The memory and PostgreSQL
+adapters implement the complete contract. The standalone `ArtifactStore` trait
+remains usable without task execution or an archive provider.
+
+Export and backup completion can carry `VerifiedArtifact` rather than complete
+values. Preserve the proof through the completion transaction and fence the
+claim, cancellation, output retention and attempt state before publishing it.
+`StorageBackupOutput::document()` is optional; use its artifact reference for new
+outputs. Continue supporting the inline variants for retained legacy outputs.
+
+Backups use format 12 and include `history.export_artifacts` as bounded manifest
+and block frames. Restore these into fresh physical identities, independently
+verify destination bytes, and remap output references. Retain prior cleanup
+obligations and shared capacity policy across restore. Format 11 identities remain
+native; formats 6–10 still require the quarantined legacy identity upgrade.

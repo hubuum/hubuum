@@ -179,6 +179,8 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_EXPORT_TEMPLATE_FUEL", Exports),
     option!("HUBUUM_EXPORT_TEMPLATE_MAX_OBJECTS", Exports),
     option!("HUBUUM_EXPORT_MAX_OUTPUT_BYTES", Exports),
+    option!("HUBUUM_ARTIFACT_MAX_SPOOL_BYTES", Exports),
+    option!("HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES", Exports),
     option!("HUBUUM_EXPORT_STAGE_TIMEOUT_MS", Exports),
     option!("HUBUUM_EXPORT_DB_STATEMENT_TIMEOUT_MS", Exports),
     option!("HUBUUM_REMOTE_CALL_TIMEOUT_MS", RemoteCalls),
@@ -265,6 +267,11 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
 pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_MIGRATION_DATABASE_URL", Database, sensitive),
     option!("HUBUUM_DATABASE_ROLE_TESTS", Operations),
+    option!("HUBUUM_PROBE_ROWS", Operations),
+    option!("HUBUUM_PROBE_ROW_BYTES", Operations),
+    option!("HUBUUM_PROBE_MODE", Operations),
+    option!("HUBUUM_PROBE_SLOTS", Operations),
+    option!("HUBUUM_PROBE_RATE", Operations),
     option!("HUBUUM_TOKEN_HASH_KEY", Authentication, sensitive),
     option!("HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID", Authentication),
     option!("HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS", Authentication),
@@ -804,6 +811,7 @@ pub const ENVIRONMENT_ADAPTER_PATHS: &[&str] = &[
     "src/secrets.rs",
     "src/test_support.rs",
     "src/tests/temporal/mod.rs",
+    "src/tasks/tests/artifact_pipeline.rs",
     "src/tests/permissions/live_treetop_parity.rs",
     "crates/hubuum-storage-postgres/src/test_support.rs",
 ];

@@ -678,6 +678,13 @@ async fn maybe_recover_expired_task_leases(
 async fn maybe_cleanup_expired_task_outputs(
     backend: &impl crate::storage::StorageContext,
 ) -> Result<(), ApiError> {
+    // One bounded chunk batch per worker tick. Durable obligations survive task
+    // deletion and local spool loss; output metadata retention is independent.
+    storage_handle(backend)
+        .artifact_store()
+        .cleanup()
+        .await
+        .map_err(crate::services::artifacts::error)?;
     let cleanup_interval = task_worker_settings().export_output_cleanup_interval();
     let Some(reservation) = CleanupReservation::reserve(cleanup_state(), cleanup_interval)? else {
         return Ok(());

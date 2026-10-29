@@ -20,7 +20,6 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::time::Duration;
 
 use hubuum_task_core::IdempotencyKey;
-use hubuum_templates::SizeLimitedWriter;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -37,13 +36,13 @@ use crate::models::search::{
 };
 use crate::models::{
     ClassIdSet, Collection, CollectionExportTemplates, CollectionID, ExportContentType,
-    ExportIncludeRelatedDirection, ExportIncludeRelatedQuery, ExportIncludeRelatedSort,
-    ExportJsonResponse, ExportMeta, ExportMissingDataPolicy, ExportRequest, ExportTemplate,
-    ExportTemplateID, ExportWarning, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
-    HubuumObjectID, HubuumObjectRelation, HubuumObjectWithPath, NewTaskEventRecord, Permissions,
-    PermissionsList, PrincipalID, RELATED_INCLUDE_DEFAULT_LIMIT, RELATED_INCLUDE_DEFAULT_MAX_DEPTH,
-    RelatedObjectForRootRow, RelatedObjectGraphRow, RelatedObjectIncludeRow, TaskKind, TaskRecord,
-    TaskResultCounts, TaskStatus, TokenID, TokenScope, ValidatedExportScope,
+    ExportIncludeRelatedDirection, ExportIncludeRelatedQuery, ExportIncludeRelatedSort, ExportMeta,
+    ExportMissingDataPolicy, ExportRequest, ExportTemplate, ExportTemplateID, ExportWarning,
+    HubuumClassExpanded, HubuumClassRelation, HubuumObject, HubuumObjectID, HubuumObjectRelation,
+    HubuumObjectWithPath, NewTaskEventRecord, Permissions, PermissionsList, PrincipalID,
+    RELATED_INCLUDE_DEFAULT_LIMIT, RELATED_INCLUDE_DEFAULT_MAX_DEPTH, RelatedObjectForRootRow,
+    RelatedObjectGraphRow, RelatedObjectIncludeRow, TaskKind, TaskRecord, TaskResultCounts,
+    TaskStatus, TokenID, TokenScope, ValidatedExportScope,
 };
 use crate::observability::metrics;
 use crate::pagination::page_limits_or_defaults;
@@ -70,7 +69,7 @@ use crate::tasks::request_hash;
 use crate::traits::{
     AuthzSubject, SelfAccessors, UserPermissions, scope_allows, scope_allows_resource,
 };
-use crate::utilities::exporting::render_template;
+use crate::utilities::exporting::render_template_spooled;
 
 use crate::models::traits::check_if_object_in_class;
 
@@ -80,44 +79,14 @@ struct StoredExportTaskPayload {
     template_id: Option<i32>,
 }
 
-enum ExportArtifactOutput {
-    Json(ExportJsonResponse),
-    Text {
-        format: TextExportFormat,
-        body: String,
-    },
-}
-
-#[derive(Clone, Copy)]
-enum TextExportFormat {
-    Plain,
-    Html,
-    Csv,
-}
-impl TextExportFormat {
-    fn content_type(self) -> ExportContentType {
-        match self {
-            Self::Plain => ExportContentType::TextPlain,
-            Self::Html => ExportContentType::TextHtml,
-            Self::Csv => ExportContentType::TextCsv,
-        }
-    }
-}
-impl ExportArtifactOutput {
-    fn content_type(&self) -> ExportContentType {
-        match self {
-            Self::Json(_) => ExportContentType::ApplicationJson,
-            Self::Text { format, .. } => format.content_type(),
-        }
-    }
-}
-
 struct ExportArtifact {
-    output: ExportArtifactOutput,
+    proof: hubuum_artifacts::VerifiedArtifact,
+    content_type: ExportContentType,
     meta: ExportMeta,
     warnings: Vec<ExportWarning>,
     template_name: Option<String>,
     timings: ExportExecutionTimings,
+    expires_at: chrono::DateTime<chrono::Utc>,
 }
 
 struct ExportRuntime {
@@ -139,10 +108,9 @@ impl ExportRuntime {
 }
 
 struct ExportExecution {
-    items: Vec<serde_json::Value>,
+    rows: hubuum_templates::TemplateRows,
     warnings: Vec<ExportWarning>,
     meta: ExportMeta,
-    template_items: Vec<serde_json::Value>,
     source: Option<serde_json::Value>,
 }
 
@@ -198,6 +166,7 @@ struct HydratedTemplatePathObject {
     hubuum_class_id: i32,
 }
 
+#[derive(Clone, Copy)]
 struct RelationHydrationPlan {
     depth_limit: i32,
     enabled_for_scope: bool,
@@ -213,6 +182,7 @@ struct ObjectNeighborhood {
 struct HydrationBudget {
     max_objects: usize,
     hydrated_objects: usize,
+    row_bytes: usize,
 }
 
 impl HydrationBudget {
@@ -220,6 +190,7 @@ impl HydrationBudget {
         Self {
             max_objects,
             hydrated_objects: 0,
+            row_bytes: 0,
         }
     }
 
@@ -236,6 +207,19 @@ impl HydrationBudget {
         }
 
         Ok(self.remaining().saturating_sub(1))
+    }
+
+    fn charge_object(&mut self, object: &HubuumObjectWithPath) -> Result<(), ApiError> {
+        let mut writer = hubuum_budget::LimitedWriter::new(
+            std::io::sink(),
+            hubuum_budget::ByteLimit::new(
+                hubuum_templates::MAX_SPOOL_ROW_BYTES.saturating_sub(self.row_bytes),
+            ),
+        );
+        serde_json::to_writer(&mut writer, object)
+            .map_err(|_| ApiError::PayloadTooLarge("Hydrated template row exceeds 4 MiB".into()))?;
+        self.row_bytes += writer.budget().used();
+        Ok(())
     }
 
     fn count_object(&mut self) -> Result<(), ApiError> {
@@ -623,7 +607,7 @@ fn export_template_context(
     execution: &ExportExecution,
 ) -> serde_json::Value {
     json!({
-        "items": &execution.template_items,
+
         "meta": &execution.meta,
         "warnings": &execution.warnings,
         "request": export,
@@ -678,32 +662,6 @@ fn validate_export_limits(export: &ExportRequest) -> Result<(), ApiError> {
                 "max_output_bytes ({max_output_bytes}) exceeds server maximum ({server_max_output_bytes})"
             )));
         }
-    }
-
-    Ok(())
-}
-
-fn enforce_json_output_limit(
-    response: &ExportJsonResponse,
-    export: &ExportRequest,
-) -> Result<(), ApiError> {
-    let max_output_bytes = export
-        .limits
-        .as_ref()
-        .and_then(|limits| limits.max_output_bytes)
-        .unwrap_or_else(configured_export_max_output_bytes);
-
-    let mut writer = SizeLimitedWriter::new(max_output_bytes);
-    if let Err(error) = serde_json::to_writer(&mut writer, response) {
-        if writer.exceeded() {
-            return Err(ApiError::PayloadTooLarge(format!(
-                "Rendered export exceeded max_output_bytes (> {max_output_bytes})"
-            )));
-        }
-
-        return Err(ApiError::InternalServerError(format!(
-            "Failed to serialize export: {error}"
-        )));
     }
 
     Ok(())

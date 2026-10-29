@@ -4,6 +4,7 @@ use std::time::Duration;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum StorageCapability {
+    Artifact,
     AuditEvent,
     Authentication,
     AuthorizationData,
@@ -55,6 +56,7 @@ pub enum StorageCapability {
 
 impl StorageCapability {
     pub const ALL: &'static [Self] = &[
+        Self::Artifact,
         Self::AuditEvent,
         Self::Authentication,
         Self::AuthorizationData,
@@ -107,6 +109,7 @@ impl StorageCapability {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Artifact => "artifact",
             Self::AuditEvent => "audit_event",
             Self::Authentication => "authentication",
             Self::AuthorizationData => "authorization_data",

@@ -1,94 +1,92 @@
 use super::*;
+use hubuum_artifacts::{ArtifactError, stage_producer};
+use std::sync::Arc;
 
 pub(super) async fn build_export_artifact(
     runtime: &ExportRuntime,
     execution: ExportExecution,
     timings: ExportExecutionTimings,
+    output: &crate::services::artifacts::TaskOutput,
+    expires_at: chrono::DateTime<chrono::Utc>,
 ) -> Result<ExportArtifact, ApiError> {
-    match runtime.content_type() {
-        ExportContentType::ApplicationJson => {
-            build_json_export_artifact(runtime, execution, timings)
-        }
-        ExportContentType::TextPlain => {
-            build_text_export_artifact(runtime, execution, timings, TextExportFormat::Plain).await
-        }
-        ExportContentType::TextHtml => {
-            build_text_export_artifact(runtime, execution, timings, TextExportFormat::Html).await
-        }
-        ExportContentType::TextCsv => {
-            build_text_export_artifact(runtime, execution, timings, TextExportFormat::Csv).await
-        }
-    }
-}
-
-pub(super) fn build_json_export_artifact(
-    runtime: &ExportRuntime,
-    execution: ExportExecution,
-    timings: ExportExecutionTimings,
-) -> Result<ExportArtifact, ApiError> {
-    let response = ExportJsonResponse {
-        items: execution.items,
-        meta: execution.meta.clone(),
-        warnings: execution.warnings.clone(),
-    };
-
-    enforce_json_output_limit(&response, &runtime.export)?;
-
-    Ok(ExportArtifact {
-        output: ExportArtifactOutput::Json(response),
-        meta: execution.meta,
-        warnings: execution.warnings,
-        template_name: None,
-        timings,
-    })
-}
-
-pub(super) async fn build_text_export_artifact(
-    runtime: &ExportRuntime,
-    execution: ExportExecution,
-    timings: ExportExecutionTimings,
-    format: TextExportFormat,
-) -> Result<ExportArtifact, ApiError> {
-    let template = required_template(runtime, runtime.content_type())?;
-    let context = export_template_context(&runtime.export, &execution);
-    let max_output_bytes = runtime
-        .export
-        .limits
+    let content_type = runtime.content_type();
+    let mut warnings = execution.warnings.clone();
+    let meta = execution.meta.clone();
+    let template_name = runtime
+        .template
         .as_ref()
-        .and_then(|limits| limits.max_output_bytes)
-        .unwrap_or_else(configured_export_max_output_bytes);
-    let (rendered, template_warnings) = render_template(
-        template,
-        &runtime.collection_templates,
-        &context,
-        runtime.content_type(),
-        runtime.missing_data_policy,
-        max_output_bytes,
-    )
-    .await?;
-    let mut warnings = execution.warnings;
-    warnings.extend(template_warnings);
-
+        .map(|template| template.name.clone());
+    let (proof, ()) = if content_type == ExportContentType::ApplicationJson {
+        #[derive(Serialize)]
+        struct Response {
+            items: hubuum_templates::TemplateRows,
+            meta: ExportMeta,
+            warnings: Vec<ExportWarning>,
+        }
+        let response = Response {
+            items: execution.rows,
+            meta: execution.meta,
+            warnings: execution.warnings,
+        };
+        stage_producer(
+            output.store.as_ref(),
+            output.identity.clone(),
+            output.limits,
+            move |sink| {
+                serde_json::to_writer(sink, &response)
+                    .map_err(|error| ArtifactError::Backend(error.to_string()))
+            },
+        )
+        .await
+    } else {
+        let template = runtime.template.as_ref().ok_or_else(|| {
+            ApiError::BadRequest("Text output requires an executable template".into())
+        })?;
+        let context = export_template_context(&runtime.export, &execution);
+        let rendered = render_template_spooled(
+            template,
+            &runtime.collection_templates,
+            &context,
+            Arc::new(execution.rows),
+            runtime.missing_data_policy,
+            output.limits.artifact_bytes() as usize,
+        )
+        .await?;
+        warnings.extend(
+            rendered
+                .missing_values()
+                .iter()
+                .map(|missing| ExportWarning {
+                    code: "template_missing_value".into(),
+                    message: format!(
+                        "Template '{}' rendered one or more missing values",
+                        missing.template_name()
+                    ),
+                    path: missing.clone().into_path(),
+                }),
+        );
+        // Rendering has reaped the child and released its input spool. Only the
+        // bounded output file overlaps durable staging; neither is in memory.
+        stage_producer(
+            output.store.as_ref(),
+            output.identity.clone(),
+            output.limits,
+            move |sink| {
+                rendered
+                    .copy_to(sink)
+                    .map_err(|error| ArtifactError::Backend(error.to_string()))
+            },
+        )
+        .await
+    }
+    .map_err(crate::services::artifacts::error)?;
     Ok(ExportArtifact {
-        output: ExportArtifactOutput::Text {
-            format,
-            body: rendered,
-        },
-        meta: execution.meta,
+        proof,
+        content_type,
+        meta,
         warnings,
-        template_name: Some(template.name.clone()),
+        template_name,
         timings,
-    })
-}
-
-pub(super) fn required_template(
-    runtime: &ExportRuntime,
-    content_type: ExportContentType,
-) -> Result<&ExportTemplate, ApiError> {
-    runtime.template.as_ref().ok_or_else(|| {
-        ApiError::BadRequest(format!(
-            "Output type '{}' requires running an executable export template",
-            content_type.as_mime()
-        ))
+        expires_at,
     })
 }

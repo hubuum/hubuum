@@ -10,7 +10,10 @@ use super::*;
 
 // Shared policy changes and restore replace deployment-wide state. Use the
 // runner's isolated restore database and its existing serialization boundary.
-async fn with_fixture(kind: StorageBackendKind, test: impl AsyncFnOnce(&RestoreContractFixture)) {
+pub(super) async fn with_fixture(
+    kind: StorageBackendKind,
+    test: impl AsyncFnOnce(&RestoreContractFixture),
+) {
     let _guard = RESTORE_TEST_LOCK.lock().await;
     let pool = postgres_test_pool_with_timeout(&database_url(), 8, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
     let fixture = RestoreContractFixture::new(kind, pool).await.unwrap();
@@ -48,7 +51,7 @@ async fn with_fixture(kind: StorageBackendKind, test: impl AsyncFnOnce(&RestoreC
     }
 }
 
-async fn set_policy(
+pub(super) async fn set_policy(
     storage: &impl TaskCapacityStorage,
     policy: TaskAdmissionPolicy,
 ) -> StorageTaskPolicy {

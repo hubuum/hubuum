@@ -21,6 +21,7 @@ use crate::storage::StorageBackendKind;
 use crate::tasks::TaskWorkerSettings;
 use environment::{constraints, validate_configuration_bounds};
 
+pub mod artifacts;
 mod client_network;
 mod defaults;
 mod query_observations;
@@ -240,6 +241,9 @@ impl LoginRateLimitBackendKind {
 #[derive(Parser, Deserialize, Clone)]
 #[command(version = env!("CARGO_PKG_VERSION"), about = "Hubuum server", long_about = None)]
 pub struct AppConfig {
+    #[command(flatten)]
+    #[serde(default)]
+    pub artifacts: artifacts::ArtifactOptions,
     #[command(flatten)]
     #[serde(default)]
     pub schema_validation: SchemaValidationOptions,
@@ -1440,6 +1444,8 @@ impl AppConfig {
     fn validate(mut self) -> Result<Self, ApiError> {
         self.query_observation_settings = self.query_observations.validate()?;
         self.schema_limits = self.schema_validation.validate()?;
+        self.artifacts
+            .validate(self.export_max_output_bytes, self.backup_max_output_bytes)?;
         if self.actix_workers == 0 {
             return Err(ApiError::BadRequest(
                 "actix_workers must be greater than 0".to_string(),
@@ -2005,6 +2011,7 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
     let config = AppConfig {
         schema_validation: SchemaValidationOptions::from_environment()?,
         query_observations: QueryObservationOptions::from_environment()?,
+        artifacts: artifacts::ArtifactOptions::from_environment()?,
         query_observation_settings: StorageQueryObservationSettings::default(),
         schema_limits: JsonSchemaLimits::default(),
         secrets: SecretSourceOptions::from_environment()

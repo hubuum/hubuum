@@ -9,6 +9,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Verified, chunked PostgreSQL export and backup outputs with bounded producer
+  backpressure, streamed downloads, and durable cancellation/expiry cleanup.
+  Templates replay indexed temporary files; backup capture reuses its row spool.
+  Configure spool and worker resident limits with
+  `HUBUUM_ARTIFACT_MAX_SPOOL_BYTES` and `HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES`.
+
 - Shared task admission and execution limits across API/worker replicas, with
   separate resident-byte and cumulative-work accounting, internal repair
   admission, and administrator policy/usage endpoints at
@@ -16,6 +22,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   restore; stale claims cannot occupy capacity after reconciliation.
 
 ### Changed
+
+- **Breaking (storage SDK):** advance all ten SDK crates to `0.9.0` and implement
+  the required artifact contract and verified completion variants. Follow the
+  [0.9 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-08-to-09).
+- **Breaking backup compatibility:** new backups use format 12, including portable
+  retained export artifact frames. Upgrade restore binaries before consuming
+  them; formats 6–11 remain readable. Restore assigns fresh physical artifact
+  identities and retains earlier cleanup obligations.
+- **Breaking operational change:** stop older API/worker processes and run
+  `hubuum-admin --migrate` before starting matching artifact-aware binaries.
+  Reconcile task-owned artifacts before downgrading. New export replay rows and
+  backup source rows are capped at 4 MiB; related template input is capped at
+  8 MiB per batch and hydrated output at 4 MiB per row. Narrow oversized queries.
 
 - **Breaking operational change:** task capacity requires an offline upgrade.
   Stop API/worker replicas, back up the database, run `hubuum-admin --migrate`

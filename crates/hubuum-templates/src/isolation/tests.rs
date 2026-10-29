@@ -33,6 +33,7 @@ impl Fixture {
         let capacity = self.runtime.admit(started).unwrap();
         let (response, receiver) = oneshot::channel();
         let job = Job {
+            spool_pins: None,
             encoded: input,
             max_response_bytes: 1024,
             expected_results: 1,
@@ -300,4 +301,41 @@ async fn continuous_admission_drains_completed_job_tracking() {
     }
     fixture.idle().await;
     fixture.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn real_worker_replays_sequence_access_into_a_spool() {
+    let mut rows = crate::TemplateRows::new(1024).unwrap();
+    rows.push(&serde_json::json!({"name":"alpha"})).unwrap();
+    rows.push(&serde_json::json!({"name":"beta"})).unwrap();
+    let rendered = TemplateExecution::new(
+        "spool",
+        "{{ items|length }}:{{ items[1].name }}:{% for row in items %}{{ row.name }};{% endfor %}",
+        TemplateLimits::new(32, 100_000),
+    )
+    .max_output_bytes(1024)
+    .render_spooled(&serde_json::json!({"items":[]}), Arc::new(rows))
+    .await
+    .unwrap();
+    let mut bytes = Vec::new();
+    rendered.copy_to(&mut bytes).unwrap();
+    assert_eq!(bytes, b"2:beta:alpha;beta;");
+}
+
+#[tokio::test]
+async fn real_worker_spools_output_beyond_legacy_string_limit() {
+    let mut rows = crate::TemplateRows::new(128 * 1024).unwrap();
+    rows.push(&serde_json::json!({"text":"x".repeat(64 * 1024)}))
+        .unwrap();
+    let rendered = TemplateExecution::new(
+        "large-spool",
+        "{% for i in range(513) %}{{ items[0].text }}{% endfor %}",
+        TemplateLimits::new(32, 1_000_000),
+    )
+    .max_output_bytes(34 * 1024 * 1024)
+    .render_spooled(&serde_json::json!({}), Arc::new(rows))
+    .await
+    .unwrap();
+    assert_eq!(rendered.byte_size(), 513 * 64 * 1024);
+    assert!(rendered.peak_heap_bytes() < 16 * 1024 * 1024);
 }

@@ -73,11 +73,33 @@ pub(super) fn validate_relation_depth(depth: i32) -> Result<i32, ApiError> {
     Ok(depth)
 }
 
+#[cfg(test)]
 pub(super) async fn build_template_items<C, S>(
     exporter: &PermissionAwareExport<'_, C, S>,
     runtime: &ExportRuntime,
     items: &[serde_json::Value],
     relation_hydration: Option<RelationHydrationPlan>,
+) -> Result<(Vec<serde_json::Value>, Option<serde_json::Value>), ApiError>
+where
+    C: AuthorizationContext,
+    S: crate::traits::Search + ?Sized,
+{
+    build_template_page(
+        exporter,
+        runtime,
+        items,
+        relation_hydration,
+        &mut HydrationBudget::new(max_hydrated_template_objects()),
+    )
+    .await
+}
+
+pub(super) async fn build_template_page<C, S>(
+    exporter: &PermissionAwareExport<'_, C, S>,
+    runtime: &ExportRuntime,
+    items: &[serde_json::Value],
+    relation_hydration: Option<RelationHydrationPlan>,
+    hydration_budget: &mut HydrationBudget,
 ) -> Result<(Vec<serde_json::Value>, Option<serde_json::Value>), ApiError>
 where
     C: AuthorizationContext,
@@ -95,8 +117,6 @@ where
     if !relation_hydration.enabled_for_scope {
         return Ok((items.to_vec(), None));
     }
-
-    let mut hydration_budget = HydrationBudget::new(max_hydrated_template_objects());
 
     match runtime.scope {
         ValidatedExportScope::ObjectsInClass(_) => {
@@ -142,6 +162,7 @@ where
             // One class-metadata fetch over every object in the export.
             let mut all_objects = BTreeMap::<i32, HubuumObjectWithPath>::new();
             for root in &roots {
+                hydration_budget.row_bytes = 0;
                 let root_with_path = object_with_root_path(root);
                 all_objects.insert(root_with_path.id, root_with_path);
             }
@@ -153,9 +174,10 @@ where
 
             let mut hydrated_items = Vec::with_capacity(roots.len());
             for root in &roots {
+                hydration_budget.row_bytes = 0;
                 let root_with_path = object_with_root_path(root);
                 let related = related_by_root.remove(&root.id).unwrap_or_default();
-                let related = take_related_within_budget(&hydration_budget, related)?;
+                let related = take_related_within_budget(hydration_budget, related)?;
 
                 let mut neighborhood_ids = related
                     .iter()
@@ -182,7 +204,7 @@ where
                     root_with_path.id,
                     vec![root_with_path.id],
                     relation_hydration.depth_limit,
-                    &mut hydration_budget,
+                    hydration_budget,
                 )?;
                 hydrated_items.push(serde_json::to_value(hydrated)?);
             }
@@ -202,7 +224,7 @@ where
                 source,
                 related_objects,
                 relation_hydration.depth_limit,
-                &mut hydration_budget,
+                hydration_budget,
             )
             .await?;
             let source = serde_json::to_value(&hydrated)?;
@@ -671,6 +693,7 @@ pub(super) fn hydrate_object(
     let object = neighborhood.objects_by_id.get(&object_id).ok_or_else(|| {
         ApiError::InternalServerError("Missing object while hydrating template".to_string())
     })?;
+    hydration_budget.charge_object(object)?;
     let mut related = BTreeMap::new();
     let mut reachable = BTreeMap::new();
     let mut paths = BTreeMap::new();

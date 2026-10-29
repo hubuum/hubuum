@@ -294,7 +294,7 @@ impl StorageBackupReplay {
                         identity: IdentityReference::Known { identity },
                         version,
                     }) = identities::legacy_subject(
-                        identities::history_family(history),
+                        identities::history_family(history).expect("resource history has identity"),
                         history.as_str(),
                         &row,
                         cohort,
@@ -397,12 +397,10 @@ impl StorageBackupReplay {
                     builder.begin_history(section)?;
                 }
                 for row in self.history_rows(section) {
-                    let row = prepare(
-                        identities::history_family(section),
-                        section.as_str(),
-                        row?,
-                        None,
-                    )?;
+                    let row = match identities::history_family(section) {
+                        Some(family) => prepare(family, section.as_str(), row?, None)?,
+                        None => row?,
+                    };
                     if let Some(builder) = &mut builder {
                         builder.push(row)?;
                     }
@@ -621,6 +619,7 @@ impl StorageBackupReplay {
         builder.seal()
     }
     fn normalize(self, version: Option<i32>) -> Result<Self, StorageError> {
+        self.validate_artifacts()?;
         for &section in State::ALL {
             if !self.state.contains_key(&section)
                 && !matches!(
@@ -635,7 +634,12 @@ impl StorageBackupReplay {
         }
         if let Some(history) = &self.history {
             for &section in History::ALL {
-                if !history.contains_key(&section) && section != History::ComputedFieldHistory {
+                if !history.contains_key(&section)
+                    && !matches!(
+                        section,
+                        History::ComputedFieldHistory | History::ExportArtifacts
+                    )
+                {
                     return Err(invalid(format!(
                         "Backup snapshot is missing required history section '{section}'"
                     )));

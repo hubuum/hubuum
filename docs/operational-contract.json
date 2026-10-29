@@ -1783,6 +1783,7 @@
           "name": "capability",
           "bounded_by": "enumerated values",
           "values": [
+            "artifact",
             "audit_event",
             "authentication",
             "authorization_data",
@@ -2213,6 +2214,7 @@
           "name": "capability",
           "bounded_by": "enumerated values",
           "values": [
+            "artifact",
             "audit_event",
             "authentication",
             "authorization_data",
@@ -3597,6 +3599,50 @@
       "default_is_set": true,
       "default": [
         "local"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_ARTIFACT_MAX_SPOOL_BYTES",
+      "owner": "exports",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "268435456"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES",
+      "owner": "exports",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "4294967296"
       ],
       "dynamic_default": null,
       "allowed_values": [],
@@ -5322,6 +5368,106 @@
       ],
       "appears_in_running_configuration": true,
       "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_PROBE_MODE",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_PROBE_RATE",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_PROBE_ROWS",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_PROBE_ROW_BYTES",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_PROBE_SLOTS",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
       "dynamic_prefix": false
     },
     {
@@ -7604,7 +7750,7 @@
   },
   "documents": {
     "backup": {
-      "version": 11,
+      "version": 12,
       "required_fields": [
         "backup_version",
         "created_at",
@@ -7652,6 +7798,7 @@
         "remote_target_history",
         "terminal_tasks",
         "import_results",
+        "export_artifacts",
         "export_outputs",
         "remote_call_results",
         "audit_events",
@@ -7718,6 +7865,44 @@
     {
       "command": "hubuum-server",
       "options": [
+        {
+          "id": "max_spool_bytes",
+          "long": "max-spool-bytes",
+          "short": null,
+          "environment": "HUBUUM_ARTIFACT_MAX_SPOOL_BYTES",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "268435456"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "worker_resident_bytes",
+          "long": "worker-resident-bytes",
+          "short": null,
+          "environment": "HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "4294967296"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
         {
           "id": "schema_max_bytes",
           "long": "schema-max-bytes",

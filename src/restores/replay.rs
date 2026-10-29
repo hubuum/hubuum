@@ -64,7 +64,7 @@ impl ReplayDocument {
         mut self,
         context: hubuum_storage_core::StorageRestoreIdentityContext,
     ) -> Result<Self, ApiError> {
-        let upgrade = if self.metadata.backup_version == CURRENT_BACKUP_VERSION {
+        let upgrade = if self.metadata.backup_version >= 11 {
             StorageIdentityUpgrade::Native
         } else {
             StorageIdentityUpgrade::Legacy(context.cohort())
@@ -91,7 +91,7 @@ impl ReplayDocument {
             source_version: self.metadata.source_version.clone(),
             includes_history: self.snapshot.includes_history(),
             total_items,
-            identity_quarantine: self.metadata.backup_version != CURRENT_BACKUP_VERSION,
+            identity_quarantine: self.metadata.backup_version < 11,
             unresolved_identity_references: u64::try_from(self.unresolved_identity_references)
                 .map_err(|_| {
                     ApiError::PayloadTooLarge("Identity reference count overflow".into())
@@ -219,7 +219,7 @@ pub(crate) fn parse(
         builder = builder.without_history()?;
     }
     let snapshot = builder.finish_for_restore(metadata.backup_version)?;
-    let upgrade = if metadata.backup_version == CURRENT_BACKUP_VERSION {
+    let upgrade = if metadata.backup_version >= 11 {
         StorageIdentityUpgrade::Native
     } else {
         // Validate the full legacy upgrade in quarantine before accepting a
@@ -468,7 +468,13 @@ pub(crate) fn compare(source: &ReplayDocument, restored: &ReplayDocument) -> Res
         return Ok(());
     }
     for &section in History::ALL {
-        if section == History::AuditEvents {
+        if section == History::ExportArtifacts {
+            if artifact_fingerprints(&source.snapshot)?
+                != artifact_fingerprints(&restored.snapshot)?
+            {
+                return Err(mismatch(section.as_str()));
+            }
+        } else if section == History::AuditEvents {
             // Preserve multiplicities while permitting the one new provenance row.
             let mut retained = BTreeMap::<String, usize>::new();
             for row in source.snapshot.history_rows(section) {
@@ -536,7 +542,12 @@ pub(crate) fn compare(source: &ReplayDocument, restored: &ReplayDocument) -> Res
                         let mut a = a?;
                         a.normalize_legacy_history(section);
                         a.canonicalize_history(section);
-                        if a != b? {
+                        let mut b = b?;
+                        if section == History::ExportOutputs {
+                            a = normalize_artifact_reference(a)?;
+                            b = normalize_artifact_reference(b)?;
+                        }
+                        if a != b {
                             return Err(mismatch(section.as_str()));
                         }
                     }
@@ -546,4 +557,42 @@ pub(crate) fn compare(source: &ReplayDocument, restored: &ReplayDocument) -> Res
         }
     }
     Ok(())
+}
+
+#[cfg(feature = "embedded-migrations")]
+fn artifact_fingerprints(
+    snapshot: &StorageBackupReplay,
+) -> Result<BTreeMap<i32, serde_json::Value>, ApiError> {
+    use hubuum_storage_core::artifacts::{BackupArtifactDecoder, BackupArtifactPart};
+    let mut decoder = BackupArtifactDecoder::default();
+    let mut outputs = BTreeMap::new();
+    for row in snapshot.history_rows(History::ExportArtifacts) {
+        if let BackupArtifactPart::Header(header) = decoder.push(row?)? {
+            outputs.insert(
+                header.task_id().id(),
+                serde_json::json!({
+                    "expires_at": header.expires_at(), "bytes": header.manifest().byte_size(),
+                    "sha256": header.manifest().stream_digest(),
+                }),
+            );
+        }
+    }
+    decoder.finish()?;
+    Ok(outputs)
+}
+
+#[cfg(feature = "embedded-migrations")]
+fn normalize_artifact_reference(row: StorageBackupRow) -> Result<StorageBackupRow, ApiError> {
+    let mut value = row.into_value();
+    if value
+        .get("artifact_reference")
+        .is_some_and(|reference| !reference.is_null())
+    {
+        // Fresh physical identities are expected. The independently verified
+        // fingerprint section above retains content and task/expiry binding.
+        value["artifact_reference"] = serde_json::Value::Bool(true);
+    } else if let Some(fields) = value.as_object_mut() {
+        fields.remove("artifact_reference");
+    }
+    StorageBackupRow::try_from_value(value).map_err(|error| error.into_request_error().into())
 }

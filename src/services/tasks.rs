@@ -884,6 +884,7 @@ fn backup_summary_from_storage(output: StorageBackupOutputSummary) -> BackupTask
 
 fn export_output_from_storage(output: StorageExportOutput) -> ExportTaskOutput {
     ExportTaskOutput {
+        artifact_reference: output.artifact_reference().cloned(),
         content_type: output.content_type().to_string(),
         json_output: output.json_output().cloned(),
         text_output: output.text_output().map(str::to_string),
@@ -895,7 +896,8 @@ fn export_output_from_storage(output: StorageExportOutput) -> ExportTaskOutput {
 
 fn backup_output_from_storage(output: StorageBackupOutput) -> BackupTaskOutput {
     BackupTaskOutput {
-        document: output.document().to_vec(),
+        artifact_reference: output.artifact_reference().cloned(),
+        document: output.document().map(<[u8]>::to_vec),
         sha256: output.sha256().to_string(),
     }
 }
