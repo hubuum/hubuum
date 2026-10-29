@@ -842,6 +842,26 @@ async fn restore_registers_required_repairs_above_reduced_limits(
             reconciled.work_budget_blocked(),
             reconciled.internal().outstanding()
         );
+        assert!(
+            storage
+                .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            storage
+                .create_task(
+                    fixture
+                        .task_request(StorageTaskKind::Import)
+                        .try_build()
+                        .unwrap(),
+                )
+                .await
+                .unwrap_err()
+                .task_capacity_rejection(),
+            Some(TaskCapacityRejection::CumulativeWork)
+        );
     })
     .await;
 }
