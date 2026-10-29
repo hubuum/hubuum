@@ -74,6 +74,81 @@ async fn drain(store: &dyn TaskArtifactStore, reference: &ArtifactReference) -> 
     result
 }
 
+#[actix_web::test]
+async fn an_empty_output_still_retains_manifest_space() {
+    let fixture = Fixture::new(
+        BackendTestEnvironment::Memory {
+            storage: MemoryStorage::new(),
+        },
+        StorageTaskKind::Export,
+    )
+    .await;
+    let lease = fixture.claim().await;
+    let before = fixture
+        .backend
+        .task_capacity_snapshot()
+        .await
+        .unwrap()
+        .ordinary()
+        .resident_bytes();
+    let (identity, limits) = stage(&fixture, &lease, 0).await;
+    let store = fixture.backend.artifact_store();
+    let writer = ArtifactWriter::new(store.as_ref(), identity, limits)
+        .await
+        .unwrap();
+    let manifest = writer.seal().await.unwrap();
+    let proof = verify(store.as_ref(), &manifest).await.unwrap();
+    fixture
+        .backend
+        .complete_task(completion(lease, proof))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .backend
+            .task_capacity_snapshot()
+            .await
+            .unwrap()
+            .ordinary()
+            .resident_bytes(),
+        before + 117
+    );
+    fixture.cleanup().await;
+}
+
+#[actix_web::test]
+async fn worker_admission_reserves_manifest_space_before_upload() {
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let fixture = Fixture::new(environment, StorageTaskKind::Export).await;
+        let lease = fixture.claim().await;
+        let store = fixture.backend.artifact_store();
+        let destination =
+            Destination::new(DestinationId::generate(), prefix("manifest_capacity")).unwrap();
+        store.register_destination(&destination).await.unwrap();
+        let identity = ArtifactIdentity::new(destination.id());
+        let limits = ArtifactLimits::builder()
+            .artifact_bytes(4096)
+            .build()
+            .unwrap();
+        store.stage(&identity, limits).await.unwrap();
+        assert!(
+            store
+                .bind_task(
+                    &identity,
+                    &lease,
+                    ArtifactReservation::new(*uuid::Uuid::new_v4().as_bytes(), 4096, 8192).unwrap(),
+                    Utc::now() + chrono::Duration::hours(1),
+                )
+                .await
+                .is_err()
+        );
+        store.abort(&identity).await.unwrap();
+        store.cleanup().await.unwrap();
+        fixture.cleanup().await;
+    }
+}
+
 #[rstest]
 #[case::empty(0)]
 #[case::partial(123)]
@@ -212,7 +287,8 @@ async fn cancellation_fences_each_publication_boundary(#[case] boundary: u8) {
                     .unwrap()
                     .ordinary()
                     .resident_bytes()
-                    + 2 * limits.artifact_bytes(),
+                    + 2 * limits.artifact_bytes()
+                    + u64::from(limits.manifest_bytes()),
                 before_cleanup.ordinary().resident_bytes()
             );
         }

@@ -115,8 +115,9 @@ Lowering current write settings does not make previously stored output unreadabl
 
 Reservations precede producer capture. An export reserves its output ceiling plus
 `max(spool ceiling, output ceiling)`; a backup reserves twice its output ceiling.
+The manifest ceiling is reserved in addition to those payload/spool bytes.
 This covers overlapping spool and destination bytes. Publication drops the local
-reservation to the actual durable output size. Cancellation, task purge and output
+reservation to the actual durable payload plus encoded manifest size. Cancellation, task purge and output
 expiry retain the physical reservation until cleanup finishes. The worker runs
 bounded cleanup independently of output metadata expiry scheduling.
 

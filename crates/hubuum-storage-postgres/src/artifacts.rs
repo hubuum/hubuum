@@ -425,7 +425,7 @@ pub(crate) async fn publish_for_task(
         "UPDATE artifact_task_owners SET spool_bytes=0, reserved_bytes=$2 WHERE artifact_id=$1",
     )
     .bind::<SqlUuid, _>(owner.artifact_id)
-    .bind::<BigInt, _>(verified.manifest().byte_size() as i64)
+    .bind::<BigInt, _>(verified.manifest().stored_bytes() as i64)
     .execute(connection)
     .await?;
     Ok(())

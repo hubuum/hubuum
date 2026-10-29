@@ -42,7 +42,7 @@
     },
     {
       "migration": "crates/hubuum-storage-postgres/migrations/2026-10-29-000001_artifact_outputs/up.sql",
-      "sha256": "1fd3fba1b37f22c1ddd80303a3d42780905070307685b6ec1305ef3bae296350",
+      "sha256": "0fb0f761c8f0ca3e5f8938ee6329cc8479fbd091e2208216d6553d296d00d5c0",
       "reason": "Artifact-backed task outputs, physical reservations and portable backup format 12 require matching writers, readers and restore executors. The widened limits preserve retained artifacts independently of write policy.",
       "upgrade_action": "Stop API and worker processes, back up the database, run hubuum-admin --migrate and reconcile grants, then start matching binaries. Reclaim all artifact-backed output and cleanup obligations before downgrading. See docs/artifact_staging.md#backup-restore-and-upgrades.",
       "drop_constraints": {

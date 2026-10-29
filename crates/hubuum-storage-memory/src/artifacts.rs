@@ -77,7 +77,7 @@ impl Artifacts {
         let reference = proof.reference();
         attempt.reference = Some(reference.clone());
         if let Some(owner) = &mut attempt.owner {
-            owner.reserved = attempt.bytes;
+            owner.reserved = proof.manifest().stored_bytes();
             owner.reservation = ArtifactReservation::new(
                 *owner.reservation.worker(),
                 0,
@@ -410,7 +410,8 @@ impl TaskArtifactStore for MemoryStorage {
         let reserved = attempt
             .limits
             .artifact_bytes()
-            .checked_add(reservation.spool_bytes())
+            .checked_add(u64::from(attempt.limits.manifest_bytes()))
+            .and_then(|bytes| bytes.checked_add(reservation.spool_bytes()))
             .ok_or_else(conflict)?;
         let mut worker = 0u128;
         for attempt in state.artifacts.attempts.values() {
@@ -504,7 +505,7 @@ impl MemoryState {
                     if let Some(previous) = current.take() {
                         previous.finish(self, &mut references)?;
                     }
-                    self.check_restored_artifact_space(header.manifest().byte_size())?;
+                    self.check_restored_artifact_space(header.manifest().stored_bytes())?;
                     let identity = ArtifactIdentity::new(
                         DestinationId::from_bytes([0x50; 16]).map_err(archive_error)?,
                     );
@@ -565,7 +566,7 @@ impl MemoryRestoreArtifact {
                 i64::MAX as u64,
             )
             .map_err(archive_error)?,
-            reserved: manifest.byte_size(),
+            reserved: manifest.stored_bytes(),
             cleanup_after: None,
             expires: self.header.expires_at(),
         };

@@ -1,4 +1,5 @@
 use clap::Args;
+use hubuum_storage_core::artifacts::ArtifactLimits;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -28,8 +29,7 @@ impl ArtifactOptions {
         export_bytes: usize,
         backup_bytes: usize,
     ) -> Result<(), ApiError> {
-        let ceiling =
-            hubuum_storage_core::artifacts::ArtifactLimits::format_ceiling().artifact_bytes();
+        let ceiling = ArtifactLimits::format_ceiling().artifact_bytes();
         if self.max_spool_bytes == 0
             || self.max_spool_bytes > ceiling
             || self.worker_resident_bytes == 0
@@ -41,12 +41,20 @@ impl ArtifactOptions {
                 "Artifact limits exceed the supported format/admission bounds".into(),
             ));
         }
-        let export_reservation =
-            export_bytes as u64 + self.max_spool_bytes.max(export_bytes as u64);
-        let backup_reservation = 2 * backup_bytes as u64;
+        let manifest_bytes = |bytes: usize| {
+            if bytes as u64 <= ArtifactLimits::default().artifact_bytes() {
+                ArtifactLimits::default().manifest_bytes() as u64
+            } else {
+                ArtifactLimits::format_ceiling().manifest_bytes() as u64
+            }
+        };
+        let export_reservation = export_bytes as u64
+            + self.max_spool_bytes.max(export_bytes as u64)
+            + manifest_bytes(export_bytes);
+        let backup_reservation = 2 * backup_bytes as u64 + manifest_bytes(backup_bytes);
         if export_reservation.max(backup_reservation) > self.worker_resident_bytes {
             return Err(ApiError::BadRequest(
-                "Artifact worker resident bytes must cover one configured output and its spool"
+                "Artifact worker resident bytes must cover one configured output, manifest and spool"
                     .into(),
             ));
         }

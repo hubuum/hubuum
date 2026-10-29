@@ -183,7 +183,7 @@ BEGIN
     SELECT * INTO STRICT owner FROM hubuum_control.task_accounting WHERE task_id=owner_id AND lease_token=claim;
     SELECT * INTO STRICT staged FROM public.artifact_attempts WHERE artifact_id=artifact AND attempt_id=attempt
         AND state='staging' AND expires_at>clock_timestamp() FOR UPDATE;
-    reservation := staged.max_bytes + spool;
+    reservation := staged.max_bytes + staged.max_manifest_bytes + spool;
     SELECT coalesce(sum(o.reserved_bytes),0) INTO worker_used FROM public.artifact_task_owners o
         JOIN public.artifact_attempts a USING(artifact_id) WHERE o.worker_identity=worker AND a.state<>'published';
     IF worker_used + reservation > worker_limit THEN RAISE EXCEPTION 'Artifact worker resident capacity exhausted'; END IF;

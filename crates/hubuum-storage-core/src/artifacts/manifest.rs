@@ -137,6 +137,10 @@ impl ArtifactManifest {
     pub fn block_count(&self) -> u32 {
         self.blocks.len() as u32
     }
+    /// Encoded payload plus its canonical manifest; excludes database page/WAL overhead.
+    pub fn stored_bytes(&self) -> u64 {
+        self.byte_size + self.encoded_len() as u64
+    }
     pub fn stream_digest(&self) -> &[u8; 32] {
         &self.digest
     }

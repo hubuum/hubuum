@@ -134,7 +134,7 @@ impl Restoring {
             .execute(conn)
             .await?;
         let capacity = diesel::sql_query("SELECT COALESCE((SELECT sum(reserved_bytes::NUMERIC) FROM artifact_task_owners),0) + COALESCE((SELECT sum(resident_input_bytes::NUMERIC+resident_output_bytes) FROM hubuum_control.task_accounting WHERE NOT internal),0) + $1 <= (policy #>> '{deployment,resident_bytes}')::NUMERIC AS available FROM hubuum_control.task_policy WHERE singleton")
-            .bind::<BigInt, _>(header.manifest().byte_size() as i64)
+            .bind::<BigInt, _>(header.manifest().stored_bytes() as i64)
             .get_result::<CapacityAvailable>(conn).await?;
         if !capacity.available {
             return Err(PostgresStorageError::conflict(
@@ -154,7 +154,7 @@ impl Restoring {
             .bind::<Integer,_>(limits.blocks() as i32).bind::<Integer,_>(limits.manifest_bytes() as i32).execute(conn).await?;
         diesel::sql_query("INSERT INTO artifact_task_owners(artifact_id,task_identity,task_id,lease_token,worker_identity,spool_bytes,reserved_bytes,output_expires_at) SELECT $1,(logical_identity #>> '{subject,identity,identity}')::UUID,id,$3,$4,0,$5,$6 FROM tasks WHERE id=$2")
             .bind::<SqlUuid,_>(id).bind::<Integer,_>(header.task_id().id()).bind::<SqlUuid,_>(Uuid::new_v4()).bind::<SqlUuid,_>(Uuid::new_v4())
-            .bind::<BigInt,_>(limits.artifact_bytes() as i64).bind::<Timestamptz,_>(header.expires_at()).execute(conn).await?;
+            .bind::<BigInt,_>(header.manifest().stored_bytes() as i64).bind::<Timestamptz,_>(header.expires_at()).execute(conn).await?;
         let builder = ManifestBuilder::new(identity.clone(), limits);
         Ok(Self {
             header,
