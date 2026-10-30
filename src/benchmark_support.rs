@@ -4,6 +4,8 @@
 //! helpers keep benchmark-only construction out of normal service APIs while
 //! allowing benchmarks to exercise the same observed storage boundary.
 
+pub mod history_segments;
+
 use std::sync::Arc;
 
 use crate::services::CollectionService;
