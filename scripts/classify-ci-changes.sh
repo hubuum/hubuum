@@ -116,13 +116,13 @@ for path in "$@"; do
       # The standalone fuzz workflow owns these tests and lint checks.
       code=true
       ;;
-    test-corpora/comprehensive.json)
-      # The streaming restore parser also embeds the legacy corpus in Rust tests.
+    test-corpora/comprehensive.json | .gitattributes)
+      # Rust embeds byte-sensitive fixtures; attributes control checkout bytes.
       code=true
       rust=true
       container=true
       ;;
-    test-corpora/* | tests/python/integration/corpus.py | tests/python/unit/tooling/test_corpus.py | .gitattributes | \
+    test-corpora/* | tests/python/integration/corpus.py | tests/python/unit/tooling/test_corpus.py | \
       docs/assets/atlas/* | docs/getting-started/example-dataset.md | \
       tests/python/integration/atlas.py | tests/python/unit/tooling/test_atlas.py)
       code=true

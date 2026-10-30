@@ -4,3 +4,5 @@ hooks/pre-commit eol=lf diff=sh
 # Corpus and recipe checksums must survive Windows checkouts unchanged.
 test-corpora/*.json text eol=lf
 docs/assets/atlas/*.json text eol=lf
+# Capture receipts bind the exact LF-terminated output bytes.
+docs/contracts/lifecycle-audit/*.jsonl text eol=lf
