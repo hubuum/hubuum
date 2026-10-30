@@ -1,0 +1,313 @@
+{
+  "type": "object",
+  "properties": {
+    "proposal": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "const": "replace_policy"
+        },
+        "family": {
+          "enum": [
+            "collection",
+            "class",
+            "object",
+            "class_relation",
+            "object_relation",
+            "export_template",
+            "remote_target",
+            "computed_definitions",
+            "class_schema"
+          ]
+        },
+        "scope": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "deployment"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "collection",
+                    "class"
+                  ]
+                },
+                "identity": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "current_id": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 2147483647
+                }
+              },
+              "required": [
+                "kind",
+                "identity"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "expected_policy_revision": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "binding": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "inherit",
+                    "disabled_expiry",
+                    "indefinite"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "expire"
+                },
+                "trigger": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "age"
+                        },
+                        "age_seconds": {
+                          "type": "string",
+                          "pattern": "^(0|[1-9][0-9]*)$",
+                          "maxLength": 20
+                        },
+                        "deleted_age_seconds": {
+                          "type": "string",
+                          "pattern": "^(0|[1-9][0-9]*)$",
+                          "maxLength": 20
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "age_seconds"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "logical_size"
+                        },
+                        "upper_logical_bytes": {
+                          "type": "string",
+                          "pattern": "^[1-9][0-9]*$",
+                          "maxLength": 20
+                        },
+                        "lower_logical_bytes": {
+                          "type": "string",
+                          "pattern": "^(0|[1-9][0-9]*)$",
+                          "maxLength": 20
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "upper_logical_bytes",
+                        "lower_logical_bytes"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "enum": [
+                            "age_or_size",
+                            "age_and_size"
+                          ]
+                        },
+                        "age": {
+                          "type": "object",
+                          "properties": {
+                            "age_seconds": {
+                              "type": "string",
+                              "pattern": "^(0|[1-9][0-9]*)$",
+                              "maxLength": 20
+                            },
+                            "deleted_age_seconds": {
+                              "type": "string",
+                              "pattern": "^(0|[1-9][0-9]*)$",
+                              "maxLength": 20
+                            }
+                          },
+                          "required": [
+                            "age_seconds"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "size": {
+                          "type": "object",
+                          "properties": {
+                            "upper_logical_bytes": {
+                              "type": "string",
+                              "pattern": "^[1-9][0-9]*$",
+                              "maxLength": 20
+                            },
+                            "lower_logical_bytes": {
+                              "type": "string",
+                              "pattern": "^(0|[1-9][0-9]*)$",
+                              "maxLength": 20
+                            }
+                          },
+                          "required": [
+                            "upper_logical_bytes",
+                            "lower_logical_bytes"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "age",
+                        "size"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "minimum_age_seconds": {
+                  "type": "string",
+                  "pattern": "^(0|[1-9][0-9]*)$",
+                  "maxLength": 20
+                }
+              },
+              "required": [
+                "kind",
+                "trigger",
+                "minimum_age_seconds"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "application": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "prospective"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "retrospective"
+                },
+                "closed_through": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "required": [
+                "kind",
+                "closed_through"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "action",
+        "family",
+        "scope",
+        "expected_policy_revision",
+        "binding",
+        "application"
+      ],
+      "additionalProperties": false
+    },
+    "review": {
+      "type": "object",
+      "properties": {
+        "preview_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "proposal_fingerprint": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "preview_id",
+        "proposal_fingerprint"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "proposal"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Proposed revision-bound policy application v1",
+  "if": {
+    "properties": {
+      "proposal": {
+        "properties": {
+          "application": {
+            "properties": {
+              "kind": {
+                "const": "retrospective"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        },
+        "required": [
+          "application"
+        ]
+      }
+    },
+    "required": [
+      "proposal"
+    ]
+  },
+  "then": {
+    "required": [
+      "review"
+    ]
+  }
+}

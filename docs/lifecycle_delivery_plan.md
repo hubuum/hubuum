@@ -10,6 +10,11 @@ transition matrix, exact membership evidence, safe sink views and shared
 consumer fixtures. Its acceptance gates apply to the owning lifecycle features;
 the proposal does not activate those features or block unrelated foundations.
 
+The [task receipt and policy contract review](lifecycle_task_policy_contract.md)
+records #545's feature-specific submission outcomes and proposed preview/apply
+boundary. Its examples do not advertise unimplemented policy routes; audit and
+sink contracts remain coordinated separately in #550.
+
 ## Delivery order
 
 | Step | Issues | Review scope and acceptance gate |
