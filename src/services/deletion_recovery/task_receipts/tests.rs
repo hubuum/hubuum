@@ -300,6 +300,100 @@ async fn changed_signing_key_fails_before_selecting_a_fresh_namespace() {
 }
 
 #[actix_web::test]
+async fn sweep_report_uses_its_verified_snapshot_without_reacquiring_the_repository() {
+    let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
+    let outcome = fixture
+        .service
+        .sweep_task_retention(&fixture.storage)
+        .await
+        .unwrap();
+    let TaskRetentionCompletion::Protected { checkpoint, .. } = &outcome.completion else {
+        panic!("protected cleanup outcome");
+    };
+    let identity = checkpoint.identity().to_owned();
+    let revision = checkpoint.task_control().unwrap().revision().value();
+    let _publisher = open_session(fixture.service.configuration().unwrap())
+        .await
+        .unwrap();
+    fixture
+        .admit("unacknowledged-after-sweep", StorageTaskKind::Import)
+        .await;
+    assert!(
+        fixture
+            .storage
+            .read_task_control()
+            .await
+            .unwrap()
+            .revision()
+            .value()
+            > revision
+    );
+
+    let output = super::super::task_admin::report_sweep(
+        &fixture.storage,
+        &fixture.root.join("repository"),
+        &fixture.root.join("key"),
+        outcome,
+    )
+    .await
+    .unwrap();
+    let output = serde_json::to_value(output).unwrap();
+    assert_eq!(output["checkpoint"], identity);
+    assert_eq!(output["task_revision"], revision);
+}
+
+#[rstest::rstest]
+#[case::covered(true, false, true)]
+#[case::newer_selection(true, true, false)]
+#[case::unpublished_terminal(false, false, false)]
+#[actix_web::test]
+async fn expiry_reuses_only_a_checkpoint_covering_the_selected_revision_and_anchors(
+    #[case] publish_terminal: bool,
+    #[case] newer_admission: bool,
+    #[case] covered: bool,
+) {
+    let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
+    let state = fixture.storage.read_task_control().await.unwrap();
+    fixture
+        .storage
+        .replace_task_retention_policy(TaskRetentionPolicyChange::new(
+            state.policy().revision(),
+            TaskRetentionPolicy::new(
+                state.policy().revision().next().unwrap(),
+                Duration::from_secs(1),
+                None,
+            )
+            .unwrap(),
+        ))
+        .await
+        .unwrap();
+    fixture
+        .complete("expiry-proof", StorageTaskCompletionPayload::Import)
+        .await;
+    let session = open_session(fixture.service.configuration().unwrap())
+        .await
+        .unwrap();
+    let session = if publish_terminal {
+        publish_current(&fixture.storage, session).await.unwrap()
+    } else {
+        session
+    };
+    if newer_admission {
+        fixture
+            .admit("new-after-proof", StorageTaskKind::Import)
+            .await;
+    }
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let batch = fixture
+        .storage
+        .select_expired_task_receipts(ReceiptExpirySelection::new(1000).unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt_expiry_is_covered(&session, &batch), covered);
+}
+
+#[actix_web::test]
 async fn productive_background_pass_leaves_time_for_other_repository_publishers() {
     let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
     for index in 0..=MAX_PENDING_ADMISSIONS_PER_PASS {
@@ -383,7 +477,8 @@ async fn abandoned_pending_admissions_activate_in_bounded_passes() {
             .service
             .sweep_task_retention(&fixture.storage)
             .await
-            .unwrap(),
+            .unwrap()
+            .progress(),
         TaskRetentionSweep::Protected { more: true, .. }
     ));
     assert_eq!(
@@ -447,7 +542,8 @@ async fn output_only_cleanup_is_checkpointed_when_detail_retention_is_disabled()
             .service
             .sweep_task_retention(&fixture.storage)
             .await
-            .unwrap(),
+            .unwrap()
+            .progress(),
         TaskRetentionSweep::Protected {
             rows: 1,
             more: true,
@@ -701,6 +797,7 @@ async fn one_sweep_shares_its_physical_budget_across_all_manifests() {
         .sweep_task_retention(&fixture.storage)
         .await
         .unwrap()
+        .progress()
     else {
         panic!("protected sweep");
     };

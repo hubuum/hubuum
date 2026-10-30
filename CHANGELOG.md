@@ -206,6 +206,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Task cleanup reports retain their exact verified checkpoint instead of
+  reacquiring a contended repository or mixing it with newer database state.
+  Receipt expiry reuses existing protection only when it covers the selected
+  revision and every fixed terminal anchor.
+
 - Task claim and retention lookups use indexed UUID comparisons and queue order,
   avoiding repeated scans as retained removal decisions and queued tasks grow.
 

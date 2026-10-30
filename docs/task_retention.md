@@ -165,7 +165,11 @@ Shutdown interrupts that wait. Artifact cleanup uses the same maintenance loop.
 Task visibility compares stable UUIDs directly against retained targets, and
 queue claims use an index matching their status, kind and creation order.
 Retained decisions therefore do not require a full target scan for each claim. Explicit administrator sweeps use the same
-protected cleanup service.
+protected cleanup service. Their reports describe the exact verified
+completion checkpoint, even when another publisher subsequently acquires the
+repository. Receipt expiry can reuse an existing checkpoint only if it covers
+the selected revision, exact generations and original terminal anchors; the
+post-expiry floor and removals still require independent publication.
 
 Use stable UUIDs when retrying hold commands:
 

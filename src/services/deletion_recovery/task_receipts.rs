@@ -4,19 +4,21 @@ use std::sync::Arc;
 use hubuum_domain::PrincipalIdentity;
 use hubuum_storage_core::{
     ControlKeyFingerprint, DeletionCheckpointIdentity, DeletionControlStorage,
-    ProtectedReceiptExpiry, ProtectedTaskAdmission, ProtectedTaskPurge, ReceiptExpirySelection,
-    StorageTaskKind, TaskActivationOutcome, TaskAdmissionTicket, TaskControlCheckpoint,
-    TaskControlRevision, TaskLegacyReceiptBinding, TaskLegacyReceiptCandidate, TaskPurgeBudget,
-    TaskPurgeProgress, TaskPurgeScope, TaskPurgeSelection, TaskPurgeTicket, TaskQueueStorage,
-    TaskReceiptActivation, TaskReceiptBinding, TaskRequestFingerprint, TaskRetentionStorage,
-    TaskSubmissionIdentity, TaskSubmissionLookup, TaskSubmissionResolution,
+    ProtectedReceiptExpiry, ProtectedTaskAdmission, ProtectedTaskPurge, ReceiptExpiryBatch,
+    ReceiptExpirySelection, StorageTaskKind, TaskActivationOutcome, TaskAdmissionTicket,
+    TaskControlCheckpoint, TaskControlRevision, TaskLegacyReceiptBinding,
+    TaskLegacyReceiptCandidate, TaskPurgeBudget, TaskPurgeProgress, TaskPurgeScope,
+    TaskPurgeSelection, TaskPurgeTicket, TaskQueueStorage, TaskReceiptActivation,
+    TaskReceiptBinding, TaskRequestFingerprint, TaskRetentionStorage, TaskSubmissionIdentity,
+    TaskSubmissionLookup, TaskSubmissionResolution,
 };
 use hubuum_task_core::IdempotencyKey;
 use serde::Serialize;
 use tokio::sync::Mutex;
 
 use super::repository::{
-    AuthenticatedPayloadCache, CheckpointRepository, CheckpointSession, repository_busy,
+    AuthenticatedPayloadCache, CheckpointRepository, CheckpointSession, DurableCheckpoint,
+    repository_busy,
 };
 use super::task_key::TaskReceiptKey;
 use super::{invalid_control, unavailable};
@@ -48,6 +50,42 @@ struct Configuration {
 pub(crate) enum TaskRetentionSweep {
     Disabled,
     Protected { rows: u32, bytes: u64, more: bool },
+}
+
+/// The verified publication returned by this exact cleanup operation. The
+/// administrator must not reacquire a repository session or combine this proof
+/// with a newer, independently unacknowledged database snapshot.
+pub(crate) struct TaskRetentionOutcome {
+    completion: TaskRetentionCompletion,
+}
+
+pub(super) enum TaskRetentionCompletion {
+    Disabled,
+    Protected {
+        rows: u32,
+        bytes: u64,
+        more: bool,
+        checkpoint: DurableCheckpoint,
+    },
+}
+
+impl TaskRetentionOutcome {
+    pub(super) fn into_completion(self) -> TaskRetentionCompletion {
+        self.completion
+    }
+
+    pub(crate) fn progress(&self) -> TaskRetentionSweep {
+        match &self.completion {
+            TaskRetentionCompletion::Disabled => TaskRetentionSweep::Disabled,
+            TaskRetentionCompletion::Protected {
+                rows, bytes, more, ..
+            } => TaskRetentionSweep::Protected {
+                rows: *rows,
+                bytes: *bytes,
+                more: *more,
+            },
+        }
+    }
 }
 
 impl TaskReceiptService {
@@ -216,8 +254,8 @@ impl TaskReceiptService {
     pub(crate) async fn sweep_task_retention(
         &self,
         context: &impl StorageContext,
-    ) -> Result<TaskRetentionSweep, ApiError> {
-        self.try_sweep_task_retention(context)
+    ) -> Result<TaskRetentionOutcome, ApiError> {
+        self.try_sweep_with_checkpoint(context)
             .await?
             .ok_or_else(repository_busy)
     }
@@ -228,10 +266,22 @@ impl TaskReceiptService {
         &self,
         context: &impl StorageContext,
     ) -> Result<Option<TaskRetentionSweep>, ApiError> {
+        Ok(self
+            .try_sweep_with_checkpoint(context)
+            .await?
+            .map(|outcome| outcome.progress()))
+    }
+
+    async fn try_sweep_with_checkpoint(
+        &self,
+        context: &impl StorageContext,
+    ) -> Result<Option<TaskRetentionOutcome>, ApiError> {
         let storage = storage_handle(context);
         let activation = storage.read_task_receipt_activation().await?;
         if matches!(activation, TaskReceiptActivation::Disabled) {
-            return Ok(Some(TaskRetentionSweep::Disabled));
+            return Ok(Some(TaskRetentionOutcome {
+                completion: TaskRetentionCompletion::Disabled,
+            }));
         }
         self.validate_activation(&activation)?;
         let configuration = self.configuration()?;
@@ -345,7 +395,14 @@ impl TaskReceiptService {
                 require_purge_completion(&session, &ticket, revision)?;
             }
         }
-        Ok(Some(TaskRetentionSweep::Protected { rows, bytes, more }))
+        Ok(Some(TaskRetentionOutcome {
+            completion: TaskRetentionCompletion::Protected {
+                rows,
+                bytes,
+                more,
+                checkpoint: session.into_checkpoint(),
+            },
+        }))
     }
 }
 
@@ -513,6 +570,22 @@ async fn publish_current(
     .map_err(|_| unavailable("Task checkpoint publication worker failed"))?
 }
 
+fn receipt_expiry_is_covered(session: &CheckpointSession, batch: &ReceiptExpiryBatch) -> bool {
+    session.checkpoint().task_control().is_some_and(|captured| {
+        captured.revision() >= batch.expected_revision()
+            && batch.receipts().iter().all(|reference| {
+                captured
+                    .receipt(reference.submission())
+                    .is_some_and(|receipt| {
+                        receipt.reference() == reference
+                            && receipt
+                                .expires_at()
+                                .is_some_and(|expiry| expiry <= batch.floor())
+                    })
+            })
+    })
+}
+
 async fn expire_one_batch(
     context: &impl StorageContext,
     mut session: CheckpointSession,
@@ -532,23 +605,15 @@ async fn expire_one_batch(
     };
     // Publish terminal anchors before forgetting their matching fields. A last
     // independent MayExecute record cannot be silently expired by a timestamp.
-    session = publish_current(context, session).await?;
-    let captured = session
-        .checkpoint()
-        .task_control()
-        .ok_or_else(|| unavailable("Receipt expiry has no independent checkpoint"))?;
-    if !batch.receipts().iter().all(|reference| {
-        captured
-            .receipt(reference.submission())
-            .is_some_and(|receipt| {
-                receipt.reference() == reference
-                    && receipt
-                        .expires_at()
-                        .is_some_and(|expiry| expiry <= batch.floor())
-            })
-    }) {
+    // The initial sweep publication can already cover this selection. Reuse
+    // it only when its revision and every exact terminal anchor are sufficient.
+    // Concurrent settlements or admissions force a fresh authenticated capture.
+    if !receipt_expiry_is_covered(&session, &batch) {
+        session = publish_current(context, session).await?;
+    }
+    if !receipt_expiry_is_covered(&session, &batch) {
         return Err(unavailable(
-            "Independent checkpoint does not protect the exact terminal expiry anchors",
+            "Independent checkpoint does not protect the selected revision and exact terminal expiry anchors",
         ));
     }
     let revision = storage

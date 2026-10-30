@@ -14,10 +14,9 @@ use hubuum_storage_core::{
 };
 use serde::Serialize;
 
-use super::repository::{CheckpointRepository, CheckpointSession};
-use super::{
-    TaskReceiptService, TaskRetentionSweep, covers_checkpoint, invalid_control, unavailable,
-};
+use super::repository::{CheckpointRepository, CheckpointSession, DurableCheckpoint};
+use super::task_receipts::{TaskRetentionCompletion, TaskRetentionOutcome};
+use super::{TaskReceiptService, covers_checkpoint, invalid_control, unavailable};
 use crate::config::ControlRecoveryOptions;
 use crate::errors::ApiError;
 use crate::storage::{StorageContext, storage_handle};
@@ -86,7 +85,7 @@ fn invalid_request(error: StorageValidationError) -> ApiError {
     ApiError::BadRequest(error.to_string())
 }
 
-fn report(state: &TaskControlState, session: &CheckpointSession) -> TaskRetentionAdminReport {
+fn report(state: &TaskControlState, checkpoint: &DurableCheckpoint) -> TaskRetentionAdminReport {
     TaskRetentionAdminReport {
         activation: state.activation().clone(),
         task_revision: state.revision().value(),
@@ -94,7 +93,7 @@ fn report(state: &TaskControlState, session: &CheckpointSession) -> TaskRetentio
         retained_receipts: state.receipts().len(),
         retained_purge_manifests: state.purge_batches().len(),
         holds: state.holds().values().cloned().collect(),
-        checkpoint: session.checkpoint().identity().to_owned(),
+        checkpoint: checkpoint.identity().to_owned(),
         checkpoint_measurement: super::repository::checkpoint_measurement(),
         preview: None,
         backfilled: 0,
@@ -162,6 +161,36 @@ fn confirmation(
         .to_owned())
 }
 
+pub(super) async fn report_sweep(
+    context: &impl StorageContext,
+    directory: &Path,
+    key: &Path,
+    outcome: TaskRetentionOutcome,
+) -> Result<TaskRetentionAdminReport, ApiError> {
+    match outcome.into_completion() {
+        TaskRetentionCompletion::Disabled => {
+            let session = session(directory, key).await?;
+            let state = storage_handle(context).read_task_control().await?;
+            Ok(report(&state, session.checkpoint()))
+        }
+        TaskRetentionCompletion::Protected {
+            rows,
+            bytes,
+            more,
+            checkpoint,
+        } => {
+            let state = checkpoint
+                .task_control()
+                .ok_or_else(|| unavailable("Cleanup lacks protected task authority"))?;
+            let mut output = report(state, &checkpoint);
+            output.removed_rows = rows;
+            output.removed_bytes = bytes;
+            output.more = more;
+            Ok(output)
+        }
+    }
+}
+
 pub(crate) async fn administer_task_retention(
     context: &impl StorageContext,
     options: &ControlRecoveryOptions,
@@ -171,16 +200,8 @@ pub(crate) async fn administer_task_retention(
         "Task retention administration requires --control-recovery-directory and --control-recovery-key".into()))?;
     let service = TaskReceiptService::configured(options).await?;
     if matches!(action, TaskRetentionAdminAction::Run) {
-        let progress = service.sweep_task_retention(context).await?;
-        let session = session(directory, key).await?;
-        let state = storage_handle(context).read_task_control().await?;
-        let mut output = report(&state, &session);
-        if let TaskRetentionSweep::Protected { rows, bytes, more } = progress {
-            output.removed_rows = rows;
-            output.removed_bytes = bytes;
-            output.more = more;
-        }
-        return Ok(output);
+        let outcome = service.sweep_task_retention(context).await?;
+        return report_sweep(context, directory, key, outcome).await;
     }
     let mut session = session(directory, key).await?;
     let storage = storage_handle(context);
@@ -203,7 +224,7 @@ pub(crate) async fn administer_task_retention(
     }
     let mut backfilled = 0;
     match action {
-        TaskRetentionAdminAction::Status => return Ok(report(&state, &session)),
+        TaskRetentionAdminAction::Status => return Ok(report(&state, session.checkpoint())),
         TaskRetentionAdminAction::Preview => {
             let candidates = storage
                 .list_legacy_task_receipts(
@@ -220,7 +241,7 @@ pub(crate) async fn administer_task_retention(
                     unverifiable += 1;
                 }
             }
-            let mut output = report(&state, &session);
+            let mut output = report(&state, session.checkpoint());
             output.preview = Some(TaskActivationPreview {
                 confirmation: confirmation(&service, &state)?,
                 sampled_legacy_tasks: candidates.len(),
@@ -397,7 +418,7 @@ pub(crate) async fn administer_task_retention(
     }
     session = publish(context, session).await?;
     state = storage.read_task_control().await?;
-    let mut output = report(&state, &session);
+    let mut output = report(&state, session.checkpoint());
     output.backfilled = backfilled;
     output.more = matches!(
         state.activation(),

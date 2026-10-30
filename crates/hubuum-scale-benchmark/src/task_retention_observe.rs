@@ -287,6 +287,16 @@ fn eligible_lags(
         "p95_within_60_seconds":complete && distribution["p95_ms"].as_i64().is_some_and(|lag|lag <= 60000)})
 }
 
+fn require_steady_expiry_targets(details: &Value, receipts: &Value) -> Result<()> {
+    if details["p95_within_60_seconds"] != true || receipts["p95_within_60_seconds"] != true {
+        return Err(format!(
+            "Steady expiry target missed or incomplete (details: {}, receipts: {}); raw report retained",
+            details["p95_status"], receipts["p95_status"],
+        ).into());
+    }
+    Ok(())
+}
+
 pub async fn run(options: ObserveArgs) -> Result<()> {
     if options.timeout_seconds == 0
         || options.timeout_seconds > 86400
@@ -654,6 +664,9 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
                 .into(),
         );
     }
+    if options.steady_seconds > 0 {
+        require_steady_expiry_targets(&steady_detail_lags, &steady_receipt_lags)?;
+    }
     Ok(())
 }
 
@@ -662,6 +675,40 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[rstest]
+    #[case::within_target(59999, 59999, true)]
+    #[case::at_target(60000, 60000, true)]
+    #[case::details_breach(60001, 1000, false)]
+    #[case::receipts_breach(1000, 60001, false)]
+    fn steady_expiry_failures_stop_later_qualification_phases(
+        #[case] detail_lag: i64,
+        #[case] receipt_lag: i64,
+        #[case] accepted: bool,
+    ) {
+        let samples = BTreeMap::from([(
+            TaskIdentity::generate(),
+            Lifetime {
+                details_expires_at_ms: Some(1000),
+                receipt_expires_at_ms: Some(1000),
+                detail_removal_observed_ms: Some(1000 + detail_lag),
+                receipt_retirement_observed_ms: Some(1000 + receipt_lag),
+                ..Lifetime::default()
+            },
+        )]);
+        let details = eligible_lags(&samples, false, 0, 2000, 70000);
+        let receipts = eligible_lags(&samples, true, 0, 2000, 70000);
+        assert_eq!(
+            require_steady_expiry_targets(&details, &receipts).is_ok(),
+            accepted
+        );
+    }
+
+    #[test]
+    fn empty_steady_evidence_cannot_pass_the_expiry_gate() {
+        let report = eligible_lags(&BTreeMap::new(), false, 0, 2000, 70000);
+        assert!(require_steady_expiry_targets(&report, &report).is_err());
+    }
 
     #[rstest]
     #[case::busy(b"Error: ServiceUnavailable(\"Control repository is busy; retry without bypassing protection\")\n", true)]

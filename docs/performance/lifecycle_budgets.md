@@ -109,6 +109,12 @@ revised with evidence, and cannot waive H1–H5.
 | P7 | Artifact slow; #508 | At least 0.8 MiB/s upload throughput per 1 MiB/s stream | Report producer/upload/verification/publication separately, count upload and full read-back, preserve H1/H2. Publication still requires completed verification. |
 | P8 | Archive exact; #518 | At most 128 MiB source-plus-destination bytes per touched 64 MiB segment, plus reported verification traffic | Erase 1% of records; report all touched segments instead of extrapolating one segment's cost to the dataset. |
 
+The task-retention observer writes its raw report before returning failure when
+steady detail or receipt expiry misses P6, or lacks complete eligible evidence.
+This stops later output-expiry and recovery probes from running after a known
+latency failure. A bounded smoke drill without a steady phase remains a
+correctness check and cannot establish P6 acceptance.
+
 P4 proposes an eight-claim promotion interval for evaluation, not shipped defaults.
 Catalog/segment limits reflect bounded block reads and an initial 5% online
 metadata envelope. Memory/spool ceilings support four concurrent streams without
