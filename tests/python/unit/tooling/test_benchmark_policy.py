@@ -46,6 +46,13 @@ class BenchmarkPolicyTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(policy.resolve([path])["scopes"], sorted(policy.load_policy()["scopes"]))
 
+    def test_crate_build_inputs_override_narrow_subject_rules(self):
+        for crate in ("hubuum-query", "hubuum-auth-core", "hubuum-templates", "hubuum-computed-fields"):
+            for name in ("Cargo.toml", "Cargo.lock", "build.rs"):
+                with self.subTest(crate=crate, name=name):
+                    actual = policy.resolve([f"crates/{crate}/{name}"])
+                    self.assertEqual(actual["whole_scopes"], sorted(policy.load_policy()["scopes"]))
+
     def test_docs_select_no_performance_work(self):
         actual = policy.resolve(["README.md", "docs/testing.md"])
         self.assertEqual(actual["scopes"], [])
