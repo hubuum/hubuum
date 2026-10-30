@@ -5,6 +5,32 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      scopes:
+        description: Scopes (auto, all, or comma-separated micro,postgres,runtime,resources)
+        default: auto
+        type: string
+      base_sha:
+        description: Base revision for manual comparisons (defaults to main)
+        default: main
+        type: string
+      tags:
+        description: Comma-separated subject tags; unioned with explicit scopes/targets
+        default: ""
+        type: string
+      targets:
+        description: Comma-separated canonical backend:manifest:target identities
+        default: ""
+        type: string
+      profile:
+        description: Measurement effort (scope remains independent)
+        default: standard
+        type: choice
+        options: [quick, standard, thorough]
+      warm_only:
+        description: Only warm all benchmark executables on main
+        default: false
+        type: boolean
   pull_request:
     types:
       - opened
@@ -21,6 +47,7 @@ concurrency:
       (github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
       github.event.label.name != 'ci:full' &&
       github.event.label.name != 'ci:benchmarks' &&
+      !startsWith(github.event.label.name, 'ci:bench:') &&
       format('ignored-label-{0}', github.event.label.name) ||
       'validation'
     }}
@@ -32,23 +59,20 @@ permissions:
 
 jobs:
   changes:
-    name: Classify benchmark changes
+    name: Resolve benchmark scopes tags and profile
     if: >-
-      github.event_name == 'pull_request' &&
-      (
-        github.event.pull_request.draft == false ||
-        contains(github.event.pull_request.labels.*.name, 'ci:full') ||
-        contains(github.event.pull_request.labels.*.name, 'ci:benchmarks')
-      ) &&
-      (
-        (github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
-        github.event.label.name == 'ci:full' ||
-        github.event.label.name == 'ci:benchmarks'
-      )
+      (github.event_name == 'pull_request' ||
+       (github.event_name == 'workflow_dispatch' && !inputs.warm_only)) &&
+      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+       github.event.label.name == 'ci:full' || github.event.label.name == 'ci:benchmarks' ||
+       startsWith(github.event.label.name, 'ci:bench:'))
     runs-on: ubuntu-24.04
     outputs:
       run_benchmarks: ${{ steps.policy.outputs.run_benchmarks }}
       run_runtime: ${{ steps.policy.outputs.run_runtime }}
+      run_resources: ${{ steps.policy.outputs.run_resources }}
+      selection: ${{ steps.policy.outputs.selection }}
+      base_sha: ${{ steps.policy.outputs.base_sha }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -58,55 +82,26 @@ jobs:
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version-file: .python-version
-      - name: Test change classifier
-        run: bash scripts/test-classify-ci-changes.sh
-      - name: Classify changed paths
-        id: paths
-        env:
-          IS_PULL_REQUEST: true
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          bash scripts/ci-changed-paths.sh > "$RUNNER_TEMP/benchmark-changed-paths"
-          changed_files=()
-          while IFS= read -r -d '' path; do
-            changed_files+=("$path")
-          done < "$RUNNER_TEMP/benchmark-changed-paths"
-          bash scripts/classify-ci-changes.sh "${changed_files[@]}"
-      - name: Select benchmark tier
+      - name: Resolve performance selection
         id: policy
         env:
-          IS_DRAFT: ${{ github.event.pull_request.draft }}
-          FORCE_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}
-          FORCE_BENCHMARKS: ${{ contains(github.event.pull_request.labels.*.name, 'ci:benchmarks') }}
-          BENCHMARKS_CHANGED: ${{ steps.paths.outputs.benchmarks }}
-          RUNTIME_CHANGED: ${{ steps.paths.outputs.runtime_benchmark }}
+          IS_PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || inputs.base_sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          requested=false
-          if [[ "$IS_DRAFT" != "true" || "$FORCE_FULL" == "true" || "$FORCE_BENCHMARKS" == "true" ]]; then
-            requested=true
+          if [[ -n "$BASE_SHA" ]]; then
+            BASE_SHA="$(git rev-parse --verify --end-of-options "${BASE_SHA}^{commit}" 2>/dev/null || git rev-parse --verify --end-of-options "origin/${BASE_SHA}^{commit}")"
+            export BASE_SHA
+            echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
           fi
-
-          force_all=false
-          if [[ "$FORCE_FULL" == "true" || "$FORCE_BENCHMARKS" == "true" ]]; then
-            force_all=true
-          fi
-
-          run_benchmarks=false
-          run_runtime=false
-          if [[ "$requested" == "true" ]]; then
-            if [[ "$force_all" == "true" || "$BENCHMARKS_CHANGED" == "true" ]]; then
-              run_benchmarks=true
-            fi
-            if [[ "$force_all" == "true" || "$RUNTIME_CHANGED" == "true" ]]; then
-              run_runtime=true
-            fi
-          fi
-
-          {
-            echo "run_benchmarks=$run_benchmarks"
-            echo "run_runtime=$run_runtime"
-          } >> "$GITHUB_OUTPUT"
+          bash scripts/ci-changed-paths.sh > "$RUNNER_TEMP/benchmark-changed-paths"
+          python3 scripts/benchmark-policy.py --paths "$RUNNER_TEMP/benchmark-changed-paths" --output selection.json
+      - name: Retain performance selection
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: performance-selection-${{ github.run_attempt }}
+          path: selection.json
 
   benchmark-lanes:
     name: Discover independent benchmark lanes
@@ -118,21 +113,23 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.lanes.outputs.matrix }}
+      has_targets: ${{ steps.lanes.outputs.has_targets }}
+      config: ${{ steps.lanes.outputs.config }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && !inputs.warm_only)
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ needs.changes.outputs.base_sha }}
           path: .benchmark-base
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: terjekv/rust-pr-bench
-          ref: d0202becabbd115351a879c21f53ab9da6812a44
+          ref: 7c25e2f52947680c432441707958ab254aa5e27e
           path: .benchmark-action
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -141,13 +138,32 @@ jobs:
       - name: Partition discovered benchmarks, preserving moved baselines
         id: lanes
         env:
-          IS_PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
+          IS_PULL_REQUEST: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && !inputs.warm_only) }}
+          SELECTION_JSON: ${{ needs.changes.outputs.selection }}
         run: |
           args=(--action-path .benchmark-action --head .)
           if [[ "$IS_PULL_REQUEST" == "true" ]]; then
             args+=(--base .benchmark-base)
           fi
-          echo "matrix=$(python3 scripts/benchmark-lanes.py "${args[@]}")" >> "$GITHUB_OUTPUT"
+          if [[ -n "$SELECTION_JSON" ]]; then
+            args+=(--selection-json "$SELECTION_JSON")
+          fi
+          python3 scripts/benchmark-lanes.py "${args[@]}" > target-selection.json
+          python3 - <<'PYTHON'
+          import json, os
+          from pathlib import Path
+          matrix = json.loads(Path("target-selection.json").read_text())
+          policy = json.loads(Path(".github/benchmark-policy.json").read_text())
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write("matrix=" + json.dumps(matrix, separators=(",", ":")) + "\n")
+              output.write("has_targets=" + str(bool(matrix["include"])).lower() + "\n")
+              output.write("config=" + json.dumps({"version": 1, "profiles": policy["profiles"]}, separators=(",", ":")) + "\n")
+          PYTHON
+      - name: Retain selected targets
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: performance-target-selection-${{ github.run_attempt }}
+          path: target-selection.json
 
   benchmarks:
     name: Benchmarks (${{ matrix.name }})
@@ -155,35 +171,41 @@ jobs:
     if: >-
       !cancelled() &&
       needs.benchmark-lanes.result == 'success' &&
-      needs.changes.outputs.run_benchmarks == 'true'
+      needs.changes.outputs.run_benchmarks == 'true' &&
+      needs.benchmark-lanes.outputs.has_targets == 'true'
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.benchmark-lanes.outputs.matrix) }}
-    uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@d0202becabbd115351a879c21f53ab9da6812a44 # v1.3.0
+    uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@7c25e2f52947680c432441707958ab254aa5e27e # target selection and profiles (rust-pr-bench#32)
     secrets: inherit
     with:
       # Keep build/cache inputs aligned with warm-cache below.
-      action_ref: d0202becabbd115351a879c21f53ab9da6812a44
+      action_ref: 7c25e2f52947680c432441707958ab254aa5e27e
       backend: all
+      base_sha: ${{ needs.changes.outputs.base_sha }}
       benchmarks_json: ${{ toJSON(matrix.benchmarks) }}
       auto_detect_moved_benchmarks: true
       cargo_args: --locked
       cache: true
-      cache_namespace: hubuum-benchmarks-${{ matrix.name }}
+      cache_namespace: ${{ matrix.cache_namespace }}
       cache_binaries: true
+      cache_save_build: false
+      benchmark_config_json: ${{ needs.benchmark-lanes.outputs.config }}
+      select_targets_json: ${{ toJSON(matrix.selected_targets) }}
+      profile: ${{ fromJSON(needs.changes.outputs.selection).profile }}
       criterion_statistic: median
       # Apply the same bounded sampling budget to both revisions and every lane.
       criterion_cli_args: "--noplot --sample-size 20 --warm-up-time 1 --measurement-time 2 --nresamples 10000"
       regression_threshold_pct_gungraun: 3
       regression_threshold_pct_criterion: 50
-      fail_on_regression: true
-      comment_mode: ${{ matrix.name == 'standard' && 'always' || 'never' }}
+      fail_on_regression: ${{ fromJSON(needs.changes.outputs.selection).profile != 'quick' }}
+      comment_mode: never
 
   warm-cache-changes:
     name: Classify benchmark cache inputs
     if: >-
       github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.warm_only))
     runs-on: ubuntu-24.04
     outputs:
       benchmarks: ${{ steps.paths.outputs.benchmarks }}
@@ -214,29 +236,31 @@ jobs:
     if: >-
       !cancelled() &&
       needs.benchmark-lanes.result == 'success' &&
+      needs.benchmark-lanes.outputs.has_targets == 'true' &&
       github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.warm_only)) &&
       needs.warm-cache-changes.outputs.benchmarks == 'true'
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.benchmark-lanes.outputs.matrix) }}
-    uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@d0202becabbd115351a879c21f53ab9da6812a44 # v1.3.0
+    uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@7c25e2f52947680c432441707958ab254aa5e27e # target selection and profiles (rust-pr-bench#32)
     with:
-      action_ref: d0202becabbd115351a879c21f53ab9da6812a44
+      action_ref: 7c25e2f52947680c432441707958ab254aa5e27e
       backend: all
       benchmarks_json: ${{ toJSON(matrix.benchmarks) }}
       auto_detect_moved_benchmarks: true
       cargo_args: --locked
       cache: true
-      cache_namespace: hubuum-benchmarks-${{ matrix.name }}
+      cache_namespace: ${{ matrix.cache_namespace }}
       cache_binaries: true
       compile_only: true
+      benchmark_config_json: ${{ needs.benchmark-lanes.outputs.config }}
       comment_mode: never
 
   runtime-limits:
     name: Template and schema resource evidence
     needs: changes
-    if: needs.changes.outputs.run_benchmarks == 'true'
+    if: needs.changes.outputs.run_resources == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -250,6 +274,8 @@ jobs:
           sudo apt-get install --yes libpq-dev libssl-dev
       - name: Cache Cargo and target directories
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - name: Build the isolated renderer
         run: cargo build --locked --release -p hubuum-templates --bin hubuum-template-worker
       - name: Measure concurrent templates and schema validation
@@ -259,6 +285,7 @@ jobs:
         shell: bash
         run: python3 tests/python/run.py integration schema-budget --release | tee -a template-schema-evidence.jsonl
       - name: Retain template and schema measurements
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: template-schema-evidence
@@ -295,6 +322,8 @@ jobs:
           fetch-depth: 0
       - name: Cache Cargo and target directories
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - name: Verify PostgreSQL build tools
         run: |
           command -v pg_config
@@ -309,7 +338,7 @@ jobs:
       - name: Detect an existing base runtime validator
         id: base_runtime
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ needs.changes.outputs.base_sha }}
         run: |
           if git cat-file -e "$BASE_SHA:src/bin/runtime_behavior_check.rs" 2>/dev/null; then
             echo "available=true" >> "$GITHUB_OUTPUT"
@@ -319,7 +348,7 @@ jobs:
       - name: Measure base runtime behavior
         if: steps.base_runtime.outputs.available == 'true'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ needs.changes.outputs.base_sha }}
         run: |
           git checkout --detach "$BASE_SHA"
           cargo run --locked --features embedded-migrations --bin hubuum-admin -- \
@@ -337,7 +366,7 @@ jobs:
             --output "$RUNTIME_BEHAVIOR_REPORT_DIR/base.json"
       - name: Measure pull-request runtime behavior
         env:
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           git checkout --detach "$HEAD_SHA"
           cargo run --locked --features embedded-migrations --bin hubuum-admin -- \

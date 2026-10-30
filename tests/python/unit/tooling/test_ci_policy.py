@@ -57,6 +57,14 @@ class CiTierTests(unittest.TestCase):
         for key in ("run_rust_ci", "run_full_ci", "run_container", "run_default_suite"):
             self.assertEqual(result[key], "true", key)
 
+    def test_validate_label_requests_full_ci_without_selecting_performance(self):
+        changes = job("changes")
+        self.assertIn("contains(github.event.pull_request.labels.*.name, 'ci:validate')", changes)
+        self.assertIn("github.event.label.name == 'ci:validate'", changes)
+        # Both labels feed the existing, already covered correctness-tier resolver.
+        self.assertEqual(self.policy(FORCE_FULL="true", IS_DRAFT="true")["run_container"], "true")
+        self.assertNotIn("run_benchmarks", changes)
+
 
 class DatabaseInitializationTests(unittest.TestCase):
     def test_every_diesel_setup_finishes_production_backfills(self):

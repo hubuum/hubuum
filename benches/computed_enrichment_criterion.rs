@@ -96,10 +96,6 @@ fn benchmark_computed_enrichment(c: &mut Criterion) {
         Ok::<_, PostgresStorageError>((collection, owner))
     })).unwrap();
     let mut group = c.benchmark_group("computed_enrichment");
-    group
-        .sample_size(20)
-        .warm_up_time(Duration::from_secs(1))
-        .measurement_time(Duration::from_secs(3));
     for bytes in [1024, 262_144] {
         for mode in ["fresh", "stale", "personal", "disabled"] {
             let data = json!({"value": "benchmark.example", "padding": "x".repeat(bytes)});
@@ -312,5 +308,10 @@ fn benchmark_computed_enrichment(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, benchmark_computed_enrichment);
+// CLI profiles override these standalone defaults equally on both revisions.
+criterion_group! {
+    name = benches;
+    config = Criterion::default().sample_size(20).warm_up_time(Duration::from_secs(1)).measurement_time(Duration::from_secs(3));
+    targets = benchmark_computed_enrichment
+}
 criterion_main!(benches);

@@ -12,8 +12,6 @@ const PASSWORD: &str = "correct horse battery staple";
 fn benchmark_password_hashing(c: &mut Criterion) {
     let mut group = c.benchmark_group("password_hashing");
     // Argon2 hashing takes tens of milliseconds; keep the run bounded.
-    group.sample_size(10);
-    group.measurement_time(Duration::from_secs(10));
 
     group.bench_function("hash_password", |b| {
         b.iter(|| hash_password(black_box(PASSWORD)).expect("password should hash"));
@@ -31,5 +29,10 @@ fn benchmark_password_hashing(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, benchmark_password_hashing);
+// CLI profiles override these standalone defaults equally on both revisions.
+criterion_group! {
+    name = benches;
+    config = Criterion::default().sample_size(10).measurement_time(Duration::from_secs(10));
+    targets = benchmark_password_hashing
+}
 criterion_main!(benches);

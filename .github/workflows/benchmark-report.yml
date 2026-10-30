@@ -1,0 +1,46 @@
+name: Performance report
+
+on:
+  workflow_run:
+    workflows: [Benchmarks]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Completed benchmark workflow run to report
+        required: true
+        type: string
+
+concurrency:
+  group: performance-report-${{ github.event.workflow_run.head_branch || inputs.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+
+jobs:
+  publish:
+    name: Publish complete performance evidence
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out trusted reporting code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - name: Collect final status and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+        run: python3 scripts/benchmark-report.py --run-id "$SOURCE_RUN_ID" --publish
+      - name: Retain complete report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: complete-performance-report
+          path: performance-report.md
