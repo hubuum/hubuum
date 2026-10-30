@@ -20,6 +20,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::*;
+use crate::permissions::{AppContext, LocalPermissionBackend};
 use crate::storage::StorageHandle;
 
 mod legacy_restore;
@@ -172,6 +173,98 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         fs::remove_dir_all(&self.root).unwrap();
     }
+}
+
+#[actix_web::test]
+async fn contended_background_retention_leaves_authority_and_task_details_untouched() {
+    let fixture = Fixture::new(Some(Duration::ZERO), TaskPurgeBudget::default()).await;
+    let (_, task) = fixture
+        .complete("busy-cleanup", StorageTaskCompletionPayload::Import)
+        .await;
+    let before = fixture.storage.read_task_control().await.unwrap();
+    let _held = open_session(fixture.service.configuration().unwrap())
+        .await
+        .unwrap();
+
+    assert!(
+        fixture
+            .service
+            .try_sweep_task_retention(&fixture.storage)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(fixture.storage.read_task_control().await.unwrap(), before);
+    assert!(fixture.storage.get_task_access(task).await.is_ok());
+}
+
+#[actix_web::test]
+async fn explicit_retention_sweep_still_rejects_repository_contention() {
+    let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
+    let _held = open_session(fixture.service.configuration().unwrap())
+        .await
+        .unwrap();
+    let result = fixture.service.sweep_task_retention(&fixture.storage).await;
+    assert!(matches!(result, Err(ApiError::ServiceUnavailable(message))
+        if message == "Control repository is busy; retry without bypassing protection"));
+}
+
+#[actix_web::test]
+async fn worker_cleanup_contention_does_not_abort_the_task_iteration() {
+    let fixture = Fixture::new(Some(Duration::ZERO), TaskPurgeBudget::default()).await;
+    let (_, task) = fixture
+        .complete("worker-busy-cleanup", StorageTaskCompletionPayload::Import)
+        .await;
+    let permissions = Arc::new(LocalPermissionBackend::new(
+        fixture.storage.clone(),
+        "admin".to_owned(),
+    ));
+    let context = AppContext::new(fixture.storage.clone(), permissions)
+        .with_task_receipts(fixture.service.clone());
+    let _held = open_session(fixture.service.configuration().unwrap())
+        .await
+        .unwrap();
+
+    crate::tasks::cleanup_task_outputs_for_test(&context)
+        .await
+        .unwrap();
+    assert!(fixture.storage.get_task_access(task).await.is_ok());
+}
+
+#[derive(Clone, Copy)]
+enum CleanupFailure {
+    MissingKey,
+    ChangedKey,
+    InvalidLock,
+}
+
+#[rstest::rstest]
+#[case::missing_key(CleanupFailure::MissingKey)]
+#[case::changed_key(CleanupFailure::ChangedKey)]
+#[case::invalid_lock(CleanupFailure::InvalidLock)]
+#[actix_web::test]
+async fn background_retention_preserves_protection_failures(#[case] failure: CleanupFailure) {
+    let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
+    let _held = open_session(fixture.service.configuration().unwrap())
+        .await
+        .unwrap();
+    let key = fixture.root.join("key");
+    match failure {
+        CleanupFailure::ChangedKey => fs::write(&key, [99; 32]).unwrap(),
+        CleanupFailure::MissingKey => fs::remove_file(&key).unwrap(),
+        CleanupFailure::InvalidLock => {
+            let lock = fixture.root.join("repository/LOCK");
+            fs::remove_file(&lock).unwrap();
+            fs::create_dir(lock).unwrap();
+        }
+    }
+    assert!(
+        fixture
+            .service
+            .try_sweep_task_retention(&fixture.storage)
+            .await
+            .is_err()
+    );
 }
 
 #[actix_web::test]

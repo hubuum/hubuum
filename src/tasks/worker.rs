@@ -330,7 +330,7 @@ async fn process_admitted_task(
 ) -> Result<bool, ApiError> {
     maybe_recover_expired_task_leases(context).await?;
 
-    if let Err(error) = maybe_cleanup_expired_task_outputs(context).await {
+    if let Err(error) = maybe_cleanup_expired_task_outputs(context, cleanup_state()).await {
         metrics::task_worker_iteration("error");
         return Err(error);
     }
@@ -721,7 +721,10 @@ async fn maybe_recover_expired_task_leases(
     }
 }
 
-async fn maybe_cleanup_expired_task_outputs(backend: &AppContext) -> Result<(), ApiError> {
+async fn maybe_cleanup_expired_task_outputs(
+    backend: &AppContext,
+    schedule: &Mutex<CleanupSchedule>,
+) -> Result<(), ApiError> {
     let cleanup_interval = task_worker_settings().export_output_cleanup_interval();
     cleanup_artifacts_when_due(&ARTIFACT_CLEANUP_STATE, cleanup_interval, async {
         storage_handle(backend)
@@ -731,15 +734,21 @@ async fn maybe_cleanup_expired_task_outputs(backend: &AppContext) -> Result<(), 
             .map_err(crate::services::artifacts::error)
     })
     .await?;
-    let Some(reservation) = CleanupReservation::reserve(cleanup_state(), cleanup_interval)? else {
+    let Some(reservation) = CleanupReservation::reserve(schedule, cleanup_interval)? else {
         return Ok(());
     };
 
-    match backend
+    let Some(sweep) = backend
         .task_receipts()
-        .sweep_task_retention(backend)
+        .try_sweep_task_retention(backend)
         .await?
-    {
+    else {
+        // This iteration already owns its application permit. Another publisher
+        // prevents cleanup, not execution of independently admitted tasks.
+        // Drop the reservation so cleanup remains due on the next iteration.
+        return Ok(());
+    };
+    match sweep {
         TaskRetentionSweep::Disabled => {}
         TaskRetentionSweep::Protected { more, .. } => {
             reservation.commit(more)?;
@@ -803,6 +812,12 @@ async fn cleanup_artifacts_when_due(
         reservation.commit(false)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) async fn cleanup_task_outputs_for_test(backend: &AppContext) -> Result<(), ApiError> {
+    let schedule = Mutex::new(CleanupSchedule::default());
+    maybe_cleanup_expired_task_outputs(backend, &schedule).await
 }
 
 fn duration_since(timestamp: chrono::NaiveDateTime) -> Option<Duration> {

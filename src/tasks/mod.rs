@@ -9,6 +9,9 @@ mod settings;
 mod types;
 mod worker;
 
+#[cfg(test)]
+pub(crate) use worker::cleanup_task_outputs_for_test;
+
 pub use helpers::{idempotency_key_from_headers, request_hash};
 #[cfg(feature = "integration-test-support")]
 pub(crate) use remote_call::{enter_local_remote_target_test, exit_local_remote_target_test};
