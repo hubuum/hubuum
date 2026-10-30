@@ -1205,17 +1205,50 @@ async fn released_hold_requires_a_checkpoint_covering_its_release_revision() {
     }).await.unwrap();
 }
 
+#[rstest]
+#[case::details("hubuum_task_details_visible")]
+#[case::outputs("hubuum_task_outputs_visible")]
+#[case::admission("hubuum_task_admission_allowed")]
+#[tokio::test]
+async fn task_visibility_lookups_have_a_fixed_buffer_budget_with_retained_purges(
+    #[case] function: &str,
+) {
+    #[derive(QueryableByName)]
+    struct Plan {
+        #[diesel(sql_type = diesel::sql_types::Json, column_name = "QUERY PLAN")]
+        value: Value,
+    }
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let pool = integration_test_migration_pool(1);
+    with_transaction(&pool, async |connection| {
+        setup(connection).await?;
+        let task = task(connection, "import").await?;
+        // Retained removal decisions outlive their task rows. A lookup for a
+        // different task must not scan every retained target on each claim.
+        connection.batch_execute("INSERT INTO hubuum_control.task_purge_batches(id,material,encoded_bytes) VALUES('22222222-2222-4222-8222-222222222222','{}',2); INSERT INTO hubuum_control.task_purge_targets(task_identity,scope,batch_id) SELECT gen_random_uuid(),'task_details','22222222-2222-4222-8222-222222222222' FROM generate_series(1,10000)").await?;
+        let query = format!("SELECT public.{function}($1) AS allowed");
+        assert!(sql_query(&query).bind::<Integer, _>(task).get_result::<Flag>(connection).await?.allowed);
+        let query = format!("EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT public.{function}($1)");
+        let plan = sql_query(query).bind::<Integer, _>(task).get_result::<Plan>(connection).await?.value;
+        let buffers = plan[0]["Plan"]["Shared Hit Blocks"].as_u64().unwrap()
+            + plan[0]["Plan"]["Shared Read Blocks"].as_u64().unwrap();
+        assert!(buffers <= 64, "{function} read {buffers} shared buffers for one task: {plan}");
+        connection.batch_execute("ROLLBACK TO SAVEPOINT retention_fixture").await?;
+        Ok::<_, PostgresStorageError>(())
+    }).await.unwrap();
+}
+
 #[tokio::test]
 async fn task_delete_triggers_and_many_child_indexes_are_reviewed_explicitly() {
     let pool = integration_test_migration_pool(1);
     let (triggers,indexed)=with_transaction(&pool,async |connection| {
         let triggers=sql_query("WITH RECURSIVE relations(oid) AS (SELECT 'public.tasks'::regclass::oid UNION SELECT c.conrelid FROM pg_constraint c JOIN relations p ON p.oid=c.confrelid WHERE c.contype='f') SELECT jsonb_build_object('table',t.tgrelid::regclass::text,'trigger',t.tgname) AS material FROM pg_trigger t WHERE NOT t.tgisinternal AND (t.tgtype&8)=8 AND t.tgrelid IN (SELECT oid FROM relations) ORDER BY t.tgrelid::regclass::text,t.tgname").load::<Material>(connection).await?;
-        let indexed=sql_query("SELECT EXISTS(SELECT 1 FROM pg_indexes WHERE schemaname='public' AND tablename='import_task_results' AND indexdef LIKE '%(task_id, id)%') AND EXISTS(SELECT 1 FROM pg_indexes WHERE schemaname='public' AND tablename='schema_impact_findings' AND indexdef LIKE '%(task_id, object_id)%') AS allowed").get_result::<Flag>(connection).await?.allowed;
+        let indexed=sql_query("SELECT EXISTS(SELECT 1 FROM pg_indexes WHERE schemaname='public' AND tablename='import_task_results' AND indexdef LIKE '%(task_id, id)%') AND EXISTS(SELECT 1 FROM pg_indexes WHERE schemaname='public' AND tablename='schema_impact_findings' AND indexdef LIKE '%(task_id, object_id)%') AND EXISTS(SELECT 1 FROM pg_indexes WHERE schemaname='public' AND tablename='tasks' AND indexdef LIKE '%(status, kind, created_at, id)%') AS allowed").get_result::<Flag>(connection).await?.allowed;
         Ok::<_,PostgresStorageError>((triggers.into_iter().map(|row|row.material).collect::<Vec<_>>(),indexed))
     }).await.unwrap();
     assert!(
         indexed,
-        "Many-child purge needs task-leading bounded lookup indexes"
+        "Task claims and many-child purges need indexes matching their bounded lookup order"
     );
     assert_eq!(
         triggers,

@@ -140,7 +140,7 @@ pub async fn reapply_task_retention(
             // within that restore does not prove that the task is unrelated to
             // an older protected decision. Exact retained targets still have a
             // proven correspondence and are reapplied normally below.
-            let derived = diesel::sql_query("SELECT t.logical_identity AS material FROM public.tasks t WHERE substring(t.logical_identity #>> '{subject,identity,identity}' FROM 15 FOR 1)='8' AND NOT EXISTS (SELECT 1 FROM hubuum_control.task_purge_targets p WHERE p.task_identity::text=t.logical_identity #>> '{subject,identity,identity}') LIMIT 1")
+            let derived = diesel::sql_query("SELECT t.logical_identity AS material FROM public.tasks t WHERE substring(t.logical_identity #>> '{subject,identity,identity}' FROM 15 FOR 1)='8' AND NOT EXISTS (SELECT 1 FROM hubuum_control.task_purge_targets p WHERE p.task_identity=(t.logical_identity #>> '{subject,identity,identity}')::uuid) LIMIT 1")
                 .get_result::<MaterialRow>(connection).await.optional()?;
             if let Some(row) = derived
                 && decode::<StorageIdentityEvidence>(row.material)?.has_unknown_task_restore_source()
@@ -171,7 +171,7 @@ pub async fn reapply_task_retention(
         }
         let unsettled=diesel::select(diesel::dsl::sql::<Bool>("EXISTS(SELECT 1 FROM hubuum_control.task_receipts WHERE material #>> '{outcome,state}'='may_execute')")).get_result::<bool>(connection).await?;
         if unsettled { return work.more(connection).await; }
-        let mismatched=diesel::sql_query("SELECT t.id,octet_length(to_jsonb(t)::text)::bigint AS bytes FROM public.tasks t JOIN hubuum_control.task_receipts r ON r.task_identity::text=t.logical_identity #>> '{subject,identity,identity}' WHERE NOT t.recovery_unavailable AND t.status NOT IN ('queued','validating','running') AND ((r.material #>> '{outcome,state}'='terminal' AND (t.status IS DISTINCT FROM r.material #>> '{outcome,status}' OR t.finished_at AT TIME ZONE 'UTC' IS DISTINCT FROM (r.material #>> '{outcome,finished_at}')::timestamptz)) OR (r.material #>> '{outcome,state}'='recovery_unknown' AND (t.status<>'failed' OR t.finished_at AT TIME ZONE 'UTC' IS DISTINCT FROM (r.material #>> '{outcome,settled_at}')::timestamptz))) ORDER BY t.id LIMIT $1 FOR UPDATE OF t")
+        let mismatched=diesel::sql_query("SELECT t.id,octet_length(to_jsonb(t)::text)::bigint AS bytes FROM public.tasks t JOIN hubuum_control.task_receipts r ON r.task_identity=(t.logical_identity #>> '{subject,identity,identity}')::uuid WHERE NOT t.recovery_unavailable AND t.status NOT IN ('queued','validating','running') AND ((r.material #>> '{outcome,state}'='terminal' AND (t.status IS DISTINCT FROM r.material #>> '{outcome,status}' OR t.finished_at AT TIME ZONE 'UTC' IS DISTINCT FROM (r.material #>> '{outcome,finished_at}')::timestamptz)) OR (r.material #>> '{outcome,state}'='recovery_unknown' AND (t.status<>'failed' OR t.finished_at AT TIME ZONE 'UTC' IS DISTINCT FROM (r.material #>> '{outcome,settled_at}')::timestamptz))) ORDER BY t.id LIMIT $1 FOR UPDATE OF t")
             .bind::<BigInt,_>(i64::from(budget.max_rows())).load::<RecoveryRow>(connection).await?;
         for row in mismatched {
             if !work.charge(row.bytes)? { return if work.rows==0 { Ok(TaskReapplicationProgress::Blocked(TaskPurgeBlock::OversizedRow)) } else { work.more(connection).await }; }

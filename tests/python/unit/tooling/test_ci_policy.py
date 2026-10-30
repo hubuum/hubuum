@@ -27,7 +27,7 @@ class CiTierTests(unittest.TestCase):
         script = textwrap.dedent(script.split("        run: |\n", 1)[1])
         variables = dict.fromkeys(("CODE_CHANGED", "RUST_CHANGED", "CONTAINER_CHANGED",
                                   "OPENAPI_CHANGED", "OPERATIONAL_CONTRACT_CHANGED",
-                                  "MARKDOWN_CHANGED", "IS_DRAFT", "FORCE_FULL"), "false")
+                                  "MARKDOWN_CHANGED", "IS_DRAFT", "FORCE_FULL", "FORCE_TASKS"), "false")
         variables.update(IS_PULL_REQUEST="true", **changes)
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "outputs"
@@ -54,7 +54,7 @@ class CiTierTests(unittest.TestCase):
 
     def test_full_label_overrides_path_and_draft_selection(self):
         result = self.policy(FORCE_FULL="true", IS_DRAFT="true")
-        for key in ("run_rust_ci", "run_full_ci", "run_container", "run_default_suite"):
+        for key in ("run_rust_ci", "run_full_ci", "run_container", "run_default_suite", "run_tasks"):
             self.assertEqual(result[key], "true", key)
 
     def test_validate_label_requests_full_ci_without_selecting_performance(self):
@@ -72,6 +72,25 @@ class CiTierTests(unittest.TestCase):
                 condition = job(name).split("    if: >-\n", 1)[1].split("    runs-on:", 1)[0]
                 self.assertIn("!cancelled()", condition)
                 self.assertNotIn("always()", condition)
+
+    def test_tasks_label_selects_only_the_dedicated_lane_on_a_documentation_draft(self):
+        result = self.policy(FORCE_TASKS="true", IS_DRAFT="true")
+        self.assertEqual(result["run_tasks"], "true")
+        for key in ("run_rust_ci", "run_full_ci", "run_container", "run_default_suite"):
+            self.assertEqual(result[key], "false", key)
+
+    def test_ready_rust_changes_do_not_implicitly_select_task_qualification(self):
+        self.assertEqual(self.policy(CODE_CHANGED="true", RUST_CHANGED="true")["run_tasks"], "false")
+
+    def test_removing_the_tasks_label_deselects_task_qualification(self):
+        self.assertEqual(self.policy(IS_DRAFT="true")["run_tasks"], "false")
+
+    def test_task_label_events_reclassify_and_share_validation_concurrency(self):
+        changes = job("changes").split("    runs-on:", 1)[0]
+        self.assertIn("github.event.label.name == 'ci:tasks'", changes)
+        concurrency = WORKFLOW.split("concurrency:\n", 1)[1].split("\nenv:", 1)[0]
+        self.assertIn("github.event.label.name != 'ci:tasks'", concurrency)
+
 
 
 class DatabaseInitializationTests(unittest.TestCase):
@@ -165,7 +184,8 @@ class PublicationGateTests(unittest.TestCase):
         for name in ("container-monitoring", "container-deployment"):
             with self.subTest(job=name):
                 consumer = job(name)
-                self.assertIn("    needs: container-build\n", consumer)
+                self.assertIn("    needs: [changes, container-build]\n", consumer)
+                self.assertIn("needs.changes.outputs.run_container == 'true'", consumer)
                 self.assertIn("!cancelled() && needs.container-build.result == 'success'", consumer)
                 download = consumer.split(
                     "      - name: Download verified production image\n", 1,
@@ -173,6 +193,52 @@ class PublicationGateTests(unittest.TestCase):
                 consumed = re.search(r"^          name: (.+)$", download, re.MULTILINE).group(1)
                 self.assertEqual(consumed, artifact)
                 self.assertIn('docker load --input "$RUNNER_TEMP/production-container.tar"', consumer)
+
+    def test_task_lane_reuses_the_image_and_is_a_required_gate_when_selected(self):
+        tasks = job("task-system")
+        self.assertIn("needs.changes.outputs.run_tasks == 'true'", tasks)
+        self.assertIn("needs.container-build.result == 'success'", tasks)
+        self.assertIn("name: production-container", tasks)
+        self.assertIn('cargo test --locked --release -p hubuum-storage-memory', tasks)
+        self.assertIn('--test task_retention', tasks)
+        self.assertIn('--count 100 --profile local --runs 1', tasks)
+        self.assertIn('--safety-probes --recovery-probes --physical-recovery-probes', tasks)
+        self.assertNotIn('--output-probe', tasks)
+        self.assertNotIn('--steady-seconds', tasks)
+        self.assertIn('      - task-system\n', job("ci-gate"))
+        self.assertIn("needs.changes.outputs.run_tasks == 'true'", job("container-build"))
+
+    def test_failed_native_task_contracts_cannot_be_hidden_by_tee(self):
+        tasks = job("task-system")
+        block = tasks.split("      - name: Run native task-retention contracts and query budgets\n", 1)[1]
+        script = textwrap.dedent(block.split("        run: |\n", 1)[1].split("      - name:", 1)[0])
+        with tempfile.TemporaryDirectory() as directory:
+            for name, code in (("hubuum-admin", 0), ("cargo", 43)):
+                path = Path(directory) / name
+                path.write_text(f"#!/bin/sh\nexit {code}\n")
+                path.chmod(0o700)
+            result = subprocess.run(["bash", "-e", "-c", script], cwd=directory, capture_output=True,
+                                    env={**os.environ, "RUNNER_TEMP": directory,
+                                         "PATH": directory + os.pathsep + os.environ["PATH"]})
+            self.assertEqual(result.returncode, 43)
+
+    def test_task_evidence_gate_rejects_incomplete_or_invalid_measurements(self):
+        import json
+
+        block = job("task-system").split("      - name: Verify task-system evidence\n", 1)[1]
+        script = textwrap.dedent(block.split("        run: |\n", 1)[1].split("      - name:", 1)[0])
+        for invalid in (None, "cleanup", "workload", "measurement", "monitor"):
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory) / "task-system-evidence/run-1"
+                root.mkdir(parents=True)
+                (root / "cleanup.json").write_text(json.dumps({"completed": invalid != "cleanup"}))
+                (root / "resources.json").write_text(json.dumps({
+                    "workload_completed": invalid != "workload", "measurement_valid": invalid != "measurement",
+                    "monitor_errors": ["missing process"] if invalid == "monitor" else [],
+                }))
+                result = subprocess.run(["bash", "-euo", "pipefail", "-c", script], cwd=directory,
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, invalid is None, result.stderr)
 
     def test_deployment_inputs_still_run_rust_container_contracts(self):
         contracts = job("deployment-build-contracts")

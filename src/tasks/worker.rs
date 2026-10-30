@@ -811,6 +811,15 @@ async fn cleanup_artifacts_when_due(
 }
 
 #[cfg(all(test, unix))]
+pub(crate) async fn run_task_maintenance_for_test(
+    context: AppContext,
+    poll_interval: Duration,
+    shutdown: ShutdownSignal,
+) {
+    cleanup::run(context, poll_interval, shutdown).await;
+}
+
+#[cfg(all(test, unix))]
 pub(crate) async fn cleanup_task_outputs_for_test(backend: &AppContext) -> Result<(), ApiError> {
     let schedule = Mutex::new(CleanupSchedule::default());
     let artifacts = Mutex::new(CleanupSchedule::default());

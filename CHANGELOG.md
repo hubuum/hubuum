@@ -206,12 +206,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Task claim and retention lookups use indexed UUID comparisons and queue order,
+  avoiding repeated scans as retained removal decisions and queued tasks grow.
+
 - Background task cleanup defers a contended checkpoint publication without
   aborting the worker's next task claim. Explicit cleanup commands retain their
   retryable refusal, and authentication or filesystem failures remain fatal.
 - Task maintenance runs independently of queue claimants, so bounded cleanup
   and artifact work can finish without pausing the next task execution. Each
-  maintenance pass retains its application admission and recovery checks.
+  maintenance pass retains its application admission and recovery checks and
+  pauses for the configured worker poll interval before reacquiring the
+  repository, allowing other publishers to make progress.
 - Startup readiness requires the latest migration packaged with the adapter,
   preventing an incomplete schema from passing after parallel migrations are
   integrated.

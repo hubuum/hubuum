@@ -293,9 +293,17 @@ fixtures with `python3 tests/python/run.py unit policies.test_rust_api` and
 
 The `ci:full` pull request label forces the complete CI and benchmark suites,
 including on a draft or documentation-only pull request. The `ci:benchmarks`
-label forces all benchmark jobs without expanding the main CI tier. Adding or
-removing either label takes effect immediately; converting a pull request back
-to draft cancels superseded work unless a forcing label remains.
+label forces all benchmark jobs without expanding the main CI tier.
+The `ci:tasks` label selects the dedicated task-system job on any pull request,
+including drafts and documentation changes, and requests its production image.
+This job also runs under `ci:full`; ordinary unlabelled CI skips it. It runs the
+memory adapter contracts, native retention contracts and 10,000-target query
+budgets, then a 100-task
+packaged admission, cleanup, hold, crash and restore drill. It reuses the verified
+production image and retains reports. It does not run the ten-load-run lifecycle
+performance qualification or the real one-hour output-expiry probe.
+Adding or removing these labels takes effect immediately; converting a pull
+request back to draft cancels superseded work unless a forcing label remains.
 
 The lightweight change classifier is implemented by
 `scripts/classify-ci-changes.sh`. Unknown file types are classified

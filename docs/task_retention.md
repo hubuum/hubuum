@@ -158,8 +158,13 @@ its configured task claimants. Cleanup retains its own application admission,
 maintenance/quarantine checks, execution scope and shutdown handling. Its local
 schedules avoid backend polling between cleanup intervals. A bounded pass can
 continue pending work without making a queue claimant wait for that pass;
-protected admission activation wakes the queue separately. Artifact cleanup
-uses the same maintenance loop. Explicit administrator sweeps use the same
+protected admission activation wakes the queue separately. Each bounded pass
+waits for the configured worker poll interval before reacquiring the repository,
+including when more work remains, so other publishers have time to acquire it.
+Shutdown interrupts that wait. Artifact cleanup uses the same maintenance loop.
+Task visibility compares stable UUIDs directly against retained targets, and
+queue claims use an index matching their status, kind and creation order.
+Retained decisions therefore do not require a full target scan for each claim. Explicit administrator sweeps use the same
 protected cleanup service.
 
 Use stable UUIDs when retrying hold commands:
