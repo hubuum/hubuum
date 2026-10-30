@@ -209,6 +209,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Background task cleanup defers a contended checkpoint publication without
   aborting the worker's next task claim. Explicit cleanup commands retain their
   retryable refusal, and authentication or filesystem failures remain fatal.
+- Task maintenance runs independently of queue claimants, so bounded cleanup
+  and artifact work can finish without pausing the next task execution. Each
+  maintenance pass retains its application admission and recovery checks.
 - Startup readiness requires the latest migration packaged with the adapter,
   preventing an incomplete schema from passing after parallel migrations are
   integrated.
