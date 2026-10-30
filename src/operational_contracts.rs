@@ -1457,6 +1457,7 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
                 "payload_too_large",
                 "database_error",
                 "conflict",
+                "idempotency_key_conflict",
                 "task_details_expired",
                 "legacy_request_unverifiable",
                 "precondition_failed",

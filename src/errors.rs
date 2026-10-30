@@ -529,6 +529,18 @@ impl From<TemplateAliasError> for ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::operational_contracts::metric_label_value_is_allowed;
+
+    #[rstest::rstest]
+    #[case::changed_request(ApiError::IdempotencyConflict)]
+    #[case::legacy_request(ApiError::LegacyTaskRequestUnverifiable)]
+    fn task_submission_errors_have_declared_metric_classes(#[case] error: ApiError) {
+        assert!(metric_label_value_is_allowed(
+            "hubuum_api_errors_total",
+            "class",
+            error.class(),
+        ));
+    }
 
     #[rstest::rstest]
     #[case::capacity(TaskCapacityRejection::Principal, StatusCode::TOO_MANY_REQUESTS)]
