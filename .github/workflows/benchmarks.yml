@@ -29,7 +29,7 @@ on:
         options: [quick, standard, thorough]
       warm_only:
         description: Only warm all benchmark executables on main
-        default: false
+        default: true
         type: boolean
   pull_request:
     types:

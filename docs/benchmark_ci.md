@@ -48,9 +48,10 @@ with an actionable error. Removing a selector or changing draft status recalcula
 selection; unrelated labels do not cancel active CI or benchmark jobs.
 
 The workflow can also be dispatched with `scopes` (`auto`, `all`, or a comma-separated
-list), `tags`, `targets`, `profile`, and `base_sha`. Manual comparisons default to
-`main` as their base. Set `warm_only=true` on `main` to compile the complete target
-catalog without measuring it.
+list), `tags`, `targets`, `profile`, and `base_sha`. Manual dispatch preserves the
+existing cache-warming default on `main`: `warm_only=true` compiles the complete
+catalog without measuring it. Set `warm_only=false` to compare the requested
+scopes/tags/targets; comparisons default to `main` as their base.
 
 ## Measurement profiles
 

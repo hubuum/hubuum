@@ -74,6 +74,11 @@ class BenchmarkPolicyTests(unittest.TestCase):
         self.assertIn("run_resources == 'true'", workflow)
         self.assertIn("has_targets == 'true'", workflow)
 
+    def test_manual_dispatch_preserves_cache_warming_by_default(self):
+        workflow = (ROOT / ".github/workflows/benchmarks.yml").read_text()
+        warm_input = workflow.split("      warm_only:\n", 1)[1].split("  pull_request:\n", 1)[0]
+        self.assertIn("default: true", warm_input)
+
 
 class TargetSelectionTests(unittest.TestCase):
     def setUp(self):
