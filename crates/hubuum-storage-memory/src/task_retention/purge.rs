@@ -47,6 +47,10 @@ impl PurgeWork {
         self.bytes += bytes;
         Ok(true)
     }
+
+    pub(crate) fn remaining_rows(&self) -> u32 {
+        self.budget.max_rows() - self.rows
+    }
 }
 
 impl MemoryTaskRecord {
@@ -143,6 +147,7 @@ impl MemoryState {
                 .schema_profile_outputs
                 .get(&id)
                 .is_some_and(|value| value.expires_at() > now)
+            || self.artifacts.has_available_task_output(identity, now)
         {
             return Ok(Some(TaskPurgeBlock::OutputAvailable));
         }
@@ -168,6 +173,10 @@ impl MemoryState {
         let mut blocked = None;
         let mut more = false;
         'targets: for identity in ticket.manifest().tasks() {
+            if self.task_control.holds_task(*identity, Utc::now()) {
+                blocked.get_or_insert(TaskPurgeBlock::Held);
+                continue;
+            }
             let mut selected = None;
             for task in self.tasks.values() {
                 let actual = self.task_identity(task.id)?;
@@ -177,15 +186,30 @@ impl MemoryState {
                     ));
                 }
             }
-            let Some(id) = selected else {
-                continue;
-            };
-            if let Some(block) =
-                self.task_purge_block(&self.tasks[&id.id()], ticket.manifest().scope(), Utc::now())?
+            if let Some(id) = selected
+                && let Some(block) = self.task_purge_block(
+                    &self.tasks[&id.id()],
+                    ticket.manifest().scope(),
+                    Utc::now(),
+                )?
             {
                 blocked.get_or_insert(block);
                 continue;
             }
+            match self.artifacts.purge_task(*identity, work)? {
+                Ok(true) => {}
+                Ok(false) => {
+                    more = true;
+                    continue;
+                }
+                Err(block) => {
+                    blocked.get_or_insert(block);
+                    continue;
+                }
+            }
+            let Some(id) = selected else {
+                continue;
+            };
             macro_rules! charge {
                 ($bytes:expr) => {
                     match work.charge($bytes) {
@@ -441,6 +465,7 @@ impl MemoryStorage {
                             .schema_profile_outputs
                             .get(&task.id.id())
                             .is_some_and(|value| value.expires_at() <= now)
+                        || state.artifacts.has_task_output_for_cleanup(identity, now)
                 }
             };
             if !due || already_selected || state.task_purge_block(task, scope, now)?.is_some() {

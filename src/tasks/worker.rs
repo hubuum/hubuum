@@ -800,7 +800,7 @@ async fn cleanup_artifacts_when_due(
     // Drain one bounded batch per worker tick. Once empty, avoid a database
     // acquisition on every idle poll; failures remain eligible for retry.
     if cleanup.await? == 0 {
-        reservation.commit()?;
+        reservation.commit(false)?;
     }
     Ok(())
 }

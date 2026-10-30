@@ -272,12 +272,22 @@ async fn protected_retry_precedes_approval_and_mutable_dependency_reads(
         Retry::Expired => 410,
     };
     let status = response.status().as_u16();
+    if !matches!(retry, Retry::Retained) {
+        assert_eq!(response.headers().get("Cache-Control").unwrap(), "no-store");
+        assert!(response.headers().get("Retry-After").is_none());
+    }
     let body: Value = actix_test::read_body_json(response).await;
     assert_eq!(status, expected, "{body}");
     match retry {
         Retry::Retained => assert_eq!(body["id"], task_id),
         Retry::Expired => assert_eq!(body["task_identity"], json!(identity)),
-        Retry::Changed => assert_eq!(body["error"], "Conflict"),
+        Retry::Changed => {
+            let fixture: Value = serde_json::from_str(include_str!(
+                "../../../../../tests/fixtures/lifecycle/task_submission_outcomes.json"
+            ))
+            .unwrap();
+            assert_eq!(body, fixture["changed_request"]["body"]);
+        }
     }
     assert_eq!(
         storage_handle(&fixture.context)

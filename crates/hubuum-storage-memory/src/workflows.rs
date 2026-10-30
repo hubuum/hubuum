@@ -1048,12 +1048,12 @@ impl TaskExecutionStorage for MemoryStorage {
             }
             StorageTaskCompletionPayload::Export(artifact) => {
                 let (identity, content, report, output_expires_at, durations) =
-                    artifact.into_parts();
+                    artifact.into_parts(now)?;
                 let (template_name, content_type) = identity.into_parts();
                 let (json_output, text_output, proof) = content.into_parts();
                 let reference = proof
                     .as_ref()
-                    .map(|proof| state.publish_task_artifact(&lease, proof))
+                    .map(|proof| state.publish_task_artifact(&lease, proof, output_expires_at))
                     .transpose()?;
                 let (metadata, warnings, warning_count, truncated) = report.into_parts();
                 let output = StorageExportOutput::builder(
@@ -1098,10 +1098,11 @@ impl TaskExecutionStorage for MemoryStorage {
                 state.export_outputs.insert(lease.task_id().id(), output);
             }
             StorageTaskCompletionPayload::Backup(artifact) => {
-                let (document, byte_size, sha256, output_expires_at) = artifact.into_parts();
+                let (document, byte_size, sha256, output_expires_at) = artifact.into_parts(now)?;
                 let output = match document {
                     StorageBackupTaskContent::Verified(proof) => {
-                        let reference = state.publish_task_artifact(&lease, &proof)?;
+                        let reference =
+                            state.publish_task_artifact(&lease, &proof, output_expires_at)?;
                         StorageBackupOutput::from_reference(
                             lease.task_id(),
                             reference,

@@ -620,6 +620,7 @@ identities and preserves all pre-existing physical obligations.
 
 The [artifact contract](../artifact_staging.md) defines wire integrity, spool
 lifetime, finite limits, retained-reader compatibility, and cleanup accounting.
+
 ### `task_retention`
 
 Required trait: `TaskRetentionStorage`, within the workflow family.

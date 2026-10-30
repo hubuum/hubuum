@@ -241,8 +241,11 @@ Writes already coalesced roughly 32 protected records per publication, while
 each admission reread and verified the growing checkpoint. This evidence motivates
 bounded reuse of authenticated immutable contents with fresh independent file,
 digest, reference, key and durability checks. It does not establish acceptance.
-The host exposes a MegaRAID controller with rotational-device metadata; physical
-SSD media and equivalence to the named SSD profile remain unverified.
+The host exposes a MegaRAID controller with rotational-device metadata. The
+operator confirmed on 2026-10-30 that its backing drives are SSDs; this is
+operator evidence rather than direct media identification by the operating
+system. Resource enforcement and the remaining profile equivalence still need
+to be recorded with each acceptance run.
 
 P6 acceptance still requires five fresh runs with declared warm-up, demonstrated steady occupancy
 near 10,000 receipts and continuous capacity release/refill for at least three windows.

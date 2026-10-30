@@ -555,8 +555,13 @@ async fn deletion_status_excludes_copy_locations_and_erased_payloads() {
     }
 }
 
+#[rstest]
+#[case::runtime(false)]
+#[case::status(true)]
 #[tokio::test]
-async fn task_only_publication_preserves_the_verified_application_release() {
+async fn task_only_publication_preserves_the_verified_application_release(
+    #[case] inspect_status: bool,
+) {
     use hubuum_storage_core::{TaskRetentionPolicy, TaskRetentionPolicyChange};
     use std::time::Duration;
 
@@ -587,9 +592,19 @@ async fn task_only_publication_preserves_the_verified_application_release() {
         serde_json::json!({"directory":fixture.directory,"key":fixture.key}),
     )
     .unwrap();
-    super::super::require_runtime_permit(&fixture.storage, &options)
-        .await
-        .unwrap();
+    if inspect_status {
+        let report = super::super::status(&fixture.storage, &fixture.directory, &fixture.key)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(report).unwrap()["intents"][0]["confirmed_managed_scope_completion"],
+            true
+        );
+    } else {
+        super::super::require_runtime_permit(&fixture.storage, &options)
+            .await
+            .unwrap();
+    }
 }
 
 #[rstest]

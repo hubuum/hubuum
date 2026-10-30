@@ -57,6 +57,80 @@ pub(super) struct Fixture {
     user: BackendUserFixture,
     pub(super) task: StorageTask,
 }
+
+#[rstest]
+#[case::export(StorageTaskKind::Export)]
+#[case::backup(StorageTaskKind::Backup)]
+#[actix_web::test]
+async fn output_availability_is_resolved_at_atomic_completion(#[case] kind: StorageTaskKind) {
+    use hubuum_storage_core::{
+        StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageExportTaskArtifactContent,
+        StorageOutputAvailability,
+    };
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let fixture = Fixture::new(environment, kind).await;
+        let lease = fixture.claim().await;
+        // The prepared artifact carries a duration without consuming any of it
+        // until the adapter publishes the result in its completion transaction.
+        let availability = StorageOutputAvailability::after_ready_seconds(48 * 60 * 60).unwrap();
+        let payload = match kind {
+            StorageTaskKind::Export => StorageTaskCompletionPayload::Export(
+                StorageExportTaskArtifact::builder(
+                    "application/json",
+                    StorageExportTaskArtifactContent::Json(serde_json::json!({"ready":true})),
+                    serde_json::json!({}),
+                    serde_json::json!([]),
+                    availability,
+                )
+                .try_build()
+                .unwrap(),
+            ),
+            StorageTaskKind::Backup => StorageTaskCompletionPayload::Backup(
+                StorageBackupTaskArtifact::try_new(b"{}".to_vec(), availability).unwrap(),
+            ),
+            _ => unreachable!(),
+        };
+        let completed = fixture
+            .backend
+            .complete_task(StorageTaskCompletion::new(
+                StorageTaskTerminalUpdate::new(
+                    lease,
+                    StorageTaskTerminalStatus::Succeeded,
+                    StorageTaskResultCounts::try_new(1, 1, 0).unwrap(),
+                ),
+                StorageTaskEventInput::new("succeeded", "Result ready"),
+                payload,
+            ))
+            .await
+            .unwrap();
+        let ready_at = completed.finished_at().unwrap();
+        let expires_at = match kind {
+            StorageTaskKind::Export => match fixture
+                .backend
+                .get_export_output(fixture.task.id())
+                .await
+                .unwrap()
+            {
+                StorageTaskOutputLookup::Available(output) => output.output_expires_at(),
+                _ => panic!("newly ready output unavailable"),
+            },
+            StorageTaskKind::Backup => match fixture
+                .backend
+                .get_backup_output(fixture.task.id())
+                .await
+                .unwrap()
+            {
+                StorageTaskOutputLookup::Available(output) => output.output_expires_at(),
+                _ => panic!("newly ready backup unavailable"),
+            },
+            _ => unreachable!(),
+        };
+        assert!(expires_at >= ready_at + chrono::Duration::hours(48));
+        assert!(expires_at < ready_at + chrono::Duration::hours(48) + chrono::Duration::seconds(2));
+        fixture.cleanup().await;
+    }
+}
 impl Fixture {
     pub(super) async fn new(environment: BackendTestEnvironment, kind: StorageTaskKind) -> Self {
         Self::with_total(environment, kind, 1).await

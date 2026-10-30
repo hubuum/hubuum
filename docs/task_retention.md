@@ -33,10 +33,64 @@ protected before receipt retirement advances the monotonic expiry floor. Only
 then can a reused key create another generation. An old admission ticket cannot
 activate that generation.
 
+### HTTP outcomes and consumer actions
+
+The same rules apply to keyed import, backup, export, template export, remote
+invocation and schema-profile submissions. Treat these as distinct outcomes:
+
+- HTTP 202 for a recognized request returns its existing task. Continue reading
+  that task; do not assume the operation executed again.
+- HTTP 409 with `reason: idempotency_key_conflict` means the key still identifies
+  a different protected request or kind. No new work was created. Do not replace
+  the key automatically to get past the conflict.
+- HTTP 410 with `reason: task_details_expired` recognizes the original submission
+  after its details were removed. No work or capacity reservation was created.
+  Keep the receipt outcome; do not turn this response into a new submission.
+- After independently protected receipt retirement, normal admission can accept
+  the key as a new generation and return HTTP 202 with a new task reference.
+  That is new work with new effects. A client clock, HTTP 404, or HTTP 410 does
+  not prove retirement or authorize it. Require an intentional new user request.
+
+For example, a changed protected request returns:
+
+```http
+HTTP/1.1 409 Conflict
+Content-Type: application/json
+Cache-Control: no-store
+
+{"error":"Conflict","reason":"idempotency_key_conflict","message":"The idempotency key identifies a different protected request; no new work was created"}
+```
+
+A recognized submission with removed details returns:
+
+```http
+HTTP/1.1 410 Gone
+Content-Type: application/json
+Cache-Control: no-store
+
+{"reason":"task_details_expired","task_identity":"00000000-0000-0000-0000-000000000001","kind":"export","expires_at":null}
+```
+
+Neither response includes `Retry-After`. The receipt's `expires_at` is its
+deduplication deadline, when known; it is not a result-availability deadline or a
+promise that a later retry will be accepted. Preserve unknown optional response
+fields and handle unknown reasons using the HTTP status without parsing messages.
+Shared examples live in
+`tests/fixtures/lifecycle/task_submission_outcomes.json`.
+The server's HTTP tests exercise these examples for every keyed submission kind.
+
+Task/result inspection still requires current authentication and permission.
+An authorized retained task can report an expired output as HTTP 410. A missing
+or already purged task/output returns HTTP 404; an unauthorized request follows
+the route's permission-safe denial behavior. Neither response grants output
+access, a different principal's receipt, or permission to submit new work.
+The existing output routes may use the general `ApiErrorResponse` shape for
+expiry; the submission receipt response above is a separate typed contract.
+
 ## Upgrade and activation
 
 Stop older API, worker, restore and administrator binaries. Apply migration
-`2026-10-29-000006_task_retention`, reconcile database grants, and deploy matching
+`2026-10-29-000007_task_retention`, reconcile database grants, and deploy matching
 binaries with the same independent control repository and authentication key.
 Keep these outside supported database rollback, following
 [deletion recovery](deletion_recovery.md). The migration leaves receipt protection
@@ -113,6 +167,42 @@ expiry. Global audit records retain captured stable task identities even after a
 task row is removed. Scoped task reads disappear when their purge intent becomes
 effective. Reads already started under an earlier database snapshot may finish;
 retention cannot retract bytes already delivered.
+
+Published task-owned artifact chunks, manifests and reservations participate in
+the protected purge. Their independent verification digest preserves this
+requirement after an output reference or its original task disappears.
+Each physical row consumes the same batch row/byte budget. Reservations remain
+charged through the local producer cleanup grace and until the physical
+obligation has been retired. A removed output catalog row alone is not evidence
+that its bytes are gone.
+An abandoned unpublished attempt becomes eligible once its task is terminal;
+it does not wait for a result-availability window that never began.
+Unpublished staging also retains its existing lease-fenced cleanup path, so an
+abandoned attempt can release capacity during a retry. Both adapters pin current
+holds before that cleanup; a hold still prevents removal.
+
+### Result availability and reconnecting
+
+Existing task discovery is principal-owned rather than session-owned. After
+re-authentication, list `/api/v1/tasks` with the appropriate kind/status filters
+and use the returned links. Closing a browser or local wait does not cancel the
+task. Each later read checks current authorization again.
+
+For new export and backup results, the configured output lifetime starts at
+atomic successful completion. Preparation time does not consume that window.
+Configure `HUBUUM_EXPORT_OUTPUT_RETENTION_HOURS=48` and
+`HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS=48` for a two-day post-ready window.
+The terminal task's `finished_at` is the ready-time anchor;
+`details.export.output_expires_at` or `details.backup.output_expires_at` is the
+availability deadline. Detail cleanup preserves discovery while an output is
+available, even if its detail policy would otherwise expire sooner. Receipt
+deduplication has its own independently protected window.
+
+Restoring a recorded result preserves its original deadline. Retrieval does not
+extend source-version retention or override erasure, holds, or current
+authorization. This change covers existing export/backup results; warm/cold
+retrieval workflows and their full cross-login, next-day acceptance are owned by
+the coordinated #545, #516 and #517 contracts.
 
 Receipt authority has independent limits of 16,384 records and 12 MiB. Admission
 reserves each record's worst-case terminal growth, so the byte limit can be reached

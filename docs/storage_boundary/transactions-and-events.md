@@ -445,6 +445,7 @@ physical storage state and durable ownership, not ordinary domain resources.
 Task completion owns the terminal task event and atomic output publication.
 Cleanup retains obligations and reservations until bounded physical deletion
 finishes, independently of application task deletion and logical restore.
+
 ## Protected task-control mutations
 
 `TaskQueueStorage::activate_task_submission` atomically acknowledges an exact

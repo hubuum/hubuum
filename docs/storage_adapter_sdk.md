@@ -634,6 +634,17 @@ lookup and activation, and the typed `StorageTaskSubmissionOutcome` creation
 result. Preserve stable principal/task identities, original request fingerprints,
 terminal-anchored windows and exact admission tickets across adapter boundaries.
 
+Preserve `StorageErrorKind::IdempotencyConflict` across adapter error conversion
+for changed protected request fingerprints and task kinds. The application maps
+it to HTTP 409 with a bounded reason; do not collapse it into a generic conflict
+whose meaning a consumer would have to recover from prose.
+
+Export and backup artifact `into_parts` now accepts an adapter-owned readiness
+clock and returns a fallible result. `StorageOutputAvailability` preserves either
+an existing fixed deadline or a validated post-ready lifetime. Resolve it inside
+atomic completion and update physical artifact ownership to the same resulting
+deadline. Restore keeps its recorded deadline and must not start a new lifetime.
+
 Checkpoint capture now combines independent deletion and task authority through
 `ControlCheckpointCapture`. Exposure release takes `ApplicationExposureProof`;
 protected task authority requires an exact current-incarnation task reapplication
@@ -648,3 +659,11 @@ unsupported fallback satisfies these required methods. Run the shared protected
 admission verifier and adapter-native transaction, locking, migration, recovery
 and bounded-purge tests. See [task retention](task_retention.md) for operational
 activation and client-visible retry behavior.
+
+Published task-owned artifact chunks, manifests and reservations are part of the
+bounded purge contract. Their verification proof fences ordinary physical
+cleanup, including while already marked deleting. Abandoned unpublished staging
+retains lease-fenced cleanup with current holds pinned, preserving retry capacity.
+Recheck holds and immutable task ownership even when its catalog row is
+absent, preserve producer grace, and acknowledge completion only after all
+physical obligations in the selected scope have been retired.

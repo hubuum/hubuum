@@ -779,7 +779,9 @@ async fn logical_task_backup_preserves_fixed_policy_anchor() {
         StorageBackupBudget::new(16 * 1024 * 1024, 10000).unwrap(),
     )
     .unwrap();
-    let restored = crate::backup::restore_without_repairs(snapshot, Default::default()).unwrap();
+    let restored =
+        crate::backup::restore_without_repairs(snapshot, Default::default(), Default::default())
+            .unwrap();
     assert_eq!(
         restored.tasks[&id.id()].retention_policy,
         original.tasks[&id.id()].retention_policy

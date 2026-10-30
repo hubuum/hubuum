@@ -21,8 +21,9 @@ pub(crate) use cleanup::cleanup_object_history;
 use std::path::Path;
 
 use hubuum_storage_core::{
-    ControlCheckpointCapture, DeletionControlState, DeletionControlStorage, RuntimeIsolationDomain,
-    StorageValidationError, TaskControlRecovery, TaskReceiptActivation, TaskRetentionStorage,
+    ApplicationControlState, ControlCheckpointCapture, DeletionControlState,
+    DeletionControlStorage, RuntimeIsolationDomain, StorageValidationError, TaskControlRecovery,
+    TaskReceiptActivation, TaskRetentionStorage,
 };
 use serde::Serialize;
 
@@ -157,18 +158,11 @@ pub(crate) async fn require_runtime_permit(
             "Retained deletion decisions restrict application exposure and worker execution; keep the deployment quarantined until lifecycle restrictions can be reapplied",
         ));
     }
-    if (!current.intents().is_empty()
-        || application.reapplication().is_some()
-        || capture.task_reapplication().is_some()
-        || required.as_ref().is_some_and(|required| {
-            required.checkpoint().reapplication().is_some()
-                || required.checkpoint().task_reapplication().is_some()
-        }))
-        && !required.as_ref().is_some_and(|required| {
-            application.reapplication() == required.checkpoint().reapplication()
-                && capture.task_reapplication() == required.checkpoint().task_reapplication()
-        })
-    {
+    if !reapplication_is_protected(
+        &capture,
+        &application,
+        required.as_ref().map(RecoveryEvidence::checkpoint),
+    ) {
         return Err(unavailable(
             "Application release does not match independently protected reapplication; run --reapply-control",
         ));
@@ -267,6 +261,24 @@ fn covers_checkpoint(
         && required
             .task_control()
             .is_none_or(|tasks| current.task_control().covers(tasks))
+}
+
+fn reapplication_is_protected(
+    current: &ControlCheckpointCapture,
+    application: &ApplicationControlState,
+    required: Option<&repository::DurableCheckpoint>,
+) -> bool {
+    let needs_proof = !current.deletion().state().intents().is_empty()
+        || application.reapplication().is_some()
+        || current.task_reapplication().is_some()
+        || required.is_some_and(|checkpoint| {
+            checkpoint.reapplication().is_some() || checkpoint.task_reapplication().is_some()
+        });
+    !needs_proof
+        || required.is_some_and(|checkpoint| {
+            application.reapplication() == checkpoint.reapplication()
+                && current.task_reapplication() == checkpoint.task_reapplication()
+        })
 }
 
 fn require_activation_checkpoint(

@@ -1,5 +1,8 @@
 use super::*;
 use hubuum_storage_core::artifacts::*;
+use hubuum_storage_core::{TaskPurgeBlock, TaskReceiptActivation};
+
+use super::task_retention::{PurgeWork, measured};
 
 #[derive(Clone, Default)]
 pub(super) struct Artifacts {
@@ -42,6 +45,119 @@ fn boundary(error: StorageError) -> ArtifactError {
     ArtifactError::Backend(error.to_string())
 }
 impl Artifacts {
+    pub(super) fn has_available_task_output(&self, task: TaskIdentity, now: DateTime<Utc>) -> bool {
+        self.attempts.values().any(|attempt| {
+            attempt.phase == Phase::Published
+                && attempt
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.task == task && owner.expires > now)
+        })
+    }
+
+    pub(super) fn has_task_output_for_cleanup(
+        &self,
+        task: TaskIdentity,
+        now: DateTime<Utc>,
+    ) -> bool {
+        self.attempts.values().any(|attempt| {
+            attempt.owner.as_ref().is_some_and(|owner| {
+                owner.task == task && (attempt.phase != Phase::Published || owner.expires <= now)
+            })
+        })
+    }
+
+    pub(super) fn purge_task(
+        &mut self,
+        task: TaskIdentity,
+        work: &mut PurgeWork,
+    ) -> Result<Result<bool, TaskPurgeBlock>, StorageError> {
+        let ids: Vec<_> = self
+            .attempts
+            .iter()
+            .filter(|(_, attempt)| {
+                attempt
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.task == task)
+            })
+            .take(work.remaining_rows().max(1) as usize)
+            .map(|(id, _)| *id)
+            .collect();
+        macro_rules! charge {
+            ($bytes:expr) => {
+                match work.charge($bytes) {
+                    Ok(true) => {}
+                    Ok(false) => return Ok(Ok(false)),
+                    Err(block) => return Ok(Err(block)),
+                }
+            };
+        }
+        let now = Utc::now();
+        for id in ids {
+            let attempt = self.attempts.get_mut(&id).expect("selected owned attempt");
+            let owner = attempt.owner.as_mut().expect("selected owner");
+            if attempt.phase == Phase::Published && owner.expires > now {
+                return Ok(Err(TaskPurgeBlock::OutputAvailable));
+            }
+            let owner_bytes = measured(&(
+                owner.task,
+                owner.lease.task_id().id(),
+                owner.lease.token().adapter_value(),
+                owner.lease.execution_fence(),
+                owner.reservation.worker(),
+                owner.reservation.spool_bytes(),
+                owner.reservation.worker_bytes(),
+                owner.reserved,
+                owner.cleanup_after,
+                owner.expires,
+            ))?;
+            if owner.reservation.spool_bytes() > 0 && owner.cleanup_after.is_none() {
+                charge!(owner_bytes);
+                owner.cleanup_after = Some(
+                    now + Duration::from_std(LOCAL_SPOOL_CLEANUP_GRACE)
+                        .expect("finite cleanup grace"),
+                );
+                return Ok(Ok(false));
+            }
+            if owner.cleanup_after.is_some_and(|after| after > now) {
+                return Ok(Err(TaskPurgeBlock::Dependency));
+            }
+            if attempt.phase != Phase::Discarded {
+                attempt.phase = Phase::Deleting;
+                while let Some((ordinal, bytes)) = attempt.blocks.first_key_value() {
+                    charge!(bytes.len() as u64 + measured(&(&attempt.identity, ordinal))?);
+                    attempt.blocks.pop_first();
+                }
+                charge!(
+                    measured(&(
+                        &attempt.identity,
+                        attempt.limits.block_bytes(),
+                        attempt.limits.artifact_bytes(),
+                        attempt.limits.blocks(),
+                        attempt.limits.manifest_bytes(),
+                        attempt.bytes,
+                        attempt.expires,
+                        &attempt.reference,
+                    ))? + attempt
+                        .manifest
+                        .as_ref()
+                        .map_or(0, |manifest| manifest.encoded_len() as u64)
+                );
+                attempt.manifest = None;
+                attempt.phase = Phase::Discarded;
+            }
+            charge!(owner_bytes);
+            attempt.owner = None;
+        }
+        Ok(Ok(!self.attempts.values().any(|attempt| {
+            attempt
+                .owner
+                .as_ref()
+                .is_some_and(|owner| owner.task == task)
+        })))
+    }
+
     pub(super) fn reservations(&self) -> impl Iterator<Item = (TaskIdentity, u64)> + '_ {
         self.attempts.values().filter_map(|attempt| {
             attempt
@@ -109,6 +225,7 @@ impl MemoryState {
         &mut self,
         lease: &StorageTaskLease,
         proof: &VerifiedArtifact,
+        output_expires_at: DateTime<Utc>,
     ) -> Result<ArtifactReference, StorageError> {
         let identity = self.task_identity(lease.task_id())?;
         let attempt = self
@@ -122,9 +239,18 @@ impl MemoryState {
         if owner.task != identity || &owner.lease != lease || owner.expires <= Utc::now() {
             return Err(StorageError::conflict("Task artifact owner changed"));
         }
-        self.artifacts
+        let reference = self
+            .artifacts
             .publish(proof)
-            .map_err(|error| StorageError::conflict(error.to_string()))
+            .map_err(|error| StorageError::conflict(error.to_string()))?;
+        self.artifacts
+            .attempt_mut(proof.manifest().identity())
+            .map_err(|error| StorageError::conflict(error.to_string()))?
+            .owner
+            .as_mut()
+            .expect("validated task owner")
+            .expires = output_expires_at;
+        Ok(reference)
     }
 }
 
@@ -302,6 +428,16 @@ impl ArtifactStore for MemoryStorage {
             .attempts
             .iter()
             .find(|(_, attempt)| {
+                if let Some(owner) = &attempt.owner
+                    && !matches!(
+                        state.task_control.activation(),
+                        TaskReceiptActivation::Disabled
+                    )
+                    && (attempt.reference.is_some()
+                        || state.task_control.holds_task(owner.task, now))
+                {
+                    return false;
+                }
                 if attempt
                     .owner
                     .as_ref()
@@ -593,5 +729,297 @@ impl MemoryRestoreArtifact {
             },
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod retention_tests {
+    use super::*;
+    use rstest::rstest;
+
+    async fn fixture(
+        spool_bytes: u64,
+        terminal: bool,
+    ) -> (MemoryStorage, TaskIdentity, ArtifactReference) {
+        let storage = MemoryStorage::new();
+        let StorageTaskSubmissionOutcome::CreatedReady(task) = storage
+            .create_task(
+                StorageTaskCreateRequest::builder(
+                    StorageTaskKind::Import,
+                    PrincipalId::new(1).unwrap(),
+                    serde_json::json!({}),
+                    1,
+                )
+                .try_build()
+                .unwrap(),
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("fixture task")
+        };
+        let claim = storage
+            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        if terminal {
+            storage
+                .fail_task(StorageTaskFailure::new(
+                    claim.lease().clone(),
+                    "Fixture settled",
+                    StorageTaskEventInput::new("failed", "Fixture settled"),
+                ))
+                .await
+                .unwrap();
+        }
+        let mut state = storage.state.write_control().await;
+        let task_identity = state.task_identity(task.id()).unwrap();
+        let identity = ArtifactIdentity::new(DestinationId::generate());
+        let limits = ArtifactLimits::builder()
+            .block_bytes(1024)
+            .artifact_bytes(20 * 1024)
+            .blocks(20)
+            .manifest_bytes(1024)
+            .build()
+            .unwrap();
+        let mut builder = ManifestBuilder::new(identity.clone(), limits);
+        for _ in 0..20 {
+            builder.push(&[7; 1024]).unwrap();
+        }
+        let manifest = builder.finish().unwrap();
+        let mut verifier = manifest.verifier();
+        for _ in 0..20 {
+            verifier.push(&[7; 1024]).unwrap();
+        }
+        let proof = verifier.finish().unwrap();
+        let reference = proof.reference();
+        let published = terminal && spool_bytes == 0;
+        let reserved = if published {
+            manifest.stored_bytes()
+        } else {
+            limits.artifact_bytes() + u64::from(limits.manifest_bytes()) + spool_bytes
+        };
+        let lease = if terminal {
+            claim.lease().clone()
+        } else {
+            let mut old = StorageTaskLease::new(
+                task.id(),
+                StorageTaskClaimToken::new(Uuid::new_v4().to_string()),
+            );
+            if let Some(fence) = claim.lease().execution_fence() {
+                old = old.with_execution_fence(fence);
+            }
+            old
+        };
+        let key_fingerprint = ControlKeyFingerprint::new("a".repeat(64)).unwrap();
+        state.task_control = state
+            .task_control
+            .with_activation(TaskReceiptActivation::Backfilling {
+                key_fingerprint: key_fingerprint.clone(),
+            })
+            .unwrap()
+            .with_activation(TaskReceiptActivation::Protected { key_fingerprint })
+            .unwrap();
+        state.artifacts.attempts.insert(
+            identity.artifact(),
+            Attempt {
+                identity,
+                limits,
+                phase: if published {
+                    Phase::Published
+                } else {
+                    Phase::Sealed
+                },
+                blocks: (0..20)
+                    .map(|ordinal| (ordinal, Arc::new(vec![7; 1024])))
+                    .collect(),
+                bytes: manifest.byte_size(),
+                manifest: Some(manifest),
+                reference: published.then(|| reference.clone()),
+                expires: Utc::now() + Duration::hours(1),
+                owner: Some(Owner {
+                    lease,
+                    task: task_identity,
+                    reservation: ArtifactReservation::new(
+                        *Uuid::new_v4().as_bytes(),
+                        spool_bytes,
+                        64 * 1024,
+                    )
+                    .unwrap(),
+                    reserved,
+                    cleanup_after: None,
+                    expires: if published {
+                        Utc::now() - Duration::seconds(1)
+                    } else {
+                        Utc::now() + Duration::days(1)
+                    },
+                }),
+            },
+        );
+        drop(state);
+        (storage, task_identity, reference)
+    }
+
+    async fn proof(storage: &MemoryStorage) -> ProtectedTaskPurge {
+        let ticket = storage
+            .prepare_expired_task_outputs(
+                TaskPurgeSelection::new(1, TaskPurgeBudget::default()).unwrap(),
+            )
+            .await
+            .unwrap()
+            .expect("expired physical output without a catalog reference");
+        let state = storage.read_task_control().await.unwrap();
+        ProtectedTaskPurge::new(
+            ticket,
+            TaskControlCheckpoint::new(
+                state.lineage(),
+                state.epoch(),
+                state.revision(),
+                DeletionCheckpointIdentity::new("b".repeat(64)).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn ordinary_cleanup_cannot_bypass_a_protected_artifact_purge() {
+        let (storage, _, reference) = fixture(0, true).await;
+        storage.cleanup().await.unwrap();
+        assert!(storage.published_manifest(&reference).await.is_ok());
+    }
+
+    #[rstest]
+    #[case::reclaim_retry_capacity(false)]
+    #[case::retained_hold(true)]
+    #[tokio::test]
+    async fn abandoned_staging_cleanup_respects_holds_during_another_attempt(#[case] held: bool) {
+        let (storage, task, reference) = fixture(0, false).await;
+        if held {
+            let state = storage.read_task_control().await.unwrap();
+            let hold = TaskRetentionHold::new(
+                TaskHoldId::generate(),
+                task,
+                Utc::now(),
+                None,
+                TaskHoldReason::Legal,
+            )
+            .unwrap();
+            storage
+                .change_task_hold(TaskHoldChange::new(state.revision(), hold))
+                .await
+                .unwrap();
+        }
+        storage.cleanup().await.unwrap();
+        storage.cleanup().await.unwrap();
+        let state = storage.state.read_control().await;
+        let attempt = &state.artifacts.attempts[&reference.identity().artifact()];
+        assert_eq!(attempt.blocks.len(), if held { 20 } else { 0 });
+    }
+
+    #[tokio::test]
+    async fn abandoned_unpublished_artifact_does_not_wait_for_result_expiry() {
+        let (storage, _, reference) = fixture(0, true).await;
+        {
+            let mut state = storage.state.write_control().await;
+            let attempt = state
+                .artifacts
+                .attempts
+                .get_mut(&reference.identity().artifact())
+                .unwrap();
+            attempt.phase = Phase::Sealed;
+            attempt.reference = None;
+            let reservation =
+                attempt.limits.artifact_bytes() + u64::from(attempt.limits.manifest_bytes());
+            let owner = attempt.owner.as_mut().unwrap();
+            owner.reserved = reservation;
+            owner.expires = Utc::now() + Duration::days(1);
+        }
+        let protected = proof(&storage).await;
+        assert!(matches!(
+            storage
+                .purge_task_details_batch(protected, TaskPurgeBudget::default())
+                .await
+                .unwrap(),
+            TaskPurgeProgress::Removed { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn protected_artifact_purge_charges_chunks_manifest_and_reservation_before_completion() {
+        let (storage, _, reference) = fixture(0, true).await;
+        let protected = proof(&storage).await;
+        let budget = TaskPurgeBudget::new(2, 4096).unwrap();
+        let mut complete = false;
+        for _ in 0..32 {
+            let progress = storage
+                .purge_task_details_batch(protected.clone(), budget)
+                .await
+                .unwrap();
+            let (rows, bytes) = match progress {
+                TaskPurgeProgress::More { rows, bytes } => (rows, bytes),
+                TaskPurgeProgress::Removed { rows, bytes, .. } => {
+                    complete = true;
+                    (rows, bytes)
+                }
+                other => panic!("unexpected purge outcome: {other:?}"),
+            };
+            assert!(rows <= budget.max_rows() && bytes <= budget.max_bytes());
+            let state = storage.state.read_control().await;
+            let attempt = &state.artifacts.attempts[&reference.identity().artifact()];
+            if complete {
+                assert!(
+                    attempt.blocks.is_empty()
+                        && attempt.manifest.is_none()
+                        && attempt.owner.is_none()
+                );
+                break;
+            }
+        }
+        assert!(complete);
+    }
+
+    #[rstest]
+    #[case::hold(false)]
+    #[case::spool_grace(true)]
+    #[tokio::test]
+    async fn physical_purge_preserves_blocked_bytes_and_reservations(#[case] spool: bool) {
+        let (storage, task, reference) = fixture(if spool { 1024 } else { 0 }, true).await;
+        let protected = proof(&storage).await;
+        if !spool {
+            let state = storage.read_task_control().await.unwrap();
+            let hold = TaskRetentionHold::new(
+                TaskHoldId::generate(),
+                task,
+                Utc::now(),
+                None,
+                TaskHoldReason::Legal,
+            )
+            .unwrap();
+            storage
+                .change_task_hold(TaskHoldChange::new(state.revision(), hold))
+                .await
+                .unwrap();
+        }
+        let progress = storage
+            .purge_task_details_batch(protected, TaskPurgeBudget::default())
+            .await
+            .unwrap();
+        if spool {
+            assert!(matches!(progress, TaskPurgeProgress::More { .. }));
+        } else {
+            assert!(matches!(
+                progress,
+                TaskPurgeProgress::Blocked(TaskPurgeBlock::Held)
+            ));
+        }
+        let state = storage.state.read_control().await;
+        let attempt = &state.artifacts.attempts[&reference.identity().artifact()];
+        assert_eq!(attempt.blocks.len(), 20);
+        assert!(attempt.owner.is_some());
+        if spool {
+            assert!(attempt.owner.as_ref().unwrap().cleanup_after.unwrap() > Utc::now());
+        }
     }
 }

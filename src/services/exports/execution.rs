@@ -62,8 +62,13 @@ where
     let retention = get_config()
         .map(|config| config.export_output_retention_hours)
         .unwrap_or(DEFAULT_EXPORT_OUTPUT_RETENTION_HOURS);
-    let expires_at = FutureRetention::from_hours(retention, "export_output_retention_hours")
-        .and_then(|retention| retention.expires_at(chrono::Utc::now().naive_utc()))
+    let retention = FutureRetention::from_hours(retention, "export_output_retention_hours")
+        .map_err(ApiError::BadRequest)?;
+    let availability = retention
+        .output_availability()
+        .map_err(ApiError::BadRequest)?;
+    let expires_at = retention
+        .expires_at(chrono::Utc::now().naive_utc())
         .map_err(ApiError::BadRequest)?
         .and_utc();
     let spool_bytes = crate::services::artifacts::spool_limit();
@@ -99,7 +104,7 @@ where
         // Await the bounded render job so its child has been reaped before the
         // worker acknowledges a stop and releases its claim.
         let artifact =
-            build_export_artifact(&runtime, execution, timings, &output, expires_at).await?;
+            build_export_artifact(&runtime, execution, timings, &output, availability).await?;
         crate::tasks::control::checkpoint()?;
         let mut timings = artifact.timings;
         if let Err(error) =

@@ -70,6 +70,7 @@ pub fn fatal_error(message: &str, exit_code: i32) -> ! {
 pub enum ApiError {
     TaskCapacity(TaskCapacityRejection),
     TaskDetailsExpired(TaskDetailsExpiredResponse),
+    IdempotencyConflict,
     LegacyTaskRequestUnverifiable,
     TaskStopped(#[serde(serialize_with = "serialize_task_stop_reason")] TaskStopReason),
     Unauthorized(String),
@@ -102,6 +103,7 @@ impl ApiError {
         match self {
             ApiError::TaskCapacity(reason) => reason.as_str(),
             ApiError::TaskDetailsExpired(_) => "task_details_expired",
+            ApiError::IdempotencyConflict => "idempotency_key_conflict",
             ApiError::LegacyTaskRequestUnverifiable => "legacy_request_unverifiable",
             ApiError::TaskStopped(reason) => reason.as_str(),
             ApiError::Unauthorized(_) => "unauthorized",
@@ -156,6 +158,9 @@ impl ApiError {
         match self {
             ApiError::TaskDetailsExpired(_) => {
                 "Task details have expired; the original submission is still recognized"
+            }
+            ApiError::IdempotencyConflict => {
+                "The idempotency key identifies a different protected request; no new work was created"
             }
             ApiError::LegacyTaskRequestUnverifiable => {
                 "The legacy submission is recognized but its original request cannot be verified"
@@ -219,6 +224,7 @@ impl From<StorageError> for ApiError {
             }
             StorageErrorKind::InvalidInput => Self::BadRequest(message),
             StorageErrorKind::Conflict => Self::Conflict(message),
+            StorageErrorKind::IdempotencyConflict => Self::IdempotencyConflict,
             StorageErrorKind::Backend => Self::DatabaseError(message),
             StorageErrorKind::ReauthenticationRequired => Self::ReauthenticationRequired,
             StorageErrorKind::PermissionDenied => Self::Forbidden(message),
@@ -295,6 +301,7 @@ impl fmt::Display for ApiError {
             ApiError::TaskStopped(_)
             | ApiError::TaskCapacity(_)
             | ApiError::TaskDetailsExpired(_)
+            | ApiError::IdempotencyConflict
             | ApiError::LegacyTaskRequestUnverifiable => f.write_str(self.public_message()),
             ApiError::HashError(message) => write!(f, "{message}"),
             ApiError::NotFound(message) => write!(f, "{message}"),
@@ -330,7 +337,7 @@ impl ResponseError for ApiError {
             ApiError::TaskDetailsExpired(receipt) => HttpResponse::Gone()
                 .insert_header(("Cache-Control", "no-store"))
                 .json(receipt),
-            ApiError::LegacyTaskRequestUnverifiable => HttpResponse::Conflict()
+            ApiError::IdempotencyConflict | ApiError::LegacyTaskRequestUnverifiable => HttpResponse::Conflict()
                 .insert_header(("Cache-Control", "no-store"))
                 .json(json!({"error":"Conflict", "reason":self.class(), "message":self.public_message()})),
             ApiError::TaskCapacity(reason) => HttpResponse::build(self.status_code())
@@ -417,9 +424,9 @@ impl ResponseError for ApiError {
 
     fn status_code(&self) -> StatusCode {
         match self {
-            ApiError::TaskStopped(_) | ApiError::LegacyTaskRequestUnverifiable => {
-                StatusCode::CONFLICT
-            }
+            ApiError::TaskStopped(_)
+            | ApiError::LegacyTaskRequestUnverifiable
+            | ApiError::IdempotencyConflict => StatusCode::CONFLICT,
             ApiError::TaskDetailsExpired(_) => StatusCode::GONE,
             ApiError::TaskCapacity(reason) if reason.is_unavailable() => {
                 StatusCode::SERVICE_UNAVAILABLE

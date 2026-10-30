@@ -178,7 +178,7 @@ pub(crate) async fn resolve_on(
         ));
     }
     if lookup.kind() != receipt.kind() {
-        return Err(PostgresStorageError::conflict(
+        return Err(PostgresStorageError::idempotency_conflict(
             "Idempotency key is already in use for a different task kind",
         ));
     }
@@ -191,7 +191,7 @@ pub(crate) async fn resolve_on(
         ));
     }
     if !lookup.matches(receipt.kind(), receipt.fingerprint()) {
-        return Err(PostgresStorageError::conflict(
+        return Err(PostgresStorageError::idempotency_conflict(
             "Idempotency key is already in use for a different task submission",
         ));
     }

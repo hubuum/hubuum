@@ -29,8 +29,8 @@ use crate::traits::{SelfAccessors, UserPermissions};
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Class access denied", body = ApiErrorResponse),
         (status = 404, description = "Class not found", body = ApiErrorResponse),
-        (status = 410, description = "Submission recognized; task details expired", body = TaskDetailsExpiredResponse),
-        (status = 409, description = "Idempotency key conflict", body = ApiErrorResponse),
+        (status = 410, description = "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.", body = TaskDetailsExpiredResponse, headers(("Cache-Control" = String, description = "no-store; no automatic retry is implied"))),
+        (status = 409, description = "Changed protected request; reason idempotency_key_conflict", body = ApiErrorResponse, headers(("Cache-Control" = String, description = "no-store for protected request conflicts; no Retry-After"))),
         (status = 429, description = "Shared task admission or byte capacity exhausted", body = ApiErrorResponse),
         (status = 503, description = "Task identity or control reconciliation unavailable", body = ApiErrorResponse))) ]
 #[post("/{class_id}/schema/profiles")]

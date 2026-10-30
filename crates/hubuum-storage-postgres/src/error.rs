@@ -98,6 +98,11 @@ impl PostgresStorageError {
     }
 
     #[must_use]
+    pub fn idempotency_conflict(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::IdempotencyConflict, message, None)
+    }
+
+    #[must_use]
     pub fn reauthentication_required() -> Self {
         Self::new(
             StorageErrorKind::ReauthenticationRequired,
@@ -249,6 +254,7 @@ impl From<StorageError> for PostgresStorageError {
             StorageErrorKind::AuthorizationUnavailable => Self::authorization_unavailable(message),
             StorageErrorKind::InvalidInput => Self::invalid_input(message),
             StorageErrorKind::Conflict => Self::conflict(message),
+            StorageErrorKind::IdempotencyConflict => Self::idempotency_conflict(message),
             StorageErrorKind::Backend => Self::database(message),
             StorageErrorKind::ReauthenticationRequired => Self::reauthentication_required(),
             StorageErrorKind::PermissionDenied => Self::permission_denied(message),
@@ -424,6 +430,7 @@ impl From<PostgresStorageError> for StorageError {
             }
             StorageErrorKind::InvalidInput => Self::invalid_input(error.message),
             StorageErrorKind::Conflict => Self::conflict(error.message),
+            StorageErrorKind::IdempotencyConflict => Self::idempotency_conflict(error.message),
             StorageErrorKind::Backend => Self::backend_failure(error.message),
             StorageErrorKind::ReauthenticationRequired => Self::reauthentication_required(),
             StorageErrorKind::PermissionDenied => Self::permission_denied(error.message),

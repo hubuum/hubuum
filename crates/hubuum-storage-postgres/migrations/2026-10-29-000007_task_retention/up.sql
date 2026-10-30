@@ -1,6 +1,12 @@
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '600s';
 
+-- Protected cleanup calls these invoker triggers from a pg_catalog-only
+-- capability. Resolve their existing unqualified application tables explicitly;
+-- keep temporary schemas last so they cannot shadow the protected relations.
+ALTER FUNCTION public.hubuum_guard_artifact_attempt() SET search_path = pg_catalog, public, pg_temp;
+ALTER FUNCTION public.hubuum_guard_artifact_chunk() SET search_path = pg_catalog, public, pg_temp;
+
 -- This authority is deliberately outside the logical restore replacement set.
 -- Runtime access is restricted to the operation-shaped functions below.
 CREATE TABLE hubuum_control.task_retention_control (
@@ -119,6 +125,21 @@ BEGIN
     RETURN public.hubuum_task_retention_read();
 END $$;
 REVOKE ALL ON FUNCTION public.hubuum_task_retention_lock() FROM PUBLIC;
+
+-- Called under the retention lock before ordinary artifact locks. Published
+-- task results require protected purge; abandoned staging retains its existing
+-- lease-fenced cleanup path without bypassing a newly committed hold.
+CREATE FUNCTION public.hubuum_task_artifact_cleanup_allowed(artifact UUID) RETURNS BOOLEAN
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+    SELECT c.activation->>'state'='disabled' OR NOT EXISTS (
+        SELECT 1 FROM public.artifact_attempts a JOIN public.artifact_task_owners o USING(artifact_id)
+        WHERE a.artifact_id=artifact AND (a.manifest_sha256 IS NOT NULL OR EXISTS (
+            SELECT 1 FROM hubuum_control.task_retention_holds h WHERE h.task_identity=o.task_identity
+            AND h.material->>'released_at' IS NULL
+            AND (h.material->>'expires_at' IS NULL OR (h.material->>'expires_at')::timestamptz>clock_timestamp()))))
+    FROM hubuum_control.task_retention_control c WHERE c.id=1
+$$;
+REVOKE ALL ON FUNCTION public.hubuum_task_artifact_cleanup_allowed(UUID) FROM PUBLIC;
 
 CREATE FUNCTION public.hubuum_task_control_read() RETURNS JSONB
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
@@ -458,6 +479,11 @@ CREATE FUNCTION public.hubuum_task_purge_block(task UUID, scope TEXT, cutoff TIM
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE t public.tasks;
 BEGIN
+    IF EXISTS (SELECT 1 FROM hubuum_control.task_retention_holds h WHERE h.task_identity=task
+        AND h.material->>'released_at' IS NULL
+        AND (h.material->>'expires_at' IS NULL OR (h.material->>'expires_at')::timestamptz>clock_timestamp())) THEN RETURN 'held'; END IF;
+    IF EXISTS (SELECT 1 FROM public.artifact_task_owners o JOIN public.artifact_attempts a USING(artifact_id)
+        WHERE o.task_identity=task AND a.state='published' AND o.output_expires_at>cutoff) THEN RETURN 'output_available'; END IF;
     IF (SELECT count(*) FROM public.tasks WHERE logical_identity #>> '{subject,identity,identity}'=task::text)>1 THEN
         RETURN 'unknown_identity';
     END IF;
@@ -469,9 +495,6 @@ BEGIN
     IF t.lease_token IS NOT NULL OR EXISTS (SELECT 1 FROM hubuum_control.task_execution_claims WHERE task_id=t.id)
        OR EXISTS (SELECT 1 FROM public.class_computation_state WHERE active_task_id=t.id)
        OR EXISTS (SELECT 1 FROM public.schema_validation_work WHERE task_id=t.id AND active) THEN RETURN 'dependency'; END IF;
-    IF EXISTS (SELECT 1 FROM hubuum_control.task_retention_holds h WHERE h.task_identity=task
-        AND h.material->>'released_at' IS NULL
-        AND (h.material->>'expires_at' IS NULL OR (h.material->>'expires_at')::timestamptz>clock_timestamp())) THEN RETURN 'held'; END IF;
     IF scope='task_details' AND EXISTS (SELECT 1 FROM public.schema_repair_reports WHERE task_id=t.id) THEN RETURN 'output_available'; END IF;
     IF EXISTS (SELECT 1 FROM public.export_task_outputs WHERE task_id=t.id AND output_expires_at>cutoff AT TIME ZONE 'UTC')
        OR EXISTS (SELECT 1 FROM public.backup_task_outputs WHERE task_id=t.id AND output_expires_at>cutoff AT TIME ZONE 'UTC')
@@ -502,7 +525,10 @@ BEGIN
           OR (scope='expired_outputs' AND (
              EXISTS (SELECT 1 FROM public.export_task_outputs WHERE task_id=t.id AND output_expires_at<=cutoff AT TIME ZONE 'UTC')
              OR EXISTS (SELECT 1 FROM public.backup_task_outputs WHERE task_id=t.id AND output_expires_at<=cutoff AT TIME ZONE 'UTC')
-             OR EXISTS (SELECT 1 FROM public.schema_profile_outputs WHERE task_id=t.id AND output_expires_at<=cutoff AT TIME ZONE 'UTC'))))
+             OR EXISTS (SELECT 1 FROM public.schema_profile_outputs WHERE task_id=t.id AND output_expires_at<=cutoff AT TIME ZONE 'UTC')
+             OR EXISTS (SELECT 1 FROM public.artifact_task_owners o JOIN public.artifact_attempts a USING(artifact_id)
+                 WHERE o.task_identity::text=t.logical_identity #>> '{subject,identity,identity}'
+                 AND (a.state<>'published' OR o.output_expires_at<=cutoff)))))
         AND public.hubuum_task_purge_block((t.logical_identity #>> '{subject,identity,identity}')::uuid,scope,cutoff) IS NULL
         ORDER BY t.id LIMIT max_tasks FOR UPDATE OF t
     LOOP
@@ -548,6 +574,7 @@ DECLARE c hubuum_control.task_retention_control; d JSONB; b hubuum_control.task_
     scope TEXT; cutoff TIMESTAMPTZ; task UUID; v_task_id INTEGER; blocker TEXT; first_block TEXT;
     relation TEXT; child RECORD; used_rows INTEGER:=0; used_bytes BIGINT:=0; remaining BOOLEAN:=FALSE;
     relations TEXT[]; old_bytes INTEGER; next_material JSONB; row_bytes BIGINT; found_parent BOOLEAN;
+    artifact RECORD;
 BEGIN
     IF current_setting('transaction_isolation')<>'read committed' THEN RAISE EXCEPTION 'Task purge requires READ COMMITTED' USING ERRCODE='25001'; END IF;
     IF max_rows NOT BETWEEN 1 AND 1000 OR max_bytes NOT BETWEEN 1 AND 16777216 THEN RAISE EXCEPTION 'Invalid task purge budget' USING ERRCODE='22023'; END IF;
@@ -571,9 +598,57 @@ BEGIN
         v_task_id:=NULL;
         SELECT t.id INTO v_task_id FROM public.tasks t WHERE t.logical_identity #>> '{subject,identity,identity}'=task::text FOR UPDATE;
         found_parent:=FOUND;
-        IF NOT found_parent THEN CONTINUE; END IF;
         blocker:=public.hubuum_task_purge_block(task,scope,cutoff);
         IF blocker IS NOT NULL THEN first_block:=COALESCE(first_block,blocker); remaining:=TRUE; CONTINUE; END IF;
+        -- Ownership uses the immutable task UUID and survives task deletion and
+        -- restore. Drain physical obligations before removing their references.
+        FOR artifact IN SELECT a.artifact_id,a.state,o.spool_bytes,o.cleanup_after
+            FROM public.artifact_attempts a JOIN public.artifact_task_owners o USING(artifact_id)
+            WHERE o.task_identity=task ORDER BY a.artifact_id LIMIT max_rows-used_rows FOR UPDATE OF a,o LOOP
+            EXIT WHEN used_rows>=max_rows;
+            IF artifact.cleanup_after>clock_timestamp() THEN
+                first_block:=COALESCE(first_block,'dependency'); remaining:=TRUE; CONTINUE;
+            END IF;
+            IF artifact.spool_bytes>0 AND artifact.cleanup_after IS NULL THEN
+                SELECT octet_length(to_jsonb(o)::text) INTO row_bytes FROM public.artifact_task_owners o WHERE artifact_id=artifact.artifact_id;
+                IF row_bytes<=max_bytes-used_bytes THEN
+                    -- Versioned local-spool protocol: match LOCAL_SPOOL_CLEANUP_GRACE.
+                    UPDATE public.artifact_task_owners SET cleanup_after=clock_timestamp()+INTERVAL '10 seconds' WHERE artifact_id=artifact.artifact_id;
+                    used_rows:=used_rows+1; used_bytes:=used_bytes+row_bytes;
+                ELSE first_block:=COALESCE(first_block,'oversized_row'); END IF;
+                remaining:=TRUE; CONTINUE;
+            END IF;
+            IF artifact.state<>'discarded' THEN
+                UPDATE public.artifact_attempts SET state='deleting' WHERE artifact_id=artifact.artifact_id;
+                FOR child IN SELECT chunk_row.ordinal,octet_length(to_jsonb(chunk_row)::text)::bigint AS bytes FROM public.artifact_chunks chunk_row
+                    WHERE chunk_row.artifact_id=artifact.artifact_id ORDER BY chunk_row.ordinal LIMIT max_rows-used_rows FOR UPDATE LOOP
+                    IF child.bytes>max_bytes-used_bytes THEN remaining:=TRUE; first_block:=COALESCE(first_block,'oversized_row'); CONTINUE; END IF;
+                    DELETE FROM public.artifact_chunks WHERE artifact_id=artifact.artifact_id AND ordinal=child.ordinal;
+                    used_rows:=used_rows+1; used_bytes:=used_bytes+child.bytes;
+                END LOOP;
+                IF EXISTS (SELECT 1 FROM public.artifact_chunks WHERE artifact_id=artifact.artifact_id) THEN
+                    remaining:=TRUE; CONTINUE;
+                END IF;
+                SELECT octet_length(to_jsonb(a)::text) INTO row_bytes FROM public.artifact_attempts a WHERE artifact_id=artifact.artifact_id;
+                IF used_rows>=max_rows OR row_bytes>max_bytes-used_bytes THEN
+                    remaining:=TRUE;
+                    IF row_bytes>max_bytes THEN first_block:=COALESCE(first_block,'oversized_row'); END IF;
+                    CONTINUE;
+                END IF;
+                UPDATE public.artifact_attempts SET state='discarded',manifest=NULL WHERE artifact_id=artifact.artifact_id;
+                used_rows:=used_rows+1; used_bytes:=used_bytes+row_bytes;
+            END IF;
+            SELECT octet_length(to_jsonb(o)::text) INTO row_bytes FROM public.artifact_task_owners o WHERE artifact_id=artifact.artifact_id;
+            IF used_rows>=max_rows OR row_bytes>max_bytes-used_bytes THEN
+                remaining:=TRUE;
+                IF row_bytes>max_bytes THEN first_block:=COALESCE(first_block,'oversized_row'); END IF;
+                CONTINUE;
+            END IF;
+            DELETE FROM public.artifact_task_owners WHERE artifact_id=artifact.artifact_id;
+            used_rows:=used_rows+1; used_bytes:=used_bytes+row_bytes;
+        END LOOP;
+        IF EXISTS (SELECT 1 FROM public.artifact_task_owners WHERE task_identity=task) THEN remaining:=TRUE; CONTINUE; END IF;
+        IF NOT found_parent THEN CONTINUE; END IF;
         IF scope='task_details' THEN UPDATE public.tasks SET details_purge_pending=TRUE WHERE id=v_task_id; END IF;
         FOREACH relation IN ARRAY relations LOOP
             IF relation='schema_validation_work' AND EXISTS(SELECT 1 FROM public.schema_impact_findings r WHERE r.task_id=v_task_id) THEN

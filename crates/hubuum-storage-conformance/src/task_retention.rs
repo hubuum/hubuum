@@ -1,11 +1,11 @@
 //! Protected admission invariants shared by every selectable adapter.
 
 use hubuum_storage_core::{
-    DeletionCheckpointIdentity, DeletionControlStorage, ProtectedTaskAdmission,
+    DeletionCheckpointIdentity, DeletionControlStorage, ProtectedTaskAdmission, StorageErrorKind,
     StorageTaskCreateRequest, StorageTaskEventInput, StorageTaskFailure, StorageTaskLeaseDuration,
     StorageTaskSubmissionOutcome, TaskActivationOutcome, TaskControlCheckpoint,
-    TaskExecutionStorage, TaskQueueStorage, TaskReceiptOutcome, TaskRetentionStorage,
-    TaskSubmissionResolution,
+    TaskExecutionStorage, TaskQueueStorage, TaskReceiptOutcome, TaskRequestFingerprint,
+    TaskRetentionStorage, TaskSubmissionLookup, TaskSubmissionResolution,
 };
 
 use crate::FixtureError;
@@ -36,6 +36,24 @@ pub async fn verify_protected_task_admission(
         return Err("Protected lookup lost the original pending reservation".into());
     }
     let before = backend.read_task_control().await?;
+    let mut changed_digest = lookup.canonical().as_str().to_owned();
+    let replacement = if changed_digest.starts_with('0') {
+        "1"
+    } else {
+        "0"
+    };
+    changed_digest.replace_range(..1, replacement);
+    let changed = TaskSubmissionLookup::new(
+        lookup.identity().clone(),
+        lookup.kind(),
+        TaskRequestFingerprint::new(changed_digest)?,
+    );
+    if !matches!(backend.lookup_task_submission(changed).await, Err(error) if error.kind() == StorageErrorKind::IdempotencyConflict)
+    {
+        return Err(
+            "Changed protected requests must retain their typed idempotency conflict".into(),
+        );
+    }
     let duration =
         StorageTaskLeaseDuration::from_milliseconds(60_000).expect("valid fixture lease duration");
     if backend.claim_next_task(duration).await?.is_some() {

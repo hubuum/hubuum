@@ -1,6 +1,6 @@
 #![cfg(feature = "integration-test-support")]
 
-use diesel::sql_types::{BigInt, Bool, Integer, Jsonb, Text};
+use diesel::sql_types::{BigInt, Binary, Bool, Integer, Jsonb, Text, Uuid as SqlUuid};
 use diesel::{QueryableByName, sql_query};
 use diesel_async::{AsyncConnection, RunQueryDsl, SimpleAsyncConnection};
 use hubuum_storage_core::{TaskPurgeScope, TaskPurgeTicket};
@@ -76,7 +76,7 @@ async fn prepare(
         TaskPurgeScope::ExpiredOutputs => "expired_outputs",
     };
     let value = sql_query("SELECT public.hubuum_task_purge_prepare($1,$2,64) AS material")
-        .bind::<diesel::sql_types::Uuid, _>(Uuid::new_v4())
+        .bind::<SqlUuid, _>(Uuid::new_v4())
         .bind::<Text, _>(scope)
         .get_result::<Material>(connection)
         .await?
@@ -108,6 +108,202 @@ async fn execute(
             .await?
             .material,
     )
+}
+
+async fn expired_artifact(
+    connection: &mut PostgresConnection,
+    spool: i64,
+    published: bool,
+) -> Result<(i32, Uuid), PostgresStorageError> {
+    use hubuum_storage_core::artifacts::{
+        ArtifactIdentity, ArtifactLimits, DestinationId, ManifestBuilder,
+    };
+    let id = task(connection, "export").await?;
+    let identity = ArtifactIdentity::new(DestinationId::generate());
+    let artifact = Uuid::from_bytes(*identity.artifact().as_bytes());
+    let destination = Uuid::from_bytes(*identity.destination().as_bytes());
+    let limits = ArtifactLimits::builder()
+        .block_bytes(1024)
+        .artifact_bytes(20 * 1024)
+        .blocks(20)
+        .manifest_bytes(1024)
+        .build()
+        .unwrap();
+    let mut builder = ManifestBuilder::new(identity.clone(), limits);
+    for _ in 0..20 {
+        builder.push(&[7; 1024]).unwrap();
+    }
+    let manifest = builder.finish().unwrap();
+    let reserved = if published {
+        manifest.stored_bytes()
+    } else {
+        limits.artifact_bytes() + u64::from(limits.manifest_bytes()) + spool as u64
+    };
+    sql_query("INSERT INTO artifact_destinations(id,name) VALUES($1,$2)")
+        .bind::<SqlUuid, _>(destination)
+        .bind::<Text, _>(format!("retention_fixture_{destination}"))
+        .execute(connection)
+        .await?;
+    sql_query("INSERT INTO artifact_attempts(artifact_id,attempt_id,destination_id,object_version,block_bytes,max_bytes,max_blocks,max_manifest_bytes) VALUES($1,$2,$3,$4,1024,20480,20,$5)")
+        .bind::<SqlUuid,_>(artifact)
+        .bind::<SqlUuid,_>(Uuid::from_bytes(*identity.attempt().as_bytes()))
+        .bind::<SqlUuid,_>(destination)
+        .bind::<SqlUuid,_>(Uuid::from_bytes(*identity.version().as_bytes()))
+        .bind::<Integer,_>(limits.manifest_bytes() as i32).execute(connection).await?;
+    sql_query("INSERT INTO artifact_chunks(artifact_id,ordinal,content) SELECT $1,n,decode(repeat('07',1024),'hex') FROM generate_series(0,19) n ORDER BY n")
+        .bind::<SqlUuid,_>(artifact).execute(connection).await?;
+    sql_query("UPDATE artifact_attempts SET state='sealed',manifest=$2 WHERE artifact_id=$1")
+        .bind::<SqlUuid, _>(artifact)
+        .bind::<Binary, _>(manifest.encode())
+        .execute(connection)
+        .await?;
+    sql_query("INSERT INTO artifact_task_owners(artifact_id,task_identity,task_id,lease_token,worker_identity,spool_bytes,reserved_bytes,output_expires_at) SELECT $1,(logical_identity #>> '{subject,identity,identity}')::uuid,id,gen_random_uuid(),gen_random_uuid(),$3,$5,clock_timestamp()+CASE WHEN $4 THEN interval '-1 minute' ELSE interval '1 day' END FROM tasks WHERE id=$2")
+        .bind::<SqlUuid,_>(artifact).bind::<Integer,_>(id).bind::<BigInt,_>(spool).bind::<Bool,_>(published).bind::<BigInt,_>(reserved as i64).execute(connection).await?;
+    if published {
+        sql_query(
+        "UPDATE artifact_attempts SET state='published',manifest_sha256=$2 WHERE artifact_id=$1",
+    )
+    .bind::<SqlUuid, _>(artifact)
+    .bind::<Binary, _>(manifest.manifest_digest().to_vec())
+    .execute(connection)
+    .await?;
+    }
+    Ok((id, artifact))
+}
+
+async fn hold_task(
+    connection: &mut PostgresConnection,
+    id: i32,
+) -> Result<(), PostgresStorageError> {
+    use hubuum_storage_core::{TaskHoldId, TaskHoldReason, TaskRetentionHold};
+    let task = sql_query("SELECT to_jsonb((logical_identity #>> '{subject,identity,identity}')::uuid) AS material FROM tasks WHERE id=$1")
+        .bind::<Integer,_>(id).get_result::<Material>(connection).await?.material;
+    let hold = TaskRetentionHold::new(
+        TaskHoldId::generate(),
+        serde_json::from_value(task).unwrap(),
+        chrono::Utc::now(),
+        None,
+        TaskHoldReason::Legal,
+    )
+    .unwrap();
+    let encoded = serde_json::to_string(&hold).unwrap();
+    sql_query("INSERT INTO hubuum_control.task_retention_holds(id,task_identity,material,encoded_bytes) SELECT (encoded::jsonb->>'id')::uuid,(encoded::jsonb->>'task')::uuid,encoded::jsonb,octet_length(encoded) FROM (VALUES ($1::text)) input(encoded)")
+        .bind::<Text,_>(&encoded).execute(connection).await?;
+    sql_query("UPDATE hubuum_control.task_retention_control SET revision=revision+1,retention_bytes=retention_bytes+$1+39 WHERE id=1")
+        .bind::<BigInt,_>(encoded.len() as i64).execute(connection).await?;
+    Ok(())
+}
+
+#[rstest]
+#[case::published_result(true, false, false)]
+#[case::abandoned_staging(false, false, true)]
+#[case::held_staging(false, true, false)]
+#[tokio::test]
+async fn ordinary_artifact_cleanup_guard_preserves_results_and_holds(
+    #[case] published: bool,
+    #[case] held: bool,
+    #[case] expected: bool,
+) {
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let pool = integration_test_migration_pool(1);
+    with_transaction(&pool, async |connection| {
+        setup(connection).await?;
+        let (id, artifact) = expired_artifact(connection, 0, published).await?;
+        if held {
+            hold_task(connection, id).await?;
+        }
+        let allowed =
+            sql_query("SELECT public.hubuum_task_artifact_cleanup_allowed($1) AS allowed")
+                .bind::<SqlUuid, _>(artifact)
+                .get_result::<Flag>(connection)
+                .await?
+                .allowed;
+        assert_eq!(allowed, expected);
+        connection
+            .batch_execute("ROLLBACK TO SAVEPOINT retention_fixture")
+            .await?;
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
+    .unwrap();
+}
+
+#[rstest]
+#[case::ordinary(false)]
+#[case::temporary_shadows(true)]
+#[tokio::test]
+async fn protected_artifact_purge_is_bounded_and_removes_physical_obligations_before_acknowledging(
+    #[case] temporary_shadows: bool,
+) {
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let pool = integration_test_migration_pool(1);
+    with_transaction(&pool, async |connection| {
+        setup(connection).await?;
+        let (_, artifact) = expired_artifact(connection, 0, true).await?;
+        if temporary_shadows {
+            connection.batch_execute("CREATE TEMP TABLE artifact_attempts(artifact_id UUID); CREATE TEMP TABLE artifact_chunks(artifact_id UUID);").await?;
+        }
+        let (ticket, proof) = prepare(connection, TaskPurgeScope::ExpiredOutputs).await?;
+        let mut complete = false;
+        for _ in 0..32 {
+            let result = execute(connection, &ticket, &proof, 2, 4096).await?;
+            assert!(result["rows"].as_i64().unwrap()<=2 && result["bytes"].as_i64().unwrap()<=4096);
+            if result["state"]=="removed" { complete=true; break; }
+            assert_eq!(result["state"], "more");
+        }
+        assert!(complete);
+        let absent=sql_query("SELECT NOT EXISTS(SELECT 1 FROM public.artifact_chunks WHERE artifact_id=$1) AND NOT EXISTS(SELECT 1 FROM public.artifact_task_owners WHERE artifact_id=$1) AND EXISTS(SELECT 1 FROM public.artifact_attempts WHERE artifact_id=$1 AND state='discarded' AND manifest IS NULL) AS allowed")
+            .bind::<SqlUuid,_>(artifact).get_result::<Flag>(connection).await?.allowed;
+        assert!(absent);
+        connection.batch_execute("ROLLBACK TO SAVEPOINT retention_fixture").await?;
+        Ok::<_,PostgresStorageError>(())
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn abandoned_unpublished_artifact_does_not_wait_for_result_expiry() {
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let pool = integration_test_migration_pool(1);
+    with_transaction(&pool, async |connection| {
+        setup(connection).await?;
+        expired_artifact(connection, 0, false).await?;
+        let (ticket, proof) = prepare(connection, TaskPurgeScope::ExpiredOutputs).await?;
+        let result = execute(connection, &ticket, &proof, 1000, 16777216).await?;
+        assert_eq!(result["state"], "removed");
+        connection
+            .batch_execute("ROLLBACK TO SAVEPOINT retention_fixture")
+            .await?;
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
+    .unwrap();
+}
+
+#[rstest]
+#[case::hold(false)]
+#[case::spool_grace(true)]
+#[tokio::test]
+async fn protected_artifact_purge_preserves_blocked_bytes_and_reservations(#[case] spool: bool) {
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let pool = integration_test_migration_pool(1);
+    with_transaction(&pool, async |connection| {
+        setup(connection).await?;
+        let (id, artifact) = expired_artifact(connection, if spool { 1024 } else { 0 }, !spool).await?;
+        let (ticket, proof) = prepare(connection, TaskPurgeScope::ExpiredOutputs).await?;
+        if !spool {
+            hold_task(connection, id).await?;
+        }
+        let result = execute(connection, &ticket, &proof, 2, 4096).await?;
+        if spool { assert_eq!(result["state"],"more"); }
+        else { assert_eq!(result,json!({"state":"blocked","reason":"held"})); }
+        let retained=sql_query("SELECT (SELECT count(*) FROM artifact_chunks WHERE artifact_id=$1)=20 AND EXISTS(SELECT 1 FROM artifact_task_owners WHERE artifact_id=$1 AND (NOT $2 OR cleanup_after>clock_timestamp()+($3-1)*interval '1 second')) AS allowed")
+            .bind::<SqlUuid,_>(artifact).bind::<Bool,_>(spool)
+            .bind::<BigInt,_>(hubuum_storage_core::artifacts::LOCAL_SPOOL_CLEANUP_GRACE.as_secs() as i64)
+            .get_result::<Flag>(connection).await?.allowed;
+        assert!(retained);
+        connection.batch_execute("ROLLBACK TO SAVEPOINT retention_fixture").await?;
+        Ok::<_,PostgresStorageError>(())
+    }).await.unwrap();
 }
 
 #[tokio::test]
@@ -312,7 +508,7 @@ async fn purge_rejects_an_inherited_repeatable_read_snapshot() {
                 .get_result::<i32>(connection)
                 .await?;
             sql_query("SELECT public.hubuum_task_purge_prepare($1,'task_details',1)")
-                .bind::<diesel::sql_types::Uuid, _>(Uuid::new_v4())
+                .bind::<SqlUuid, _>(Uuid::new_v4())
                 .execute(connection)
                 .await?;
             Ok(())
@@ -991,7 +1187,7 @@ async fn internal_supersession_receipt_catches_up_to_its_original_terminal_clock
         .unwrap();
     let original=with_transaction(&fixture.pool,async |connection| {
         Ok::<_,PostgresStorageError>(sql_query("SELECT jsonb_build_object('finished_at',finished_at AT TIME ZONE 'UTC','body_redacted',request_payload IS NULL) AS material FROM tasks WHERE receipt_generation=$1")
-            .bind::<diesel::sql_types::Uuid,_>(ticket.receipt().generation().value()).get_result::<Material>(connection).await?.material)
+            .bind::<SqlUuid,_>(ticket.receipt().generation().value()).get_result::<Material>(connection).await?.material)
     }).await.unwrap();
     let before = runtime.read_task_control().await.unwrap();
     assert!(matches!(
