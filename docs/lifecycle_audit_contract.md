@@ -487,8 +487,9 @@ details and an acknowledged gap whose history remains unavailable.
 
 ## Consumer compatibility review
 
-Inspected default-branch sources on 2026-10-30. This is an implementation review,
-not execution of those repositories' tests or maintainer sign-off.
+Inspected default-branch sources on 2026-10-30. The following table records static
+implementation review. The separate Rust probe below supplies limited execution
+evidence; neither establishes maintainer sign-off.
 
 | Consumer and pinned source | Finding | Required acceptance |
 | --- | --- | --- |
@@ -496,6 +497,34 @@ not execution of those repositories' tests or maintainer sign-off.
 | [Python client `f65ed9db`, `src/hubuum_client/api/models.py`](https://github.com/hubuum/hubuum-client-python/blob/f65ed9db387e6792c04d56028e101d83e2f9f010/src/hubuum_client/api/models.py) | Generated `EventResponse` uses string entity/action and JSON metadata; the response base allows extra fields | #91: regenerate wire models, prove sync/async parsing of new catalog entries, bounded reasons and evidence failures |
 | [Frontend `49790431`, `src/lib/event-options.ts`](https://github.com/hubuum/hubuum-frontend/blob/49790431aa3e5a6dcd93f3d00d21f3c530486054/src/lib/event-options.ts) | Catalog options are explicit; audit workspace uses generated models | #193: regenerate models, add catalog/filter/detail UI, preserve expiry/redaction and separate notification preview |
 | [CLI `8ae0368d`, `src/domain/events.rs`](https://github.com/hubuum/hubuum-cli/blob/8ae0368da0f16ca77b315442c4ea2ce3c4f3e97c/src/domain/events.rs) | Audit records wrap the Rust client; tabular output is generic | #155: release/pin the corresponding SDK, typed evidence commands, structured completeness and nonzero unavailable outcomes |
+
+### Executed Rust envelope compatibility probe
+
+On 2026-10-30 the pinned Rust client `170f4c9e` passed **34 probe checks** using
+the shared examples from server `cf09cfeb`. The
+[runnable probe](contracts/lifecycle-audit/rust-client-probe.rs) exercises the
+client's actual async and blocking event-list builders, mock transport and
+`EventResponse` deserialization. Each mode checks twelve audit/sink examples,
+four reader-evolution examples and the complete duplicate/out-of-order vector.
+Lifecycle metadata, scoped identities and provenance survive decoding and
+serialization, including decimal-string revisions beyond JavaScript's exact
+integer range and unknown optional fields/reasons/names/versions.
+
+To reproduce, use that exact client source and its unchanged lockfile. Copy the
+probe to its `tests/lifecycle_audit_contract_probe.rs`, then run from the client
+root with the server checkout's shared fixture path:
+
+```bash
+HUBUUM_LIFECYCLE_FIXTURES=/path/to/hubuum/docs/contracts/lifecycle-audit/examples.json \
+  cargo test -p hubuum_client --test lifecycle_audit_contract_probe \
+  --features async,blocking --locked
+```
+
+This proves raw event-list parsing in the two client modes. It does not implement
+typed lifecycle/evidence views, classify unsupported semantics, reconcile
+delivery, test live server authorization or execute the client's full suite.
+Python, frontend/BFF and CLI execution and explicit consumer review remain
+required. The probe adds no dependency or production catalog entry.
 
 Review each consuming feature using the same fixtures: additional optional field,
 unknown optional reason, unsupported name/version, scope separation, exact
