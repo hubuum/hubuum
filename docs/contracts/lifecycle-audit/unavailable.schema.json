@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:hubuum:lifecycle-audit:proposal:1:unavailable",
+  "title": "Proposed unavailable; not an enabled server API",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "const": "lifecycle_evidence_unavailable"
+    },
+    "reason": {
+      "enum": [
+        "expired",
+        "minimized",
+        "unavailable",
+        "corrupt",
+        "unsupported_format",
+        "dependency_incomplete"
+      ]
+    },
+    "receipt_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    }
+  },
+  "required": [
+    "kind",
+    "reason",
+    "receipt_id"
+  ],
+  "additionalProperties": false
+}

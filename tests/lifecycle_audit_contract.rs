@@ -1,0 +1,255 @@
+//! Validate #550's proposed interchange examples, not unimplemented lifecycle
+//! transitions. Backend/provider qualification remains in the scenario ledger.
+
+use std::sync::OnceLock;
+
+use hubuum_domain::{JsonSchemaErrorKind, validate_json_schema, validate_json_value};
+use hubuum_events_core::EventEnvelope;
+use rstest::rstest;
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+
+fn schema(view: &str) -> Value {
+    let document = match view {
+        "audit" => include_str!("../docs/contracts/lifecycle-audit/audit-event.schema.json"),
+        "sink" => include_str!("../docs/contracts/lifecycle-audit/sink-event.schema.json"),
+        "membership" => {
+            include_str!("../docs/contracts/lifecycle-audit/membership-page.schema.json")
+        }
+        "unavailable" => include_str!("../docs/contracts/lifecycle-audit/unavailable.schema.json"),
+        _ => panic!("unknown contract view"),
+    };
+    serde_json::from_str(document).unwrap()
+}
+
+fn assert_invalid(view: &str, value: &Value) {
+    assert_eq!(
+        validate_json_value(&schema(view), value)
+            .unwrap_err()
+            .kind(),
+        JsonSchemaErrorKind::InvalidValue,
+        "the schema must compile before a value can be rejected"
+    );
+}
+
+fn fixtures() -> &'static Value {
+    static EXAMPLES: OnceLock<Value> = OnceLock::new();
+    EXAMPLES.get_or_init(|| {
+        serde_json::from_str(include_str!(
+            "../docs/contracts/lifecycle-audit/examples.json"
+        ))
+        .unwrap()
+    })
+}
+
+fn example(name: &str) -> Value {
+    fixtures()["examples"][name]
+        .as_object()
+        .expect("named shared fixture must exist")
+        .clone()
+        .into()
+}
+
+#[rstest]
+#[case("audit")]
+#[case("sink")]
+#[case("membership")]
+#[case("unavailable")]
+fn proposal_schema_is_valid_json_schema(#[case] view: &str) {
+    validate_json_schema(&schema(view)).unwrap();
+}
+
+#[rstest]
+#[case("published_audit")]
+#[case("same_tier_migration_audit")]
+#[case("published_sink")]
+#[case("source_retired_audit")]
+#[case("erasure_restricted_audit")]
+#[case("erasure_completed_audit")]
+#[case("erasure_blocked_audit")]
+#[case("ready_audit")]
+#[case("ready_sink")]
+#[case("system_policy_audit")]
+#[case("verified_audit_only")]
+#[case("membership_page")]
+#[case("empty_membership_page")]
+#[case("expired_evidence")]
+#[case("minimized_evidence")]
+#[case("corrupt_evidence")]
+fn shared_interchange_example_satisfies_the_proposal(#[case] name: &str) {
+    let value = example(name);
+    let view = match value["kind"].as_str() {
+        Some("lifecycle_membership") => "membership",
+        Some("lifecycle_evidence_unavailable") => "unavailable",
+        _ => value["metadata"]["lifecycle"]["projection"]
+            .as_str()
+            .unwrap(),
+    };
+    validate_json_value(&schema(view), &value).unwrap();
+    let lifecycle = &value["metadata"]["lifecycle"];
+    if !lifecycle.is_null() {
+        let limit = if lifecycle["projection"] == "sink" {
+            8 * 1024
+        } else {
+            64 * 1024
+        };
+        assert!(serde_json::to_vec(&value).unwrap().len() <= limit);
+        assert!(serde_json::to_vec(lifecycle).unwrap().len() <= 16 * 1024);
+    }
+}
+
+#[rstest]
+#[case("/metadata/lifecycle/evidence", json!({"membership_id": "hidden"}))]
+#[case("/metadata/lifecycle/copies", json!({"object_key": "private"}))]
+#[case("/metadata/related_collection_ids", json!([8]))]
+#[case("/metadata/lifecycle/scope/collection_uuids", json!(["hidden"]))]
+#[case("/metadata/lifecycle/authority", json!({"review_id": "hidden"}))]
+#[case("/provenance/initiator", json!({"principal_id": 42, "name": "private"}))]
+#[case("/actor_user_id", json!(42))]
+#[case("/correlation_id", json!("internal-root-operation"))]
+#[case("/summary", json!("Collection B contains 17 hidden versions"))]
+#[case("/before", json!({"erased_payload": true}))]
+fn safe_sink_view_rejects_privileged_or_cross_scope_data(
+    #[case] pointer: &str,
+    #[case] value: Value,
+) {
+    let mut sink = example("published_sink");
+    let (parent, field) = pointer.rsplit_once('/').unwrap();
+    sink.pointer_mut(parent)
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .insert(field.to_owned(), value);
+    assert_invalid("sink", &sink);
+}
+
+#[rstest]
+#[case(
+    "published_audit",
+    "/metadata/lifecycle/evidence/verification_id",
+    Value::Null
+)]
+#[case(
+    "published_audit",
+    "/metadata/lifecycle/evidence/membership",
+    Value::Null
+)]
+#[case(
+    "erasure_completed_audit",
+    "/metadata/lifecycle/evidence/receipt_id",
+    Value::Null
+)]
+#[case(
+    "erasure_completed_audit",
+    "/metadata/lifecycle/evidence/membership",
+    Value::Null
+)]
+#[case("erasure_blocked_audit", "/metadata/lifecycle/state/outcome", json!("committed"))]
+#[case("published_audit", "/action", json!("deleted"))]
+#[case("system_policy_audit", "/collection_id", json!(7))]
+#[case("published_audit", "/collection_id", Value::Null)]
+#[case("published_audit", "/metadata/lifecycle/operation_revision", json!(9007199254740993_u64))]
+#[case("published_audit", "/metadata/lifecycle/operation_revision", json!("0"))]
+#[case("published_audit", "/metadata/lifecycle/contract_version", json!(2))]
+#[case("ready_audit", "/metadata/lifecycle/availability", Value::Null)]
+#[case("erasure_blocked_audit", "/metadata/lifecycle/state/reasons", json!([]))]
+fn malformed_or_insufficient_evidence_is_not_a_valid_success_view(
+    #[case] name: &str,
+    #[case] pointer: &str,
+    #[case] replacement: Value,
+) {
+    let mut value = example(name);
+    *value.pointer_mut(pointer).unwrap() = replacement;
+    assert_invalid("audit", &value);
+}
+
+#[test]
+fn audit_only_transition_cannot_be_delivered_as_a_sink_view() {
+    let mut value = example("published_sink");
+    value["metadata"]["lifecycle"]["name"] = json!("lifecycle.archive.verified");
+    assert_invalid("sink", &value);
+}
+
+#[rstest]
+#[case("unknown_optional_field")]
+#[case("unknown_optional_reason")]
+#[case("unknown_name")]
+#[case("unknown_major_version")]
+fn reader_evolution_vectors_are_distinct_from_closed_v1_producer_payloads(#[case] name: &str) {
+    let case = &fixtures()["reader_cases"][name];
+    assert_invalid(case["view"].as_str().unwrap(), &case["input"]);
+}
+
+#[rstest]
+#[case(0)]
+#[case(1)]
+#[case(2)]
+fn duplicate_out_of_order_delivery_vector_contains_valid_safe_views(#[case] index: usize) {
+    let value = &fixtures()["delivery_cases"]["duplicate_out_of_order"]["input"][index];
+    validate_json_value(&schema("sink"), value).unwrap();
+}
+
+#[test]
+fn membership_pages_remain_bounded() {
+    let mut page = example("membership_page");
+    page["members"] = json!(vec![page["members"][0].clone(); 251]);
+    assert_invalid("membership", &page);
+}
+
+#[test]
+fn unavailable_evidence_cannot_masquerade_as_complete_empty_membership() {
+    let mut page = example("empty_membership_page");
+    page["coverage"] = json!("expired");
+    assert_invalid("membership", &page);
+}
+
+#[test]
+fn audit_and_sink_views_preserve_the_same_committed_scoped_identity() {
+    let audit = example("published_audit");
+    let sink = example("published_sink");
+    for pointer in [
+        "/event_id",
+        "/metadata/lifecycle/name",
+        "/metadata/lifecycle/operation_id",
+        "/metadata/lifecycle/operation_revision",
+        "/metadata/lifecycle/scope",
+        "/metadata/lifecycle/counts",
+    ] {
+        assert_eq!(audit.pointer(pointer), sink.pointer(pointer), "{pointer}");
+    }
+}
+
+#[test]
+fn exact_membership_example_is_bound_to_its_published_digest() {
+    let page = example("membership_page");
+    let mut encoded = format!(
+        "hubuum-lifecycle-membership-v1\n{}\n{}\n{}\n",
+        page["membership_id"].as_str().unwrap(),
+        page["collection_uuid"].as_str().unwrap(),
+        page["operation_id"].as_str().unwrap(),
+    );
+    for member in page["members"].as_array().unwrap() {
+        encoded.push_str(member["resource_uuid"].as_str().unwrap());
+        encoded.push('\t');
+        encoded.push_str(member["version_uuid"].as_str().unwrap());
+        encoded.push('\n');
+    }
+    let audit = example("published_audit");
+    let membership = &audit["metadata"]["lifecycle"]["evidence"]["membership"];
+    let digest = Sha256::digest(encoded.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    assert_eq!(membership["sha256"], digest);
+    assert_eq!(membership["encoded_bytes"], encoded.len());
+    assert_eq!(
+        membership["count"],
+        page["members"].as_array().unwrap().len()
+    );
+}
+
+#[test]
+fn proposal_does_not_silently_activate_the_runtime_catalog() {
+    let error = serde_json::from_value::<EventEnvelope>(example("published_audit")).unwrap_err();
+    assert!(error.to_string().contains("unknown variant `lifecycle`"));
+}

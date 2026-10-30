@@ -4,6 +4,10 @@ Hubuum stores one canonical event stream in `events`. Audit reads query that
 stream directly, while external delivery fans matching events out through
 `event_subscriptions` and `event_deliveries`.
 
+The [lifecycle audit proposal](lifecycle_audit_contract.md) specifies future
+tier movement, retrieval and deletion evidence and their separate safe sink
+projections. Its catalog entries and routes are not enabled by the proposal.
+
 The event stream is append-only during normal application operation. Domain
 changes emit events in the same database transaction as the state change, so an
 event exists only if the change commits.

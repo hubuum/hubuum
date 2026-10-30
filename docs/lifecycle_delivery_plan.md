@@ -5,6 +5,11 @@ starting 2026-10-27. The issue remains the design authority and the three parent
 epics retain their complete requirements. This plan orders reviewable work; it
 does not claim any archive or permanent-deletion behavior has shipped.
 
+The [lifecycle audit contract proposal](lifecycle_audit_contract.md) tracks #550's
+transition matrix, exact membership evidence, safe sink views and shared
+consumer fixtures. Its acceptance gates apply to the owning lifecycle features;
+the proposal does not activate those features or block unrelated foundations.
+
 ## Delivery order
 
 | Step | Issues | Review scope and acceptance gate |

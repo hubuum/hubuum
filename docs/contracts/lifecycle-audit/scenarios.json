@@ -1,0 +1,293 @@
+{
+  "contract_version": 1,
+  "status": "proposal",
+  "note": "Required runtime qualification scenarios, not executed lifecycle test results.",
+  "scenarios": [
+    {
+      "id": "atomic_rollback",
+      "owners": [
+        "hubuum/hubuum#513",
+        "hubuum/hubuum#515",
+        "hubuum/hubuum#518",
+        "hubuum/hubuum#520"
+      ],
+      "setup": "Fail after changing lifecycle state but before required audit/membership commit.",
+      "required_outcomes": [
+        "The transaction rolls back state, membership and event together.",
+        "No fan-out success fact exists."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "audit_unavailable",
+      "owners": [
+        "hubuum/hubuum#513",
+        "hubuum/hubuum#515",
+        "hubuum/hubuum#518",
+        "hubuum/hubuum#520"
+      ],
+      "setup": "Make required canonical audit persistence unavailable.",
+      "required_outcomes": [
+        "The transition fails and no completion is acknowledged.",
+        "A later retry cannot repeat an acknowledged irreversible effect."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "transfer_crash_boundaries",
+      "owners": [
+        "hubuum/hubuum#515",
+        "hubuum/hubuum#520"
+      ],
+      "setup": "Crash before/after attempt intent, provider success, verified observation, publication, source retirement and cleanup.",
+      "required_outcomes": [
+        "Source authority survives until verified publication.",
+        "Recovery preserves the original event/attempt identities for already committed facts.",
+        "Unobserved provider outcomes are reconciled before recording success."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "deletion_crash_boundaries",
+      "owners": [
+        "hubuum/hubuum#511",
+        "hubuum/hubuum#518"
+      ],
+      "setup": "Crash before/after intent protection, physical removal and completion protection.",
+      "required_outcomes": [
+        "Irreversible cleanup cannot outrun independent intent/membership protection.",
+        "Final acknowledgement cannot outrun protected completion/audit coverage."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "duplicate_reconciliation",
+      "owners": [
+        "hubuum/hubuum#511",
+        "hubuum/hubuum#515",
+        "hubuum/hubuum#518",
+        "hubuum/hubuum#520"
+      ],
+      "setup": "Reconcile the same committed transition twice.",
+      "required_outcomes": [
+        "The canonical event UUID is unchanged.",
+        "A genuine additional physical attempt has its own attempt UUID."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "late_commit",
+      "owners": [
+        "hubuum/hubuum#513",
+        "hubuum/hubuum#515"
+      ],
+      "setup": "Commit an eligible version after an earlier batch selected older sequence values.",
+      "required_outcomes": [
+        "A later eligibility pass selects the late commit.",
+        "No timestamp/sequence watermark silently excludes it."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "stale_lease",
+      "owners": [
+        "hubuum/hubuum#515",
+        "hubuum/hubuum#516",
+        "hubuum/hubuum#518",
+        "hubuum/hubuum#520"
+      ],
+      "setup": "Replace a worker claim before its provider result returns.",
+      "required_outcomes": [
+        "The old worker cannot publish, retire, or acknowledge success.",
+        "Its observed external effect remains a bounded reconciliation obligation."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "permission_loss",
+      "owners": [
+        "hubuum/hubuum#516",
+        "hubuum/hubuum#517",
+        "hubuum/hubuum#545"
+      ],
+      "setup": "Revoke request/evidence authority between admission and result or membership access.",
+      "required_outcomes": [
+        "Execution and every access recheck current authority.",
+        "Unauthorized lookup is indistinguishable from nonexistent lookup."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "mixed_scope",
+      "owners": [
+        "hubuum/hubuum#513",
+        "hubuum/hubuum#515",
+        "hubuum/hubuum#518",
+        "hubuum/hubuum#520"
+      ],
+      "setup": "Operate on collections A/B while a reader and subscriber have A only.",
+      "required_outcomes": [
+        "A gets its own event/operation identity and exact A-only membership/counts.",
+        "Summary, metadata, cursors, causation and every transport contain no B identity or count."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "hold_or_provider_lock",
+      "owners": [
+        "hubuum/hubuum#513",
+        "hubuum/hubuum#515",
+        "hubuum/hubuum#518",
+        "hubuum/hubuum#520"
+      ],
+      "setup": "Create a hold or return a provider retention lock before retirement/deletion.",
+      "required_outcomes": [
+        "A bounded blocker is recorded.",
+        "Transfer publication is not confused with source removal or erasure completion."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "sink_outage",
+      "owners": [
+        "hubuum/hubuum#550"
+      ],
+      "setup": "Keep an eligible sink unavailable while physical cleanup completes.",
+      "required_outcomes": [
+        "Canonical audit persists and cleanup never waits for sink acknowledgement.",
+        "Retries/backlog are bounded and any delivery gap is inspectable."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "duplicate_out_of_order_delivery",
+      "owners": [
+        "hubuum/hubuum#550"
+      ],
+      "setup": "Deliver revision 3 before revision 2, then redeliver 3.",
+      "required_outcomes": [
+        "The consumer deduplicates event UUIDs and preserves operation revisions.",
+        "Transport success is never interpreted as domain completion."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "revoked_retry",
+      "owners": [
+        "hubuum/hubuum#550"
+      ],
+      "setup": "Revoke a sink grant or subscription authority before retry admission.",
+      "required_outcomes": [
+        "The retry does not begin transport.",
+        "Already admitted external work is not claimed recalled."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "partial_deletion",
+      "owners": [
+        "hubuum/hubuum#511",
+        "hubuum/hubuum#518"
+      ],
+      "setup": "Remove one managed copy while another is locked or unavailable.",
+      "required_outcomes": [
+        "Copy-level receipt and blocker remain separate.",
+        "No confirmed managed-scope completion is emitted."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "logical_restore",
+      "owners": [
+        "hubuum/hubuum#511",
+        "hubuum/hubuum#550"
+      ],
+      "setup": "Restore older application data reusing integer resource/principal IDs.",
+      "required_outcomes": [
+        "Protected authority and exact UUID membership retain their identity.",
+        "Exposure stays quarantined until restrictions/evidence are reapplied."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "physical_recovery",
+      "owners": [
+        "hubuum/hubuum#511",
+        "hubuum/hubuum#550"
+      ],
+      "setup": "Recover a primary behind acknowledged authority; also test stale and wrong-lineage independent evidence.",
+      "required_outcomes": [
+        "Recovery fails closed for stale, missing or incompatible coverage.",
+        "Rebuilt audit projections preserve original event UUIDs."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "task_principal_resource_purge",
+      "owners": [
+        "hubuum/hubuum#512",
+        "hubuum/hubuum#550"
+      ],
+      "setup": "Purge the original task and delete its principal/resource.",
+      "required_outcomes": [
+        "Authorized minimal evidence is discoverable without a live task/resource.",
+        "Current records with reused integer IDs cannot supply historical attribution."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "evidence_expiry",
+      "owners": [
+        "hubuum/hubuum#513",
+        "hubuum/hubuum#550"
+      ],
+      "setup": "Expire or minimize exact membership while an authorized caller retains the event reference.",
+      "required_outcomes": [
+        "The typed response distinguishes unavailable evidence from complete empty membership.",
+        "Unauthorized callers receive no tombstone, count or receipt disclosure."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "corrupt_manifest",
+      "owners": [
+        "hubuum/hubuum#514",
+        "hubuum/hubuum#550"
+      ],
+      "setup": "Corrupt, truncate, or substitute a retained manifest or remove a required reader/dependency.",
+      "required_outcomes": [
+        "No complete membership response is returned.",
+        "A typed corruption/unsupported/dependency failure is exposed after authorization."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "access_audit",
+      "owners": [
+        "hubuum/hubuum#516",
+        "hubuum/hubuum#517",
+        "hubuum/hubuum#545"
+      ],
+      "setup": "Authorize a result download, then disconnect or fail verification before EOF.",
+      "required_outcomes": [
+        "Authorization is not recorded as completed transfer.",
+        "No event claims user consumption or retention."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "consumer_evolution",
+      "owners": [
+        "hubuum/hubuum#545",
+        "hubuum/hubuum#550"
+      ],
+      "setup": "Read added optional fields/reasons and an unsupported name/version through every consumer mode.",
+      "required_outcomes": [
+        "Unknown optional data is preserved without fabricated success.",
+        "Unsupported required semantics stay explicit.",
+        "Frontend/BFF, Rust async/blocking, Python sync/async and released-SDK CLI run the same fixtures."
+      ],
+      "qualification": "pending"
+    }
+  ]
+}
