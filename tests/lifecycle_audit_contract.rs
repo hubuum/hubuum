@@ -17,18 +17,19 @@ fn schema(view: &str) -> Value {
             include_str!("../docs/contracts/lifecycle-audit/membership-page.schema.json")
         }
         "unavailable" => include_str!("../docs/contracts/lifecycle-audit/unavailable.schema.json"),
+        "delivery" => include_str!("../docs/contracts/lifecycle-audit/delivery-status.schema.json"),
+        "capture" => include_str!("../docs/contracts/lifecycle-audit/capture-receipt.schema.json"),
         _ => panic!("unknown contract view"),
     };
     serde_json::from_str(document).unwrap()
 }
 
 fn assert_invalid(view: &str, value: &Value) {
+    let error = validate_json_value(&schema(view), value).unwrap_err();
     assert_eq!(
-        validate_json_value(&schema(view), value)
-            .unwrap_err()
-            .kind(),
+        error.kind(),
         JsonSchemaErrorKind::InvalidValue,
-        "the schema must compile before a value can be rejected"
+        "the schema must compile before a value can be rejected: {error}"
     );
 }
 
@@ -55,6 +56,8 @@ fn example(name: &str) -> Value {
 #[case("sink")]
 #[case("membership")]
 #[case("unavailable")]
+#[case("delivery")]
+#[case("capture")]
 fn proposal_schema_is_valid_json_schema(#[case] view: &str) {
     validate_json_schema(&schema(view)).unwrap();
 }
@@ -76,11 +79,26 @@ fn proposal_schema_is_valid_json_schema(#[case] view: &str) {
 #[case("expired_evidence")]
 #[case("minimized_evidence")]
 #[case("corrupt_evidence")]
+#[case("delivery_configured")]
+#[case("delivery_unconfigured")]
+#[case("delivery_draining")]
+#[case("delivery_gap_open")]
+#[case("delivery_gap_unknown_count")]
+#[case("delivery_gap_recovery_unknown")]
+#[case("delivery_gap_acknowledged_expired_source")]
+#[case("delivery_history_expired")]
+#[case("delivery_gap_acknowledged_audit")]
+#[case("capture_ready_without_task")]
+#[case("capture_ready_expired_source")]
+#[case("capture_expired")]
+#[case("capture_unavailable")]
 fn shared_interchange_example_satisfies_the_proposal(#[case] name: &str) {
     let value = example(name);
     let view = match value["kind"].as_str() {
         Some("lifecycle_membership") => "membership",
         Some("lifecycle_evidence_unavailable") => "unavailable",
+        Some("lifecycle_delivery_status") => "delivery",
+        Some("lifecycle_capture_receipt") => "capture",
         _ => value["metadata"]["lifecycle"]["projection"]
             .as_str()
             .unwrap(),
@@ -104,6 +122,7 @@ fn shared_interchange_example_satisfies_the_proposal(#[case] name: &str) {
 #[case("/metadata/related_collection_ids", json!([8]))]
 #[case("/metadata/lifecycle/scope/collection_uuids", json!(["hidden"]))]
 #[case("/metadata/lifecycle/authority", json!({"review_id": "hidden"}))]
+#[case("/metadata/lifecycle/delivery", json!({"gap_id": "private"}))]
 #[case("/provenance/initiator", json!({"principal_id": 42, "name": "private"}))]
 #[case("/actor_user_id", json!(42))]
 #[case("/correlation_id", json!("internal-root-operation"))]
@@ -163,10 +182,12 @@ fn malformed_or_insufficient_evidence_is_not_a_valid_success_view(
     assert_invalid("audit", &value);
 }
 
-#[test]
-fn audit_only_transition_cannot_be_delivered_as_a_sink_view() {
+#[rstest]
+#[case("lifecycle.archive.verified")]
+#[case("lifecycle.delivery_gap.acknowledged")]
+fn audit_only_transition_cannot_be_delivered_as_a_sink_view(#[case] name: &str) {
     let mut value = example("published_sink");
-    value["metadata"]["lifecycle"]["name"] = json!("lifecycle.archive.verified");
+    value["metadata"]["lifecycle"]["name"] = json!(name);
     assert_invalid("sink", &value);
 }
 
@@ -187,6 +208,84 @@ fn reader_evolution_vectors_are_distinct_from_closed_v1_producer_payloads(#[case
 fn duplicate_out_of_order_delivery_vector_contains_valid_safe_views(#[case] index: usize) {
     let value = &fixtures()["delivery_cases"]["duplicate_out_of_order"]["input"][index];
     validate_json_value(&schema("sink"), value).unwrap();
+}
+
+#[rstest]
+#[case("delivery_gap_unknown_count", "delivery", "/gap/omitted_events", json!(17))]
+#[case("delivery_gap_open", "delivery", "/gap/omitted_events", Value::Null)]
+#[case(
+    "delivery_gap_acknowledged_expired_source",
+    "delivery",
+    "/gap/acknowledged_revision",
+    Value::Null
+)]
+#[case("delivery_gap_acknowledged_expired_source", "delivery", "/gap/source_history/state", json!("retained"))]
+#[case("delivery_configured", "delivery", "/policy_revision", Value::Null)]
+#[case("delivery_configured", "delivery", "/source_generation", Value::Null)]
+#[case("delivery_configured", "delivery", "/capacity/row_limit", json!(0))]
+#[case("delivery_configured", "delivery", "/capacity/payload_byte_limit", json!(8191))]
+#[case("delivery_configured", "delivery", "/capacity/deployment_rows_in_use", json!(999))]
+#[case("delivery_configured", "delivery", "/gap_history", json!("unknown"))]
+#[case("capture_ready_without_task", "capture", "/coverage/gap_recovered", json!(true))]
+#[case("capture_ready_without_task", "capture", "/coverage/basis", json!("wall_clock_interval"))]
+#[case("capture_ready_without_task", "capture", "/result/event_count", json!(10001))]
+#[case("capture_ready_without_task", "capture", "/result/encoded_bytes", json!(16777217))]
+#[case("capture_ready_without_task", "capture", "/result/sha256", json!("provider-etag"))]
+#[case("capture_ready_without_task", "capture", "/result/download_url", json!("https://private-provider.example"))]
+#[case("capture_ready_without_task", "capture", "/state", json!("expired"))]
+#[case(
+    "capture_ready_expired_source",
+    "capture",
+    "/coverage/source_history/reason",
+    Value::Null
+)]
+#[case(
+    "delivery_gap_acknowledged_audit",
+    "audit",
+    "/metadata/lifecycle/delivery",
+    Value::Null
+)]
+fn delivery_evidence_rejects_ambiguous_or_privileged_views(
+    #[case] name: &str,
+    #[case] view: &str,
+    #[case] pointer: &str,
+    #[case] replacement: Value,
+) {
+    let mut value = example(name);
+    let (parent, field) = pointer.rsplit_once('/').unwrap();
+    value
+        .pointer_mut(parent)
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .insert(field.to_owned(), replacement);
+    assert_invalid(view, &value);
+}
+
+#[test]
+fn catchup_output_is_bound_to_its_capture_receipt_and_contains_only_safe_views() {
+    let bytes = include_bytes!("../docs/contracts/lifecycle-audit/catchup-output.jsonl");
+    assert_eq!(bytes.last(), Some(&b'\n'));
+    assert!(!bytes.contains(&b'\r'));
+    assert!(!bytes.starts_with(&[0xef, 0xbb, 0xbf]));
+    let receipt = example("capture_ready_without_task");
+    let result = &receipt["result"];
+    let digest = Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    assert_eq!(result["sha256"], digest);
+    assert_eq!(result["encoded_bytes"], bytes.len());
+    let lines = std::str::from_utf8(bytes)
+        .unwrap()
+        .lines()
+        .collect::<Vec<_>>();
+    assert_eq!(result["event_count"], lines.len());
+    for line in lines {
+        let event: Value = serde_json::from_str(line).unwrap();
+        validate_json_value(&schema("sink"), &event).unwrap();
+        assert_eq!(event["metadata"]["lifecycle"]["scope"], receipt["scope"]);
+    }
 }
 
 #[test]

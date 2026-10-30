@@ -1,0 +1,523 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:hubuum:lifecycle-audit:proposal:1:capture_receipt",
+  "title": "Proposed capture receipt; not an enabled server API",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "const": "lifecycle_capture_receipt"
+    },
+    "contract_version": {
+      "const": 1
+    },
+    "capture_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "subscription_uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "scope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "collection"
+            },
+            "collection_uuid": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "kind",
+            "collection_uuid"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "system"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "configuration_revision": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,18}$"
+    },
+    "gap_revision": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[1-9][0-9]{0,18}$"
+    },
+    "task_id": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
+    "state": {
+      "enum": [
+        "ready",
+        "expired",
+        "unavailable"
+      ]
+    },
+    "captured_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+    },
+    "ready_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+    },
+    "available_until": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+    },
+    "result": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "output_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "format": {
+          "const": "lifecycle-catchup-jsonl-v1"
+        },
+        "event_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "encoded_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16777216
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "output_id",
+        "format",
+        "event_count",
+        "encoded_bytes",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "coverage": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "basis": {
+          "const": "captured_committed_set"
+        },
+        "completeness": {
+          "const": "complete"
+        },
+        "source_history": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "retained",
+                "unavailable",
+                "unknown"
+              ]
+            },
+            "reason": {
+              "enum": [
+                "source_expired",
+                "configuration_changed",
+                "recovery_gap",
+                "not_assessed",
+                null
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "type": "object",
+                "required": [
+                  "state"
+                ],
+                "properties": {
+                  "state": {
+                    "const": "retained"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "reason": {
+                    "type": "null"
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "type": "object",
+                "required": [
+                  "state"
+                ],
+                "properties": {
+                  "state": {
+                    "const": "unavailable"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "reason": {
+                    "enum": [
+                      "source_expired",
+                      "configuration_changed",
+                      "recovery_gap"
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "type": "object",
+                "required": [
+                  "state"
+                ],
+                "properties": {
+                  "state": {
+                    "const": "unknown"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "reason": {
+                    "enum": [
+                      "configuration_changed",
+                      "recovery_gap",
+                      "not_assessed"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "gap_recovered": {
+          "const": false
+        }
+      },
+      "required": [
+        "basis",
+        "completeness",
+        "source_history",
+        "gap_recovered"
+      ],
+      "additionalProperties": false
+    },
+    "reason": {
+      "enum": [
+        "capture_expired",
+        "capture_unavailable",
+        null
+      ]
+    },
+    "source_generation": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    }
+  },
+  "required": [
+    "kind",
+    "contract_version",
+    "capture_id",
+    "subscription_uuid",
+    "scope",
+    "configuration_revision",
+    "gap_revision",
+    "task_id",
+    "state",
+    "captured_at",
+    "ready_at",
+    "available_until",
+    "result",
+    "coverage",
+    "reason",
+    "source_generation"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "const": "ready"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "ready_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+          },
+          "available_until": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+          },
+          "result": {
+            "type": "object",
+            "properties": {
+              "output_id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+              },
+              "format": {
+                "const": "lifecycle-catchup-jsonl-v1"
+              },
+              "event_count": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10000
+              },
+              "encoded_bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 16777216
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "output_id",
+              "format",
+              "event_count",
+              "encoded_bytes",
+              "sha256"
+            ],
+            "additionalProperties": false
+          },
+          "coverage": {
+            "type": "object",
+            "properties": {
+              "basis": {
+                "const": "captured_committed_set"
+              },
+              "completeness": {
+                "const": "complete"
+              },
+              "source_history": {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "retained",
+                      "unavailable",
+                      "unknown"
+                    ]
+                  },
+                  "reason": {
+                    "enum": [
+                      "source_expired",
+                      "configuration_changed",
+                      "recovery_gap",
+                      "not_assessed",
+                      null
+                    ]
+                  }
+                },
+                "required": [
+                  "state",
+                  "reason"
+                ],
+                "additionalProperties": false,
+                "allOf": [
+                  {
+                    "if": {
+                      "type": "object",
+                      "required": [
+                        "state"
+                      ],
+                      "properties": {
+                        "state": {
+                          "const": "retained"
+                        }
+                      }
+                    },
+                    "then": {
+                      "properties": {
+                        "reason": {
+                          "type": "null"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "if": {
+                      "type": "object",
+                      "required": [
+                        "state"
+                      ],
+                      "properties": {
+                        "state": {
+                          "const": "unavailable"
+                        }
+                      }
+                    },
+                    "then": {
+                      "properties": {
+                        "reason": {
+                          "enum": [
+                            "source_expired",
+                            "configuration_changed",
+                            "recovery_gap"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "if": {
+                      "type": "object",
+                      "required": [
+                        "state"
+                      ],
+                      "properties": {
+                        "state": {
+                          "const": "unknown"
+                        }
+                      }
+                    },
+                    "then": {
+                      "properties": {
+                        "reason": {
+                          "enum": [
+                            "configuration_changed",
+                            "recovery_gap",
+                            "not_assessed"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "gap_recovered": {
+                "const": false
+              }
+            },
+            "required": [
+              "basis",
+              "completeness",
+              "source_history",
+              "gap_recovered"
+            ],
+            "additionalProperties": false
+          },
+          "reason": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "const": "expired"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "type": "null"
+          },
+          "coverage": {
+            "type": "null"
+          },
+          "reason": {
+            "const": "capture_expired"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "const": "unavailable"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "type": "null"
+          },
+          "coverage": {
+            "type": "null"
+          },
+          "reason": {
+            "const": "capture_unavailable"
+          }
+        }
+      }
+    }
+  ]
+}

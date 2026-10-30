@@ -219,7 +219,8 @@
                 "lifecycle.evidence.expired",
                 "lifecycle.result.access_authorized",
                 "lifecycle.result.transfer_completed",
-                "lifecycle.result.transfer_failed"
+                "lifecycle.result.transfer_failed",
+                "lifecycle.delivery_gap.acknowledged"
               ]
             },
             "projection": {
@@ -508,31 +509,19 @@
               "type": "object",
               "properties": {
                 "source_tier": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "hot",
-                        "warm",
-                        "cold"
-                      ]
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "enum": [
+                    "hot",
+                    "warm",
+                    "cold",
+                    null
                   ]
                 },
                 "destination_tier": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "hot",
-                        "warm",
-                        "cold"
-                      ]
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "enum": [
+                    "hot",
+                    "warm",
+                    "cold",
+                    null
                   ]
                 },
                 "destination_id": {
@@ -641,6 +630,50 @@
                 "receipt_id"
               ],
               "additionalProperties": false
+            },
+            "delivery": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "properties": {
+                "subscription_uuid": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                },
+                "gap_id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                },
+                "gap_revision": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]{0,18}$"
+                },
+                "configuration_revision": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]{0,18}$"
+                },
+                "source_generation": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                },
+                "capture_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                }
+              },
+              "required": [
+                "subscription_uuid",
+                "gap_id",
+                "gap_revision",
+                "configuration_revision",
+                "source_generation",
+                "capture_id"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -661,7 +694,8 @@
             "attribution",
             "authority",
             "copies",
-            "evidence"
+            "evidence",
+            "delivery"
           ],
           "additionalProperties": false,
           "allOf": [
@@ -755,6 +789,22 @@
                         }
                       }
                     }
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "name": {
+                    "const": "lifecycle.delivery_gap.acknowledged"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "delivery": {
+                    "type": "object"
                   }
                 }
               }
@@ -1060,7 +1110,8 @@
                       "lifecycle.erasure.access_restricted",
                       "lifecycle.erasure.recovery_protected",
                       "lifecycle.erasure.copy_removed",
-                      "lifecycle.erasure.blocked"
+                      "lifecycle.erasure.blocked",
+                      "lifecycle.delivery_gap.acknowledged"
                     ]
                   }
                 }
@@ -1085,36 +1136,9 @@
               "lifecycle": {
                 "properties": {
                   "name": {
-                    "enum": [
-                      "lifecycle.policy.created",
-                      "lifecycle.policy.changed",
-                      "lifecycle.policy.reviewed",
-                      "lifecycle.hold.created",
-                      "lifecycle.hold.released",
-                      "lifecycle.hold.expired",
-                      "lifecycle.run.requested",
-                      "lifecycle.run.started",
-                      "lifecycle.run.completed",
-                      "lifecycle.archive.transfer_started",
-                      "lifecycle.archive.verified",
-                      "lifecycle.archive.published",
-                      "lifecycle.archive.source_retired",
-                      "lifecycle.archive.cleanup_completed",
-                      "lifecycle.data_request.requested",
-                      "lifecycle.data_request.preparing",
-                      "lifecycle.data_request.provider_wait",
-                      "lifecycle.data_request.ready",
-                      "lifecycle.data_request.result_expired",
-                      "lifecycle.cache.evicted",
-                      "lifecycle.erasure.requested",
-                      "lifecycle.erasure.access_restricted",
-                      "lifecycle.erasure.recovery_protected",
-                      "lifecycle.erasure.copy_removed",
-                      "lifecycle.erasure.completed",
-                      "lifecycle.evidence.expired",
-                      "lifecycle.result.access_authorized",
-                      "lifecycle.result.transfer_completed"
-                    ]
+                    "not": {
+                      "pattern": "[._](failed|blocked|cancelled)$"
+                    }
                   }
                 }
               }
@@ -1150,10 +1174,7 @@
               "lifecycle": {
                 "properties": {
                   "name": {
-                    "enum": [
-                      "lifecycle.archive.blocked",
-                      "lifecycle.erasure.blocked"
-                    ]
+                    "pattern": "[._]blocked$"
                   }
                 }
               }
@@ -1189,13 +1210,7 @@
               "lifecycle": {
                 "properties": {
                   "name": {
-                    "enum": [
-                      "lifecycle.run.failed",
-                      "lifecycle.archive.failed",
-                      "lifecycle.archive.integrity_failed",
-                      "lifecycle.data_request.failed",
-                      "lifecycle.result.transfer_failed"
-                    ]
+                    "pattern": "[._]failed$"
                   }
                 }
               }
@@ -1231,10 +1246,7 @@
               "lifecycle": {
                 "properties": {
                   "name": {
-                    "enum": [
-                      "lifecycle.run.cancelled",
-                      "lifecycle.data_request.cancelled"
-                    ]
+                    "pattern": "[._]cancelled$"
                   }
                 }
               }

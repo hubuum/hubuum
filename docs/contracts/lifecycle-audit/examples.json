@@ -88,7 +88,8 @@
             },
             "verification_id": "00000000-0000-4000-8000-000000000060",
             "receipt_id": null
-          }
+          },
+          "delivery": null
         }
       }
     },
@@ -228,7 +229,8 @@
             },
             "verification_id": "00000000-0000-4000-8000-000000000060",
             "receipt_id": null
-          }
+          },
+          "delivery": null
         }
       }
     },
@@ -318,7 +320,8 @@
             },
             "verification_id": null,
             "receipt_id": null
-          }
+          },
+          "delivery": null
         }
       }
     },
@@ -408,7 +411,8 @@
             },
             "verification_id": "00000000-0000-4000-8000-000000000060",
             "receipt_id": "00000000-0000-4000-8000-000000000070"
-          }
+          },
+          "delivery": null
         }
       }
     },
@@ -500,7 +504,8 @@
             },
             "verification_id": "00000000-0000-4000-8000-000000000060",
             "receipt_id": null
-          }
+          },
+          "delivery": null
         }
       }
     },
@@ -593,7 +598,8 @@
             },
             "verification_id": "00000000-0000-4000-8000-000000000060",
             "receipt_id": null
-          }
+          },
+          "delivery": null
         }
       }
     },
@@ -675,7 +681,8 @@
             "membership": null,
             "verification_id": null,
             "receipt_id": null
-          }
+          },
+          "delivery": null
         }
       }
     },
@@ -765,7 +772,8 @@
             },
             "verification_id": "00000000-0000-4000-8000-000000000060",
             "receipt_id": null
-          }
+          },
+          "delivery": null
         }
       }
     },
@@ -952,9 +960,469 @@
             },
             "verification_id": "00000000-0000-4000-8000-000000000060",
             "receipt_id": null
+          },
+          "delivery": null
+        }
+      }
+    },
+    "delivery_configured": {
+      "kind": "lifecycle_delivery_status",
+      "contract_version": 1,
+      "subscription_id": 8,
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "policy_state": "configured",
+      "policy_revision": "1",
+      "configuration_revision": "3",
+      "observed_at": "2026-10-30T01:00:00Z",
+      "capacity": {
+        "retained_rows": 8,
+        "row_limit": 100,
+        "reserved_payload_bytes": 65536,
+        "payload_byte_limit": 819200
+      },
+      "gap_history": "retained",
+      "history_available_since": "2026-10-29T00:00:00Z",
+      "gap": null,
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "delivery_unconfigured": {
+      "kind": "lifecycle_delivery_status",
+      "contract_version": 1,
+      "subscription_id": 8,
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "policy_state": "unconfigured",
+      "policy_revision": null,
+      "configuration_revision": "3",
+      "observed_at": "2026-10-30T01:00:00Z",
+      "capacity": null,
+      "gap_history": "unknown",
+      "history_available_since": null,
+      "gap": null,
+      "source_generation": null
+    },
+    "delivery_gap_open": {
+      "kind": "lifecycle_delivery_status",
+      "contract_version": 1,
+      "subscription_id": 8,
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "policy_state": "configured",
+      "policy_revision": "1",
+      "configuration_revision": "3",
+      "observed_at": "2026-10-30T01:00:00Z",
+      "capacity": {
+        "retained_rows": 8,
+        "row_limit": 100,
+        "reserved_payload_bytes": 65536,
+        "payload_byte_limit": 819200
+      },
+      "gap_history": "retained",
+      "history_available_since": "2026-10-29T00:00:00Z",
+      "gap": {
+        "gap_id": "00000000-0000-4000-8000-000000000500",
+        "revision": "5",
+        "state": "open",
+        "observed_from": "2026-10-30T00:00:00Z",
+        "observed_through": "2026-10-30T00:30:00Z",
+        "visible_until": "2026-11-06T00:30:00Z",
+        "reasons": [
+          "backlog_capacity"
+        ],
+        "omitted_events": 17,
+        "count_accuracy": "exact",
+        "source_history": {
+          "state": "retained",
+          "reason": null
+        },
+        "acknowledged_revision": null
+      },
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "delivery_gap_unknown_count": {
+      "kind": "lifecycle_delivery_status",
+      "contract_version": 1,
+      "subscription_id": 8,
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "policy_state": "configured",
+      "policy_revision": "1",
+      "configuration_revision": "3",
+      "observed_at": "2026-10-30T01:00:00Z",
+      "capacity": {
+        "retained_rows": 8,
+        "row_limit": 100,
+        "reserved_payload_bytes": 65536,
+        "payload_byte_limit": 819200
+      },
+      "gap_history": "retained",
+      "history_available_since": "2026-10-29T00:00:00Z",
+      "gap": {
+        "gap_id": "00000000-0000-4000-8000-000000000500",
+        "revision": "5",
+        "state": "open",
+        "observed_from": "2026-10-30T00:00:00Z",
+        "observed_through": "2026-10-30T00:30:00Z",
+        "visible_until": "2026-11-06T00:30:00Z",
+        "reasons": [
+          "backlog_capacity"
+        ],
+        "omitted_events": null,
+        "count_accuracy": "unknown",
+        "source_history": {
+          "state": "retained",
+          "reason": null
+        },
+        "acknowledged_revision": null
+      },
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "delivery_gap_acknowledged_expired_source": {
+      "kind": "lifecycle_delivery_status",
+      "contract_version": 1,
+      "subscription_id": 8,
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "policy_state": "configured",
+      "policy_revision": "1",
+      "configuration_revision": "3",
+      "observed_at": "2026-10-30T01:00:00Z",
+      "capacity": {
+        "retained_rows": 8,
+        "row_limit": 100,
+        "reserved_payload_bytes": 65536,
+        "payload_byte_limit": 819200
+      },
+      "gap_history": "retained",
+      "history_available_since": "2026-10-29T00:00:00Z",
+      "gap": {
+        "gap_id": "00000000-0000-4000-8000-000000000500",
+        "revision": "6",
+        "state": "acknowledged",
+        "observed_from": "2026-10-30T00:00:00Z",
+        "observed_through": "2026-10-30T00:30:00Z",
+        "visible_until": "2026-11-06T00:30:00Z",
+        "reasons": [
+          "backlog_capacity",
+          "source_retention"
+        ],
+        "omitted_events": 17,
+        "count_accuracy": "exact",
+        "source_history": {
+          "state": "unavailable",
+          "reason": "source_expired"
+        },
+        "acknowledged_revision": "5"
+      },
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "delivery_history_expired": {
+      "kind": "lifecycle_delivery_status",
+      "contract_version": 1,
+      "subscription_id": 8,
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "policy_state": "configured",
+      "policy_revision": "1",
+      "configuration_revision": "3",
+      "observed_at": "2026-10-30T01:00:00Z",
+      "capacity": {
+        "retained_rows": 8,
+        "row_limit": 100,
+        "reserved_payload_bytes": 65536,
+        "payload_byte_limit": 819200
+      },
+      "gap_history": "expired",
+      "history_available_since": "2026-10-30T00:00:00Z",
+      "gap": null,
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "delivery_draining": {
+      "kind": "lifecycle_delivery_status",
+      "contract_version": 1,
+      "subscription_id": 8,
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "policy_state": "draining",
+      "policy_revision": "1",
+      "configuration_revision": "3",
+      "observed_at": "2026-10-30T01:00:00Z",
+      "capacity": {
+        "retained_rows": 120,
+        "row_limit": 100,
+        "reserved_payload_bytes": 983040,
+        "payload_byte_limit": 819200
+      },
+      "gap_history": "retained",
+      "history_available_since": "2026-10-29T00:00:00Z",
+      "gap": null,
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "capture_ready_without_task": {
+      "kind": "lifecycle_capture_receipt",
+      "contract_version": 1,
+      "capture_id": "00000000-0000-4000-8000-000000000510",
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "configuration_revision": "3",
+      "gap_revision": "5",
+      "task_id": null,
+      "state": "ready",
+      "captured_at": "2026-10-30T01:00:00Z",
+      "ready_at": "2026-10-30T01:00:01Z",
+      "available_until": "2026-11-01T01:00:01Z",
+      "result": {
+        "output_id": "00000000-0000-4000-8000-000000000511",
+        "format": "lifecycle-catchup-jsonl-v1",
+        "event_count": 2,
+        "encoded_bytes": 1794,
+        "sha256": "a172eb3e13d06afd0e804e43b7a6e2728ba0d2e30729665183d68df1978a552f"
+      },
+      "coverage": {
+        "basis": "captured_committed_set",
+        "completeness": "complete",
+        "source_history": {
+          "state": "retained",
+          "reason": null
+        },
+        "gap_recovered": false
+      },
+      "reason": null,
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "capture_ready_expired_source": {
+      "kind": "lifecycle_capture_receipt",
+      "contract_version": 1,
+      "capture_id": "00000000-0000-4000-8000-000000000510",
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "configuration_revision": "3",
+      "gap_revision": "5",
+      "task_id": null,
+      "state": "ready",
+      "captured_at": "2026-10-30T01:00:00Z",
+      "ready_at": "2026-10-30T01:00:01Z",
+      "available_until": "2026-11-01T01:00:01Z",
+      "result": {
+        "output_id": "00000000-0000-4000-8000-000000000511",
+        "format": "lifecycle-catchup-jsonl-v1",
+        "event_count": 2,
+        "encoded_bytes": 1794,
+        "sha256": "a172eb3e13d06afd0e804e43b7a6e2728ba0d2e30729665183d68df1978a552f"
+      },
+      "coverage": {
+        "basis": "captured_committed_set",
+        "completeness": "complete",
+        "source_history": {
+          "state": "unavailable",
+          "reason": "source_expired"
+        },
+        "gap_recovered": false
+      },
+      "reason": null,
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "capture_expired": {
+      "kind": "lifecycle_capture_receipt",
+      "contract_version": 1,
+      "capture_id": "00000000-0000-4000-8000-000000000510",
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "configuration_revision": "3",
+      "gap_revision": "5",
+      "task_id": null,
+      "state": "expired",
+      "captured_at": "2026-10-30T01:00:00Z",
+      "ready_at": "2026-10-30T01:00:01Z",
+      "available_until": "2026-11-01T01:00:01Z",
+      "result": null,
+      "coverage": null,
+      "reason": "capture_expired",
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "capture_unavailable": {
+      "kind": "lifecycle_capture_receipt",
+      "contract_version": 1,
+      "capture_id": "00000000-0000-4000-8000-000000000510",
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "configuration_revision": "3",
+      "gap_revision": "5",
+      "task_id": null,
+      "state": "unavailable",
+      "captured_at": "2026-10-30T01:00:00Z",
+      "ready_at": "2026-10-30T01:00:01Z",
+      "available_until": "2026-11-01T01:00:01Z",
+      "result": null,
+      "coverage": null,
+      "reason": "capture_unavailable",
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "delivery_gap_acknowledged_audit": {
+      "id": 11,
+      "event_id": "00000000-0000-4000-8000-000000000111",
+      "occurred_at": "2026-10-30T00:00:00",
+      "entity_type": "lifecycle",
+      "entity_id": null,
+      "entity_name": null,
+      "collection_id": 7,
+      "action": "updated",
+      "actor_kind": "user",
+      "actor_user_id": 42,
+      "provenance": {
+        "actor": {
+          "kind": "user",
+          "principal": {
+            "principal_id": 42,
+            "name": null
+          }
+        },
+        "initiator": null,
+        "task_id": null
+      },
+      "request_id": null,
+      "correlation_id": "example-operation",
+      "summary": "Lifecycle delivery gap acknowledged",
+      "before": null,
+      "after": null,
+      "schema_version": 1,
+      "metadata": {
+        "lifecycle": {
+          "contract_version": 1,
+          "name": "lifecycle.delivery_gap.acknowledged",
+          "projection": "audit",
+          "operation_id": "00000000-0000-4000-8000-000000000520",
+          "operation_revision": "1",
+          "scope": {
+            "kind": "collection",
+            "collection_uuid": "00000000-0000-4000-8000-000000000007"
+          },
+          "state": {
+            "outcome": "committed",
+            "reasons": []
+          },
+          "counts": {
+            "versions": null,
+            "logical_bytes": null,
+            "physical_bytes": null,
+            "transferred_bytes": null
+          },
+          "availability": null,
+          "run_id": null,
+          "batch_id": null,
+          "attempt_id": null,
+          "caused_by_event_id": null,
+          "observed_at": null,
+          "attribution": {
+            "actor_principal_uuid": "00000000-0000-4000-8000-000000000042",
+            "initiator_principal_uuid": null,
+            "trigger": "manual"
+          },
+          "authority": {
+            "policy_id": null,
+            "policy_revision": null,
+            "review_id": null,
+            "hold_generation": null,
+            "deletion_generation": null
+          },
+          "copies": {
+            "source_tier": null,
+            "destination_tier": null,
+            "destination_id": null,
+            "artifact_id": null,
+            "source_destination_id": null,
+            "source_artifact_id": null
+          },
+          "evidence": {
+            "membership": null,
+            "verification_id": null,
+            "receipt_id": null
+          },
+          "delivery": {
+            "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+            "gap_id": "00000000-0000-4000-8000-000000000500",
+            "gap_revision": "5",
+            "configuration_revision": "3",
+            "source_generation": "00000000-0000-4000-8000-000000000530",
+            "capture_id": null
           }
         }
       }
+    },
+    "delivery_gap_recovery_unknown": {
+      "kind": "lifecycle_delivery_status",
+      "contract_version": 1,
+      "subscription_id": 8,
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "policy_state": "configured",
+      "policy_revision": "1",
+      "configuration_revision": "3",
+      "observed_at": "2026-10-30T01:00:00Z",
+      "capacity": {
+        "retained_rows": 8,
+        "row_limit": 100,
+        "reserved_payload_bytes": 65536,
+        "payload_byte_limit": 819200
+      },
+      "gap_history": "unknown",
+      "history_available_since": null,
+      "gap": {
+        "gap_id": "00000000-0000-4000-8000-000000000500",
+        "revision": "5",
+        "state": "open",
+        "observed_from": "2026-10-30T00:00:00Z",
+        "observed_through": "2026-10-30T00:30:00Z",
+        "visible_until": "2026-11-06T00:30:00Z",
+        "reasons": [
+          "recovery_gap"
+        ],
+        "omitted_events": 17,
+        "count_accuracy": "exact",
+        "source_history": {
+          "state": "unknown",
+          "reason": "recovery_gap"
+        },
+        "acknowledged_revision": null
+      },
+      "source_generation": "00000000-0000-4000-8000-000000000531"
     }
   },
   "reader_cases": {
@@ -1049,7 +1517,8 @@
             },
             "future_optional_field": {
               "hint": "retain unknown data"
-            }
+            },
+            "delivery": null
           }
         }
       },
@@ -1145,7 +1614,8 @@
               },
               "verification_id": "00000000-0000-4000-8000-000000000060",
               "receipt_id": null
-            }
+            },
+            "delivery": null
           }
         }
       },
@@ -1293,7 +1763,8 @@
               },
               "verification_id": "00000000-0000-4000-8000-000000000060",
               "receipt_id": null
-            }
+            },
+            "delivery": null
           }
         }
       },

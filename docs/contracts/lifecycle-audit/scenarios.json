@@ -288,6 +288,89 @@
         "Frontend/BFF, Rust async/blocking, Python sync/async and released-SDK CLI run the same fixtures."
       ],
       "qualification": "pending"
+    },
+    {
+      "id": "delivery_retained_capacity",
+      "owners": [
+        "hubuum/hubuum#550",
+        "hubuum/hubuum#545"
+      ],
+      "setup": "Fill retained-row/byte and gap-slot ceilings; finish deliveries without purging their rows.",
+      "required_outcomes": [
+        "Terminal status does not release retained storage reservations.",
+        "Full delivery capacity atomically coalesces an explicit gap; full gap-slot capacity rejects new opt-in.",
+        "Configured reductions drain existing reservations without changing recorded limits between replicas."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "gap_persistence_rollback",
+      "owners": [
+        "hubuum/hubuum#550",
+        "hubuum/hubuum#545"
+      ],
+      "setup": "Fail the gap write during fan-out when delivery capacity is full.",
+      "required_outcomes": [
+        "The event remains undispatched and retryable; replay does not double-charge or double-count.",
+        "Required audit facts are retained and physical lifecycle completion never waits for an external receiver."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "catchup_source_retention",
+      "owners": [
+        "hubuum/hubuum#550",
+        "hubuum/hubuum#545"
+      ],
+      "setup": "Purge source audit rows and change configuration while a sink is unavailable or a capture is being built.",
+      "required_outcomes": [
+        "Scoped source-retention generation advances atomically with purge.",
+        "The capture describes only its bounded committed set; source loss stays expired/unknown.",
+        "No empty or acknowledged response claims complete notification recovery.",
+        "Supported restore/recovery invalidates stale continuations through the verified application incarnation and marks unreconciled notification coverage unknown/recovery_gap."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "catchup_late_commit",
+      "owners": [
+        "hubuum/hubuum#550",
+        "hubuum/hubuum#545"
+      ],
+      "setup": "Capture a fixed result, then commit an older-timestamp event and advance the gap revision.",
+      "required_outcomes": [
+        "The new event uses ordinary fan-out and may appear in a later capture.",
+        "Reading the old capture cannot clear the newer gap or prove a time-window watermark."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "gap_acknowledgement",
+      "owners": [
+        "hubuum/hubuum#550",
+        "hubuum/hubuum#545"
+      ],
+      "setup": "Acknowledge the current gap and then race an acknowledgement with another omission.",
+      "required_outcomes": [
+        "Acknowledgement records operator awareness only and preserves unavailable source history.",
+        "Stale expected revisions conflict and a later omission reopens the gap.",
+        "Configuration and scoped source-generation changes also conflict with the reviewed acknowledgement; success advances the gap revision and audits awareness only."
+      ],
+      "qualification": "pending"
+    },
+    {
+      "id": "catchup_output_lifetime",
+      "owners": [
+        "hubuum/hubuum#550",
+        "hubuum/hubuum#545"
+      ],
+      "setup": "Purge original task details, disconnect, and return during the capture availability window; also exceed each capture limit.",
+      "required_outcomes": [
+        "The same authorized capture/output remains discoverable and digest-bound while available.",
+        "Expired/unavailable results are typed failures, not empty success.",
+        "Candidate, input or output overflow stops before publishing a complete result."
+      ],
+      "qualification": "pending"
     }
   ]
 }

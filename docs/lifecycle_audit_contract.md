@@ -25,7 +25,7 @@ authority. There is no second audit log or deletion ledger.
 | `src/tests/storage_contract.rs`: `every_registered_backend_satisfies_the_audited_mutation_contract` | Shared committed mutation, rollback and fan-out certification | Equivalent lifecycle fault coverage for every selectable backend |
 | `tests/api_platform_suite/events.rs` | Collection `ReadAudit`, scoped tokens and relation snapshot redaction | Stable resource/version lookup and lifecycle evidence retention |
 | `src/tests/storage_contract/event_delivery.rs` | Fenced delivery admission and grant/configuration rechecks | Lifecycle projection before templates, preview, test and every transport |
-| `crates/hubuum-storage-postgres/src/operations/event_retention.rs` | Durable bounded retention claims and idempotent completion | Protected evidence lifetimes; ordinary event retention is insufficient |
+| `crates/hubuum-storage-postgres/src/operations/event_retention.rs` | Durable bounded retention claims, undispatched-event protection and idempotent completion | Protected evidence lifetimes; ordinary event retention is insufficient |
 
 Existing related-collection visibility preserves metadata while redacting
 snapshots. It is therefore insufficient for a mixed-collection lifecycle batch.
@@ -98,6 +98,7 @@ transition returns its original event identity and emits nothing new.
 | `erasure.blocked` | updated | #511/#518 | Managed obligation changes to a bounded blocker | Eligible |
 | `erasure.completed` | succeeded | #511/#518 | Defined managed scope and final receipt independently protected before acknowledgement | Eligible |
 | `evidence.expired` | deleted | #513/#550 | A bounded evidence-retention batch and its accounting committed | Audit |
+| `delivery_gap.acknowledged` | updated | #550/#545 | Expected gap/configuration/source generations and operator awareness committed; no recovery or consumption claim | Audit |
 | `result.access_authorized` | invoked | #516/#517/#545 | Optional access-audit policy records authorization, before opening the body | Audit |
 | `result.transfer_completed` | succeeded | #516/#517/#545 | Optional access audit records verified EOF and bytes handed to server transport | Audit |
 | `result.transfer_failed` | failed | #516/#517/#545 | Optional access audit records interrupted/corrupt server transfer | Audit |
@@ -281,14 +282,123 @@ neither globally ordered nor exactly-once delivery. Sink acknowledgement proves
 transport delivery only; it cannot complete a migration or erasure.
 
 Bound fan-out using existing batch settings and one delivery per matching
-subscription/event. Add measured per-scope/deployment pending-row and byte
-ceilings before activation. When the delivery allowance is exhausted, record a
-bounded delivery-gap interval/reason and keep the canonical audit fact; do not
-silently lose audit evidence, create an unbounded outbox, or wait for a webhook
-to acknowledge physical cleanup. Resume consumers through an authorized,
-bounded audit query and explicit coverage. A gap is not a promise that missing
-notifications can always be replayed. Dead letters expire under a documented
-delivery policy, and retry after expiry cannot invent a missing source event.
+subscription/event. The following delivery policy and catch-up rules make
+overload and unavailable history explicit.
+
+### Bounded delivery and gap evidence
+
+Before lifecycle subscriptions can activate, require one persisted, validated
+delivery policy revision with deployment and per-scope retained-row and reserved
+payload-byte ceilings, a subscription/gap-slot ceiling, and finite delivery/gap
+visibility windows. An unconfigured policy rejects lifecycle opt-in; it does not
+disable canonical audit writes. Configure these values explicitly and qualify
+them with #504's profiles before activation. Report their non-secret effective
+values through administrator diagnostics.
+
+Reserve 8 KiB per stored safe envelope plus one retained-row reservation at
+fan-out admission. Check both scope and deployment budgets in the same
+transaction, with checked arithmetic and canonical lock ordering. Count queued,
+retryable, in-flight, succeeded and dead rows until their actual purge; merely
+reaching a terminal state does not release retained storage. Physical attempts
+use the existing separate concurrency/retry budgets. Lowering limits prevents
+new acquisitions while existing reservations drain. Disabled retention can
+exhaust delivery capacity, but cannot create an unbounded terminal-row store.
+Rendered transport bytes remain subject to the existing size/concurrency limits;
+any persisted rendered copy needs its own byte reservation before writing.
+
+Reserve one fixed-size gap slot when accepting a lifecycle subscription, including
+space for its deletion tombstone until the advertised visibility deadline. If
+the slot allowance is exhausted, reject new opt-in rather than accepting a
+subscription whose delivery loss cannot be recorded. Coalesce omissions into
+one record per stable subscription UUID, across configuration changes; retain
+only bounded reasons, observation times, a monotonic revision and an optional
+count. Counts that cannot remain exact become null with `count_accuracy=unknown`.
+Do not retain an unbounded event-ID list or one gap record per configuration.
+
+Fan-out atomically inserts each admitted delivery or advances its reserved gap
+record before marking the source event dispatched. A repeated fan-out of the
+same committed event cannot charge or count it twice. A missing gap write rolls
+back that fan-out decision; the source remains undispatched and retryable. Reuse
+the current retention protection for undispatched events rather than discarding
+them as notification failures. This is local persistence, never a wait for a
+sink acknowledgement, and does not make physical lifecycle completion depend on
+an external receiver. Required canonical audit persistence still fails closed.
+Exhaustion of required local audit/evidence capacity is an admission failure,
+with protected cleanup/recovery capacity retained; it cannot be hidden by dropping
+undispatched audit facts.
+
+The [delivery-status schema](contracts/lifecycle-audit/delivery-status.schema.json)
+distinguishes configured capacity, an open/acknowledged gap, unknown counts and
+source-history loss. Its observation times bound recorded fan-out observations;
+they are not event-time intervals, commit watermarks or exact missing membership.
+`gap=null` means no retained gap record, not proof that every historical event
+was delivered. After gap visibility expires, keep an explicit expired/unknown
+history state until its subscription/tombstone can be retired within the slot
+budget. Dead-letter expiry can create a gap; acknowledgement does not erase that
+fact or prove consumption. New omissions reopen the record at a new revision.
+
+### Bounded catch-up and source retention
+
+Catch-up creates a principal-owned, admitted export through existing task/query
+and artifact capabilities. Its input is a fixed set of currently committed,
+authorized lifecycle events captured in a short database snapshot under the
+subscription configuration and gap revision. Capture at most 10k candidates,
+64 MiB input and 16 MiB encoded result, stopping before publication on any limit.
+The immutable result uses `lifecycle-catchup-jsonl-v1`: one safe sink envelope
+per UTF-8 JSON line, followed by LF, with no BOM. Each envelope retains its
+canonical event UUID. Encoded length and SHA-256 cover all bytes, including LFs;
+the existing verified output/download contract applies. The
+[capture receipt](contracts/lifecycle-audit/capture-receipt.schema.json) binds
+that result, scope, configuration/gap revisions, readiness and availability
+window independently of the original task's remaining details.
+
+Capture coverage is complete only for its `captured_committed_set`. It does not
+claim every event ever committed in a wall-clock interval, include later commits,
+prove delivery to a sink, or automatically close a gap. Late commits go through
+normal fan-out and may advance the gap revision; a later capture can include them.
+Reading the result or ending a client wait does not acknowledge a gap or cancel
+server work. An explicit authorized acknowledgement binds an expected gap
+revision and records operator awareness only. Stale acknowledgement conflicts;
+it cannot clear a newer omission, be labelled recovered, or acknowledge erasure.
+The request also binds the expected subscription configuration revision and
+opaque scoped source-retention generation from the status response. A concurrent
+configuration change or source purge therefore conflicts even without another
+omission. A successful acknowledgement advances the gap revision and records
+the reviewed prior revision separately; repeats of that settled acknowledgement
+are no-ops. Its audit-only canonical event carries the typed delivery references,
+not notification payloads or an external-receipt assertion.
+Recognize a matching retained acknowledgement receipt before the stale-state
+check; a changed actor/request cannot reuse it as a new acknowledgement.
+
+Audit retention advances an authorization-scoped source-retention generation in
+the same transaction as its purge. A capture compares the retained configuration,
+gap and source-generation evidence; source expiry, lost configuration history or
+unsupported recovery coverage is reported as expired/unknown history. A captured
+set may still be readable after its source rows expire, subject to its own
+availability and current authorization/erasure, but it cannot become proof that
+the missing notification history was recovered. Holds and protected receipts
+keep their separate lifetimes. This closes the case where a sink outage outlives
+ordinary audit retention without silently extending that retention forever.
+Capture `source_history` and `source_generation` describe the assessment at
+`captured_at`; they are not a perpetual claim about the source. Delivery status
+assesses current source history. Neither view marks notification recovery from
+a historical assessment or a successful output download.
+
+Logical restore and supported physical recovery bind this state to #511's
+verified application incarnation. Invalidate stale acknowledgement/capture
+continuations and establish a new scoped source generation before exposure.
+Unreconciled or lost notification history is `unknown` with `recovery_gap`, not
+quietly retained or recovered. Reuse the existing protected recovery authority;
+gap records are not another deletion ledger. Restoring a backup does not
+automatically resend notifications or prove what an external receiver retained.
+
+Initially capture hot audit rows only. Archived event search/retrieval requires
+its separately qualified reader; discovery must report unsupported modes instead
+of silently omitting them. Preserve capture discovery through its advertised
+result window after reconnect or task-detail purge. An expired result is a typed
+expired outcome, never an empty successful export. Every inspection/download
+rechecks scope and current authority; unauthorized identity lookup returns the
+same `404` as an absent identity.
 
 ## Retention and public API proposal
 
@@ -314,7 +424,9 @@ helpers and `ApiError`; then add annotations and regenerate `docs/openapi.json`.
 The downloadable [audit schema](contracts/lifecycle-audit/audit-event.schema.json),
 [sink schema](contracts/lifecycle-audit/sink-event.schema.json),
 [membership schema](contracts/lifecycle-audit/membership-page.schema.json),
-[unavailable-evidence schema](contracts/lifecycle-audit/unavailable.schema.json)
+[unavailable-evidence schema](contracts/lifecycle-audit/unavailable.schema.json),
+[delivery-status schema](contracts/lifecycle-audit/delivery-status.schema.json),
+[capture-receipt schema](contracts/lifecycle-audit/capture-receipt.schema.json)
 and [shared examples](contracts/lifecycle-audit/examples.json) define these views
 before rollout. Schemas validate structure; typed constructors must additionally
 enforce UUID relationships, member ordering/uniqueness, digest/count agreement,
@@ -328,6 +440,22 @@ except the paired published audit/sink views and their complete membership page.
 | `GET /api/v1/events/{event_uuid}/members` | Bounded exact membership page with manifest UUID, scoped operation UUID, coverage, advertised expiry and opaque next cursor. Bind cursor to manifest generation, filter and authority scope; recheck access on every page. |
 | `GET /api/v1/lifecycle-receipts/{receipt_uuid}` | #511/#545 durable, permission-scoped acknowledgement and exact evidence lookup independent of transient task/event detail. Distinguish access restricted, recovery pending, cleanup pending, blocked copies and confirmed managed-scope completion. |
 | Existing subscription, preview/test and delivery routes | Add validated lifecycle-name selection and safe-view fixtures; never treat delivery state as domain completion. |
+| `GET /api/v1/collections/{collection_id}/event-subscriptions/{subscription_id}/lifecycle-delivery-status` | Require both `ReadAudit` and `ManageEventSubscription`; expose only this subscription's scoped capacity/gap status. The corresponding system-subscription route requires an unscoped administrator. |
+| `POST /api/v1/collections/{collection_id}/event-subscriptions/{subscription_id}/lifecycle-captures` | Validate current scope/configuration and admit an existing export/query task; return `202` with durable task and capture references. No outbound re-send is implied. The system variant remains administrator-only. |
+| `GET /api/v1/collections/{collection_id}/event-subscriptions/{subscription_id}/lifecycle-captures/{capture_uuid}` | Authorized capture receipt and verified output reference through the declared window, including after task details expire. Preserve typed expired/unavailable outcomes. |
+| `POST /api/v1/collections/{collection_id}/event-subscriptions/{subscription_id}/lifecycle-delivery-status/acknowledgements` | Expected-revision acknowledgement of gap awareness. Conflict on stale revision; no notification recovery, external receipt or lifecycle-completion claim. |
+
+The same suffixes on `/api/v1/system-event-subscriptions/{subscription_id}`
+require an unscoped administrator. Capture output uses its capture-specific
+`/output` route and the existing verified-download helpers, including after its
+original task disappears; it does not expose a generic provider/file API.
+Collection status exposes only authorized scope usage and limits. Deployment
+usage belongs in administrator diagnostics, not a partial-scope response.
+
+Output owned by a capture must retain explicit authorization, retention and resource
+accounting ownership before task details retire. If an adapter cannot transfer
+that ownership, dependent task purge remains blocked. Task expiry cannot erase
+an available capture or refund bytes whose physical cleanup is still pending.
 
 A fully available empty membership page means complete empty evidence. Expired,
 missing, minimized, corrupt, unsupported-format or dependency-incomplete evidence
@@ -352,6 +480,10 @@ unsupported outcomes for consumer review. `delivery_cases` supplies actual
 duplicated/out-of-order safe envelopes, including a revision above JavaScript's
 exact-number range. Validating their structure does not prove a consumer's
 reconciliation or interpretation; its own tests must run those vectors.
+`catchup-output.jsonl` provides a complete two-event output with a matching
+capture-receipt digest and length. Delivery-status/capture examples include
+unconfigured capacity, saturated unknown counts, source expiry, stale task
+details and an acknowledged gap whose history remains unavailable.
 
 ## Consumer compatibility review
 
@@ -388,7 +520,8 @@ provider, transaction, restore, retention or performance guarantees.
 | Deletion boundaries | Crash before/after independent protection, physical removal and completion protection; no premature acknowledgement |
 | Fencing and concurrent change | Stale leases, changed generation, new hold, lock/outage, late commit behind earlier selection, and authorization loss |
 | Scope and disclosure | Two-collection operation with one-collection reader/subscriber; every template/preview/transport excludes hidden identities, counts and provider data |
-| Delivery | Sink outage, duplicate and out-of-order delivery, revoked retry authority, bounded backlog/gap and dead-letter expiry |
+| Delivery | Sink outage, duplicate/out-of-order delivery, revoked retry authority, retained-row/byte exhaustion, finite gap slots, dead-letter expiry and failed gap persistence |
+| Catch-up | Fixed committed-set capture, late commit/new gap revision, source/configuration expiry, stale acknowledgement, output digest/limits and task-independent result availability |
 | Evidence lifetime | Task purge, principal/resource deletion, membership expiry/minimization, corrupt manifest and unsupported reader |
 | Recovery | Logical restore with reused integers, supported primary rollback, wrong-lineage/stale checkpoint and duplicate reconciliation |
 | Consumer acceptance | Pinned frontend/BFF, Rust async/blocking, Python sync/async and released-SDK CLI fixture results and explicit review |
