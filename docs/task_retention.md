@@ -127,7 +127,10 @@ Existing tasks are grandfathered out of detail expiry; activation does not
 silently apply a new deletion deadline to old details.
 
 The default deduplication window is seven days after terminal completion; detail
-expiry is disabled. Policy changes affect subsequent admissions. For example:
+expiry is disabled. Policy changes affect subsequent admissions. An update
+compares the policy revision: concurrent receipt settlement does not invalidate
+it, while a competing policy edit requires reading the latest policy before
+retrying. For example:
 
 ```bash
 hubuum-admin --task-retention set-policy \

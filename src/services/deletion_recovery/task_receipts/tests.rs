@@ -421,7 +421,7 @@ async fn interrupted_expiry_acknowledgement_is_repaired_before_key_reuse() {
     fixture
         .storage
         .replace_task_retention_policy(TaskRetentionPolicyChange::new(
-            state.revision(),
+            state.policy().revision(),
             TaskRetentionPolicy::new(
                 state.policy().revision().next().unwrap(),
                 Duration::from_secs(1),

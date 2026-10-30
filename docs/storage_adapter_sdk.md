@@ -639,6 +639,11 @@ for changed protected request fingerprints and task kinds. The application maps
 it to HTTP 409 with a bounded reason; do not collapse it into a generic conflict
 whose meaning a consumer would have to recover from prose.
 
+`TaskRetentionPolicyChange` compares a `TaskRetentionPolicyRevision`, independently
+of the task-control revision. Under the adapter's control lock, reject a competing
+policy revision and apply the replacement to the latest authority state, preserving
+concurrent receipt changes. Receipt settlement alone must not invalidate the edit.
+
 Export and backup artifact `into_parts` now accepts an adapter-owned readiness
 clock and returns a fallible result. `StorageOutputAvailability` preserves either
 an existing fixed deadline or a validated post-ready lifetime. Resolve it inside

@@ -50,7 +50,10 @@ async fn configure(storage: &MemoryStorage, window: u64) {
     )
     .unwrap();
     storage
-        .replace_task_retention_policy(TaskRetentionPolicyChange::new(state.revision(), policy))
+        .replace_task_retention_policy(TaskRetentionPolicyChange::new(
+            state.policy().revision(),
+            policy,
+        ))
         .await
         .unwrap();
 }
@@ -638,7 +641,7 @@ async fn output_only_retention_works_when_task_details_retention_is_disabled() {
     let state = storage.read_task_control().await.unwrap();
     storage
         .replace_task_retention_policy(TaskRetentionPolicyChange::new(
-            state.revision(),
+            state.policy().revision(),
             TaskRetentionPolicy::new(
                 state.policy().revision().next().unwrap(),
                 std::time::Duration::from_secs(3600),
@@ -1295,4 +1298,38 @@ async fn pending_invocation_preserves_its_distinct_initiator(#[case] replace: bo
     let ticket = submit(&storage, create).await;
     remove_or_replace_activation_principal(&storage, initiator, replace).await;
     assert_pending_activation_rejects_changed_principal(&storage, ticket).await;
+}
+
+#[rstest]
+#[case::receipt_activity(false)]
+#[case::competing_policy(true)]
+#[tokio::test]
+async fn policy_replacement_checks_policy_revision(#[case] competing_policy: bool) {
+    let storage = MemoryStorage::new();
+    configure(&storage, 3600).await;
+    let before = storage.read_task_control().await.unwrap();
+    let policy = TaskRetentionPolicy::new(
+        before.policy().revision().next().unwrap(),
+        std::time::Duration::from_secs(7200),
+        None,
+    )
+    .unwrap();
+    let change = TaskRetentionPolicyChange::new(before.policy().revision(), policy.clone());
+    completed(&storage, 'a').await;
+    let settled = storage.read_task_control().await.unwrap();
+    if competing_policy {
+        storage
+            .replace_task_retention_policy(change.clone())
+            .await
+            .unwrap();
+    }
+    let result = storage.replace_task_retention_policy(change).await;
+    if competing_policy {
+        assert_eq!(result.unwrap_err().kind(), StorageErrorKind::Conflict);
+    } else {
+        result.unwrap();
+        let after = storage.read_task_control().await.unwrap();
+        assert_eq!(after.policy(), &policy);
+        assert_eq!(after.receipts(), settled.receipts());
+    }
 }

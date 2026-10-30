@@ -580,7 +580,10 @@ async fn task_only_publication_preserves_the_verified_application_release(
     .unwrap();
     fixture
         .storage
-        .replace_task_retention_policy(TaskRetentionPolicyChange::new(tasks.revision(), policy))
+        .replace_task_retention_policy(TaskRetentionPolicyChange::new(
+            tasks.policy().revision(),
+            policy,
+        ))
         .await
         .unwrap();
     super::super::checkpoint(&fixture.storage, &fixture.directory, &fixture.key, false)

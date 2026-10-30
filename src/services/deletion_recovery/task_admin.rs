@@ -349,7 +349,7 @@ pub(crate) async fn administer_task_retention(
             .with_cleanup_budget(old.cleanup_budget());
             storage
                 .replace_task_retention_policy(TaskRetentionPolicyChange::new(
-                    state.revision(),
+                    state.policy().revision(),
                     policy,
                 ))
                 .await?;

@@ -1238,3 +1238,57 @@ async fn internal_supersession_receipt_catches_up_to_its_original_terminal_clock
     assert_eq!(*finished_at, original_clock);
     assert_eq!(original["body_redacted"], true);
 }
+
+#[rstest]
+#[case::receipt_activity(false)]
+#[case::competing_policy(true)]
+#[tokio::test]
+async fn policy_replacement_checks_policy_revision(#[case] competing_policy: bool) {
+    use hubuum_storage_core::{
+        StorageErrorKind, TaskRetentionPolicy, TaskRetentionPolicyChange, TaskRetentionStorage,
+    };
+    use std::time::Duration;
+
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let fixture = AdmissionFixture::new().await;
+    let storage = fixture.admin();
+    let before = storage.read_task_control().await.unwrap();
+    let revision = before.policy().revision().next().unwrap();
+    let policy = TaskRetentionPolicy::new(revision, Duration::from_secs(7200), None).unwrap();
+    let change = TaskRetentionPolicyChange::new(before.policy().revision(), policy.clone());
+    hubuum_storage_conformance::verify_protected_task_admission(
+        &fixture.runtime(),
+        fixture.request(),
+        hubuum_storage_core::DeletionCheckpointIdentity::new("b".repeat(64)).unwrap(),
+    )
+    .await
+    .unwrap();
+    let settled = storage.read_task_control().await.unwrap();
+    if competing_policy {
+        storage
+            .replace_task_retention_policy(change.clone())
+            .await
+            .unwrap();
+    }
+    let result = storage.replace_task_retention_policy(change).await;
+    let after = storage.read_task_control().await.unwrap();
+    let pool = fixture.pool.clone();
+    fixture.finish().await;
+    with_transaction(&pool, async |connection| {
+        assume_owner(connection).await?;
+        sql_query("DELETE FROM hubuum_control.task_retention_policies WHERE revision=$1")
+            .bind::<BigInt, _>(revision.value())
+            .execute(connection)
+            .await?;
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
+    .unwrap();
+    if competing_policy {
+        assert_eq!(result.unwrap_err().kind(), StorageErrorKind::Conflict);
+    } else {
+        result.unwrap();
+        assert_eq!(after.policy(), &policy);
+        assert_eq!(after.receipts(), settled.receipts());
+    }
+}
