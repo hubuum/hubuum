@@ -249,6 +249,7 @@ cat > "$test_root/compose.yml" <<'EOF'
 services:
   postgres:
     image: ${POSTGRES_TEST_IMAGE}
+    command: ["postgres", "-c", "log_min_messages=fatal", "-c", "log_min_error_statement=panic"]
     environment:
       POSTGRES_DB: hubuum
       POSTGRES_USER: hubuum

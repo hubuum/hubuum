@@ -260,7 +260,8 @@ class Deployment:
                 "run", "--detach", "--name", name, "--network", self.name,
                 "--network-alias", "postgres", "--env", "POSTGRES_USER=corpus",
                 "--env", f"POSTGRES_PASSWORD={self.password}", "--env", "POSTGRES_DB=source",
-                self.postgres_image,
+                self.postgres_image, "postgres", "-c", "log_min_messages=fatal",
+                "-c", "log_min_error_statement=panic",
             )
             wait_for("PostgreSQL", lambda: self.docker(
                 "exec", name, "pg_isready", "-h", "127.0.0.1", "-U", "corpus",
