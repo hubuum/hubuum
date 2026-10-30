@@ -12,6 +12,8 @@
     "status": 410,
     "headers": { "cache-control": "no-store" },
     "body": {
+      "error": "Gone",
+      "message": "Task details have expired; the original submission is still recognized; no new work was created",
       "reason": "task_details_expired",
       "task_identity": "00000000-0000-0000-0000-000000000001",
       "kind": "export",

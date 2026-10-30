@@ -40002,11 +40002,16 @@
         "type": "object",
         "description": "Minimal recognized submission response after its task details have expired.\nConstruction is restricted to the authorized receipt application path.",
         "required": [
+          "error",
+          "message",
           "reason",
           "task_identity",
           "kind"
         ],
         "properties": {
+          "error": {
+            "type": "string"
+          },
           "expires_at": {
             "type": [
               "string",
@@ -40016,6 +40021,9 @@
           },
           "kind": {
             "$ref": "#/components/schemas/TaskKind"
+          },
+          "message": {
+            "type": "string"
           },
           "reason": {
             "type": "string"

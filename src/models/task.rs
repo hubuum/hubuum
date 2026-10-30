@@ -28,6 +28,8 @@ pub(crate) fn task_kind_from_db(value: &str) -> Result<TaskKind, ApiError> {
 /// Construction is restricted to the authorized receipt application path.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, ToSchema)]
 pub struct TaskDetailsExpiredResponse {
+    error: &'static str,
+    message: &'static str,
     reason: &'static str,
     #[schema(value_type = String, format = Uuid)]
     task_identity: hubuum_domain::TaskIdentity,
@@ -41,11 +43,17 @@ impl TaskDetailsExpiredResponse {
     ) -> Self {
         let receipt = proof.receipt();
         Self {
+            error: "Gone",
+            message: "Task details have expired; the original submission is still recognized; no new work was created",
             reason: "task_details_expired",
             task_identity: receipt.task(),
             kind: receipt.kind(),
             expires_at: receipt.expires_at(),
         }
+    }
+
+    pub(crate) const fn public_message(&self) -> &'static str {
+        self.message
     }
 }
 

@@ -68,10 +68,12 @@ HTTP/1.1 410 Gone
 Content-Type: application/json
 Cache-Control: no-store
 
-{"reason":"task_details_expired","task_identity":"00000000-0000-0000-0000-000000000001","kind":"export","expires_at":null}
+{"error":"Gone","message":"Task details have expired; the original submission is still recognized; no new work was created","reason":"task_details_expired","task_identity":"00000000-0000-0000-0000-000000000001","kind":"export","expires_at":null}
 ```
 
-Neither response includes `Retry-After`. The receipt's `expires_at` is its
+Both responses preserve the standard `error`/`message` envelope so existing
+clients can explain the outcome without parsing prose. Neither response includes
+`Retry-After`. The receipt's `expires_at` is its
 deduplication deadline, when known; it is not a result-availability deadline or a
 promise that a later retry will be accepted. Preserve unknown optional response
 fields and handle unknown reasons using the HTTP status without parsing messages.
