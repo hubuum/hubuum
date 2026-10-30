@@ -36,8 +36,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   reservations; holds and producer grace cannot be bypassed by ordinary cleanup.
   Export and backup result availability starts at successful publication, so
   preparation time does not shorten the configured post-ready window.
-  Concurrent receipt settlement does not prevent retention policy updates;
-  competing policy edits still conflict.
+  Concurrent receipt settlement does not prevent retention policy or hold
+  updates; competing edits to the same decision still conflict.
 
 - `--reapply-control` verifies retained deletion decisions against the current
   application image, independently protects completion, and reopens access.
@@ -114,8 +114,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   restore from a backup with matching stable identity evidence.
 - **Breaking Rust SDK change:** upgrade all ten SDK crates to 0.14.0 and implement
   protected task admission, receipt/retention capabilities, composite checkpoints
-  and combined exposure proofs. Policy replacement compares the policy revision
-  while preserving concurrent receipt updates. See the
+  and combined exposure proofs. Policy replacement compares the policy revision;
+  hold updates compare the captured hold decision, preserving concurrent receipts. See the
   [0.14 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-013-to-014).
 
 - **Breaking operational change:** stop every older API, worker and administrator

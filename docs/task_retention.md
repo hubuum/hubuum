@@ -130,7 +130,8 @@ The default deduplication window is seven days after terminal completion; detail
 expiry is disabled. Policy changes affect subsequent admissions. An update
 compares the policy revision: concurrent receipt settlement does not invalidate
 it, while a competing policy edit requires reading the latest policy before
-retrying. For example:
+retrying. Hold creation and release similarly compare the captured decision for
+that hold ID, preserving concurrent receipts and other holds. For example:
 
 ```bash
 hubuum-admin --task-retention set-policy \

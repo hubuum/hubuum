@@ -907,7 +907,7 @@ mod retention_tests {
             )
             .unwrap();
             storage
-                .change_task_hold(TaskHoldChange::new(state.revision(), hold))
+                .change_task_hold(TaskHoldChange::new(&state, hold))
                 .await
                 .unwrap();
         }
@@ -998,7 +998,7 @@ mod retention_tests {
             )
             .unwrap();
             storage
-                .change_task_hold(TaskHoldChange::new(state.revision(), hold))
+                .change_task_hold(TaskHoldChange::new(&state, hold))
                 .await
                 .unwrap();
         }

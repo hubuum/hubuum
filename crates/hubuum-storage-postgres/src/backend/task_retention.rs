@@ -133,13 +133,11 @@ impl TaskRetentionStorage for PostgresStorage {
     ) -> Result<TaskControlRevision, StorageError> {
         self.runtime()
             .with_control_transaction(async move |connection| {
-                let header = retention::lock_on(connection).await?;
-                if header.revision != change.expected() {
-                    return Err(PostgresStorageError::conflict(
-                        "Task hold authority changed",
-                    ));
-                }
+                retention::lock_on(connection).await?;
                 let previous = authority::state_on(connection).await?;
+                if previous.holds().get(&change.hold().id()) != change.expected() {
+                    return Err(PostgresStorageError::conflict("Task hold decision changed"));
+                }
                 let next = previous.with_hold(change.hold().clone())?;
                 authority::store_state_on(connection, &next).await?;
                 Ok::<_, PostgresStorageError>(next.revision())

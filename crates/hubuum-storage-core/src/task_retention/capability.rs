@@ -105,17 +105,22 @@ impl TaskRetentionPolicyChange {
     }
 }
 
+/// Compare the captured decision for this hold, independently of receipt activity
+/// and other holds. The snapshot binds the expected record to the desired ID.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaskHoldChange {
-    expected: TaskControlRevision,
+    expected: Option<TaskRetentionHold>,
     hold: TaskRetentionHold,
 }
 impl TaskHoldChange {
-    pub const fn new(expected: TaskControlRevision, hold: TaskRetentionHold) -> Self {
-        Self { expected, hold }
+    pub fn new(snapshot: &TaskControlState, hold: TaskRetentionHold) -> Self {
+        Self {
+            expected: snapshot.holds().get(&hold.id()).cloned(),
+            hold,
+        }
     }
-    pub const fn expected(&self) -> TaskControlRevision {
-        self.expected
+    pub const fn expected(&self) -> Option<&TaskRetentionHold> {
+        self.expected.as_ref()
     }
     pub const fn hold(&self) -> &TaskRetentionHold {
         &self.hold

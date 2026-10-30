@@ -1,3 +1,4 @@
+use hubuum_domain::TaskIdentity;
 use hubuum_task_core::IdempotencyKey;
 use rstest::rstest;
 
@@ -597,7 +598,7 @@ async fn hold_release_requires_a_checkpoint_newer_than_the_original_purge_intent
     .unwrap();
     storage
         .change_task_hold(TaskHoldChange::new(
-            storage.read_task_control().await.unwrap().revision(),
+            &storage.read_task_control().await.unwrap(),
             hold.clone(),
         ))
         .await
@@ -611,7 +612,7 @@ async fn hold_release_requires_a_checkpoint_newer_than_the_original_purge_intent
     );
     storage
         .change_task_hold(TaskHoldChange::new(
-            storage.read_task_control().await.unwrap().revision(),
+            &storage.read_task_control().await.unwrap(),
             hold.release(Utc::now()).unwrap(),
         ))
         .await
@@ -744,7 +745,7 @@ async fn late_hold_does_not_starve_other_members_of_the_same_manifest() {
     let state = storage.read_task_control().await.unwrap();
     storage
         .change_task_hold(TaskHoldChange::new(
-            state.revision(),
+            &state,
             TaskRetentionHold::new(
                 TaskHoldId::generate(),
                 held.receipt().task(),
@@ -1332,4 +1333,108 @@ async fn policy_replacement_checks_policy_revision(#[case] competing_policy: boo
         assert_eq!(after.policy(), &policy);
         assert_eq!(after.receipts(), settled.receipts());
     }
+}
+
+async fn hold_change(storage: &MemoryStorage, release: bool) -> TaskHoldChange {
+    let hold = TaskRetentionHold::new(
+        TaskHoldId::generate(),
+        TaskIdentity::generate(),
+        Utc::now(),
+        None,
+        TaskHoldReason::Operator,
+    )
+    .unwrap();
+    if release {
+        let state = storage.read_task_control().await.unwrap();
+        storage
+            .change_task_hold(TaskHoldChange::new(&state, hold.clone()))
+            .await
+            .unwrap();
+    }
+    let state = storage.read_task_control().await.unwrap();
+    let desired = if release {
+        hold.release(Utc::now()).unwrap()
+    } else {
+        hold
+    };
+    TaskHoldChange::new(&state, desired)
+}
+
+#[rstest]
+#[case::create(false)]
+#[case::release(true)]
+#[tokio::test]
+async fn hold_change_survives_receipt_activity(#[case] release: bool) {
+    let storage = MemoryStorage::new();
+    configure(&storage, 3600).await;
+    let change = hold_change(&storage, release).await;
+    completed(&storage, 'a').await;
+    let other = TaskRetentionHold::new(
+        TaskHoldId::generate(),
+        change.hold().task(),
+        Utc::now(),
+        None,
+        TaskHoldReason::Incident,
+    )
+    .unwrap();
+    let settled = storage.read_task_control().await.unwrap();
+    storage
+        .change_task_hold(TaskHoldChange::new(&settled, other.clone()))
+        .await
+        .unwrap();
+    storage.change_task_hold(change.clone()).await.unwrap();
+    let after = storage.read_task_control().await.unwrap();
+    assert_eq!(after.holds().get(&change.hold().id()), Some(change.hold()));
+    assert_eq!(after.holds().get(&other.id()), Some(&other));
+    assert_eq!(after.receipts(), settled.receipts());
+}
+
+#[rstest]
+#[case::create(false)]
+#[case::release(true)]
+#[tokio::test]
+async fn hold_change_rejects_competing_decision(#[case] release: bool) {
+    let storage = MemoryStorage::new();
+    configure(&storage, 3600).await;
+    let change = hold_change(&storage, release).await;
+    let competing = if release {
+        change.expected().unwrap().release(Utc::now()).unwrap()
+    } else {
+        TaskRetentionHold::new(
+            change.hold().id(),
+            change.hold().task(),
+            change.hold().created_at(),
+            None,
+            TaskHoldReason::Incident,
+        )
+        .unwrap()
+    };
+    let state = storage.read_task_control().await.unwrap();
+    storage
+        .change_task_hold(TaskHoldChange::new(&state, competing))
+        .await
+        .unwrap();
+    let before = storage.read_task_control().await.unwrap();
+    assert_eq!(
+        storage.change_task_hold(change).await.unwrap_err().kind(),
+        StorageErrorKind::Conflict
+    );
+    assert_eq!(storage.read_task_control().await.unwrap(), before);
+}
+
+#[rstest]
+#[case::create(false)]
+#[case::release(true)]
+#[tokio::test]
+async fn generic_control_change_cannot_bypass_hold_protocol(#[case] release: bool) {
+    let storage = MemoryStorage::new();
+    configure(&storage, 3600).await;
+    let change = hold_change(&storage, release).await;
+    let before = storage.read_task_control().await.unwrap();
+    let next = before.with_hold(change.hold().clone()).unwrap();
+    let result = storage
+        .commit_task_control(TaskControlChange::new(before.clone(), next).unwrap())
+        .await;
+    assert_eq!(result.unwrap_err().kind(), StorageErrorKind::InvalidInput);
+    assert_eq!(storage.read_task_control().await.unwrap(), before);
 }
