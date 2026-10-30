@@ -68,7 +68,7 @@ HTTP/1.1 410 Gone
 Content-Type: application/json
 Cache-Control: no-store
 
-{"error":"Gone","message":"Task details have expired; the original submission is still recognized; no new work was created","reason":"task_details_expired","task_identity":"00000000-0000-0000-0000-000000000001","kind":"export","expires_at":null}
+{"error":"Gone","message":"Task details have expired; the original submission is still recognized; no new work was created","reason":"task_details_expired","task_identity":"00000000-0000-4000-8000-000000000001","kind":"export","expires_at":null}
 ```
 
 Both responses preserve the standard `error`/`message` envelope so existing
