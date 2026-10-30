@@ -156,9 +156,7 @@ impl ApiError {
     /// bodies and streaming events.
     pub fn public_message(&self) -> &str {
         match self {
-            ApiError::TaskDetailsExpired(_) => {
-                "Task details have expired; the original submission is still recognized"
-            }
+            ApiError::TaskDetailsExpired(receipt) => receipt.public_message(),
             ApiError::IdempotencyConflict => {
                 "The idempotency key identifies a different protected request; no new work was created"
             }

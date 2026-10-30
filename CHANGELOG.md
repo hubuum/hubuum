@@ -25,8 +25,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Configure spool and worker resident limits with
   `HUBUUM_ARTIFACT_MAX_SPOOL_BYTES` and `HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES`.
 - Protected idempotency receipts preserve retry behavior after task details expire.
-  Authorized matching retries receive a minimal HTTP 410 response; changed
-  requests conflict during their fixed deduplication window. Task/output cleanup
+  Authorized matching retries receive a minimal HTTP 410 response using the
+  standard error/message envelope; changed requests conflict during their fixed
+  deduplication window. Task/output cleanup
   uses protected bounded batches, honors holds and available outputs, and
   preserves retained decisions across backup recovery. Administrators can preview
   and enable receipt protection, set prospective policy, manage holds and run
