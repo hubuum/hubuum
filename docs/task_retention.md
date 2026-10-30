@@ -153,6 +153,15 @@ the retryable repository-busy refusal. Missing or changed keys, invalid evidence
 and filesystem failures remain errors. A deferred attempt performs no retention
 mutation or completion acknowledgement.
 
+Each process with task execution enabled runs one maintenance loop alongside
+its configured task claimants. Cleanup retains its own application admission,
+maintenance/quarantine checks, execution scope and shutdown handling. Its local
+schedules avoid backend polling between cleanup intervals. A bounded pass can
+continue pending work without making a queue claimant wait for that pass;
+protected admission activation wakes the queue separately. Artifact cleanup
+uses the same maintenance loop. Explicit administrator sweeps use the same
+protected cleanup service.
+
 Use stable UUIDs when retrying hold commands:
 
 ```bash
