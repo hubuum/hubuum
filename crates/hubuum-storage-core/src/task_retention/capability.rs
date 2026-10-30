@@ -87,15 +87,17 @@ impl ProtectedReceiptExpiry {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// Compare against the policy revision so unrelated receipt activity cannot
+/// invalidate an administrator decision. Competing policy edits still conflict.
 pub struct TaskRetentionPolicyChange {
-    expected: TaskControlRevision,
+    expected: TaskRetentionPolicyRevision,
     policy: TaskRetentionPolicy,
 }
 impl TaskRetentionPolicyChange {
-    pub const fn new(expected: TaskControlRevision, policy: TaskRetentionPolicy) -> Self {
+    pub const fn new(expected: TaskRetentionPolicyRevision, policy: TaskRetentionPolicy) -> Self {
         Self { expected, policy }
     }
-    pub const fn expected(&self) -> TaskControlRevision {
+    pub const fn expected(&self) -> TaskRetentionPolicyRevision {
         self.expected
     }
     pub const fn policy(&self) -> &TaskRetentionPolicy {

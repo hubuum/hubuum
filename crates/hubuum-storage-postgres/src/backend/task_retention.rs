@@ -111,9 +111,11 @@ impl TaskRetentionStorage for PostgresStorage {
         self.runtime()
             .with_control_transaction(async move |connection| {
                 let header = retention::lock_on(connection).await?;
-                if header.revision != change.expected() {
+                if header.policy.as_ref().map(TaskRetentionPolicy::revision)
+                    != Some(change.expected())
+                {
                     return Err(PostgresStorageError::conflict(
-                        "Task policy authority changed",
+                        "Task retention policy changed",
                     ));
                 }
                 let previous = authority::state_on(connection).await?;

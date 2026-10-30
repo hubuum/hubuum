@@ -203,7 +203,9 @@ impl TaskRetentionStorage for MemoryStorage {
         change: TaskRetentionPolicyChange,
     ) -> Result<TaskControlRevision, StorageError> {
         let mut state = self.state.write_control().await;
-        state.require_task_revision(change.expected())?;
+        if state.task_control.policy().revision() != change.expected() {
+            return Err(StorageError::conflict("Task retention policy changed"));
+        }
         state.task_control = state
             .task_control
             .with_policy(change.policy().clone())
