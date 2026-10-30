@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
@@ -378,6 +379,149 @@ async fn held_old_manifest_does_not_prevent_new_unheld_cleanup() {
         fixture.storage.list_pending_task_purges(8).await.unwrap(),
         vec![old]
     );
+    assert_eq!(fixture.checkpoint().task_control(), Some(&state));
+}
+
+#[actix_web::test]
+async fn retention_sweep_batches_multiple_manifests_before_acknowledging_completion() {
+    let fixture = Fixture::new(Some(Duration::ZERO), TaskPurgeBudget::default()).await;
+    let mut expected = BTreeSet::new();
+    for index in 0..129 {
+        let (ticket, _) = fixture
+            .complete(
+                &format!("batched-{index}"),
+                StorageTaskCompletionPayload::Import,
+            )
+            .await;
+        expected.insert(ticket.receipt().task());
+    }
+    fixture
+        .service
+        .sweep_task_retention(&fixture.storage)
+        .await
+        .unwrap();
+    let state = fixture.storage.read_task_control().await.unwrap();
+    let mut removed = BTreeSet::new();
+    for decision in state.purge_batches().values() {
+        assert!(decision.removed().is_some());
+        removed.extend(decision.ticket().manifest().tasks().iter().copied());
+    }
+    assert_eq!(removed, expected);
+    assert_eq!(fixture.checkpoint().task_control(), Some(&state));
+}
+
+#[actix_web::test]
+async fn retention_sweep_batches_repair_multiple_unacknowledged_completions() {
+    let fixture = Fixture::new(Some(Duration::ZERO), TaskPurgeBudget::default()).await;
+    for index in 0..65 {
+        fixture
+            .complete(
+                &format!("interrupted-{index}"),
+                StorageTaskCompletionPayload::Import,
+            )
+            .await;
+    }
+    let mut tickets = Vec::new();
+    while let Some(ticket) = fixture
+        .storage
+        .prepare_task_details_purge(
+            TaskPurgeSelection::new(64, TaskPurgeBudget::default()).unwrap(),
+        )
+        .await
+        .unwrap()
+    {
+        tickets.push(ticket);
+    }
+    let session = open_session(fixture.service.configuration().unwrap())
+        .await
+        .unwrap();
+    let session = publish_current(&fixture.storage, session).await.unwrap();
+    for ticket in &tickets {
+        let progress = fixture
+            .storage
+            .purge_task_details_batch(
+                ProtectedTaskPurge::new(ticket.clone(), checkpoint_identity(&session).unwrap())
+                    .unwrap(),
+                TaskPurgeBudget::default(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(progress, TaskPurgeProgress::Removed { .. }));
+    }
+    // Interrupt before the combined completion publication.
+    drop(session);
+    assert!(
+        fixture
+            .checkpoint()
+            .task_control()
+            .unwrap()
+            .purge_batches()
+            .values()
+            .all(|decision| decision.removed().is_none())
+    );
+    fixture
+        .service
+        .sweep_task_retention(&fixture.storage)
+        .await
+        .unwrap();
+    let state = fixture.storage.read_task_control().await.unwrap();
+    for ticket in tickets {
+        assert!(
+            state.purge_batches()[&ticket.manifest().id()]
+                .removed()
+                .is_some()
+        );
+    }
+    assert_eq!(fixture.checkpoint().task_control(), Some(&state));
+}
+
+#[actix_web::test]
+async fn retention_sweep_batches_retire_more_than_one_physical_manifest_of_receipts() {
+    let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
+    let state = fixture.storage.read_task_control().await.unwrap();
+    fixture
+        .storage
+        .replace_task_retention_policy(TaskRetentionPolicyChange::new(
+            state.policy().revision(),
+            TaskRetentionPolicy::new(
+                state.policy().revision().next().unwrap(),
+                Duration::from_secs(1),
+                None,
+            )
+            .unwrap(),
+        ))
+        .await
+        .unwrap();
+    for index in 0..65 {
+        fixture
+            .complete(
+                &format!("expiry-batch-{index}"),
+                StorageTaskCompletionPayload::Import,
+            )
+            .await;
+    }
+    let expiry = fixture
+        .storage
+        .read_task_control()
+        .await
+        .unwrap()
+        .receipts()
+        .iter()
+        .filter_map(|receipt| receipt.expires_at())
+        .max()
+        .unwrap();
+    tokio::time::sleep(
+        (expiry - Utc::now()).to_std().unwrap_or_default() + Duration::from_millis(20),
+    )
+    .await;
+    fixture
+        .service
+        .sweep_task_retention(&fixture.storage)
+        .await
+        .unwrap();
+    let state = fixture.storage.read_task_control().await.unwrap();
+    assert!(state.receipts().is_empty());
+    assert!(state.receipt_expiry_floor() >= expiry);
     assert_eq!(fixture.checkpoint().task_control(), Some(&state));
 }
 

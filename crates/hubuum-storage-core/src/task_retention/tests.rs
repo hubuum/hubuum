@@ -45,6 +45,38 @@ fn state() -> TaskControlState {
 }
 
 #[rstest]
+#[case::empty(0, false)]
+#[case::above_physical_manifest(65, true)]
+#[case::maximum(1000, true)]
+#[case::over_limit(1001, false)]
+fn receipt_expiry_selection_has_its_own_bounded_metadata_limit(
+    #[case] count: u32,
+    #[case] valid: bool,
+) {
+    assert_eq!(ReceiptExpirySelection::new(count).is_ok(), valid);
+}
+
+#[rstest]
+#[case::empty(0, false)]
+#[case::above_physical_manifest(65, true)]
+#[case::maximum(1000, true)]
+#[case::over_limit(1001, false)]
+fn receipt_expiry_batch_has_its_own_bounded_metadata_limit(
+    #[case] count: usize,
+    #[case] valid: bool,
+) {
+    let mut references = (0..count)
+        .map(|_| receipt(StorageTaskKind::Import).reference().clone())
+        .collect::<Vec<_>>();
+    references.sort_by(|a, b| a.submission().cmp(b.submission()));
+    assert_eq!(
+        ReceiptExpiryBatch::new(TaskControlRevision::new(1).unwrap(), Utc::now(), references)
+            .is_ok(),
+        valid
+    );
+}
+
+#[rstest]
 #[case(StorageTaskKind::Import)]
 #[case(StorageTaskKind::Backup)]
 #[case(StorageTaskKind::RemoteCall)]

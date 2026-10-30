@@ -4,9 +4,10 @@ use chrono::Utc;
 use diesel::sql_types::{BigInt, Binary, Bool, Integer, Jsonb, Text, Uuid as SqlUuid};
 use diesel::{QueryableByName, sql_query};
 use diesel_async::{AsyncConnection, RunQueryDsl, SimpleAsyncConnection};
-use hubuum_domain::TaskIdentity;
+use hubuum_domain::{PrincipalIdentity, TaskIdentity};
 use hubuum_storage_core::{
-    TaskHoldChange, TaskHoldId, TaskHoldReason, TaskPurgeScope, TaskPurgeTicket, TaskRetentionHold,
+    ProtectedTaskKey, TaskHoldChange, TaskHoldId, TaskHoldReason, TaskPurgeScope, TaskPurgeTicket,
+    TaskReceiptGeneration, TaskReceiptReference, TaskRetentionHold, TaskSubmissionIdentity,
 };
 use hubuum_storage_postgres::test_support::{
     database_role_tests_enabled, integration_test_database_roles, integration_test_migration_pool,
@@ -18,6 +19,66 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 static CONTROL_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[rstest]
+#[case::above_physical_manifest(65, true)]
+#[case::maximum(1000, true)]
+#[case::over_limit(1001, false)]
+#[tokio::test]
+async fn native_receipt_selection_has_a_separate_bounded_metadata_limit(
+    #[case] count: i32,
+    #[case] valid: bool,
+) {
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let pool = integration_test_migration_pool(1);
+    with_transaction(&pool, async |connection| {
+        setup(connection).await?;
+        let result = sql_query("SELECT public.hubuum_task_receipts_expired($1) AS material")
+            .bind::<Integer, _>(count)
+            .load::<Material>(connection)
+            .await;
+        assert_eq!(result.is_ok(), valid);
+        connection
+            .batch_execute("ROLLBACK TO SAVEPOINT retention_fixture")
+            .await?;
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
+    .unwrap();
+}
+
+#[rstest]
+#[case::above_physical_manifest(65, true)]
+#[case::maximum(1000, true)]
+#[case::over_limit(1001, false)]
+#[tokio::test]
+async fn native_retired_receipt_retry_has_a_separate_bounded_metadata_limit(
+    #[case] count: usize,
+    #[case] valid: bool,
+) {
+    let references = (0..count)
+        .map(|_| {
+            TaskReceiptReference::new(
+                TaskSubmissionIdentity::new(
+                    PrincipalIdentity::generate(),
+                    ProtectedTaskKey::new("a".repeat(64)).unwrap(),
+                ),
+                TaskReceiptGeneration::generate(),
+                TaskIdentity::generate(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let pool = integration_test_migration_pool(1);
+    with_transaction(&pool, async move |connection| {
+        setup(connection).await?;
+        let result = sql_query("SELECT to_jsonb(public.hubuum_task_receipts_expire(c.revision,c.receipt_expiry_floor,$1,c.revision,(a.material->>'lineage')::uuid,(a.material->>'epoch')::uuid)) AS material FROM hubuum_control.task_retention_control c CROSS JOIN hubuum_control.deletion_authority a WHERE c.id=1 AND a.id=1")
+            .bind::<Jsonb, _>(serde_json::to_value(references).unwrap()).get_result::<Material>(connection).await;
+        assert_eq!(result.is_ok(), valid);
+        connection.batch_execute("ROLLBACK TO SAVEPOINT retention_fixture").await?;
+        Ok::<_, PostgresStorageError>(())
+    }).await.unwrap();
+}
 
 #[derive(QueryableByName)]
 struct Material {

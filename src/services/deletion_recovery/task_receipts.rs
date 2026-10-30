@@ -7,7 +7,7 @@ use hubuum_storage_core::{
     ProtectedReceiptExpiry, ProtectedTaskAdmission, ProtectedTaskPurge, ReceiptExpirySelection,
     StorageTaskKind, TaskActivationOutcome, TaskAdmissionTicket, TaskControlCheckpoint,
     TaskControlRevision, TaskLegacyReceiptBinding, TaskLegacyReceiptCandidate, TaskPurgeBudget,
-    TaskPurgeProgress, TaskPurgeSelection, TaskPurgeTicket, TaskQueueStorage,
+    TaskPurgeProgress, TaskPurgeScope, TaskPurgeSelection, TaskPurgeTicket, TaskQueueStorage,
     TaskReceiptActivation, TaskReceiptBinding, TaskRequestFingerprint, TaskRetentionStorage,
     TaskSubmissionIdentity, TaskSubmissionLookup, TaskSubmissionResolution,
 };
@@ -240,12 +240,41 @@ impl TaskReceiptService {
         let budget = storage.read_task_retention_policy().await?.cleanup_budget();
         let selection =
             TaskPurgeSelection::new(MAX_SELECTED_TASKS, budget).map_err(invalid_control)?;
-        // New eligible work must not wait behind an old held manifest. Both
-        // adapters exclude held/dependent targets before their bounded selection.
-        storage.prepare_task_details_purge(selection).await?;
-        // A details manifest already covers its owned outputs; select it first
-        // so one eligible task does not consume two permanent manifests.
-        storage.prepare_expired_task_outputs(selection).await?;
+        let existing = storage
+            .list_pending_task_purges(MAX_PURGE_BATCHES_PER_PASS)
+            .await?;
+        // Fill the bounded pass before publishing its intents. Still admit new
+        // eligible work behind held manifests, and give output-only work a turn.
+        let preparation_limit = MAX_PURGE_BATCHES_PER_PASS
+            .saturating_sub(existing.len() as u32)
+            .max(2)
+            .min(budget.max_rows().max(2));
+        for index in 0..preparation_limit {
+            // Details already cover their owned outputs, so try them first.
+            let scopes = if index == 1 {
+                [TaskPurgeScope::ExpiredOutputs, TaskPurgeScope::TaskDetails]
+            } else {
+                [TaskPurgeScope::TaskDetails, TaskPurgeScope::ExpiredOutputs]
+            };
+            let mut prepared = false;
+            for scope in scopes {
+                let ticket = match scope {
+                    TaskPurgeScope::TaskDetails => {
+                        storage.prepare_task_details_purge(selection).await?
+                    }
+                    TaskPurgeScope::ExpiredOutputs => {
+                        storage.prepare_expired_task_outputs(selection).await?
+                    }
+                };
+                if ticket.is_some() {
+                    prepared = true;
+                    break;
+                }
+            }
+            if !prepared {
+                break;
+            }
+        }
         let pending = storage
             .list_pending_task_purges(MAX_PURGE_BATCHES_PER_PASS)
             .await?;
@@ -255,6 +284,7 @@ impl TaskReceiptService {
         let mut rows = 0;
         let mut bytes = 0;
         let mut more = expired || activated;
+        let mut completed = Vec::new();
         for ticket in pending {
             if rows == budget.max_rows() || bytes == budget.max_bytes() {
                 more = true;
@@ -286,10 +316,18 @@ impl TaskReceiptService {
                     bytes: removed_bytes,
                 } => {
                     charge_progress(&mut rows, &mut bytes, removed_rows, removed_bytes, budget)?;
-                    session = publish_current(context, session).await?;
-                    require_purge_completion(&session, &ticket, revision)?;
+                    completed.push((ticket, revision));
                     more = true;
                 }
+            }
+        }
+        if !completed.is_empty() {
+            // No completion is acknowledged until this publication covers every
+            // exact removal. A crash beforehand is repaired by the next pass's
+            // initial publication; the independently protected intents remain.
+            session = publish_current(context, session).await?;
+            for (ticket, revision) in completed {
+                require_purge_completion(&session, &ticket, revision)?;
             }
         }
         Ok(TaskRetentionSweep::Protected { rows, bytes, more })
@@ -457,8 +495,14 @@ async fn expire_one_batch(
     mut session: CheckpointSession,
 ) -> Result<(CheckpointSession, bool), ApiError> {
     let storage = storage_handle(context);
+    let limit = storage
+        .read_task_retention_policy()
+        .await?
+        .cleanup_budget()
+        .max_rows()
+        .min(ReceiptExpirySelection::MAX_RECEIPTS);
     let Some(batch) = storage
-        .select_expired_task_receipts(ReceiptExpirySelection::new(64).map_err(invalid_control)?)
+        .select_expired_task_receipts(ReceiptExpirySelection::new(limit).map_err(invalid_control)?)
         .await?
     else {
         return Ok((session, false));
