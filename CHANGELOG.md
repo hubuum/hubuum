@@ -38,6 +38,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   preparation time does not shorten the configured post-ready window.
   Concurrent receipt settlement does not prevent retention policy or hold
   updates; competing edits to the same decision still conflict.
+  Cleanup shares its fixed row/byte budget across multiple protected manifests
+  and coalesces their completion checkpoints; receipt retirement has a separate
+  bounded metadata batch instead of inheriting the physical task-manifest limit.
 
 - `--reapply-control` verifies retained deletion decisions against the current
   application image, independently protects completion, and reopens access.

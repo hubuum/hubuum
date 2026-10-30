@@ -415,7 +415,7 @@ CREATE TRIGGER task_retention_policy BEFORE INSERT OR UPDATE OF finished_at ON p
 CREATE FUNCTION public.hubuum_task_receipts_expired(batch_limit INTEGER) RETURNS SETOF JSONB
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
-    IF batch_limit<1 OR batch_limit>64 THEN RAISE EXCEPTION 'Invalid receipt expiry batch bound'; END IF;
+    IF batch_limit<1 OR batch_limit>1000 THEN RAISE EXCEPTION 'Invalid receipt expiry batch bound'; END IF;
     RETURN QUERY SELECT material FROM hubuum_control.task_receipts
        WHERE expires_at<=clock_timestamp() ORDER BY expires_at,task_identity LIMIT batch_limit;
 END $$;
@@ -446,7 +446,7 @@ BEGIN
     SELECT material INTO STRICT authority FROM hubuum_control.deletion_authority WHERE id=1;
     IF (selected_revision<=covered_revision AND covered_revision<=c.revision
         AND authority->>'lineage'=lineage::text AND authority->>'epoch'=epoch::text
-        AND expiry_floor<=clock_timestamp() AND jsonb_array_length(targets) BETWEEN 1 AND 64) IS NOT TRUE THEN
+        AND expiry_floor<=clock_timestamp() AND jsonb_array_length(targets) BETWEEN 1 AND 1000) IS NOT TRUE THEN
         RAISE EXCEPTION 'Receipt expiry protection does not cover the selected authority' USING ERRCODE='40001';
     END IF;
     FOR target IN SELECT value FROM jsonb_array_elements(targets) LOOP

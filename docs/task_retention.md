@@ -166,6 +166,13 @@ and 16 MiB of measured row input, including owned children. Oversized indivisibl
 rows block explicitly. Held or blocked targets do not prevent progress on other
 eligible targets.
 
+One pass can prepare and process up to eight fixed manifests under that shared
+budget. It publishes their intents together and protects all completed removals
+before returning acknowledgement. Interrupted completion publication is repaired
+at the start of the next pass. Receipt retirement uses a separate batch of up to
+1,000 metadata references, with exact terminal-anchor checks and a protected
+expiry floor; it does not inherit the 64-task physical manifest limit.
+
 Detail cleanup preserves available outputs, repair reports without an expiry,
 active dependencies and required provenance. Expired export, backup and profile
 outputs use a separate manifest scope, so their cleanup does not depend on detail

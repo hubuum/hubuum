@@ -644,6 +644,11 @@ of the task-control revision. Under the adapter's control lock, reject a competi
 policy revision and apply the replacement to the latest authority state, preserving
 concurrent receipt changes. Receipt settlement alone must not invalidate the edit.
 
+Receipt retirement uses `ReceiptExpirySelection::MAX_RECEIPTS` (1,000 bounded
+metadata references), independently of the 64-task physical purge manifest.
+Both the selector and `ReceiptExpiryBatch` enforce this limit. Preserve exact
+terminal-anchor protection and the published expiry floor for the whole batch.
+
 Construct `TaskHoldChange` from the captured `TaskControlState` and desired hold.
 It retains the prior decision for that hold ID, not a global task revision.
 Compare that exact record under the control lock before applying to fresh state;

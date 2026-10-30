@@ -9,10 +9,12 @@ pub struct ReceiptExpirySelection {
     limit: u32,
 }
 impl ReceiptExpirySelection {
+    pub const MAX_RECEIPTS: u32 = 1000;
+
     pub fn new(limit: u32) -> Result<Self, StorageValidationError> {
-        if limit == 0 || limit as usize > TASK_CONTROL_MAX_PURGE_TASKS {
+        if limit == 0 || limit > Self::MAX_RECEIPTS {
             return Err(invalid(
-                "Receipt expiry batch must contain 1..=64 generations",
+                "Receipt expiry batch must contain 1..=1000 generations",
             ));
         }
         Ok(Self { limit })
@@ -35,7 +37,7 @@ impl ReceiptExpiryBatch {
         receipts: Vec<TaskReceiptReference>,
     ) -> Result<Self, StorageValidationError> {
         if receipts.is_empty()
-            || receipts.len() > TASK_CONTROL_MAX_PURGE_TASKS
+            || receipts.len() > ReceiptExpirySelection::MAX_RECEIPTS as usize
             || receipts
                 .windows(2)
                 .any(|pair| pair[0].submission() >= pair[1].submission())
