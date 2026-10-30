@@ -99,18 +99,22 @@ def scope_status(jobs):
 def render(run, jobs, evidence, artifacts, problems=()):
     selection = next((value for name, value in evidence if name == "selection.json" and "scopes" in value), None)
     targets = next((value for name, value in evidence if name == "target-selection.json"), None)
+    resolved_scopes = set(selection["scopes"]) if selection else set(SCOPES)
+    if targets is not None:
+        resolved_scopes.difference_update(("micro", "postgres"))
+        resolved_scopes.update(item["name"] for item in targets.get("include", []))
     records = deduplicate([value for name, value in evidence if name == "performance.jsonl" and value.get("kind") != "jobs"])
     rows = [MARKER, f"## Performance results — {escape(run.get('conclusion', 'unavailable'))}", "",
             f"[Workflow run and evidence]({run['html_url']}) · attempt {int(run.get('run_attempt', 1))}", ""]
     if selection:
-        rows += [f"Scopes: {escape(', '.join(selection['scopes']) or 'none')}. "
+        rows += [f"Scopes: {escape(', '.join(sorted(resolved_scopes)) or 'none')}. "
                  f"Tags: {escape(', '.join(selection.get('tags', [])) or 'none')}. "
                  f"Profile: **{escape(selection['profile'])}**.", ""]
         rows += [escape(reason) for reason in selection.get("reasons", [])]
     else:
         rows += ["Selection evidence unavailable; the selection job may have failed or been cancelled."]
     rows += ["", "| Scope | Status | Runner time |", "| --- | --- | ---: |"]
-    selected = set(selection["scopes"]) if selection else set(SCOPES)
+    selected = resolved_scopes
     discovered = {item["name"] for item in targets.get("include", [])} if targets else None
     for scope, prefix in SCOPES.items():
         group = [job for job in jobs if job.get("name", "").startswith(prefix)]

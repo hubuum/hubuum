@@ -190,7 +190,7 @@ jobs:
     name: Rust dependency and license policy
     needs: changes
     if: >-
-      always() &&
+      !cancelled() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
         needs.changes.outputs.code == 'true'
@@ -229,7 +229,7 @@ jobs:
     name: Python tests (${{ matrix.python-version }})
     needs: changes
     if: >-
-      always() &&
+      !cancelled() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
         needs.changes.outputs.code == 'true' ||
@@ -254,7 +254,7 @@ jobs:
     name: Monitoring integration (${{ matrix.engine }})
     needs: changes
     if: >-
-      always() &&
+      !cancelled() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
         needs.changes.outputs.code == 'true' ||
@@ -291,7 +291,7 @@ jobs:
     name: Rust API policy
     needs: changes
     if: >-
-      always() &&
+      !cancelled() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
         needs.changes.outputs.rust == 'true' ||
@@ -459,7 +459,7 @@ jobs:
     name: OpenAPI contract
     needs: changes
     if: >-
-      always() &&
+      !cancelled() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
         needs.changes.outputs.run_openapi == 'true'
@@ -626,7 +626,7 @@ jobs:
     name: Operational contract
     needs: changes
     if: >-
-      always() &&
+      !cancelled() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
         needs.changes.outputs.run_operational_contract == 'true'
@@ -931,7 +931,7 @@ jobs:
     name: Treetop authorization conformance
     needs: changes
     if: >-
-      always() &&
+      !cancelled() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
         needs.changes.outputs.treetop_conformance == 'true'
@@ -1277,7 +1277,7 @@ jobs:
     name: Container build (production features)
     needs: changes
     if: >-
-      always() &&
+      !cancelled() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
         (

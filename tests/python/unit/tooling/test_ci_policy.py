@@ -65,6 +65,14 @@ class CiTierTests(unittest.TestCase):
         self.assertEqual(self.policy(FORCE_FULL="true", IS_DRAFT="true")["run_container"], "true")
         self.assertNotIn("run_benchmarks", changes)
 
+    def test_long_validation_jobs_can_cancel_when_the_run_is_obsolete(self):
+        for name in ("dependency-policy", "python-tooling", "monitoring-integration", "rust-api-policy",
+                     "openapi-contract", "operational-contract", "treetop-authorization-conformance", "container-build"):
+            with self.subTest(job=name):
+                condition = job(name).split("    if: >-\n", 1)[1].split("    runs-on:", 1)[0]
+                self.assertIn("!cancelled()", condition)
+                self.assertNotIn("always()", condition)
+
 
 class DatabaseInitializationTests(unittest.TestCase):
     def test_every_diesel_setup_finishes_production_backfills(self):

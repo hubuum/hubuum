@@ -42,6 +42,13 @@ class BenchmarkReportTests(unittest.TestCase):
         self.assertIn("Selection evidence unavailable", body)
         self.assertIn("| postgres | unavailable |", body)
 
+    def test_explicit_target_reports_only_its_discovered_scope(self):
+        selection = {**self.selection, "scopes": ["micro", "postgres"]}
+        targets = {"include": [{"name": "micro", "selected_targets": ["gungraun:query/Cargo.toml:parse"]}]}
+        body = report.render(self.run, [], [("selection.json", selection), ("target-selection.json", targets)], [])
+        self.assertIn("Scopes: micro.", body)
+        self.assertIn("| postgres | no selected targets |", body)
+
     def test_duplicate_artifact_copies_do_not_duplicate_work(self):
         record = {"operation_id": "one", "label": "unique-operation", "compile_seconds": 10}
         records = [("performance.jsonl", record), ("performance.jsonl", dict(record))]
