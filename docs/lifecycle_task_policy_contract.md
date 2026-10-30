@@ -96,6 +96,10 @@ relation, export template, remote target, computed definitions and class schema.
 They reuse the storage identity history family rather than defining another
 independently maintained backend family set.
 
+Collection history supports deployment and collection policy scopes. A class
+scope cannot govern collection history; the standalone and embedded write schemas
+reject that impossible family/scope combination before stateful lookup.
+
 Durable bindings use stable UUIDs. Existing resource integer IDs remain unchanged.
 An optional current integer ID is presentation/lookup information; if supplied
 alongside a UUID, both must resolve to the same current resource before review.

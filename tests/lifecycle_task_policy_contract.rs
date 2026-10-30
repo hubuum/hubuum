@@ -183,7 +183,20 @@ fn nested_unknown_write_fields_are_rejected(#[case] pointer: &str) {
 fn history_families_use_storage_wire_names(#[case] family: StorageIdentityHistoryKind) {
     let mut request = examples()["apply_request"].clone();
     request["proposal"]["family"] = serde_json::to_value(family).unwrap();
+    request["proposal"]["scope"] = json!({"kind": "deployment"});
     validate_json_value(&apply_schema(), &request).unwrap();
+}
+
+#[test]
+fn collection_history_cannot_have_a_class_policy_scope() {
+    let mut request = examples()["apply_request"].clone();
+    request["proposal"]["family"] = json!("collection");
+    assert_eq!(
+        validate_json_value(&apply_schema(), &request)
+            .unwrap_err()
+            .kind(),
+        JsonSchemaErrorKind::InvalidValue
+    );
 }
 
 #[rstest]

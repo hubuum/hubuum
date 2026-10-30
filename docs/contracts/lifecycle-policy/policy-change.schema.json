@@ -256,5 +256,33 @@
   ],
   "additionalProperties": false,
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Proposed history policy change v1"
+  "title": "Proposed history policy change v1",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "family": {
+            "const": "collection"
+          }
+        },
+        "required": [
+          "family"
+        ]
+      },
+      "then": {
+        "properties": {
+          "scope": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "deployment",
+                  "collection"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

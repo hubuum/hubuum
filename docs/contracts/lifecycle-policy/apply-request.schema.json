@@ -257,7 +257,35 @@
         "binding",
         "application"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "family": {
+                "const": "collection"
+              }
+            },
+            "required": [
+              "family"
+            ]
+          },
+          "then": {
+            "properties": {
+              "scope": {
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "deployment",
+                      "collection"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "review": {
       "type": "object",
