@@ -1,9 +1,13 @@
 #![cfg(feature = "integration-test-support")]
 
+use chrono::Utc;
 use diesel::sql_types::{BigInt, Binary, Bool, Integer, Jsonb, Text, Uuid as SqlUuid};
 use diesel::{QueryableByName, sql_query};
 use diesel_async::{AsyncConnection, RunQueryDsl, SimpleAsyncConnection};
-use hubuum_storage_core::{TaskPurgeScope, TaskPurgeTicket};
+use hubuum_domain::TaskIdentity;
+use hubuum_storage_core::{
+    TaskHoldChange, TaskHoldId, TaskHoldReason, TaskPurgeScope, TaskPurgeTicket, TaskRetentionHold,
+};
 use hubuum_storage_postgres::test_support::{
     database_role_tests_enabled, integration_test_database_roles, integration_test_migration_pool,
     integration_test_pool,
@@ -682,6 +686,33 @@ impl AdmissionFixture {
     fn key(&self) -> hubuum_storage_core::ControlKeyFingerprint {
         hubuum_storage_core::ControlKeyFingerprint::new("a".repeat(64)).unwrap()
     }
+    async fn hold_change(&self, release: bool) -> TaskHoldChange {
+        use hubuum_storage_core::TaskRetentionStorage;
+        let storage = self.admin();
+        // Independent holds also protect stable task identities absent after restore.
+        let hold = TaskRetentionHold::new(
+            TaskHoldId::generate(),
+            TaskIdentity::generate(),
+            Utc::now(),
+            None,
+            TaskHoldReason::Operator,
+        )
+        .unwrap();
+        if release {
+            let state = storage.read_task_control().await.unwrap();
+            storage
+                .change_task_hold(TaskHoldChange::new(&state, hold.clone()))
+                .await
+                .unwrap();
+        }
+        let state = storage.read_task_control().await.unwrap();
+        let desired = if release {
+            hold.release(Utc::now()).unwrap()
+        } else {
+            hold
+        };
+        TaskHoldChange::new(&state, desired)
+    }
     fn request(&self) -> hubuum_storage_core::StorageTaskCreateRequest {
         use hubuum_storage_core::{
             ProtectedTaskKey, StorageTaskCreateRequest, StorageTaskKind, TaskReceiptBinding,
@@ -1291,4 +1322,99 @@ async fn policy_replacement_checks_policy_revision(#[case] competing_policy: boo
         assert_eq!(after.policy(), &policy);
         assert_eq!(after.receipts(), settled.receipts());
     }
+}
+
+#[rstest]
+#[case::create(false)]
+#[case::release(true)]
+#[tokio::test]
+async fn hold_change_survives_receipt_activity(#[case] release: bool) {
+    use hubuum_storage_core::TaskRetentionStorage;
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let fixture = AdmissionFixture::new().await;
+    let storage = fixture.admin();
+    let change = fixture.hold_change(release).await;
+    hubuum_storage_conformance::verify_protected_task_admission(
+        &fixture.runtime(),
+        fixture.request(),
+        hubuum_storage_core::DeletionCheckpointIdentity::new("b".repeat(64)).unwrap(),
+    )
+    .await
+    .unwrap();
+    let other = TaskRetentionHold::new(
+        TaskHoldId::generate(),
+        change.hold().task(),
+        Utc::now(),
+        None,
+        TaskHoldReason::Incident,
+    )
+    .unwrap();
+    let settled = storage.read_task_control().await.unwrap();
+    storage
+        .change_task_hold(TaskHoldChange::new(&settled, other.clone()))
+        .await
+        .unwrap();
+    let result = storage.change_task_hold(change.clone()).await;
+    let after = storage.read_task_control().await.unwrap();
+    fixture.finish().await;
+    result.unwrap();
+    assert_eq!(after.holds().get(&change.hold().id()), Some(change.hold()));
+    assert_eq!(after.holds().get(&other.id()), Some(&other));
+    assert_eq!(after.receipts(), settled.receipts());
+}
+
+#[rstest]
+#[case::create(false)]
+#[case::release(true)]
+#[tokio::test]
+async fn hold_change_rejects_competing_decision(#[case] release: bool) {
+    use hubuum_storage_core::{StorageErrorKind, TaskRetentionStorage};
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let fixture = AdmissionFixture::new().await;
+    let storage = fixture.admin();
+    let change = fixture.hold_change(release).await;
+    let competing = if release {
+        change.expected().unwrap().release(Utc::now()).unwrap()
+    } else {
+        TaskRetentionHold::new(
+            change.hold().id(),
+            change.hold().task(),
+            change.hold().created_at(),
+            None,
+            TaskHoldReason::Incident,
+        )
+        .unwrap()
+    };
+    let state = storage.read_task_control().await.unwrap();
+    storage
+        .change_task_hold(TaskHoldChange::new(&state, competing))
+        .await
+        .unwrap();
+    let before = storage.read_task_control().await.unwrap();
+    let result = storage.change_task_hold(change).await;
+    let after = storage.read_task_control().await.unwrap();
+    fixture.finish().await;
+    assert_eq!(result.unwrap_err().kind(), StorageErrorKind::Conflict);
+    assert_eq!(after, before);
+}
+
+#[rstest]
+#[case::create(false)]
+#[case::release(true)]
+#[tokio::test]
+async fn generic_control_change_cannot_bypass_hold_protocol(#[case] release: bool) {
+    use hubuum_storage_core::{StorageErrorKind, TaskControlChange, TaskRetentionStorage};
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let fixture = AdmissionFixture::new().await;
+    let storage = fixture.admin();
+    let change = fixture.hold_change(release).await;
+    let before = storage.read_task_control().await.unwrap();
+    let next = before.with_hold(change.hold().clone()).unwrap();
+    let result = storage
+        .commit_task_control(TaskControlChange::new(before.clone(), next).unwrap())
+        .await;
+    let after = storage.read_task_control().await.unwrap();
+    fixture.finish().await;
+    assert_eq!(result.unwrap_err().kind(), StorageErrorKind::InvalidInput);
+    assert_eq!(after, before);
 }

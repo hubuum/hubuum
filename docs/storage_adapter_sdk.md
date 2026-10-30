@@ -644,6 +644,13 @@ of the task-control revision. Under the adapter's control lock, reject a competi
 policy revision and apply the replacement to the latest authority state, preserving
 concurrent receipt changes. Receipt settlement alone must not invalidate the edit.
 
+Construct `TaskHoldChange` from the captured `TaskControlState` and desired hold.
+It retains the prior decision for that hold ID, not a global task revision.
+Compare that exact record under the control lock before applying to fresh state;
+receipt activity and other holds cannot invalidate it. Conflicting decisions for
+the same hold still fail, and release still advances the protected purge fence.
+Generic `commit_task_control` must reject hold changes in every adapter.
+
 Export and backup artifact `into_parts` now accepts an adapter-owned readiness
 clock and returns a fallible result. `StorageOutputAvailability` preserves either
 an existing fixed deadline or a validated post-ready lifetime. Resolve it inside

@@ -128,10 +128,11 @@ impl TaskRetentionStorage for MemoryStorage {
         }
         if change.next().receipts() != change.expected().receipts()
             || change.next().purge_batches() != change.expected().purge_batches()
+            || change.next().holds() != change.expected().holds()
             || change.next().receipt_expiry_floor() != change.expected().receipt_expiry_floor()
         {
             return Err(StorageError::invalid_input(
-                "Admission, expiry and purge require their operation-specific protocols",
+                "Admission, hold, expiry and purge require their operation-specific protocols",
             ));
         }
         if !state.task_control.activation().is_protected()
@@ -217,7 +218,9 @@ impl TaskRetentionStorage for MemoryStorage {
         change: TaskHoldChange,
     ) -> Result<TaskControlRevision, StorageError> {
         let mut state = self.state.write_control().await;
-        state.require_task_revision(change.expected())?;
+        if state.task_control.holds().get(&change.hold().id()) != change.expected() {
+            return Err(StorageError::conflict("Task hold decision changed"));
+        }
         state.task_control = state
             .task_control
             .with_hold(change.hold().clone())

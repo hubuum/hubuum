@@ -343,12 +343,7 @@ async fn held_old_manifest_does_not_prevent_new_unheld_cleanup() {
     fixture
         .storage
         .change_task_hold(TaskHoldChange::new(
-            fixture
-                .storage
-                .read_task_control()
-                .await
-                .unwrap()
-                .revision(),
+            &fixture.storage.read_task_control().await.unwrap(),
             hold,
         ))
         .await

@@ -377,7 +377,7 @@ pub(crate) async fn administer_task_retention(
                     .map_err(invalid_request)?,
             };
             storage
-                .change_task_hold(TaskHoldChange::new(state.revision(), hold))
+                .change_task_hold(TaskHoldChange::new(&state, hold))
                 .await?;
         }
         TaskRetentionAdminAction::ReleaseHold { id } => {
@@ -388,7 +388,7 @@ pub(crate) async fn administer_task_retention(
                 .release(Utc::now())
                 .map_err(invalid_request)?;
             storage
-                .change_task_hold(TaskHoldChange::new(state.revision(), hold))
+                .change_task_hold(TaskHoldChange::new(&state, hold))
                 .await?;
         }
         TaskRetentionAdminAction::Run => {
