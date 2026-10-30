@@ -79,7 +79,7 @@ uncalibrated advisory results.
 
 ## Selection and caches
 
-[The repository policy](../.github/benchmark-policy.json) owns tag assignments,
+[The repository policy](https://github.com/hubuum/hubuum/blob/main/.github/benchmark-policy.json) owns tag assignments,
 profiles, and changed-path rules. Discovery remains the benchmark inventory.
 Known query changes select query targets; shared and unknown inputs expand
 conservatively. New benchmark inputs, moved paths, shared fixtures, manifests,
