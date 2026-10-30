@@ -126,7 +126,7 @@ unknown attribution and unavailable accounting remain separately visible
 blockers. No rule silently converts an unresolved conflict into permission to
 delete.
 
-New timestamps use RFC 3339 UTC. New revisions and potentially large counts/byte
+New timestamps use RFC 3339 UTC (`Z` or `+00:00`). New revisions and potentially large counts/byte
 quantities use decimal strings, preserving integer precision in JavaScript.
 Existing endpoint timestamp/number representations are not changed by this
 proposal. A missing deadline is explicit, never silently replaced with now.
@@ -166,7 +166,8 @@ reuse across a supported restore cannot recreate old deletion authority.
 | Relevant policy/protection changed | 409, `stale_preview`. | Inspect and review a new preview; never silently refresh and reapply old approval. |
 | Review lifetime ended | 409, `preview_expired`. | Obtain a new review; an old fingerprint cannot renew authority. |
 | Scope/action/proposal differs | 409, `preview_mismatch`. | Stop; reconcile the intended change. |
-| Missing preview or inaccessible target | Normal authorized 404/403 behavior. | Do not infer hidden existence or permission. |
+| Malformed request or omitted required review | 400 using the standard validation envelope. | Correct the request; never silently change retrospective application to prospective. |
+| Unknown/inaccessible preview reference or target | Normal authorized 404/403 behavior. | Do not infer hidden existence or permission. |
 | Required protection unavailable | 503 with a bounded reason and meaningful retry guidance only where applicable. | Preserve the uncertain outcome and inspect authority; do not claim application succeeded. |
 
 Errors use the existing safe `error`/`message` envelope, `no-store`, and additive
@@ -216,10 +217,27 @@ with strict write shapes in the
 [apply schema](contracts/lifecycle-policy/apply-request.schema.json). A preview
 request uses `change`; the PUT uses `apply_request`, containing the exact
 `proposal` and its `review` reference. Fingerprint values are illustrative; a
-client cannot mint issuance proof from these examples. The 13 executable schema checks cover the prospective and retrospective write
-examples, required review references, unknown write fields/actions/families,
-invalid ages/IDs and decimal-string revision precision. Negative cases require
-a value-validation failure rather than accepting an invalid schema as evidence.
+client cannot mint issuance proof from these examples.
+
+The schemas use JSON Schema Draft 7, for which the repository validator enables
+`date-time` assertions. Consumers must enable format validation as well. UUID
+patterns enforce hyphenated non-nil RFC identities, including the version and
+variant constraints of the existing logical identity types. UTC suffix checks
+supplement calendar/time validation; a syntactically shaped but impossible date
+is invalid. The embedded proposal and standalone schema must remain identical.
+Executable checks cover prospective and retrospective writes, all nine storage
+history families, every binding/trigger variant, required review references,
+unknown nested write fields/actions/families, invalid UUIDs/timestamps/ages/IDs,
+and decimal-string revision precision. Negative cases require a value-validation
+failure rather than accepting an invalid schema as evidence.
+
+These are wire-shape schemas, not the complete semantic validator. Before issuing
+a preview or applying a write, the implementation must also validate supported
+numeric ranges and timestamp arithmetic, a size target strictly below its upper
+threshold, UUID/current-ID correspondence, and the cutoff against authoritative
+preview time. The 20-digit string limit does not prove that a value fits the
+implementation's integer type. Issuance, principal, revision and protection
+checks require server state and cannot be established by schema validation.
 These are not claims that the routes are implemented. Before feature acceptance, the
 server and consumer tests must cover stale/expired/mismatched proofs, changed
 holds/policies, lost responses, unknown optional fields/reasons, incomplete
