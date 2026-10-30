@@ -194,6 +194,19 @@ return `minimized`; do not rewrite it under the old digest or claim exact
 membership is still available. A digest without retrievable authorized
 membership is insufficient to answer which versions were affected.
 
+Protected minimum membership retained for the complete control lineage uses
+`expires_at: null` with `retention: "control_lineage"`. Null never means an
+unknown deadline. Ordinary finite membership retains its timestamp; an optional
+`retention: "finite"` must agree with it. This represents #511's existing
+indefinite recovery horizon without inventing an expiry or retaining erased data.
+
+The offline #511 administrator command is a system-only operation. Its exact
+membership retains the historical collection UUID, while its canonical events
+remain accessible only to an unscoped administrator. It does not enable lifecycle
+subscriptions. Trusted local administration uses a system actor and manual
+trigger, with no invented Hubuum principal. Older control formats explicitly
+report audit evidence as not recorded; an upgrade cannot fabricate past facts.
+
 The v1 digest covers this ASCII byte stream: `hubuum-lifecycle-membership-v1`
 and LF; manifest UUID and LF; collection UUID and LF; scoped operation UUID and
 LF; then one `resource_uuid`, TAB, `version_uuid`, LF line per member, sorted
@@ -432,6 +445,12 @@ before rollout. Schemas validate structure; typed constructors must additionally
 enforce UUID relationships, member ordering/uniqueness, digest/count agreement,
 time ordering and proof authenticity. The examples are independent state samples,
 except the paired published audit/sink views and their complete membership page.
+
+The producer schemas use Draft 7 so the repository validator asserts `date-time`
+formats, including real calendar dates. UUID patterns enforce canonical lowercase
+RFC identities, including version and variant constraints. Consumers must enable
+format validation; matching a timestamp's shape alone is insufficient. Legacy
+naive-UTC event occurrence timestamps still require typed calendar validation.
 
 | Surface | Contract |
 | --- | --- |

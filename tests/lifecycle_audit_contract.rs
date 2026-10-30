@@ -183,6 +183,81 @@ fn malformed_or_insufficient_evidence_is_not_a_valid_success_view(
 }
 
 #[rstest]
+#[case("published_audit", "audit", "/event_id")]
+#[case("published_sink", "sink", "/metadata/lifecycle/operation_id")]
+#[case("membership_page", "membership", "/members/0/version_uuid")]
+#[case("expired_evidence", "unavailable", "/receipt_id")]
+#[case("delivery_configured", "delivery", "/subscription_uuid")]
+#[case("capture_ready_without_task", "capture", "/capture_id")]
+fn evidence_identities_reject_nil_and_reserved_uuids(
+    #[case] name: &str,
+    #[case] view: &str,
+    #[case] pointer: &str,
+    #[values(
+        "00000000-0000-0000-0000-000000000000",
+        "12345678-1234-4234-1234-123456789abc",
+        "12345678-1234-0234-8234-123456789abc"
+    )]
+    identity: &str,
+) {
+    let mut value = example(name);
+    *value.pointer_mut(pointer).unwrap() = json!(identity);
+    assert_invalid(view, &value);
+}
+
+#[rstest]
+#[case("ready_audit", "audit", "/metadata/lifecycle/availability/ready_at")]
+#[case("ready_sink", "sink", "/metadata/lifecycle/availability/ready_at")]
+#[case("membership_page", "membership", "/expires_at")]
+#[case("delivery_configured", "delivery", "/observed_at")]
+#[case("capture_ready_without_task", "capture", "/captured_at")]
+fn evidence_timestamps_reject_impossible_calendar_dates(
+    #[case] name: &str,
+    #[case] view: &str,
+    #[case] pointer: &str,
+) {
+    let mut value = example(name);
+    *value.pointer_mut(pointer).unwrap() = json!("2026-02-30T00:00:00Z");
+    assert_invalid(view, &value);
+}
+
+#[rstest]
+#[case(
+    "erasure_completed_audit",
+    "audit",
+    "/metadata/lifecycle/evidence/membership"
+)]
+#[case("membership_page", "membership", "")]
+fn protected_membership_has_an_explicit_control_lineage_lifetime(
+    #[case] name: &str,
+    #[case] view: &str,
+    #[case] pointer: &str,
+) {
+    let mut value = example(name);
+    let membership = value.pointer_mut(pointer).unwrap();
+    membership["expires_at"] = Value::Null;
+    membership["retention"] = json!("control_lineage");
+    validate_json_value(&schema(view), &value).unwrap();
+}
+
+#[rstest]
+#[case(
+    "erasure_completed_audit",
+    "audit",
+    "/metadata/lifecycle/evidence/membership"
+)]
+#[case("membership_page", "membership", "")]
+fn unknown_membership_expiry_is_not_indefinite_protection(
+    #[case] name: &str,
+    #[case] view: &str,
+    #[case] pointer: &str,
+) {
+    let mut value = example(name);
+    value.pointer_mut(pointer).unwrap()["expires_at"] = Value::Null;
+    assert_invalid(view, &value);
+}
+
+#[rstest]
 #[case("lifecycle.archive.verified")]
 #[case("lifecycle.delivery_gap.acknowledged")]
 fn audit_only_transition_cannot_be_delivered_as_a_sink_view(#[case] name: &str) {
