@@ -4976,10 +4976,23 @@ assertions stay unchanged.</p>
 <p>The runner includes PostgreSQL adapter tests and a resource-limited JSON Schema
 probe. Python applies the probe's process limits; its assertions remain in Rust.
 Destructive restore contracts use a second runner-owned database with the same
-split owner, migrator and runtime roles. This keeps their backup budgets and
+database role configuration. This keeps their backup budgets and
 deadlines independent of history retained by other suites. The runner migrates
-and removes both databases, including on test failure.
-CI's direct Cargo jobs use <code>python3 tests/python/run.py integration rust-tests --</code>
+and removes both databases, including on test failure.</p>
+<p>By default, the runner provisions separate owner, migrator and runtime roles,
+requiring a test login with <code>CREATEDB</code> and <code>CREATEROLE</code>. For a disposable instance
+where the login can create databases but cannot create roles, run:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nb">source</span><span class="w"> </span>.env<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nv">HUBUUM_DATABASE_ROLE_TESTS</span><span class="o">=</span><span class="nb">false</span><span class="w"> </span>./run_tests.sh
+</code></pre></div>
+<p>This uses the existing login to own, migrate and access both test databases. It
+keeps the workspace, PostgreSQL adapter, application, schema-budget and restore
+suites, but disables assertions guarded by the database-role fixture and the
+serial split-role reconciliation test. Those guards cover privilege isolation
+and some readiness and integrity checks; Rust reports early-returning guarded
+tests as passed even though their assertions were skipped. The runner announces
+this reduced coverage. Full split-role verification remains required in CI.
+Only <code>true</code> and <code>false</code> are accepted; an unset flag defaults to <code>true</code>.</p>
+<p>CI's direct Cargo jobs use <code>python3 tests/python/run.py integration rust-tests --</code>
 before the Cargo command to provision equivalent isolated restore authority on
 Linux, macOS and Windows. The driver uses the built migration binary, preserves
 the application database settings and test exit status, and removes its temporary
@@ -4995,13 +5008,13 @@ fake executables and loopback HTTP servers; they do not start containers, build
 Rust binaries or require a running database. Git, Bash, curl and Cargo metadata
 must be available for the tools they exercise. No pip installs or virtual
 environment are needed.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Discover every local test, also the default with no arguments.</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>python3<span class="w"> </span>-I<span class="w"> </span>-S<span class="w"> </span>tests/python/run.py<span class="w"> </span>unit
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># List tests, run one area, or select a module/class/method.</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>unit<span class="w"> </span>--list
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>unit<span class="w"> </span>deployment
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>unit<span class="w"> </span>policies.test_rust_api
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Discover every local test, also the default with no arguments.</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>python3<span class="w"> </span>-I<span class="w"> </span>-S<span class="w"> </span>tests/python/run.py<span class="w"> </span>unit
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># List tests, run one area, or select a module/class/method.</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>unit<span class="w"> </span>--list
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>unit<span class="w"> </span>deployment
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>unit<span class="w"> </span>policies.test_rust_api
 </code></pre></div>
 <p>The categories are <code>deployment</code>, <code>monitoring</code>, <code>policies</code> and <code>tooling</code>. Add a
 <code>test_*.py</code> module with <code>unittest.TestCase</code> classes in the appropriate category;
@@ -5017,12 +5030,12 @@ Linux host: its disposable CA uses <code>SSL_CERT_FILE</code>, which the product
 verifier on macOS and Windows does not honor. Unsupported hosts fail before
 building or provisioning; the required Production integration contracts CI job
 runs this harness on Linux. Build the production image before using it:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>docker<span class="w"> </span>build<span class="w"> </span>--build-arg<span class="w"> </span><span class="s1">'CARGO_BUILD_FLAGS=-F tls-rustls -F tls-openssl --locked --release'</span><span class="w"> </span>--tag<span class="w"> </span>hubuum-server:verify<span class="w"> </span>.
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>monitoring<span class="w"> </span>--image<span class="w"> </span>hubuum-server:verify<span class="w"> </span>--report<span class="w"> </span>monitoring-acceptance.json
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>monitoring-fixture<span class="w"> </span>--engine<span class="w"> </span>docker
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>event-transports
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>corpus<span class="w"> </span>verify<span class="w"> </span>--image<span class="w"> </span>hubuum-server:verify
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>atlas<span class="w"> </span>verify<span class="w"> </span>--image<span class="w"> </span>hubuum-server:verify
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>docker<span class="w"> </span>build<span class="w"> </span>--build-arg<span class="w"> </span><span class="s1">'CARGO_BUILD_FLAGS=-F tls-rustls -F tls-openssl --locked --release'</span><span class="w"> </span>--tag<span class="w"> </span>hubuum-server:verify<span class="w"> </span>.
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>monitoring<span class="w"> </span>--image<span class="w"> </span>hubuum-server:verify<span class="w"> </span>--report<span class="w"> </span>monitoring-acceptance.json
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>monitoring-fixture<span class="w"> </span>--engine<span class="w"> </span>docker
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>event-transports
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>corpus<span class="w"> </span>verify<span class="w"> </span>--image<span class="w"> </span>hubuum-server:verify
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>python3<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>atlas<span class="w"> </span>verify<span class="w"> </span>--image<span class="w"> </span>hubuum-server:verify
 </code></pre></div>
 <p>The monitoring acceptance run imports real data, checks both replicas against SQL,
 compares dashboard queries through Grafana and Prometheus, and drives two webhook
