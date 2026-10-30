@@ -307,13 +307,21 @@ impl CheckpointRepository {
     }
 
     pub(super) fn into_session(self) -> Result<CheckpointSession, ApiError> {
-        let lock = self.lock()?;
+        self.try_into_session()?.ok_or_else(repository_busy)
+    }
+
+    /// Contention is the only deferred outcome. Authentication and filesystem
+    /// failures remain errors, and an acquired session still verifies HEAD.
+    pub(super) fn try_into_session(self) -> Result<Option<CheckpointSession>, ApiError> {
+        let Some(lock) = self.try_lock()? else {
+            return Ok(None);
+        };
         let checkpoint = self.latest_locked()?;
-        Ok(CheckpointSession {
+        Ok(Some(CheckpointSession {
             repository: self,
             checkpoint,
             _lock: lock,
-        })
+        }))
     }
 
     fn latest_locked(&self) -> Result<DurableCheckpoint, ApiError> {
@@ -655,6 +663,10 @@ impl CheckpointRepository {
     }
 
     fn lock(&self) -> Result<File, ApiError> {
+        self.try_lock()?.ok_or_else(repository_busy)
+    }
+
+    fn try_lock(&self) -> Result<Option<File>, ApiError> {
         let started = Instant::now();
         let file = match checked_file(&self.root.join("LOCK"), true) {
             Ok(file) => file,
@@ -669,21 +681,23 @@ impl CheckpointRepository {
             // SAFETY: file owns this live descriptor. Closing it releases the
             // advisory lock, including when a publisher crashes.
             if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-                let outcome =
-                    if std::io::Error::last_os_error().kind() == std::io::ErrorKind::WouldBlock {
-                        CheckpointLockOutcome::Contended
-                    } else {
-                        CheckpointLockOutcome::Failure
-                    };
-                checkpoint_lock_finished(outcome, started.elapsed());
+                if std::io::Error::last_os_error().kind() == std::io::ErrorKind::WouldBlock {
+                    checkpoint_lock_finished(CheckpointLockOutcome::Contended, started.elapsed());
+                    return Ok(None);
+                }
+                checkpoint_lock_finished(CheckpointLockOutcome::Failure, started.elapsed());
                 return Err(unavailable(
-                    "Control repository is busy; retry without bypassing protection",
+                    "Cannot acquire control repository publication lock",
                 ));
             }
         }
         checkpoint_lock_finished(CheckpointLockOutcome::Acquired, started.elapsed());
-        Ok(file)
+        Ok(Some(file))
     }
+}
+
+pub(super) fn repository_busy() -> ApiError {
+    unavailable("Control repository is busy; retry without bypassing protection")
 }
 
 fn digest(bytes: &[u8]) -> String {

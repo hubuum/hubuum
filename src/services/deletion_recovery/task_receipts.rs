@@ -15,7 +15,9 @@ use hubuum_task_core::IdempotencyKey;
 use serde::Serialize;
 use tokio::sync::Mutex;
 
-use super::repository::{AuthenticatedPayloadCache, CheckpointRepository, CheckpointSession};
+use super::repository::{
+    AuthenticatedPayloadCache, CheckpointRepository, CheckpointSession, repository_busy,
+};
 use super::task_key::TaskReceiptKey;
 use super::{invalid_control, unavailable};
 use crate::config::ControlRecoveryOptions;
@@ -215,22 +217,35 @@ impl TaskReceiptService {
         &self,
         context: &impl StorageContext,
     ) -> Result<TaskRetentionSweep, ApiError> {
+        self.try_sweep_task_retention(context)
+            .await?
+            .ok_or_else(repository_busy)
+    }
+
+    /// None means another publisher owns the exclusive repository session.
+    /// No retention mutation or acknowledgment has occurred in that case.
+    pub(crate) async fn try_sweep_task_retention(
+        &self,
+        context: &impl StorageContext,
+    ) -> Result<Option<TaskRetentionSweep>, ApiError> {
         let storage = storage_handle(context);
         let activation = storage.read_task_receipt_activation().await?;
         if matches!(activation, TaskReceiptActivation::Disabled) {
-            return Ok(TaskRetentionSweep::Disabled);
+            return Ok(Some(TaskRetentionSweep::Disabled));
         }
         self.validate_activation(&activation)?;
         let configuration = self.configuration()?;
-        let wait = CheckpointTimer::start(CheckpointOperation::CoalescingWait);
-        let _coalescing = configuration.publication.lock().await;
-        wait.finish(true);
-        let session = open_session(configuration).await?;
         if !matches!(activation, TaskReceiptActivation::Protected { .. }) {
             return Err(unavailable(
                 "Task receipt backfill must finish before retention runs",
             ));
         }
+        let wait = CheckpointTimer::start(CheckpointOperation::CoalescingWait);
+        let _coalescing = configuration.publication.lock().await;
+        wait.finish(true);
+        let Some(session) = try_open_session(configuration).await? else {
+            return Ok(None);
+        };
         // A previous process may have committed expiry or removal and lost its
         // acknowledgement before publishing the resulting complete authority.
         // Such work no longer appears in pending selectors; repair it first.
@@ -330,7 +345,7 @@ impl TaskReceiptService {
                 require_purge_completion(&session, &ticket, revision)?;
             }
         }
-        Ok(TaskRetentionSweep::Protected { rows, bytes, more })
+        Ok(Some(TaskRetentionSweep::Protected { rows, bytes, more }))
     }
 }
 
@@ -445,6 +460,14 @@ fn charge_progress(
 }
 
 async fn open_session(configuration: &Arc<Configuration>) -> Result<CheckpointSession, ApiError> {
+    try_open_session(configuration)
+        .await?
+        .ok_or_else(repository_busy)
+}
+
+async fn try_open_session(
+    configuration: &Arc<Configuration>,
+) -> Result<Option<CheckpointSession>, ApiError> {
     let configuration = Arc::clone(configuration);
     tokio::task::spawn_blocking(move || {
         let repository =
@@ -456,7 +479,7 @@ async fn open_session(configuration: &Arc<Configuration>) -> Result<CheckpointSe
         }
         repository
             .with_payload_cache(Arc::clone(&configuration.payload_cache))
-            .into_session()
+            .try_into_session()
     })
     .await
     .map_err(|_| unavailable("Task control repository worker failed"))?

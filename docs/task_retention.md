@@ -146,6 +146,13 @@ pass; normal workers continue eligible work automatically.
 
 ## Holds, outputs and bounded cleanup
 
+When another publisher holds the independent repository, background workers
+leave cleanup due and continue already admitted task work under the current
+application permit and task execution checks. Explicit cleanup commands return
+the retryable repository-busy refusal. Missing or changed keys, invalid evidence
+and filesystem failures remain errors. A deferred attempt performs no retention
+mutation or completion acknowledgement.
+
 Use stable UUIDs when retrying hold commands:
 
 ```bash
