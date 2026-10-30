@@ -31,7 +31,7 @@ enum HoldReason {
 #[derive(Args, Default)]
 pub(super) struct TaskRetentionAdminOptions {
     /// Inspect or change protected task retention; run performs one bounded cleanup pass
-    #[arg(long, value_enum, requires_all = ["control_recovery_directory", "control_recovery_key"], conflicts_with_all = ["control_checkpoint", "verify_control_recovery", "recover_control", "reapply_control", "delete_object_history_version", "backup", "restore", "restore_executor", "verify_backup", "reconcile_query_usage", "database_ready", "reset_password", "audit_templates", "export_template_health", "token_key_status", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges"])]
+    #[arg(long, value_enum, requires_all = ["control_recovery_directory", "control_recovery_key"], conflicts_with_all = ["control_status", "control_checkpoint", "verify_control_recovery", "recover_control", "reapply_control", "delete_object_history_version", "backup", "restore", "restore_executor", "verify_backup", "reconcile_query_usage", "database_ready", "reset_password", "audit_templates", "export_template_health", "token_key_status", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges"])]
     #[cfg_attr(feature = "embedded-migrations", arg(conflicts_with_all = ["migrate", "migration_mode"]))]
     task_retention: Option<Command>,
 

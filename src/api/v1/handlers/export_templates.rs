@@ -231,8 +231,8 @@ pub async fn get_template(
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
         (status = 404, description = "Template not found", body = ApiErrorResponse),
-        (status = 410, description = "Submission recognized; task details expired", body = TaskDetailsExpiredResponse),
-        (status = 409, description = "Conflict", body = ApiErrorResponse),
+        (status = 410, description = "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.", body = TaskDetailsExpiredResponse, headers(("Cache-Control" = String, description = "no-store; no automatic retry is implied"))),
+        (status = 409, description = "Conflict; reason idempotency_key_conflict identifies a changed protected request", body = ApiErrorResponse, headers(("Cache-Control" = String, description = "no-store for protected request conflicts; no Retry-After"))),
         (status = 429, description = "Shared task admission or byte capacity exhausted", body = ApiErrorResponse),
         (status = 503, description = "Task identity or control reconciliation unavailable", body = ApiErrorResponse)
     )

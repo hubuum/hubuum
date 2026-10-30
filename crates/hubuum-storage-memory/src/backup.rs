@@ -157,7 +157,7 @@ pub(super) fn restore(
     control: crate::task_capacity::MemoryTaskCapacity,
     artifacts: crate::artifacts::Artifacts,
 ) -> Result<MemoryState, StorageError> {
-    let mut state = restore_without_repairs(snapshot, control)?;
+    let mut state = restore_without_repairs(snapshot, control, artifacts)?;
     enqueue_restored_repairs(&mut state)?;
     Ok(state)
 }
@@ -165,6 +165,7 @@ pub(super) fn restore(
 pub(super) fn restore_without_repairs(
     snapshot: StorageBackupSnapshot,
     control: crate::task_capacity::MemoryTaskCapacity,
+    artifacts: crate::artifacts::Artifacts,
 ) -> Result<MemoryState, StorageError> {
     let schema_limits = snapshot.schema_limits();
     let (sections, history) = snapshot.into_parts();

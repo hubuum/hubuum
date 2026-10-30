@@ -4,7 +4,7 @@ use hubuum_storage_core::artifacts::VerifiedArtifact;
 
 use std::time::Duration;
 
-use chrono::NaiveDateTime;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::dsl::sql;
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::sql_types::{
@@ -489,24 +489,22 @@ pub async fn complete_task(
             .await?
         }
         StorageTaskCompletionPayload::Export(artifact) => {
-            let (output, proof) = export_artifact(claimed.id, artifact);
             finalize_task(
                 runtime,
                 claimed,
                 update,
                 event,
-                Some(TaskArtifact::Export(output, proof)),
+                Some(TaskArtifact::Export(artifact)),
             )
             .await?
         }
         StorageTaskCompletionPayload::Backup(artifact) => {
-            let (output, proof) = backup_artifact(claimed.id, artifact);
             finalize_task(
                 runtime,
                 claimed,
                 update,
                 event,
-                Some(TaskArtifact::Backup(output, proof)),
+                Some(TaskArtifact::Backup(artifact)),
             )
             .await?
         }
@@ -625,8 +623,8 @@ pub async fn purge_expired_backup_outputs(
 
 enum TaskArtifact {
     SchemaProfiling(i32, StorageSchemaProfileArtifact),
-    Export(NewExportOutputRow, Option<VerifiedArtifact>),
-    Backup(NewBackupOutputRow, Option<VerifiedArtifact>),
+    Export(StorageExportTaskArtifact),
+    Backup(StorageBackupTaskArtifact),
     RemoteCall(NewRemoteCallResultRow),
 }
 
@@ -662,20 +660,8 @@ async fn finalize_task(
                 .await;
             }
             if let Some(artifact) = artifact {
-                if let TaskArtifact::Export(_, Some(proof)) | TaskArtifact::Backup(_, Some(proof)) =
-                    &artifact
-                {
-                    crate::artifacts::publish_for_task(
-                        connection,
-                        claimed.id,
-                        &row.lease_token.ok_or_else(|| {
-                            PostgresStorageError::conflict("Task lease disappeared")
-                        })?,
-                        proof,
-                    )
-                    .await?;
-                }
-                persist_artifact(connection, artifact).await?;
+                let ready_at = database_now(connection).await?.and_utc();
+                persist_artifact(connection, claimed, artifact, ready_at).await?;
             }
             finalize_task_connection(connection, claimed, update, event).await
         })
@@ -684,7 +670,9 @@ async fn finalize_task(
 
 async fn persist_artifact(
     connection: &mut PostgresConnection,
+    claimed: ClaimedTask,
     artifact: TaskArtifact,
+    ready_at: DateTime<Utc>,
 ) -> Result<(), PostgresStorageError> {
     match artifact {
         TaskArtifact::SchemaProfiling(task_id, artifact) => {
@@ -698,7 +686,18 @@ async fn persist_artifact(
                 .execute(connection)
                 .await?;
         }
-        TaskArtifact::Export(output, _) => {
+        TaskArtifact::Export(artifact) => {
+            let (output, proof) = export_artifact(claimed.id, artifact, ready_at)?;
+            if let Some(proof) = proof {
+                crate::artifacts::publish_for_task(
+                    connection,
+                    claimed.id,
+                    &claimed.token,
+                    &proof,
+                    output.output_expires_at.and_utc(),
+                )
+                .await?;
+            }
             use crate::schema::export_task_outputs::dsl as outputs;
             diesel::insert_into(outputs::export_task_outputs)
                 .values(output)
@@ -707,7 +706,18 @@ async fn persist_artifact(
                 .execute(connection)
                 .await?;
         }
-        TaskArtifact::Backup(output, _) => {
+        TaskArtifact::Backup(artifact) => {
+            let (output, proof) = backup_artifact(claimed.id, artifact, ready_at)?;
+            if let Some(proof) = proof {
+                crate::artifacts::publish_for_task(
+                    connection,
+                    claimed.id,
+                    &claimed.token,
+                    &proof,
+                    output.output_expires_at.and_utc(),
+                )
+                .await?;
+            }
             use crate::schema::backup_task_outputs::dsl as outputs;
             diesel::insert_into(outputs::backup_task_outputs)
                 .values(output)
@@ -1152,12 +1162,14 @@ pub async fn mark_recovered_reindex_failed_on_connection(
 fn export_artifact(
     task_id: i32,
     artifact: StorageExportTaskArtifact,
-) -> (NewExportOutputRow, Option<VerifiedArtifact>) {
-    let (identity, content, report, output_expires_at, durations) = artifact.into_parts();
+    ready_at: DateTime<Utc>,
+) -> Result<(NewExportOutputRow, Option<VerifiedArtifact>), PostgresStorageError> {
+    let (identity, content, report, output_expires_at, durations) =
+        artifact.into_parts(ready_at)?;
     let (template_name, content_type) = identity.into_parts();
     let (json_output, text_output, proof) = content.into_parts();
     let (meta_json, warnings_json, warning_count, truncated) = report.into_parts();
-    (
+    Ok((
         NewExportOutputRow {
             artifact_reference: proof
                 .as_ref()
@@ -1178,19 +1190,20 @@ fn export_artifact(
             render_duration_ms: durations.render_ms(),
         },
         proof,
-    )
+    ))
 }
 
 fn backup_artifact(
     task_id: i32,
     artifact: StorageBackupTaskArtifact,
-) -> (NewBackupOutputRow, Option<VerifiedArtifact>) {
-    let (document, byte_size, sha256, output_expires_at) = artifact.into_parts();
+    ready_at: DateTime<Utc>,
+) -> Result<(NewBackupOutputRow, Option<VerifiedArtifact>), PostgresStorageError> {
+    let (document, byte_size, sha256, output_expires_at) = artifact.into_parts(ready_at)?;
     let (document, proof) = match document {
         StorageBackupTaskContent::Inline(bytes) => (bytes, None),
         StorageBackupTaskContent::Verified(proof) => (Vec::new(), Some(proof)),
     };
-    (
+    Ok((
         NewBackupOutputRow {
             artifact_reference: proof
                 .as_ref()
@@ -1202,7 +1215,7 @@ fn backup_artifact(
             output_expires_at: output_expires_at.naive_utc(),
         },
         proof,
-    )
+    ))
 }
 
 fn remote_call_artifact(

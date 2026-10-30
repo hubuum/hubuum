@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use hubuum_storage_core::{
-    ApplicationControlState, DeletionAudit, DeletionControlState, DeletionControlStorage,
-    DeletionCopyState, StorageRecordIdentity,
+    ApplicationControlState, ControlCheckpointCapture, DeletionAudit, DeletionControlState,
+    DeletionControlStorage, DeletionCopyState, StorageRecordIdentity, TaskRetentionStorage,
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -86,18 +86,19 @@ pub(crate) async fn status(
     // Failure is a bounded observation, never a successful verification result.
     let required = evidence(directory, key).await.ok();
     let storage = storage_handle(context);
-    let current = storage.read_deletion_control().await?;
+    let current = storage.capture_control_checkpoint().await?;
     let application = storage.read_application_control().await?;
     Ok(observe(&current, &application, required.as_ref()))
 }
 
 fn observe(
-    current: &DeletionControlState,
+    capture: &ControlCheckpointCapture,
     application: &ApplicationControlState,
     required: Option<&RecoveryEvidence>,
 ) -> DeletionStatusReport {
-    let authority_covered = required.is_some_and(|evidence| current.covers(evidence.state()));
-    let checkpoint = required.map(RecoveryEvidence::checkpoint);
+    let current = capture.deletion().state();
+    let authority_covered =
+        required.is_some_and(|evidence| super::covers_checkpoint(capture, evidence.checkpoint()));
     let (recovery_protection, block_reason, next_action) = match required {
         None => (
             RecoveryProtection::Blocked,
@@ -119,22 +120,33 @@ fn observe(
             Some(BlockReason::RecoveryRequired),
             NextAction::RecoverControl,
         ),
-        Some(evidence) if !evidence.state().covers(current) => (
-            RecoveryProtection::Pending,
-            None,
-            NextAction::PublishCheckpoint,
-        ),
+        Some(evidence)
+            if !evidence.state().covers(current)
+                || !evidence
+                    .checkpoint()
+                    .task_control()
+                    .map_or(capture.task_control().revision().value() == 0, |tasks| {
+                        tasks.covers(capture.task_control())
+                    }) =>
+        {
+            (
+                RecoveryProtection::Pending,
+                None,
+                NextAction::PublishCheckpoint,
+            )
+        }
         Some(_) => (RecoveryProtection::Protected, None, NextAction::None),
     };
     let released = authority_covered
         && application.is_released_for(current)
-        && (current.intents().is_empty()
-            || checkpoint.is_some_and(|checkpoint| {
-                application.reapplication() == checkpoint.reapplication()
-                    && application
-                        .checkpoint()
-                        .is_some_and(|identity| identity.as_str() == checkpoint.identity())
-            }));
+        && required.is_some_and(|evidence| {
+            super::require_activation_checkpoint(capture, evidence.checkpoint()).is_ok()
+        })
+        && super::reapplication_is_protected(
+            capture,
+            application,
+            required.map(RecoveryEvidence::checkpoint),
+        );
     let intents: Vec<_> = current
         .intents()
         .iter()

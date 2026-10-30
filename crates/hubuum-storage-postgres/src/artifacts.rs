@@ -16,6 +16,7 @@ use hubuum_storage_core::artifacts::{
 };
 use uuid::Uuid;
 
+use crate::operations::task_retention;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
 /// Constructed only by PostgreSQL composition. Pools do not cross the immutable
@@ -344,6 +345,10 @@ impl ArtifactStore for PostgresArtifactStore {
 
     async fn cleanup(&self) -> ArtifactResult<u32> {
         self.runtime.with_transaction(async |connection| {
+            // Pin holds and activation before artifact locks. The capability
+            // keeps published results behind protected purge while permitting
+            // lease-fenced abandoned staging to release retry capacity.
+            task_retention::lock_on(connection).await?;
             #[derive(QueryableByName)]
             struct Candidate {
                 #[diesel(sql_type = SqlUuid)] artifact_id: Uuid,
@@ -351,7 +356,7 @@ impl ArtifactStore for PostgresArtifactStore {
                 #[diesel(sql_type = Nullable<Timestamptz>)] cleanup_after: Option<DateTime<Utc>>,
             }
             let candidate = diesel::sql_query("SELECT a.artifact_id, o.spool_bytes, o.cleanup_after FROM artifact_attempts a LEFT JOIN artifact_task_owners o USING(artifact_id)
-                WHERE (o.cleanup_after IS NULL OR o.cleanup_after<=clock_timestamp()) AND a.state <> 'discarded' AND (a.state='deleting'
+                WHERE (o.artifact_id IS NULL OR public.hubuum_task_artifact_cleanup_allowed(a.artifact_id)) AND (o.cleanup_after IS NULL OR o.cleanup_after<=clock_timestamp()) AND a.state <> 'discarded' AND (a.state='deleting'
                 OR (a.state<>'published' AND a.expires_at<=clock_timestamp())
                 OR (o.artifact_id IS NOT NULL AND (o.output_expires_at<=clock_timestamp()
                     OR NOT EXISTS (SELECT 1 FROM tasks t WHERE t.id=o.task_id AND t.deleted_at IS NULL
@@ -410,6 +415,7 @@ pub(crate) async fn publish_for_task(
     task_id: i32,
     lease: &Uuid,
     verified: &VerifiedArtifact,
+    output_expires_at: DateTime<Utc>,
 ) -> Result<(), PostgresStorageError> {
     #[derive(QueryableByName)]
     struct Owned {
@@ -422,10 +428,11 @@ pub(crate) async fn publish_for_task(
         .get_result::<Owned>(connection).await.optional()?.ok_or_else(conflict)?;
     publish_on(connection, verified).await?;
     diesel::sql_query(
-        "UPDATE artifact_task_owners SET spool_bytes=0, reserved_bytes=$2 WHERE artifact_id=$1",
+        "UPDATE artifact_task_owners SET spool_bytes=0, reserved_bytes=$2, output_expires_at=$3 WHERE artifact_id=$1",
     )
     .bind::<SqlUuid, _>(owner.artifact_id)
     .bind::<BigInt, _>(verified.manifest().stored_bytes() as i64)
+    .bind::<Timestamptz, _>(output_expires_at)
     .execute(connection)
     .await?;
     Ok(())

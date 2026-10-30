@@ -29,7 +29,7 @@ impl MemoryState {
             ));
         }
         if receipt.kind() != lookup.kind() {
-            return Err(StorageError::conflict(
+            return Err(StorageError::idempotency_conflict(
                 "Idempotency key is already in use for a different task kind",
             ));
         }
@@ -39,7 +39,7 @@ impl MemoryState {
             ));
         }
         if !lookup.matches(receipt.kind(), receipt.fingerprint()) {
-            return Err(StorageError::conflict(
+            return Err(StorageError::idempotency_conflict(
                 "Idempotency key is already in use for a different request",
             ));
         }

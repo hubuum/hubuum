@@ -4,9 +4,9 @@ use std::sync::Arc;
 #[cfg(feature = "permissions-treetop")]
 use std::sync::Mutex;
 
-use actix_web::{App, ResponseError, http::StatusCode, test as actix_test, web};
+use actix_web::{App, ResponseError, test as actix_test, web};
 #[cfg(feature = "permissions-treetop")]
-use actix_web::{HttpResponse, HttpServer};
+use actix_web::{HttpResponse, HttpServer, http::StatusCode};
 #[cfg(feature = "permissions-treetop")]
 use clap::Parser;
 use hubuum_events_core::EventContext;
@@ -47,7 +47,12 @@ async fn expired_receipt_http_response_contains_only_authorized_minimal_evidence
     let storage = StorageHandle::memory();
     let actor = actor(&storage).await;
     let owner = principal_identity(&storage, &actor).await.unwrap();
-    let task = TaskIdentity::generate();
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../../tests/fixtures/lifecycle/task_submission_outcomes.json"
+    ))
+    .unwrap();
+    let expected = &fixture["expired_details"];
+    let task = serde_json::from_value(expected["body"]["task_identity"].clone()).unwrap();
     let receipt = ExpiredTaskSubmission::new(task, TaskKind::Export, None, owner);
     let permissions = Arc::new(LocalPermissionBackend::new(storage.clone(), "admin".into()));
     let context = AppContext::new(storage, permissions);
@@ -68,13 +73,17 @@ async fn expired_receipt_http_response_contains_only_authorized_minimal_evidence
         actix_test::TestRequest::post().uri("/receipt").to_request(),
     )
     .await;
-    assert_eq!(response.status(), StatusCode::GONE);
-    assert_eq!(response.headers().get("Cache-Control").unwrap(), "no-store");
-    let body: Value = actix_test::read_body_json(response).await;
     assert_eq!(
-        body,
-        json!({"reason":"task_details_expired", "task_identity":task, "kind":"export", "expires_at":null})
+        response.status().as_u16(),
+        expected["status"].as_u64().unwrap() as u16
     );
+    assert_eq!(
+        response.headers().get("Cache-Control").unwrap(),
+        expected["headers"]["cache-control"].as_str().unwrap()
+    );
+    assert!(response.headers().get("Retry-After").is_none());
+    let body: Value = actix_test::read_body_json(response).await;
+    assert_eq!(body, expected["body"]);
 }
 
 #[actix_web::test]

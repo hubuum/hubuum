@@ -10,7 +10,7 @@ pub(super) fn artifact_to_storage(
         content,
         serde_json::to_value(&artifact.meta)?,
         serde_json::to_value(&artifact.warnings)?,
-        artifact.expires_at,
+        artifact.availability,
     )
     .template_name(artifact.template_name)
     .warning_state(

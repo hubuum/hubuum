@@ -78,6 +78,7 @@ pub(super) fn sanitize_error_for_storage(err: &ApiError) -> String {
         ApiError::ReauthenticationRequired
         | ApiError::TaskCapacity(_)
         | ApiError::TaskDetailsExpired(_)
+        | ApiError::IdempotencyConflict
         | ApiError::LegacyTaskRequestUnverifiable => err.public_message().to_string(),
         ApiError::TaskStopped(reason) => reason.to_string(),
         ApiError::Conflict(msg) => format!("Conflict: {}", msg),

@@ -2,6 +2,7 @@ use super::*;
 
 mod admission;
 mod purge;
+pub(crate) use purge::{PurgeWork, measured};
 mod recovery;
 #[cfg(test)]
 mod tests;

@@ -158,6 +158,7 @@ fn preflight_failure_kind(error: &ApiError) -> FailureKind {
             FailureKind::Permission
         }
         ApiError::Conflict(_)
+        | ApiError::IdempotencyConflict
         | ApiError::LegacyTaskRequestUnverifiable
         | ApiError::PreconditionFailed(_, _)
         | ApiError::RevisionConflict(_, _) => FailureKind::Collision,

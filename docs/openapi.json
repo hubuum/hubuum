@@ -1138,7 +1138,15 @@
             }
           },
           "409": {
-            "description": "Conflict",
+            "description": "Conflict; reason idempotency_key_conflict identifies a changed protected request",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store for protected request conflicts; no Retry-After"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1148,7 +1156,15 @@
             }
           },
           "410": {
-            "description": "Submission recognized; task details expired",
+            "description": "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store; no automatic retry is implied"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7779,7 +7795,15 @@
             }
           },
           "409": {
-            "description": "Idempotency key conflict",
+            "description": "Changed protected request; reason idempotency_key_conflict",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store for protected request conflicts; no Retry-After"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7789,7 +7813,15 @@
             }
           },
           "410": {
-            "description": "Submission recognized; task details expired",
+            "description": "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store; no automatic retry is implied"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -16120,7 +16152,15 @@
             }
           },
           "409": {
-            "description": "Conflict",
+            "description": "Conflict; reason idempotency_key_conflict identifies a changed protected request",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store for protected request conflicts; no Retry-After"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -16130,7 +16170,15 @@
             }
           },
           "410": {
-            "description": "Submission recognized; task details expired",
+            "description": "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store; no automatic retry is implied"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -16446,7 +16494,15 @@
             }
           },
           "409": {
-            "description": "Conflict",
+            "description": "Conflict; reason idempotency_key_conflict identifies a changed protected request",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store for protected request conflicts; no Retry-After"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -16456,7 +16512,15 @@
             }
           },
           "410": {
-            "description": "Submission recognized; task details expired",
+            "description": "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store; no automatic retry is implied"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -21405,7 +21469,15 @@
             }
           },
           "409": {
-            "description": "Conflict",
+            "description": "Conflict; reason idempotency_key_conflict identifies a changed protected request",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store for protected request conflicts; no Retry-After"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -21415,7 +21487,15 @@
             }
           },
           "410": {
-            "description": "Submission recognized; task details expired",
+            "description": "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store; no automatic retry is implied"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -23374,7 +23454,15 @@
             }
           },
           "409": {
-            "description": "Conflict",
+            "description": "Conflict; reason idempotency_key_conflict identifies a changed protected request",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store for protected request conflicts; no Retry-After"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -23384,7 +23472,15 @@
             }
           },
           "410": {
-            "description": "Submission recognized; task details expired",
+            "description": "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store; no automatic retry is implied"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {

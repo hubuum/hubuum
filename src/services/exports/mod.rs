@@ -10,6 +10,7 @@ mod execution;
 pub(crate) use execution::execute_export_task;
 mod submission;
 use hubuum_domain::ClassId;
+use hubuum_storage_core::StorageOutputAvailability;
 pub(crate) use submission::{ExportTaskSubmission, submit_export_task};
 use submission::{prepare_export_runtime, resolve_template, validate_export_submission};
 mod pagination;
@@ -85,7 +86,7 @@ struct ExportArtifact {
     warnings: Vec<ExportWarning>,
     template_name: Option<String>,
     timings: ExportExecutionTimings,
-    expires_at: chrono::DateTime<chrono::Utc>,
+    availability: StorageOutputAvailability,
 }
 
 struct ExportRuntime {
