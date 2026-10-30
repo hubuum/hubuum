@@ -39,18 +39,28 @@ fn cpu_mask(value: &str) -> io::Result<std::collections::BTreeSet<usize>> {
 }
 
 #[cfg(target_os = "linux")]
+fn process_disappeared(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::NotFound || error.raw_os_error() == Some(libc::ESRCH)
+}
+
+#[cfg(target_os = "linux")]
 fn verify_cpu_affinity(pids: &[Pid], expected: &str) -> io::Result<()> {
     let expected = cpu_mask(expected)?;
     for pid in pids {
         let tasks = match fs::read_dir(format!("/proc/{pid}/task")) {
             Ok(tasks) => tasks,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) if process_disappeared(&error) => continue,
             Err(error) => return Err(error),
         };
         for task in tasks {
-            let status = match fs::read_to_string(task?.path().join("status")) {
+            let task = match task {
+                Ok(task) => task,
+                Err(error) if process_disappeared(&error) => continue,
+                Err(error) => return Err(error),
+            };
+            let status = match fs::read_to_string(task.path().join("status")) {
                 Ok(status) => status,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) if process_disappeared(&error) => continue,
                 Err(error) => return Err(error),
             };
             let mask = status
@@ -330,6 +340,23 @@ mod tests {
             }
             thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[rstest]
+    #[case::missing_process(libc::ENOENT, true)]
+    #[case::exited_thread(libc::ESRCH, true)]
+    #[case::permission_denied(libc::EACCES, false)]
+    #[case::operation_denied(libc::EPERM, false)]
+    #[case::io_failure(libc::EIO, false)]
+    fn affinity_sampling_only_tolerates_disappearing_processes(
+        #[case] code: i32,
+        #[case] disappeared: bool,
+    ) {
+        assert_eq!(
+            process_disappeared(&io::Error::from_raw_os_error(code)),
+            disappeared
+        );
     }
 
     #[test]

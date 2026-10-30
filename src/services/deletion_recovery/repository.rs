@@ -104,6 +104,10 @@ pub(super) struct CheckpointSession {
 }
 
 impl CheckpointSession {
+    pub(super) fn into_checkpoint(self) -> DurableCheckpoint {
+        self.checkpoint
+    }
+
     pub(super) fn checkpoint(&self) -> &DurableCheckpoint {
         &self.checkpoint
     }
