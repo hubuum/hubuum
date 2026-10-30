@@ -335,6 +335,44 @@ class RetentionDeployment(Deployment):
         return 4 if self.profile == "shared" and container.endswith("-db") else 2
 
     def admin(self, database, *args, mount=None):
+        started = time.monotonic()
+        attempts = 0
+        refusals = []
+        completed = False
+        try:
+            while True:
+                attempts += 1
+                attempt_started = time.monotonic()
+                try:
+                    result = self._admin_once(database, *args, mount=mount)
+                    completed = True
+                    return result
+                except RuntimeError as error:
+                    # The refused command has not acquired publication authority.
+                    # Other unavailable outcomes stay fatal.
+                    busy = 'Error: ServiceUnavailable("Control repository is busy; retry without bypassing protection")'
+                    diagnostic = str(error).removeprefix("Docker run failed (1): ")
+                    if busy not in diagnostic.splitlines():
+                        raise
+                    now = time.monotonic()
+                    refusals.append({"attempt": attempts, "elapsed_ms": (now - attempt_started) * 1000,
+                                     "outcome": "control_repository_busy"})
+                    remaining = 30 - (now - started)
+                    if remaining <= 0:
+                        raise
+                    time.sleep(min(0.1, remaining))
+                    if time.monotonic() - started >= 30:
+                        raise
+        finally:
+            if refusals:
+                write_json(self.root / f"admin-contention-{uuid.uuid4().hex}.json", {
+                    "attempts": attempts, "completed": completed,
+                    "elapsed_ms": (time.monotonic() - started) * 1000,
+                    "retry_budget_seconds": 30,
+                    "refusals": refusals,
+                })
+
+    def _admin_once(self, database, *args, mount=None):
         if not self.affinity:
             return super().admin(database, *args, mount=mount)
         mounts = [] if mount is None else ["--mount", f"type=bind,source={mount.resolve()},target=/corpus,readonly"]

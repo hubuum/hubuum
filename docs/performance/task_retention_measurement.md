@@ -81,6 +81,13 @@ and authentication warm-up; it does not fabricate completed warm-up tasks.
 Only HTTP 503 receives a bounded same-key retry. Actual unavailable attempts and
 total elapsed time remain visible, including repository lock contention.
 
+Administrator setup retries only the exact repository-lock refusal for a bounded
+30-second retry budget, retaining attempt counts and total elapsed time. Native
+cleanup observers retain every refused process attempt and retry within their
+original overall timeout/pass limit. Contention delays remain part of observed
+expiry lag; no source deadline or measurement window is renewed. Key mismatches,
+recovery-required outcomes and other failures still stop the run.
+
 Some rootless engines expose a memory controller but no CPU quota controller.
 The driver refuses to treat requested `--cpus` flags as enforcement on those
 engines. Build a measurement-only image with `taskset`, then add `--cpu-affinity`

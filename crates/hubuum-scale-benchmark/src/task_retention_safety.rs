@@ -299,6 +299,14 @@ async fn execute(options: &SafetyArgs) -> Result<Value> {
         )?;
         let result = result?;
         if !result.status.success() {
+            if lifecycle_process::control_repository_busy(&result.stderr) {
+                passes.push(json!({"at_ms":now_ms()?,"artifact":format!("pass-{pass}.json"),"outcome":"control_repository_busy"}));
+                if passes.len() >= 300 {
+                    return Err("Safety cleanup exceeded its bounded pass count".into());
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
             return Err("Production safety cleanup pass failed".into());
         }
         let admin: Value = serde_json::from_slice(&result.stdout)?;

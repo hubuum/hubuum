@@ -397,6 +397,15 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
         )?;
         let result = result?;
         if !result.status.success() {
+            if lifecycle_process::control_repository_busy(&result.stderr) {
+                passes.push(json!({"observed_at_ms":now_ms()?,"artifact":process_report,"outcome":"control_repository_busy"}));
+                pass += 1;
+                if started.elapsed() >= Duration::from_secs(options.timeout_seconds) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
             return Err(format!(
                 "Production retention pass {pass} failed with {}",
                 result.status
@@ -653,6 +662,15 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[rstest]
+    #[case::busy(b"Error: ServiceUnavailable(\"Control repository is busy; retry without bypassing protection\")\n", true)]
+    #[case::engine_warning(b"engine warning\nError: ServiceUnavailable(\"Control repository is busy; retry without bypassing protection\")\n", true)]
+    #[case::recovery_required(b"Error: ServiceUnavailable(\"Recover independently acknowledged control before task administration\")\n", false)]
+    #[case::invalid_diagnostic(b"\xffError: ServiceUnavailable(\"Control repository is busy; retry without bypassing protection\")\n", false)]
+    fn only_repository_lock_refusal_is_retryable(#[case] stderr: &[u8], #[case] expected: bool) {
+        assert_eq!(lifecycle_process::control_repository_busy(stderr), expected);
+    }
 
     #[rstest]
     #[case::crossed_cutoff(1999, 3000, true, false)]

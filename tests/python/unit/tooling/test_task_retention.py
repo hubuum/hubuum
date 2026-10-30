@@ -12,6 +12,83 @@ from integration import task_retention as RETENTION
 
 
 class TaskRetentionMeasurementTests(unittest.TestCase):
+    def test_administrator_retries_only_lock_refusal_and_retains_elapsed_attempts(self):
+        busy = RuntimeError('Docker run failed (1): Error: ServiceUnavailable("Control repository is busy; retry without bypassing protection")\n')
+        with tempfile.TemporaryDirectory() as temporary:
+            deployment = RETENTION.RetentionDeployment.__new__(RETENTION.RetentionDeployment)
+            deployment.root = Path(temporary)
+            deployment._admin_once = MagicMock(side_effect=[busy, "completed"])
+            clock = [0.0]
+
+            def sleep(seconds):
+                clock[0] += seconds
+
+            with patch.object(RETENTION.time, "monotonic", side_effect=lambda: clock[0]), \
+                    patch.object(RETENTION.time, "sleep", side_effect=sleep):
+                result = deployment.admin("source", "--task-retention", "set-policy",
+                                          "--control-recovery-key", "fixture-secret")
+            self.assertEqual(result, "completed")
+            self.assertEqual(deployment._admin_once.call_count, 2)
+            self.assertEqual(deployment._admin_once.call_args_list[0], deployment._admin_once.call_args_list[1])
+            report_path, = deployment.root.glob("admin-contention-*.json")
+            report = json.loads(report_path.read_text())
+            self.assertEqual(report, {"attempts": 2, "completed": True, "elapsed_ms": 100,
+                                      "retry_budget_seconds": 30, "refusals": [
+                                          {"attempt": 1, "elapsed_ms": 0, "outcome": "control_repository_busy"},
+                                      ]})
+            self.assertNotIn("fixture-secret", report_path.read_text())
+
+    def test_administrator_does_not_retry_recovery_required(self):
+        failure = RuntimeError('Error: ServiceUnavailable("Recover independently acknowledged control before task administration")')
+        with tempfile.TemporaryDirectory() as temporary:
+            deployment = RETENTION.RetentionDeployment.__new__(RETENTION.RetentionDeployment)
+            deployment.root = Path(temporary)
+            deployment._admin_once = MagicMock(side_effect=failure)
+            with self.assertRaisesRegex(RuntimeError, "Recover independently"):
+                deployment.admin("source", "--task-retention", "set-policy")
+            self.assertEqual(deployment._admin_once.call_count, 1)
+            self.assertEqual(list(deployment.root.glob("admin-contention-*.json")), [])
+
+    def test_administrator_stops_at_contention_retry_budget(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            deployment = RETENTION.RetentionDeployment.__new__(RETENTION.RetentionDeployment)
+            deployment.root = Path(temporary)
+            clock = [0.0]
+
+            def refuse(*args, **kwargs):
+                clock[0] += 10
+                raise RuntimeError('Error: ServiceUnavailable("Control repository is busy; retry without bypassing protection")')
+
+            deployment._admin_once = MagicMock(side_effect=refuse)
+            with patch.object(RETENTION.time, "monotonic", side_effect=lambda: clock[0]), \
+                    patch.object(RETENTION.time, "sleep"):
+                with self.assertRaisesRegex(RuntimeError, "Control repository is busy"):
+                    deployment.admin("source", "--task-retention", "set-policy")
+            self.assertEqual(deployment._admin_once.call_count, 3)
+            report_path, = deployment.root.glob("admin-contention-*.json")
+            self.assertEqual(json.loads(report_path.read_text()), {
+                "attempts": 3, "completed": False, "elapsed_ms": 30000,
+                "retry_budget_seconds": 30,
+                "refusals": [
+                    {"attempt": attempt, "elapsed_ms": 10000, "outcome": "control_repository_busy"}
+                    for attempt in range(1, 4)
+                ],
+            })
+
+    def test_administrator_preserves_fatal_failure_after_a_retry(self):
+        busy = RuntimeError('Docker run failed (1): engine warning\nError: ServiceUnavailable("Control repository is busy; retry without bypassing protection")')
+        fatal = RuntimeError('Error: ServiceUnavailable("Configured key does not own protected task authority")')
+        with tempfile.TemporaryDirectory() as temporary:
+            deployment = RETENTION.RetentionDeployment.__new__(RETENTION.RetentionDeployment)
+            deployment.root = Path(temporary)
+            deployment._admin_once = MagicMock(side_effect=[busy, fatal])
+            with patch.object(RETENTION.time, "sleep"), \
+                    self.assertRaisesRegex(RuntimeError, "Configured key"):
+                deployment.admin("source", "--task-retention", "set-policy")
+            self.assertEqual(deployment._admin_once.call_count, 2)
+            report_path, = deployment.root.glob("admin-contention-*.json")
+            self.assertFalse(json.loads(report_path.read_text())["completed"])
+
     def test_failed_captured_administrator_retains_private_redacted_diagnostics(self):
         with tempfile.TemporaryDirectory() as temporary:
             deployment = SimpleNamespace(root=Path(temporary), password="fixture-password",
