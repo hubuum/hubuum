@@ -13,6 +13,16 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
 const MAX_DIAGNOSTIC_BYTES: u64 = 1024 * 1024;
 
+/// The private administrator refusal is retryable without weakening protection.
+/// Other unavailable outcomes can require recovery or a different key.
+pub fn control_repository_busy(stderr: &[u8]) -> bool {
+    std::str::from_utf8(stderr).is_ok_and(|text| {
+        text.lines().any(|line| {
+            line == "Error: ServiceUnavailable(\"Control repository is busy; retry without bypassing protection\")"
+        })
+    })
+}
+
 #[cfg(target_os = "linux")]
 fn cpu_mask(value: &str) -> io::Result<std::collections::BTreeSet<usize>> {
     let mut result = std::collections::BTreeSet::new();
