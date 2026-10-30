@@ -60,6 +60,7 @@ DROP FUNCTION public.hubuum_task_control_capture();
 DROP FUNCTION public.hubuum_task_control_read();
 DROP FUNCTION public.hubuum_task_retention_read();
 DROP INDEX public.import_task_results_purge;
+DROP INDEX public.task_claim_order;
 DROP INDEX public.task_stable_identity;
 DROP INDEX public.task_retention_eligible;
 DROP INDEX public.task_legacy_submission_key;

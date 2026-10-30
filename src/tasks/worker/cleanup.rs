@@ -6,37 +6,33 @@ pub(super) fn spawn(context: AppContext, poll_interval: Duration) {
     spawn_background_worker("task-retention-maintenance", move |shutdown| {
         let system = actix_rt::System::new();
         system.block_on(async move {
-            let context = task_worker_context(context);
-            let tasks = Mutex::new(CleanupSchedule::default());
-            let artifacts = Mutex::new(CleanupSchedule::default());
-            loop {
-                if shutdown.is_requested() {
-                    break;
-                }
-                let work = Box::pin(iteration(&context, &tasks, &artifacts));
-                let result =
-                    with_storage_call_site(&context, StorageCallSite::TaskWorker, work).await;
-                if shutdown.is_requested() {
-                    break;
-                }
-                match result {
-                    Ok(true) => {
-                        tokio::task::yield_now().await;
-                        continue;
-                    }
-                    Ok(false) => {}
-                    Err(error) => {
-                        error!(message = "Task maintenance iteration failed", error = %error)
-                    }
-                }
-                tokio::select! {
-                    biased;
-                    _ = shutdown.requested() => break,
-                    _ = sleep(poll_interval) => {}
-                }
-            }
+            run(task_worker_context(context), poll_interval, shutdown).await;
         });
     });
+}
+
+pub(super) async fn run(context: AppContext, poll_interval: Duration, shutdown: ShutdownSignal) {
+    let tasks = Mutex::new(CleanupSchedule::default());
+    let artifacts = Mutex::new(CleanupSchedule::default());
+    loop {
+        if shutdown.is_requested() {
+            break;
+        }
+        let work = Box::pin(iteration(&context, &tasks, &artifacts));
+        if let Err(error) =
+            with_storage_call_site(&context, StorageCallSite::TaskWorker, work).await
+        {
+            error!(message = "Task maintenance iteration failed", error = %error);
+        }
+        // Release the cross-process publication lock between bounded passes,
+        // including productive ones. A runtime yield alone cannot give another
+        // process an opportunity to publish a hold, admission, or checkpoint.
+        tokio::select! {
+            biased;
+            _ = shutdown.requested() => break,
+            _ = sleep(poll_interval) => {}
+        }
+    }
 }
 
 async fn iteration(

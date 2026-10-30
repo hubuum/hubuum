@@ -300,6 +300,69 @@ async fn changed_signing_key_fails_before_selecting_a_fresh_namespace() {
 }
 
 #[actix_web::test]
+async fn productive_background_pass_leaves_time_for_other_repository_publishers() {
+    let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
+    for index in 0..=MAX_PENDING_ADMISSIONS_PER_PASS {
+        fixture
+            .admit(
+                &format!("maintenance-fairness-{index}"),
+                StorageTaskKind::Import,
+            )
+            .await;
+    }
+    let context = AppContext::new(
+        fixture.storage.clone(),
+        Arc::new(LocalPermissionBackend::new(
+            fixture.storage.clone(),
+            "admin".to_owned(),
+        )),
+    )
+    .with_task_receipts(fixture.service.clone());
+    let shutdown = crate::lifecycle::ShutdownSignal::new();
+    let maintenance = actix_rt::spawn(crate::tasks::run_task_maintenance_for_test(
+        context,
+        Duration::from_secs(30),
+        shutdown.clone(),
+    ));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while fixture
+            .storage
+            .list_pending_task_admissions(64)
+            .await
+            .unwrap()
+            .len()
+            > 1
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the first bounded pass must activate its admissions");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let remaining = fixture
+        .storage
+        .list_pending_task_admissions(64)
+        .await
+        .unwrap();
+    let publication = try_open_session(fixture.service.configuration().unwrap()).await;
+    shutdown.request();
+    tokio::time::timeout(Duration::from_secs(2), maintenance)
+        .await
+        .expect("shutdown must interrupt the maintenance pause")
+        .unwrap();
+
+    assert_eq!(
+        remaining.len(),
+        1,
+        "a productive pass must pause before draining the next batch"
+    );
+    assert!(
+        publication.unwrap().is_some(),
+        "another publisher must be able to acquire the repository during the pause"
+    );
+}
+
+#[actix_web::test]
 async fn abandoned_pending_admissions_activate_in_bounded_passes() {
     let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
     for index in 0..=MAX_PENDING_ADMISSIONS_PER_PASS {

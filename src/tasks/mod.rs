@@ -10,7 +10,7 @@ mod types;
 mod worker;
 
 #[cfg(all(test, unix))]
-pub(crate) use worker::cleanup_task_outputs_for_test;
+pub(crate) use worker::{cleanup_task_outputs_for_test, run_task_maintenance_for_test};
 
 pub use helpers::{idempotency_key_from_headers, request_hash};
 #[cfg(feature = "integration-test-support")]

@@ -99,6 +99,7 @@ CREATE UNIQUE INDEX task_legacy_submission_key ON public.tasks (submitted_by, id
 CREATE INDEX task_retention_eligible ON public.tasks (detail_expires_at, id)
     WHERE detail_expires_at IS NOT NULL; -- hubuum-compat: bounded-transactional-index
 CREATE INDEX task_stable_identity ON public.tasks ((logical_identity #>> '{subject,identity,identity}')); -- hubuum-compat: bounded-transactional-index
+CREATE INDEX task_claim_order ON public.tasks (status, kind, created_at, id); -- hubuum-compat: bounded-transactional-index
 CREATE INDEX import_task_results_purge ON public.import_task_results (task_id, id); -- hubuum-compat: bounded-transactional-index
 
 CREATE FUNCTION public.hubuum_task_retention_read() RETURNS JSONB
@@ -186,7 +187,7 @@ CREATE FUNCTION public.hubuum_task_details_visible(task INTEGER) RETURNS BOOLEAN
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
     SELECT EXISTS (SELECT 1 FROM public.tasks t WHERE t.id=task AND NOT t.details_purge_pending AND NOT t.recovery_unavailable
         AND NOT EXISTS (SELECT 1 FROM hubuum_control.task_purge_targets p
-            WHERE p.scope='task_details' AND p.task_identity::text=t.logical_identity #>> '{subject,identity,identity}'))
+            WHERE p.scope='task_details' AND p.task_identity=(t.logical_identity #>> '{subject,identity,identity}')::uuid))
 $$;
 REVOKE ALL ON FUNCTION public.hubuum_task_details_visible(INTEGER) FROM PUBLIC;
 
@@ -194,7 +195,7 @@ CREATE FUNCTION public.hubuum_task_outputs_visible(task INTEGER) RETURNS BOOLEAN
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
     SELECT public.hubuum_task_details_visible(task) AND NOT EXISTS (
         SELECT 1 FROM hubuum_control.task_purge_targets p JOIN public.tasks t
-          ON p.task_identity::text=t.logical_identity #>> '{subject,identity,identity}'
+          ON p.task_identity=(t.logical_identity #>> '{subject,identity,identity}')::uuid
         WHERE t.id=task AND p.scope='expired_outputs')
 $$;
 REVOKE ALL ON FUNCTION public.hubuum_task_outputs_visible(INTEGER) FROM PUBLIC;
@@ -208,7 +209,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
           OR (t.receipt_checkpoint IS NOT NULL AND c.activation->>'state'='protected'
             AND t.receipt_incarnation=a.incarnation AND EXISTS (
                 SELECT 1 FROM hubuum_control.task_receipts r
-                WHERE r.task_identity::text=t.logical_identity #>> '{subject,identity,identity}'
+                WHERE r.task_identity=(t.logical_identity #>> '{subject,identity,identity}')::uuid
                   AND r.generation=t.receipt_generation
                   AND r.material #>> '{outcome,state}'='may_execute'))))
 $$;
@@ -317,7 +318,7 @@ BEGIN
     IF c.revision<>expected_revision THEN RAISE EXCEPTION 'Task receipt authority changed' USING ERRCODE='40001'; END IF;
     SELECT * INTO STRICT t FROM public.tasks WHERE id=task FOR UPDATE;
     SELECT * INTO STRICT previous FROM hubuum_control.task_receipts
-        WHERE task_identity::text=t.logical_identity #>> '{subject,identity,identity}';
+        WHERE task_identity=(t.logical_identity #>> '{subject,identity,identity}')::uuid;
     IF previous.material=next THEN RETURN FALSE; END IF;
     IF (bytes BETWEEN 1 AND 1024 AND previous.generation=t.receipt_generation
         AND (previous.material-'outcome')=(next-'outcome')
@@ -352,7 +353,7 @@ BEGIN
     SELECT material INTO STRICT authority FROM hubuum_control.deletion_authority WHERE id=1;
     SELECT * INTO STRICT t FROM public.tasks WHERE id=task FOR UPDATE;
     SELECT material INTO receipt FROM hubuum_control.task_receipts
-        WHERE task_identity::text=t.logical_identity #>> '{subject,identity,identity}'
+        WHERE task_identity=(t.logical_identity #>> '{subject,identity,identity}')::uuid
           AND task_receipts.generation=$2;
     IF (c.activation->>'state' IN ('backfilling','protected') AND receipt IS NOT NULL
         AND t.receipt_generation=$2 AND t.receipt_incarnation=image
@@ -520,14 +521,14 @@ BEGIN
         AND t.finished_at IS NOT NULL
         AND t.logical_identity #>> '{subject,identity,state}'='known'
         AND NOT EXISTS (SELECT 1 FROM hubuum_control.task_purge_targets p
-            WHERE p.task_identity::text=t.logical_identity #>> '{subject,identity,identity}' AND p.scope=$2)
+            WHERE p.task_identity=(t.logical_identity #>> '{subject,identity,identity}')::uuid AND p.scope=$2)
         AND ((scope='task_details' AND t.detail_expires_at<=cutoff AT TIME ZONE 'UTC')
           OR (scope='expired_outputs' AND (
              EXISTS (SELECT 1 FROM public.export_task_outputs WHERE task_id=t.id AND output_expires_at<=cutoff AT TIME ZONE 'UTC')
              OR EXISTS (SELECT 1 FROM public.backup_task_outputs WHERE task_id=t.id AND output_expires_at<=cutoff AT TIME ZONE 'UTC')
              OR EXISTS (SELECT 1 FROM public.schema_profile_outputs WHERE task_id=t.id AND output_expires_at<=cutoff AT TIME ZONE 'UTC')
              OR EXISTS (SELECT 1 FROM public.artifact_task_owners o JOIN public.artifact_attempts a USING(artifact_id)
-                 WHERE o.task_identity::text=t.logical_identity #>> '{subject,identity,identity}'
+                 WHERE o.task_identity=(t.logical_identity #>> '{subject,identity,identity}')::uuid
                  AND (a.state<>'published' OR o.output_expires_at<=cutoff)))))
         AND public.hubuum_task_purge_block((t.logical_identity #>> '{subject,identity,identity}')::uuid,scope,cutoff) IS NULL
         ORDER BY t.id LIMIT max_tasks FOR UPDATE OF t
@@ -706,7 +707,7 @@ REVOKE ALL ON FUNCTION public.hubuum_task_purge_execute(JSONB,JSONB,INTEGER,BIGI
 CREATE FUNCTION public.hubuum_task_receipt_settlement_pending(task INTEGER) RETURNS BOOLEAN
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
     SELECT EXISTS(SELECT 1 FROM public.tasks t JOIN hubuum_control.task_receipts r
-        ON r.task_identity::text=t.logical_identity #>> '{subject,identity,identity}'
+        ON r.task_identity=(t.logical_identity #>> '{subject,identity,identity}')::uuid
         AND r.generation=t.receipt_generation WHERE t.id=task
         AND t.status IN ('succeeded','failed','partially_succeeded','cancelled')
         AND r.material #>> '{outcome,state}'='may_execute')
