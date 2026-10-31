@@ -72,6 +72,9 @@ struct SchedulingArgs {
     samples: u32,
     #[arg(long)]
     timed_seconds: Option<u64>,
+    /// Shrink and restore the shared pool through the production policy API.
+    #[arg(long, requires = "timed_seconds", conflicts_with = "prepare_only")]
+    capacity_cycle: bool,
     #[arg(long)]
     overdue: bool,
     /// Prepare a disposable database without starting any workers.
@@ -698,6 +701,7 @@ async fn scheduling(args: SchedulingArgs) -> Result<()> {
         .with_slots(args.slots)?
         .with_samples(args.samples)?
         .with_timed_window(args.timed_seconds)?
+        .with_capacity_cycle(args.capacity_cycle)?
         .with_overdue(args.overdue);
     let options = match args.profile_spec {
         Some(path) => options.with_fixture(LifecycleFixture::new(

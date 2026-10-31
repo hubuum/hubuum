@@ -17,7 +17,7 @@ use hubuum_scale_core::lifecycle::{
 use hubuum_storage_core::{
     StorageTaskClaimRequest, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
     StorageTaskLeaseDuration, StorageTaskPolicyUpdate, TaskCapacityLimit, TaskCapacityStorage,
-    TaskExecutionStorage, TaskKindWeight, TaskScopeCapacity, TaskWorkerId,
+    TaskExecutionStorage, TaskKindWeight, TaskSchedulingMode, TaskScopeCapacity, TaskWorkerId,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -47,6 +47,7 @@ pub struct SchedulingBenchmarkOptions {
     samples: u32,
     timed_seconds: Option<u64>,
     overdue: bool,
+    capacity_cycle: bool,
 }
 
 impl SchedulingBenchmarkOptions {
@@ -59,6 +60,7 @@ impl SchedulingBenchmarkOptions {
             samples: 10_000,
             timed_seconds: None,
             overdue: false,
+            capacity_cycle: false,
         }
     }
 
@@ -131,6 +133,16 @@ impl SchedulingBenchmarkOptions {
         self.overdue = overdue;
         self
     }
+
+    pub fn with_capacity_cycle(mut self, enabled: bool) -> Result<Self> {
+        if enabled && (self.slots != 4 || self.timed_seconds.is_none_or(|seconds| seconds < 90)) {
+            return Err(PostgresStorageError::invalid_input(
+                "Capacity cycling requires the shared profile and a window of at least 90 seconds",
+            ));
+        }
+        self.capacity_cycle = enabled;
+        Ok(self)
+    }
 }
 
 #[derive(Serialize)]
@@ -146,6 +158,7 @@ struct ClaimSample {
     elapsed_us: u64,
     busy_us: u64,
     window_busy_us: u64,
+    busy_offset_us: u64,
 }
 
 #[derive(Serialize)]
@@ -153,9 +166,13 @@ pub struct SchedulingBenchmarkReport {
     options: SchedulingBenchmarkOptions,
     fixture_inventory: Option<Value>,
     warmup_claims: usize,
+    timed_warmup: Option<TimedWarmup>,
     principal_cap_blocked_us: BTreeMap<i32, u64>,
     measurement_window: Option<MeasurementWindow>,
+    measurement_clock_bound_us: u64,
     postgres: String,
+    postgres_settings: Value,
+    database_round_trip_us: Vec<u64>,
     elapsed_us: u64,
     claim_p95_us: u64,
     claim_p99_us: u64,
@@ -168,12 +185,37 @@ pub struct SchedulingBenchmarkReport {
     failed_polls: Vec<String>,
     occupied_slot_fraction: f64,
     samples: Vec<ClaimSample>,
+    capacity_changes: Vec<CapacityChange>,
+}
+
+#[derive(Default, Serialize)]
+struct TimedWarmup {
+    elapsed_us: u64,
+    samples: Vec<ClaimSample>,
+    empty_polls: Vec<u64>,
+    failed_polls: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct CapacityChange {
+    started_us: u64,
+    committed_us: u64,
+    configured_slots: u16,
+    eligible_slots: u64,
+    mode: TaskSchedulingMode,
+    executing: u64,
 }
 
 #[derive(Serialize)]
 struct MeasurementWindow {
     start: NaiveDateTime,
     end: NaiveDateTime,
+}
+
+#[derive(QueryableByName)]
+struct DatabaseSettings {
+    #[diesel(sql_type = Jsonb)]
+    settings: Value,
 }
 
 #[derive(QueryableByName)]
@@ -296,6 +338,15 @@ impl PostgresScaleBackend {
         &self,
         options: SchedulingBenchmarkOptions,
     ) -> Result<SchedulingBenchmarkReport> {
+        if options.capacity_cycle
+            && (options.slots != 4
+                || options.timed_seconds.is_none_or(|seconds| seconds < 90)
+                || matches!(options.phase, SchedulingPhase::Prepare))
+        {
+            return Err(PostgresStorageError::invalid_input(
+                "Capacity cycling requires a timed shared worker phase of at least 90 seconds",
+            ));
+        }
         let fixture_inventory = match options.phase {
             SchedulingPhase::Complete | SchedulingPhase::Prepare => {
                 self.prepare_scheduling_fixture(&options).await?
@@ -315,24 +366,17 @@ impl PostgresScaleBackend {
                 fixture.inventory
             }
         };
-        let measurement_window = if let Some(seconds) = options.timed_seconds {
-            let start = with_connection(&self.pool, async |connection| {
-                diesel::sql_query("SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now")
-                    .get_result::<MeasurementClock>(connection)
-                    .await
-                    .map(|row| row.now)
-                    .map_err(PostgresStorageError::from)
-            })
-            .await?;
-            Some(MeasurementWindow {
-                start,
-                end: start + TimeDelta::seconds(seconds as i64),
-            })
-        } else {
-            None
-        };
-        let started = Instant::now();
-        let next = Arc::new(AtomicU32::new(0));
+        let (postgres_settings, database_round_trip_us) = with_connection(&self.pool, async |connection| {
+            let settings = diesel::sql_query("SELECT jsonb_object_agg(name,jsonb_build_object('value',setting,'unit',unit)) AS settings FROM pg_settings WHERE name IN ('shared_buffers','work_mem','maintenance_work_mem','max_connections','effective_cache_size','random_page_cost','seq_page_cost','synchronous_commit','fsync','full_page_writes','wal_level')")
+                .get_result::<DatabaseSettings>(connection).await?.settings;
+            let mut samples = Vec::with_capacity(100);
+            for index in 0..110 {
+                let start = Instant::now();
+                diesel::sql_query("SELECT 'ready'::text AS value").get_result::<super::TextRow>(connection).await?;
+                if index >= 10 { samples.push(micros(start.elapsed())); }
+            }
+            Ok::<_, PostgresStorageError>((settings, samples))
+        }).await?;
         // Prepared worker processes share one eight-connection pool each. The
         // single-process diagnostic mode can still model two independent pools.
         let replicas = if matches!(options.phase, SchedulingPhase::Complete) && options.slots == 4 {
@@ -360,15 +404,80 @@ impl PostgresScaleBackend {
                 )
             })
             .collect();
+        // Warm each measured process's existing pools and worker identities.
+        // Complete 100 real claims without simulated work delays; keep the
+        // prepared principal-cap policy and retain every excluded sample.
+        let timed_warmup = if options.timed_seconds.is_some() && !workers.is_empty() {
+            let warm_started = Instant::now();
+            let warm_next = Arc::new(AtomicU32::new(0));
+            let results = try_join_all(workers.iter().map(|(pool, request)| {
+                run_worker(
+                    pool.clone(),
+                    *request,
+                    options.clone(),
+                    warm_next.clone(),
+                    warm_started,
+                    SamplingPhase::Warmup,
+                )
+            }))
+            .await?;
+            let mut warmup = TimedWarmup::default();
+            for (mut claims, mut empty, mut failed) in results {
+                warmup.samples.append(&mut claims);
+                warmup.empty_polls.append(&mut empty);
+                warmup.failed_polls.append(&mut failed);
+            }
+            warmup.samples.sort_by_key(|claim| claim.sequence);
+            warmup.elapsed_us = micros(warm_started.elapsed());
+            Some(warmup)
+        } else {
+            None
+        };
+        let clock_requested = Instant::now();
+        let measurement_window = if let Some(seconds) = options.timed_seconds {
+            let start = with_connection(&self.pool, async |connection| {
+                diesel::sql_query("SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now")
+                    .get_result::<MeasurementClock>(connection)
+                    .await
+                    .map(|row| row.now)
+                    .map_err(PostgresStorageError::from)
+            })
+            .await?;
+            Some(MeasurementWindow {
+                start,
+                end: start + TimeDelta::seconds(seconds as i64),
+            })
+        } else {
+            None
+        };
+        let started = Instant::now();
+        let measurement_clock_bound_us =
+            micros(started.duration_since(clock_requested)).saturating_add(1);
+        let next = Arc::new(AtomicU32::new(0));
         // Registration may claim because the queue is populated. Measure every
         // resulting claim instead of silently consuming warm-up turns.
-        let results = try_join_all(workers.into_iter().map(|(pool, request)| {
-            run_worker(pool, request, options.clone(), next.clone(), started)
-        }))
+        let workers = try_join_all(workers.into_iter().map(|(pool, request)| {
+            run_worker(
+                pool,
+                request,
+                options.clone(),
+                next.clone(),
+                started,
+                SamplingPhase::Measured,
+            )
+        }));
+        let (results, capacity_changes) = futures_util::future::try_join(
+            workers,
+            cycle_capacity(self.pool.clone(), &options, started),
+        )
         .await?;
         let mut samples = Vec::new();
         let mut empty_polls = Vec::new();
-        let mut failed_polls = Vec::new();
+        let mut failed_polls: Vec<_> = timed_warmup
+            .iter()
+            .flat_map(|warmup| &warmup.failed_polls)
+            .map(|failure| format!("warm-up: {failure}"))
+            .collect();
         for (mut claims, mut empty, mut failed) in results {
             samples.append(&mut claims);
             empty_polls.append(&mut empty);
@@ -447,15 +556,67 @@ impl PostgresScaleBackend {
             options,
             fixture_inventory,
             warmup_claims,
+            timed_warmup,
             principal_cap_blocked_us,
             measurement_window,
+            measurement_clock_bound_us,
             postgres,
+            postgres_settings,
+            database_round_trip_us,
             elapsed_us,
             empty_polls,
             failed_polls,
             samples,
+            capacity_changes,
         })
     }
+}
+
+async fn cycle_capacity(
+    pool: PostgresPool,
+    options: &SchedulingBenchmarkOptions,
+    started: Instant,
+) -> Result<Vec<CapacityChange>> {
+    if !options.capacity_cycle {
+        return Ok(Vec::new());
+    }
+    let seconds = options
+        .timed_seconds
+        .expect("validated timed capacity cycle");
+    let storage = PostgresStorage::unobserved(pool);
+    let mut changes = Vec::with_capacity(2);
+    for (at, slots) in [(seconds / 3, 1), (seconds * 2 / 3, options.slots)] {
+        tokio::time::sleep_until((started + Duration::from_secs(at)).into()).await;
+        let started_us = micros(started.elapsed());
+        let current = storage.task_policy().await?;
+        let scheduling = current
+            .policy()
+            .scheduling()
+            .clone()
+            .with_capacity(slots, 1)
+            .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
+        let policy = current.policy().clone().with_scheduling(scheduling);
+        storage
+            .replace_task_policy(StorageTaskPolicyUpdate::new(current.revision(), policy))
+            .await?;
+        let committed_us = micros(started.elapsed());
+        let snapshot = storage.task_capacity_snapshot().await?;
+        changes.push(CapacityChange {
+            started_us,
+            committed_us,
+            configured_slots: slots,
+            eligible_slots: snapshot.scheduling().eligible_slots(),
+            mode: snapshot.scheduling().mode(),
+            executing: snapshot.ordinary().executing(),
+        });
+    }
+    Ok(changes)
+}
+
+#[derive(Clone, Copy)]
+enum SamplingPhase {
+    Warmup,
+    Measured,
 }
 
 async fn run_worker(
@@ -464,24 +625,24 @@ async fn run_worker(
     options: SchedulingBenchmarkOptions,
     next: Arc<AtomicU32>,
     started: Instant,
+    phase: SamplingPhase,
 ) -> Result<(Vec<ClaimSample>, Vec<u64>, Vec<String>)> {
+    let timed_seconds = match phase {
+        SamplingPhase::Warmup => None,
+        SamplingPhase::Measured => options.timed_seconds,
+    };
+    let target = match phase {
+        SamplingPhase::Warmup => 100,
+        SamplingPhase::Measured => options.samples + if timed_seconds.is_none() { 100 } else { 0 },
+    };
     let storage = PostgresStorage::unobserved(pool.clone());
     let mut samples = Vec::new();
     let mut empty = Vec::new();
     let mut failed = Vec::new();
     loop {
-        if options
-            .timed_seconds
-            .is_some_and(|seconds| started.elapsed() >= Duration::from_secs(seconds))
-        {
+        if timed_seconds.is_some_and(|seconds| started.elapsed() >= Duration::from_secs(seconds)) {
             break;
         }
-        let target = options.samples
-            + if options.timed_seconds.is_none() {
-                100
-            } else {
-                0
-            };
         #[allow(
             deprecated,
             reason = "try_update requires Rust 1.95; this crate supports Rust 1.88"
@@ -517,7 +678,7 @@ async fn run_worker(
         let principal = task.submitted_by().expect("fixture principal").id();
         let busy_started = Instant::now();
         let busy_offset = started.elapsed();
-        if options.timed_seconds.is_some() {
+        if timed_seconds.is_some() {
             let duration = task
                 .request_payload()
                 .and_then(|value| value.get("duration_ms"))
@@ -526,7 +687,7 @@ async fn run_worker(
             tokio::time::sleep(Duration::from_millis(duration)).await;
         }
         let busy_us = micros(busy_started.elapsed());
-        let window_busy_us = options.timed_seconds.map_or(0, |seconds| {
+        let window_busy_us = timed_seconds.map_or(0, |seconds| {
             micros(Duration::from_secs(seconds).saturating_sub(busy_offset)).min(busy_us)
         });
         storage
@@ -558,6 +719,7 @@ async fn run_worker(
             elapsed_us: micros(started.elapsed()),
             busy_us,
             window_busy_us,
+            busy_offset_us: micros(busy_offset),
         });
     }
     Ok::<_, PostgresStorageError>((samples, empty, failed))
@@ -569,4 +731,31 @@ struct PrincipalOccupancy {
     principal: i32,
     #[diesel(sql_type = BigInt)]
     occupied_us: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::shared_cycle(4, Some(90), true, true)]
+    #[case::short_window(4, Some(60), true, false)]
+    #[case::untimed(4, None, true, false)]
+    #[case::local(1, Some(90), true, false)]
+    #[case::ordinary_local(1, None, false, true)]
+    fn capacity_cycle_requires_a_measurable_shared_window(
+        #[case] slots: u16,
+        #[case] seconds: Option<u64>,
+        #[case] enabled: bool,
+        #[case] valid: bool,
+    ) {
+        let result = SchedulingBenchmarkOptions::new(LifecycleWorkload::bundled().unwrap())
+            .with_slots(slots)
+            .unwrap()
+            .with_timed_window(seconds)
+            .unwrap()
+            .with_capacity_cycle(enabled);
+        assert_eq!(result.is_ok(), valid);
+    }
 }

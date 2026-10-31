@@ -576,6 +576,7 @@ PY
 
 scale_benchmark_output="$(bash "$classifier" \
   .github/workflows/scale-benchmarks.yml \
+  .github/workflows/scheduler-benchmarks.yml \
   scale-benchmarks/profiles/large.toml \
   scale-benchmarks/profiles/huge.toml \
   scale-benchmarks/sensitivity-v1.toml \
@@ -726,6 +727,14 @@ if ((literal_include_count == 0)); then
 fi
 
 echo "CI change classifier tests passed."
+
+for scheduler_report in scheduling_acceptance scheduling_integration; do
+  scheduler_report_output="$(bash "$classifier" "docs/performance/$scheduler_report.json")"
+  assert_flag "$scheduler_report_output" documentation true
+  for scheduler_report_flag in code rust container artifacts benchmarks; do
+    assert_flag "$scheduler_report_output" "$scheduler_report_flag" false
+  done
+done
 
 # Runtime hardening adds a compiled documentation input. Keep its validation.
 hardening_docs="$(bash "$classifier" docs/runtime_hardening.md)"
