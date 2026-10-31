@@ -3824,6 +3824,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../lifecycle_audit_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Lifecycle audit contract proposal
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../logical_identity/" class="md-nav__link">
         
   
@@ -5320,6 +5347,9 @@
 <p>Hubuum stores one canonical event stream in <code>events</code>. Audit reads query that
 stream directly, while external delivery fans matching events out through
 <code>event_subscriptions</code> and <code>event_deliveries</code>.</p>
+<p>The <a href="../lifecycle_audit_contract/">lifecycle audit proposal</a> specifies future
+tier movement, retrieval and deletion evidence and their separate safe sink
+projections. Its catalog entries and routes are not enabled by the proposal.</p>
 <p>The event stream is append-only during normal application operation. Domain
 changes emit events in the same database transaction as the state change, so an
 event exists only if the change commits.</p>
