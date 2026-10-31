@@ -1870,6 +1870,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../deletion_recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deletion recovery checkpoints
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../supply-chain-security/" class="md-nav__link">
         
   
@@ -5433,6 +5460,11 @@ for an exception.</p>
   ordinary domain lifecycle shortcut.</li>
 <li>Retention: <code>TokenRetentionStorage::purge_expired_tokens</code> applies configured
   expiry and emits the token-purge semantics owned by the retention worker.</li>
+<li>Deletion authority maintenance: <code>DeletionControlStorage::commit_deletion_control</code>
+  persists a validated exact-predecessor transition under privileged authority.
+  It retains only UUID selectors and copy outcomes outside logical application
+  replacement. Independent checkpoint evidence and exposure gates are separate
+  from this control mutation; no erasure executor is enabled by the foundation.</li>
 <li>Task policy maintenance: <code>TaskCapacityStorage::initialize_task_policy</code>
   establishes deployment control state only once; subsequent initializers read
   the existing policy. <code>TaskCapacityStorage::replace_task_policy</code> is an explicit

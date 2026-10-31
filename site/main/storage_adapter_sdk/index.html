@@ -1870,6 +1870,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../deletion_recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deletion recovery checkpoints
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../supply-chain-security/" class="md-nav__link">
         
   
@@ -3946,6 +3973,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Adapter Upgrade Process">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#deletion-authority-foundation-09-to-010" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deletion authority foundation: 0.9 to 0.10
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5146,6 +5190,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Adapter Upgrade Process">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#deletion-authority-foundation-09-to-010" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deletion authority foundation: 0.9 to 0.10
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5350,7 +5411,7 @@
 
 
 <h1 id="storage-adapter-sdk-compatibility">Storage Adapter SDK Compatibility<a class="headerlink" href="#storage-adapter-sdk-compatibility" title="Permanent link">&para;</a></h1>
-<p>Status: accepted; current experimental release train is <code>0.9</code>.</p>
+<p>Status: accepted; current experimental release train is <code>0.10</code>.</p>
 <h2 id="supported-crate-graph">Supported Crate Graph<a class="headerlink" href="#supported-crate-graph" title="Permanent link">&para;</a></h2>
 <p>The statically linked storage adapter SDK consists of these crates:</p>
 <table>
@@ -5566,6 +5627,16 @@ versions, and the safest available migration.</p>
 <code>cargo-semver-checks</code> once a registry baseline exists. Publication itself is a
 maintainer-controlled operation because crates.io versions cannot be replaced.</p>
 <h2 id="adapter-upgrade-process">Adapter Upgrade Process<a class="headerlink" href="#adapter-upgrade-process" title="Permanent link">&para;</a></h2>
+<h3 id="deletion-authority-foundation-09-to-010">Deletion authority foundation: 0.9 to 0.10<a class="headerlink" href="#deletion-authority-foundation-09-to-010" title="Permanent link">&para;</a></h3>
+<p>Update all ten supported SDK crates together to 0.10.0. The complete operational
+family now requires <code>DeletionControlStorage</code>. Implement privileged, bounded
+capture and atomic exact-predecessor transitions for <code>DeletionControlState</code>.
+Keep its records outside logical application replacement. Retained decisions
+must prevent restored exposure until restriction reapplication is implemented;
+the initial adapters conservatively reject replacement whenever intents exist.
+See <a href="../deletion_recovery/">deletion recovery</a> for the independent repository
+contract and the remaining activation gates. This is a breaking Rust SDK change;
+it does not enable a deletion endpoint or promise permanent-erasure completion.</p>
 <p>Adapter authors should upgrade <code>hubuum-storage-core</code> and
 <code>hubuum-storage-conformance</code> to the same exact SDK version, update every direct
 SDK dependency to that version, and then:</p>

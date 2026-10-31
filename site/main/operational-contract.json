@@ -1788,6 +1788,7 @@
             "authentication",
             "authorization_data",
             "backup_snapshot",
+            "deletion_control",
             "catalog",
             "class",
             "class_relation",
@@ -1865,11 +1866,13 @@
             "bootstrap_default_admin",
             "cancel_schema_work",
             "capture_backup_replay",
+            "capture_deletion_control",
             "change_event_sink_grant",
             "claim_event_delivery_batch",
             "claim_event_retention_batch",
             "claim_next_task",
             "cleanup",
+            "commit_deletion_control",
             "complete_event_retention_batch",
             "complete_task",
             "count_enabled_event_sinks",
@@ -2230,6 +2233,7 @@
             "authentication",
             "authorization_data",
             "backup_snapshot",
+            "deletion_control",
             "catalog",
             "class",
             "class_relation",
@@ -2307,11 +2311,13 @@
             "bootstrap_default_admin",
             "cancel_schema_work",
             "capture_backup_replay",
+            "capture_deletion_control",
             "change_event_sink_grant",
             "claim_event_delivery_batch",
             "claim_event_retention_batch",
             "claim_next_task",
             "cleanup",
+            "commit_deletion_control",
             "complete_event_retention_batch",
             "complete_task",
             "count_enabled_event_sinks",
@@ -10722,6 +10728,116 @@
     {
       "command": "hubuum-admin",
       "options": [
+        {
+          "id": "control_checkpoint",
+          "long": "control-checkpoint",
+          "short": null,
+          "environment": null,
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [
+            "audit_templates",
+            "backup",
+            "check_database_privileges",
+            "database_ready",
+            "database_role_grants_sql",
+            "database_role_setup_sql",
+            "export_template_health",
+            "migrate",
+            "migration_mode",
+            "reconcile_query_usage",
+            "reset_password",
+            "restore",
+            "restore_executor",
+            "token_key_status",
+            "verify_backup",
+            "verify_control_recovery"
+          ],
+          "requires": [
+            "control_checkpoint_key"
+          ]
+        },
+        {
+          "id": "verify_control_recovery",
+          "long": "verify-control-recovery",
+          "short": null,
+          "environment": null,
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [
+            "audit_templates",
+            "backup",
+            "check_database_privileges",
+            "control_checkpoint",
+            "database_ready",
+            "database_role_grants_sql",
+            "database_role_setup_sql",
+            "export_template_health",
+            "migrate",
+            "migration_mode",
+            "reconcile_query_usage",
+            "reset_password",
+            "restore",
+            "restore_executor",
+            "token_key_status",
+            "verify_backup"
+          ],
+          "requires": [
+            "control_checkpoint_key"
+          ]
+        },
+        {
+          "id": "control_checkpoint_key",
+          "long": "control-checkpoint-key",
+          "short": null,
+          "environment": null,
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "initialize_control_checkpoint",
+          "long": "initialize-control-checkpoint",
+          "short": null,
+          "environment": null,
+          "value_kind": "boolean",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "default": [
+            "false"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "control_checkpoint"
+          ]
+        },
         {
           "id": "schema_max_bytes",
           "long": "schema-max-bytes",

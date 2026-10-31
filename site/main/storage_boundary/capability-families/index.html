@@ -1870,6 +1870,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../deletion_recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deletion recovery checkpoints
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../supply-chain-security/" class="md-nav__link">
         
   
@@ -6176,6 +6203,7 @@ Sink and subscription mutations include their lifecycle events atomically.</p>
 <p>Required traits:</p>
 <ul>
 <li><code>MetricsStorage</code> and <code>OperationalStateStorage</code>;</li>
+<li><code>DeletionControlStorage</code>;</li>
 <li><code>EventDeliveryWorkerStorage</code>, <code>EventFanoutStorage</code>, <code>EventHealthStorage</code>, and
   <code>EventRetentionStorage</code>;</li>
 <li><code>TokenRetentionStorage</code>; and</li>
@@ -6186,6 +6214,12 @@ retention, worker claims and acknowledgements, and the execution context
 applied across requests and workers. <code>WorkerNotificationProvider</code> is an
 optional application-composition provider: adapters may implement it for
 lower-latency wake-ups, but it is not part of <code>StorageBackend</code>.</p>
+<p><code>DeletionControlStorage</code> owns privileged capture and exact-predecessor transitions
+for protected deletion authority. Logical replacement must preserve these records
+and reject retained intents until restriction reapplication is implemented.
+The application owns independent checkpoint publication and recovery evidence;
+see the <a href="../../deletion_recovery/">deletion recovery foundation</a> for its durability
+contract and activation gates.</p>
 <p>Queue and gauge snapshots correlate optional oldest/last timestamps with their
 counts. A positive queued, active, due, pending, or terminal count requires the
 matching timestamp; a zero count forbids one. Task gauge ages cover every task
