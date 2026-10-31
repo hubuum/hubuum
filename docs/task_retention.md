@@ -92,7 +92,7 @@ expiry; the submission receipt response above is a separate typed contract.
 ## Upgrade and activation
 
 Stop older API, worker, restore and administrator binaries. Apply migration
-`2026-10-29-000007_task_retention`, reconcile database grants, and deploy matching
+`2026-10-31-000008_task_retention`, reconcile database grants, and deploy matching
 binaries with the same independent control repository and authentication key.
 Keep these outside supported database rollback, following
 [deletion recovery](deletion_recovery.md). The migration leaves receipt protection

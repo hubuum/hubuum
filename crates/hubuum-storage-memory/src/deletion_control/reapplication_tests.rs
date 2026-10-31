@@ -61,7 +61,10 @@ async fn application_release_requires_the_required_completion_audit() {
         .await
         .unwrap();
     let error = storage
-        .release_application_exposure(receipt, checkpoint())
+        .release_application_exposure(
+            ApplicationExposureProof::new(receipt, None).unwrap(),
+            checkpoint(),
+        )
         .await
         .unwrap_err();
     assert_eq!(error.kind(), StorageErrorKind::Conflict);
