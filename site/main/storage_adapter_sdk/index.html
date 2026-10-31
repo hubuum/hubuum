@@ -3721,6 +3721,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../task_scheduling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task scheduling and capacity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../computed_field_locking/" class="md-nav__link">
         
   
@@ -4107,6 +4134,61 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Upgrading from 0.8 to 0.9
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrading-from-010-to-011" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.10 to 0.11
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrading-from-011-to-012" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.11 to 0.12
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrading-from-012-to-013" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.12 to 0.13
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrading-from-013-to-014" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.13 to 0.14
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrading-from-014-to-015" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.14 to 0.15
       </span>
     </span>
   </a>
@@ -5330,6 +5412,61 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#upgrading-from-010-to-011" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.10 to 0.11
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrading-from-011-to-012" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.11 to 0.12
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrading-from-012-to-013" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.12 to 0.13
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrading-from-013-to-014" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.13 to 0.14
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrading-from-014-to-015" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.14 to 0.15
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5411,7 +5548,7 @@
 
 
 <h1 id="storage-adapter-sdk-compatibility">Storage Adapter SDK Compatibility<a class="headerlink" href="#storage-adapter-sdk-compatibility" title="Permanent link">&para;</a></h1>
-<p>Status: accepted; current experimental release train is <code>0.10</code>.</p>
+<p>Status: accepted; current experimental release train is <code>0.15</code>.</p>
 <h2 id="supported-crate-graph">Supported Crate Graph<a class="headerlink" href="#supported-crate-graph" title="Permanent link">&para;</a></h2>
 <p>The statically linked storage adapter SDK consists of these crates:</p>
 <table>
@@ -5890,6 +6027,100 @@ and block frames. Restore these into fresh physical identities, independently
 verify destination bytes, and remap output references. Retain prior cleanup
 obligations and shared capacity policy across restore. Format 11 identities remain
 native; formats 6–10 still require the quarantined legacy identity upgrade.</p>
+<h2 id="upgrading-from-010-to-011">Upgrading from 0.10 to 0.11<a class="headerlink" href="#upgrading-from-010-to-011" title="Permanent link">&para;</a></h2>
+<p>This is a breaking coordinated SDK release. Upgrade all ten SDK dependencies
+and handle <code>MaintenanceState::RecoveryQuarantine</code> in exhaustive matches. It
+restricts exposure independently of restore draining; restore status endpoints
+must not bypass this restriction. Return this state from maintenance and readiness
+checks while any deletion intent remains, including completed intents. Block
+new task/event claims and retention work under the same restriction.</p>
+<p><code>DeletionControlStorage::read_deletion_control()</code> provides minimal authority
+without physical backup coordinates. Its default implementation uses capture;
+adapters with privileged capture must override it with a read-only runtime
+capability. <code>DeletionControlState::recover_from()</code> constructs an exact-predecessor
+transition that preserves newer local decisions and rejects conflicting histories.
+Adapters must accept validated recovery transitions that advance several revisions
+under the same exact-predecessor transaction, rather than requiring an increment
+of exactly one.
+Only trusted services holding authenticated latest evidence may use it for recovery.
+See the <a href="../deletion_recovery/">recovery procedure</a> for the offline boundary.</p>
+<h2 id="upgrading-from-011-to-012">Upgrading from 0.11 to 0.12<a class="headerlink" href="#upgrading-from-011-to-012" title="Permanent link">&para;</a></h2>
+<p>This is a breaking coordinated SDK release. Upgrade all ten SDK crates and
+implement the four new <code>DeletionControlStorage</code> operations: <code>register_runtime</code>,
+<code>unregister_runtime</code>, <code>prepare_hot_object_history_deletion</code>, and
+<code>cleanup_hot_object_history</code>.</p>
+<p>Runtime registration is atomic against deletion authority and bounded to 1,024
+owners. Return the non-cloneable <code>RuntimeRegistration</code> capability only after
+commit; remove a registration only with its matching ownership token. Dropping a
+token, heartbeat age, process failure, and logical restore must not remove a
+registration. Keep ownership tokens out of logs and public reports.</p>
+<p>Prepare and cleanup lock authority before other rows, compare the exact expected
+state, and require every protected registration to be absent in that same
+transaction. A racing startup must either register first and block cleanup or
+observe the retained intent and refuse startup. Preserve registrations outside
+application replacement independently of ordinary restore coordinator heartbeats.</p>
+<p>The managed-copy request names one resource/version UUID pair and one explicitly
+bound hot object-history copy. Reject open, unresolved, mismatched or ambiguous
+history. Delete the exact copy and record its outcome atomically. A retained
+<code>Removed</code> outcome still requires checking physical presence on retry: an older
+application restore can reintroduce that row. Never authorize cleanup from reused
+integers or infer a binding for an existing opaque obligation.</p>
+<p><code>DeletionCheckpointIdentity</code> validates a content address; it is not evidence of
+independent publication or durability. Only the trusted administrator service
+holding the authenticated repository session may invoke managed cleanup. Final
+completion requires independent publication and readback covering the adapter's
+receipt. Keep application exposure quarantined afterward.</p>
+<p>Control format 2 adds explicit copy bindings and receipts. Continue decoding and
+encoding format 1 byte-for-byte: checkpoint authentication depends on its original
+canonical representation. Unknown legacy copies remain unexecutable and retain
+their original outcomes. See <a href="../deletion_recovery/#offline-managed-copy-cleanup">managed cleanup</a>.</p>
+<h2 id="upgrading-from-012-to-013">Upgrading from 0.12 to 0.13<a class="headerlink" href="#upgrading-from-012-to-013" title="Permanent link">&para;</a></h2>
+<p>Upgrade all ten SDK crates together. Every complete adapter now implements
+application-incarnation fencing, runtime-owner binding, exact drain
+acknowledgements, transactional decision reapplication, and exposure release.
+<code>ExecutionStorage</code> exposes the current scope and synchronous scope execution for
+streaming response polling; nested scopes preserve the outer application permit.
+<code>StorageTaskLease</code> carries the captured application fence. Adapters persist and
+verify the task claim's original fence before productive transitions, even when
+another caller supplies a freshly admitted execution scope.</p>
+<p>Logical replacement preserves authority and runtime registrations, rotates the
+application incarnation, and quarantines retained obligations until independently
+protected reapplication completes. A checkpoint's optional reapplication receipt
+never imports local release permission. An explicitly unbound adapter remains
+available for privileged administration and focused tests; production composition
+binds every capability port and provider to its registered owner and rejects
+missing, different-owner, stale, or revoked permits.</p>
+<p>See <a href="../deletion_recovery/">deletion recovery</a> for the coordinated offline upgrade,
+process-isolation contract, checkpoint ordering, and conservative failure states.</p>
+<h2 id="upgrading-from-013-to-014">Upgrading from 0.13 to 0.14<a class="headerlink" href="#upgrading-from-013-to-014" title="Permanent link">&para;</a></h2>
+<p>Upgrade all ten SDK crates together to <code>0.14.0</code> for the required protected audit
+contract and expanded lifecycle event vocabulary.</p>
+<p><code>DeletionControlStorage::observe_deletion_checkpoint</code> commits an independently
+verified checkpoint observation, its required canonical event and minimum protected
+evidence atomically. Use the adapter's recording clock. Audited intent and copy
+removal capabilities must preserve original event UUIDs, exact membership and
+recording times; failure to persist required audit rolls back their state changes.
+Format 3 retains this minimum evidence without erased payloads. Ordinary event
+expiry must not remove it. Lifecycle audit is initially system-only and cannot
+enter notification subscription, preview or delivery paths.</p>
+<p>Completion evidence may advance an already recorded physical reapplication receipt
+only through <code>ApplicationControlState::with_completed_audit</code>, which rejects changed
+decisions, bindings or copy outcomes. Protect the updated receipt and audit facts
+before release; do not redo physical cleanup or infer a new drain acknowledgement
+from an audit-only revision. Missing required completion audit blocks exposure.</p>
+<h2 id="upgrading-from-014-to-015">Upgrading from 0.14 to 0.15<a class="headerlink" href="#upgrading-from-014-to-015" title="Permanent link">&para;</a></h2>
+<p>Update all ten exact-version SDK dependencies to <code>=0.15.0</code> together.
+<code>TaskExecutionStorage::claim_next_task</code> now accepts <code>StorageTaskClaimRequest</code>,
+which carries a stable per-slot <code>TaskWorkerId</code>, supported <code>TaskWorkerKinds</code>,
+and the validated lease duration. Generate the identity once per worker loop,
+not once per poll. Preserve the complete policy's required <code>scheduling</code> field
+and provide <code>TaskSchedulingSnapshot</code> when constructing capacity diagnostics.</p>
+<p>Adapters must persist weighted rotation, principal service history and promotion
+spacing atomically with claims, maintain worker availability with backend time,
+and fence/reset worker leases during restore while preserving service history.
+Execution caps and small-pool reservation fallback are part of the complete
+contract; see <a href="../task_scheduling/">shared scheduling</a>. Rerun conformance and
+production-adapter transaction/concurrency tests before deployment.</p>
 
 
 

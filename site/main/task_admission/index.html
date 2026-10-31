@@ -16,7 +16,7 @@
         <link rel="prev" href="../task_system/">
       
       
-        <link rel="next" href="../computed_field_locking/">
+        <link rel="next" href="../task_scheduling/">
       
       
         
@@ -3825,6 +3825,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../task_scheduling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task scheduling and capacity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../computed_field_locking/" class="md-nav__link">
         
   
@@ -5096,8 +5123,8 @@ and a required <code>TaskCapacityStorage</code> capability. PostgreSQL and memor
 the same logical contract. Application configuration and HTTP errors remain
 outside the SDK. This implements <a href="https://github.com/hubuum/hubuum/issues/506">#506</a>
 on the durable identity foundation from #505.</p>
-<p>Fair selection, worker-pool availability and reserved execution scheduling belong
-to #507. External artifact/provider obligations are added with #508/#516, rather
+<p>Fair selection, worker-pool availability and reserved execution scheduling are
+described in <a href="../task_scheduling/">shared task scheduling</a>. External artifact/provider obligations are added with #508/#516, rather
 than represented by unused placeholder tables here.</p>
 <h2 id="ownership-and-restore-reconciliation">Ownership and restore reconciliation<a class="headerlink" href="#ownership-and-restore-reconciliation" title="Permanent link">&para;</a></h2>
 <table>
@@ -5158,7 +5185,7 @@ The affected scope drains before new work can be admitted or claimed.</p>
 <p>Internal computed/schema repair has a distinct admission allowance that ordinary
 submissions cannot consume. An ordinary caller cannot select the internal lane.
 Finite internal limits still apply. Execution reservations and their single-worker
-fallback are specified and implemented by #507.</p>
+fallback follow <a href="../task_scheduling/">shared task scheduling</a>.</p>
 <p>Only administrator diagnostics disclose deployment totals. Public capacity
 rejections use bounded reason codes and do not include another principal's
 identity, usage or queued work.</p>
@@ -5344,13 +5371,13 @@ arguments into policy initialization. See the
         
         
           
-          <a href="../computed_field_locking/" class="md-footer__link md-footer__link--next" aria-label="Next: Computed-field locking">
+          <a href="../task_scheduling/" class="md-footer__link md-footer__link--next" aria-label="Next: Task scheduling and capacity">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Computed-field locking
+                Task scheduling and capacity
               </div>
             </div>
             <div class="md-footer__button md-icon">

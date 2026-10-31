@@ -3647,6 +3647,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#implemented-protected-deletion-slice" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Implemented protected-deletion slice
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#existing-guarantees-and-gaps" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3884,6 +3895,33 @@
     
   
   Task admission and capacity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../task_scheduling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task scheduling and capacity
 
     
   </span>
@@ -5034,6 +5072,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#implemented-protected-deletion-slice" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Implemented protected-deletion slice
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#existing-guarantees-and-gaps" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5257,6 +5306,15 @@ implement and qualify their applicable transitions before advertising support.
 Consumer review is still required; the review table below records inspected
 source, not consumer approval. Unrelated foundations and task/SSE work can ship
 independently.</p>
+<h2 id="implemented-protected-deletion-slice">Implemented protected-deletion slice<a class="headerlink" href="#implemented-protected-deletion-slice" title="Permanent link">&para;</a></h2>
+<p>The <a href="../deletion_recovery/#protected-audit-evidence">offline deletion foundation</a>
+implements five audit-only transitions for one exact closed object-history copy:
+request, access restriction, independent recovery protection, copy removal and
+completion. Their original identities, times and exact membership survive recovery
+through the protected control lineage. This introduces the <code>lifecycle</code> catalog
+entity, while subscription creation, updates and test delivery reject it.
+The broader transition catalog, public evidence endpoints and safe sink projection
+below remain proposals requiring their owning implementation and qualification.</p>
 <h2 id="existing-guarantees-and-gaps">Existing guarantees and gaps<a class="headerlink" href="#existing-guarantees-and-gaps" title="Permanent link">&para;</a></h2>
 <p>Reuse the <a href="../events/">canonical event stream</a>, <code>AuditDocument</code>, event catalog,
 audit visibility, subscriptions, delivery workers, and protected deletion
@@ -5323,9 +5381,10 @@ update and review rather than silently expanding an existing export contract.</p
 <p>The envelope's <code>schema_version</code> remains separate: lifecycle examples use version
 1 with null snapshots; existing revision-aware documents remain version 2.
 Do not change historical event meaning or infer lifecycle completion from a
-generic <code>task.succeeded</code> event. No lifecycle catalog entry is activated by this
-proposal. Adding it later requires exhaustive server/adapter matches, OpenAPI,
-backup-reader compatibility and the consumer checks below.</p>
+generic <code>task.succeeded</code> event. The proposal alone activates no transition. The protected-deletion slice above
+uses the lifecycle catalog for audit-only facts. Further activation requires
+exhaustive server/adapter matches, OpenAPI, backup-reader compatibility and the
+consumer checks below.</p>
 <p>Each row below is a named v1 event. <strong>Eligible</strong> means an explicit subscription
 may select its safe sink projection; no subscription is created automatically.
 <strong>Audit</strong> means audit-only, including for system subscriptions. State and audit

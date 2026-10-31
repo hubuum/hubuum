@@ -3903,6 +3903,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../task_scheduling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task scheduling and capacity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../computed_field_locking/" class="md-nav__link">
         
   
@@ -5238,7 +5265,7 @@ file adds that inventory through the normal merge API; the backup replaces all
 application data.</p>
 <p>Hubuum can create versioned full-system logical backups and perform a staged,
 destructive system restore. Backup generation uses one PostgreSQL
-<code>REPEATABLE READ, READ ONLY</code> transaction, so every section in a document is
+<code>REPEATABLE READ</code> transaction with the shared deletion-authority lock, so every section in a document is
 read from the same database snapshot.</p>
 <p>Backup/restore is the disaster-recovery path: it preserves identifiers and
 replaces the whole system. Export/import is the portable merge path for moving
@@ -5556,7 +5583,8 @@ and manifest, is serialized through a bounded writer. Exceeding either budget
 fails the backup with a size/resource-limit error; no partial artifact is stored
 or written. Diagnostics include scanned rows and retained logical row counts and
 bytes, without row contents.</p>
-<p>PostgreSQL uses one repeatable-read, read-only transaction and fetches one source
+<p>PostgreSQL uses one repeatable-read snapshot transaction, holds the shared
+deletion-authority lock through capture, and fetches one source
 row at a time from cursors ordered by primary keys. Excluded history rows still
 consume the work budget. At most one additional row is fetched to detect that
 the row ceiling would be exceeded; that row is never retained. Eligibility uses indexed task/event lookups instead of

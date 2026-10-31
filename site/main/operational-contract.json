@@ -1840,6 +1840,7 @@
           "values": [
             "abandon_schema_revision",
             "abort",
+            "acknowledge_runtime_drain",
             "acknowledge_task_stop",
             "activate_schema_revision",
             "add_group_member",
@@ -1865,6 +1866,8 @@
             "block",
             "bootstrap_default_admin",
             "cancel_schema_work",
+            "capture_application_execution",
+            "capture_application_execution_with_maintenance",
             "capture_backup_replay",
             "capture_deletion_control",
             "change_event_sink_grant",
@@ -1872,6 +1875,7 @@
             "claim_event_retention_batch",
             "claim_next_task",
             "cleanup",
+            "cleanup_hot_object_history",
             "commit_deletion_control",
             "complete_event_retention_batch",
             "complete_task",
@@ -2073,10 +2077,12 @@
             "mark_external_sync_attempted",
             "move_collection",
             "observe_credential_source",
+            "observe_deletion_checkpoint",
             "patch_object_data",
             "poll_task_execution",
             "preflight_import",
             "prepare_class_relation",
+            "prepare_hot_object_history_deletion",
             "prepare_object_relation",
             "process_event_fanout_batch",
             "process_schema_work",
@@ -2089,13 +2095,20 @@
             "purge_expired_schema_profile_outputs",
             "purge_expired_tokens",
             "query_observation_control",
+            "read_application_control",
+            "read_deletion_control",
+            "reapply_deletion_decisions",
             "record_claimed_import_results",
             "record_credential_creation",
             "record_import_results",
             "record_remote_target_invocation",
+            "recover_application_control",
             "recover_expired_task_leases",
             "refresh_principal",
             "register_destination",
+            "register_runtime",
+            "register_runtime_isolated",
+            "release_application_exposure",
             "release_event_delivery_for_retry",
             "remove_group_member",
             "remove_restore_instance",
@@ -2145,6 +2158,7 @@
             "task_policy",
             "tick_restore_coordinator",
             "token_key_usage",
+            "unregister_runtime",
             "update_class",
             "update_class_relation_labels",
             "update_collection",
@@ -2285,6 +2299,7 @@
           "values": [
             "abandon_schema_revision",
             "abort",
+            "acknowledge_runtime_drain",
             "acknowledge_task_stop",
             "activate_schema_revision",
             "add_group_member",
@@ -2310,6 +2325,8 @@
             "block",
             "bootstrap_default_admin",
             "cancel_schema_work",
+            "capture_application_execution",
+            "capture_application_execution_with_maintenance",
             "capture_backup_replay",
             "capture_deletion_control",
             "change_event_sink_grant",
@@ -2317,6 +2334,7 @@
             "claim_event_retention_batch",
             "claim_next_task",
             "cleanup",
+            "cleanup_hot_object_history",
             "commit_deletion_control",
             "complete_event_retention_batch",
             "complete_task",
@@ -2518,10 +2536,12 @@
             "mark_external_sync_attempted",
             "move_collection",
             "observe_credential_source",
+            "observe_deletion_checkpoint",
             "patch_object_data",
             "poll_task_execution",
             "preflight_import",
             "prepare_class_relation",
+            "prepare_hot_object_history_deletion",
             "prepare_object_relation",
             "process_event_fanout_batch",
             "process_schema_work",
@@ -2534,13 +2554,20 @@
             "purge_expired_schema_profile_outputs",
             "purge_expired_tokens",
             "query_observation_control",
+            "read_application_control",
+            "read_deletion_control",
+            "reapply_deletion_decisions",
             "record_claimed_import_results",
             "record_credential_creation",
             "record_import_results",
             "record_remote_target_invocation",
+            "recover_application_control",
             "recover_expired_task_leases",
             "refresh_principal",
             "register_destination",
+            "register_runtime",
+            "register_runtime_isolated",
+            "release_application_exposure",
             "release_event_delivery_for_retry",
             "remove_group_member",
             "remove_restore_instance",
@@ -2590,6 +2617,7 @@
             "task_policy",
             "tick_restore_coordinator",
             "token_key_usage",
+            "unregister_runtime",
             "update_class",
             "update_class_relation_labels",
             "update_collection",
@@ -3918,6 +3946,48 @@
         "all",
         "api",
         "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_CONTROL_RECOVERY_DIRECTORY",
+      "owner": "restores",
+      "exposure": "sensitive_metadata",
+      "value_kind": "path",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker",
+        "admin"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_CONTROL_RECOVERY_KEY",
+      "owner": "restores",
+      "exposure": "sensitive_metadata",
+      "value_kind": "path",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker",
+        "admin"
       ],
       "appears_in_running_configuration": true,
       "source": "server",
@@ -7764,6 +7834,14 @@
         "actions": [
           "succeeded"
         ]
+      },
+      {
+        "name": "lifecycle",
+        "actions": [
+          "queued",
+          "updated",
+          "succeeded"
+        ]
       }
     ],
     "redaction_rules": [
@@ -7930,6 +8008,44 @@
           "required": false,
           "conflicts_with": [],
           "requires": []
+        },
+        {
+          "id": "control_recovery_directory",
+          "long": "control-recovery-directory",
+          "short": null,
+          "environment": "HUBUUM_CONTROL_RECOVERY_DIRECTORY",
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "control_recovery_key"
+          ]
+        },
+        {
+          "id": "control_recovery_key",
+          "long": "control-recovery-key",
+          "short": null,
+          "environment": "HUBUUM_CONTROL_RECOVERY_KEY",
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "control_recovery_directory"
+          ]
         },
         {
           "id": "schema_max_bytes",
@@ -10729,6 +10845,44 @@
       "command": "hubuum-admin",
       "options": [
         {
+          "id": "control_recovery_directory",
+          "long": "control-recovery-directory",
+          "short": null,
+          "environment": "HUBUUM_CONTROL_RECOVERY_DIRECTORY",
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "control_recovery_key"
+          ]
+        },
+        {
+          "id": "control_recovery_key",
+          "long": "control-recovery-key",
+          "short": null,
+          "environment": "HUBUUM_CONTROL_RECOVERY_KEY",
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "control_recovery_directory"
+          ]
+        },
+        {
           "id": "control_checkpoint",
           "long": "control-checkpoint",
           "short": null,
@@ -10798,6 +10952,220 @@
           ],
           "requires": [
             "control_checkpoint_key"
+          ]
+        },
+        {
+          "id": "control_status",
+          "long": "control-status",
+          "short": null,
+          "environment": null,
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [
+            "audit_templates",
+            "backup",
+            "check_database_privileges",
+            "control_checkpoint",
+            "database_ready",
+            "database_role_grants_sql",
+            "database_role_setup_sql",
+            "delete_object_history_version",
+            "export_template_health",
+            "migrate",
+            "migration_mode",
+            "reapply_control",
+            "reconcile_query_usage",
+            "recover_control",
+            "reset_password",
+            "restore",
+            "restore_executor",
+            "token_key_status",
+            "verify_backup",
+            "verify_control_recovery"
+          ],
+          "requires": [
+            "control_checkpoint_key"
+          ]
+        },
+        {
+          "id": "recover_control",
+          "long": "recover-control",
+          "short": null,
+          "environment": null,
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [
+            "audit_templates",
+            "backup",
+            "check_database_privileges",
+            "control_checkpoint",
+            "database_ready",
+            "database_role_grants_sql",
+            "database_role_setup_sql",
+            "export_template_health",
+            "migrate",
+            "migration_mode",
+            "reconcile_query_usage",
+            "reset_password",
+            "restore",
+            "restore_executor",
+            "token_key_status",
+            "verify_backup",
+            "verify_control_recovery"
+          ],
+          "requires": [
+            "control_checkpoint_key"
+          ]
+        },
+        {
+          "id": "reapply_control",
+          "long": "reapply-control",
+          "short": null,
+          "environment": null,
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [
+            "audit_templates",
+            "backup",
+            "check_database_privileges",
+            "control_checkpoint",
+            "database_ready",
+            "database_role_grants_sql",
+            "database_role_setup_sql",
+            "delete_object_history_version",
+            "export_template_health",
+            "migrate",
+            "migration_mode",
+            "reconcile_query_usage",
+            "recover_control",
+            "reset_password",
+            "restore",
+            "restore_executor",
+            "token_key_status",
+            "verify_backup",
+            "verify_control_recovery"
+          ],
+          "requires": [
+            "control_checkpoint_key"
+          ]
+        },
+        {
+          "id": "delete_object_history_version",
+          "long": "delete-object-history-version",
+          "short": null,
+          "environment": null,
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [
+            "audit_templates",
+            "backup",
+            "check_database_privileges",
+            "control_checkpoint",
+            "database_ready",
+            "database_role_grants_sql",
+            "database_role_setup_sql",
+            "export_template_health",
+            "migrate",
+            "migration_mode",
+            "reconcile_query_usage",
+            "recover_control",
+            "reset_password",
+            "restore",
+            "restore_executor",
+            "token_key_status",
+            "verify_backup",
+            "verify_control_recovery"
+          ],
+          "requires": [
+            "history_resource",
+            "deletion_intent",
+            "control_repository",
+            "control_checkpoint_key"
+          ]
+        },
+        {
+          "id": "history_resource",
+          "long": "history-resource",
+          "short": null,
+          "environment": null,
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "delete_object_history_version"
+          ]
+        },
+        {
+          "id": "deletion_intent",
+          "long": "deletion-intent",
+          "short": null,
+          "environment": null,
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "delete_object_history_version"
+          ]
+        },
+        {
+          "id": "control_repository",
+          "long": "control-repository",
+          "short": null,
+          "environment": null,
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "delete_object_history_version"
           ]
         },
         {

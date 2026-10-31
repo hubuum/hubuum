@@ -70,6 +70,19 @@ event_coordination = [
 retention = ["TokenRetentionStorage::purge_expired_tokens", "AuthenticationStorage::purge_credential_sources", "AuthenticationStorage::purge_auth_sessions"]
 maintenance = [
     "DeletionControlStorage::commit_deletion_control",
+    "DeletionControlStorage::observe_deletion_checkpoint",
+    "DeletionControlStorage::register_runtime",
+    "DeletionControlStorage::register_runtime_isolated",
+    "DeletionControlStorage::capture_application_execution",
+    "DeletionControlStorage::capture_application_execution_with_maintenance",
+    "DeletionControlStorage::acknowledge_runtime_drain",
+    "DeletionControlStorage::reapply_deletion_decisions",
+    "DeletionControlStorage::release_application_exposure",
+    "DeletionControlStorage::recover_application_control",
+
+    "DeletionControlStorage::unregister_runtime",
+    "DeletionControlStorage::prepare_hot_object_history_deletion",
+    "DeletionControlStorage::cleanup_hot_object_history",
     "TaskCapacityStorage::initialize_task_policy",
     "TaskCapacityStorage::replace_task_policy",
     "QueryUsageStorage::set_query_observation_control",
@@ -285,10 +298,64 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.DeletionControlStorage]
 source = "crates/hubuum-storage-core/src/deletion_control.rs"
-methods = ["capture_deletion_control", "commit_deletion_control"]
-effects = { point_read = ["capture_deletion_control"], workflow_mutation = ["commit_deletion_control"] }
-shared_scenarios = ["crates/hubuum-storage-memory/src/deletion_control.rs::competing_control_changes_cannot_both_commit"]
-native_scenarios = ["crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_restore_gate_rejects_retained_decisions", "crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_authority_has_no_cascading_application_references", "crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_authority_compare_and_swap_rejects_old_snapshot"]
+methods = ["read_application_control", "register_runtime_isolated", "capture_application_execution", "capture_application_execution_with_maintenance", "acknowledge_runtime_drain", "reapply_deletion_decisions", "release_application_exposure", "recover_application_control", "read_deletion_control", "capture_deletion_control", "register_runtime", "unregister_runtime", "prepare_hot_object_history_deletion", "cleanup_hot_object_history", "commit_deletion_control", "observe_deletion_checkpoint"]
+effects = { point_read = ["read_application_control", "read_deletion_control", "capture_deletion_control"], workflow_mutation = ["register_runtime_isolated", "capture_application_execution", "capture_application_execution_with_maintenance", "acknowledge_runtime_drain", "reapply_deletion_decisions", "release_application_exposure", "recover_application_control", "register_runtime", "unregister_runtime", "prepare_hot_object_history_deletion", "cleanup_hot_object_history", "commit_deletion_control", "observe_deletion_checkpoint"] }
+shared_scenarios = [
+    "crates/hubuum-storage-core/src/deletion_control/audit_tests.rs::recovered_canonical_projection_keeps_original_identity_and_time",
+    "crates/hubuum-storage-core/src/deletion_control/audit_tests.rs::completion_evidence_preserves_the_existing_physical_reapplication_proof",
+    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::unavailable_required_audit_rolls_back_intent_and_canonical_events",
+    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::ordinary_event_purge_preserves_protected_original_audit_facts",
+    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::control_recovery_rehydrates_original_facts_without_duplicate_success",
+    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::application_release_requires_the_required_completion_audit",
+    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::worker_admission_observes_maintenance_and_preserves_its_permit",
+    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::worker_admission_rejects_a_foreign_inherited_permit",
+    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::worker_admission_cannot_refresh_an_old_permit_after_release",
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::worker_admission_and_maintenance_share_one_acquisition",
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::coordinator_observes_and_acknowledges_drain_in_one_acquisition",
+    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::released_application_rejects_runtime_drain_acknowledgement",
+    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::reapplication_deletes_current_copy_and_requires_published_release",
+    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::repeated_reapplication_preserves_exact_receipt",
+    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::unknown_obligation_rejects_entire_reapplication_before_removal",
+    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::reapplication_rejects_restored_live_target",
+    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::bound_adapter_requires_its_owner_permit",
+    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::old_scope_cannot_refresh_itself_after_release",
+    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::capturing_work_revokes_previous_drain_acknowledgement",
+    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::isolated_recovery_only_retires_matching_known_domain",
+    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::a_new_permit_cannot_publish_an_old_task_claim",
+    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::unresolved_identity_cannot_be_used_as_absence_evidence",
+    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::ordinary_writes_cannot_bypass_stale_application_scope",
+    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::logical_restore_reapplies_retained_decisions_before_resuming",
+
+    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::competing_control_changes_cannot_both_commit",
+    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::preparation_rejects_invalid_history_copy",
+    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::cleanup_commits_exact_removal_and_receipt_together",
+    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::cleanup_retry_rechecks_removed_history_after_recovery",
+    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::cleanup_does_not_confuse_reused_integer_ids",
+    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::registered_runtime_blocks_cleanup_until_exact_drain",
+    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::runtime_registration_capacity_never_evicts_an_owner",
+    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::runtime_unregister_requires_ownership",
+    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::logical_restore_preserves_runtime_registration",
+]
+native_scenarios = [
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::required_audit_failure_rolls_back_the_exact_transition",
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::repeatable_read_before_gate_cannot_reuse_revoked_admission",
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::runtime_drain_and_exact_checkpoint_release_fence_old_work",
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::unknown_unrelated_history_prevents_removed_copy_reapplication",
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::restored_removed_history_is_reapplied_before_new_incarnation_release",
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::recovery_revokes_only_runtimes_from_the_excluded_isolation_domain",
+
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::connection_loss_during_control_recovery_rolls_back_import",
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::runtime_can_read_authority_without_control_table_write_access",
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_restore_gate_rejects_retained_decisions",
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_authority_has_no_cascading_application_references",
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_authority_compare_and_swap_rejects_old_snapshot",
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::cleanup_matches_alternate_uuid_spelling_by_identity",
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::cleanup_connection_loss_rolls_back_copy_and_receipt_together",
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::invalid_authority_rolls_back_runtime_registration",
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::runtime_ownership_prevents_unrelated_unregister",
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::registered_runtime_wins_race_but_intent_starts_a_drain",
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_intent_wins_race_and_prevents_runtime_startup",
+]
 
 [traits.TokenRetentionStorage]
 source = "crates/hubuum-storage-core/src/operational.rs"
@@ -373,9 +440,9 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.ExecutionStorage]
 source = "crates/hubuum-storage-core/src/execution.rs"
-methods = ["run_in_scope", "run_in_scope_send"]
-effects = { execution_scope = ["run_in_scope", "run_in_scope_send"] }
-shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_execution_context", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_export_query_scope"]
+methods = ["current_execution_scope", "run_in_scope_sync", "run_in_scope", "run_in_scope_send"]
+effects = { execution_scope = ["current_execution_scope", "run_in_scope_sync", "run_in_scope", "run_in_scope_send"] }
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_restores_scope_after_synchronous_polling", "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::old_scope_cannot_refresh_itself_after_release", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_execution_context", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_export_query_scope"]
 
 [traits.TransactionStorage]
 source = "crates/hubuum-storage-core/src/transaction.rs"

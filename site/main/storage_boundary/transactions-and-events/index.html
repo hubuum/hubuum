@@ -3721,6 +3721,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../task_scheduling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task scheduling and capacity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../computed_field_locking/" class="md-nav__link">
         
   
@@ -5460,11 +5487,44 @@ for an exception.</p>
   ordinary domain lifecycle shortcut.</li>
 <li>Retention: <code>TokenRetentionStorage::purge_expired_tokens</code> applies configured
   expiry and emits the token-purge semantics owned by the retention worker.</li>
+<li>Application admission and recovery: <code>DeletionControlStorage::register_runtime_isolated</code>
+  records the trusted local process-isolation identity. <code>DeletionControlStorage::capture_application_execution</code>
+  validates live ownership and released application state, then invalidates any
+  prior drain acknowledgement before admitting work.
+  <code>DeletionControlStorage::capture_application_execution_with_maintenance</code> also
+  observes maintenance in the same protected operation; an inherited permit is
+  validated and preserved rather than refreshed. <code>DeletionControlStorage::acknowledge_runtime_drain</code>
+  acknowledges only an exact current application fence. <code>DeletionControlStorage::reapply_deletion_decisions</code>
+  rechecks all supported bindings, removes recovered closed history, and records
+  an application-specific receipt atomically. <code>DeletionControlStorage::release_application_exposure</code>
+  requires that exact receipt and its independently protected checkpoint identity;
+  it releases pending restore maintenance in the same transaction.
+  <code>DeletionControlStorage::recover_application_control</code> preserves newer compatible
+  authority, rotates local application identity and revokes only owners covered
+  by the caller's actual exclusive process-isolation proof. Unknown domains block.
+  Registration and drain housekeeping emit no application audit events. Physical
+  deletion transitions retain required canonical audit facts without erased payload.</li>
 <li>Deletion authority maintenance: <code>DeletionControlStorage::commit_deletion_control</code>
   persists a validated exact-predecessor transition under privileged authority.
-  It retains only UUID selectors and copy outcomes outside logical application
-  replacement. Independent checkpoint evidence and exposure gates are separate
-  from this control mutation; no erasure executor is enabled by the foundation.</li>
+  <code>DeletionControlStorage::register_runtime</code> records bounded, restore-isolated
+  ownership before runtime work starts; <code>DeletionControlStorage::unregister_runtime</code>
+  consumes that ownership only after a confirmed shutdown.
+  <code>DeletionControlStorage::prepare_hot_object_history_deletion</code> checks the exact
+  predecessor and a closed UUID-bound history
+  copy before retaining its deletion intent, exact historical membership, and
+  requested/access-restricted canonical events in the same transaction.
+  <code>DeletionControlStorage::cleanup_hot_object_history</code> rechecks those fences and
+  commits exact-copy removal with its receipt and required audit fact in one transaction, including
+  reconciliation of a recovered copy whose prior outcome was already removed.
+  These operations retain only UUID selectors, ownership, copy outcomes, and
+  checkpoint identities outside logical application replacement. Independent
+  durable intent protection precedes cleanup; completion acknowledgement requires
+  independently protected removal evidence. This workflow does not release
+  application quarantine or erase other managed copies.
+  <code>DeletionControlStorage::observe_deletion_checkpoint</code> atomically records an
+  independently verified intent/completion observation and its canonical event.
+  The service retains the authenticated repository session and independently
+  protects required audit evidence before cleanup or completion acknowledgement.</li>
 <li>Task policy maintenance: <code>TaskCapacityStorage::initialize_task_policy</code>
   establishes deployment control state only once; subsequent initializers read
   the existing policy. <code>TaskCapacityStorage::replace_task_policy</code> is an explicit
