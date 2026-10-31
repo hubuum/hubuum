@@ -66,6 +66,7 @@ nav = [
       { "PostgreSQL roles" = "database_roles.md" },
       { "Backup & restore" = "backup-restore.md" },
       { "Deletion recovery checkpoints" = "deletion_recovery.md" },
+      { "Task retention" = "task_retention.md" },
       { "Verify release artifacts" = "supply-chain-security.md" },
     ] },
     { "Identity & security" = [
@@ -166,6 +167,7 @@ nav = [
       { "Lifecycle budgets" = "performance/lifecycle_budgets.md" },
       { "History segment prototype" = "performance/history_segment_prototype.md" },
       { "Artifact pipeline measurements" = "performance/artifact_pipeline.md" },
+      { "Task retention measurements" = "performance/task_retention_measurement.md" },
       { "Release profiles" = "performance/release_profiles.md" },
       { "Runtime measurements" = "performance/runtime_hardening.md" },
       { "Computed enrichment" = "performance/computed_enrichment.md" },

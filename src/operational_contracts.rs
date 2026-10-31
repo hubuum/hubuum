@@ -58,6 +58,7 @@ const STORAGE_OPERATION_SOURCES: &[&str] = &[
     include_str!("storage/context/operational.rs"),
     include_str!("storage/context/queries.rs"),
     include_str!("storage/context/relations.rs"),
+    include_str!("storage/context/task_retention.rs"),
     include_str!("storage/context/tasks.rs"),
     include_str!("storage/context/transaction.rs"),
     include_str!("storage/context/workflows.rs"),
@@ -118,6 +119,69 @@ macro_rules! metric {
 }
 
 pub(crate) const METRICS: &[MetricDefinition] = &[
+    metric!(
+        "hubuum_control_checkpoint_io_bytes_total",
+        Counter,
+        Some("bytes"),
+        ["operation"],
+        &[],
+        Process,
+        "Actual checkpoint file data bytes read or written, including partial operations"
+    ),
+    metric!(
+        "hubuum_control_checkpoint_operations_total",
+        Counter,
+        None,
+        ["operation", "outcome"],
+        &[],
+        Process,
+        "Checkpoint publisher operation outcomes"
+    ),
+    metric!(
+        "hubuum_control_checkpoint_operation_duration_seconds",
+        Histogram,
+        Some("seconds"),
+        ["operation", "outcome"],
+        BACKGROUND_BUCKETS_SECONDS,
+        Process,
+        "Checkpoint publisher operation duration"
+    ),
+    metric!(
+        "hubuum_control_checkpoint_lock_attempts_total",
+        Counter,
+        None,
+        ["outcome"],
+        &[],
+        Process,
+        "Nonblocking checkpoint publication lock attempts"
+    ),
+    metric!(
+        "hubuum_control_checkpoint_lock_duration_seconds",
+        Histogram,
+        Some("seconds"),
+        ["outcome"],
+        LATENCY_BUCKETS_SECONDS,
+        Process,
+        "Checkpoint publication lock attempt duration"
+    ),
+    metric!(
+        "hubuum_control_checkpoint_gc_files_total",
+        Counter,
+        None,
+        [],
+        &[],
+        Process,
+        "Authenticated superseded checkpoint files removed"
+    ),
+    metric!(
+        "hubuum_control_checkpoint_gc_bytes_total",
+        Counter,
+        Some("bytes"),
+        [],
+        &[],
+        Process,
+        "File lengths of authenticated superseded checkpoints removed"
+    ),
     metric!(
         "hubuum_tracing_info",
         Gauge,
@@ -1330,6 +1394,32 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             .collect::<Vec<_>>()
     };
     let values = match (metric, label) {
+        ("hubuum_control_checkpoint_io_bytes_total", "operation") => strings(&["read", "write"]),
+        (
+            "hubuum_control_checkpoint_operations_total"
+            | "hubuum_control_checkpoint_operation_duration_seconds",
+            "operation",
+        ) => strings(&[
+            "read",
+            "write",
+            "encode_sign",
+            "verify",
+            "fsync_file",
+            "fsync_directory",
+            "publish",
+            "gc",
+            "coalescing_wait",
+        ]),
+        (
+            "hubuum_control_checkpoint_operations_total"
+            | "hubuum_control_checkpoint_operation_duration_seconds",
+            "outcome",
+        ) => strings(&["success", "failure"]),
+        (
+            "hubuum_control_checkpoint_lock_attempts_total"
+            | "hubuum_control_checkpoint_lock_duration_seconds",
+            "outcome",
+        ) => strings(&["acquired", "contended", "failure"]),
         ("hubuum_tracing_info", "sampling_mode") => TracingSamplingMode::value_variants()
             .iter()
             .map(|mode| mode.as_str().to_string())
@@ -1367,6 +1457,9 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
                 "payload_too_large",
                 "database_error",
                 "conflict",
+                "idempotency_key_conflict",
+                "task_details_expired",
+                "legacy_request_unverifiable",
                 "precondition_failed",
                 "revision_conflict",
                 "too_many_requests",
@@ -1883,6 +1976,8 @@ struct CliArgumentMetadata {
 
 fn process_environment_metadata(name: &str) -> Option<CliArgumentMetadata> {
     let (value_kind, default, allowed_values): (&str, &[&str], &[&str]) = match name {
+        "HUBUUM_CONTROL_CHECKPOINT_MEASURE" => ("boolean", &["false"], &["true", "false"]),
+        "HUBUUM_MEASUREMENT_CPU_AFFINITY" => ("cpu_set", &[], &[]),
         "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY" => {
             ("boolean", &["false"], &["true", "false", "1", "0"])
         }
@@ -2221,6 +2316,18 @@ fn argument_value_kind(argument: &clap::Arg) -> &'static str {
 
 fn cli_requirements(command: &str, argument: &str) -> &'static [&'static str] {
     match (command, argument) {
+        ("hubuum-admin", "task_retention") => {
+            &["control_recovery_directory", "control_recovery_key"]
+        }
+        (
+            "hubuum-admin",
+            "task_retention_confirmation"
+            | "task_retention_deduplication_seconds"
+            | "task_retention_details_seconds"
+            | "task_hold_id"
+            | "task_hold_task",
+        ) => &["task_retention"],
+        ("hubuum-admin", "task_hold_expires_at" | "task_hold_reason") => &["task_hold_task"],
         (
             "hubuum-admin",
             "control_checkpoint"
@@ -2279,6 +2386,7 @@ fn admin_process_environment(name: &str) -> bool {
     matches!(
         name,
         "HUBUUM_TOKEN_HASH_KEY"
+            | "HUBUUM_CONTROL_CHECKPOINT_MEASURE"
             | "HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID"
             | "HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS"
             | "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY"
@@ -2286,10 +2394,16 @@ fn admin_process_environment(name: &str) -> bool {
 }
 
 fn runtime_roles(name: &str, admin_applicable: bool) -> Vec<&'static str> {
+    if name == "HUBUUM_MEASUREMENT_CPU_AFFINITY" {
+        return vec!["benchmark"];
+    }
     if name.contains("_TEST_") || name.ends_with("_TESTS") {
         return vec!["test"];
     }
-    if name == "HUBUUM_MIGRATION_DATABASE_URL" {
+    if matches!(
+        name,
+        "HUBUUM_MIGRATION_DATABASE_URL" | "HUBUUM_CONTROL_CHECKPOINT_MEASURE"
+    ) {
         return vec!["admin"];
     }
     let mut roles = match name {
@@ -2654,6 +2768,7 @@ mod tests {
 
     const METRIC_SOURCES: &[&str] = &[
         include_str!("observability/metrics.rs"),
+        include_str!("observability/metrics/checkpoint.rs"),
         include_str!("observability/metrics/computed_field.rs"),
         include_str!("observability/metrics/db.rs"),
         include_str!("observability/metrics/event.rs"),

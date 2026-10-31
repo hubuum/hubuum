@@ -7,7 +7,7 @@ pub(super) async fn build_export_artifact(
     execution: ExportExecution,
     timings: ExportExecutionTimings,
     output: &crate::services::artifacts::TaskOutput,
-    expires_at: chrono::DateTime<chrono::Utc>,
+    availability: StorageOutputAvailability,
 ) -> Result<ExportArtifact, ApiError> {
     let content_type = runtime.content_type();
     let mut warnings = execution.warnings.clone();
@@ -87,6 +87,6 @@ pub(super) async fn build_export_artifact(
         warnings,
         template_name,
         timings,
-        expires_at,
+        availability,
     })
 }

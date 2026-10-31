@@ -252,6 +252,7 @@ mod query_observation_control;
 mod query_usage;
 mod relations;
 mod schema_evolution;
+mod task_retention;
 mod tasks;
 mod transaction;
 mod workflows;

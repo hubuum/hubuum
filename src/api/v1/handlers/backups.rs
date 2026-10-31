@@ -1,3 +1,5 @@
+use crate::models::TaskDetailsExpiredResponse;
+use crate::services::tasks::TaskSubmissionOperation;
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, post, web};
 use base64::Engine;
 
@@ -13,10 +15,10 @@ use crate::models::{
 };
 use crate::permissions::AppContext;
 use crate::services::tasks::{
-    TaskSubmission, backup_output, backup_output_summary, load_authorized_backup, submit_task,
-    task_scope_snapshot,
+    TaskSubmission, TaskSubmissionAttempt, backup_output, backup_output_summary,
+    load_authorized_backup, task_scope_snapshot,
 };
-use crate::tasks::{idempotency_key_from_headers, kick_task_worker, request_hash};
+use crate::tasks::{idempotency_key_from_headers, request_hash};
 
 fn digest_header_from_sha256(sha256: &str) -> Result<String, ApiError> {
     let encoded = sha256.as_bytes();
@@ -59,7 +61,8 @@ fn invalid_stored_sha256() -> ApiError {
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Unscoped administrator access required", body = ApiErrorResponse),
-        (status = 409, description = "Conflict", body = ApiErrorResponse),
+        (status = 410, description = "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.", body = TaskDetailsExpiredResponse, headers(("Cache-Control" = String, description = "no-store; no automatic retry is implied"))),
+        (status = 409, description = "Conflict; reason idempotency_key_conflict identifies a changed protected request", body = ApiErrorResponse, headers(("Cache-Control" = String, description = "no-store for protected request conflicts; no Retry-After"))),
         (status = 429, description = "Shared task admission or byte capacity exhausted", body = ApiErrorResponse),
         (status = 503, description = "Task identity or control reconciliation unavailable", body = ApiErrorResponse)
     )
@@ -72,29 +75,42 @@ pub async fn create_backup(
     request: web::Json<BackupRequest>,
 ) -> Result<impl Responder, ApiError> {
     let request = request.into_inner();
-    authorize_backup_request(&context, &requestor.principal, requestor.scopes()).await?;
     let payload = serde_json::to_value(&request)?;
     let hash = request_hash(&payload)?;
-    let scope_snapshot = task_scope_snapshot(
-        Some(TokenID::new(requestor.token_meta.id().id())?),
-        requestor.scopes(),
-    );
-    let task = submit_task(
+    let attempt = TaskSubmissionAttempt::prepare(
         &context,
-        TaskSubmission::new(
-            TaskKind::Backup,
-            PrincipalID::new(requestor.principal.id().id())?,
-            payload,
-            1,
-        )
-        .idempotency_key(idempotency_key_from_headers(req.headers())?)
-        .request_hash(Some(hash))
-        .scope_snapshot(scope_snapshot),
+        &requestor.principal,
+        idempotency_key_from_headers(req.headers())?,
+        TaskSubmissionOperation::Backup,
+        &request,
+        Some(&hash),
     )
     .await?;
+    let task = if let Some(task) = attempt.lookup(&context, &requestor.principal).await? {
+        task
+    } else {
+        authorize_backup_request(&context, &requestor.principal, requestor.scopes()).await?;
+        let scope_snapshot = task_scope_snapshot(
+            Some(TokenID::new(requestor.token_meta.id().id())?),
+            requestor.scopes(),
+        );
+        attempt
+            .submit(
+                &context,
+                &requestor.principal,
+                TaskSubmission::new(
+                    TaskKind::Backup,
+                    PrincipalID::new(requestor.principal.id().id())?,
+                    payload,
+                    1,
+                )
+                .request_hash(Some(hash))
+                .scope_snapshot(scope_snapshot),
+            )
+            .await?
+    };
     let output = backup_output_summary(&context, TaskID::new(task.id)?).await?;
     let response = task.to_response_with_backup_output(output.as_ref())?;
-    kick_task_worker(context.clone());
     Ok(ApiResponse::accepted_at(
         response,
         api_locations::task(task.id)?,

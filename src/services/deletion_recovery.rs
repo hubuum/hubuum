@@ -10,12 +10,21 @@ mod repository;
 mod status;
 pub(crate) use reapplication::reapply;
 pub(crate) use status::status;
+mod task_admin;
+mod task_key;
+mod task_receipts;
+pub(crate) use task_admin::{TaskRetentionAdminAction, administer_task_retention};
+pub(crate) use task_receipts::{TaskReceiptService, TaskRetentionSweep};
 
 pub(crate) use cleanup::cleanup_object_history;
 
 use std::path::Path;
 
-use hubuum_storage_core::{DeletionControlState, DeletionControlStorage, RuntimeIsolationDomain};
+use hubuum_storage_core::{
+    ApplicationControlState, ControlCheckpointCapture, DeletionControlState,
+    DeletionControlStorage, RuntimeIsolationDomain, StorageValidationError, TaskControlRecovery,
+    TaskReceiptActivation, TaskRetentionStorage,
+};
 use serde::Serialize;
 
 use crate::config::ControlRecoveryOptions;
@@ -37,6 +46,12 @@ pub(crate) struct RuntimeRecoveryLifetime {
 }
 
 impl RuntimeRecoveryLifetime {
+    pub(crate) fn isolation_domain(&self) -> Option<RuntimeIsolationDomain> {
+        self.permit
+            .as_ref()
+            .and_then(RuntimeRecoveryPermit::isolation_domain)
+    }
+
     pub(crate) fn release(mut self) {
         drop(self.permit.take());
     }
@@ -93,15 +108,18 @@ pub(crate) async fn require_control_runtime_lifetime(
         Some((directory, key)) => {
             let isolation = runtime_isolation(directory, key, false).await?;
             let required = evidence(directory, key).await?;
-            let current = storage_handle(context).read_deletion_control().await?;
-            if !current.covers(required.state()) {
+            let current = storage_handle(context).capture_control_checkpoint().await?;
+            if !covers_checkpoint(&current, required.checkpoint()) {
                 return Err(unavailable(
                     "Restore authority is behind independently acknowledged control; stop producers and run --recover-control",
                 ));
             }
             Some(isolation)
         }
-        None => None,
+        None => {
+            require_unprotected_tasks(context).await?;
+            None
+        }
     };
     Ok(RuntimeRecoveryPermit { isolation }.into_runtime_lifetime())
 }
@@ -118,29 +136,33 @@ pub(crate) async fn require_runtime_permit(
         Some((directory, key)) => Some(evidence(directory, key).await?),
         None => None,
     };
-    let current = storage_handle(context).read_deletion_control().await?;
+    let capture = storage_handle(context).capture_control_checkpoint().await?;
+    let current = capture.deletion().state();
+    if required.is_none() {
+        require_unprotected_tasks(context).await?;
+    }
     if required
         .as_ref()
-        .is_some_and(|required| !current.covers(required.state()))
+        .is_some_and(|required| !covers_checkpoint(&capture, required.checkpoint()))
     {
         return Err(unavailable(
             "Recovered control does not cover the latest independent checkpoint; run hubuum-admin --recover-control while all replicas remain stopped",
         ));
     }
+    if let Some(required) = &required {
+        require_activation_checkpoint(&capture, required.checkpoint())?;
+    }
     let application = storage_handle(context).read_application_control().await?;
-    if !application.is_released_for(&current) {
+    if !application.is_released_for(current) {
         return Err(unavailable(
             "Retained deletion decisions restrict application exposure and worker execution; keep the deployment quarantined until lifecycle restrictions can be reapplied",
         ));
     }
-    if !current.intents().is_empty()
-        && !required.as_ref().is_some_and(|required| {
-            application.reapplication() == required.checkpoint().reapplication()
-                && application.checkpoint().is_some_and(|checkpoint| {
-                    checkpoint.as_str() == required.checkpoint().identity()
-                })
-        })
-    {
+    if !reapplication_is_protected(
+        &capture,
+        &application,
+        required.as_ref().map(RecoveryEvidence::checkpoint),
+    ) {
         return Err(unavailable(
             "Application release does not match independently protected reapplication; run --reapply-control",
         ));
@@ -171,6 +193,21 @@ pub(crate) async fn recover(
             "Recovered authority read-back did not cover the checkpoint; keep the deployment quarantined",
         ));
     }
+    if let Some(tasks) = required.checkpoint().task_control() {
+        let current = storage.read_task_control().await?;
+        let change = TaskControlRecovery::new(current, tasks.clone()).map_err(|_| unavailable(
+            "Task recovery conflicts with retained receipts or retention authority; keep the deployment quarantined",
+        ))?;
+        storage.recover_task_control(change).await?;
+    }
+    if !covers_checkpoint(
+        &storage.capture_control_checkpoint().await?,
+        required.checkpoint(),
+    ) {
+        return Err(unavailable(
+            "Recovered task authority does not cover independent evidence; keep the deployment quarantined",
+        ));
+    }
     Ok(report(&recovered, required.state()))
 }
 
@@ -189,13 +226,13 @@ pub(crate) async fn checkpoint(
     key_file: &Path,
     initialize: bool,
 ) -> Result<ControlRecoveryReport, ApiError> {
-    let capture = storage_handle(context).capture_deletion_control().await?;
+    let capture = storage_handle(context).capture_control_checkpoint().await?;
     let directory = directory.to_owned();
     let key_file = key_file.to_owned();
     tokio::task::spawn_blocking(move || {
         let repository = CheckpointRepository::open(&directory, &key_file)?;
-        let checkpoint = repository.publish(&capture, initialize)?;
-        Ok(report(capture.state(), checkpoint.state()))
+        let checkpoint = repository.publish_control(&capture, initialize)?;
+        Ok(report(capture.deletion().state(), checkpoint.state()))
     })
     .await
     .map_err(|_| unavailable("Checkpoint worker failed"))?
@@ -207,13 +244,73 @@ pub(crate) async fn verify(
     key_file: &Path,
 ) -> Result<ControlRecoveryReport, ApiError> {
     let required = evidence(directory, key_file).await?;
-    let current = storage_handle(context).read_deletion_control().await?;
-    if !current.covers(required.state()) {
+    let capture = storage_handle(context).capture_control_checkpoint().await?;
+    if !covers_checkpoint(&capture, required.checkpoint()) {
         return Err(unavailable(
             "Recovered control does not cover the latest independent checkpoint; keep the deployment quarantined",
         ));
     }
-    Ok(report(&current, required.state()))
+    Ok(report(capture.deletion().state(), required.state()))
+}
+
+fn covers_checkpoint(
+    current: &ControlCheckpointCapture,
+    required: &repository::DurableCheckpoint,
+) -> bool {
+    current.deletion().state().covers(required.state())
+        && required
+            .task_control()
+            .is_none_or(|tasks| current.task_control().covers(tasks))
+}
+
+fn reapplication_is_protected(
+    current: &ControlCheckpointCapture,
+    application: &ApplicationControlState,
+    required: Option<&repository::DurableCheckpoint>,
+) -> bool {
+    let needs_proof = !current.deletion().state().intents().is_empty()
+        || application.reapplication().is_some()
+        || current.task_reapplication().is_some()
+        || required.is_some_and(|checkpoint| {
+            checkpoint.reapplication().is_some() || checkpoint.task_reapplication().is_some()
+        });
+    !needs_proof
+        || required.is_some_and(|checkpoint| {
+            application.reapplication() == checkpoint.reapplication()
+                && current.task_reapplication() == checkpoint.task_reapplication()
+        })
+}
+
+fn require_activation_checkpoint(
+    current: &ControlCheckpointCapture,
+    required: &repository::DurableCheckpoint,
+) -> Result<(), ApiError> {
+    if !matches!(
+        current.task_control().activation(),
+        TaskReceiptActivation::Disabled
+    ) && required
+        .task_control()
+        .is_none_or(|tasks| tasks.activation() != current.task_control().activation())
+    {
+        return Err(unavailable(
+            "Task receipt activation requires independent publication before producers start",
+        ));
+    }
+    Ok(())
+}
+
+async fn require_unprotected_tasks(context: &impl StorageContext) -> Result<(), ApiError> {
+    if !matches!(
+        storage_handle(context)
+            .read_task_receipt_activation()
+            .await?,
+        TaskReceiptActivation::Disabled
+    ) {
+        return Err(unavailable(
+            "Protected task receipts require independent recovery configuration on every producer",
+        ));
+    }
+    Ok(())
 }
 
 fn report(
@@ -231,6 +328,10 @@ fn report(
 
 fn unavailable(message: &str) -> ApiError {
     ApiError::ServiceUnavailable(message.into())
+}
+
+fn invalid_control(error: StorageValidationError) -> ApiError {
+    unavailable(&format!("Invalid protected control state: {error}"))
 }
 
 #[cfg(all(test, unix))]

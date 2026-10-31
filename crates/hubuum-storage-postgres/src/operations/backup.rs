@@ -352,9 +352,10 @@ fn history_field_mappings(
             ("actor_user_id", "actor_principal_id"),
             ("initiator_user_id", "initiator_principal_id"),
         ],
-        StorageBackupHistorySection::TerminalTasks => {
-            &[("initiator_user_id", "initiator_principal_id")]
-        }
+        StorageBackupHistorySection::TerminalTasks => &[
+            ("initiator_user_id", "initiator_principal_id"),
+            ("detail_expires_at", "details_expires_at"),
+        ],
         _ => &[],
     }
 }
@@ -366,6 +367,14 @@ fn history_private_fields(section: StorageBackupHistorySection) -> &'static [&'s
             "submitted_token_id",
             "lease_token",
             "lease_expires_at",
+            "receipt_generation",
+            "receipt_incarnation",
+            "receipt_created_revision",
+            "receipt_protection_deadline",
+            "receipt_checkpoint",
+            "receipt_legacy",
+            "admission_event",
+            "details_purge_pending",
         ],
         StorageBackupHistorySection::AuditEvents => &["fanout_locked_until", "fanout_claim_token"],
         StorageBackupHistorySection::ImportResults => &["execution_index", "execution_claim_token"],
@@ -476,6 +485,17 @@ pub(crate) fn history_row_to_postgres(
             "Logical backup history row contains adapter-private field '{field}'"
         )));
     }
+    if section == StorageBackupHistorySection::TerminalTasks {
+        // Replay projects every physical column, so omitted fields do not use
+        // database defaults. A terminal backup restores neither pending receipt
+        // activation nor purge acknowledgement; retained control is reapplied
+        // separately before exposure, including when receipts are enabled.
+        object.insert("receipt_legacy".to_string(), Value::Bool(false));
+        object.insert("details_purge_pending".to_string(), Value::Bool(false));
+        object
+            .entry("recovery_unavailable".to_string())
+            .or_insert(Value::Bool(false));
+    }
     if matches!(
         section,
         StorageBackupHistorySection::CollectionHistory
@@ -533,7 +553,10 @@ impl SnapshotFilter {
         match self {
             Self::All => Ok(None),
             Self::TerminalTasks if table == "tasks" => Ok(Some(
-                "status IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled')",
+                "status IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled') AND public.hubuum_task_details_visible(id)",
+            )),
+            Self::TerminalTaskResults if table == "export_task_outputs" => Ok(Some(
+                "public.hubuum_task_outputs_visible(snapshot_row.task_id) AND EXISTS (SELECT 1 FROM tasks t WHERE t.id=snapshot_row.task_id AND t.status IN ('succeeded','partially_succeeded','failed','cancelled'))",
             )),
             Self::TerminalTaskResults
                 if matches!(
@@ -542,20 +565,22 @@ impl SnapshotFilter {
                 ) =>
             {
                 Ok(Some(
-                    "EXISTS (SELECT 1 FROM tasks t WHERE t.id = snapshot_row.task_id AND t.status IN \
+                    "EXISTS (SELECT 1 FROM tasks t WHERE t.id = snapshot_row.task_id AND public.hubuum_task_details_visible(t.id) AND t.status IN \
                      ('succeeded', 'partially_succeeded', 'failed', 'cancelled') OFFSET 0)",
                 ))
             }
             Self::HistoryEvents if table == "events" => Ok(Some(
-                "snapshot_row.entity_type <> 'task' OR EXISTS \
-                 (SELECT 1 FROM tasks t WHERE t.id = snapshot_row.entity_id AND t.status IN \
-                 ('succeeded', 'partially_succeeded', 'failed', 'cancelled') OFFSET 0)",
+                "snapshot_row.entity_type <> 'task' OR NOT EXISTS \
+                 (SELECT 1 FROM tasks t WHERE t.id=snapshot_row.entity_id \
+                  AND t.logical_identity #>> '{subject,identity,identity}'=snapshot_row.logical_identity #>> '{references,/entity_id,reference,identity}' \
+                  AND t.status IN ('queued','validating','running') OFFSET 0)",
             )),
             Self::TerminalDeliveries if table == "event_deliveries" => Ok(Some(
                 "snapshot_row.status IN ('succeeded', 'dead') AND EXISTS \
-                 (SELECT 1 FROM events e WHERE e.id = snapshot_row.event_id AND (e.entity_type <> 'task' OR EXISTS \
-                 (SELECT 1 FROM tasks t WHERE t.id = e.entity_id AND t.status IN \
-                 ('succeeded', 'partially_succeeded', 'failed', 'cancelled') OFFSET 0)) OFFSET 0)",
+                 (SELECT 1 FROM events e WHERE e.id=snapshot_row.event_id AND (e.entity_type <> 'task' OR NOT EXISTS \
+                  (SELECT 1 FROM tasks t WHERE t.id=e.entity_id \
+                   AND t.logical_identity #>> '{subject,identity,identity}'=e.logical_identity #>> '{references,/entity_id,reference,identity}' \
+                   AND t.status IN ('queued','validating','running') OFFSET 0)) OFFSET 0)",
             )),
             _ => Err(PostgresStorageError::database(
                 "Refused an invalid backup snapshot filter/table combination",

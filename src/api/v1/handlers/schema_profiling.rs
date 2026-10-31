@@ -1,3 +1,6 @@
+use crate::models::TaskDetailsExpiredResponse;
+use crate::services::tasks::TaskSubmissionAttempt;
+use crate::services::tasks::TaskSubmissionOperation;
 use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
 use hubuum_domain::{ClassId, TaskId};
 use hubuum_storage_core::{
@@ -14,7 +17,7 @@ use crate::models::{Permissions, TaskKind, TaskResponse};
 use crate::permissions::AppContext;
 use crate::services::{schema_profiling, tasks::load_authorized_task};
 use crate::storage::storage_handle;
-use crate::tasks::{idempotency_key_from_headers, kick_task_worker};
+use crate::tasks::idempotency_key_from_headers;
 use crate::traits::{SelfAccessors, UserPermissions};
 
 #[utoipa::path(post, path = "/api/v1/classes/{class_id}/schema/profiles", tag = "classes",
@@ -26,7 +29,8 @@ use crate::traits::{SelfAccessors, UserPermissions};
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Class access denied", body = ApiErrorResponse),
         (status = 404, description = "Class not found", body = ApiErrorResponse),
-        (status = 409, description = "Idempotency key conflict", body = ApiErrorResponse),
+        (status = 410, description = "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.", body = TaskDetailsExpiredResponse, headers(("Cache-Control" = String, description = "no-store; no automatic retry is implied"))),
+        (status = 409, description = "Changed protected request; reason idempotency_key_conflict", body = ApiErrorResponse, headers(("Cache-Control" = String, description = "no-store for protected request conflicts; no Retry-After"))),
         (status = 429, description = "Shared task admission or byte capacity exhausted", body = ApiErrorResponse),
         (status = 503, description = "Task identity or control reconciliation unavailable", body = ApiErrorResponse))) ]
 #[post("/{class_id}/schema/profiles")]
@@ -37,25 +41,35 @@ pub(crate) async fn create_schema_profile(
     class_id: web::Path<ClassId>,
     options: web::Json<SchemaProfileRequest>,
 ) -> Result<impl Responder, ApiError> {
-    let class = class_id.into_inner().instance(&context).await?;
-    crate::can!(
+    let class_id = class_id.into_inner();
+    let options = options.into_inner();
+    let hash = crate::tasks::request_hash(
+        &serde_json::json!({ "class_id": class_id, "options": &options }),
+    )?;
+    let attempt = TaskSubmissionAttempt::prepare(
         &context,
         &requestor.principal,
-        requestor.scopes(),
-        [Permissions::ReadClass],
-        class
-    );
-    let mut task = schema_profiling::submit(
-        &context,
-        &requestor,
-        &class,
-        options.into_inner(),
         idempotency_key_from_headers(req.headers())?,
+        TaskSubmissionOperation::SchemaProfile,
+        &(class_id, &options),
+        Some(&hash),
     )
     .await?;
+    let mut task = if let Some(task) = attempt.lookup(&context, &requestor.principal).await? {
+        task
+    } else {
+        let class = class_id.instance(&context).await?;
+        crate::can!(
+            &context,
+            &requestor.principal,
+            requestor.scopes(),
+            [Permissions::ReadClass],
+            class
+        );
+        schema_profiling::submit(&context, &requestor, &class, options, attempt).await?
+    };
     super::tasks::discovery::redact(&context, &requestor, std::slice::from_mut(&mut task)).await?;
     let response = task.to_response()?;
-    kick_task_worker(context.clone());
     Ok(ApiResponse::accepted_at(
         response,
         locations::task(task.id)?,

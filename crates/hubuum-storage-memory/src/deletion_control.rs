@@ -236,10 +236,27 @@ impl DeletionControlStorage for MemoryStorage {
 
     async fn release_application_exposure(
         &self,
-        receipt: ApplicationReapplication,
+        proof: ApplicationExposureProof,
         checkpoint: DeletionCheckpointIdentity,
     ) -> Result<(), StorageError> {
-        let mut state = self.state.write_control().await;
+        let mut guard = self.state.write_control().await;
+        let mut state = guard.clone();
+        let receipt = proof.deletion();
+        let task_proof_required = !matches!(
+            state.task_control.activation(),
+            TaskReceiptActivation::Disabled
+        );
+        if (task_proof_required && proof.tasks().is_none())
+            || proof.tasks().is_some_and(|tasks| {
+                Some(tasks) != state.task_reapplication.as_ref()
+                    || tasks.incarnation() != state.application_control.fence().incarnation()
+                    || tasks.task_revision() != state.task_control.revision()
+            })
+        {
+            return Err(StorageError::conflict(
+                "Task retention has not been reapplied and protected for this application",
+            ));
+        }
         if receipt.revision() != state.deletion_control.revision()
             || !state.deletion_control.has_required_audit_completion()
         {
@@ -249,8 +266,12 @@ impl DeletionControlStorage for MemoryStorage {
         }
         let released = state
             .application_control
-            .release(&receipt, checkpoint)
+            .release(receipt, checkpoint)
             .map_err(invalid_contract_value)?;
+        if state.restore_repairs_pending {
+            crate::backup::enqueue_restored_repairs(&mut state)?;
+            state.restore_repairs_pending = false;
+        }
         state.application_control = released;
         if state.pending_restore {
             state.maintenance_state = MaintenanceState::Normal;
@@ -258,6 +279,7 @@ impl DeletionControlStorage for MemoryStorage {
             state.restore_instances.clear();
             state.pending_restore = false;
         }
+        *guard = state;
         Ok(())
     }
 
@@ -286,6 +308,7 @@ impl DeletionControlStorage for MemoryStorage {
         state.apply_deletion_authority(change.next().clone())?;
         state.runtime_registrations.clear();
         state.application_control = ApplicationControlState::quarantined(fence);
+        state.task_reapplication = None;
         Ok(fence)
     }
 
@@ -450,7 +473,7 @@ impl MemoryState {
             .validate_execution(&self.deletion_control, permit)
     }
 
-    fn require_runtime_drain(&self) -> Result<(), StorageError> {
+    pub(super) fn require_runtime_drain(&self) -> Result<(), StorageError> {
         if self
             .runtime_registrations
             .values()

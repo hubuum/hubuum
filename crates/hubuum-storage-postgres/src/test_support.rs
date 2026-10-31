@@ -764,7 +764,8 @@ pub async fn store_export_output(
     task_id_value: TaskId,
     artifact: StorageExportTaskArtifact,
 ) -> Result<(), PostgresStorageError> {
-    let (identity, content, report, output_expires_at, durations) = artifact.into_parts();
+    let (identity, content, report, output_expires_at, durations) =
+        artifact.into_parts(chrono::Utc::now())?;
     let (template_name, content_type) = identity.into_parts();
     let (json_output, text_output, proof) = content.into_parts();
     if proof.is_some() {

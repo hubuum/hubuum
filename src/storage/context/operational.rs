@@ -1,8 +1,8 @@
 use super::*;
 use hubuum_storage_core::{
-    ApplicationControlState, ApplicationFence, ApplicationReapplication, ApplicationWorkAdmission,
-    DeletionAuditObservation, DeletionCheckpointIdentity, HotObjectHistoryCleanup,
-    HotObjectHistoryDeletion, RuntimeIsolationDomain, RuntimeRegistration,
+    ApplicationControlState, ApplicationExposureProof, ApplicationFence, ApplicationReapplication,
+    ApplicationWorkAdmission, DeletionAuditObservation, DeletionCheckpointIdentity,
+    HotObjectHistoryCleanup, HotObjectHistoryDeletion, RuntimeIsolationDomain, RuntimeRegistration,
 };
 
 #[async_trait]
@@ -123,7 +123,7 @@ impl DeletionControlStorage for StorageHandle {
 
     async fn release_application_exposure(
         &self,
-        receipt: ApplicationReapplication,
+        receipt: ApplicationExposureProof,
         checkpoint: DeletionCheckpointIdentity,
     ) -> Result<(), StorageError> {
         self.observe_storage_call(

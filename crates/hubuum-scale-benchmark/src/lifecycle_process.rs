@@ -13,6 +13,68 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
 const MAX_DIAGNOSTIC_BYTES: u64 = 1024 * 1024;
 
+/// The private administrator refusal is retryable without weakening protection.
+/// Other unavailable outcomes can require recovery or a different key.
+pub fn control_repository_busy(stderr: &[u8]) -> bool {
+    std::str::from_utf8(stderr).is_ok_and(|text| {
+        text.lines().any(|line| {
+            line == "Error: ServiceUnavailable(\"Control repository is busy; retry without bypassing protection\")"
+        })
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn cpu_mask(value: &str) -> io::Result<std::collections::BTreeSet<usize>> {
+    let mut result = std::collections::BTreeSet::new();
+    for segment in value.trim().split(',') {
+        let (first, last) = segment.split_once('-').unwrap_or((segment, segment));
+        let parse = |value: &str| value.parse::<usize>().map_err(io::Error::other);
+        let (first, last) = (parse(first)?, parse(last)?);
+        if first > last || last > 65536 {
+            return Err(io::Error::other("Invalid measured CPU affinity mask"));
+        }
+        result.extend(first..=last);
+    }
+    Ok(result)
+}
+
+#[cfg(target_os = "linux")]
+fn process_disappeared(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::NotFound || error.raw_os_error() == Some(libc::ESRCH)
+}
+
+#[cfg(target_os = "linux")]
+fn verify_cpu_affinity(pids: &[Pid], expected: &str) -> io::Result<()> {
+    let expected = cpu_mask(expected)?;
+    for pid in pids {
+        let tasks = match fs::read_dir(format!("/proc/{pid}/task")) {
+            Ok(tasks) => tasks,
+            Err(error) if process_disappeared(&error) => continue,
+            Err(error) => return Err(error),
+        };
+        for task in tasks {
+            let task = match task {
+                Ok(task) => task,
+                Err(error) if process_disappeared(&error) => continue,
+                Err(error) => return Err(error),
+            };
+            let status = match fs::read_to_string(task.path().join("status")) {
+                Ok(status) => status,
+                Err(error) if process_disappeared(&error) => continue,
+                Err(error) => return Err(error),
+            };
+            let mask = status
+                .lines()
+                .find_map(|line| line.strip_prefix("Cpus_allowed_list:"))
+                .ok_or_else(|| io::Error::other("Missing kernel CPU affinity"))?;
+            if !cpu_mask(mask)?.is_subset(&expected) {
+                return Err(io::Error::other("Measured process escaped CPU affinity"));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub struct ProcessLimits {
     resident_bytes: u64,
     timeout: Duration,
@@ -35,6 +97,7 @@ impl ProcessLimits {
 struct ManagedChild {
     child: Child,
     running: bool,
+    kernel_peak_resident_bytes: Option<u64>,
 }
 
 impl ManagedChild {
@@ -66,8 +129,26 @@ impl ManagedChild {
                 killpg(self.child.id() as i32, SIGKILL);
             }
         }
-        #[cfg(unix)]
+        #[cfg(all(unix, not(target_os = "linux")))]
         let status = Some(self.child.wait()?);
+        #[cfg(target_os = "linux")]
+        let status = {
+            use std::mem::MaybeUninit;
+            use std::os::unix::process::ExitStatusExt;
+
+            let mut status = 0;
+            let mut usage = MaybeUninit::<libc::rusage>::zeroed();
+            let waited =
+                unsafe { libc::wait4(self.child.id() as i32, &mut status, 0, usage.as_mut_ptr()) };
+            if waited == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            self.kernel_peak_resident_bytes =
+                u64::try_from(unsafe { usage.assume_init() }.ru_maxrss)
+                    .ok()
+                    .map(|kilobytes| kilobytes.saturating_mul(1024));
+            Some(ExitStatus::from_raw(status))
+        };
         #[cfg(not(unix))]
         let status = self.child.try_wait()?;
         if status.is_some() {
@@ -111,7 +192,10 @@ pub fn run(
     limits: &ProcessLimits,
 ) -> (io::Result<Output>, LifecycleStageResources) {
     let started = Instant::now();
-    let mut resources = LifecycleStageResources::default();
+    let mut resources = LifecycleStageResources {
+        cpu_affinity: std::env::var("HUBUUM_MEASUREMENT_CPU_AFFINITY").ok(),
+        ..Default::default()
+    };
     let result = run_inner(command, directory, limits, started, &mut resources);
     resources.elapsed_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
     (result, resources)
@@ -139,6 +223,7 @@ fn run_inner(
     let mut child = ManagedChild {
         child: command.spawn()?,
         running: true,
+        kernel_peak_resident_bytes: None,
     };
     let root = Pid::from_u32(child.child.id());
     let mut system = System::new();
@@ -161,6 +246,11 @@ fn run_inner(
                 }),
             );
             index += 1;
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(mask) = &resources.cpu_affinity {
+            verify_cpu_affinity(&descendants, mask)?;
+            resources.affinity_verification_samples += 1;
         }
         let resident = descendants
             .iter()
@@ -187,6 +277,16 @@ fn run_inner(
             )));
         }
         if let Some(status) = child.try_wait()? {
+            resources.kernel_peak_resident_bytes = child.kernel_peak_resident_bytes;
+            if resources
+                .kernel_peak_resident_bytes
+                .is_some_and(|peak| peak > limits.resident_bytes)
+            {
+                resources.termination = Some("resident_memory_limit".to_string());
+                return Err(io::Error::other(
+                    "lifecycle process exceeded kernel memory high-water limit",
+                ));
+            }
             let read = |path| -> io::Result<Vec<u8>> {
                 let mut bytes = Vec::new();
                 File::open(path)?
@@ -203,7 +303,7 @@ fn run_inner(
                 stderr: read(stderr)?,
             });
         }
-        thread::sleep(Duration::from_millis(25));
+        thread::sleep(Duration::from_millis(20));
     }
 }
 
@@ -240,6 +340,23 @@ mod tests {
             }
             thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[rstest]
+    #[case::missing_process(libc::ENOENT, true)]
+    #[case::exited_thread(libc::ESRCH, true)]
+    #[case::permission_denied(libc::EACCES, false)]
+    #[case::operation_denied(libc::EPERM, false)]
+    #[case::io_failure(libc::EIO, false)]
+    fn affinity_sampling_only_tolerates_disappearing_processes(
+        #[case] code: i32,
+        #[case] disappeared: bool,
+    ) {
+        assert_eq!(
+            process_disappeared(&io::Error::from_raw_os_error(code)),
+            disappeared
+        );
     }
 
     #[test]

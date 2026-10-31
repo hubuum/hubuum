@@ -62,6 +62,10 @@ pub(crate) async fn execute_backup_task(
         .clone()
         .ok_or_else(|| ApiError::BadRequest("Backup task payload is missing".to_string()))?;
     let request: BackupRequest = serde_json::from_value(payload)?;
+    let availability = settings
+        .output_retention
+        .output_availability()
+        .map_err(ApiError::BadRequest)?;
     let expires_at = settings.output_expires_at(Utc::now().naive_utc())?;
     let output = crate::services::artifacts::TaskOutput::begin(
         context,
@@ -125,7 +129,7 @@ pub(crate) async fn execute_backup_task(
             },
             StorageTaskCompletionPayload::Backup(StorageBackupTaskArtifact::verified(
                 proof,
-                expires_at.and_utc(),
+                availability,
             )),
         )
         .await?;

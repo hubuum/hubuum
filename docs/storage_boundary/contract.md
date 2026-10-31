@@ -285,7 +285,9 @@ it establishes one current system-attributed snapshot for each live temporal
 resource, retaining its ID, revision, data, and resource timestamps. Temporal
 validity starts at the supplied restore boundary, represented at microsecond
 precision. Its `create` operation marks entry into the new retained timeline.
-Task, audit, and delivery history remains empty until the restore-success event.
+Source task audit and terminal delivery provenance is replayed when included in the
+backup. Protected task receipt and retention authority remains independent of the
+application snapshot; restore cannot replace it with older matching/deletion state.
 
 `RestoreStorage::apply_restore_replay` must persist these prepared rows atomically with
 the state replacement, derived-state reset/rebuild scheduling, success event,
@@ -476,3 +478,24 @@ semantics: all requested permissions must occur in one group grant for that
 collection. Do not combine partial grants from different groups. Local permission
 batches use this operation for both endpoints of relations, including non-admin
 callers, without per-resource database calls.
+
+## Protected task receipts and retention
+
+`TaskRetentionStorage` is mandatory for every complete backend. Its canonical
+authority uses stable identities, validated private-field records and a revision
+separate from deployment-wide deletion fences. Task creation returns a typed
+submission outcome; keyed work cannot be claimed until the exact admission
+generation is independently protected and atomically activated. Recognized
+duplicates never repeat capacity or approval consumption.
+
+Adapters implement both task-detail and expired-output scopes, immutable bounded
+manifest selection, physical row/byte accounting, child-write fencing, holds,
+available-output and dependency blockers, and exact completion recording. They
+preserve captured audit identities and prospective policy/deadline anchors in
+logical backups. A snapshot acquired before a purge intent may finish; later
+scoped reads observe its restrictions.
+
+Recovery preserves still-applicable receipts and full-lineage purge decisions,
+settles old nonterminal tasks conservatively, and requires composite exact
+reapplication before exposure release. See [task retention](../task_retention.md)
+for deadlines, bounds, activation, independent checkpoint semantics and errors.

@@ -87,6 +87,7 @@ pub async fn request_task_cancellation(
     request: StorageTaskCancellationRequest,
 ) -> Result<StorageTaskCancellationOutcome, PostgresStorageError> {
     runtime.with_control_transaction(async move |connection| {
+        super::task_retention::lock_on(connection).await?;
         use crate::schema::tasks::dsl as tasks;
         if request.kind() == StorageTaskKind::Reindex {
             lock_reindex_cleanup(connection, &[request.task_id().id()]).await?;
@@ -201,6 +202,7 @@ pub async fn acknowledge_task_stop(
     let claimed = claimed_task(&lease)?;
     let row = runtime
         .with_control_transaction(async move |connection| {
+            super::task_retention::lock_on(connection).await?;
             lock_reindex_cleanup(connection, &[claimed.id]).await?;
             let row = live_claimed_task(connection, claimed).await?;
             let control = row.control(stored_task_kind(&row)?)?;
@@ -346,7 +348,7 @@ pub(super) async fn finish_stopped_on(
     )
     .await?;
     let at = event.into_parts().0.occurred_at().naive_utc();
-    diesel::update(tasks::tasks.filter(tasks::id.eq(row.id)))
+    let settled = diesel::update(tasks::tasks.filter(tasks::id.eq(row.id)))
         .set((
             tasks::status.eq(status.as_str()),
             tasks::summary.eq(Some(summary)),
@@ -364,6 +366,7 @@ pub(super) async fn finish_stopped_on(
         ))
         .returning(TaskRow::as_returning())
         .get_result::<TaskRow>(connection)
-        .await
-        .map_err(PostgresStorageError::from)
+        .await?;
+    super::task_retention::settle_on(connection, &settled).await?;
+    Ok(settled)
 }

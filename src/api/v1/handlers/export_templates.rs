@@ -1,3 +1,6 @@
+use crate::models::TaskDetailsExpiredResponse;
+use crate::services::tasks::TaskSubmissionAttempt;
+use crate::services::tasks::TaskSubmissionOperation;
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 use tracing::{debug, info};
 
@@ -25,7 +28,7 @@ use crate::services::history::{
     export_template_history_paginated_with_total_count,
 };
 use crate::storage::with_revision_precondition;
-use crate::tasks::{idempotency_key_from_headers, kick_task_worker};
+use crate::tasks::idempotency_key_from_headers;
 use crate::traits::{CanDelete, CanSave, CanUpdate, SelfAccessors};
 use crate::traits::{UserPermissions, scope_allows};
 
@@ -228,8 +231,10 @@ pub async fn get_template(
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
         (status = 404, description = "Template not found", body = ApiErrorResponse),
-        (status = 409, description = "Conflict", body = ApiErrorResponse),
-        (status = 429, description = "Too many active export tasks", body = ApiErrorResponse)
+        (status = 410, description = "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.", body = TaskDetailsExpiredResponse, headers(("Cache-Control" = String, description = "no-store; no automatic retry is implied"))),
+        (status = 409, description = "Conflict; reason idempotency_key_conflict identifies a changed protected request", body = ApiErrorResponse, headers(("Cache-Control" = String, description = "no-store for protected request conflicts; no Retry-After"))),
+        (status = 429, description = "Shared task admission or byte capacity exhausted", body = ApiErrorResponse),
+        (status = 503, description = "Task identity or control reconciliation unavailable", body = ApiErrorResponse)
     )
 )]
 #[post("/{template_id}/exports")]
@@ -250,28 +255,39 @@ pub async fn run_template_export(
         template_id = template_id.id()
     );
 
-    let template = template_id.instance(&context).await?;
-
-    can!(
+    let attempt = TaskSubmissionAttempt::prepare(
         &context,
         user,
-        requestor.scopes(),
-        [Permissions::ReadTemplate],
-        &template
-    );
-
-    let export = template.build_export_request(run)?;
-    let idempotency_key = idempotency_key_from_headers(req.headers())?;
-    let submission = ExportTaskSubmission::for_token(
-        export,
-        TokenID::new(requestor.token_meta.id().id())?,
-        requestor.scopes(),
+        idempotency_key_from_headers(req.headers())?,
+        TaskSubmissionOperation::TemplateExport,
+        &(template_id, &run),
+        None,
     )
-    .template(template)
-    .idempotency_key(idempotency_key);
-    let mut task = submit_export_task(&context, user, submission).await?;
+    .await?;
+    let mut task = if let Some(task) = attempt.lookup(&context, user).await? {
+        task
+    } else {
+        let template = template_id.instance(&context).await?;
+
+        can!(
+            &context,
+            user,
+            requestor.scopes(),
+            [Permissions::ReadTemplate],
+            &template
+        );
+
+        let export = template.build_export_request(run)?;
+        let submission = ExportTaskSubmission::for_token(
+            export,
+            TokenID::new(requestor.token_meta.id().id())?,
+            requestor.scopes(),
+            attempt,
+        )
+        .template(template);
+        submit_export_task(&context, user, submission).await?
+    };
     super::tasks::discovery::redact(&context, &requestor, std::slice::from_mut(&mut task)).await?;
-    kick_task_worker(context.clone());
     let output = crate::services::tasks::export_output_summary(
         &context,
         crate::models::TaskID::new(task.id)?,

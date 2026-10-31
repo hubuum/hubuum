@@ -44,8 +44,9 @@ impl Fixture {
     }
 
     async fn checkpoint_ahead_of_primary(&self) -> DeletionControlState {
-        let initial = self.storage.capture_deletion_control().await.unwrap();
+        let initial = self.storage.capture_control_checkpoint().await.unwrap();
         let change = initial
+            .deletion()
             .state()
             .record_intent(
                 Uuid::new_v4(),
@@ -57,10 +58,14 @@ impl Fixture {
             .unwrap();
         let recovered = change.next().clone();
         // Model independent evidence surviving a rollback of the primary.
-        let capture = DeletionControlCapture::new(recovered.clone(), initial.position().clone());
+        let capture = ControlCheckpointCapture::new(
+            DeletionControlCapture::new(recovered.clone(), initial.deletion().position().clone()),
+            initial.task_control().clone(),
+        )
+        .unwrap();
         CheckpointRepository::open(&self.directory, &self.key)
             .unwrap()
-            .publish(&capture, false)
+            .publish_control(&capture, false)
             .unwrap();
         recovered
     }

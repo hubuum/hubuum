@@ -1,7 +1,7 @@
+use crate::models::TaskDetailsExpiredResponse;
 use crate::services::remote_targets::invocation::AuthorizedRemoteInvocation;
+use crate::services::tasks::TaskSubmissionOperation;
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
-use hubuum_task_core::IdempotencyKey;
-use tracing::{debug, info};
 
 use crate::api::etag::{RevisionedResource, revision_precondition, revision_precondition_for_tag};
 use crate::api::locations as api_locations;
@@ -15,8 +15,8 @@ use crate::models::collection::user_can_on_any;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     CollectionID, HistoryAuthorizationSnapshot, HubuumClassID, NewRemoteTarget, Permissions,
-    PrincipalID, RemoteTarget, RemoteTargetHistory, RemoteTargetID, RemoteTargetInvokeRequest,
-    StoredRemoteCallTaskPayload, TaskKind, TaskRecord, TaskResponse, TokenID, UpdateRemoteTarget,
+    RemoteTarget, RemoteTargetHistory, RemoteTargetID, RemoteTargetInvokeRequest,
+    StoredRemoteCallTaskPayload, TaskKind, TaskResponse, TokenID, UpdateRemoteTarget,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::{
@@ -27,12 +27,9 @@ use crate::services::history::{
     HistoryCollectionFilter, remote_target_as_of, remote_target_history_paginated_with_total_count,
 };
 use crate::services::remote_targets as remote_target_service;
-use crate::services::tasks::{TaskSubmission, submit_task, task_scope_snapshot};
-use crate::storage::StorageTaskScopeSnapshot;
+use crate::services::tasks::{TaskSubmission, TaskSubmissionAttempt, task_scope_snapshot};
 use crate::storage::with_revision_precondition;
-use crate::tasks::{
-    ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
-};
+use crate::tasks::{idempotency_key_from_headers, request_hash};
 use crate::traits::ClassAccessors;
 use crate::traits::{UserPermissions, scope_allows};
 
@@ -331,7 +328,8 @@ pub async fn delete_remote_target(
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
         (status = 404, description = "Subject or remote target not found", body = ApiErrorResponse),
-        (status = 409, description = "Conflict", body = ApiErrorResponse),
+        (status = 410, description = "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.", body = TaskDetailsExpiredResponse, headers(("Cache-Control" = String, description = "no-store; no automatic retry is implied"))),
+        (status = 409, description = "Conflict; reason idempotency_key_conflict identifies a changed protected request", body = ApiErrorResponse, headers(("Cache-Control" = String, description = "no-store for protected request conflicts; no Retry-After"))),
         (status = 429, description = "Shared task admission or byte capacity exhausted", body = ApiErrorResponse),
         (status = 503, description = "Task identity or control reconciliation unavailable", body = ApiErrorResponse)
     )
@@ -344,88 +342,62 @@ pub async fn invoke_remote_target(
     target_id: web::Path<RemoteTargetID>,
     body: web::Json<RemoteTargetInvokeRequest>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(context.clone());
     let user = &requestor.principal;
     let target_id = target_id.into_inner();
     let invoke = body.into_inner();
-    let target = remote_target_service::get_remote_target(&context, target_id.id()).await?;
-    let invocation = AuthorizedRemoteInvocation::authorize(
+    let attempt = TaskSubmissionAttempt::prepare(
         &context,
         user,
-        requestor.scopes(),
-        target,
-        &invoke.subject,
-    )
-    .await?;
-    let target = invocation.target();
-
-    let payload = serde_json::to_value(StoredRemoteCallTaskPayload {
-        target_id,
-        target_revision: Some(target.revision),
-        subject: invoke.subject,
-        parameters: invoke.parameters,
-        body_override: invoke.body_override,
-    })?;
-    let snapshot = task_scope_snapshot(
-        Some(TokenID::new(requestor.token_meta.id().id())?),
-        requestor.scopes(),
-    );
-    let mut task = find_or_create_remote_call_task(
-        &context,
-        PrincipalID::new(user.id().id())?,
-        snapshot,
         idempotency_key_from_headers(req.headers())?,
-        payload,
+        TaskSubmissionOperation::RemoteInvocation,
+        &(target_id, &invoke),
+        None,
     )
     .await?;
-    super::tasks::discovery::redact(&context, &requestor, std::slice::from_mut(&mut task)).await?;
-    let event_context = requestor.event_context(&req);
-    remote_target_service::record_remote_target_invocation(
-        &context,
-        target.id,
-        task.id,
-        invocation.subject_type(),
-        invocation.subject_id(),
-        event_context,
-    )
-    .await?;
-    kick_task_worker(context.clone());
+    let mut task = if let Some(task) = attempt.lookup(&context, user).await? {
+        task
+    } else {
+        let target = remote_target_service::get_remote_target(&context, target_id.id()).await?;
+        let invocation = AuthorizedRemoteInvocation::authorize(
+            &context,
+            user,
+            requestor.scopes(),
+            target,
+            &invoke.subject,
+        )
+        .await?;
+        let target = invocation.target();
 
-    debug!(
-        message = "Remote target invocation queued",
-        task_id = task.id,
-        target_id = target.id,
-        subject_type = invocation.subject_type().as_str(),
-        subject_id = invocation.subject_id()
-    );
+        let payload = serde_json::to_value(StoredRemoteCallTaskPayload {
+            target_id,
+            target_revision: Some(target.revision),
+            subject: invoke.subject,
+            parameters: invoke.parameters,
+            body_override: invoke.body_override,
+        })?;
+        let snapshot = task_scope_snapshot(
+            Some(TokenID::new(requestor.token_meta.id().id())?),
+            requestor.scopes(),
+        );
+        let hash = request_hash(&payload)?;
+        let event = invocation.task_event(requestor.event_context(&req))?;
+        attempt
+            .submit(
+                &context,
+                user,
+                TaskSubmission::new(TaskKind::RemoteCall, user.id(), payload, 1)
+                    .request_hash(Some(hash))
+                    .scope_snapshot(snapshot)
+                    .remote_invocation(event),
+            )
+            .await?
+    };
+    super::tasks::discovery::redact(&context, &requestor, std::slice::from_mut(&mut task)).await?;
 
     Ok(ApiResponse::accepted_at(
         task.to_response()?,
         api_locations::task(task.id)?,
     ))
-}
-
-async fn find_or_create_remote_call_task(
-    context: &impl crate::storage::StorageContext,
-    submitted_by: PrincipalID,
-    snapshot: StorageTaskScopeSnapshot,
-    idempotency_key: Option<IdempotencyKey>,
-    payload: serde_json::Value,
-) -> Result<TaskRecord, ApiError> {
-    let hash = request_hash(&payload)?;
-
-    info!(
-        message = "Creating remote call task",
-        submitted_by = submitted_by.id()
-    );
-    submit_task(
-        context,
-        TaskSubmission::new(TaskKind::RemoteCall, submitted_by, payload, 1)
-            .idempotency_key(idempotency_key)
-            .request_hash(Some(hash))
-            .scope_snapshot(snapshot),
-    )
-    .await
 }
 
 #[utoipa::path(

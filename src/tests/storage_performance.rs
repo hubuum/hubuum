@@ -38,7 +38,8 @@ use hubuum_storage_postgres::{PostgresPool, capture_queries, with_connection};
 mod catalog;
 mod shared_catalog;
 
-const REPRESENTATIVE_COLLECTION_ROWS: i32 = 2_000;
+// A tiny heap can make a sequential scan cheaper than the index under test.
+const REPRESENTATIVE_COLLECTION_ROWS: i32 = 8_000;
 
 async fn object_relation_budget_fixture(
     scope: &TestScope,

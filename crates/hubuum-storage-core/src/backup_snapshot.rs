@@ -173,6 +173,14 @@ impl StorageBackupRow {
     /// additional information; populated values must never disappear.
     pub fn canonicalize_history(&mut self, section: StorageBackupHistorySection) {
         if section == StorageBackupHistorySection::TerminalTasks {
+            for field in ["retention_policy_revision", "details_expires_at"] {
+                if self.0.get(field).is_some_and(Value::is_null) {
+                    self.0.remove(field);
+                }
+            }
+            if self.0.get("recovery_unavailable") == Some(&Value::Bool(false)) {
+                self.0.remove("recovery_unavailable");
+            }
             if self.0.get("discovery_metadata").is_some_and(Value::is_null) {
                 self.0.remove("discovery_metadata");
             }

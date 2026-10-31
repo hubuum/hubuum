@@ -268,6 +268,8 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
 
 /// Exact Hubuum variables resolved outside clap's `AppConfig` adapter.
 pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
+    option!("HUBUUM_CONTROL_CHECKPOINT_MEASURE", Operations),
+    option!("HUBUUM_MEASUREMENT_CPU_AFFINITY", Operations),
     option!("HUBUUM_MIGRATION_DATABASE_URL", Database, sensitive),
     option!("HUBUUM_DATABASE_ROLE_TESTS", Operations),
     option!("HUBUUM_PROBE_ROWS", Operations),
@@ -833,12 +835,14 @@ pub const ENVIRONMENT_ADAPTER_PATHS: &[&str] = &[
     "src/config/token_hash.rs",
     "src/administration.rs",
     "src/logger.rs",
+    "src/observability/metrics/checkpoint.rs",
     "src/secrets.rs",
     "src/test_support.rs",
     "src/tests/temporal/mod.rs",
     "src/tasks/tests/artifact_pipeline.rs",
     "src/tests/permissions/live_treetop_parity.rs",
     "crates/hubuum-storage-postgres/src/test_support.rs",
+    "crates/hubuum-scale-benchmark/src/lifecycle_process.rs",
 ];
 
 pub fn declared(name: &str) -> bool {

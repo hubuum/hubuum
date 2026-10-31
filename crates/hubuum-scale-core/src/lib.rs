@@ -1892,6 +1892,13 @@ pub struct ResourceReport {
 pub struct LifecycleStageResources {
     pub elapsed_ms: u64,
     pub peak_resident_bytes: u64,
+    /// Kernel high-water RSS of the leader and its waited-for children on Linux.
+    #[serde(default)]
+    pub kernel_peak_resident_bytes: Option<u64>,
+    #[serde(default)]
+    pub cpu_affinity: Option<String>,
+    #[serde(default)]
+    pub affinity_verification_samples: u64,
     pub termination: Option<String>,
 }
 

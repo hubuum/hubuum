@@ -39,7 +39,10 @@ async fn reapply(storage: &MemoryStorage) -> ApplicationReapplication {
 async fn release(storage: &MemoryStorage) -> ApplicationReapplication {
     let receipt = reapply(storage).await;
     storage
-        .release_application_exposure(receipt.clone(), checkpoint())
+        .release_application_exposure(
+            ApplicationExposureProof::new(receipt.clone(), None).unwrap(),
+            checkpoint(),
+        )
         .await
         .unwrap();
     receipt
@@ -58,7 +61,10 @@ async fn application_release_requires_the_required_completion_audit() {
         .await
         .unwrap();
     let error = storage
-        .release_application_exposure(receipt, checkpoint())
+        .release_application_exposure(
+            ApplicationExposureProof::new(receipt, None).unwrap(),
+            checkpoint(),
+        )
         .await
         .unwrap_err();
     assert_eq!(error.kind(), StorageErrorKind::Conflict);
@@ -110,7 +116,10 @@ async fn reapplication_deletes_current_copy_and_requires_published_release(
         Some(&receipt)
     );
     storage
-        .release_application_exposure(receipt, checkpoint())
+        .release_application_exposure(
+            ApplicationExposureProof::new(receipt, None).unwrap(),
+            checkpoint(),
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -454,7 +463,10 @@ async fn capturing_work_revokes_previous_drain_acknowledgement() {
         .await
         .unwrap();
     storage
-        .release_application_exposure(receipt, checkpoint())
+        .release_application_exposure(
+            ApplicationExposureProof::new(receipt, None).unwrap(),
+            checkpoint(),
+        )
         .await
         .unwrap();
     storage

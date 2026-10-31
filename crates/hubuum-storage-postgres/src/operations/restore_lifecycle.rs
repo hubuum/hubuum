@@ -635,8 +635,10 @@ async fn apply_restore_replay_parts(
                 // a recently lowered policy needs their scope to drain.
                 diesel::sql_query("SELECT set_config('hubuum.reconcile_task_capacity', 'on', true)")
                     .execute(connection).await?;
-                enqueue_restored_computed_rebuilds_on_connection(connection).await?;
-                super::schema_evolution::enqueue_restored_schema_work_on(connection).await?;
+                if empty_authority {
+                    enqueue_restored_computed_rebuilds_on_connection(connection).await?;
+                    super::schema_evolution::enqueue_restored_schema_work_on(connection).await?;
+                }
                 diesel::sql_query("SELECT set_config('hubuum.reconcile_task_capacity', 'off', true)")
                     .execute(connection).await?;
 
@@ -1257,8 +1259,10 @@ mod tests {
         use serde_json::{Value, json};
 
         use super::super::{insert_restore_rows, reset_restore_sequence};
+        use crate::operations::backup::{history_row_to_logical, history_row_to_postgres};
         use crate::test_support::integration_test_pool;
         use crate::{PostgresStorageError, with_transaction};
+        use hubuum_storage_core::StorageBackupHistorySection;
 
         #[derive(QueryableByName)]
         struct RestoredJsonRow {
@@ -1278,6 +1282,95 @@ mod tests {
         struct BatchSizes {
             #[diesel(sql_type = Jsonb)]
             sizes: Value,
+        }
+
+        #[rstest]
+        #[case::legacy(None)]
+        #[case::available(Some(false))]
+        #[case::recovery_unavailable(Some(true))]
+        #[tokio::test]
+        async fn terminal_task_restore_initializes_private_retention_state(
+            #[case] recovery_unavailable: Option<bool>,
+        ) {
+            #[derive(QueryableByName)]
+            struct TaskRow {
+                #[diesel(sql_type = Jsonb)]
+                row: Value,
+            }
+
+            let pool = integration_test_pool(1);
+            let restored = with_transaction(&pool, async |connection| {
+                // Keep the real task column defaults and constraints, including
+                // NOT NULL, while isolating this replay from shared task data.
+                diesel::sql_query(
+                    "CREATE TEMP TABLE tasks (LIKE public.tasks INCLUDING DEFAULTS \
+                     INCLUDING CONSTRAINTS) ON COMMIT DROP",
+                )
+                .execute(connection)
+                .await?;
+                let mut logical = diesel::sql_query(
+                    "INSERT INTO tasks(id,kind,status,finished_at) \
+                     VALUES(42,'import','succeeded',TIMESTAMP '2026-10-01 12:00:00') \
+                     RETURNING to_jsonb(tasks) AS row",
+                )
+                .get_result::<TaskRow>(connection)
+                .await?
+                .row;
+                history_row_to_logical(StorageBackupHistorySection::TerminalTasks, &mut logical)?;
+                let fields = logical.as_object_mut().unwrap();
+                match recovery_unavailable {
+                    Some(unavailable) => {
+                        fields.insert("recovery_unavailable".into(), json!(unavailable));
+                        fields.insert("retention_policy_revision".into(), json!(7));
+                        fields.insert("details_expires_at".into(), json!("2026-10-02T12:00:00Z"));
+                    }
+                    None => {
+                        // Backups predating retention have no policy anchors or
+                        // recovery flag. They must remain grandfathered.
+                        for field in [
+                            "retention_policy_revision",
+                            "details_expires_at",
+                            "recovery_unavailable",
+                        ] {
+                            fields.remove(field);
+                        }
+                    }
+                }
+                diesel::sql_query("DELETE FROM tasks")
+                    .execute(connection)
+                    .await?;
+                let physical =
+                    history_row_to_postgres(StorageBackupHistorySection::TerminalTasks, logical)?;
+                insert_restore_rows(connection, "tasks", std::iter::once(Ok(physical))).await?;
+                diesel::sql_query("SELECT to_jsonb(tasks) AS row FROM tasks")
+                    .get_result::<TaskRow>(connection)
+                    .await
+                    .map_err(PostgresStorageError::from)
+            })
+            .await
+            .unwrap()
+            .row;
+
+            assert_eq!(restored["receipt_legacy"], false);
+            assert_eq!(restored["details_purge_pending"], false);
+            assert_eq!(
+                restored["recovery_unavailable"],
+                recovery_unavailable.unwrap_or(false)
+            );
+            assert!(restored["receipt_generation"].is_null());
+            assert!(restored["receipt_checkpoint"].is_null());
+            assert_eq!(
+                restored["retention_policy_revision"],
+                recovery_unavailable
+                    .map(|_| 7)
+                    .map_or(Value::Null, |value| json!(value))
+            );
+            assert_eq!(
+                restored["detail_expires_at"],
+                recovery_unavailable
+                    .map(|_| json!("2026-10-02T12:00:00"))
+                    .unwrap_or(Value::Null)
+            );
         }
 
         #[rstest]

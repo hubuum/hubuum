@@ -1,6 +1,8 @@
 mod lifecycle;
 mod scheduling;
 pub use scheduling::{SchedulingBenchmarkOptions, SchedulingBenchmarkReport};
+mod task_retention;
+pub use task_retention::PostgresTaskRetentionObservation;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::time::Instant;
@@ -1315,7 +1317,7 @@ impl ScaleBenchmarkBackend for PostgresScaleBackend {
                        coalesce(sum(pg_relation_size(oid)), 0)::BIGINT AS table_bytes,\n\
                        coalesce(sum(pg_indexes_size(oid)), 0)::BIGINT AS index_bytes\n\
                      FROM pg_class\n\
-                     WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r', 'p')",
+                     WHERE relnamespace IN ('public'::regnamespace,'hubuum_control'::regnamespace) AND relkind IN ('r', 'p')",
                 )
                 .get_result::<DatabaseResourceRow>(connection)
                 .await

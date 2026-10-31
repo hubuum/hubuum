@@ -28,6 +28,7 @@ use crate::permissions::LocalPermissionBackend;
 use crate::permissions::{AppContext, require_unscoped_runtime_admin};
 use crate::restores::{MaintenanceActivityGuard, track_application_completion};
 use crate::services::authentication::ExecutionPrincipal;
+use crate::services::deletion_recovery::TaskRetentionSweep;
 use crate::services::exports::execute_export_task;
 use crate::services::tasks::{
     ClaimedTask, claim_next_task, fail_task, purge_expired_backup_outputs,
@@ -45,12 +46,11 @@ use super::helpers::sanitize_error_for_storage;
 use super::remote_call::execute_remote_call_task;
 use super::types::WorkerLoopAction;
 
+mod cleanup;
+
 static TASK_WORKER: Once = Once::new();
 static TASK_WORKER_LISTENER: Once = Once::new();
 static TASK_WORKER_NOTIFY: OnceLock<Notify> = OnceLock::new();
-static TASK_OUTPUT_CLEANUP_STATE: OnceLock<Mutex<CleanupSchedule>> = OnceLock::new();
-static ARTIFACT_CLEANUP_STATE: LazyLock<Mutex<CleanupSchedule>> =
-    LazyLock::new(|| Mutex::new(CleanupSchedule::default()));
 static TASK_RECOVERY_STATE: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 static TASK_WORKER_SETTINGS: OnceLock<TaskWorkerSettings> = OnceLock::new();
 static TASK_LEASE_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
@@ -80,10 +80,6 @@ fn get_task_worker_notify() -> &'static Notify {
 
 fn wake_task_worker_from_storage() {
     get_task_worker_notify().notify_one();
-}
-
-fn cleanup_state() -> &'static Mutex<CleanupSchedule> {
-    TASK_OUTPUT_CLEANUP_STATE.get_or_init(|| Mutex::new(CleanupSchedule::default()))
 }
 
 fn recovery_state() -> &'static Mutex<Option<Instant>> {
@@ -248,6 +244,7 @@ pub fn ensure_task_worker_running_with_settings(
             worker_count = worker_count,
             poll_interval = ?poll_interval
         );
+        cleanup::spawn(context.clone(), poll_interval);
         for worker_index in 0..worker_count {
             spawn_task_worker_loop(
                 context.clone(),
@@ -328,11 +325,6 @@ async fn process_admitted_task(
     backup_settings: &BackupSettings,
 ) -> Result<bool, ApiError> {
     maybe_recover_expired_task_leases(context).await?;
-
-    if let Err(error) = maybe_cleanup_expired_task_outputs(context).await {
-        metrics::task_worker_iteration("error");
-        return Err(error);
-    }
 
     let settings = task_worker_settings();
     let claim_started_at = TokioInstant::now();
@@ -454,6 +446,15 @@ struct CleanupSchedule {
     in_progress: bool,
 }
 
+impl CleanupSchedule {
+    fn is_due(&self, interval: Duration) -> bool {
+        !self.in_progress
+            && self
+                .last_completed_at
+                .is_none_or(|last_run| last_run.elapsed() >= interval)
+    }
+}
+
 struct CleanupReservation<'a> {
     state: &'a Mutex<CleanupSchedule>,
     finished: bool,
@@ -467,11 +468,7 @@ impl<'a> CleanupReservation<'a> {
         let mut schedule = state.lock().map_err(|_| {
             ApiError::InternalServerError("Cleanup state lock poisoned".to_string())
         })?;
-        if schedule.in_progress
-            || schedule
-                .last_completed_at
-                .is_some_and(|last_run| last_run.elapsed() < interval)
-        {
+        if !schedule.is_due(interval) {
             return Ok(None);
         }
         schedule.in_progress = true;
@@ -481,11 +478,11 @@ impl<'a> CleanupReservation<'a> {
         }))
     }
 
-    fn commit(mut self) -> Result<(), ApiError> {
+    fn commit(mut self, more: bool) -> Result<(), ApiError> {
         let mut schedule = self.state.lock().map_err(|_| {
             ApiError::InternalServerError("Cleanup state lock poisoned".to_string())
         })?;
-        schedule.last_completed_at = Some(Instant::now());
+        schedule.last_completed_at = (!more).then(Instant::now);
         schedule.in_progress = false;
         self.finished = true;
         Ok(())
@@ -721,10 +718,12 @@ async fn maybe_recover_expired_task_leases(
 }
 
 async fn maybe_cleanup_expired_task_outputs(
-    backend: &impl crate::storage::StorageContext,
-) -> Result<(), ApiError> {
+    backend: &AppContext,
+    schedule: &Mutex<CleanupSchedule>,
+    artifacts: &Mutex<CleanupSchedule>,
+) -> Result<bool, ApiError> {
     let cleanup_interval = task_worker_settings().export_output_cleanup_interval();
-    cleanup_artifacts_when_due(&ARTIFACT_CLEANUP_STATE, cleanup_interval, async {
+    cleanup_artifacts_when_due(artifacts, cleanup_interval, async {
         storage_handle(backend)
             .artifact_store()
             .cleanup()
@@ -732,9 +731,31 @@ async fn maybe_cleanup_expired_task_outputs(
             .map_err(crate::services::artifacts::error)
     })
     .await?;
-    let Some(reservation) = CleanupReservation::reserve(cleanup_state(), cleanup_interval)? else {
-        return Ok(());
+    let Some(reservation) = CleanupReservation::reserve(schedule, cleanup_interval)? else {
+        return Ok(false);
     };
+
+    let Some(sweep) = backend
+        .task_receipts()
+        .try_sweep_task_retention(backend)
+        .await?
+    else {
+        // Keep cleanup due for a later maintenance iteration. An independent
+        // task claimant never waits for this repository publication session.
+        return Ok(false);
+    };
+    match sweep {
+        TaskRetentionSweep::Disabled => {}
+        TaskRetentionSweep::Protected { more, .. } => {
+            reservation.commit(more)?;
+            if more {
+                // A maintenance pass can activate protected admissions. Queue
+                // claimants have their own wakeup and never await this loop.
+                get_task_worker_notify().notify_one();
+            }
+            return Ok(more);
+        }
+    }
 
     metrics::task_output_cleanup_run(metrics::TaskOutputKind::Export);
     let deleted_exports = match purge_expired_export_outputs(backend).await {
@@ -768,9 +789,9 @@ async fn maybe_cleanup_expired_task_outputs(
             return Err(error.into());
         }
     }
-    reservation.commit()?;
+    reservation.commit(false)?;
 
-    Ok(())
+    Ok(false)
 }
 
 async fn cleanup_artifacts_when_due(
@@ -784,8 +805,25 @@ async fn cleanup_artifacts_when_due(
     // Drain one bounded batch per worker tick. Once empty, avoid a database
     // acquisition on every idle poll; failures remain eligible for retry.
     if cleanup.await? == 0 {
-        reservation.commit()?;
+        reservation.commit(false)?;
     }
+    Ok(())
+}
+
+#[cfg(all(test, unix))]
+pub(crate) async fn run_task_maintenance_for_test(
+    context: AppContext,
+    poll_interval: Duration,
+    shutdown: ShutdownSignal,
+) {
+    cleanup::run(context, poll_interval, shutdown).await;
+}
+
+#[cfg(all(test, unix))]
+pub(crate) async fn cleanup_task_outputs_for_test(backend: &AppContext) -> Result<(), ApiError> {
+    let schedule = Mutex::new(CleanupSchedule::default());
+    let artifacts = Mutex::new(CleanupSchedule::default());
+    maybe_cleanup_expired_task_outputs(backend, &schedule, &artifacts).await?;
     Ok(())
 }
 
@@ -1028,10 +1066,12 @@ mod cleanup_tests {
     }
 
     #[rstest]
-    #[case::failure(false, false)]
-    #[case::success(true, true)]
+    #[case::failure(false, false, false)]
+    #[case::success(true, false, true)]
+    #[case::continuation(true, true, false)]
     fn cleanup_reservation_updates_schedule_only_after_commit(
         #[case] commit: bool,
+        #[case] more: bool,
         #[case] expected_scheduled: bool,
     ) {
         let state = Mutex::new(CleanupSchedule::default());
@@ -1039,7 +1079,9 @@ mod cleanup_tests {
             .expect("cleanup reservation")
             .expect("cleanup is due");
         if commit {
-            reservation.commit().expect("commit cleanup reservation");
+            reservation
+                .commit(more)
+                .expect("commit cleanup reservation");
         } else {
             drop(reservation);
         }
