@@ -165,6 +165,9 @@ for path in "$@"; do
       code=true
       rust=true
       ;;
+    docs/performance/scheduling_acceptance.json | docs/performance/scheduling_integration.json)
+      # Retained measurement evidence; no build or test consumes this report.
+      ;;
     docs/generated/project_inventory.json | docs/querying.md | docs/webhook_notifications.md)
       code=true
       rust=true
@@ -230,7 +233,7 @@ for path in "$@"; do
       container=true
       artifacts=true
       ;;
-    .github/workflows/scale-benchmarks.yml | scale-benchmarks/* | \
+    .github/workflows/scale-benchmarks.yml | .github/workflows/scheduler-benchmarks.yml | scale-benchmarks/* | \
       crates/hubuum-scale-benchmark/* | crates/hubuum-scale-core/* | \
       crates/hubuum-storage-postgres/src/scale_benchmark.rs | \
       crates/hubuum-storage-postgres/src/scale_benchmark/*)
