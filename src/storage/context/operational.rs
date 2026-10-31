@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_storage_core::{HotObjectHistoryCleanup, HotObjectHistoryDeletion, RuntimeRegistration};
 
 #[async_trait]
 impl DeletionControlStorage for StorageHandle {
@@ -18,6 +19,68 @@ impl DeletionControlStorage for StorageHandle {
             StorageCapability::DeletionControl,
             "capture_deletion_control",
             async { dispatch_backend!(self, |backend| backend.capture_deletion_control().await) },
+        )
+        .await
+    }
+
+    async fn register_runtime(&self) -> Result<RuntimeRegistration, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::DeletionControl,
+            "register_runtime",
+            async { dispatch_backend!(self, |backend| backend.register_runtime().await) },
+        )
+        .await
+    }
+
+    async fn unregister_runtime(
+        &self,
+        registration: RuntimeRegistration,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::DeletionControl,
+            "unregister_runtime",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .unregister_runtime(registration)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn prepare_hot_object_history_deletion(
+        &self,
+        expected: DeletionControlState,
+        request: HotObjectHistoryDeletion,
+    ) -> Result<DeletionControlState, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::DeletionControl,
+            "prepare_hot_object_history_deletion",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .prepare_hot_object_history_deletion(expected, request)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn cleanup_hot_object_history(
+        &self,
+        request: HotObjectHistoryCleanup,
+    ) -> Result<DeletionControlState, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::DeletionControl,
+            "cleanup_hot_object_history",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .cleanup_hot_object_history(request)
+                    .await)
+            },
         )
         .await
     }

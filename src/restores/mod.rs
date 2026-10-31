@@ -5,7 +5,7 @@ use hubuum_storage_core::{
     StorageRestoreIdentityContext, StorageRestoreReplayApply, StorageRestoreStageArtifact,
 };
 pub use maintenance::MaintenanceActivityGuard;
-use maintenance::active_maintenance_work;
+pub(crate) use maintenance::active_maintenance_work;
 
 use hubuum_domain::{JsonSchemaLimits, PrincipalId};
 use std::collections::BTreeMap;
@@ -23,9 +23,9 @@ use crate::errors::ApiError;
 use crate::lifecycle::spawn_background_worker;
 use crate::models::retention::FutureRetention;
 use crate::models::{
-    BACKUP_MANIFEST_EXCLUSIONS, BackupDocument, MaintenanceState, RESTORE_CONFIRMATION_PHRASE,
-    RestoreConfirmRequest, RestoreJobID, RestoreJobStatus, RestoreStageRequest,
-    RestoreStageResponse,
+    BACKUP_MANIFEST_EXCLUSIONS, BackupDocument, HISTORICAL_BACKUP_MANIFEST_EXCLUSIONS,
+    MaintenanceState, RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreJobID,
+    RestoreJobStatus, RestoreStageRequest, RestoreStageResponse,
 };
 use crate::services::identity::resolve_identity_scope_name as load_identity_scope_name;
 use crate::storage::storage_handle;
@@ -287,6 +287,7 @@ fn serialized_sha256(value: &impl Serialize) -> Result<String, ApiError> {
 }
 
 fn validate_manifest_counts(
+    backup_version: i32,
     manifest: &crate::models::BackupManifest,
     counts: &BTreeMap<String, i64>,
 ) -> Result<(), ApiError> {
@@ -301,14 +302,25 @@ fn validate_manifest_counts(
             "Full backup manifest count for section '{mismatched_section}' does not match the document"
         )));
     }
-    let exclusions = BACKUP_MANIFEST_EXCLUSIONS
-        .iter()
-        .map(|value| (*value).to_string())
-        .collect::<Vec<_>>();
-    if manifest.exclusions != exclusions {
-        return Err(ApiError::BadRequest(
-            "Full backup manifest exclusions do not match backup version 5".to_string(),
-        ));
+    let matches = |expected: &[&str]| {
+        manifest
+            .exclusions
+            .iter()
+            .map(String::as_str)
+            .eq(expected.iter().copied())
+    };
+    let valid_exclusions = match backup_version {
+        6..=10 => matches(HISTORICAL_BACKUP_MANIFEST_EXCLUSIONS),
+        // Formats 11 and 12 shipped before protected authority was added.
+        11 | 12 => {
+            matches(HISTORICAL_BACKUP_MANIFEST_EXCLUSIONS) || matches(BACKUP_MANIFEST_EXCLUSIONS)
+        }
+        _ => false,
+    };
+    if !valid_exclusions {
+        return Err(ApiError::BadRequest(format!(
+            "Full backup manifest exclusions do not match backup version {backup_version}"
+        )));
     }
     Ok(())
 }

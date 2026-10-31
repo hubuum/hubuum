@@ -88,6 +88,7 @@ impl MemoryState {
             artifacts: Default::default(),
             deletion_control: DeletionControlState::empty(Uuid::new_v4(), Uuid::new_v4())
                 .expect("generated control identities"),
+            runtime_registrations: BTreeMap::new(),
             logical_identities,
             schema_repair_reports: Default::default(),
             generation: Arc::new(()),

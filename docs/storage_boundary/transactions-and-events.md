@@ -206,9 +206,20 @@ for an exception.
   expiry and emits the token-purge semantics owned by the retention worker.
 - Deletion authority maintenance: `DeletionControlStorage::commit_deletion_control`
   persists a validated exact-predecessor transition under privileged authority.
-  It retains only UUID selectors and copy outcomes outside logical application
-  replacement. Independent checkpoint evidence and exposure gates are separate
-  from this control mutation; no erasure executor is enabled by the foundation.
+  `DeletionControlStorage::register_runtime` records bounded, restore-isolated
+  ownership before runtime work starts; `DeletionControlStorage::unregister_runtime`
+  consumes that ownership only after a confirmed shutdown.
+  `DeletionControlStorage::prepare_hot_object_history_deletion` checks the exact
+  predecessor, absence of registered runtimes, and a closed UUID-bound history
+  copy before retaining its deletion intent.
+  `DeletionControlStorage::cleanup_hot_object_history` rechecks those fences and
+  commits exact-copy removal with its receipt in one transaction, including
+  reconciliation of a recovered copy whose prior outcome was already removed.
+  These operations retain only UUID selectors, ownership, copy outcomes, and
+  checkpoint identities outside logical application replacement. Independent
+  durable intent protection precedes cleanup; completion acknowledgement requires
+  independently protected removal evidence. This workflow does not release
+  application quarantine or erase other managed copies.
 - Task policy maintenance: `TaskCapacityStorage::initialize_task_policy`
   establishes deployment control state only once; subsequent initializers read
   the existing policy. `TaskCapacityStorage::replace_task_policy` is an explicit

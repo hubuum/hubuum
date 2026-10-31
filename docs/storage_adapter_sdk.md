@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.11`.
+Status: accepted; current experimental release train is `0.12`.
 
 ## Supported Crate Graph
 
@@ -530,3 +530,40 @@ under the same exact-predecessor transaction, rather than requiring an increment
 of exactly one.
 Only trusted services holding authenticated latest evidence may use it for recovery.
 See the [recovery procedure](deletion_recovery.md) for the offline boundary.
+
+## Upgrading from 0.11 to 0.12
+
+This is a breaking coordinated SDK release. Upgrade all ten SDK crates and
+implement the four new `DeletionControlStorage` operations: `register_runtime`,
+`unregister_runtime`, `prepare_hot_object_history_deletion`, and
+`cleanup_hot_object_history`.
+
+Runtime registration is atomic against deletion authority and bounded to 1,024
+owners. Return the non-cloneable `RuntimeRegistration` capability only after
+commit; remove a registration only with its matching ownership token. Dropping a
+token, heartbeat age, process failure, and logical restore must not remove a
+registration. Keep ownership tokens out of logs and public reports.
+
+Prepare and cleanup lock authority before other rows, compare the exact expected
+state, and require every protected registration to be absent in that same
+transaction. A racing startup must either register first and block cleanup or
+observe the retained intent and refuse startup. Preserve registrations outside
+application replacement independently of ordinary restore coordinator heartbeats.
+
+The managed-copy request names one resource/version UUID pair and one explicitly
+bound hot object-history copy. Reject open, unresolved, mismatched or ambiguous
+history. Delete the exact copy and record its outcome atomically. A retained
+`Removed` outcome still requires checking physical presence on retry: an older
+application restore can reintroduce that row. Never authorize cleanup from reused
+integers or infer a binding for an existing opaque obligation.
+
+`DeletionCheckpointIdentity` validates a content address; it is not evidence of
+independent publication or durability. Only the trusted administrator service
+holding the authenticated repository session may invoke managed cleanup. Final
+completion requires independent publication and readback covering the adapter's
+receipt. Keep application exposure quarantined afterward.
+
+Control format 2 adds explicit copy bindings and receipts. Continue decoding and
+encoding format 1 byte-for-byte: checkpoint authentication depends on its original
+canonical representation. Unknown legacy copies remain unexecutable and retain
+their original outcomes. See [managed cleanup](deletion_recovery.md#offline-managed-copy-cleanup).

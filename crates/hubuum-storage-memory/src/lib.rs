@@ -347,6 +347,7 @@ impl MemoryTokenRecord {
 struct MemoryState {
     artifacts: artifacts::Artifacts,
     deletion_control: DeletionControlState,
+    runtime_registrations: BTreeMap<Uuid, Uuid>,
     task_capacity: task_capacity::MemoryTaskCapacity,
     logical_identities: logical_identity::MemoryLogicalIdentities,
     generation: Arc<()>,

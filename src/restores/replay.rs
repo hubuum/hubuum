@@ -214,7 +214,7 @@ pub(crate) fn parse(
     })?;
     metadata.validate_version()?;
     super::validate_backup_metadata(&metadata)?;
-    super::validate_manifest_counts(&metadata.manifest, &counts)?;
+    super::validate_manifest_counts(metadata.backup_version, &metadata.manifest, &counts)?;
     if metadata.history.is_none() {
         builder = builder.without_history()?;
     }

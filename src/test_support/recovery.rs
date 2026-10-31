@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::errors::ApiError;
 use crate::events::EventContext;
+use crate::models::backup::HISTORICAL_BACKUP_MANIFEST_EXCLUSIONS;
 use crate::models::{
     BackupDocument, BackupHistory, BackupManifest, BackupRequest, BackupState,
     CURRENT_BACKUP_VERSION, RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreInitiator,
@@ -670,7 +671,15 @@ async fn stage_and_confirm_snapshot(
     let (state, history) = snapshot.into_parts();
     let state = BackupState { sections: state };
     let history = history.map(|sections| BackupHistory { sections });
-    let manifest = BackupManifest::from_sections(&state, history.as_ref());
+    let mut manifest = BackupManifest::from_sections(&state, history.as_ref());
+    if (6..=10).contains(&version) {
+        // A legacy fixture must use the manifest written by that format, not
+        // exclusions added by the current writer after its release.
+        manifest.exclusions = HISTORICAL_BACKUP_MANIFEST_EXCLUSIONS
+            .iter()
+            .map(|exclusion| (*exclusion).to_owned())
+            .collect();
+    }
     let document = BackupDocument {
         backup_version: version,
         created_at: Utc::now(),

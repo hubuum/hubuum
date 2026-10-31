@@ -1,9 +1,10 @@
 use crate::config::SchemaValidationOptions;
 use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
 use hubuum_domain::ClassId;
-use hubuum_domain::JsonSchemaLimits;
+use hubuum_domain::{JsonSchemaLimits, ResourceIdentity, VersionIdentity};
 use hubuum_storage_core::{
-    StorageBackupBudget, StorageRestoreArtifact, StorageRestoreIdentityContext,
+    StorageBackupBudget, StorageRecordIdentity, StorageRestoreArtifact,
+    StorageRestoreIdentityContext,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -61,6 +62,14 @@ fn parse_query_usage_class(value: &str) -> Result<ClassId, String> {
     ClassId::new(id).map_err(|error| error.to_string())
 }
 
+fn parse_deletion_intent(value: &str) -> Result<Uuid, String> {
+    let identity = value.parse::<Uuid>().map_err(|error| error.to_string())?;
+    if identity.is_nil() {
+        return Err("Deletion intent must be a non-nil UUID".into());
+    }
+    Ok(identity)
+}
+
 #[derive(Parser)]
 #[command(
     author = "Terje Kvernes <terje@kvernes.no>",
@@ -88,6 +97,31 @@ struct AdminCli {
     #[arg(long, value_name = "DIRECTORY", requires = "control_checkpoint_key", conflicts_with_all = ["control_checkpoint", "verify_control_recovery", "backup", "restore", "restore_executor", "verify_backup", "reconcile_query_usage", "database_ready", "reset_password", "audit_templates", "export_template_health", "token_key_status", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges"])]
     #[cfg_attr(feature = "embedded-migrations", arg(conflicts_with_all = ["migrate", "migration_mode"]))]
     recover_control: Option<PathBuf>,
+
+    /// Remove one closed object-history version while all runtimes are stopped; quarantine remains
+    #[arg(long, value_name = "VERSION_UUID", requires_all = ["history_resource", "deletion_intent", "control_repository", "control_checkpoint_key"], conflicts_with_all = ["control_checkpoint", "verify_control_recovery", "recover_control", "backup", "restore", "restore_executor", "verify_backup", "reconcile_query_usage", "database_ready", "reset_password", "audit_templates", "export_template_health", "token_key_status", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges"])]
+    #[cfg_attr(feature = "embedded-migrations", arg(conflicts_with_all = ["migrate", "migration_mode"]))]
+    delete_object_history_version: Option<VersionIdentity>,
+
+    /// Stable resource identity that owns the selected object-history version
+    #[arg(
+        long,
+        value_name = "RESOURCE_UUID",
+        requires = "delete_object_history_version"
+    )]
+    history_resource: Option<ResourceIdentity>,
+
+    /// Stable deletion intent identity; reuse the same value on every retry
+    #[arg(long, value_name = "UUID", requires = "delete_object_history_version", value_parser = parse_deletion_intent)]
+    deletion_intent: Option<Uuid>,
+
+    /// Initialized independent recovery repository for the managed-copy operation
+    #[arg(
+        long,
+        value_name = "DIRECTORY",
+        requires = "delete_object_history_version"
+    )]
+    control_repository: Option<PathBuf>,
 
     /// Owner-only file containing exactly 32 random signing-key bytes
     #[arg(long, value_name = "PATH", required_if_eq_any = [("initialize_control_checkpoint", "true")])]
@@ -335,6 +369,7 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     init_logging(
         &admin_cli.log_level,
         admin_cli.reconcile_query_usage
+            || admin_cli.delete_object_history_version.is_some()
             || admin_cli.control_checkpoint.is_some()
             || admin_cli.recover_control.is_some()
             || admin_cli.verify_control_recovery.is_some(),
@@ -396,6 +431,7 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
         ));
     }
     let privileged_database_operation = migration_requested
+        || admin_cli.delete_object_history_version.is_some()
         || admin_cli.control_checkpoint.is_some()
         || admin_cli.recover_control.is_some()
         || admin_cli.verify_control_recovery.is_some()
@@ -544,6 +580,33 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     }
 
     let storage = initialize_storage(&storage_settings)?;
+
+    if let Some(version) = admin_cli.delete_object_history_version {
+        let report = crate::services::deletion_recovery::cleanup_object_history(
+            &storage,
+            admin_cli
+                .control_repository
+                .as_deref()
+                .expect("required by clap"),
+            admin_cli
+                .control_checkpoint_key
+                .as_deref()
+                .expect("required by clap"),
+            admin_cli.deletion_intent.expect("required by clap"),
+            StorageRecordIdentity::new(
+                admin_cli.history_resource.expect("required by clap"),
+                version,
+            ),
+        )
+        .await?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|_| ApiError::InternalServerError(
+                "Cannot encode copy cleanup report".into()
+            ))?
+        );
+        return Ok(());
+    }
 
     if admin_cli.control_checkpoint.is_some()
         || admin_cli.recover_control.is_some()
@@ -1550,6 +1613,7 @@ mod tests {
     #[cfg(feature = "embedded-migrations")]
     use clap::{CommandFactory, FromArgMatches};
     use hubuum_domain::ClassId;
+    use rstest::rstest;
     use uuid::Uuid;
 
     #[cfg(feature = "embedded-migrations")]
@@ -1559,6 +1623,84 @@ mod tests {
         DEFAULT_DATABASE_RUNTIME_ROLE, DatabaseRoleMode, StorageBackendKind,
         StorageDatabaseRoleNames, resolve_database_roles,
     };
+
+    fn history_cleanup_arguments() -> Vec<String> {
+        vec![
+            "hubuum-admin",
+            "--delete-object-history-version",
+            "a1db7312-acb1-4a4e-8797-bf5bc55d47ec",
+            "--history-resource",
+            "f92b92b2-db30-4501-9678-a14b9780a12f",
+            "--deletion-intent",
+            "bcdf80ed-4ba2-435a-ab11-db89ead89a33",
+            "--control-repository",
+            "/independent/control",
+            "--control-checkpoint-key",
+            "/independent-secrets/control.key",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+    }
+
+    #[rstest]
+    #[case("--history-resource")]
+    #[case("--deletion-intent")]
+    #[case("--control-repository")]
+    #[case("--control-checkpoint-key")]
+    fn history_cleanup_requires_exact_scope_and_recovery_configuration(#[case] missing: &str) {
+        let mut arguments = history_cleanup_arguments();
+        let position = arguments
+            .iter()
+            .position(|argument| *argument == missing)
+            .unwrap();
+        arguments.drain(position..=position + 1);
+        let error = AdminCli::try_parse_from(arguments)
+            .err()
+            .expect("required argument");
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+    }
+
+    #[rstest]
+    #[case("--deletion-intent", "00000000-0000-0000-0000-000000000000")]
+    #[case("--history-resource", "1")]
+    #[case(
+        "--delete-object-history-version",
+        "00000000-0000-0000-0000-000000000000"
+    )]
+    fn history_cleanup_rejects_invalid_identities_before_database_access(
+        #[case] argument: &str,
+        #[case] invalid: &str,
+    ) {
+        let mut arguments = history_cleanup_arguments();
+        let position = arguments
+            .iter()
+            .position(|value| *value == argument)
+            .unwrap();
+        arguments[position + 1] = invalid.to_owned();
+        let error = AdminCli::try_parse_from(arguments)
+            .err()
+            .expect("invalid identity");
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[rstest]
+    #[case("--backup", "backup.json")]
+    #[case("--recover-control", "/independent/control")]
+    fn history_cleanup_cannot_run_with_another_administrator_operation(
+        #[case] argument: &str,
+        #[case] value: &str,
+    ) {
+        let mut arguments = history_cleanup_arguments();
+        arguments.extend([argument.to_owned(), value.to_owned()]);
+        let error = AdminCli::try_parse_from(arguments)
+            .err()
+            .expect("conflicting operation");
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
 
     #[test]
     fn failed_streaming_backup_preserves_the_destination_and_removes_partial_output() {

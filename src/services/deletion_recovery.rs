@@ -4,7 +4,10 @@
 //! impose deployment-wide restrictions until lifecycle consumers can reapply
 //! narrower restrictions; importing authority never releases those restrictions.
 
+mod cleanup;
 mod repository;
+
+pub(crate) use cleanup::cleanup_object_history;
 
 use std::path::Path;
 

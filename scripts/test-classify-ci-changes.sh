@@ -75,6 +75,8 @@ for history_handler in src/models/history/computed.rs src/api/v1/handlers/classe
 done
 
 for cursor_input in crates/hubuum-storage-postgres/src/cursor/query_plan_tests.rs \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000005_managed_deletion_cleanup/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000005_managed_deletion_cleanup/down.sql \
   crates/hubuum-storage-postgres/migrations/2026-10-29-000004_deletion_execution_fence/up.sql \
   crates/hubuum-storage-postgres/migrations/2026-10-29-000004_deletion_execution_fence/down.sql \
   crates/hubuum-storage-postgres/migrations/2026-10-29-000003_deletion_recovery_gate/up.sql \
@@ -122,9 +124,14 @@ artifact_driver_unit_output="$(bash "$classifier" tests/python/unit/tooling/test
 assert_flag "$artifact_driver_unit_output" code true
 assert_flag "$artifact_driver_unit_output" rust false
 for deletion_input in crates/hubuum-storage-core/src/deletion_control.rs \
+  crates/hubuum-storage-core/src/deletion_control/cleanup.rs \
   crates/hubuum-storage-memory/src/deletion_control.rs \
+  crates/hubuum-storage-memory/src/deletion_control/tests.rs \
   crates/hubuum-storage-postgres/tests/deletion_control.rs \
+  src/application/runtime_shutdown_tests.rs \
   src/middlewares/maintenance/tests.rs \
+  src/services/deletion_recovery/cleanup.rs \
+  src/services/deletion_recovery/cleanup/tests.rs \
   src/services/deletion_recovery/repository.rs \
   src/services/deletion_recovery/tests.rs src/config/control_recovery.rs; do
   deletion_output="$(bash "$classifier" "$deletion_input")"
@@ -184,6 +191,7 @@ for corpus_path in .gitattributes test-corpora/comprehensive.json test-corpora/c
   assert_flag "$corpus_output" scale_benchmark false
 done
 
+# This fixture is also read directly by the Rust backup verifier regression.
 assert_flag "$(bash "$classifier" test-corpora/comprehensive.json)" rust true
 assert_flag "$(bash "$classifier" .gitattributes)" rust true
 assert_flag "$(bash "$classifier" tests/python/unit/tooling/test_lifecycle_fixture_checkout.py)" code true

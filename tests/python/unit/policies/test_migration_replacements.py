@@ -2,6 +2,8 @@
 
 import unittest
 import hashlib
+import re
+from pathlib import Path
 
 from support import load_script
 
@@ -57,6 +59,35 @@ class OfflineReviewTests(unittest.TestCase):
     def test_exact_review_permits_only_named_constraint(self):
         content = "ALTER TABLE deliveries DROP CONSTRAINT normal_unique;"
         self.assertEqual(MODULE.approved_offline_drops(self.review(content), "up.sql", content), {"OFFLINE:DELIVERIES:NORMAL_UNIQUE"})
+
+    def test_approved_schema_qualification_preserves_table_identity(self):
+        for table, expected in (
+            ("public.deliveries", "OFFLINE:DELIVERIES:NORMAL_UNIQUE"),
+            ("hubuum_control.deliveries", "OFFLINE:HUBUUM_CONTROL.DELIVERIES:NORMAL_UNIQUE"),
+        ):
+            with self.subTest(table=table):
+                content = f"ALTER TABLE {table} DROP CONSTRAINT normal_unique;"
+                review = self.review(content)
+                review["reviews"][0]["drop_constraints"] = {table: ["normal_unique"]}
+                self.assertEqual(MODULE.approved_offline_drops(review, "up.sql", content), {expected})
+
+    def test_arbitrary_schema_and_multipart_identifiers_are_rejected(self):
+        for table in ("audit.deliveries", "public.hubuum_control.deliveries", "hubuum_control.deliveries.extra"):
+            with self.subTest(table=table):
+                content = f"ALTER TABLE {table} DROP CONSTRAINT normal_unique;"
+                review = self.review(content)
+                review["reviews"][0]["drop_constraints"] = {table: ["normal_unique"]}
+                with self.assertRaises(ValueError):
+                    MODULE.approved_offline_drops(review, "up.sql", content)
+
+    def test_managed_deletion_format_widening_preserves_every_old_predicate(self):
+        migrations = Path(MODULE.__file__).resolve().parents[1] / "crates/hubuum-storage-postgres/migrations"
+        original = (migrations / "2026-10-29-000002_deletion_authority/up.sql").read_text()
+        replacement = (migrations / "2026-10-29-000005_managed_deletion_cleanup/up.sql").read_text()
+        old_check = original.split("material JSONB NOT NULL CHECK ", 1)[1].split(");", 1)[0]
+        new_check = replacement.split("ADD CONSTRAINT deletion_authority_material_check CHECK ", 1)[1].split(" NOT VALID;", 1)[0]
+        widened = old_check.replace("material->>'format' = '1'", "material->>'format' IN ('1', '2')")
+        self.assertEqual(re.sub(r"\s+", "", new_check), re.sub(r"\s+", "", widened))
 
     def test_changed_sql_requires_review(self):
         with self.assertRaises(ValueError):

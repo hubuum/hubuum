@@ -1,9 +1,10 @@
 # Deletion authority and independent checkpoint foundation
 
 This implements protected control records, independent checkpoint publication,
-offline control recovery, and runtime recovery quarantine for
-[#511](https://github.com/hubuum/hubuum/issues/511). It does **not** enable permanent
-deletion or selective restriction reapplication. Retained decisions restrict the
+offline control recovery, runtime recovery quarantine, and one scoped hot-history
+cleanup operation for [#511](https://github.com/hubuum/hubuum/issues/511). It does
+**not** enable general resource erasure or selective restriction reapplication.
+Retained decisions restrict the
 entire deployment, including completed deletions, so recovering authority cannot
 expose data that an older application backup may contain. The issue remains open.
 
@@ -80,8 +81,8 @@ A retry after lost acknowledgement can return the identical published checkpoint
 A crash before latest-reference replacement leaves unacknowledged staged material;
 it cannot grant cleanup authority. Missing or corrupt staged bytes fail closed.
 An uncertain rename/synchronization result requires rereading the latest durable
-evidence before any acknowledgement or cleanup. No cleanup executor is enabled
-by this foundation.
+evidence before any acknowledgement or cleanup. The managed-copy command below
+retains this proof through cleanup and completion protection.
 
 The repository itself must not be rolled back. HMAC authentication detects
 modification, not replay of an older valid copy of the entire independent
@@ -191,8 +192,9 @@ processes. Startup rejects retained intents; recovery reports always keep
 `application_quarantine_released: false`. Selective reapplication is still required
 before a deployment with retained intents can resume useful application traffic.
 
-Physical rollback and control recovery are offline operations. These checks do
-not authorize live database replacement or online deletion producers. Logical
+Physical rollback, control recovery, and managed-copy cleanup are offline
+operations. These checks do not authorize live database replacement or online
+deletion producers. Logical
 application restore continues to reject retained intents before replacing any
 data.
 
@@ -222,6 +224,73 @@ still fail during recovery quarantine. The restore confirmation route is exempt
 from waiting for itself. This drain accounting does not itself revoke
 bytes already sent or prove that a disconnected replica has stopped.
 
+## Offline managed-copy cleanup
+
+The first executor removes one **closed object-history row** selected by its
+stable resource and version UUIDs. It does not erase live objects, open history,
+backups, PostgreSQL MVCC/WAL, artifacts, or bytes already delivered to consumers.
+Completion describes this one managed hot copy, not erasure of every possible
+copy of the data. Existing opaque copy obligations cannot be guessed into an
+executable target.
+
+Before upgrading, stop every older API and worker process. Apply the managed
+cleanup migration and reconcile split-role grants, then start only matching
+binaries. Its UUID index rejects malformed or ambiguous historical version
+identities; repair their provenance before retrying. Older binaries do not
+participate in the new runtime registration fence and must never remain active
+when cleanup is enabled.
+
+Each runtime registers before bootstrap writes, background work or listeners.
+These bounded protected registrations survive logical restore and are separate
+from restore-coordinator heartbeats. A successful shutdown removes its own
+registration only after HTTP, workers and template processing have settled.
+Cancelled handlers, incomplete responses, worker panic/timeout, lost shutdown
+acknowledgement and process death (including abrupt signals such as `SIGQUIT`)
+can leave uncertainty; their registrations stay
+blocking. Heartbeat expiry does not prove that a disconnected writer stopped.
+There is no force-clear command. Unknown owners require the future fenced
+operator-recovery workflow, so this layer does not complete #511.
+
+Provision and initialize the independent repository as described above, then
+stop all API and worker replicas cleanly. Generate an intent UUID once and reuse
+it for every retry of the same target:
+
+```bash
+hubuum-admin \
+  --delete-object-history-version VERSION_UUID \
+  --history-resource RESOURCE_UUID \
+  --deletion-intent INTENT_UUID \
+  --control-repository /independent/control \
+  --control-checkpoint-key /independent-secrets/control.key
+```
+
+The command uses the privileged migration connection. It authenticates the latest
+independent checkpoint and requires the primary to cover it. Prepare then locks
+authority, checks that no runtime registration remains, validates the exact closed
+history copy and commits a minimal bound intent. New runtime registration now
+fails under quarantine.
+
+The owned repository session remains locked while the command publishes and
+reads back the intent checkpoint. Only its private protection proof can reach
+the cleanup service. The adapter locks authority again, compares the exact
+protected state, rechecks the absence of runtime owners and verifies the UUID
+pair. Removing the row and recording its protecting checkpoint identity commit
+together. No database transaction spans filesystem synchronization.
+
+Final acknowledgement requires another independent checkpoint covering the
+committed removal receipt. If that publication fails, the command reports pending
+completion protection instead of success. Retry with the same intent identity;
+it preserves the existing copy identity and receipt. Retries check physical
+presence even when authority already says `Removed`, because recovery may have
+reintroduced the same version. A recovered open or mismatched row remains blocked.
+Every successful report keeps `application_quarantine_released: false`.
+
+Bound intents use control format 2. Readers preserve the canonical bytes of
+existing format 1 checkpoints and keep their unknown obligations unchanged.
+Downgrade refuses format 2 authority or retained runtime registrations instead of
+discarding them. Retain the repository and key for the entire supported recovery
+horizon; no control eviction or receipt expiry is enabled.
+
 ## Logical restore gate and remaining activation work
 
 Application backups exclude the control table. Restore checks protected authority
@@ -230,12 +299,12 @@ If any retained intent exists, replacement fails before application data changes
 This conservative gate includes completed decisions because an older backup may
 contain their erased data. The memory adapter applies the same gate.
 
-Before #511 can be completed or any deletion consumer activated, implement:
+Before #511 can be completed or general lifecycle consumers activated, implement:
 
 - restriction/publication fencing when each intent commits, with proof types
   carried into cleanup and acknowledgement operations;
-- independently protected intent and completion acknowledgements around real
-  physical-copy operations;
+- additional managed-copy operations beyond the explicitly bound hot object
+  history scope, with independently protected acknowledgements;
 - explicit recovery-epoch transitions and selective exposure release after
   restriction reapplication;
 - restriction reapplication after logical restore, replacing the conservative

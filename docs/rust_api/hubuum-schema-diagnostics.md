@@ -1,6 +1,6 @@
 # `hubuum-schema-diagnostics` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.11` release train;
+Status: experimental public API in the storage SDK `0.12` release train;
 standalone publication is under consideration and is not part of this change.
 
 ## Purpose and callers

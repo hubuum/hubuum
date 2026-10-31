@@ -1,6 +1,6 @@
 [package]
 name = "hubuum-storage-conformance"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Reusable behavioral conformance contract for Hubuum storage adapters."
@@ -16,7 +16,7 @@ release-train = "storage-sdk"
 
 [dependencies]
 async-trait = "0.1"
-hubuum-domain = { version = "=0.11.0", path = "../hubuum-domain" }
-hubuum-events-core = { version = "=0.11.0", path = "../hubuum-events-core" }
-hubuum-query = { version = "=0.11.0", path = "../hubuum-query" }
-hubuum-storage-core = { version = "=0.11.0", path = "../hubuum-storage-core" }
+hubuum-domain = { version = "=0.12.0", path = "../hubuum-domain" }
+hubuum-events-core = { version = "=0.12.0", path = "../hubuum-events-core" }
+hubuum-query = { version = "=0.12.0", path = "../hubuum-query" }
+hubuum-storage-core = { version = "=0.12.0", path = "../hubuum-storage-core" }

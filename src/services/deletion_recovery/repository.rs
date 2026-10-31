@@ -54,6 +54,26 @@ struct Signed<T> {
 /// Only independent authenticated read-back can construct this proof.
 pub(super) struct DurableCheckpoint {
     payload: Payload,
+    sha256: String,
+}
+
+/// An owned publication session keeps cleanup and its completion checkpoint
+/// ordered against every other administrator using this repository.
+pub(super) struct CheckpointSession {
+    repository: CheckpointRepository,
+    checkpoint: DurableCheckpoint,
+    _lock: File,
+}
+
+impl CheckpointSession {
+    pub(super) fn checkpoint(&self) -> &DurableCheckpoint {
+        &self.checkpoint
+    }
+
+    pub(super) fn publish(&mut self, capture: &DeletionControlCapture) -> Result<(), ApiError> {
+        self.checkpoint = self.repository.publish_locked(capture, false)?;
+        Ok(())
+    }
 }
 
 /// Keep latest-reference publication excluded until recovery commits and its
@@ -72,6 +92,10 @@ impl RecoveryEvidence {
 impl DurableCheckpoint {
     pub(super) fn state(&self) -> &DeletionControlState {
         &self.payload.state
+    }
+
+    pub(super) fn identity(&self) -> &str {
+        &self.sha256
     }
 }
 
@@ -202,6 +226,16 @@ impl CheckpointRepository {
         })
     }
 
+    pub(super) fn into_session(self) -> Result<CheckpointSession, ApiError> {
+        let lock = self.lock()?;
+        let checkpoint = self.latest_locked()?;
+        Ok(CheckpointSession {
+            repository: self,
+            checkpoint,
+            _lock: lock,
+        })
+    }
+
     fn latest_locked(&self) -> Result<DurableCheckpoint, ApiError> {
         let head: Head = self.verified(&read_bounded(checked_file(
             &self.root.join("HEAD"),
@@ -239,7 +273,10 @@ impl CheckpointRepository {
         self.directory
             .sync_all()
             .map_err(|_| unavailable("Cannot establish latest checkpoint durability"))?;
-        Ok(DurableCheckpoint { payload })
+        Ok(DurableCheckpoint {
+            payload,
+            sha256: head.sha256,
+        })
     }
 
     pub(super) fn publish(
@@ -248,6 +285,14 @@ impl CheckpointRepository {
         initialize: bool,
     ) -> Result<DurableCheckpoint, ApiError> {
         let _lock = self.lock()?;
+        self.publish_locked(capture, initialize)
+    }
+
+    fn publish_locked(
+        &self,
+        capture: &DeletionControlCapture,
+        initialize: bool,
+    ) -> Result<DurableCheckpoint, ApiError> {
         if initialize {
             // Bootstrap is explicit and restricted to a fresh, empty authority
             // and repository. Missing HEAD is never interpreted as an empty ledger.
@@ -431,6 +476,120 @@ mod tests {
         assert!(fixture.repository.publish(&fixture.initial, false).is_err());
         drop(evidence);
         assert!(fixture.repository.publish(&fixture.initial, false).is_ok());
+    }
+
+    #[test]
+    fn cleanup_session_retains_exclusive_publication_through_successive_checkpoints() {
+        let fixture = Fixture::new();
+        fixture.repository.publish(&fixture.initial, true).unwrap();
+        let mut session =
+            CheckpointRepository::open(&fixture.repository.root, &fixture.root.join("key"))
+                .unwrap()
+                .into_session()
+                .unwrap();
+        let next = fixture.next();
+        session.publish(&next).unwrap();
+        assert!(fixture.repository.recovery_evidence().is_err());
+        let identity = session.checkpoint().identity().to_owned();
+        drop(session);
+        assert_eq!(fixture.repository.latest().unwrap().identity(), identity);
+    }
+
+    #[test]
+    fn signed_v1_intents_authenticate_without_binding_fields() {
+        let fixture = Fixture::new();
+        // These bytes use the published v1 field order and omit every v2 field.
+        // Signing them directly catches accidental normalization on decoding.
+        let state = r#"{"format":1,"lineage":"c39555e3-e6dc-4b42-9c78-d5726dbdc200","epoch":"b40e2188-3758-4cf6-bf35-7369784d7a16","revision":1,"intents":{"6d209981-b5cc-4271-8532-019b06a26304":{"subject":{"kind":"version","identity":"1580e33a-ecf4-4269-8482-976c29fbac33"},"generation":1,"copies":{"a6e092ca-bb89-4664-9ff8-9e641bf70004":"removed"}}}}"#;
+        let payload = format!(
+            r#"{{"state":{state},"position":{{"backend":"memory","instance":"014c606d-91e9-4e06-b9a6-99e2fe626b52"}}}}"#
+        );
+        let mut mac = Hmac::<Sha256>::new_from_slice(&[42; 32]).unwrap();
+        mac.update(MAC_DOMAIN);
+        mac.update(payload.as_bytes());
+        let bytes = format!(
+            r#"{{"payload":{payload},"mac":"{}"}}"#,
+            STANDARD.encode(mac.finalize().into_bytes())
+        )
+        .into_bytes();
+        let sha256 = digest(&bytes);
+        fixture
+            .repository
+            .write_new(
+                &fixture.repository.root.join(format!("{sha256}.json")),
+                &bytes,
+            )
+            .unwrap();
+        let control = DeletionControlState::decode(state.as_bytes()).unwrap();
+        let head = fixture
+            .repository
+            .signed(Head {
+                format: 1,
+                lineage: control.lineage(),
+                epoch: control.epoch(),
+                revision: control.revision(),
+                sha256,
+            })
+            .unwrap();
+        fixture
+            .repository
+            .write_new(&fixture.head(), &head)
+            .unwrap();
+        let recovered = fixture.repository.latest().unwrap();
+        assert_eq!(recovered.state().encode().unwrap(), state.as_bytes());
+    }
+
+    #[test]
+    #[ignore = "subprocess fixture for cleanup session crash test"]
+    fn hold_cleanup_session_child() {
+        let root = std::env::current_dir().unwrap();
+        let _session = CheckpointRepository::open(&root.join("repository"), &root.join("key"))
+            .unwrap()
+            .into_session()
+            .unwrap();
+        fs::write(root.join("locked"), b"ready").unwrap();
+        loop {
+            std::thread::park();
+        }
+    }
+
+    #[test]
+    fn killed_cleanup_process_releases_its_session_without_losing_evidence() {
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        let fixture = Fixture::new();
+        let checkpoint = fixture.repository.publish(&fixture.initial, true).unwrap();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "services::deletion_recovery::repository::tests::hold_cleanup_session_child",
+                "--ignored",
+            ])
+            .current_dir(&fixture.root)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !fixture.root.join("locked").exists() && Instant::now() < deadline {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let locked = fixture.root.join("locked").exists();
+        let excluded = fixture.repository.recovery_evidence().is_err();
+        let _ = child.kill();
+        child.wait().unwrap();
+        assert!(
+            locked && excluded,
+            "cleanup child must hold the publication lock"
+        );
+        assert_eq!(
+            fixture.repository.latest().unwrap().identity(),
+            checkpoint.identity()
+        );
     }
 
     #[test]
