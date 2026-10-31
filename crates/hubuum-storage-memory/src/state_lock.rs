@@ -41,6 +41,7 @@ impl MemoryStateLock {
         lease: &StorageTaskLease,
     ) -> Result<(), StorageError> {
         let mut live = self.0.write().await;
+        live.ensure_task_execution_allowed()?;
         let task = live
             .tasks
             .get(&lease.task_id().id())

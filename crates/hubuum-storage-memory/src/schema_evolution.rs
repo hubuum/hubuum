@@ -1066,6 +1066,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
         request: StorageSchemaRepairReportWrite,
     ) -> Result<(), StorageError> {
         let mut guard = self.state.write().await;
+        guard.ensure_task_execution_allowed()?;
         let mut state = guard.clone();
         let report = request.report();
         state
@@ -1112,6 +1113,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
         let started = Instant::now();
         let (mut work, active, baseline, snapshots, context) = {
             let state = self.state.read().await;
+            state.ensure_task_execution_allowed()?;
             let task = state
                 .tasks
                 .get(&lease.task_id().id())
@@ -1205,6 +1207,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
             .collect::<Vec<_>>();
         tokio::task::yield_now().await;
         let mut guard = self.state.write().await;
+        guard.ensure_task_execution_allowed()?;
         let live = guard
             .tasks
             .get(&lease.task_id().id())

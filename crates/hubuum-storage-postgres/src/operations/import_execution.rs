@@ -1,5 +1,6 @@
 //! Atomic PostgreSQL execution for validated backend-neutral import plans.
 use super::task_execution::{claimed_task, live_claimed_task};
+use crate::runtime::require_deletion_execution;
 use hubuum_domain::ClassId;
 use hubuum_domain::JsonSchemaLimits;
 use hubuum_domain::PlaintextPassword;
@@ -236,6 +237,7 @@ pub async fn apply_claimed_import_strict(
     let (lease, items) = plan.into_parts();
     runtime
         .with_transaction(async move |connection| {
+            require_deletion_execution(connection).await?;
             let mut state = ImportRuntime::for_plan(&fenced_operations(&items));
             for item in items {
                 crate::runtime::task_execution_checkpoint()?;
@@ -295,6 +297,7 @@ pub async fn apply_claimed_import_best_effort(
         let receipt = result.clone();
         let outcome = runtime
             .with_transaction(async |connection| {
+                require_deletion_execution(connection).await?;
                 let change = if let Some(operation) = operation {
                     execute_operation(schema_limits, connection, &state, operation).await?
                 } else {
@@ -322,6 +325,7 @@ pub async fn apply_claimed_import_best_effort(
                 let error = StorageError::from(error);
                 runtime
                     .with_transaction(async |connection| {
+                        require_deletion_execution(connection).await?;
                         live_claimed_task(connection, claimed_task(&lease)?).await?;
                         record_execution_receipt(
                             connection,
@@ -350,6 +354,7 @@ pub async fn record_claimed_import_results(
     let (lease, results) = results.into_parts();
     runtime
         .with_transaction(async move |connection| {
+            require_deletion_execution(connection).await?;
             for result in results {
                 record_execution_receipt(connection, &lease, None, result).await?;
             }

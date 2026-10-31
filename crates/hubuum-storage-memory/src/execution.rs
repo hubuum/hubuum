@@ -133,6 +133,12 @@ impl TransactionStorage for MemoryStorage {
         R: Send,
     {
         let mut committed = self.state.write().await;
+        if MEMORY_EXECUTION_SCOPE
+            .try_with(|scope| scope.task_execution_override().is_some_and(Option::is_some))
+            .unwrap_or(false)
+        {
+            committed.ensure_task_execution_allowed()?;
+        }
         let transaction = MemoryTransaction {
             storage: Self {
                 schema_limits: self.schema_limits,

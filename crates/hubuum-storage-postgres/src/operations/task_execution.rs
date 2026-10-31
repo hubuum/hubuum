@@ -8,7 +8,7 @@ use std::time::Duration;
 use chrono::NaiveDateTime;
 use diesel::dsl::sql;
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, OptionalExtension, QueryDsl};
-use diesel::sql_types::{Array, BigInt, Integer, Nullable, Text, Timestamp};
+use diesel::sql_types::{Array, BigInt, Bool, Integer, Nullable, Text, Timestamp};
 use diesel::{Insertable, QueryableByName, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{PrincipalId, TaskId};
@@ -27,6 +27,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::operations::event_record::append_event;
+use crate::runtime::require_deletion_execution;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
 use super::schema_evolution::mark_schema_work_failed_on;
@@ -423,6 +424,7 @@ pub async fn append_task_event(
     let claimed = claimed_task(&lease)?;
     runtime
         .with_transaction(async move |connection| {
+            require_deletion_execution(connection).await?;
             let row = live_claimed_task(connection, claimed).await?;
             append_task_lifecycle_event(connection, &row, event, &worker_provenance(&row)?)
                 .await
@@ -516,6 +518,7 @@ pub(super) async fn complete_task_on_connection(
     event: StorageTaskEventInput,
 ) -> Result<TaskRow, PostgresStorageError> {
     let (claimed, update) = terminal_state_update(update)?;
+    require_deletion_execution(connection).await?;
     finalize_task_connection(connection, claimed, update, event).await
 }
 
@@ -564,7 +567,13 @@ pub async fn fail_task(
             })
             .await?
     } else {
-        finalize_task(runtime, claimed, update, event, None).await?
+        // Failure settlement publishes no artifact and remains available while
+        // quarantine blocks productive completion.
+        runtime
+            .with_transaction(async move |connection| {
+                finalize_task_connection(connection, claimed, update, event).await
+            })
+            .await?
     };
     record_task_terminal(runtime, &row);
     row.into_storage()
@@ -598,6 +607,7 @@ async fn finalize_task(
 ) -> Result<TaskRow, PostgresStorageError> {
     runtime
         .with_transaction(async move |connection| {
+            require_deletion_execution(connection).await?;
             super::task_control::lock_reindex_cleanup(connection, &[claimed.id]).await?;
             let row = live_claimed_task(connection, claimed).await?;
             if let Some(reason) = row
@@ -735,7 +745,8 @@ async fn update_task_state_row(
     update: TaskStateUpdate,
 ) -> Result<TaskRow, PostgresStorageError> {
     let row = runtime
-        .with_connection(async move |connection| {
+        .with_transaction(async move |connection| {
+            require_deletion_execution(connection).await?;
             use crate::schema::tasks::dsl as tasks;
             diesel::update(
                 tasks::tasks
@@ -760,6 +771,7 @@ async fn update_task_state_row(
             .returning(TaskRow::as_returning())
             .get_result::<TaskRow>(connection)
             .await
+            .map_err(PostgresStorageError::from)
         })
         .await?;
     tracing::info!(
@@ -847,6 +859,7 @@ pub(super) async fn runnable_claimed_task(
     claimed: ClaimedTask,
 ) -> Result<TaskRow, PostgresStorageError> {
     crate::runtime::task_execution_checkpoint()?;
+    require_deletion_execution(connection).await?;
     let row = live_claimed_task(connection, claimed).await?;
     if let Some(reason) = row
         .control(stored_task_kind(&row)?)?
@@ -953,11 +966,17 @@ fn active_statuses() -> [&'static str; 2] {
 async fn maintenance_is_normal(
     connection: &mut PostgresConnection,
 ) -> Result<bool, PostgresStorageError> {
-    Ok(
-        crate::operations::maintenance::maintenance_state_on_connection(connection)
-            .await?
-            .is_normal(),
-    )
+    use crate::schema::system_maintenance::dsl as maintenance;
+    // Keep the claim's existing maintenance round trip while retaining the
+    // authority lock until the new lease and its accounting commit together.
+    maintenance::system_maintenance
+        .filter(maintenance::id.eq(1_i16))
+        .select(sql::<Bool>(
+            "public.hubuum_deletion_execution_allowed() AND state = 'normal'",
+        ))
+        .first::<bool>(connection)
+        .await
+        .map_err(PostgresStorageError::from)
 }
 
 pub(super) async fn database_now(

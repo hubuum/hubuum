@@ -1,6 +1,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock};
 
-static ACTIVE_MAINTENANCE_WORK: AtomicUsize = AtomicUsize::new(0);
+static ACTIVE_MAINTENANCE_WORK: LazyLock<Arc<AtomicUsize>> =
+    LazyLock::new(|| Arc::new(AtomicUsize::new(0)));
 
 /// Counts local request/worker activity across the maintenance state check and
 /// the work it protects. The restore coordinator reports this instance drained
@@ -12,15 +14,24 @@ static ACTIVE_MAINTENANCE_WORK: AtomicUsize = AtomicUsize::new(0);
 /// let guard = MaintenanceActivityGuard;
 /// ```
 pub struct MaintenanceActivityGuard {
-    counter: &'static AtomicUsize,
+    counter: Arc<AtomicUsize>,
 }
 
 impl MaintenanceActivityGuard {
     pub fn begin() -> Self {
-        ACTIVE_MAINTENANCE_WORK.fetch_add(1, Ordering::AcqRel);
-        Self {
-            counter: &ACTIVE_MAINTENANCE_WORK,
-        }
+        Self::begin_with_counter(Arc::clone(&ACTIVE_MAINTENANCE_WORK))
+    }
+
+    fn begin_with_counter(counter: Arc<AtomicUsize>) -> Self {
+        counter.fetch_add(1, Ordering::AcqRel);
+        Self { counter }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn isolated() -> (Arc<AtomicUsize>, Self) {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let guard = Self::begin_with_counter(Arc::clone(&counter));
+        (counter, guard)
     }
 }
 

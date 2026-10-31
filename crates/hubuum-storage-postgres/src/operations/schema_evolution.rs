@@ -486,6 +486,7 @@ pub async fn save_schema_repair_report(
     request: StorageSchemaRepairReportWrite,
 ) -> Result<(), PostgresStorageError> {
     runtime.with_transaction(async move |connection| {
+        crate::runtime::require_deletion_execution(connection).await?;
         let report = request.report();
         let class = lock_class(connection, report.target().class_id()).await?;
         check_collection(&class, request.authorized_collection())?;
@@ -815,6 +816,7 @@ pub async fn process_schema_work(
         })
         .collect::<Result<Vec<_>, PostgresStorageError>>()?;
     runtime.with_transaction(async move |connection|{
+        crate::runtime::require_deletion_execution(connection).await?;
         lock_class(connection,work.target().class_id()).await?;
         task_execution::runnable_claimed_task(connection,claimed).await?;
         let persisted=work_on(connection,work.task_id()).await?;

@@ -102,6 +102,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Artifact cleanup backs off after an empty batch using the configured output
   cleanup interval, avoiding an extra database acquisition on every idle worker
   poll while retaining bounded draining and retries when work remains.
+- Restore draining now waits for active HTTP handlers and streamed response
+  bodies to finish or disconnect. Deletion recovery quarantine fences productive
+  task transactions and output publication against committed deletion intents,
+  while cancellation and failure settlement remain available. Apply the
+  execution-fence migration and reconcile runtime grants before restarting
+  matching workers; permanent deletion remains disabled.
+
 - Retained history and task-event actor names no longer attach to a different
   principal when a restore timeline reuses an integer ID. Historical relation
   endpoint hydration also requires the captured endpoint identity.

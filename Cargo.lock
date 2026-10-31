@@ -2441,6 +2441,7 @@ dependencies = [
  "hubuum-query",
  "hubuum-regex",
  "hubuum-storage-core",
+ "hubuum-task-core",
  "ipnet",
  "json-patch",
  "regex",
