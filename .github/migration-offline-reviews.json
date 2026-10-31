@@ -79,6 +79,17 @@
       "reason": "Application-incarnation permits, exact runtime drain acknowledgements, restore reapplication and persisted task-claim fences require every producer to use the new protocol. Older binaries cannot establish process isolation or prevent stale publication.",
       "upgrade_action": "Stop every older API, worker, restore executor and administrator producer; apply the migration and reconcile runtime grants; configure the independent repository on every producer and start matching binaries. Preserve all existing runtime registrations and recovery material. See docs/deletion_recovery.md#upgrade-and-rollback.",
       "drop_constraints": {}
+    },
+    {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-10-30-000001_protected_deletion_audit/up.sql",
+      "sha256": "60b1192f02b0ec509871960af2187a54b3403771b67ad4579a19a614875bf268",
+      "reason": "The existing control predicates remain intact while format 3 adds required protected lifecycle audit evidence. Older producers cannot preserve it or enforce audit-before-acknowledgement ordering.",
+      "upgrade_action": "Stop every older API, worker, restore executor and administrator producer; migrate and reconcile grants, then deploy matching binaries. Retain the independent repository and key. Downgrade refuses retained format-3 evidence. See docs/deletion_recovery.md#protected-audit-evidence.",
+      "drop_constraints": {
+        "hubuum_control.deletion_authority": [
+          "deletion_authority_material_check"
+        ]
+      }
     }
   ]
 }

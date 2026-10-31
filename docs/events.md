@@ -37,6 +37,13 @@ entity updates, moves to the current parent, repeated permission grants or
 revocations, repeated service-account disable requests, and membership changes
 that do not change effective membership.
 
+The offline deletion-recovery commands emit `lifecycle` audit events for intent,
+access restriction, recovery protection, exact hot-copy removal and completion.
+These system-only events require an unscoped administrator. They are unavailable
+to notification subscriptions, previews, tests and transports. Minimum original
+event references and membership survive ordinary audit expiry in protected control
+evidence; `hubuum-admin --control-status` exposes that bounded evidence separately.
+
 ## Audit Log
 
 Audit readers query the canonical stream with `GET /api/v1/events`. The

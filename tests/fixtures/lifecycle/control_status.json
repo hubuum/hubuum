@@ -16,7 +16,10 @@
       "recorded_removed_copies": 0,
       "unbound_copies": 0,
       "confirmed_managed_scope_completion": false,
-      "next_action": "publish_checkpoint"
+      "next_action": "publish_checkpoint",
+      "audit_evidence": {
+        "state": "not_recorded"
+      }
     }
   ]
 }

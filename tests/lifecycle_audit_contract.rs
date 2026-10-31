@@ -3,8 +3,9 @@
 
 use std::sync::OnceLock;
 
-use hubuum_domain::{JsonSchemaErrorKind, validate_json_schema, validate_json_value};
-use hubuum_events_core::EventEnvelope;
+use hubuum_domain::{EventSinkId, JsonSchemaErrorKind, validate_json_schema, validate_json_value};
+use hubuum_events_core::{EventContext, EventEnvelope, EventSubscriptionScope};
+use hubuum_storage_core::{StorageErrorKind, StorageEventSubscriptionCreate};
 use rstest::rstest;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -423,7 +424,18 @@ fn exact_membership_example_is_bound_to_its_published_digest() {
 }
 
 #[test]
-fn proposal_does_not_silently_activate_the_runtime_catalog() {
-    let error = serde_json::from_value::<EventEnvelope>(example("published_audit")).unwrap_err();
-    assert!(error.to_string().contains("unknown variant `lifecycle`"));
+fn proposal_does_not_silently_activate_lifecycle_delivery() {
+    let event = serde_json::from_value::<EventEnvelope>(example("published_audit")).unwrap();
+    let error = StorageEventSubscriptionCreate::builder(
+        EventSubscriptionScope::System,
+        EventSinkId::new(1).unwrap(),
+        "proposed lifecycle delivery",
+        EventContext::system(),
+    )
+    .entity_types(vec![event.entity_type()])
+    .actions(vec![event.action()])
+    .try_build()
+    .unwrap_err();
+    assert_eq!(error.kind(), StorageErrorKind::InvalidInput);
+    assert!(error.to_string().contains("audit-only"));
 }

@@ -1,9 +1,9 @@
 use std::path::Path;
 
 use hubuum_storage_core::{
-    DeletionCheckpointIdentity, DeletionControlCapture, DeletionControlState,
-    DeletionControlStorage, HotObjectHistoryCleanup, HotObjectHistoryDeletion,
-    StorageRecordIdentity,
+    DeletionAudit, DeletionAuditObservation, DeletionAuditProtection, DeletionCheckpointIdentity,
+    DeletionControlCapture, DeletionControlState, DeletionControlStorage, HotObjectHistoryCleanup,
+    HotObjectHistoryDeletion, StorageRecordIdentity,
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -60,6 +60,7 @@ pub(crate) struct HotHistoryCleanupReport {
     control_revision: i64,
     completion_checkpoint: String,
     application_quarantine_released: bool,
+    audit: Option<DeletionAudit>,
 }
 
 async fn publish(
@@ -74,6 +75,39 @@ async fn publish(
     })
     .await
     .map_err(|_| unavailable("Cleanup checkpoint worker failed"))?
+}
+
+pub(super) async fn protect_audit(
+    storage: &StorageHandle,
+    session: CheckpointSession,
+    protection: DeletionAuditProtection,
+) -> Result<(CheckpointSession, DeletionControlState), ApiError> {
+    let current = storage.read_deletion_control().await?;
+    if !session.checkpoint().state().covers(&current) {
+        return Err(unavailable(
+            "Audit observation requires independently protected exact authority",
+        ));
+    }
+    let checkpoint = DeletionCheckpointIdentity::new(session.checkpoint().identity().to_owned())
+        .map_err(|_| unavailable("Invalid independent checkpoint identity"))?;
+    let expected = storage
+        .observe_deletion_checkpoint(DeletionAuditObservation::new(
+            current.clone(),
+            checkpoint,
+            protection,
+        ))
+        .await?;
+    if expected == current {
+        return Ok((session, current));
+    }
+    let capture = storage.capture_deletion_control().await?;
+    if !capture.state().covers(&expected) {
+        return Err(unavailable(
+            "Committed audit observation could not be read back",
+        ));
+    }
+    let session = publish(session, capture).await?;
+    Ok((session, expected))
 }
 
 pub(crate) async fn cleanup_object_history(
@@ -120,8 +154,9 @@ pub(crate) async fn cleanup_object_history(
             "Committed cleanup intent could not be read back",
         ));
     }
-    let expected = capture.state().clone();
     let session = publish(session, capture).await?;
+    let (session, expected) =
+        protect_audit(&storage, session, DeletionAuditProtection::Intent).await?;
     let protected = ProtectedHotCopy::new(session, expected, request.clone())?;
     let (session, removed) = protected.remove(&storage).await?;
     acknowledge_completion(&storage, session, removed, request).await
@@ -144,6 +179,8 @@ async fn acknowledge_completion(
                 "Independent evidence does not cover copy removal",
             ));
         }
+        let (session, completed) =
+            protect_audit(storage, session, DeletionAuditProtection::Completion).await?;
         Ok::<_, ApiError>(HotHistoryCleanupReport {
             intent: request.intent(),
             copy: request.copy(),
@@ -152,6 +189,11 @@ async fn acknowledge_completion(
             control_revision: session.checkpoint().state().revision(),
             completion_checkpoint: session.checkpoint().identity().to_owned(),
             application_quarantine_released: false,
+            audit: completed
+                .intents()
+                .get(&request.intent())
+                .and_then(|intent| intent.audit())
+                .cloned(),
         })
     }
     .await;

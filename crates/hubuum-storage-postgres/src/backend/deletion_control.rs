@@ -1,5 +1,6 @@
 use async_trait::async_trait;
-use diesel::sql_types::{BigInt, Bool, Jsonb, Nullable, Text, Uuid as SqlUuid};
+use chrono::{DateTime, NaiveDateTime, Utc};
+use diesel::sql_types::{BigInt, Bool, Jsonb, Nullable, Text, Timestamp, Uuid as SqlUuid};
 use diesel::{QueryableByName, sql_query};
 use diesel_async::RunQueryDsl;
 use futures_util::TryStreamExt;
@@ -10,6 +11,24 @@ use uuid::Uuid;
 
 use super::PostgresStorage;
 use crate::{PostgresConnection, PostgresStorageError};
+
+#[derive(QueryableByName)]
+struct AuditClock {
+    #[diesel(sql_type = Timestamp)]
+    recorded_at: NaiveDateTime,
+}
+
+async fn audit_time(
+    connection: &mut PostgresConnection,
+) -> Result<DateTime<Utc>, PostgresStorageError> {
+    Ok(
+        sql_query("SELECT clock_timestamp() AT TIME ZONE 'UTC' AS recorded_at")
+            .get_result::<AuditClock>(connection)
+            .await?
+            .recorded_at
+            .and_utc(),
+    )
+}
 
 #[derive(QueryableByName)]
 struct CaptureRow {
@@ -284,6 +303,11 @@ async fn store_control(
     state
         .encode()
         .map_err(|error| PostgresStorageError::validation_failed(error.to_string()))?;
+    let previous = read_authority_on(connection).await?;
+    for event in state.new_audit_events_since(&previous)? {
+        crate::operations::event_record::append_retained_lifecycle_event(connection, &event)
+            .await?;
+    }
     let material = serde_json::to_value(state)
         .map_err(|_| PostgresStorageError::database("Cannot encode deletion authority"))?;
     let changed = sql_query("UPDATE hubuum_control.deletion_authority SET material=$1 WHERE id=1 AND material IS DISTINCT FROM $1")
@@ -298,6 +322,31 @@ async fn store_control(
 
 #[async_trait]
 impl DeletionControlStorage for PostgresStorage {
+    async fn observe_deletion_checkpoint(
+        &self,
+        observation: DeletionAuditObservation,
+    ) -> Result<DeletionControlState, StorageError> {
+        self.runtime()
+            .with_control_transaction(async move |connection| {
+                lock_authority(connection, observation.expected()).await?;
+                let change = observation.expected().record_audit_protection(
+                    observation.checkpoint().clone(),
+                    audit_time(connection).await?,
+                    observation.protection(),
+                )?;
+            let application = if observation.protection() == DeletionAuditProtection::Completion {
+                read_application_on(connection).await?.with_completed_audit(&change)?
+            } else { None };
+                store_control(connection, change.next()).await?;
+            if let Some(application) = application {
+                sql_query("UPDATE hubuum_control.application_control SET reapplication_revision=$1 WHERE id=1")
+                    .bind::<BigInt, _>(application.fence().revision()).execute(connection).await?;
+            }
+                Ok::<_, PostgresStorageError>(change.next().clone())
+            })
+            .await
+            .map_err(StorageError::from)
+    }
     async fn read_deletion_control(&self) -> Result<DeletionControlState, StorageError> {
         self.runtime()
             .with_control_connection(async |connection| {
@@ -473,7 +522,7 @@ impl DeletionControlStorage for PostgresStorage {
             let mut state=expected.clone();
             for (request,row) in targets {
                 let cleanup=HotObjectHistoryCleanup::new(state.clone(),request,checkpoint.clone())?;
-                let change=state.record_hot_object_history_removed(&cleanup)?;
+                let change=state.record_hot_object_history_removed(&cleanup, audit_time(connection).await?)?;
                 if let Some(id)=row { sql_query("DELETE FROM public.hubuumobject_history WHERE history_id=$1").bind::<BigInt,_>(id).execute(connection).await?; }
                 state=change.next().clone();
             }
@@ -494,6 +543,9 @@ impl DeletionControlStorage for PostgresStorage {
     ) -> Result<(), StorageError> {
         self.runtime().with_control_transaction(async move |connection| {
             sql_query("SELECT material FROM hubuum_control.deletion_authority WHERE id=1 FOR UPDATE").get_result::<ControlRow>(connection).await?;
+            if !read_authority_on(connection).await?.has_required_audit_completion() {
+                return Err(PostgresStorageError::conflict("Required deletion audit completion remains unprotected"));
+            }
             let application=read_application_on(connection).await?;
             application.release(&receipt, checkpoint.clone()).map_err(|error|PostgresStorageError::conflict(error.to_string()))?;
             sql_query("UPDATE public.system_maintenance SET generation=0,state='normal',restore_job_id=NULL,entered_at=NULL,updated_at=timezone('UTC',clock_timestamp()) WHERE id=1 AND EXISTS (SELECT 1 FROM hubuum_control.application_control WHERE id=1 AND pending_restore)").execute(connection).await?;
@@ -557,7 +609,7 @@ impl DeletionControlStorage for PostgresStorage {
         self.runtime()
             .with_control_transaction(async move |connection| {
                 lock_authority(connection, &expected).await?;
-                let change = expected
+                let mut change = expected
                     .record_hot_object_history_intent(&request)
                     .map_err(|error| PostgresStorageError::conflict(error.to_string()))?;
                 let row = exact_closed_history_copy(connection, &request).await?;
@@ -565,6 +617,18 @@ impl DeletionControlStorage for PostgresStorage {
                     return Err(PostgresStorageError::not_found(
                         "Exact closed history version was not found",
                     ));
+                }
+                if !expected.intents().contains_key(&request.intent()) {
+                    let row = sql_query("SELECT logical_identity AS material FROM public.hubuumobject_history WHERE history_id=$1")
+                        .bind::<BigInt, _>(row.expect("new intent requires a closed row"))
+                        .get_result::<ControlRow>(connection).await?;
+                    let evidence: StorageIdentityEvidence = serde_json::from_value(row.material)
+                        .map_err(|_| PostgresStorageError::conflict("Historical collection identity is unresolved"))?;
+                    let collection = match evidence.references().get("/collection_id") {
+                        Some(StorageCapturedIdentity::Resource { family: StorageIdentityResourceKind::Collection, reference }) => reference.known_identity(),
+                        _ => None,
+                    }.ok_or_else(|| PostgresStorageError::conflict("Historical collection identity is unresolved"))?;
+                    change = change.with_hot_history_audit(&request, collection, audit_time(connection).await?)?;
                 }
                 store_control(connection, change.next()).await?;
                 Ok::<_, PostgresStorageError>(change.next().clone())
@@ -584,7 +648,7 @@ impl DeletionControlStorage for PostgresStorage {
             // Always inspect the physical copy, even for an existing Removed
             // receipt: primary recovery may have brought the old version back.
             let row = exact_closed_history_copy(connection, request.request()).await?;
-            let change = request.expected().record_hot_object_history_removed(&request)
+            let change = request.expected().record_hot_object_history_removed(&request, audit_time(connection).await?)
                 .map_err(|error| PostgresStorageError::conflict(error.to_string()))?;
             if let Some(id) = row {
                 let removed = sql_query("DELETE FROM public.hubuumobject_history WHERE history_id=$1 AND valid_to IS NOT NULL AND (logical_identity #>> '{subject,version}')::uuid = $2 AND (logical_identity #>> '{subject,identity,identity}')::uuid = $3")

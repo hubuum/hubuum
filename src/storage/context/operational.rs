@@ -1,12 +1,28 @@
 use super::*;
 use hubuum_storage_core::{
     ApplicationControlState, ApplicationFence, ApplicationReapplication, ApplicationWorkAdmission,
-    DeletionCheckpointIdentity, HotObjectHistoryCleanup, HotObjectHistoryDeletion,
-    RuntimeIsolationDomain, RuntimeRegistration,
+    DeletionAuditObservation, DeletionCheckpointIdentity, HotObjectHistoryCleanup,
+    HotObjectHistoryDeletion, RuntimeIsolationDomain, RuntimeRegistration,
 };
 
 #[async_trait]
 impl DeletionControlStorage for StorageHandle {
+    async fn observe_deletion_checkpoint(
+        &self,
+        observation: DeletionAuditObservation,
+    ) -> Result<DeletionControlState, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::DeletionControl,
+            "observe_deletion_checkpoint",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .observe_deletion_checkpoint(observation)
+                    .await)
+            },
+        )
+        .await
+    }
     async fn register_runtime_isolated(
         &self,
         isolation: Option<RuntimeIsolationDomain>,
