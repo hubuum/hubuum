@@ -235,6 +235,9 @@
         <loc>https://hubuum.github.io/hubuum/main/testing/</loc>
       </url>
       <url>
+        <loc>https://hubuum.github.io/hubuum/main/benchmark_ci/</loc>
+      </url>
+      <url>
         <loc>https://hubuum.github.io/hubuum/main/regex-testing/</loc>
       </url>
       <url>
