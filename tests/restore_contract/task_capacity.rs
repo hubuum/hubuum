@@ -1,5 +1,5 @@
-use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
 use hubuum::tests::asserts::expect_legacy_task;
+use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
 use std::panic::{AssertUnwindSafe, resume_unwind};
 
 use futures_util::FutureExt;
@@ -844,7 +844,10 @@ async fn restore_registers_required_repairs_above_reduced_limits(
         );
         assert!(
             storage
-                .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap()
+                ))
                 .await
                 .unwrap()
                 .is_none()

@@ -8,13 +8,13 @@ use hubuum_domain::{PrincipalId, TaskId};
 use hubuum_events_core::EventContext;
 use hubuum_storage_core::{
     LogicalIdentityStorage, RuntimeIsolationDomain, StorageIdentitySubject, StorageIdentityTarget,
-    StorageSchemaProfileArtifact, StorageTaskCompletion, StorageTaskCompletionPayload,
-    StorageTaskCreateRequest, StorageTaskEventInput, StorageTaskLeaseDuration,
-    StorageTaskResultCounts, StorageTaskSubmissionOutcome, StorageTaskTerminalStatus,
-    StorageTaskTerminalUpdate, StorageUserCreate, TaskControlChange, TaskControlRecovery,
-    TaskExecutionStorage, TaskHoldChange, TaskHoldId, TaskHoldReason, TaskPurgeScope,
-    TaskReceiptOutcome, TaskRetentionHold, TaskRetentionPolicy, TaskRetentionPolicyChange,
-    UserStorage,
+    StorageSchemaProfileArtifact, StorageTaskClaimRequest, StorageTaskCompletion,
+    StorageTaskCompletionPayload, StorageTaskCreateRequest, StorageTaskEventInput,
+    StorageTaskLeaseDuration, StorageTaskResultCounts, StorageTaskSubmissionOutcome,
+    StorageTaskTerminalStatus, StorageTaskTerminalUpdate, StorageUserCreate, TaskControlChange,
+    TaskControlRecovery, TaskExecutionStorage, TaskHoldChange, TaskHoldId, TaskHoldReason,
+    TaskPurgeScope, TaskReceiptOutcome, TaskRetentionHold, TaskRetentionPolicy,
+    TaskRetentionPolicyChange, TaskWorkerId, TaskWorkerKinds, UserStorage,
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -141,7 +141,13 @@ impl Fixture {
         };
         let claim = self
             .storage
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60000).unwrap())
+            .claim_next_task(
+                StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    StorageTaskLeaseDuration::from_milliseconds(60000).unwrap(),
+                )
+                .with_kinds(TaskWorkerKinds::new(&[payload.task_kind()]).unwrap()),
+            )
             .await
             .unwrap()
             .unwrap();
@@ -467,7 +473,13 @@ async fn abandoned_pending_admissions_activate_in_bounded_passes() {
     assert!(
         fixture
             .storage
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60000).unwrap())
+            .claim_next_task(
+                StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    StorageTaskLeaseDuration::from_milliseconds(60000).unwrap()
+                )
+                .with_kinds(TaskWorkerKinds::new(&[StorageTaskKind::Import]).unwrap())
+            )
             .await
             .unwrap()
             .is_none()
@@ -506,7 +518,13 @@ async fn abandoned_pending_admissions_activate_in_bounded_passes() {
     assert!(
         fixture
             .storage
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60000).unwrap())
+            .claim_next_task(
+                StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    StorageTaskLeaseDuration::from_milliseconds(60000).unwrap()
+                )
+                .with_kinds(TaskWorkerKinds::new(&[StorageTaskKind::Import]).unwrap())
+            )
             .await
             .unwrap()
             .is_some()

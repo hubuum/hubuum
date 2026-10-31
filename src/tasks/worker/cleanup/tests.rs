@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use hubuum_storage_core::StorageTaskLease;
 use hubuum_storage_core::artifacts::{
     ArtifactIdentity, ArtifactLimits, ArtifactManifest, ArtifactReference, ArtifactReservation,
     ArtifactResult, ArtifactStore, Destination, TaskArtifactStore, VerifiedArtifact,
 };
+use hubuum_storage_core::{StorageTaskLease, TaskWorkerId};
 
 use crate::storage::StorageHandle;
 
@@ -96,7 +96,12 @@ async fn paused_maintenance_does_not_block_the_task_claim_loop() {
 
     let result = tokio::time::timeout(
         Duration::from_secs(2),
-        process_one_task_with_settings(&context, None, &configured_backup_settings()),
+        process_one_task_with_settings(
+            &context,
+            TaskWorkerId::generate(),
+            None,
+            &configured_backup_settings(),
+        ),
     )
     .await;
     paused.release.notify_waiters();

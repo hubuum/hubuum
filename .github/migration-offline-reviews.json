@@ -106,7 +106,7 @@
     },
     {
       "migration": "crates/hubuum-storage-postgres/migrations/2026-10-31-000008_task_retention/up.sql",
-      "sha256": "280afcbd6970df3ecbc168cd841973d93a6550b596b2f3d9709b264753805d0f",
+      "sha256": "5e79b54c5ccc9d343d10c140d736f1e1e42f4711a6dbc70aa1a60541d4a1c87d",
       "reason": "Protected stable-principal task receipts replace task-row lifetime uniqueness. Every producer must reserve and protect an exact generation before execution; older writers cannot preserve receipt windows, scoped purge fences or restored deduplication authority. The legacy-only partial index keeps uniqueness while receipt protection is disabled or legacy rows await backfill.",
       "upgrade_action": "Stop all older API, worker, restore executor and administrator producers; apply this migration and reconcile runtime grants; deploy matching binaries with the independent repository configured. Preview and explicitly enable finite legacy deduplication, repeat bounded backfill to completion, and verify the activation checkpoint before starting protected producers. Preserve original terminal clocks and grandfather old task details. See docs/task_retention.md#upgrade-and-activation.",
       "drop_constraints": {

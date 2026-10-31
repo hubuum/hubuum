@@ -1,4 +1,5 @@
 use hubuum_domain::TaskIdentity;
+use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId, TaskWorkerKinds};
 use hubuum_task_core::IdempotencyKey;
 use rstest::rstest;
 
@@ -122,7 +123,13 @@ async fn completed(storage: &MemoryStorage, key: char) -> (TaskAdmissionTicket, 
         panic!("activation winner")
     };
     let claim = storage
-        .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60000).unwrap())
+        .claim_next_task(
+            StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60000).unwrap(),
+            )
+            .with_kinds(TaskWorkerKinds::new(&[StorageTaskKind::Import]).unwrap()),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -193,6 +200,64 @@ async fn release(storage: &MemoryStorage, tasks: TaskControlReapplication) {
         .unwrap();
 }
 
+#[rstest]
+#[case::pending_empty(false, false)]
+#[case::pending_before_eligible(false, true)]
+#[case::unavailable_empty(true, false)]
+#[case::unavailable_before_eligible(true, true)]
+#[tokio::test]
+async fn scheduler_skips_restricted_receipts_without_consuming_a_turn(
+    #[case] recovery_unavailable: bool,
+    #[case] include_eligible: bool,
+) {
+    let storage = MemoryStorage::new();
+    configure(&storage, 3600).await;
+    let restricted = submit(&storage, request(&storage, 'a', 'b').await).await;
+    if recovery_unavailable {
+        let TaskActivationOutcome::Activated(task) = activate(&storage, restricted).await else {
+            panic!("fixture activation")
+        };
+        storage
+            .state
+            .write_control()
+            .await
+            .tasks
+            .get_mut(&task.id().id())
+            .unwrap()
+            .recovery_unavailable = true;
+    }
+    let expected = if include_eligible {
+        let ticket = submit(&storage, request(&storage, 'c', 'b').await).await;
+        let TaskActivationOutcome::Activated(task) = activate(&storage, ticket).await else {
+            panic!("fixture activation")
+        };
+        Some(task.id())
+    } else {
+        None
+    };
+    let claim = storage
+        .claim_next_task(
+            StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+            )
+            .with_kinds(TaskWorkerKinds::new(&[StorageTaskKind::Import]).unwrap()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(claim.as_ref().map(|claim| claim.task().id()), expected);
+    assert_eq!(
+        storage
+            .state
+            .read_control()
+            .await
+            .scheduling_snapshot(Utc::now())
+            .successful_claims(),
+        u64::from(include_eligible),
+        "restricted candidates must not consume a scheduling turn",
+    );
+}
+
 #[tokio::test]
 async fn pending_generation_reserves_once_and_is_unclaimable_until_protected_activation() {
     let storage = MemoryStorage::new();
@@ -201,7 +266,13 @@ async fn pending_generation_reserves_once_and_is_unclaimable_until_protected_act
     let ticket = submit(&storage, create.clone()).await;
     assert!(
         storage
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60000).unwrap())
+            .claim_next_task(
+                StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    StorageTaskLeaseDuration::from_milliseconds(60000).unwrap(),
+                )
+                .with_kinds(TaskWorkerKinds::new(&[StorageTaskKind::Import]).unwrap())
+            )
             .await
             .unwrap()
             .is_none()
@@ -540,7 +611,13 @@ async fn recovered_nonterminal_work_is_settled_without_automatic_replay(#[case] 
         task.id()
     };
     let old_claim = storage
-        .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60000).unwrap())
+        .claim_next_task(
+            StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60000).unwrap(),
+            )
+            .with_kinds(TaskWorkerKinds::new(&[StorageTaskKind::Import]).unwrap()),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -559,7 +636,13 @@ async fn recovered_nonterminal_work_is_settled_without_automatic_replay(#[case] 
     );
     assert!(
         storage
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60000).unwrap())
+            .claim_next_task(
+                StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    StorageTaskLeaseDuration::from_milliseconds(60000).unwrap(),
+                )
+                .with_kinds(TaskWorkerKinds::new(&[StorageTaskKind::Import]).unwrap())
+            )
             .await
             .unwrap()
             .is_none()
@@ -568,7 +651,7 @@ async fn recovered_nonterminal_work_is_settled_without_automatic_replay(#[case] 
         !storage
             .renew_task_lease(
                 old_claim.lease().clone(),
-                StorageTaskLeaseDuration::from_milliseconds(60000).unwrap()
+                StorageTaskLeaseDuration::from_milliseconds(60000).unwrap(),
             )
             .await
             .unwrap()
@@ -669,7 +752,13 @@ async fn output_only_retention_works_when_task_details_retention_is_disabled() {
         panic!("new unkeyed profile")
     };
     let claimed = storage
-        .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60000).unwrap())
+        .claim_next_task(
+            StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60000).unwrap(),
+            )
+            .with_kinds(TaskWorkerKinds::new(&[StorageTaskKind::SchemaProfiling]).unwrap()),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -849,7 +938,13 @@ async fn bounded_legacy_backfill_preserves_original_owner_key_and_terminal_ancho
         panic!("legacy task")
     };
     let claimed = storage
-        .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60000).unwrap())
+        .claim_next_task(
+            StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60000).unwrap(),
+            )
+            .with_kinds(TaskWorkerKinds::new(&[StorageTaskKind::Import]).unwrap()),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -1061,7 +1156,13 @@ async fn purge_selection_byte_limit_rejects_without_recording_intent(
         panic!("new profile")
     };
     let claimed = storage
-        .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60000).unwrap())
+        .claim_next_task(
+            StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60000).unwrap(),
+            )
+            .with_kinds(TaskWorkerKinds::new(&[StorageTaskKind::SchemaProfiling]).unwrap()),
+        )
         .await
         .unwrap()
         .unwrap();

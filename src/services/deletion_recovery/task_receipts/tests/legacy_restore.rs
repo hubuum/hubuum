@@ -169,7 +169,13 @@ async fn unkeyed_export(fixture: &Fixture) -> (TaskId, TaskIdentity) {
     let identity = identity.known_identity().unwrap();
     let claim = fixture
         .storage
-        .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60000).unwrap())
+        .claim_next_task(
+            StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60000).unwrap(),
+            )
+            .with_kinds(TaskWorkerKinds::new(&[StorageTaskKind::Export]).unwrap()),
+        )
         .await
         .unwrap()
         .unwrap();

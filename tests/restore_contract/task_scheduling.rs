@@ -1,6 +1,7 @@
 use diesel::QueryableByName;
 use diesel::sql_types::{BigInt, Integer, Text};
 use hubuum::events::EventContext;
+use hubuum::tests::asserts::expect_legacy_task;
 use hubuum_storage_core::*;
 
 use super::task_capacity::{set_policy, with_fixture};
@@ -245,7 +246,12 @@ async fn a_dominant_principal_cannot_take_every_start(
         )
         .try_build()
         .unwrap();
-        let minority = storage.create_task(request).await.unwrap().id();
+        let minority = storage
+            .create_task(request)
+            .await
+            .map(expect_legacy_task)
+            .unwrap()
+            .id();
         let request = worker();
         let mut starts = Vec::new();
         for _ in 0..2 {
