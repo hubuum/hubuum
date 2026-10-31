@@ -129,7 +129,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: terjekv/rust-pr-bench
-          ref: 7c25e2f52947680c432441707958ab254aa5e27e
+          ref: 786fc15bbc1b12d043e274ac3d39fc4c3022cf09
           path: .benchmark-action
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -176,11 +176,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.benchmark-lanes.outputs.matrix) }}
-    uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@7c25e2f52947680c432441707958ab254aa5e27e # target selection and profiles (rust-pr-bench#32)
+    uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@786fc15bbc1b12d043e274ac3d39fc4c3022cf09 # v1.4.0
     secrets: inherit
     with:
       # Keep build/cache inputs aligned with warm-cache below.
-      action_ref: 7c25e2f52947680c432441707958ab254aa5e27e
+      action_ref: 786fc15bbc1b12d043e274ac3d39fc4c3022cf09
       backend: all
       base_sha: ${{ needs.changes.outputs.base_sha }}
       benchmarks_json: ${{ toJSON(matrix.benchmarks) }}
@@ -243,9 +243,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.benchmark-lanes.outputs.matrix) }}
-    uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@7c25e2f52947680c432441707958ab254aa5e27e # target selection and profiles (rust-pr-bench#32)
+    uses: terjekv/rust-pr-bench/.github/workflows/rust-pr-bench.yml@786fc15bbc1b12d043e274ac3d39fc4c3022cf09 # v1.4.0
     with:
-      action_ref: 7c25e2f52947680c432441707958ab254aa5e27e
+      action_ref: 786fc15bbc1b12d043e274ac3d39fc4c3022cf09
       backend: all
       benchmarks_json: ${{ toJSON(matrix.benchmarks) }}
       auto_detect_moved_benchmarks: true
