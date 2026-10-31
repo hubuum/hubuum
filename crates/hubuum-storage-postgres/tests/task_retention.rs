@@ -21,6 +21,48 @@ use uuid::Uuid;
 static CONTROL_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[rstest]
+#[case::pending_empty(Some("pending"), false, false, false)]
+#[case::pending_before_eligible(Some("pending"), false, false, true)]
+#[case::purged_empty(None, true, false, false)]
+#[case::purged_before_eligible(None, true, false, true)]
+#[case::unavailable_empty(None, false, true, false)]
+#[case::unavailable_before_eligible(None, false, true, true)]
+#[tokio::test]
+async fn scheduler_skips_restricted_receipts_without_consuming_a_turn(
+    #[case] pending_key: Option<&str>,
+    #[case] details_purge_pending: bool,
+    #[case] recovery_unavailable: bool,
+    #[case] include_eligible: bool,
+) {
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let pool = integration_test_migration_pool(1);
+    with_transaction(&pool, async |connection| {
+        setup(connection).await?;
+        sql_query("INSERT INTO public.tasks(kind,status,created_at,idempotency_key,details_purge_pending,recovery_unavailable) VALUES('reindex','queued',now()-interval '1 hour',$1,$2,$3)")
+            .bind::<diesel::sql_types::Nullable<Text>, _>(pending_key)
+            .bind::<Bool, _>(details_purge_pending)
+            .bind::<Bool, _>(recovery_unavailable)
+            .execute(connection).await?;
+        let expected = if include_eligible {
+            sql_query("INSERT INTO public.tasks(kind,status) VALUES('reindex','queued') RETURNING jsonb_build_object('selected',id) AS material")
+                .get_result::<Material>(connection).await?.material
+        } else {
+            json!({"selected": null})
+        };
+        let before = sql_query("SELECT successful_claims AS count FROM hubuum_control.task_scheduler WHERE singleton")
+            .get_result::<Count>(connection).await?.count;
+        let selected = sql_query("SELECT jsonb_build_object('selected',public.hubuum_schedule_task($1,ARRAY['reindex'],60000)) AS material")
+            .bind::<SqlUuid, _>(Uuid::new_v4()).get_result::<Material>(connection).await?.material;
+        assert_eq!(selected, expected);
+        let after = sql_query("SELECT successful_claims AS count FROM hubuum_control.task_scheduler WHERE singleton")
+            .get_result::<Count>(connection).await?.count;
+        assert_eq!(after - before, i64::from(include_eligible), "restricted candidates must not consume a scheduling turn");
+        connection.batch_execute("ROLLBACK TO SAVEPOINT retention_fixture").await?;
+        Ok::<_, PostgresStorageError>(())
+    }).await.unwrap();
+}
+
+#[rstest]
 #[case::above_physical_manifest(65, true)]
 #[case::maximum(1000, true)]
 #[case::over_limit(1001, false)]

@@ -291,3 +291,17 @@ does not erase other backups, WAL, artifacts outside the selected scope or prior
 downloads. Receipts keep sensitive matching fields in explicit bounded records
 for a later authorized targeted-erasure operation; retention alone does not claim
 that separate erasure capability.
+
+## Scheduler integration
+
+Receipt activation and task visibility are checked while choosing each queue
+head, before scheduling counters or worker leases advance. A pending receipt,
+retained purge restriction or unavailable recovery binding cannot execute or
+block an eligible task behind it. Memory and PostgreSQL retain this behavior
+for ordinary selection and overdue promotion.
+
+This layer advances the SDK train from scheduling's 0.15 to 0.16. Upgrade all ten
+SDK crates together and implement the complete retention and combined recovery
+proof contracts. The earlier scheduler P3/P4 report measures the source before
+retention; it does not qualify retention's additional receipt checks. P6 remains
+a separate open acceptance gate.

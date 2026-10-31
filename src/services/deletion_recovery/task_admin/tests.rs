@@ -3,7 +3,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
 use hubuum_domain::PrincipalId;
-use hubuum_storage_core::{StorageTaskCreateRequest, StorageTaskKind, StorageTaskLeaseDuration};
+use hubuum_storage_core::{
+    StorageTaskClaimRequest, StorageTaskCreateRequest, StorageTaskKind, StorageTaskLeaseDuration,
+    TaskWorkerId, TaskWorkerKinds,
+};
 use hubuum_task_core::IdempotencyKey;
 use uuid::Uuid;
 
@@ -103,7 +106,13 @@ async fn legacy_activation_is_bounded_and_protects_queued_generations_before_cla
     assert!(
         fixture
             .storage
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60000).unwrap())
+            .claim_next_task(
+                StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    StorageTaskLeaseDuration::from_milliseconds(60000).unwrap()
+                )
+                .with_kinds(TaskWorkerKinds::new(&[StorageTaskKind::Import]).unwrap())
+            )
             .await
             .unwrap()
             .is_none()
@@ -129,7 +138,13 @@ async fn legacy_activation_is_bounded_and_protects_queued_generations_before_cla
     assert!(
         fixture
             .storage
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60000).unwrap())
+            .claim_next_task(
+                StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    StorageTaskLeaseDuration::from_milliseconds(60000).unwrap()
+                )
+                .with_kinds(TaskWorkerKinds::new(&[StorageTaskKind::Import]).unwrap())
+            )
             .await
             .unwrap()
             .is_some()

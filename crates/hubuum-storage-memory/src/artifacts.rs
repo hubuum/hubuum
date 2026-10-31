@@ -735,6 +735,7 @@ impl MemoryRestoreArtifact {
 #[cfg(test)]
 mod retention_tests {
     use super::*;
+    use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId, TaskWorkerKinds};
     use rstest::rstest;
 
     async fn fixture(
@@ -759,7 +760,13 @@ mod retention_tests {
             panic!("fixture task")
         };
         let claim = storage
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+            .claim_next_task(
+                StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+                )
+                .with_kinds(TaskWorkerKinds::new(&[StorageTaskKind::Import]).unwrap()),
+            )
             .await
             .unwrap()
             .unwrap();

@@ -2,10 +2,11 @@
 
 use hubuum_storage_core::{
     DeletionCheckpointIdentity, DeletionControlStorage, ProtectedTaskAdmission, StorageErrorKind,
-    StorageTaskCreateRequest, StorageTaskEventInput, StorageTaskFailure, StorageTaskLeaseDuration,
-    StorageTaskSubmissionOutcome, TaskActivationOutcome, TaskControlCheckpoint,
-    TaskExecutionStorage, TaskQueueStorage, TaskReceiptOutcome, TaskRequestFingerprint,
-    TaskRetentionStorage, TaskSubmissionLookup, TaskSubmissionResolution,
+    StorageTaskClaimRequest, StorageTaskCreateRequest, StorageTaskEventInput, StorageTaskFailure,
+    StorageTaskLeaseDuration, StorageTaskSubmissionOutcome, TaskActivationOutcome,
+    TaskControlCheckpoint, TaskExecutionStorage, TaskQueueStorage, TaskReceiptOutcome,
+    TaskRequestFingerprint, TaskRetentionStorage, TaskSubmissionLookup, TaskSubmissionResolution,
+    TaskWorkerId, TaskWorkerKinds,
 };
 
 use crate::FixtureError;
@@ -56,7 +57,9 @@ pub async fn verify_protected_task_admission(
     }
     let duration =
         StorageTaskLeaseDuration::from_milliseconds(60_000).expect("valid fixture lease duration");
-    if backend.claim_next_task(duration).await?.is_some() {
+    let claim_request = StorageTaskClaimRequest::new(TaskWorkerId::generate(), duration)
+        .with_kinds(TaskWorkerKinds::new(&[request.kind()])?);
+    if backend.claim_next_task(claim_request).await?.is_some() {
         return Err("An unprotected admission became executable".into());
     }
     if !matches!(backend.create_task(request).await?, StorageTaskSubmissionOutcome::DuplicatePendingProtection(ref duplicate) if duplicate == &ticket)
@@ -90,7 +93,7 @@ pub async fn verify_protected_task_admission(
         return Err("Protected lookup lost the activated task correspondence".into());
     }
     let claimed = backend
-        .claim_next_task(duration)
+        .claim_next_task(claim_request)
         .await?
         .ok_or("Protected task was not claimable")?;
     if claimed.task().id() != task.id() {

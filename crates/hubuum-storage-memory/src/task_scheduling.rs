@@ -216,7 +216,10 @@ impl MemoryState {
         let start = scheduler.position % rotation.len();
         let mut candidates = Vec::new();
         for task in self.tasks.values().filter(|task| {
-            task.status == StorageTaskStatus::Queued && request.kinds().contains(task.kind)
+            task.status == StorageTaskStatus::Queued
+                && request.kinds().contains(task.kind)
+                && self.task_admission_claimable(task)
+                && self.task_details_visible(task.id)
         }) {
             if (!internal(task.kind) && !ordinary_allowed)
                 || !self.task_claim_has_capacity(task.id)?

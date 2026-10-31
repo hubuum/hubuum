@@ -266,3 +266,9 @@ properties separately. Production output retention currently has a minimum of
 one hour; an honest output-expiry run must allow that real deadline to elapse.
 Neither a diagnostic cohort drain nor unexecuted sustained-run support
 establishes the 60-second expiry p95 or 300-second recovery cleanup target.
+
+The SDK 0.16 integration adds receipt eligibility to the durable scheduler's
+candidate selection. The retained SDK 0.15 scheduler qualification predates those
+checks. Rerun the opt-in P3/P4 scheduler matrix on the final retention source as
+well as the P6 profiles before accepting its performance; passing correctness
+regressions does not establish the added checks' latency or utilization cost.

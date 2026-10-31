@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.15`.
+Status: accepted; current experimental release train is `0.16`.
 
 ## Supported Crate Graph
 
