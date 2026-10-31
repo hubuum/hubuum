@@ -25,7 +25,9 @@
     "hubuum_task_claimable_tasks",
     "hubuum_deletion_control_read",
     "hubuum_deletion_exposure_allowed",
-    "hubuum_deletion_execution_allowed"
+    "hubuum_deletion_execution_allowed",
+    "hubuum_register_runtime",
+    "hubuum_unregister_runtime"
   ],
   "runtime_function_policy": "all_security_invoker_plus_allowlisted_security_definer",
   "restore": "isolated_migrator_executor",

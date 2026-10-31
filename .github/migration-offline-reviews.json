@@ -61,6 +61,17 @@
           "backup_task_outputs_size_matches_document"
         ]
       }
+    },
+    {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-10-29-000005_managed_deletion_cleanup/up.sql",
+      "sha256": "fe39eaf911ee6cdb46b7caffce914fea7080c93c8cd29b915f179fa1c7856e82",
+      "reason": "The control check preserves every format-1 predicate while admitting format 2 with bound managed-copy receipts. Runtime registration is new; older runtimes cannot participate in its quiescence proof, so initial activation requires an offline upgrade.",
+      "upgrade_action": "Stop every older API and worker process before applying migrations and runtime role grants, then start only matching binaries. Keep the independent control repository outside primary rollback boundaries. See docs/deletion_recovery.md.",
+      "drop_constraints": {
+        "hubuum_control.deletion_authority": [
+          "deletion_authority_material_check"
+        ]
+      }
     }
   ]
 }

@@ -127,6 +127,10 @@ for path in "$@"; do
       tests/python/integration/atlas.py | tests/python/unit/tooling/test_atlas.py)
       code=true
       container=true
+      if [[ "$path" == test-corpora/comprehensive.json ]]; then
+        # The production-reader Rust regression opens this unchanged fixture.
+        rust=true
+      fi
       ;;
     CHANGELOG.md)
       # Release notes participate in both compatibility exception contracts.

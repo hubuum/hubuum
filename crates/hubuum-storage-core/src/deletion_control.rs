@@ -10,6 +10,11 @@ use uuid::Uuid;
 
 use crate::{StorageError, StorageIdentityResourceKind, StorageValidationError};
 
+mod cleanup;
+pub use cleanup::*;
+#[cfg(test)]
+mod cleanup_tests;
+
 /// Initial bounded control format. Reaching a bound blocks admission; records
 /// must not be discarded to make space for new deletion decisions.
 pub const DELETION_CONTROL_MAX_INTENTS: usize = 1024;
@@ -44,6 +49,10 @@ pub struct DeletionIntent {
     subject: DeletionSubject,
     generation: i64,
     copies: BTreeMap<Uuid, DeletionCopyState>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    bindings: BTreeMap<Uuid, DeletionCopyBinding>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    receipts: BTreeMap<Uuid, DeletionCopyReceipt>,
 }
 
 #[derive(Deserialize)]
@@ -52,6 +61,10 @@ struct IntentInput {
     subject: DeletionSubject,
     generation: i64,
     copies: BTreeMap<Uuid, DeletionCopyState>,
+    #[serde(default)]
+    bindings: BTreeMap<Uuid, DeletionCopyBinding>,
+    #[serde(default)]
+    receipts: BTreeMap<Uuid, DeletionCopyReceipt>,
 }
 
 impl TryFrom<IntentInput> for DeletionIntent {
@@ -67,10 +80,36 @@ impl TryFrom<IntentInput> for DeletionIntent {
                 "Invalid deletion intent generation or copy obligations",
             ));
         }
+        for (copy, binding) in &value.bindings {
+            if !value.copies.contains_key(copy)
+                || value.subject
+                    != (DeletionSubject::Version {
+                        identity: binding.target().version(),
+                    })
+            {
+                return Err(invalid("Deletion copy binding differs from its intent"));
+            }
+            if (value.copies[copy] == DeletionCopyState::Removed)
+                != value.receipts.contains_key(copy)
+            {
+                return Err(invalid(
+                    "Managed deletion outcome requires its cleanup receipt",
+                ));
+            }
+        }
+        if value
+            .receipts
+            .keys()
+            .any(|copy| !value.bindings.contains_key(copy))
+        {
+            return Err(invalid("Deletion receipt has no managed copy binding"));
+        }
         Ok(Self {
             subject: value.subject,
             generation: value.generation,
             copies: value.copies,
+            bindings: value.bindings,
+            receipts: value.receipts,
         })
     }
 }
@@ -84,6 +123,12 @@ impl DeletionIntent {
     }
     pub fn copies(&self) -> &BTreeMap<Uuid, DeletionCopyState> {
         &self.copies
+    }
+    pub fn bindings(&self) -> &BTreeMap<Uuid, DeletionCopyBinding> {
+        &self.bindings
+    }
+    pub fn receipts(&self) -> &BTreeMap<Uuid, DeletionCopyReceipt> {
+        &self.receipts
     }
     pub fn is_physically_complete(&self) -> bool {
         self.copies
@@ -118,7 +163,7 @@ impl TryFrom<ControlInput> for DeletionControlState {
     type Error = StorageValidationError;
 
     fn try_from(value: ControlInput) -> Result<Self, Self::Error> {
-        if value.format != 1
+        if !matches!(value.format, 1 | 2)
             || value.lineage.is_nil()
             || value.epoch.is_nil()
             || value.revision < 0
@@ -127,7 +172,11 @@ impl TryFrom<ControlInput> for DeletionControlState {
             return Err(invalid("Invalid deletion control header or intent bound"));
         }
         for (id, intent) in &value.intents {
-            if id.is_nil() || intent.generation > value.revision {
+            if id.is_nil()
+                || intent.generation > value.revision
+                || (value.format == 1
+                    && (!intent.bindings.is_empty() || !intent.receipts.is_empty()))
+            {
                 return Err(invalid(
                     "Invalid deletion intent generation or copy obligations",
                 ));
@@ -270,6 +319,8 @@ impl DeletionControlState {
                 subject,
                 generation: next.revision,
                 copies,
+                bindings: BTreeMap::new(),
+                receipts: BTreeMap::new(),
             },
         );
         Ok(DeletionControlChange {
@@ -286,6 +337,15 @@ impl DeletionControlState {
         copy: Uuid,
         outcome: DeletionCopyState,
     ) -> Result<DeletionControlChange, StorageValidationError> {
+        if self
+            .intents
+            .get(&intent)
+            .is_some_and(|intent| intent.bindings.contains_key(&copy))
+        {
+            return Err(invalid(
+                "Managed copy outcomes require verified adapter cleanup",
+            ));
+        }
         let old = self
             .intents
             .get(&intent)
@@ -334,6 +394,11 @@ impl DeletionControlState {
                     current.subject == old.subject
                         && current.generation == old.generation
                         && current.copies.keys().eq(old.copies.keys())
+                        && current.bindings == old.bindings
+                        && old
+                            .receipts
+                            .iter()
+                            .all(|(copy, receipt)| current.receipts.get(copy) == Some(receipt))
                         && old.copies.iter().all(|(copy, state)| match state {
                             DeletionCopyState::Pending => true,
                             DeletionCopyState::Blocked => {
@@ -469,6 +534,29 @@ pub trait DeletionControlStorage: Send + Sync {
         Ok(self.capture_deletion_control().await?.state().clone())
     }
     async fn capture_deletion_control(&self) -> Result<DeletionControlCapture, StorageError>;
+    /// Register before opening listeners or starting workers. A crashed or
+    /// uncertain runtime remains registered; registrations never expire.
+    async fn register_runtime(&self) -> Result<RuntimeRegistration, StorageError>;
+    /// Consume ownership only after every listener, request and worker has stopped.
+    async fn unregister_runtime(
+        &self,
+        registration: RuntimeRegistration,
+    ) -> Result<(), StorageError>;
+    /// Privileged, offline admission. Lock authority, require no registered
+    /// runtimes and the exact expected state, then validate the closed copy.
+    async fn prepare_hot_object_history_deletion(
+        &self,
+        expected: DeletionControlState,
+        request: HotObjectHistoryDeletion,
+    ) -> Result<DeletionControlState, StorageError>;
+    /// Privileged caller must retain the independent repository's locked,
+    /// durable latest-evidence session. The request validates scope and CAS;
+    /// its checkpoint reference alone does not assert independent durability.
+    /// Delete and record the adapter-verified outcome in one transaction.
+    async fn cleanup_hot_object_history(
+        &self,
+        request: HotObjectHistoryCleanup,
+    ) -> Result<DeletionControlState, StorageError>;
     async fn commit_deletion_control(
         &self,
         change: DeletionControlChange,
@@ -570,7 +658,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case("format", serde_json::json!(2))]
+    #[case("format", serde_json::json!(3))]
     #[case("lineage", serde_json::json!(Uuid::nil()))]
     #[case("epoch", serde_json::json!(Uuid::nil()))]
     #[case("revision", serde_json::json!(-1))]

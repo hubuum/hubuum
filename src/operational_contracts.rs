@@ -2225,6 +2225,15 @@ fn cli_requirements(command: &str, argument: &str) -> &'static [&'static str] {
             &["control_checkpoint_key"]
         }
         ("hubuum-admin", "initialize_control_checkpoint") => &["control_checkpoint"],
+        ("hubuum-admin", "delete_object_history_version") => &[
+            "history_resource",
+            "deletion_intent",
+            "control_repository",
+            "control_checkpoint_key",
+        ],
+        ("hubuum-admin", "history_resource" | "deletion_intent" | "control_repository") => {
+            &["delete_object_history_version"]
+        }
         ("hubuum-server", "control_recovery_directory") => &["control_recovery_key"],
         ("hubuum-server", "control_recovery_key") => &["control_recovery_directory"],
         ("hubuum-admin", "backup_without_history") => &["backup"],
