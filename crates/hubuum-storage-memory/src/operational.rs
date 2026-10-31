@@ -3,7 +3,7 @@ use super::*;
 #[async_trait]
 impl InventoryStorage for MemoryStorage {
     async fn get_inventory_counts(&self) -> Result<StorageInventoryCounts, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut objects_by_class = BTreeMap::<ClassId, i64>::new();
         for object in state.objects.values() {
             *objects_by_class.entry(object.class_id()).or_default() += 1;
@@ -32,7 +32,7 @@ impl MetricsStorage for MemoryStorage {
         &self,
     ) -> Result<StorageInventoryGaugeSnapshot, StorageError> {
         let counts = self.get_inventory_counts().await?;
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         StorageInventoryGaugeSnapshot::try_new(
             StorageInventoryMetricsSnapshot::try_new(
                 counts.total_collections(),
@@ -82,12 +82,17 @@ impl OperationalStateStorage for MemoryStorage {
     }
 
     async fn get_maintenance_state(&self) -> Result<MaintenanceState, StorageError> {
-        let state = self.state.read().await;
-        Ok(if state.deletion_control.permits_exposure() {
-            state.maintenance_state
-        } else {
-            MaintenanceState::RecoveryQuarantine
-        })
+        let state = self.state.read_control().await;
+        Ok(
+            if state
+                .application_control
+                .is_released_for(&state.deletion_control)
+            {
+                state.maintenance_state
+            } else {
+                MaintenanceState::RecoveryQuarantine
+            },
+        )
     }
 
     async fn get_task_queue_snapshot(

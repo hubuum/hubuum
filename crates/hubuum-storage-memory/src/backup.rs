@@ -221,6 +221,7 @@ fn enqueue_computed_rebuilds(state: &mut MemoryState) -> Result<(), StorageError
             initiator_principal_id: None,
             trace_link: None,
             claim_token: None,
+            execution_fence: None,
         };
         record.projection()?;
         state.store_task(id.id(), record)?;

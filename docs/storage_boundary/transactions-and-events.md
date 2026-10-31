@@ -204,13 +204,29 @@ for an exception.
   ordinary domain lifecycle shortcut.
 - Retention: `TokenRetentionStorage::purge_expired_tokens` applies configured
   expiry and emits the token-purge semantics owned by the retention worker.
+- Application admission and recovery: `DeletionControlStorage::register_runtime_isolated`
+  records the trusted local process-isolation identity. `DeletionControlStorage::capture_application_execution`
+  validates live ownership and released application state, then invalidates any
+  prior drain acknowledgement before admitting work.
+  `DeletionControlStorage::capture_application_execution_with_maintenance` also
+  observes maintenance in the same protected operation; an inherited permit is
+  validated and preserved rather than refreshed. `DeletionControlStorage::acknowledge_runtime_drain`
+  acknowledges only an exact current application fence. `DeletionControlStorage::reapply_deletion_decisions`
+  rechecks all supported bindings, removes recovered closed history, and records
+  an application-specific receipt atomically. `DeletionControlStorage::release_application_exposure`
+  requires that exact receipt and its independently protected checkpoint identity;
+  it releases pending restore maintenance in the same transaction.
+  `DeletionControlStorage::recover_application_control` preserves newer compatible
+  authority, rotates local application identity and revokes only owners covered
+  by the caller's actual exclusive process-isolation proof. Unknown domains block.
+  None of these mutations emits application audit events or retains erased payload.
 - Deletion authority maintenance: `DeletionControlStorage::commit_deletion_control`
   persists a validated exact-predecessor transition under privileged authority.
   `DeletionControlStorage::register_runtime` records bounded, restore-isolated
   ownership before runtime work starts; `DeletionControlStorage::unregister_runtime`
   consumes that ownership only after a confirmed shutdown.
   `DeletionControlStorage::prepare_hot_object_history_deletion` checks the exact
-  predecessor, absence of registered runtimes, and a closed UUID-bound history
+  predecessor and a closed UUID-bound history
   copy before retaining its deletion intent.
   `DeletionControlStorage::cleanup_hot_object_history` rechecks those fences and
   commits exact-copy removal with its receipt in one transaction, including

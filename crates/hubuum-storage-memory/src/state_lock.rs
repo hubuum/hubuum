@@ -4,34 +4,104 @@
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
+use hubuum_storage_core::{RuntimeOwner, StorageExecutionPermit};
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use super::{
-    MemoryState, StorageError, StorageTaskKind, StorageTaskLease, Utc, invalid_task_lease,
+    MEMORY_EXECUTION_SCOPE, MemoryState, StorageError, StorageTaskKind, StorageTaskLease, Utc,
+    invalid_task_lease,
 };
 
-pub(super) struct MemoryStateLock(RwLock<MemoryState>);
+pub(super) struct MemoryStateLock {
+    state: Arc<RwLock<MemoryState>>,
+    runtime_owner: Option<RuntimeOwner>,
+}
 
 impl MemoryStateLock {
     pub(super) fn new(state: MemoryState) -> Self {
-        Self(RwLock::new(state))
+        Self {
+            state: Arc::new(RwLock::new(state)),
+            runtime_owner: None,
+        }
     }
 
-    pub(super) async fn read(&self) -> RwLockReadGuard<'_, MemoryState> {
-        self.0.read().await
+    pub(super) fn with_runtime_owner(&self, owner: RuntimeOwner) -> Self {
+        Self {
+            state: Arc::clone(&self.state),
+            runtime_owner: Some(owner),
+        }
     }
 
-    pub(super) async fn write(&self) -> MemoryStateWriteGuard<'_> {
+    pub(super) fn runtime_owner(&self) -> Option<&RuntimeOwner> {
+        self.runtime_owner.as_ref()
+    }
+
+    pub(super) fn fork(&self, state: MemoryState) -> Self {
+        Self {
+            state: Arc::new(RwLock::new(state)),
+            runtime_owner: self.runtime_owner.clone(),
+        }
+    }
+
+    pub(super) async fn read(&self) -> Result<RwLockReadGuard<'_, MemoryState>, StorageError> {
+        let state = self.state.read().await;
+        self.require_application_access(&state)?;
+        Ok(state)
+    }
+
+    pub(super) async fn write(&self) -> Result<MemoryStateWriteGuard<'_>, StorageError> {
+        let guard = self.state.write().await;
+        self.require_application_access(&guard)?;
+        Ok(MemoryStateWriteGuard {
+            guard,
+            mutated: false,
+        })
+    }
+
+    /// Reserved for protected authority and operational state that must remain
+    /// available while application exposure is quarantined.
+    pub(super) async fn read_control(&self) -> RwLockReadGuard<'_, MemoryState> {
+        self.state.read().await
+    }
+
+    /// Reserved for control transitions and nonproductive failure/cancellation
+    /// settlement. Ordinary capability methods use the checked write guard.
+    pub(super) async fn write_control(&self) -> MemoryStateWriteGuard<'_> {
         MemoryStateWriteGuard {
-            guard: self.0.write().await,
+            guard: self.state.write().await,
             mutated: false,
         }
+    }
+
+    fn require_application_access(&self, state: &MemoryState) -> Result<(), StorageError> {
+        let permit = MEMORY_EXECUTION_SCOPE
+            .try_with(|scope| scope.application_access_override().cloned())
+            .ok()
+            .flatten();
+        if let Some(owner) = &self.runtime_owner {
+            let matching_owner = permit
+                .as_ref()
+                .and_then(StorageExecutionPermit::owner)
+                .is_some_and(|captured| {
+                    captured.id() == owner.id()
+                        && captured.ownership_token() == owner.ownership_token()
+                });
+            if !matching_owner {
+                return Err(StorageError::unavailable(
+                    "Registered runtime requires its captured application execution permit",
+                ));
+            }
+        }
+        if let Some(permit) = &permit {
+            state.ensure_application_permit(permit)?;
+        }
+        Ok(())
     }
 
     /// Only lease expiry and its activity timestamp may change through this
     /// guard. Snapshot commit explicitly merges these fields from live tasks.
     pub(super) async fn write_lease(&self) -> RwLockWriteGuard<'_, MemoryState> {
-        self.0.write().await
+        self.state.write().await
     }
 
     pub(super) async fn commit_import(
@@ -40,8 +110,9 @@ impl MemoryStateLock {
         mut staged: MemoryState,
         lease: &StorageTaskLease,
     ) -> Result<(), StorageError> {
-        let mut live = self.0.write().await;
-        live.ensure_task_execution_allowed()?;
+        let mut live = self.state.write().await;
+        self.require_application_access(&live)?;
+        live.ensure_task_lease_current(lease)?;
         let task = live
             .tasks
             .get(&lease.task_id().id())

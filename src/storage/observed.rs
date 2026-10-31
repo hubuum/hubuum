@@ -19,6 +19,7 @@ use super::{
     StorageResolvedObjectRelation,
 };
 use crate::events::EventContext;
+use crate::storage::context::ApplicationAdmission;
 
 #[cfg(test)]
 mod tests {
@@ -93,6 +94,7 @@ mod tests {
 /// adapter can implement one storage family and is observed only for that
 /// family; complete backend selection is enforced separately at composition.
 pub(crate) struct ObservedStorage<S> {
+    admission: Option<ApplicationAdmission>,
     backend: &'static str,
     inner: Arc<S>,
     observer: Arc<dyn StorageObserver>,
@@ -120,38 +122,54 @@ impl<S> ObservedStorage<S> {
         observer: Arc<dyn StorageObserver>,
     ) -> Self {
         Self {
+            admission: None,
             backend,
             inner: Arc::new(storage),
             observer,
         }
     }
 
-    async fn call<T>(
+    pub(crate) fn with_admission(mut self, admission: Option<ApplicationAdmission>) -> Self {
+        self.admission = admission;
+        self
+    }
+
+    async fn call<T: Send>(
         &self,
         capability: StorageCapability,
         operation: &'static str,
-        future: impl Future<Output = Result<T, StorageError>>,
+        future: impl Future<Output = Result<T, StorageError>> + Send,
     ) -> Result<T, StorageError> {
-        observe_storage_call_with(
+        let observed = observe_storage_call_with(
             self.observer.as_ref(),
             self.backend,
             capability,
             operation,
             future,
-        )
-        .await
+        );
+        match &self.admission {
+            Some(admission) => admission.run(observed).await,
+            None => observed.await,
+        }
     }
 }
 
-pub(super) trait ObservationError: std::fmt::Display {
+pub(super) trait ObservationError: std::fmt::Display + Send {
+    fn admission_error(error: StorageError) -> Self;
     fn diagnostic_kind(&self) -> hubuum_storage_core::StorageErrorKind;
 }
 impl ObservationError for StorageError {
+    fn admission_error(error: StorageError) -> Self {
+        error
+    }
     fn diagnostic_kind(&self) -> hubuum_storage_core::StorageErrorKind {
         self.kind()
     }
 }
 impl ObservationError for hubuum_storage_core::artifacts::ArtifactError {
+    fn admission_error(error: StorageError) -> Self {
+        Self::Backend(error.to_string())
+    }
     fn diagnostic_kind(&self) -> hubuum_storage_core::StorageErrorKind {
         use hubuum_storage_core::{StorageErrorKind, artifacts::ArtifactError};
         match self {

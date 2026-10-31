@@ -152,6 +152,7 @@ pub(super) fn restore(
             updated_at: r.time("updated_at")?,
             lease_expires_at: None,
             claim_token: None,
+            execution_fence: None,
             attempt_count: r.integer("attempt_count")?,
             initiator_principal_id: r
                 .optional_integer("initiator_principal_id")?
@@ -269,7 +270,7 @@ mod tests {
             for _ in 0..10 {
                 queued_task(&storage).await;
             }
-            let state = storage.state.read().await;
+            let state = storage.state.read().await.unwrap();
             let mut progress =
                 StorageBackupCaptureProgress::new(StorageBackupBudget::new(4096, 3).unwrap());
             let mut sections = StorageBackupHistorySections::new();

@@ -24,6 +24,7 @@ use crate::models::{
 };
 use crate::permissions::visibility::authorize_all_candidates;
 use crate::permissions::{AppContext, PrincipalRef};
+use crate::restores::MaintenanceActivityGuard;
 use crate::services::authentication::ExecutionPrincipal;
 use crate::services::authorization_resources::schema_compliance_authorization_resources;
 use crate::services::class_fields::AuthorizedObjectSample;
@@ -101,10 +102,14 @@ pub(crate) async fn execute(
     .await?;
     control::checkpoint()?;
     let execution = control::execution_context();
+    let activity = MaintenanceActivityGuard::begin();
     // Await completion, including cooperative stops, before releasing the task lease.
-    let output = tokio::task::spawn_blocking(move || profile_sample(payload, sample, execution))
-        .await
-        .map_err(|_| ApiError::InternalServerError("Schema profiling worker failed".into()))??;
+    let output = tokio::task::spawn_blocking(move || {
+        let _activity = activity;
+        profile_sample(payload, sample, execution)
+    })
+    .await
+    .map_err(|_| ApiError::InternalServerError("Schema profiling worker failed".into()))??;
     control::checkpoint()?;
     let artifact = StorageSchemaProfileArtifact::new(output, Utc::now() + Duration::hours(24))
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;

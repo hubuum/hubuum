@@ -1,6 +1,6 @@
 # `hubuum-storage-core` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.12` release train.
+Status: experimental public API in the storage SDK `0.13` release train.
 
 ## Purpose and Callers
 

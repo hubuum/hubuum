@@ -45,7 +45,7 @@ mod logical_identity;
 pub use logical_identity::{
     LogicalIdentityStorage, StorageCapturedIdentity, StorageIdentityEvidence,
     StorageIdentityHistoryKind, StorageIdentityResourceKind, StorageIdentitySubject,
-    StorageIdentityTarget,
+    StorageIdentityTarget, StorageRestoreVersionAncestry,
 };
 mod metrics;
 mod mutation;

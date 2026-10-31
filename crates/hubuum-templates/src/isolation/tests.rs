@@ -10,8 +10,6 @@ use tokio::time::{sleep, timeout};
 
 use super::*;
 
-const CAPACITY: usize = MAX_CONCURRENT_WORKERS + MAX_WAITING_WORKERS;
-
 #[tokio::test]
 async fn lost_supervisor_cannot_confirm_shutdown() {
     let (jobs, _incoming) = mpsc::channel(1);
@@ -20,11 +18,26 @@ async fn lost_supervisor_cannot_confirm_shutdown() {
     drop(finished);
     let runtime = WorkerRuntime {
         jobs,
-        capacity: Arc::new(Semaphore::new(1)),
+        capacity: Arc::new(Semaphore::new(MAX_CONCURRENT_WORKERS + MAX_WAITING_WORKERS)),
         stopping,
         stopped,
+        uncertain: Arc::new(AtomicBool::new(false)),
     };
 
+    assert!(!runtime.is_idle());
+    assert!(runtime.shutdown().await.is_err());
+}
+
+#[tokio::test]
+async fn unfinished_supervisor_job_prevents_idle_and_clean_shutdown() {
+    let runtime = WorkerRuntime::start().unwrap();
+    let completion = WorkerCompletion {
+        uncertain: Arc::clone(&runtime.uncertain),
+        complete: false,
+    };
+    drop(completion);
+
+    assert!(!runtime.is_idle());
     assert!(runtime.shutdown().await.is_err());
 }
 
@@ -90,7 +103,7 @@ impl Fixture {
     }
     async fn idle(&self) {
         timeout(Duration::from_secs(3), async {
-            while self.runtime.capacity.available_permits() != CAPACITY {
+            while !self.runtime.is_idle() {
                 sleep(Duration::from_millis(5)).await;
             }
         })
@@ -179,6 +192,7 @@ async fn cancellation_reaps_the_child_before_releasing_capacity(#[case] input_by
         Duration::from_secs(30),
     );
     let pid = fixture.pid("cancelled").await;
+    assert!(!fixture.runtime.is_idle());
     drop(result);
     fixture.idle().await;
     assert_reaped(pid);

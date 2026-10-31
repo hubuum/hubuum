@@ -211,7 +211,7 @@ pub(super) async fn queued_task(storage: &MemoryStorage) -> TaskId {
 
 async fn completed_task(storage: &MemoryStorage) -> TaskId {
     let id = queued_task(storage).await;
-    let mut state = storage.state.write().await;
+    let mut state = storage.state.write().await.unwrap();
     let task = state.tasks.get_mut(&id.id()).unwrap();
     task.status = StorageTaskStatus::Succeeded;
     task.finished_at = Some(Utc::now());
@@ -441,6 +441,7 @@ fn task_event_sequences_continue_after_imported_history() {
             .state
             .write()
             .await
+            .unwrap()
             .append_task_event_record(
                 id,
                 StorageTaskEventInput::new("cleanup", "Retained output cleaned up"),

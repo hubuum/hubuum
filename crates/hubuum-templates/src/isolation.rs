@@ -396,6 +396,20 @@ struct WorkerRuntime {
     capacity: Arc<Semaphore>,
     stopping: watch::Sender<bool>,
     stopped: watch::Receiver<bool>,
+    uncertain: Arc<AtomicBool>,
+}
+
+struct WorkerCompletion {
+    uncertain: Arc<AtomicBool>,
+    complete: bool,
+}
+
+impl Drop for WorkerCompletion {
+    fn drop(&mut self) {
+        if !self.complete {
+            self.uncertain.store(true, Ordering::Release);
+        }
+    }
 }
 type SpoolPins = (Arc<crate::TemplateRows>, Arc<SpoolFile>);
 
@@ -413,6 +427,12 @@ struct Job {
     command: Command,
 }
 impl WorkerRuntime {
+    fn is_idle(&self) -> bool {
+        self.capacity.available_permits() == MAX_CONCURRENT_WORKERS + MAX_WAITING_WORKERS
+            && !self.uncertain.load(Ordering::Acquire)
+            && (self.stopped.has_changed().is_ok() || *self.stopped.borrow())
+    }
+
     fn admit(&self, started: Instant) -> Result<OwnedSemaphorePermit, TemplateError> {
         self.capacity.clone().try_acquire_owned().map_err(|_| {
             event("overloaded", started);
@@ -429,6 +449,8 @@ impl WorkerRuntime {
             mpsc::channel::<Job>(MAX_CONCURRENT_WORKERS + MAX_WAITING_WORKERS);
         let (stopping, mut shutdown) = watch::channel(false);
         let (finished, stopped) = watch::channel(false);
+        let uncertain = Arc::new(AtomicBool::new(false));
+        let supervisor_uncertain = Arc::clone(&uncertain);
         std::thread::Builder::new().name("template-supervisor".into()).spawn(move || {
             runtime.block_on(async move {
                 let workers = Arc::new(Semaphore::new(MAX_CONCURRENT_WORKERS));
@@ -446,7 +468,7 @@ impl WorkerRuntime {
                         Some(job) = incoming.recv() => {
                             let span = job.span.clone();
                             let dispatcher = job.dispatcher.clone();
-                            running.spawn(supervise(job, workers.clone(), shutdown.clone()).instrument(span).with_subscriber(dispatcher));
+                            running.spawn(supervise(job, workers.clone(), shutdown.clone(), Arc::clone(&supervisor_uncertain)).instrument(span).with_subscriber(dispatcher));
                             debug_assert!(running.len() <= MAX_CONCURRENT_WORKERS + MAX_WAITING_WORKERS);
                         }
                         else => break,
@@ -469,6 +491,7 @@ impl WorkerRuntime {
             capacity,
             stopping,
             stopped,
+            uncertain,
         })
     }
 
@@ -484,7 +507,14 @@ impl WorkerRuntime {
                 TemplateError::boundary(
                     "template supervisor stopped without confirming child cleanup",
                 )
-            })
+            })?;
+        if self.is_idle() {
+            Ok(())
+        } else {
+            Err(TemplateError::boundary(
+                "template worker cleanup could not be confirmed",
+            ))
+        }
     }
 }
 
@@ -496,6 +526,15 @@ pub async fn shutdown_template_workers() -> Result<(), TemplateError> {
         runtime.shutdown().await?;
     }
     Ok(())
+}
+
+/// Whether every admitted job has finished, including cancelled callers' child
+/// processes and response decoding. Callers must independently stop new work
+/// before treating this snapshot as a completed drain.
+pub fn template_workers_idle() -> bool {
+    RUNTIME
+        .get()
+        .is_none_or(|runtime| runtime.as_ref().map_or(true, WorkerRuntime::is_idle))
 }
 
 async fn execute(request: WorkerRequest<'_>) -> Result<Vec<RenderedTemplate>, TemplateError> {
@@ -588,9 +627,21 @@ async fn execute_pinned(
         .map_err(|_| TemplateError::boundary("template supervisor unavailable"))?
 }
 
-async fn supervise(mut job: Job, workers: Arc<Semaphore>, mut shutdown: watch::Receiver<bool>) {
+async fn supervise(
+    mut job: Job,
+    workers: Arc<Semaphore>,
+    mut shutdown: watch::Receiver<bool>,
+    uncertain: Arc<AtomicBool>,
+) {
     let _capacity = job.capacity;
     let _spool_pins = job.spool_pins;
+    // This guard drops before capacity: a panic cannot transiently advertise
+    // an idle runtime before recording that child cleanup is uncertain.
+    let mut completion = WorkerCompletion {
+        uncertain: Arc::clone(&uncertain),
+        complete: false,
+    };
+    async {
     event("admitted", job.started);
     let worker = tokio::select! {
         biased;
@@ -699,6 +750,9 @@ async fn supervise(mut job: Job, workers: Arc<Semaphore>, mut shutdown: watch::R
     // Always reap before releasing either admission permit, even when the
     // request's future or its entire HTTP runtime has already disappeared.
     let reaped = child.wait().await;
+    if reaped.is_err() {
+        uncertain.store(true, Ordering::Release);
+    }
     debug!(status = ?reaped, "Template worker reaped");
     let result = match result {
         Ok(bytes) => {
@@ -759,6 +813,8 @@ async fn supervise(mut job: Job, workers: Arc<Semaphore>, mut shutdown: watch::R
     // rendered output. Their byte reservations must not overlap that transfer.
     drop(_spool_pins);
     let _ = job.response.send(result);
+    }.await;
+    completion.complete = true;
 }
 
 #[cfg(test)]

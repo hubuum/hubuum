@@ -26,6 +26,6 @@ pub async fn load_maintenance_state(
     runtime: &PostgresRuntime,
 ) -> Result<MaintenanceState, PostgresStorageError> {
     runtime
-        .with_connection(maintenance_state_on_connection)
+        .with_control_connection(maintenance_state_on_connection)
         .await
 }

@@ -22,6 +22,10 @@ impl RuntimeRegistration {
         }
     }
 
+    pub fn owner(&self) -> RuntimeOwner {
+        RuntimeOwner::new(self.id, self.ownership_token)
+    }
+
     pub const fn id(&self) -> Uuid {
         self.id
     }

@@ -10,7 +10,7 @@ impl RemoteTargetStorage for MemoryStorage {
     ) -> Result<StorageRemoteTarget, StorageError> {
         self.state
             .read()
-            .await
+            .await?
             .remote_targets
             .get(&target_id.id())
             .cloned()
@@ -27,7 +27,7 @@ impl RemoteTargetStorage for MemoryStorage {
         let rows = self
             .state
             .read()
-            .await
+            .await?
             .remote_targets
             .values()
             .filter(|target| collection_ids.contains(&target.collection_id()))
@@ -41,7 +41,7 @@ impl RemoteTargetStorage for MemoryStorage {
         request: StorageRemoteTargetCreate,
     ) -> Result<StorageMutationOutcome<StorageRemoteTarget>, StorageError> {
         let (collection_id, name, definition, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         if !state.collections.contains_key(&collection_id.id()) {
             return Err(StorageError::not_found(format!(
                 "Collection {} was not found",
@@ -90,7 +90,7 @@ impl RemoteTargetStorage for MemoryStorage {
         request: StorageRemoteTargetUpdate,
     ) -> Result<StorageMutationOutcome<StorageRemoteTarget>, StorageError> {
         let (target_id, expected_revision, patch, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let current = state
             .remote_targets
             .get(&target_id.id())
@@ -188,7 +188,7 @@ impl RemoteTargetStorage for MemoryStorage {
         request: StorageRemoteTargetDelete,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let (target_id, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let Some(target) = state.remote_targets.remove(&target_id.id()) else {
             return Ok(StorageMutationOutcome::unchanged(()));
         };
@@ -214,7 +214,7 @@ impl RemoteTargetStorage for MemoryStorage {
         request: StorageRemoteTargetInvocation,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let (target_id, task_id, subject_type, subject_id, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let target = state
             .remote_targets
             .get(&target_id.id())
@@ -246,7 +246,7 @@ impl TaskQueueStorage for MemoryStorage {
         &self,
         request: StorageTaskCreateRequest,
     ) -> Result<StorageTask, StorageError> {
-        let mut guard = self.state.write().await;
+        let mut guard = self.state.write().await?;
         let mut state = guard.clone();
         if !state.principals.contains_key(&request.submitted_by().id()) {
             return Err(StorageError::not_found(format!(
@@ -300,6 +300,7 @@ impl TaskQueueStorage for MemoryStorage {
             initiator_principal_id: Some(request.submitted_by()),
             trace_link: request.trace_link().cloned(),
             claim_token: None,
+            execution_fence: None,
         };
         let task = record.projection()?;
         state.store_task(id.id(), record)?;
@@ -325,7 +326,7 @@ impl TaskQueueStorage for MemoryStorage {
     }
 
     async fn get_task_access(&self, task_id: TaskId) -> Result<StorageTaskAccess, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let task = state.tasks.get(&task_id.id()).ok_or_else(|| {
             StorageError::not_found(format!("Task {} was not found", task_id.id()))
         })?;
@@ -348,7 +349,7 @@ impl TaskQueueStorage for MemoryStorage {
         let search = query.search().cloned().unwrap_or_default();
         let excluded_kind = query.excluded_kind();
         let (submitted_by, kind, status, options) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let rows = state
             .tasks
             .values()
@@ -372,7 +373,7 @@ impl TaskQueueStorage for MemoryStorage {
         query: StorageTaskChildListQuery,
     ) -> Result<StoragePage<StorageTaskEvent>, StorageError> {
         let (task_id, options) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         if !state.tasks.contains_key(&task_id.id()) {
             return Err(StorageError::not_found(format!(
                 "Task {} was not found",
@@ -394,7 +395,7 @@ impl TaskQueueStorage for MemoryStorage {
         query: StorageTaskChildListQuery,
     ) -> Result<StoragePage<StorageImportTaskResult>, StorageError> {
         let (task_id, options) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         if !state.tasks.contains_key(&task_id.id()) {
             return Err(StorageError::not_found(format!(
                 "Task {} was not found",
@@ -415,7 +416,7 @@ impl TaskQueueStorage for MemoryStorage {
         &self,
         task_ids: Vec<TaskId>,
     ) -> Result<Vec<StorageExportOutputSummary>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let now = Utc::now();
         task_ids
             .into_iter()
@@ -429,7 +430,7 @@ impl TaskQueueStorage for MemoryStorage {
         &self,
         task_ids: Vec<TaskId>,
     ) -> Result<Vec<StorageBackupOutputSummary>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let now = Utc::now();
         task_ids
             .into_iter()
@@ -443,7 +444,7 @@ impl TaskQueueStorage for MemoryStorage {
         &self,
         task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageExportOutputSummary>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let Some(output) = state.export_outputs.get(&task_id.id()) else {
             return Ok(StorageTaskOutputLookup::Missing);
         };
@@ -461,7 +462,7 @@ impl TaskQueueStorage for MemoryStorage {
         &self,
         task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageBackupOutputSummary>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let Some(output) = state.backup_outputs.get(&task_id.id()) else {
             return Ok(StorageTaskOutputLookup::Missing);
         };
@@ -479,7 +480,7 @@ impl TaskQueueStorage for MemoryStorage {
         &self,
         task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageExportOutput>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let Some(output) = state.export_outputs.get(&task_id.id()) else {
             return Ok(StorageTaskOutputLookup::Missing);
         };
@@ -495,7 +496,7 @@ impl TaskQueueStorage for MemoryStorage {
         &self,
         task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageBackupOutput>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let Some(output) = state.backup_outputs.get(&task_id.id()) else {
             return Ok(StorageTaskOutputLookup::Missing);
         };
@@ -517,7 +518,7 @@ impl TaskExecutionStorage for MemoryStorage {
         StorageTaskOutputLookup<hubuum_storage_core::StorageSchemaProfileArtifact>,
         StorageError,
     > {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         Ok(match state.schema_profile_outputs.get(&task_id.id()) {
             Some(output) if output.expires_at() <= Utc::now() => StorageTaskOutputLookup::Expired {
                 expires_at: output.expires_at(),
@@ -527,7 +528,7 @@ impl TaskExecutionStorage for MemoryStorage {
         })
     }
     async fn purge_expired_schema_profile_outputs(&self) -> Result<usize, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let before = state.schema_profile_outputs.len();
         let now = Utc::now();
         state
@@ -575,8 +576,10 @@ impl TaskExecutionStorage for MemoryStorage {
         &self,
         lease_duration: StorageTaskLeaseDuration,
     ) -> Result<Option<StorageTaskClaim>, StorageError> {
-        let mut state = self.state.write().await;
-        if !state.deletion_control.permits_exposure()
+        let mut state = self.state.write().await?;
+        if !state
+            .application_control
+            .is_released_for(&state.deletion_control)
             || state.maintenance_state != MaintenanceState::Normal
         {
             return Ok(None);
@@ -602,6 +605,7 @@ impl TaskExecutionStorage for MemoryStorage {
             .ok_or_else(|| StorageError::invalid_input("Task lease duration is too large"))?;
         state.charge_task_claim(task_id)?;
         let claim_token = Uuid::new_v4().to_string();
+        let fence = state.application_control.fence();
         let task = state
             .tasks
             .get_mut(&task_id.id())
@@ -612,8 +616,10 @@ impl TaskExecutionStorage for MemoryStorage {
         task.lease_expires_at = Some(expires_at);
         task.attempt_count += 1;
         task.claim_token = Some(claim_token.clone());
+        task.execution_fence = Some(fence);
         let projection = task.projection()?;
-        let lease = StorageTaskLease::new(task_id, StorageTaskClaimToken::new(claim_token));
+        let lease = StorageTaskLease::new(task_id, StorageTaskClaimToken::new(claim_token))
+            .with_execution_fence(fence);
         state.append_task_event_record(
             task_id,
             StorageTaskEventInput::new(
@@ -654,7 +660,7 @@ impl TaskExecutionStorage for MemoryStorage {
         if batch_size == 0 {
             return Ok(Vec::new());
         }
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_control().await;
         state.task_capacity = state.task_accounting_snapshot()?;
         let now = Utc::now();
         let task_ids = state
@@ -761,8 +767,8 @@ impl TaskExecutionStorage for MemoryStorage {
 
     async fn append_task_event(&self, event: StorageTaskEventAppend) -> Result<(), StorageError> {
         let (lease, event) = event.into_parts();
-        let mut state = self.state.write().await;
-        state.ensure_task_execution_allowed()?;
+        let mut state = self.state.write().await?;
+        state.ensure_task_lease_current(&lease)?;
         let task = state
             .tasks
             .get(&lease.task_id().id())
@@ -778,8 +784,8 @@ impl TaskExecutionStorage for MemoryStorage {
         update: StorageTaskActiveUpdate,
     ) -> Result<StorageTask, StorageError> {
         let (lease, status, summary, counts, started_at) = update.into_parts();
-        let mut state = self.state.write().await;
-        state.ensure_task_execution_allowed()?;
+        let mut state = self.state.write().await?;
+        state.ensure_task_lease_current(&lease)?;
         let now = Utc::now();
         let task = state
             .tasks
@@ -817,8 +823,8 @@ impl TaskExecutionStorage for MemoryStorage {
                 | StorageTaskCompletionPayload::SchemaValidation
         );
         let (lease, status, summary, counts, started_at) = update.into_parts();
-        let mut guard = self.state.write().await;
-        guard.ensure_task_execution_allowed()?;
+        let mut guard = self.state.write().await?;
+        guard.ensure_task_lease_current(&lease)?;
         let mut state = guard.clone();
         let stored = state
             .tasks
@@ -1000,7 +1006,7 @@ impl TaskExecutionStorage for MemoryStorage {
 
     async fn fail_task(&self, failure: StorageTaskFailure) -> Result<StorageTask, StorageError> {
         let (lease, summary, event) = failure.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_control().await;
         let now = Utc::now();
         let task = state
             .tasks
@@ -1044,7 +1050,7 @@ impl TaskExecutionStorage for MemoryStorage {
     }
 
     async fn purge_expired_export_outputs(&self) -> Result<usize, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let before = state.export_outputs.len();
         let now = Utc::now();
         state
@@ -1054,7 +1060,7 @@ impl TaskExecutionStorage for MemoryStorage {
     }
 
     async fn purge_expired_backup_outputs(&self) -> Result<usize, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let before = state.backup_outputs.len();
         let now = Utc::now();
         state
@@ -1071,7 +1077,7 @@ impl BackupSnapshotStorage for MemoryStorage {
         include_history: bool,
         budget: StorageBackupBudget,
     ) -> Result<StorageBackupReplay, StorageError> {
-        let state = self.state.read().await.clone();
+        let state = self.state.read().await?.clone();
         StorageBackupReplay::from_snapshot(
             crate::backup::capture(&state, include_history, self.schema_limits, budget)?,
             budget,
@@ -1087,7 +1093,7 @@ impl RestoreStorage for MemoryStorage {
     ) -> Result<StorageRestoreStatus, StorageError> {
         let (initiator, artifact, capability_hash, validation_summary, expires_at) =
             request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_control().await;
         let logical_identity = state
             .logical_identities
             .restore_requester(initiator.clone().into_parts().principal_id());
@@ -1128,11 +1134,11 @@ impl RestoreStorage for MemoryStorage {
         &self,
         job_id: RestoreJobId,
     ) -> Result<StorageRestoreArtifactJob, StorageError> {
-        self.state
-            .read()
-            .await
+        let state = self.state.read_control().await;
+        state
             .restore_jobs
             .get(&job_id.id())
+            .or_else(|| state.restore_receipts.get(&job_id.id()))
             .map(|record| record.job.clone())
             .ok_or_else(|| {
                 StorageError::not_found(format!("Restore job {} was not found", job_id.id()))
@@ -1143,7 +1149,7 @@ impl RestoreStorage for MemoryStorage {
         &self,
         job_id: RestoreJobId,
     ) -> Result<StorageRestoreStatus, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read_control().await;
         let record = state
             .restore_jobs
             .get(&job_id.id())
@@ -1157,7 +1163,7 @@ impl RestoreStorage for MemoryStorage {
     }
 
     async fn expire_restore_stage(&self, job_id: RestoreJobId) -> Result<bool, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_control().await;
         let Some(current) = state.restore_jobs.get(&job_id.id()).cloned() else {
             return Err(StorageError::not_found(format!(
                 "Restore job {} was not found",
@@ -1186,7 +1192,7 @@ impl RestoreStorage for MemoryStorage {
         request: hubuum_storage_core::StorageRestoreConfirmation,
     ) -> Result<DateTime<Utc>, StorageError> {
         let job_id = request.job_id();
-        let mut guard = self.state.write().await;
+        let mut guard = self.state.write_control().await;
         let mut state = guard.clone();
         if let Some(approval) = request.approval() {
             if approval.claim().restore_job_id() != Some(job_id) {
@@ -1242,12 +1248,7 @@ impl RestoreStorage for MemoryStorage {
         request: StorageRestoreReplayApply,
     ) -> Result<StorageRestoreCompletion, StorageError> {
         let (job_id, metadata, snapshot, source_includes_history) = request.into_parts();
-        let mut state = self.state.write().await;
-        if !state.deletion_control.intents().is_empty() {
-            return Err(StorageError::conflict(
-                "Deletion authority requires reapplication before logical restore; keep recovery quarantined",
-            ));
-        }
+        let mut state = self.state.write_control().await;
         if state.maintenance_state != MaintenanceState::Draining
             || state.maintenance_restore_job_id != Some(job_id)
         {
@@ -1276,6 +1277,12 @@ impl RestoreStorage for MemoryStorage {
         )?;
         replacement.credential_approvals = state.credential_approvals.clone();
         replacement.deletion_control = state.deletion_control.clone();
+        replacement.application_control = ApplicationControlState::initial(&state.deletion_control);
+        replacement.pending_restore = !state.deletion_control.intents().is_empty();
+        if replacement.pending_restore {
+            replacement.maintenance_state = MaintenanceState::Draining;
+            replacement.maintenance_restore_job_id = Some(job_id);
+        }
         replacement.runtime_registrations = state.runtime_registrations.clone();
         replacement.query_observation_control = state.query_observation_control;
         for (_, approval) in replacement.credential_approvals.values_mut() {
@@ -1317,7 +1324,7 @@ impl RestoreStorage for MemoryStorage {
         request: StorageRestoreFailure,
     ) -> Result<(), StorageError> {
         let (job_id, error) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_control().await;
         let current = state
             .restore_jobs
             .get(&job_id.id())
@@ -1356,7 +1363,7 @@ impl RestoreStorage for MemoryStorage {
     async fn get_restore_coordinator_snapshot(
         &self,
     ) -> Result<StorageRestoreCoordinatorSnapshot, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read_control().await;
         Ok(StorageRestoreCoordinatorSnapshot::new(
             state.maintenance_state,
             state.maintenance_restore_job_id,
@@ -1365,8 +1372,8 @@ impl RestoreStorage for MemoryStorage {
     }
 
     async fn resume_maintenance_without_restore(&self) -> Result<(), StorageError> {
-        let mut state = self.state.write().await;
-        if state.maintenance_restore_job_id.is_none() {
+        let mut state = self.state.write_control().await;
+        if state.maintenance_restore_job_id.is_none() && !state.pending_restore {
             state.maintenance_state = MaintenanceState::Normal;
             state.restore_instances.clear();
         }
@@ -1374,10 +1381,11 @@ impl RestoreStorage for MemoryStorage {
     }
 
     async fn resume_terminal_restore(&self, job_id: RestoreJobId) -> Result<(), StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_control().await;
         let status = state
             .restore_jobs
             .get(&job_id.id())
+            .or_else(|| state.restore_receipts.get(&job_id.id()))
             .map(|record| record.job.summary().status())
             .ok_or_else(|| {
                 StorageError::not_found(format!("Restore job {} was not found", job_id.id()))
@@ -1388,6 +1396,7 @@ impl RestoreStorage for MemoryStorage {
                 | StorageRestoreJobStatus::Failed
                 | StorageRestoreJobStatus::Expired
         ) && state.maintenance_restore_job_id == Some(job_id)
+            && !state.pending_restore
         {
             state.maintenance_state = MaintenanceState::Normal;
             state.maintenance_restore_job_id = None;
@@ -1402,7 +1411,10 @@ impl RestoreStorage for MemoryStorage {
         local_work_is_idle: &(dyn Fn() -> bool + Send + Sync),
         expire_validated_jobs: bool,
     ) -> Result<StorageRestoreCoordinatorSnapshot, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_control().await;
+        if let Some(owner) = self.state.runtime_owner() {
+            state.acknowledge_coordinator_drain(owner, local_work_is_idle)?;
+        }
         let now = Utc::now();
         if expire_validated_jobs {
             let expired_ids = state
@@ -1458,7 +1470,7 @@ impl RestoreStorage for MemoryStorage {
         &self,
         heartbeat_cutoff: DateTime<Utc>,
     ) -> Result<StorageRestoreDrainState, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read_control().await;
         let instances = state
             .restore_instances
             .iter()
@@ -1477,7 +1489,7 @@ impl RestoreStorage for MemoryStorage {
 
     async fn remove_restore_instance(&self, instance_id: Uuid) -> Result<(), StorageError> {
         self.state
-            .write()
+            .write_control()
             .await
             .restore_instances
             .remove(&instance_id);
@@ -1499,7 +1511,7 @@ impl ImportStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .collections
             .get(&collection_id.id())
             .cloned())
@@ -1510,7 +1522,7 @@ impl ImportStorage for MemoryStorage {
         key: &StorageImportCollectionKey,
     ) -> Result<Option<StorageCollection>, StorageError> {
         let parts = key.clone().into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut candidates = state
             .collections
             .values()
@@ -1556,7 +1568,7 @@ impl ImportStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .collections
             .values()
             .filter(|collection| collection.name() == name)
@@ -1572,7 +1584,7 @@ impl ImportStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .collections
             .values()
             .find(|collection| {
@@ -1590,7 +1602,7 @@ impl ImportStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .classes
             .values()
             .find(|class| class.collection_id() == collection_id && class.name() == name)
@@ -1605,7 +1617,7 @@ impl ImportStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .classes
             .values()
             .filter(|class| {
@@ -1624,7 +1636,7 @@ impl ImportStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .objects
             .values()
             .find(|object| object.class_id() == class_id && object.name() == name)
@@ -1639,7 +1651,7 @@ impl ImportStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .objects
             .values()
             .filter(|object| {
@@ -1657,7 +1669,7 @@ impl ImportStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .class_relations
             .values()
             .any(|relation| {
@@ -1674,7 +1686,7 @@ impl ImportStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .object_relations
             .values()
             .any(|relation| {
@@ -1688,7 +1700,7 @@ impl ImportStorage for MemoryStorage {
         identity_scope: &str,
         group_name: &str,
     ) -> Result<bool, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let scope_ids = state
             .identity_scopes
             .values()
@@ -1707,7 +1719,7 @@ impl ImportStorage for MemoryStorage {
     ) -> Result<StorageImportPreflight, StorageError> {
         let scratch = Self {
             schema_limits: self.schema_limits,
-            state: Arc::new(MemoryStateLock::new(self.state.read().await.clone())),
+            state: Arc::new(self.state.fork(self.state.read().await?.clone())),
         };
         let mut references = BTreeMap::new();
         let mut items = Vec::new();
@@ -1747,9 +1759,12 @@ impl ImportStorage for MemoryStorage {
     }
 
     async fn apply_import_strict(&self, plan: StorageImportPlan) -> Result<(), StorageError> {
+        // Keep registration and authority changes ordered with publication of
+        // the whole staged import, just as for a single imported item.
+        let mut state = self.state.write().await?;
         let scratch = Self {
             schema_limits: self.schema_limits,
-            state: Arc::new(MemoryStateLock::new(self.state.read().await.clone())),
+            state: Arc::new(self.state.fork(state.clone())),
         };
         let mut references = BTreeMap::new();
         for item in plan.into_items() {
@@ -1757,7 +1772,7 @@ impl ImportStorage for MemoryStorage {
                 .apply_import_operation(item.into_parts().1, &mut references)
                 .await?;
         }
-        *self.state.write().await = scratch.state.read().await.clone();
+        *state = scratch.state.read().await?.clone();
         Ok(())
     }
 
@@ -1788,14 +1803,14 @@ impl ImportStorage for MemoryStorage {
     ) -> Result<(), StorageError> {
         let (lease, results) = results.into_parts();
         self.check_import_claim(&lease).await?;
-        let snapshot = self.state.read().await.clone();
+        let snapshot = self.state.read().await?.clone();
         let generation = snapshot.generation.clone();
         let scratch = Self {
             schema_limits: self.schema_limits,
-            state: Arc::new(MemoryStateLock::new(snapshot)),
+            state: Arc::new(self.state.fork(snapshot)),
         };
         scratch.record_import_results(results).await?;
-        let committed_state = scratch.state.read().await.clone();
+        let committed_state = scratch.state.read().await?.clone();
         self.state
             .commit_import(&generation, committed_state, &lease)
             .await
@@ -1805,7 +1820,7 @@ impl ImportStorage for MemoryStorage {
         &self,
         results: Vec<StorageImportResult>,
     ) -> Result<(), StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         for result in &results {
             let task_id = result.clone().into_parts().0;
             let task = state.tasks.get(&task_id.id()).ok_or_else(|| {
@@ -1852,7 +1867,7 @@ impl ExportTemplateStorage for MemoryStorage {
     ) -> Result<StorageExportTemplate, StorageError> {
         self.state
             .read()
-            .await
+            .await?
             .export_templates
             .get(&template_id.id())
             .cloned()
@@ -1872,7 +1887,7 @@ impl ExportTemplateStorage for MemoryStorage {
         let rows = self
             .state
             .read()
-            .await
+            .await?
             .export_templates
             .values()
             .filter(|template| {
@@ -1894,7 +1909,7 @@ impl ExportTemplateStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .export_templates
             .values()
             .filter(|template| {
@@ -1912,7 +1927,7 @@ impl ExportTemplateStorage for MemoryStorage {
         request: StorageExportTemplateCreate,
     ) -> Result<StorageMutationOutcome<StorageExportTemplate>, StorageError> {
         let (collection_id, name, definition, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         if !state.collections.contains_key(&collection_id.id()) {
             return Err(StorageError::not_found(format!(
                 "Collection {} was not found",
@@ -1961,7 +1976,7 @@ impl ExportTemplateStorage for MemoryStorage {
         request: StorageExportTemplateReplace,
     ) -> Result<StorageMutationOutcome<StorageExportTemplate>, StorageError> {
         let (template_id, collection_id, name, definition, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let current = state
             .export_templates
             .get(&template_id.id())
@@ -2012,7 +2027,7 @@ impl ExportTemplateStorage for MemoryStorage {
         request: StorageExportTemplateDelete,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let (template_id, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let Some(template) = state.export_templates.remove(&template_id.id()) else {
             return Ok(StorageMutationOutcome::unchanged(()));
         };
@@ -2108,11 +2123,11 @@ impl MemoryStorage {
         references: &mut BTreeMap<String, MemoryImportReference>,
         complete_import: bool,
     ) -> Result<(), StorageError> {
-        let snapshot = self.state.read().await.clone();
+        let snapshot = self.state.read().await?.clone();
         let generation = snapshot.generation.clone();
         let scratch = Self {
             schema_limits: self.schema_limits,
-            state: Arc::new(MemoryStateLock::new(snapshot)),
+            state: Arc::new(self.state.fork(snapshot)),
         };
         let mut next_references = references.clone();
         for item in items {
@@ -2122,7 +2137,7 @@ impl MemoryStorage {
             if !scratch
                 .state
                 .write()
-                .await
+                .await?
                 .import_execution_receipts
                 .insert((lease.task_id().id(), index))
             {
@@ -2138,7 +2153,7 @@ impl MemoryStorage {
             scratch.record_import_results(vec![result]).await?;
             tokio::task::yield_now().await;
         }
-        let mut committed_state = scratch.state.read().await.clone();
+        let mut committed_state = scratch.state.read().await?.clone();
         if complete_import {
             committed_state
                 .tasks
@@ -2156,8 +2171,8 @@ impl MemoryStorage {
     }
 
     async fn check_import_claim(&self, lease: &StorageTaskLease) -> Result<(), StorageError> {
-        let state = self.state.read().await;
-        state.ensure_task_execution_allowed()?;
+        let state = self.state.read().await?;
+        state.ensure_task_lease_current(lease)?;
         let task = state
             .tasks
             .get(&lease.task_id().id())

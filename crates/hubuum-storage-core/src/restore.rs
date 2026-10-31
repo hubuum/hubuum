@@ -996,9 +996,14 @@ pub trait RestoreStorage: Send + Sync {
 
     /// Publish this process's coordinator heartbeat and return maintenance state.
     ///
-    /// Implementations must observe the current maintenance generation before
-    /// invoking `local_work_is_idle`, invoke it only while maintenance is not
-    /// normal, and atomically persist the resulting drained state. When
+    /// Implementations bound to a runtime owner must first observe protected
+    /// application authority and, while quarantined, acknowledge that owner's
+    /// exact fence only when `local_work_is_idle` confirms all local work settled.
+    /// This observation and acknowledgement precede all restore-table writes.
+    /// The callback must include HTTP, detached-work uncertainty and subprocesses.
+    /// Implementations also observe the current maintenance generation before
+    /// invoking the callback for restore draining and atomically persist that
+    /// result. Invoke it only for quarantine or non-normal maintenance. When
     /// `expire_validated_jobs` is true, expired validated artifacts must be
     /// erased as part of the same coordinator operation.
     async fn tick_restore_coordinator(

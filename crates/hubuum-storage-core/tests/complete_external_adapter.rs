@@ -53,6 +53,57 @@ impl DeletionControlStorage for CompleteExternalAdapter {
     ) -> Result<DeletionControlState, StorageError> {
         fixture_result()
     }
+    async fn register_runtime_isolated(
+        &self,
+        isolation: Option<RuntimeIsolationDomain>,
+    ) -> Result<RuntimeRegistration, StorageError> {
+        fixture_result()
+    }
+    async fn capture_application_execution(
+        &self,
+        owner: Option<RuntimeOwner>,
+    ) -> Result<StorageExecutionPermit, StorageError> {
+        fixture_result()
+    }
+    async fn capture_application_execution_with_maintenance(
+        &self,
+        owner: Option<RuntimeOwner>,
+    ) -> Result<ApplicationWorkAdmission, StorageError> {
+        fixture_result()
+    }
+
+    async fn read_application_control(&self) -> Result<ApplicationControlState, StorageError> {
+        fixture_result()
+    }
+    async fn acknowledge_runtime_drain(
+        &self,
+        owner: RuntimeOwner,
+        fence: ApplicationFence,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn reapply_deletion_decisions(
+        &self,
+        expected: DeletionControlState,
+        fence: ApplicationFence,
+        checkpoint: DeletionCheckpointIdentity,
+    ) -> Result<ApplicationReapplication, StorageError> {
+        fixture_result()
+    }
+    async fn release_application_exposure(
+        &self,
+        receipt: ApplicationReapplication,
+        checkpoint: DeletionCheckpointIdentity,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn recover_application_control(
+        &self,
+        change: DeletionControlChange,
+        isolation: RuntimeIsolationDomain,
+    ) -> Result<ApplicationFence, StorageError> {
+        fixture_result()
+    }
     async fn capture_deletion_control(&self) -> Result<DeletionControlCapture, StorageError> {
         fixture_result()
     }
@@ -2185,6 +2236,16 @@ impl ExportTemplateStorage for CompleteExternalAdapter {
 }
 
 impl ExecutionStorage for CompleteExternalAdapter {
+    fn current_execution_scope(&self) -> StorageExecutionScope {
+        StorageExecutionScope::default()
+    }
+    fn run_in_scope_sync<F, R>(&self, scope: StorageExecutionScope, operation: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        operation()
+    }
+
     fn run_in_scope<'a, F, R>(
         &'a self,
         scope: StorageExecutionScope,

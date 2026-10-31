@@ -27,6 +27,7 @@ mod backup_snapshot;
 mod capabilities;
 mod computed_fields;
 mod deletion_control;
+pub(crate) use deletion_control::acknowledge_coordinator_drain_on;
 mod export_templates;
 mod imports;
 mod logical_identity;
@@ -72,6 +73,12 @@ impl PostgresStorage {
     #[must_use]
     pub fn unobserved(pool: PostgresPool) -> Self {
         Self::new(pool, Arc::new(crate::NoopPostgresObserver))
+    }
+
+    #[must_use]
+    pub fn with_runtime_owner(mut self, owner: RuntimeOwner) -> Self {
+        self.runtime = self.runtime.with_runtime_owner(owner);
+        self
     }
 
     #[must_use]

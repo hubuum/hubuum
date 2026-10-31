@@ -83,11 +83,14 @@ impl MemoryState {
             StorageHistoryOperation::Create,
             None,
         );
+        let deletion_control = DeletionControlState::empty(Uuid::new_v4(), Uuid::new_v4())
+            .expect("generated control identities");
         let mut state = Self {
             task_capacity: Default::default(),
             artifacts: Default::default(),
-            deletion_control: DeletionControlState::empty(Uuid::new_v4(), Uuid::new_v4())
-                .expect("generated control identities"),
+            application_control: ApplicationControlState::initial(&deletion_control),
+            pending_restore: false,
+            deletion_control,
             runtime_registrations: BTreeMap::new(),
             logical_identities,
             schema_repair_reports: Default::default(),

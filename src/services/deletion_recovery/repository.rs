@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use hmac::{Hmac, KeyInit, Mac};
 use hubuum_storage_core::{
-    DELETION_CONTROL_MAX_BYTES, DeletionControlCapture, DeletionControlState,
-    DeletionRecoveryPosition,
+    ApplicationReapplication, DELETION_CONTROL_MAX_BYTES, DeletionControlCapture,
+    DeletionControlState, DeletionRecoveryPosition,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -14,6 +14,9 @@ use uuid::Uuid;
 
 use super::unavailable;
 use crate::errors::ApiError;
+
+mod runtime;
+pub(crate) use runtime::RuntimeIsolationGuard;
 
 const MAX_FILE_BYTES: u64 = (DELETION_CONTROL_MAX_BYTES + 65536) as u64;
 const MAC_DOMAIN: &[u8] = b"hubuum.deletion-checkpoint.v1\0";
@@ -32,6 +35,8 @@ pub(super) struct CheckpointRepository {
 struct Payload {
     state: DeletionControlState,
     position: DeletionRecoveryPosition,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reapplication: Option<ApplicationReapplication>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -84,6 +89,10 @@ pub(super) struct RecoveryEvidence {
 }
 
 impl RecoveryEvidence {
+    pub(super) fn checkpoint(&self) -> &DurableCheckpoint {
+        &self.checkpoint
+    }
+
     pub(super) fn state(&self) -> &DeletionControlState {
         self.checkpoint.state()
     }
@@ -92,6 +101,10 @@ impl RecoveryEvidence {
 impl DurableCheckpoint {
     pub(super) fn state(&self) -> &DeletionControlState {
         &self.payload.state
+    }
+
+    pub(super) fn reapplication(&self) -> Option<&ApplicationReapplication> {
+        self.payload.reapplication.as_ref()
     }
 
     pub(super) fn identity(&self) -> &str {
@@ -261,6 +274,10 @@ impl CheckpointRepository {
         if payload.state.lineage() != head.lineage
             || payload.state.epoch() != head.epoch
             || payload.state.revision() != head.revision
+            || payload
+                .reapplication
+                .as_ref()
+                .is_some_and(|receipt| receipt.revision() != head.revision)
         {
             return Err(unavailable(
                 "Checkpoint identity differs from latest reference",
@@ -322,7 +339,9 @@ impl CheckpointRepository {
                 ));
             }
             if capture.state().revision() == previous.state().revision() {
-                if capture.state() != previous.state() {
+                if capture.state() != previous.state()
+                    || capture.reapplication() != previous.reapplication()
+                {
                     return Err(unavailable("Conflicting checkpoint at the same revision"));
                 }
                 return Ok(previous);
@@ -331,6 +350,7 @@ impl CheckpointRepository {
         let bytes = self.signed(Payload {
             state: capture.state().clone(),
             position: capture.position().clone(),
+            reapplication: capture.reapplication().cloned(),
         })?;
         if bytes.len() as u64 > MAX_FILE_BYTES {
             return Err(unavailable("Checkpoint exceeds its byte limit"));
@@ -420,15 +440,17 @@ mod tests {
     use hubuum_storage_core::DeletionSubject;
     use rstest::rstest;
     use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::thread;
+    use std::time::{Duration, Instant};
 
-    struct Fixture {
+    pub(super) struct Fixture {
         root: PathBuf,
-        repository: CheckpointRepository,
-        initial: DeletionControlCapture,
+        pub(super) repository: CheckpointRepository,
+        pub(super) initial: DeletionControlCapture,
     }
 
     impl Fixture {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             let root = std::env::temp_dir().join(format!("hubuum-control-test-{}", Uuid::new_v4()));
             fs::create_dir(&root).unwrap();
             fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
@@ -492,7 +514,25 @@ mod tests {
         assert!(fixture.repository.recovery_evidence().is_err());
         let identity = session.checkpoint().identity().to_owned();
         drop(session);
-        assert_eq!(fixture.repository.latest().unwrap().identity(), identity);
+        // A concurrent template-worker fork can briefly inherit the open file
+        // description. CLOEXEC closes that copy at exec, so dropping our guard
+        // promises eventual release rather than an immediate successful flock.
+        // Keep the held-lock assertion above strict; retry only this transient
+        // busy result after the owner has finished.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let checkpoint = loop {
+            match fixture.repository.latest() {
+                Err(ApiError::ServiceUnavailable(message))
+                    if message
+                        == "Control repository is busy; retry without bypassing protection"
+                        && Instant::now() < deadline =>
+                {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                result => break result.unwrap(),
+            }
+        };
+        assert_eq!(checkpoint.identity(), identity);
     }
 
     #[test]
@@ -797,6 +837,7 @@ mod tests {
             .signed(Payload {
                 state: next.state().clone(),
                 position: next.position().clone(),
+                reapplication: None,
             })
             .unwrap();
         let path = fixture
