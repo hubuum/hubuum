@@ -399,6 +399,7 @@ mod tests {
     use hubuum_task_core::TaskExecutionLimit;
 
     use super::*;
+    use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
 
     fn run(future: impl Future<Output = ()>) {
         tokio::runtime::Builder::new_current_thread()
@@ -447,7 +448,10 @@ mod tests {
         let storage = MemoryStorage::new();
         queued(&storage).await;
         let claim = storage
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+            .claim_next_task(StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+            ))
             .await
             .unwrap()
             .unwrap();
@@ -511,7 +515,10 @@ mod tests {
             .await
             .unwrap();
         let claim = storage
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+            .claim_next_task(StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+            ))
             .await
             .unwrap()
             .unwrap();
@@ -553,7 +560,10 @@ mod tests {
         let storage = MemoryStorage::new();
         let task = queued(&storage).await;
         let claim = storage
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+            .claim_next_task(StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+            ))
             .await
             .unwrap()
             .unwrap();
@@ -588,7 +598,10 @@ mod tests {
         let storage = MemoryStorage::new();
         queued(&storage).await;
         let claim = storage
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+            .claim_next_task(StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+            ))
             .await
             .unwrap()
             .unwrap();
@@ -616,7 +629,10 @@ mod tests {
                 .await
                 .unwrap();
             let claim = storage
-                .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+                ))
                 .await
                 .unwrap();
             assert!(claim.is_none());
@@ -645,7 +661,10 @@ mod tests {
             let storage = MemoryStorage::new();
             let task = queued(&storage).await;
             let claim = storage
-                .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+                ))
                 .await
                 .unwrap()
                 .unwrap();

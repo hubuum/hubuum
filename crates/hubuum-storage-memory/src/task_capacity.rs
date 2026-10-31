@@ -5,7 +5,7 @@ use hubuum_storage_core::{
     StorageIdentityResourceKind, StorageIdentitySubject, StorageIdentityTarget,
     StorageTaskCapacitySnapshot, StorageTaskCapacityUsage, StorageTaskPolicy,
     StorageTaskPolicyUpdate, TaskAdmissionPolicy, TaskCapacityRejection, TaskCapacityStorage,
-    TaskPolicyRevision, TaskScopeCapacity,
+    TaskPolicyRevision, TaskSchedulingPolicy, TaskScopeCapacity,
 };
 use std::collections::btree_map::Entry;
 use std::io::{self, Write};
@@ -14,6 +14,7 @@ use std::io::{self, Write};
 /// membership in backup state and no ownership through an integer task ID.
 #[derive(Clone)]
 pub(super) struct MemoryTaskCapacity {
+    pub(super) scheduler: super::task_scheduling::MemoryTaskScheduler,
     initialized: bool,
     policy: StorageTaskPolicy,
     generation: u64,
@@ -25,6 +26,7 @@ pub(super) struct MemoryTaskCapacity {
 impl Default for MemoryTaskCapacity {
     fn default() -> Self {
         Self {
+            scheduler: super::task_scheduling::MemoryTaskScheduler::default(),
             initialized: false,
             generation: 0,
             partial: false,
@@ -131,6 +133,7 @@ impl MemoryTaskCapacity {
     }
 
     pub(super) fn restore_control(mut self) -> Result<Self, StorageError> {
+        self.scheduler.clear_workers();
         self.generation = self
             .generation
             .checked_add(1)
@@ -209,11 +212,22 @@ impl MemoryTaskCapacity {
             Ok(())
         };
         if candidate.owner.internal() {
-            return check(
+            check(
                 policy.internal(),
                 others().collect(),
                 TaskCapacityRejection::Internal,
-            );
+            )?;
+            return if matches!(change, CapacityChange::Claim) {
+                check(
+                    policy.for_kind(candidate.owner.kind).capacity(),
+                    others()
+                        .filter(|entry| entry.owner.kind == candidate.owner.kind)
+                        .collect(),
+                    TaskCapacityRejection::Kind,
+                )
+            } else {
+                Ok(())
+            };
         }
         check(
             policy.deployment(),
@@ -265,6 +279,21 @@ impl MemoryTaskCapacity {
 }
 
 impl MemoryState {
+    pub(super) fn scheduling_policy(&self) -> &TaskSchedulingPolicy {
+        self.task_capacity.policy.policy().scheduling()
+    }
+
+    pub(super) fn scheduling_principal(
+        &self,
+        id: TaskId,
+    ) -> Result<Option<PrincipalIdentity>, StorageError> {
+        let identity = self.task_identity(id)?;
+        self.task_capacity
+            .owners
+            .get(&identity)
+            .map(|entry| entry.owner.principal)
+            .ok_or_else(unknown_identity)
+    }
     pub(super) fn task_identity(&self, id: TaskId) -> Result<TaskIdentity, StorageError> {
         match self
             .logical_identities
@@ -678,11 +707,13 @@ impl TaskCapacityStorage for MemoryStorage {
                         > budget
             })
             .count() as u64;
-        Ok(
-            StorageTaskCapacitySnapshot::new(capacity.policy.clone(), capacity.generation)
-                .with_usage(usage(false)?, usage(true)?)
-                .with_work_budget_blocked(blocked),
+        Ok(StorageTaskCapacitySnapshot::new(
+            capacity.policy.clone(),
+            capacity.generation,
+            state.scheduling_snapshot(Utc::now()),
         )
+        .with_usage(usage(false)?, usage(true)?)
+        .with_work_budget_blocked(blocked))
     }
 
     async fn replace_task_policy(

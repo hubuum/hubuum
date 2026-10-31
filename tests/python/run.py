@@ -27,6 +27,7 @@ INTEGRATION = {
     "event-transports": "integration.event_transports",
     "corpus": "integration.corpus",
     "atlas": "integration.atlas",
+    "scheduling-benchmark": "integration.scheduling_benchmark",
     "schema-budget": "integration.schema_budget",
     "artifact-pipeline": "integration.artifact_pipeline",
     "rust-tests": "integration.rust_tests",

@@ -1,3 +1,4 @@
+use crate::StorageTaskClaimRequest;
 use crate::artifacts::VerifiedArtifact;
 use hubuum_budget::{ByteLimit, LimitedWriter};
 use std::{fmt, io};
@@ -1060,7 +1061,7 @@ pub trait TaskExecutionStorage: Send + Sync {
 
     async fn claim_next_task(
         &self,
-        lease_duration: StorageTaskLeaseDuration,
+        request: StorageTaskClaimRequest,
     ) -> Result<Option<StorageTaskClaim>, StorageError>;
 
     async fn renew_task_lease(

@@ -1,4 +1,6 @@
 mod lifecycle;
+mod scheduling;
+pub use scheduling::{SchedulingBenchmarkOptions, SchedulingBenchmarkReport};
 
 use std::collections::{BTreeMap, VecDeque};
 use std::time::Instant;
@@ -102,6 +104,19 @@ fn benchmark_pool(database_url: &str, max_size: u32) -> Result<PostgresPool> {
 }
 
 async fn load_dataset_with_pool(profile: &ScaleProfile, pool: &PostgresPool) -> Result<LoadReport> {
+    let mut report = load_raw_dataset_with_pool(profile, pool).await?;
+    let started = Instant::now();
+    initialize_benchmark_identities(pool).await?;
+    report.loading_ms += elapsed_ms(started);
+    Ok(report)
+}
+
+// Bulk fixture assembly runs before identity capture. Lifecycle overlays may
+// still change synthetic task ownership; publish identities only afterward.
+async fn load_raw_dataset_with_pool(
+    profile: &ScaleProfile,
+    pool: &PostgresPool,
+) -> Result<LoadReport> {
     profile.validate()?;
     let generation_started = Instant::now();
     let manifest = profile.manifest()?;
@@ -1671,4 +1686,41 @@ mod tests {
         .await
         .expect("scale history baselines");
     }
+}
+
+async fn initialize_benchmark_identities(pool: &PostgresPool) -> Result<()> {
+    // The fresh database's migration completed before bulk fixture loading.
+    // Reopen its owner-only backfill for the newly assembled synthetic rows.
+    with_connection(pool, async |connection| {
+        connection
+            .batch_execute(
+                "UPDATE hubuum_control.identity_backfill SET completed=FALSE WHERE singleton",
+            )
+            .await
+    })
+    .await
+    .map_err(|error| invalid_data(format!("fixture backfill initialization failed: {error}")))?;
+    for function in [
+        "hubuum_backfill_logical_identities",
+        "hubuum_backfill_task_capacity",
+    ] {
+        loop {
+            let changed = scalar(
+                pool,
+                &format!("SELECT public.{function}(500)::bigint AS value"),
+            )
+            .await?;
+            if changed == 0 {
+                break;
+            }
+        }
+    }
+    with_connection(pool, async |connection| {
+        connection
+            .batch_execute("SELECT public.hubuum_validate_logical_identities(); ANALYZE")
+            .await
+    })
+    .await
+    .map_err(|error| invalid_data(format!("fixture identity initialization failed: {error}")))?;
+    Ok(())
 }

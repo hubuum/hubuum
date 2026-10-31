@@ -75,7 +75,7 @@ def approved_replacements(baseline_documents, candidate):
 
 
 def approved_offline_drops(reviews, candidate_path, candidate):
-    """Permit only exact, declared constraint drops in a reviewed offline upgrade.
+    """Permit declared constraint drops and function renames in an offline upgrade.
 
     These are explicitly NOT rolling-compatible migrations. The hash pins the
     review to its SQL; any later edit needs a fresh review in the same PR.
@@ -96,6 +96,10 @@ def approved_offline_drops(reviews, candidate_path, candidate):
                     raise ValueError("Offline review contains an invalid constraint identifier")
                 table_identity = table.removeprefix("public.")
                 approved.add(f"OFFLINE:{table_identity}:{name}".upper())
+        for source, destination in review.get("rename_functions", {}).items():
+            if not re.fullmatch(IDENTIFIER, source) or not re.fullmatch(IDENTIFIER, destination):
+                raise ValueError("Offline review contains an invalid function identifier")
+            approved.add(f"OFFLINE_FUNCTION_RENAME:{source}:{destination}".upper())
     return approved
 
 

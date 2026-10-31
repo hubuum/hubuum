@@ -140,7 +140,7 @@ pub struct LifecycleWorkload(WorkloadInput);
 
 /// A compatible, bounded pairing of a scale corpus and its lifecycle overlay.
 /// Validate before giving an adapter permission to load the fixture.
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct LifecycleFixture {
     profile: ScaleProfile,
     workload: LifecycleWorkload,

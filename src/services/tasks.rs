@@ -1,5 +1,6 @@
 use crate::models::task::task_kind_from_db;
 use hubuum_domain::PrincipalId;
+use hubuum_storage_core::StorageTaskClaimRequest;
 use hubuum_task_core::IdempotencyKey;
 use std::ops::Deref;
 use std::time::Duration;
@@ -148,10 +149,10 @@ fn storage_task_event(event: NewTaskEventRecord) -> StorageTaskEventInput {
 
 pub(crate) async fn claim_next_task(
     backend: &impl StorageContext,
-    lease_duration: Duration,
+    request: StorageTaskClaimRequest,
 ) -> Result<Option<ClaimedTask>, ApiError> {
     storage_handle(backend)
-        .claim_next_task(storage_lease_duration(lease_duration)?)
+        .claim_next_task(request)
         .await?
         .map(ClaimedTask::from_storage)
         .transpose()

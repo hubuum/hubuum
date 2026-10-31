@@ -1027,3 +1027,26 @@ for discovery_path in tests/python/integration/class_field_discovery.py tests/py
   discovery_output="$(bash "$classifier" "$discovery_path")"
   assert_flag "$discovery_output" code true
 done
+
+# Fair scheduling touches runtime claims, restore contracts, measurement inputs,
+# and the production adapter's embedded migration.
+for scheduler_path in crates/hubuum-storage-core/src/task_scheduling.rs \
+  crates/hubuum-storage-memory/src/task_scheduling.rs \
+  crates/hubuum-storage-postgres/src/scale_benchmark/scheduling.rs \
+  crates/hubuum-storage-postgres/migrations/2026-10-31-000001_task_scheduling/up.sql \
+  tests/restore_contract/task_scheduling.rs; do
+  scheduler_output="$(bash "$classifier" "$scheduler_path")"
+  assert_flag "$scheduler_output" code true
+  assert_flag "$scheduler_output" rust true
+done
+scheduler_manifest="$(bash "$classifier" crates/hubuum-storage-postgres/Cargo.toml)"
+assert_flag "$scheduler_manifest" container true
+assert_flag "$scheduler_manifest" scale_benchmark true
+
+for scheduler_driver in tests/python/integration/scheduling_benchmark.py \
+  tests/python/unit/tooling/test_scheduling_benchmark.py; do
+  scheduler_driver_output="$(bash "$classifier" "$scheduler_driver")"
+  assert_flag "$scheduler_driver_output" code true
+  assert_flag "$scheduler_driver_output" rust true
+  assert_flag "$scheduler_driver_output" scale_benchmark true
+done

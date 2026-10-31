@@ -48,6 +48,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   to an independent durable directory and verify recovered authority against the
   latest checkpoint. These checkpoint commands alone authorize neither physical
   cleanup nor quarantine release; see [deletion recovery](docs/deletion_recovery.md).
+- Shared weighted task scheduling across worker replicas, principal start fairness,
+  bounded overdue-task promotion, and live worker/reservation diagnostics.
+  Small eligible pools share execution capacity without preempting existing work.
+  Ordinary claims stop reading queue heads once service ordering determines the
+  winner, reducing database work while preserving promotion and locking rules.
+  The queue-head optimization also applies on PostgreSQL 16.
 
 - Shared task admission and execution limits across API/worker replicas, with
   separate resident-byte and cumulative-work accounting, internal repair
@@ -124,6 +130,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `DeletionControlStorage` for complete adapters. Upgrade all ten SDK crates
   together, preserve control authority across logical replacement, and implement
   the restore gate described in the [upgrade guide](docs/storage_adapter_sdk.md).
+- **Breaking operational/API change:** stop API and worker replicas and back up
+  the database before applying the scheduling migration and role grants. Restart
+  matching binaries together. Administrator policy updates must include the new
+  `scheduling` object; internal repairs now also obey per-kind execution caps.
+  See [task scheduling](docs/task_scheduling.md).
+- **Breaking storage SDK change:** upgrade all ten crates to `0.15.0` together.
+  Claims require `StorageTaskClaimRequest` with a stable worker-slot identity;
+  adapters must implement durable scheduling and availability diagnostics. See
+  the [0.15 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-014-to-015).
 
 - **Breaking operational change:** task capacity requires an offline upgrade.
   Stop API/worker replicas, back up the database, run `hubuum-admin --migrate`

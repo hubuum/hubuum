@@ -215,3 +215,50 @@ PYREVIEW
 done
 
 echo "Migration compatibility checker tests passed."
+
+for scenario in reviewed unmarked missing-lock missing-statement nontransactional wrong-destination stale-hash; do
+  candidate="$adapter_migrations/0002_candidate"
+  rm -f "$candidate/metadata.toml"
+  {
+    if [[ "$scenario" != missing-lock ]]; then
+      printf '%s\n' "SET LOCAL lock_timeout = '5s';"
+    fi
+    if [[ "$scenario" != missing-statement ]]; then
+      printf '%s\n' "SET LOCAL statement_timeout = '60s';"
+    fi
+    if [[ "$scenario" == unmarked ]]; then
+      printf '%s\n' 'ALTER FUNCTION old_claim(JSONB) RENAME TO previous_claim;'
+    else
+      printf '%s\n' 'ALTER FUNCTION old_claim(JSONB) RENAME TO previous_claim; -- hubuum-compat: reviewed-offline-function-rename'
+    fi
+  } > "$candidate/up.sql"
+  if [[ "$scenario" == nontransactional ]]; then
+    printf '%s\n' 'run_in_transaction = false' > "$candidate/metadata.toml"
+  fi
+  mkdir -p "$test_root/.github"
+  python3 - "$test_root" "$candidate/up.sql" "$scenario" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+root, candidate, scenario = sys.argv[1:]
+path = Path(candidate)
+review = {"migration": str(path.relative_to(root)), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+          "reason": "function contract changes", "upgrade_action": "stop every writer", "drop_constraints": {},
+          "rename_functions": {"old_claim": "wrong" if scenario == "wrong-destination" else "previous_claim"}}
+if scenario == "stale-hash":
+    review["sha256"] = "0" * 64
+Path(root, ".github/migration-offline-reviews.json").write_text(json.dumps({"schema_version": 1, "reviews": [review]}))
+PY
+  git -C "$test_root" add .
+  git -C "$test_root" commit --quiet -m "function-$scenario"
+  if bash "$test_root/scripts/check-migration-compatibility.sh" v1.0.0 >/dev/null 2>&1; then
+    if [[ "$scenario" != reviewed ]]; then
+      echo "$scenario function rename unexpectedly passed compatibility review" >&2
+      exit 1
+    fi
+  elif [[ "$scenario" == reviewed ]]; then
+    echo "reviewed offline function rename unexpectedly failed" >&2
+    exit 1
+  fi
+done

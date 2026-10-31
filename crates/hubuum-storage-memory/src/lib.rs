@@ -878,5 +878,6 @@ mod state;
 mod state_lock;
 mod task_capacity;
 mod task_control;
+mod task_scheduling;
 use state_lock::MemoryStateLock;
 mod workflows;

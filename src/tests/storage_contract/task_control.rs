@@ -4,6 +4,7 @@ use hubuum_storage_core::{
     StorageTaskExecutionAdmission, TaskAdmissionPolicy, TaskByteLimit, TaskCapacityLimit,
     TaskCapacityStorage, TaskOutputState, TaskScopeCapacity,
 };
+use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId, TaskWorkerKinds};
 use hubuum_task_core::{TaskCancellationReason, TaskExecutionLimit, TaskStopReason};
 use rstest::rstest;
 use tokio::time::{sleep, timeout};
@@ -39,7 +40,10 @@ async fn recovered_deletion_authority_prevents_memory_task_claims() {
     assert!(
         fixture
             .backend
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+            .claim_next_task(StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+            ))
             .await
             .unwrap()
             .is_none()
@@ -114,7 +118,10 @@ impl Fixture {
             }
             BackendTestEnvironment::Memory { .. } => self
                 .backend
-                .claim_next_task(duration)
+                .claim_next_task(
+                    StorageTaskClaimRequest::new(TaskWorkerId::generate(), duration)
+                        .with_kinds(TaskWorkerKinds::new(&[self.task.kind()]).unwrap()),
+                )
                 .await
                 .unwrap()
                 .unwrap(),
@@ -743,7 +750,10 @@ async fn memory_rebuild_preserves_active_task_capacity(
     match first_task_status {
         StorageTaskStatus::Validating => {
             let claim = backend
-                .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+                ))
                 .await
                 .unwrap()
                 .unwrap();
@@ -887,7 +897,10 @@ async fn cancelled_reindex_stays_incomplete_and_a_later_rebuild_can_finish() {
                 .clone()
             }
             BackendTestEnvironment::Memory { .. } => backend
-                .claim_next_task(duration)
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    duration,
+                ))
                 .await
                 .unwrap()
                 .unwrap()

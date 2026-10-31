@@ -4,6 +4,7 @@ use hubuum_domain::{
     TaskId,
 };
 use hubuum_storage_core::*;
+use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
 use hubuum_storage_postgres::{PostgresFaultController, PostgresFaultPoint, PostgresPool};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -385,7 +386,10 @@ impl RestoreContractFixture {
         let task_id = self.create_task(payload.task_kind()).await?;
         let claim = self
             .storage
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+            .claim_next_task(StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+            ))
             .await?
             .unwrap();
         assert_eq!(claim.task().id(), task_id);

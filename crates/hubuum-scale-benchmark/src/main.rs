@@ -31,6 +31,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Measure real task claims against a fresh disposable lifecycle queue.
+    Scheduling(SchedulingArgs),
     /// Load a fresh synthetic lifecycle fixture and report logical/physical growth.
     LifecycleInventory(LifecycleInventoryArgs),
     /// Write the deterministic semantic manifest without loading a backend.
@@ -53,6 +55,33 @@ enum Command {
     SummarizeSensitivity(SummarizeSensitivityArgs),
     /// Render matching reports from each selected storage backend side by side.
     CompareBackends(CompareBackendsArgs),
+}
+
+#[derive(Debug, Args)]
+struct SchedulingArgs {
+    #[arg(long)]
+    database_url: String,
+    /// Load the complete lifecycle dataset before adding the queued workload.
+    #[arg(long)]
+    profile_spec: Option<PathBuf>,
+    #[arg(long)]
+    workload_spec: Option<PathBuf>,
+    #[arg(long, default_value_t = 1)]
+    slots: u16,
+    #[arg(long, default_value_t = 10000)]
+    samples: u32,
+    #[arg(long)]
+    timed_seconds: Option<u64>,
+    #[arg(long)]
+    overdue: bool,
+    /// Prepare a disposable database without starting any workers.
+    #[arg(long, conflicts_with = "worker_process_slots")]
+    prepare_only: bool,
+    /// Run this many slots against a matching prepared fixture.
+    #[arg(long, conflicts_with = "prepare_only")]
+    worker_process_slots: Option<u16>,
+    #[arg(long)]
+    output: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -257,6 +286,7 @@ struct CompareBackendsArgs {
 #[tokio::main]
 async fn main() -> Result<()> {
     match Cli::parse().command {
+        Command::Scheduling(args) => scheduling(args).await,
         Command::LifecycleInventory(args) => lifecycle_inventory(args).await,
         Command::Manifest(args) => manifest(args),
         Command::Lifecycle(args) => lifecycle(args).await,
@@ -656,4 +686,35 @@ fn io_error(message: impl Into<String>) -> Error {
         std::io::ErrorKind::InvalidData,
         message.into(),
     ))
+}
+
+async fn scheduling(args: SchedulingArgs) -> Result<()> {
+    use hubuum_storage_postgres::scale_benchmark::SchedulingBenchmarkOptions;
+    let workload = match args.workload_spec {
+        Some(path) => LifecycleWorkload::parse(&fs::read_to_string(path)?)?,
+        None => LifecycleWorkload::bundled()?,
+    };
+    let options = SchedulingBenchmarkOptions::new(workload)
+        .with_slots(args.slots)?
+        .with_samples(args.samples)?
+        .with_timed_window(args.timed_seconds)?
+        .with_overdue(args.overdue);
+    let options = match args.profile_spec {
+        Some(path) => options.with_fixture(LifecycleFixture::new(
+            ScaleProfile::read(&path)?,
+            LifecycleWorkload::bundled()?,
+        )?)?,
+        None => options,
+    };
+    let options = if args.prepare_only {
+        options.prepare_only()
+    } else if let Some(slots) = args.worker_process_slots {
+        options.with_worker_process_slots(slots)?
+    } else {
+        options
+    };
+    let backend = PostgresScaleBackend::connect(&args.database_url, 8)?;
+    let report = backend.benchmark_task_scheduling(options).await?;
+    write_json(&args.output, &report)?;
+    Ok(())
 }
