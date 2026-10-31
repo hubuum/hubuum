@@ -1,5 +1,8 @@
 use crate::models::task::task_kind_from_db;
-use hubuum_storage_core::{StorageBackupBudget, TaskExecutionStorage};
+use hubuum_storage_core::{
+    StorageBackupBudget, StorageTaskClaimRequest, StorageTaskLeaseDuration, TaskExecutionStorage,
+    TaskWorkerId,
+};
 use std::future::Future;
 use std::sync::{LazyLock, Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
@@ -137,6 +140,7 @@ async fn task_worker_loop(
     backup_settings: BackupSettings,
     shutdown: ShutdownSignal,
 ) {
+    let worker = TaskWorkerId::generate();
     loop {
         if shutdown.is_requested() {
             break;
@@ -146,6 +150,7 @@ async fn task_worker_loop(
         // does not push the worker thread's stack frame over its default size.
         let iteration = Box::pin(process_one_task_with_settings(
             &context,
+            worker,
             Some(&shutdown),
             &backup_settings,
         ));
@@ -286,6 +291,7 @@ pub(super) async fn process_claimed_task_for_test(
 
 async fn process_one_task_with_settings(
     context: &AppContext,
+    worker: TaskWorkerId,
     shutdown: Option<&ShutdownSignal>,
     backup_settings: &BackupSettings,
 ) -> Result<bool, ApiError> {
@@ -304,7 +310,12 @@ async fn process_one_task_with_settings(
         .with_application_access(permit);
     // Keep dispatch boxed before completion/scope wrappers: its full future
     // exceeds a normal worker stack even when the queue is empty.
-    let work = Box::pin(process_admitted_task(context, shutdown, backup_settings));
+    let work = Box::pin(process_admitted_task(
+        context,
+        worker,
+        shutdown,
+        backup_settings,
+    ));
     storage
         .run_in_scope(scope, track_application_completion(work))
         .await
@@ -312,6 +323,7 @@ async fn process_one_task_with_settings(
 
 async fn process_admitted_task(
     context: &AppContext,
+    worker: TaskWorkerId,
     shutdown: Option<&ShutdownSignal>,
     backup_settings: &BackupSettings,
 ) -> Result<bool, ApiError> {
@@ -324,7 +336,12 @@ async fn process_admitted_task(
 
     let settings = task_worker_settings();
     let claim_started_at = TokioInstant::now();
-    let task = match claim_next_task(context, settings.lease_duration()).await {
+    let request = StorageTaskClaimRequest::new(
+        worker,
+        StorageTaskLeaseDuration::from_milliseconds(settings.lease_duration().as_millis() as i64)
+            .expect("validated worker lease"),
+    );
+    let task = match claim_next_task(context, request).await {
         Ok(task) => task,
         Err(error) => {
             metrics::task_worker_iteration("error");
@@ -889,7 +906,9 @@ mod worker_future_tests {
         );
         let settings =
             BackupSettings::new(1, StorageBackupBudget::new(1024 * 1024, 100).unwrap()).unwrap();
-        let iteration = future_size(|| process_one_task_with_settings(&context, None, &settings));
+        let iteration = future_size(|| {
+            process_one_task_with_settings(&context, TaskWorkerId::generate(), None, &settings)
+        });
         assert!(
             iteration < 16 * 1024,
             "worker iteration exceeds its future-size budget: {iteration} bytes"
@@ -905,8 +924,12 @@ mod worker_future_tests {
             .name("task-worker-stack-regression".into())
             .stack_size(2 * 1024 * 1024)
             .spawn(move || {
-                actix_rt::System::new()
-                    .block_on(process_one_task_with_settings(&context, None, &settings))
+                actix_rt::System::new().block_on(process_one_task_with_settings(
+                    &context,
+                    TaskWorkerId::generate(),
+                    None,
+                    &settings,
+                ))
             })
             .unwrap()
             .join()

@@ -221,7 +221,8 @@ for path in "$@"; do
       benchmarks=true
       runtime_benchmark=true
       ;;
-    crates/hubuum-scale-benchmark/Cargo.toml | crates/hubuum-scale-core/Cargo.toml)
+    crates/hubuum-scale-benchmark/Cargo.toml | crates/hubuum-scale-core/Cargo.toml | \
+      crates/hubuum-storage-postgres/Cargo.toml)
       code=true
       rust=true
       benchmarks=true
@@ -337,7 +338,8 @@ for path in "$@"; do
       code=true
       container=true
       ;;
-    tests/python/integration/schema_budget.py | scripts/classify-ci-changes.sh | scripts/test-classify-ci-changes.sh | \
+    tests/python/integration/scheduling_benchmark.py | tests/python/unit/tooling/test_scheduling_benchmark.py | \
+      tests/python/integration/schema_budget.py | scripts/classify-ci-changes.sh | scripts/test-classify-ci-changes.sh | \
       scripts/ci-changed-paths.sh | tests/python/unit/tooling/test_ci_changed_paths.py)
       code=true
       rust=true

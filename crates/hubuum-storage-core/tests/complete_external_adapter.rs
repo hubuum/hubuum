@@ -7,6 +7,7 @@
 #![allow(unused_variables)]
 
 use hubuum_domain::PrincipalIdentity;
+use hubuum_storage_core::StorageTaskClaimRequest;
 
 use hubuum_storage_core::{
     DeletionAuditObservation, DeletionControlState, HotObjectHistoryCleanup,
@@ -1911,7 +1912,7 @@ impl TaskExecutionStorage for CompleteExternalAdapter {
 
     async fn claim_next_task(
         &self,
-        lease_duration: StorageTaskLeaseDuration,
+        request: StorageTaskClaimRequest,
     ) -> Result<Option<StorageTaskClaim>, StorageError> {
         fixture_result()
     }

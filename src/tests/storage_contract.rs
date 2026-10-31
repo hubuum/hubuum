@@ -1,4 +1,5 @@
 use hubuum_storage_core::StorageRestoreStageArtifact;
+use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
 mod artifacts;
 mod auth_sessions;
 use hubuum_storage_core::{EventSinkGrantAction, StorageAuditSubject, StorageEventSinkGrantChange};
@@ -4030,9 +4031,14 @@ async fn every_available_storage_backend_commits_claimed_import_effects_and_rece
                 .await
                 .unwrap()
             }
-            BackendTestEnvironment::Memory { .. } => {
-                backend.claim_next_task(duration).await.unwrap().unwrap()
-            }
+            BackendTestEnvironment::Memory { .. } => backend
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    duration,
+                ))
+                .await
+                .unwrap()
+                .unwrap(),
         };
         let name = prefix("fenced_import_collection");
         let operation = crate::services::import_boundary::import_operation_to_storage(
@@ -4324,14 +4330,6 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                 .expect("certified backend should create an executable task");
             fixture_ids.push(task.id());
         }
-        if let BackendTestEnvironment::Postgres { pool } = &environment {
-            for task_id in &fixture_ids {
-                hubuum_storage_postgres::test_support::prioritize_task(pool, *task_id)
-                    .await
-                    .expect("compatibility tasks should be made claim-first");
-            }
-        }
-
         let lease_duration = StorageTaskLeaseDuration::from_milliseconds(60_000)
             .expect("compatibility lease duration should be valid");
         assert!(
@@ -4344,12 +4342,26 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
 
         let mut completed_ids = HashSet::new();
         let mut completed_kinds = HashSet::new();
-        for completed_index in 0..StorageTaskKind::ALL.len() {
-            let claimed = backend
-                .claim_next_task(lease_duration)
-                .await
-                .expect("certified backend should claim the next task")
-                .expect("a compatibility task should be claimable");
+        let worker = TaskWorkerId::generate();
+        for (completed_index, task_id) in fixture_ids.iter().copied().enumerate() {
+            // Queue selection is covered by isolated scheduler contracts. This shared
+            // database fixture verifies the state machine after an exact claim.
+            let claimed = match &environment {
+                BackendTestEnvironment::Postgres { pool } => {
+                    hubuum_storage_postgres::test_support::claim_task_by_id_with_lease(
+                        pool,
+                        task_id,
+                        lease_duration,
+                    )
+                    .await
+                    .expect("the state-machine fixture should be claimable")
+                }
+                BackendTestEnvironment::Memory { .. } => backend
+                    .claim_next_task(StorageTaskClaimRequest::new(worker, lease_duration))
+                    .await
+                    .expect("memory should claim the next fixture")
+                    .expect("a state-machine fixture should be queued"),
+            };
             assert!(fixture_ids.contains(&claimed.task().id()));
             assert!(completed_ids.insert(claimed.task().id()));
             assert!(completed_kinds.insert(claimed.task().kind()));
@@ -4445,7 +4457,10 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                 .expect("certified backend should claim the kind mismatch fixture")
             }
             BackendTestEnvironment::Memory { .. } => backend
-                .claim_next_task(lease_duration)
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    lease_duration,
+                ))
                 .await
                 .expect("memory backend should claim the kind mismatch fixture")
                 .expect("the kind mismatch fixture should be queued"),
@@ -4503,18 +4518,22 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
             failure_fixture_ids.push(task.id());
             fixture_ids.push(task.id());
         }
-        if let BackendTestEnvironment::Postgres { pool } = &environment {
-            for task_id in &failure_fixture_ids {
-                hubuum_storage_postgres::test_support::prioritize_task(pool, *task_id)
-                    .await
-                    .expect("failure fixtures should be made claim-first");
+        let failed = match &environment {
+            BackendTestEnvironment::Postgres { pool } => {
+                hubuum_storage_postgres::test_support::claim_task_by_id_with_lease(
+                    pool,
+                    failure_fixture_ids[0],
+                    lease_duration,
+                )
+                .await
+                .expect("the failure fixture should be claimable")
             }
-        }
-        let failed = backend
-            .claim_next_task(lease_duration)
-            .await
-            .expect("certified backend should claim a failure fixture")
-            .expect("a compatibility failure fixture should be claimable");
+            BackendTestEnvironment::Memory { .. } => backend
+                .claim_next_task(StorageTaskClaimRequest::new(worker, lease_duration))
+                .await
+                .expect("memory should claim a failure fixture")
+                .expect("a failure fixture should be queued"),
+        };
         assert!(failure_fixture_ids.contains(&failed.task().id()));
         backend
             .fail_task(StorageTaskFailure::new(
@@ -6438,10 +6457,11 @@ async fn every_available_storage_backend_supplies_computed_fields() {
                     .clone()
             }
             BackendTestEnvironment::Memory { .. } => backend
-                .claim_next_task(
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
                     StorageTaskLeaseDuration::from_milliseconds(60_000)
                         .expect("computed rebuild lease duration should be valid"),
-                )
+                ))
                 .await
                 .expect("memory rebuild task should be claimable")
                 .expect("memory rebuild task should be queued")

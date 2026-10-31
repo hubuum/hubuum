@@ -6,6 +6,7 @@ use hubuum_storage_core::{
     StorageImportOperation, StorageImportPermissionPolicy, StorageImportPlan,
     StorageImportPlanItem,
 };
+use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
 
 impl SchemaFixture {
     fn import_activation(&self, revision: &StorageSchemaRevision) -> StorageImportPlan {
@@ -258,7 +259,10 @@ async fn failed_schema_import_item_leaves_the_policy_unchanged_for_later_items(
     if let BackendTestEnvironment::Memory { storage } = &fixture.environment {
         assert!(
             storage
-                .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap()
+                ))
                 .await
                 .unwrap()
                 .is_none()

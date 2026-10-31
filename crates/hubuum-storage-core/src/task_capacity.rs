@@ -4,7 +4,10 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::{StorageError, StorageTaskKind, StorageValidationError};
+use crate::{
+    StorageError, StorageTaskKind, StorageValidationError, TaskSchedulingPolicy,
+    TaskSchedulingSnapshot,
+};
 
 /// Positive capacity representable by every supported persistence adapter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,6 +205,7 @@ impl TaskKindCapacity {
 #[serde(try_from = "PolicyWire")]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TaskAdmissionPolicy {
+    scheduling: TaskSchedulingPolicy,
     deployment: TaskScopeCapacity,
     principal: TaskScopeCapacity,
     collection: TaskScopeCapacity,
@@ -213,6 +217,7 @@ pub struct TaskAdmissionPolicy {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PolicyWire {
+    scheduling: TaskSchedulingPolicy,
     deployment: TaskScopeCapacity,
     principal: TaskScopeCapacity,
     collection: TaskScopeCapacity,
@@ -233,6 +238,7 @@ impl TryFrom<PolicyWire> for TaskAdmissionPolicy {
             }
         }
         Ok(Self {
+            scheduling: wire.scheduling,
             deployment: wire.deployment,
             principal: wire.principal,
             collection: wire.collection,
@@ -256,6 +262,7 @@ impl Default for TaskAdmissionPolicy {
             )
         }
         Self {
+            scheduling: TaskSchedulingPolicy::default(),
             deployment: scope(10_000, 64, 4 * 1024 * 1024 * 1024),
             principal: scope(500, 16, 1024 * 1024 * 1024),
             collection: scope(1_000, 32, 2 * 1024 * 1024 * 1024),
@@ -278,6 +285,15 @@ impl Default for TaskAdmissionPolicy {
 }
 
 impl TaskAdmissionPolicy {
+    #[must_use]
+    pub const fn scheduling(&self) -> &TaskSchedulingPolicy {
+        &self.scheduling
+    }
+    #[must_use]
+    pub fn with_scheduling(mut self, policy: TaskSchedulingPolicy) -> Self {
+        self.scheduling = policy;
+        self
+    }
     #[must_use]
     pub const fn deployment(&self) -> TaskScopeCapacity {
         self.deployment
@@ -525,6 +541,7 @@ impl StorageTaskCapacityUsage {
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(deny_unknown_fields)]
 pub struct StorageTaskCapacitySnapshot {
+    scheduling: TaskSchedulingSnapshot,
     policy: StorageTaskPolicy,
     generation: u64,
     ordinary: StorageTaskCapacityUsage,
@@ -535,8 +552,13 @@ pub struct StorageTaskCapacitySnapshot {
 
 impl StorageTaskCapacitySnapshot {
     #[must_use]
-    pub fn new(policy: StorageTaskPolicy, generation: u64) -> Self {
+    pub fn new(
+        policy: StorageTaskPolicy,
+        generation: u64,
+        scheduling: TaskSchedulingSnapshot,
+    ) -> Self {
         Self {
+            scheduling,
             policy,
             generation,
             ordinary: StorageTaskCapacityUsage::default(),
@@ -544,6 +566,10 @@ impl StorageTaskCapacitySnapshot {
             blocked_owners: 0,
             work_budget_blocked: 0,
         }
+    }
+    #[must_use]
+    pub const fn scheduling(&self) -> &TaskSchedulingSnapshot {
+        &self.scheduling
     }
     #[must_use]
     pub const fn with_usage(

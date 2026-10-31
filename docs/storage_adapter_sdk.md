@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.14`.
+Status: accepted; current experimental release train is `0.15`.
 
 ## Supported Crate Graph
 
@@ -609,3 +609,19 @@ only through `ApplicationControlState::with_completed_audit`, which rejects chan
 decisions, bindings or copy outcomes. Protect the updated receipt and audit facts
 before release; do not redo physical cleanup or infer a new drain acknowledgement
 from an audit-only revision. Missing required completion audit blocks exposure.
+
+## Upgrading from 0.14 to 0.15
+
+Update all ten exact-version SDK dependencies to `=0.15.0` together.
+`TaskExecutionStorage::claim_next_task` now accepts `StorageTaskClaimRequest`,
+which carries a stable per-slot `TaskWorkerId`, supported `TaskWorkerKinds`,
+and the validated lease duration. Generate the identity once per worker loop,
+not once per poll. Preserve the complete policy's required `scheduling` field
+and provide `TaskSchedulingSnapshot` when constructing capacity diagnostics.
+
+Adapters must persist weighted rotation, principal service history and promotion
+spacing atomically with claims, maintain worker availability with backend time,
+and fence/reset worker leases during restore while preserving service history.
+Execution caps and small-pool reservation fallback are part of the complete
+contract; see [shared scheduling](task_scheduling.md). Rerun conformance and
+production-adapter transaction/concurrency tests before deployment.

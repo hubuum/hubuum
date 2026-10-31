@@ -1,5 +1,6 @@
 mod artifacts;
 mod task_capacity;
+mod task_scheduling;
 use std::collections::BTreeSet;
 
 use async_trait::async_trait;

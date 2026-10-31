@@ -81,7 +81,13 @@ the changelog in every PR; explicitly document supported API/backup/configuratio
 breaks and upgrade actions. Internal benchmark-only work has no user-facing
 changelog entry and must say so in its PR description.
 
-- #504: implemented with a reproducible synthetic baseline, initial targets and
-  acceptance gates; pending review/merge. See
+- #504: merged in #522 with a reproducible synthetic baseline, initial targets
+  and acceptance gates. See
   [lifecycle budgets](performance/lifecycle_budgets.md).
-- #505–#521: pending; no completion or destructive-feature enablement is implied.
+- #505: durable logical identities and compatible backup/restore merged in #524.
+- #506: shared admission and restore-isolated capacity accounting merged in #525.
+- #507: implemented in draft #527; P3/P4 performance acceptance remains open.
+  See [scheduler measurements](task_scheduling.md#measurement).
+- #508: dormant artifact staging in draft #523, with dependent backup producer
+  staging in draft #528. Production activation and pipeline evidence remain open.
+- #509–#521: pending; no completion or destructive-feature enablement is implied.

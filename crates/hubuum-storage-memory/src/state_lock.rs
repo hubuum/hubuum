@@ -139,6 +139,7 @@ impl MemoryStateLock {
             }
         }
         staged.generation = Arc::new(());
+        staged.task_capacity.scheduler = live.task_capacity.scheduler.clone();
         *live = staged;
         Ok(())
     }

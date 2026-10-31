@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::PostgresStorageError;
 
-#[derive(Clone, Queryable, Selectable)]
+#[derive(Clone, Queryable, Selectable, diesel::QueryableByName)]
 #[diesel(table_name = crate::schema::tasks)]
 pub(crate) struct TaskRow {
     pub(super) id: i32,

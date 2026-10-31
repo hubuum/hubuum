@@ -63,6 +63,11 @@ mod restore;
 mod restore_artifact;
 pub use restore_artifact::{StorageRestoreArtifact, StorageRestoreArtifactBuilder};
 mod task_capacity;
+mod task_scheduling;
+pub use task_scheduling::{
+    StorageTaskClaimRequest, TaskKindWeight, TaskSchedulingMode, TaskSchedulingPolicy,
+    TaskSchedulingSnapshot, TaskSharedCapacityReason, TaskWorkerId, TaskWorkerKinds,
+};
 mod task_control;
 pub use task_capacity::{
     StorageTaskCapacitySnapshot, StorageTaskCapacityUsage, StorageTaskPolicy,

@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_storage_core::StorageTaskClaimRequest;
 use hubuum_storage_core::{
     StorageBackupReplay, StorageSchemaProfileArtifact, StorageTaskCancellationOutcome,
     StorageTaskCancellationRequest, StorageTaskCapacitySnapshot, StorageTaskExecutionAdmission,
@@ -331,17 +332,13 @@ impl TaskExecutionStorage for StorageHandle {
 
     async fn claim_next_task(
         &self,
-        lease_duration: StorageTaskLeaseDuration,
+        request: StorageTaskClaimRequest,
     ) -> Result<Option<StorageTaskClaim>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::TaskExecution,
             "claim_next_task",
-            async {
-                dispatch_backend!(self, |backend| {
-                    backend.claim_next_task(lease_duration).await
-                })
-            },
+            async { dispatch_backend!(self, |backend| { backend.claim_next_task(request).await }) },
         )
         .await
     }

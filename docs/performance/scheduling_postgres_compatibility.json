@@ -1,0 +1,273 @@
+{
+  "measurement_version": 1,
+  "date": "2026-10-28",
+  "acceptance_status": "local_query_plan_diagnostic_only",
+  "materialized_query_commit": "1350a86aa454a4ce39662f81bde94cc361275e23",
+  "migration_sha256": "92bb79670635fe31f10944f9655d655988d4af6c03b7f5c09f3d2a87b389bc99",
+  "inlined_function_sha256": "5298e4a34ce21ea83c0e9c42f262eb00aef6b3be050b941b23aef859d4049a65",
+  "method": "Each case inserts 10000 queued tasks for 32 principals in a rolled-back transaction, analyzes task/accounting/service tables, forces generic plans, and records task live-row counters plus nested auto_explain plans. This is the native regression fixture, not a lifecycle latency workload.",
+  "ci_failure": "https://github.com/hubuum/hubuum/actions/runs/40774971640/job/123124484112",
+  "versions": {
+    "16": {
+      "server": "PostgreSQL 16.15 (Debian 16.15-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+      "image": "74d436cb49d3398cf7b5d7b33635d43623d9e4da4b93c22db453f7d5d81181b1",
+      "cases": [
+        {
+          "variant": "materialized",
+          "case": "new_principals",
+          "rows": 64,
+          "maximum": 1024,
+          "passed": true,
+          "function_sha256": "976341d5e9612fd9e858e9cc5942abd8f3b476aa85801aaeb1cc94f92d96f72b"
+        },
+        {
+          "variant": "materialized",
+          "case": "ordinary_service_history",
+          "rows": 64,
+          "maximum": 8,
+          "passed": false,
+          "function_sha256": "976341d5e9612fd9e858e9cc5942abd8f3b476aa85801aaeb1cc94f92d96f72b"
+        },
+        {
+          "variant": "materialized",
+          "case": "promotion_due_without_overdue_work",
+          "rows": 65,
+          "maximum": 8,
+          "passed": false,
+          "function_sha256": "976341d5e9612fd9e858e9cc5942abd8f3b476aa85801aaeb1cc94f92d96f72b"
+        },
+        {
+          "variant": "materialized",
+          "case": "overdue_promotion",
+          "rows": 65,
+          "maximum": 1024,
+          "passed": true,
+          "function_sha256": "976341d5e9612fd9e858e9cc5942abd8f3b476aa85801aaeb1cc94f92d96f72b"
+        },
+        {
+          "variant": "inlined",
+          "case": "new_principals",
+          "rows": 33,
+          "maximum": 1024,
+          "passed": true,
+          "function_sha256": "5298e4a34ce21ea83c0e9c42f262eb00aef6b3be050b941b23aef859d4049a65"
+        },
+        {
+          "variant": "inlined",
+          "case": "ordinary_service_history",
+          "rows": 2,
+          "maximum": 8,
+          "passed": true,
+          "function_sha256": "5298e4a34ce21ea83c0e9c42f262eb00aef6b3be050b941b23aef859d4049a65"
+        },
+        {
+          "variant": "inlined",
+          "case": "promotion_due_without_overdue_work",
+          "rows": 3,
+          "maximum": 8,
+          "passed": true,
+          "function_sha256": "5298e4a34ce21ea83c0e9c42f262eb00aef6b3be050b941b23aef859d4049a65"
+        },
+        {
+          "variant": "inlined",
+          "case": "overdue_promotion",
+          "rows": 65,
+          "maximum": 1024,
+          "passed": true,
+          "function_sha256": "5298e4a34ce21ea83c0e9c42f262eb00aef6b3be050b941b23aef859d4049a65"
+        }
+      ],
+      "ordinary_plan_nodes": {
+        "materialized": [
+          {
+            "Node Type": "Sort",
+            "Actual Rows": 64,
+            "Actual Loops": 1
+          },
+          {
+            "Node Type": "Sort",
+            "Actual Rows": 1,
+            "Actual Loops": 1
+          },
+          {
+            "Node Type": "Index Scan",
+            "Index Name": "tasks_scheduler_queue",
+            "Actual Rows": 1,
+            "Actual Loops": 64
+          }
+        ],
+        "inlined": [
+          {
+            "Node Type": "Incremental Sort",
+            "Actual Rows": 1,
+            "Actual Loops": 1
+          },
+          {
+            "Node Type": "Sort",
+            "Actual Rows": 2,
+            "Actual Loops": 1
+          },
+          {
+            "Node Type": "Index Scan",
+            "Index Name": "tasks_scheduler_queue",
+            "Actual Rows": 1,
+            "Actual Loops": 2
+          }
+        ]
+      }
+    },
+    "18": {
+      "server": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+      "image": "a1be1c8380f5c8ca80b4ad72f6be191f8a283e0ecb2e9496b1ee67dc0022d0f1",
+      "cases": [
+        {
+          "variant": "materialized",
+          "case": "new_principals",
+          "rows": 33,
+          "maximum": 1024,
+          "passed": true,
+          "function_sha256": "976341d5e9612fd9e858e9cc5942abd8f3b476aa85801aaeb1cc94f92d96f72b"
+        },
+        {
+          "variant": "materialized",
+          "case": "ordinary_service_history",
+          "rows": 2,
+          "maximum": 8,
+          "passed": true,
+          "function_sha256": "976341d5e9612fd9e858e9cc5942abd8f3b476aa85801aaeb1cc94f92d96f72b"
+        },
+        {
+          "variant": "materialized",
+          "case": "promotion_due_without_overdue_work",
+          "rows": 3,
+          "maximum": 8,
+          "passed": true,
+          "function_sha256": "976341d5e9612fd9e858e9cc5942abd8f3b476aa85801aaeb1cc94f92d96f72b"
+        },
+        {
+          "variant": "materialized",
+          "case": "overdue_promotion",
+          "rows": 65,
+          "maximum": 1024,
+          "passed": true,
+          "function_sha256": "976341d5e9612fd9e858e9cc5942abd8f3b476aa85801aaeb1cc94f92d96f72b"
+        },
+        {
+          "variant": "inlined",
+          "case": "new_principals",
+          "rows": 33,
+          "maximum": 1024,
+          "passed": true,
+          "function_sha256": "5298e4a34ce21ea83c0e9c42f262eb00aef6b3be050b941b23aef859d4049a65"
+        },
+        {
+          "variant": "inlined",
+          "case": "ordinary_service_history",
+          "rows": 2,
+          "maximum": 8,
+          "passed": true,
+          "function_sha256": "5298e4a34ce21ea83c0e9c42f262eb00aef6b3be050b941b23aef859d4049a65"
+        },
+        {
+          "variant": "inlined",
+          "case": "promotion_due_without_overdue_work",
+          "rows": 3,
+          "maximum": 8,
+          "passed": true,
+          "function_sha256": "5298e4a34ce21ea83c0e9c42f262eb00aef6b3be050b941b23aef859d4049a65"
+        },
+        {
+          "variant": "inlined",
+          "case": "overdue_promotion",
+          "rows": 65,
+          "maximum": 1024,
+          "passed": true,
+          "function_sha256": "5298e4a34ce21ea83c0e9c42f262eb00aef6b3be050b941b23aef859d4049a65"
+        }
+      ],
+      "ordinary_plan_nodes": {
+        "materialized": [
+          {
+            "Node Type": "Sort",
+            "Actual Rows": 2.0,
+            "Actual Loops": 1
+          },
+          {
+            "Node Type": "Incremental Sort",
+            "Actual Rows": 1.0,
+            "Actual Loops": 1
+          },
+          {
+            "Node Type": "Index Scan",
+            "Index Name": "tasks_scheduler_queue",
+            "Actual Rows": 1.0,
+            "Actual Loops": 2
+          }
+        ],
+        "inlined": [
+          {
+            "Node Type": "Incremental Sort",
+            "Actual Rows": 1.0,
+            "Actual Loops": 1
+          },
+          {
+            "Node Type": "Sort",
+            "Actual Rows": 2.0,
+            "Actual Loops": 1
+          },
+          {
+            "Node Type": "Index Scan",
+            "Index Name": "tasks_scheduler_queue",
+            "Actual Rows": 1.0,
+            "Actual Loops": 2
+          }
+        ]
+      }
+    }
+  },
+  "limitations": [
+    "The earlier latency report measures the materialized-query commit and is retained unchanged.",
+    "These live-row checks do not bound dead index entries, physical/index work, or retries.",
+    "No CPU-controlled latency acceptance or P3/P4 completion is claimed."
+  ],
+  "local_evidence": "target/scheduling-postgres-compatibility-2026-10-28",
+  "evidence_sha256": {
+    "postgres16/container.json": "082449dc8f1919e039bf6d0b31fe55b03436a3934ce509c29c0d1654a0086035",
+    "postgres16/inlined-new_principals.log": "f10a19224bc1bc36c899f687f550c1b995fc3e4a1aad4a7e179000766ac4ffaa",
+    "postgres16/inlined-new_principals.sql": "d42f853455ac38d95c9fc7d5f0c89d8b84602db9d42f1201ae0abcec2ee3f4c0",
+    "postgres16/inlined-ordinary_service_history.log": "8df1d4dbbb174ee83e704cc47db9e0e9d43e048bac8e2b2f444ea74d6f4d2d67",
+    "postgres16/inlined-ordinary_service_history.sql": "b152a7d0549839cfc6005c132cc3ab43506f4fdd43b604004269cf023494c9ab",
+    "postgres16/inlined-overdue_promotion.log": "2c63ae5b6e93c0e1b863f1afa3e483f23020bd18c6413dbeee4a863351672512",
+    "postgres16/inlined-overdue_promotion.sql": "524b981d946e4ff38f9c0d7e4a93ff5504e35d3b8e1bedb98a11ae18b67055e0",
+    "postgres16/inlined-promotion_due_without_overdue_work.log": "8a4e0721830bc17813ee3ecae7848cccf2ae3bb2e91e3d5103de6e7e87fe0aa1",
+    "postgres16/inlined-promotion_due_without_overdue_work.sql": "835d78ca2246cf2ef650e04ea1fc1089db56db156a99a06d16dc788fcfebda84",
+    "postgres16/materialized-new_principals.log": "72ca472be90df3995919331ef65db36cb814e824d79730c0826a66b350a24840",
+    "postgres16/materialized-new_principals.sql": "3faeac8af2ebf07a91c140117658dd25f626d29ad806d8192c9cdaf0b69ec467",
+    "postgres16/materialized-ordinary_service_history.log": "ca42aea9dfb8abec14e4b08bff6ba63a47f9987c68379886fcaba92c040fae8a",
+    "postgres16/materialized-ordinary_service_history.sql": "f5620c01cd763f600d60a8b901ec69146c06b495ab6ebe5560001cf37c6f0238",
+    "postgres16/materialized-overdue_promotion.log": "ddd12da84a7d26ce7d0f1b1473f072e49b78693e8fd7279adeba123cf0048615",
+    "postgres16/materialized-overdue_promotion.sql": "2b88bb7bc37fcaa5b9d2abeac5e31e4d7a65a39e77f95c42adfcf21667124093",
+    "postgres16/materialized-promotion_due_without_overdue_work.log": "c1cc8677486ead049dc8024282191d49679dee452cb391bc8dabe3488c96e464",
+    "postgres16/materialized-promotion_due_without_overdue_work.sql": "14ab7f423ac5e79950694d7e0d8481034b8a5842df8738d7d80c1e8d9c1e9e20",
+    "postgres16/results.json": "1c4348289d222de78c4f1aeade9944fbc9a1f3f117f9b038da2444d94064d1af",
+    "postgres18/container.json": "a999f7121327fe77e47d4235eff733d234be07fe2d9241ee5f4ff41c979c9be8",
+    "postgres18/inlined-new_principals.log": "c46f9b9bf8a8bf7f0e7a45fe076c6b3be4e35d67d038f4e6eef9460a4be427dc",
+    "postgres18/inlined-new_principals.sql": "d42f853455ac38d95c9fc7d5f0c89d8b84602db9d42f1201ae0abcec2ee3f4c0",
+    "postgres18/inlined-ordinary_service_history.log": "c35af51b39bc9567959623c657ea42c6752d275cf9da30951b08ed896bf660cd",
+    "postgres18/inlined-ordinary_service_history.sql": "b152a7d0549839cfc6005c132cc3ab43506f4fdd43b604004269cf023494c9ab",
+    "postgres18/inlined-overdue_promotion.log": "9dd11c15f2e161789bd6cb99dc442fa7a24151349acddc05c949f61f4731d792",
+    "postgres18/inlined-overdue_promotion.sql": "524b981d946e4ff38f9c0d7e4a93ff5504e35d3b8e1bedb98a11ae18b67055e0",
+    "postgres18/inlined-promotion_due_without_overdue_work.log": "a8937958c5eecae8aa67ff45eb7bcef34c37e4334594cef8cb18cb556c18d6de",
+    "postgres18/inlined-promotion_due_without_overdue_work.sql": "835d78ca2246cf2ef650e04ea1fc1089db56db156a99a06d16dc788fcfebda84",
+    "postgres18/materialized-new_principals.log": "3da154168517e1119b2b0d1fc92f2a8179a88979f37a54fdecc36ce6e02d55ba",
+    "postgres18/materialized-new_principals.sql": "3faeac8af2ebf07a91c140117658dd25f626d29ad806d8192c9cdaf0b69ec467",
+    "postgres18/materialized-ordinary_service_history.log": "338f87e99857732915e15618e3636b146379397cb61de0cf457f54200e17aa08",
+    "postgres18/materialized-ordinary_service_history.sql": "f5620c01cd763f600d60a8b901ec69146c06b495ab6ebe5560001cf37c6f0238",
+    "postgres18/materialized-overdue_promotion.log": "a3994e15d4483b22a1cce6a9570731303be5e4e33c0385eb1cb5bbf9b321217d",
+    "postgres18/materialized-overdue_promotion.sql": "2b88bb7bc37fcaa5b9d2abeac5e31e4d7a65a39e77f95c42adfcf21667124093",
+    "postgres18/materialized-promotion_due_without_overdue_work.log": "07b04c0ad7ccd6797f78933e358b5f87808f8a3e469f5ea3ccad456605021f2b",
+    "postgres18/materialized-promotion_due_without_overdue_work.sql": "14ab7f423ac5e79950694d7e0d8481034b8a5842df8738d7d80c1e8d9c1e9e20",
+    "postgres18/results.json": "eaac7c743026be5a9ddbfd4ed6f64098e5b65d5292b1812ff934be11c4236859",
+    "probe.py": "9cb130e118ec51b42a2bf75c93c57ec0381d061d5044c5158066861220a6bf28"
+  }
+}

@@ -90,6 +90,19 @@
           "deletion_authority_material_check"
         ]
       }
+    },
+    {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-10-31-000001_task_scheduling/up.sql",
+      "sha256": "92bb79670635fe31f10944f9655d655988d4af6c03b7f5c09f3d2a87b389bc99",
+      "reason": "Durable class/principal scheduling, worker availability and hard reservations require matching claim contracts across every worker; the queue index is built offline.",
+      "upgrade_action": "Stop API and worker replicas, back up the database, run hubuum-admin --migrate and reconcile role grants, then start only matching binaries. Include scheduling in administrator policy updates. See docs/task_scheduling.md.",
+      "drop_constraints": {},
+      "rename_functions": {
+        "hubuum_task_capacity_rejection": "hubuum_task_capacity_rejection_before_scheduling",
+        "hubuum_validate_task_policy": "hubuum_validate_task_admission_policy",
+        "hubuum_task_capacity_snapshot": "hubuum_task_capacity_snapshot_without_scheduling",
+        "hubuum_reconcile_task_capacity": "hubuum_reconcile_task_capacity_without_scheduling"
+      }
     }
   ]
 }

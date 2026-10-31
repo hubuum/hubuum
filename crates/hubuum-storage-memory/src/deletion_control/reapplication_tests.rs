@@ -1,7 +1,9 @@
 use super::tests::{cleanup, fixture, prepare};
 use super::*;
 use hubuum_domain::IdentityReference;
-use hubuum_storage_core::{DeletionAuditObservation, DeletionAuditProtection};
+use hubuum_storage_core::{
+    DeletionAuditObservation, DeletionAuditProtection, StorageTaskClaimRequest, TaskWorkerId,
+};
 use rstest::rstest;
 
 fn checkpoint() -> DeletionCheckpointIdentity {
@@ -549,7 +551,10 @@ async fn a_new_permit_cannot_publish_an_old_task_claim() {
         .await
         .unwrap();
     let claim = storage
-        .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+        .claim_next_task(StorageTaskClaimRequest::new(
+            TaskWorkerId::generate(),
+            StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+        ))
         .await
         .unwrap()
         .unwrap();

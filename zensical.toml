@@ -132,6 +132,7 @@ nav = [
       { "Logical identity across restore" = "logical_identity.md" },
       { "Task execution" = "task_system.md" },
       { "Task admission and capacity" = "task_admission.md" },
+      { "Task scheduling and capacity" = "task_scheduling.md" },
       { "Computed-field locking" = "computed_field_locking.md" },
       { "Project inventory" = "generated/project_inventory.md" },
     ] },

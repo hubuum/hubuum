@@ -1,3 +1,4 @@
+use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
 use std::panic::{AssertUnwindSafe, resume_unwind};
 
 use futures_util::FutureExt;
@@ -229,7 +230,10 @@ async fn reduced_outstanding_limits_allow_existing_work_to_drain(
         ));
         for _ in 0..3 {
             let claim = storage
-                .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+                ))
                 .await
                 .unwrap()
                 .unwrap();
@@ -322,7 +326,10 @@ async fn occupied_execution_slots_are_separate_from_queued_admission(
             let storage = storage.clone();
             replicas.spawn(async move {
                 storage
-                    .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+                    .claim_next_task(StorageTaskClaimRequest::new(
+                        TaskWorkerId::generate(),
+                        StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+                    ))
                     .await
                     .unwrap()
             });
@@ -405,7 +412,10 @@ async fn older_restore_preserves_policy_and_work_for_absent_owners(
         .await;
         fixture.create_task(StorageTaskKind::Import).await.unwrap();
         let claim = storage
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+            .claim_next_task(StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+            ))
             .await
             .unwrap()
             .unwrap();
@@ -482,7 +492,10 @@ async fn failed_output_publication_keeps_the_claim_and_accounting_unchanged(
         .await;
         fixture.create_task(StorageTaskKind::Export).await.unwrap();
         let claim = storage
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+            .claim_next_task(StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+            ))
             .await
             .unwrap()
             .unwrap();
@@ -586,7 +599,10 @@ async fn recovered_repair_attempts_preserve_admission_and_add_cumulative_work(
             .await
             .unwrap();
         let first = storage
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(10).unwrap())
+            .claim_next_task(StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(10).unwrap(),
+            ))
             .await
             .unwrap()
             .unwrap();
@@ -599,7 +615,10 @@ async fn recovered_repair_attempts_preserve_admission_and_add_cumulative_work(
         tokio::time::sleep(Duration::from_millis(30)).await;
         storage.recover_expired_task_leases(100).await.unwrap();
         let second = storage
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+            .claim_next_task(StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+            ))
             .await
             .unwrap()
             .unwrap();
@@ -673,7 +692,10 @@ async fn releasing_capacity_does_not_hold_the_admission_lock(#[case] remove_outp
             let task_id = fixture.create_task(StorageTaskKind::Export).await.unwrap();
             let claim = fixture
                 .storage()
-                .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+                ))
                 .await
                 .unwrap()
                 .unwrap();
@@ -739,7 +761,10 @@ async fn expired_output_cleanup_releases_bytes_without_erasing_work(
         let baseline = storage.task_capacity_snapshot().await.unwrap().ordinary();
         fixture.create_task(StorageTaskKind::Export).await.unwrap();
         let claim = storage
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+            .claim_next_task(StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+            ))
             .await
             .unwrap()
             .unwrap();
