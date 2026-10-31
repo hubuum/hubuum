@@ -76,6 +76,18 @@ where
     Ok(())
 }
 
+fn validate_subscription_entity_types(
+    entity_types: &[EntityType],
+) -> Result<(), StorageValidationError> {
+    validate_catalog_values("entity_types", entity_types)?;
+    if entity_types.contains(&EntityType::Lifecycle) {
+        return Err(StorageValidationError::invalid(
+            "Lifecycle sink delivery is not enabled; these events are audit-only",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_subscription_parts(
     name: &str,
     entity_types: &[EntityType],
@@ -84,7 +96,7 @@ fn validate_subscription_parts(
     routing: &Value,
 ) -> Result<(), StorageValidationError> {
     validate_non_empty("name", name)?;
-    validate_catalog_values("entity_types", entity_types)?;
+    validate_subscription_entity_types(entity_types)?;
     validate_catalog_values("actions", actions)?;
     for entity_type in entity_types {
         for action in actions {
@@ -1484,7 +1496,7 @@ impl StorageEventSubscriptionUpdateBuilder {
         validate_optional_non_empty("name", self.name.as_deref())
             .map_err(StorageValidationError::into_request_error)?;
         if let Some(entity_types) = &self.entity_types {
-            validate_catalog_values("entity_types", entity_types)
+            validate_subscription_entity_types(entity_types)
                 .map_err(StorageValidationError::into_request_error)?;
         }
         if let Some(actions) = &self.actions {
@@ -1979,6 +1991,11 @@ impl StorageEventNotificationInput {
         subscription: StorageEventSubscription,
         event: hubuum_events_core::EventEnvelope,
     ) -> Result<Self, StorageError> {
+        if event.entity_type() == EntityType::Lifecycle {
+            return Err(StorageError::invalid_input(
+                "Lifecycle audit evidence cannot be sent to a notification sink",
+            ));
+        }
         if sink.id() != subscription.sink_id() || !subscription.scope().matches(&event) {
             return Err(StorageError::invalid_input(
                 "Event scope or sink does not match the subscription",
@@ -2069,7 +2086,91 @@ fn validate_collection_sink(
 
 #[cfg(test)]
 mod tests {
+    use hubuum_events_core::EventEnvelope;
+    use rstest::rstest;
+
     use super::*;
+
+    #[rstest]
+    #[case::create(false, true)]
+    #[case::replace_types_and_actions(true, true)]
+    #[case::replace_types(true, false)]
+    fn lifecycle_audit_cannot_be_selected_for_delivery(
+        #[case] update: bool,
+        #[case] actions: bool,
+    ) {
+        let result = if update {
+            StorageEventSubscriptionUpdate::builder(
+                EventSubscriptionScope::System,
+                EventSubscriptionId::new(1).unwrap(),
+                EventContext::system(),
+            )
+            .entity_types(Some(vec![EntityType::Lifecycle]))
+            .actions(actions.then_some(vec![Action::Queued]))
+            .try_build()
+            .map(|_| ())
+        } else {
+            StorageEventSubscriptionCreate::builder(
+                EventSubscriptionScope::System,
+                EventSinkId::new(1).unwrap(),
+                "audit subscription",
+                EventContext::system(),
+            )
+            .entity_types(vec![EntityType::Lifecycle])
+            .actions(vec![Action::Queued])
+            .try_build()
+            .map(|_| ())
+        };
+        assert_eq!(
+            result.unwrap_err().kind(),
+            crate::StorageErrorKind::InvalidInput
+        );
+    }
+
+    #[test]
+    fn lifecycle_audit_cannot_bypass_subscription_filters_through_a_test_delivery() {
+        let now = Utc::now();
+        let sink = StorageEventSink::builder(
+            EventSinkId::new(1).unwrap(),
+            "sink",
+            "webhook",
+            now,
+            now,
+            ResourceRevision::INITIAL,
+        )
+        .try_build()
+        .unwrap();
+        let subscription = StorageEventSubscription::builder(
+            EventSubscriptionId::new(1).unwrap(),
+            EventSubscriptionScope::System,
+            sink.id(),
+            "subscription",
+            now,
+            now,
+            ResourceRevision::INITIAL,
+        )
+        .entity_types(vec![EntityType::Restore])
+        .actions(vec![Action::Succeeded])
+        .try_build()
+        .unwrap();
+        let event = EventEnvelope::builder()
+            .id(EventSequence::new(1).unwrap())
+            .event_id(uuid::Uuid::new_v4())
+            .occurred_at(now)
+            .entity_type(EntityType::Lifecycle)
+            .action(Action::Queued)
+            .actor_kind(ActorKind::System)
+            .summary("protected audit".to_owned())
+            .schema_version(1)
+            .try_build()
+            .unwrap();
+        assert!(subscription.scope().matches(&event));
+        let result = StorageEventNotificationInput::try_new(sink, subscription, event);
+        assert_eq!(
+            result.err().unwrap().kind(),
+            crate::StorageErrorKind::InvalidInput
+        );
+    }
 
     #[test]
     fn event_delivery_builder_rejects_negative_attempts_and_reversed_timestamps() {

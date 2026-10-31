@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use hubuum_storage_core::{
-    ApplicationControlState, DeletionControlState, DeletionControlStorage, DeletionCopyState,
+    ApplicationControlState, DeletionAudit, DeletionControlState, DeletionControlStorage,
+    DeletionCopyState, StorageRecordIdentity,
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -63,6 +64,17 @@ struct IntentStatus {
     unbound_copies: usize,
     confirmed_managed_scope_completion: bool,
     next_action: NextAction,
+    audit_evidence: IntentAuditEvidence,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+enum IntentAuditEvidence {
+    Retained {
+        target: StorageRecordIdentity,
+        audit: DeletionAudit,
+    },
+    NotRecorded,
 }
 
 pub(crate) async fn status(
@@ -173,6 +185,13 @@ fn observe(
                 unbound_copies: unbound,
                 confirmed_managed_scope_completion: complete,
                 next_action: action,
+                audit_evidence: match (intent.audit(), intent.bindings().values().next()) {
+                    (Some(audit), Some(binding)) => IntentAuditEvidence::Retained {
+                        target: binding.target(),
+                        audit: audit.clone(),
+                    },
+                    _ => IntentAuditEvidence::NotRecorded,
+                },
             }
         })
         .collect();

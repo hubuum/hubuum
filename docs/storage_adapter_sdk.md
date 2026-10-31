@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.13`.
+Status: accepted; current experimental release train is `0.14`.
 
 ## Supported Crate Graph
 
@@ -589,3 +589,23 @@ missing, different-owner, stale, or revoked permits.
 
 See [deletion recovery](deletion_recovery.md) for the coordinated offline upgrade,
 process-isolation contract, checkpoint ordering, and conservative failure states.
+
+## Upgrading from 0.13 to 0.14
+
+Upgrade all ten SDK crates together to `0.14.0` for the required protected audit
+contract and expanded lifecycle event vocabulary.
+
+`DeletionControlStorage::observe_deletion_checkpoint` commits an independently
+verified checkpoint observation, its required canonical event and minimum protected
+evidence atomically. Use the adapter's recording clock. Audited intent and copy
+removal capabilities must preserve original event UUIDs, exact membership and
+recording times; failure to persist required audit rolls back their state changes.
+Format 3 retains this minimum evidence without erased payloads. Ordinary event
+expiry must not remove it. Lifecycle audit is initially system-only and cannot
+enter notification subscription, preview or delivery paths.
+
+Completion evidence may advance an already recorded physical reapplication receipt
+only through `ApplicationControlState::with_completed_audit`, which rejects changed
+decisions, bindings or copy outcomes. Protect the updated receipt and audit facts
+before release; do not redo physical cleanup or infer a new drain acknowledgement
+from an audit-only revision. Missing required completion audit blocks exposure.

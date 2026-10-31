@@ -7,6 +7,41 @@ resource erasure and discovery remain separate consumers of this foundation.
 Unknown copy obligations, ambiguous identities and unsupported selectors remain
 quarantined; they are never interpreted as proof of absence.
 
+## Protected audit evidence
+
+New offline hot-history deletions commit their exact membership and canonical
+audit facts with the corresponding authority transition. Required audit failure
+rolls back the transition, including physical row removal. Events distinguish
+request, access restriction, verified independent protection, copy removal and
+completion. A rejected request or unchanged retry does not invent a new fact.
+
+Format 3 retains the original event UUIDs, UTC recording times, operation revisions,
+historical collection UUID and exact resource/version membership. The existing
+independent checkpoint protects this minimum evidence before cleanup and before
+acknowledging completion. It retains identities and proof references without
+resource payloads or provider locations. Evidence has the complete control-lineage
+lifetime; its membership declares `retention: "control_lineage"` and a null expiry.
+
+The commands are trusted local administration rather than a Hubuum login. Their
+canonical events have system scope and a system actor, with a manual trigger and
+no fabricated principal. Lifecycle notifications remain disabled. The existing
+`--control-status` report returns retained exact membership and original audit
+facts independently of ordinary event, task, principal or resource rows. Older
+control formats explicitly report `not_recorded` instead of fabricating history.
+
+Recovery preserves original event identities and times. The application's distinct
+incarnation and protected reapplication receipt identify the recovered image;
+removing a restored copy does not emit another user deletion success. Completion
+audit evidence can advance an existing physical reapplication proof only when
+its exact deletion decisions, bindings and copy outcomes are unchanged. Access
+remains restricted until the final receipt and required audit facts are protected.
+
+**Breaking operational change:** stop all older producers, apply
+`2026-10-30-000001_protected_deletion_audit`, reconcile grants, and deploy matching
+binaries before issuing new deletion commands. Preserve the independent repository
+and key. Downgrade refuses to discard retained format-3 evidence. The SDK's new
+checkpoint-observation capability and lifecycle catalog require adapter upgrades.
+
 ## Authority and ownership
 
 `DeletionControlState` contains a deployment lineage, recovery epoch, monotonic
@@ -403,12 +438,16 @@ The format-1 response contains these fields:
 | `block_reason` | Null, `evidence_unavailable`, `lineage_or_epoch_mismatch`, or `recovery_required`; no raw repository error or path is returned. |
 | `access_restricted` | True unless the current application is released against matching independently protected reapplication. |
 | `next_action` | Bounded operator action; consumers must display unknown future actions conservatively rather than infer permission. |
-| `intents` | At most 1,024 identity/generation summaries with protection state, copy counters, completion and next action. This is the primary observation; when protection is blocked it cannot establish complete recovered scope. |
+| `intents` | At most 1,024 identity/generation summaries with protection state, copy counters, completion, next action and retained audit evidence. This is the primary observation; when protection is blocked it cannot establish complete recovered scope. |
 
 Each intent reports `pending_copies`, `blocked_copies`,
 `recorded_removed_copies`, and `unbound_copies`. Blocked and unbound copies remain
-obligations. These counters do not expose subject identities, provider locations,
-copy lists, authentication material or erased payloads.
+obligations. Each intent also includes `audit_evidence`: `not_recorded` for legacy
+unaudited decisions, or `retained` with the exact `target` resource/version pair
+and an `audit` object containing the historical collection, membership identity
+and original transition facts. This trusted administrator projection is independent
+of transient tasks and ordinary event retention. It excludes provider locations,
+physical copy lists, authentication material and erased payloads.
 `confirmed_managed_scope_completion` becomes true only when every copy has an
 implemented binding and recorded removal, the outcome is independently protected,
 and the current application has matching protected reapplication and release.
@@ -418,8 +457,8 @@ No response establishes erasure of unmanaged or undiscovered copies.
 
 The [shared JSON fixture](https://github.com/hubuum/hubuum/blob/main/tests/fixtures/lifecycle/control_status.json) is
 checked against the server's serialized observation and is available for CLI and
-other consumer contract tests. For example, a primary intent committed ahead of
-its checkpoint reports:
+other consumer contract tests. For example, a legacy unaudited primary intent
+committed ahead of its checkpoint reports:
 
 ```json
 {
@@ -439,7 +478,8 @@ its checkpoint reports:
     "recorded_removed_copies": 0,
     "unbound_copies": 0,
     "confirmed_managed_scope_completion": false,
-    "next_action": "publish_checkpoint"
+    "next_action": "publish_checkpoint",
+    "audit_evidence": {"state": "not_recorded"}
   }]
 }
 ```

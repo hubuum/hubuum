@@ -1,6 +1,7 @@
 use super::tests::{cleanup, fixture, prepare};
 use super::*;
 use hubuum_domain::IdentityReference;
+use hubuum_storage_core::{DeletionAuditObservation, DeletionAuditProtection};
 use rstest::rstest;
 
 fn checkpoint() -> DeletionCheckpointIdentity {
@@ -15,7 +16,22 @@ async fn reapply(storage: &MemoryStorage) -> ApplicationReapplication {
             checkpoint(),
         )
         .await
+        .unwrap();
+    storage
+        .observe_deletion_checkpoint(DeletionAuditObservation::new(
+            storage.read_deletion_control().await.unwrap(),
+            checkpoint(),
+            DeletionAuditProtection::Completion,
+        ))
+        .await
+        .unwrap();
+    storage
+        .capture_deletion_control()
+        .await
         .unwrap()
+        .reapplication()
+        .unwrap()
+        .clone()
 }
 
 async fn release(storage: &MemoryStorage) -> ApplicationReapplication {
@@ -25,6 +41,25 @@ async fn release(storage: &MemoryStorage) -> ApplicationReapplication {
         .await
         .unwrap();
     receipt
+}
+
+#[tokio::test]
+async fn application_release_requires_the_required_completion_audit() {
+    let (storage, request, _) = fixture(true).await;
+    let expected = prepare(&storage, &request).await;
+    let receipt = storage
+        .reapply_deletion_decisions(
+            expected,
+            storage.read_application_control().await.unwrap().fence(),
+            checkpoint(),
+        )
+        .await
+        .unwrap();
+    let error = storage
+        .release_application_exposure(receipt, checkpoint())
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), StorageErrorKind::Conflict);
 }
 
 #[rstest]

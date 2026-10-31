@@ -1,4 +1,7 @@
-use hubuum_storage_core::{DeletionCheckpointIdentity, DeletionCopyState, StorageRestoreArtifact};
+use hubuum_storage_core::{
+    DeletionAuditObservation, DeletionAuditProtection, DeletionCheckpointIdentity,
+    DeletionCopyState, StorageRestoreArtifact,
+};
 use rstest::rstest;
 
 use super::*;
@@ -77,11 +80,19 @@ pub(super) async fn prepare(
     storage: &MemoryStorage,
     request: &HotObjectHistoryDeletion,
 ) -> DeletionControlState {
-    storage
+    let prepared = storage
         .prepare_hot_object_history_deletion(
             storage.read_deletion_control().await.unwrap(),
             request.clone(),
         )
+        .await
+        .unwrap();
+    storage
+        .observe_deletion_checkpoint(DeletionAuditObservation::new(
+            prepared,
+            DeletionCheckpointIdentity::new("a".repeat(64)).unwrap(),
+            DeletionAuditProtection::Intent,
+        ))
         .await
         .unwrap()
 }
@@ -96,6 +107,111 @@ pub(super) fn cleanup(
         DeletionCheckpointIdentity::new("a".repeat(64)).unwrap(),
     )
     .unwrap()
+}
+
+#[tokio::test]
+async fn unavailable_required_audit_rolls_back_intent_and_canonical_events() {
+    let (storage, request, entry) = fixture(true).await;
+    let before = storage.read_deletion_control().await.unwrap();
+    let before_events = storage.state.read_control().await.events.len();
+    storage.state.write_control().await.next_event_sequence = i64::MAX;
+    let result = storage
+        .prepare_hot_object_history_deletion(before.clone(), request)
+        .await;
+    let state = storage.state.read_control().await;
+    assert!(result.is_err());
+    assert_eq!(
+        (
+            &state.deletion_control,
+            state.events.len(),
+            state.history.iter().any(|row| row.id == entry.id)
+        ),
+        (&before, before_events, true)
+    );
+}
+
+#[tokio::test]
+async fn ordinary_event_purge_preserves_protected_original_audit_facts() {
+    let (storage, request, _) = fixture(true).await;
+    let prepared = prepare(&storage, &request).await;
+    let removed = storage
+        .cleanup_hot_object_history(cleanup(prepared, request.clone()))
+        .await
+        .unwrap();
+    let completed = storage
+        .observe_deletion_checkpoint(DeletionAuditObservation::new(
+            removed,
+            DeletionCheckpointIdentity::new("b".repeat(64)).unwrap(),
+            DeletionAuditProtection::Completion,
+        ))
+        .await
+        .unwrap();
+    storage.state.write_control().await.events.clear();
+    let recovered = storage.capture_deletion_control().await.unwrap();
+    assert_eq!(
+        recovered.state().intents()[&request.intent()].audit(),
+        completed.intents()[&request.intent()].audit()
+    );
+}
+
+#[rstest]
+#[case::canonical_survives(true)]
+#[case::canonical_was_purged(false)]
+#[tokio::test]
+async fn control_recovery_rehydrates_original_facts_without_duplicate_success(
+    #[case] keep_canonical: bool,
+) {
+    let (storage, request, _) = fixture(true).await;
+    let original = storage.read_deletion_control().await.unwrap();
+    let prepared = prepare(&storage, &request).await;
+    let removed = storage
+        .cleanup_hot_object_history(cleanup(prepared, request))
+        .await
+        .unwrap();
+    let completed = storage
+        .observe_deletion_checkpoint(DeletionAuditObservation::new(
+            removed,
+            DeletionCheckpointIdentity::new("b".repeat(64)).unwrap(),
+            DeletionAuditProtection::Completion,
+        ))
+        .await
+        .unwrap();
+    let original_facts = {
+        let state = storage.state.read_control().await;
+        state
+            .events
+            .iter()
+            .map(|event| event.as_parts().0)
+            .filter(|event| event.entity_type() == EntityType::Lifecycle)
+            .map(|event| (event.event_id(), event.occurred_at()))
+            .collect::<BTreeSet<_>>()
+    };
+    {
+        let mut state = storage.state.write_control().await;
+        state.deletion_control = original.clone();
+        if !keep_canonical {
+            state
+                .events
+                .retain(|event| event.as_parts().0.entity_type() != EntityType::Lifecycle);
+        }
+    }
+    storage
+        .commit_deletion_control(original.recover_from(&completed).unwrap())
+        .await
+        .unwrap();
+    let state = storage.state.read_control().await;
+    let recovered = state
+        .events
+        .iter()
+        .map(|event| event.as_parts().0)
+        .filter(|event| event.entity_type() == EntityType::Lifecycle)
+        .map(|event| (event.event_id(), event.occurred_at()))
+        .collect::<Vec<_>>();
+    assert_eq!(recovered.len(), 5);
+    assert_eq!(
+        recovered.into_iter().collect::<BTreeSet<_>>(),
+        original_facts
+    );
 }
 
 #[tokio::test]

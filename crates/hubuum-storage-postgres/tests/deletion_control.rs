@@ -444,8 +444,9 @@ mod managed_cleanup {
     use diesel::sql_types::{BigInt, Uuid as SqlUuid};
     use hubuum_domain::{ResourceIdentity, VersionIdentity};
     use hubuum_storage_core::{
-        DeletionCheckpointIdentity, HotObjectHistoryCleanup, HotObjectHistoryDeletion,
-        StorageIdentityEvidence, StorageRecordIdentity,
+        ApplicationReapplication, DeletionAuditObservation, DeletionAuditProtection,
+        DeletionAuditTransition, DeletionCheckpointIdentity, HotObjectHistoryCleanup,
+        HotObjectHistoryDeletion, StorageIdentityEvidence, StorageRecordIdentity,
     };
     use hubuum_storage_postgres::{PostgresFaultController, PostgresFaultPoint, PostgresPool};
     use std::time::Duration;
@@ -457,12 +458,19 @@ mod managed_cleanup {
         history_id: i64,
     }
 
+    #[derive(QueryableByName)]
+    struct AuditCount {
+        #[diesel(sql_type = BigInt)]
+        count: i64,
+    }
+
     struct Fixture {
         pool: PostgresPool,
         before: DeletionControlState,
         application_before: Value,
         request: HotObjectHistoryDeletion,
         name: String,
+        collection: ResourceIdentity,
     }
 
     impl Fixture {
@@ -482,12 +490,35 @@ mod managed_cleanup {
             )
             .unwrap();
             let application_before = capture_application_fixture(&pool).await;
+            let collection = with_transaction(&pool, async |connection| {
+                let material = sql_query(
+                    "SELECT logical_identity AS material FROM public.collections WHERE id=1",
+                )
+                .get_result::<Material>(connection)
+                .await?
+                .material;
+                let evidence: StorageIdentityEvidence =
+                    serde_json::from_value(material).map_err(|_| {
+                        PostgresStorageError::database("Fixture collection identity is invalid")
+                    })?;
+                Ok::<_, PostgresStorageError>(
+                    evidence
+                        .subject()
+                        .unwrap()
+                        .record_identity()
+                        .unwrap()
+                        .resource(),
+                )
+            })
+            .await
+            .unwrap();
             let fixture = Self {
                 application_before,
                 pool,
                 before,
                 request,
                 name: format!("managed_history_{}", Uuid::new_v4().simple()),
+                collection,
             };
             fixture.insert(fixture.request.target(), closed).await;
             fixture
@@ -500,7 +531,7 @@ mod managed_cleanup {
         async fn insert(&self, target: StorageRecordIdentity, closed: bool) -> i64 {
             let identity = serde_json::json!({
                 "subject": {"kind": "resource", "identity": {"state": "known", "identity": target.resource()}, "version": target.version()},
-                "references": {},
+                "references": {"/collection_id": {"kind": "resource", "family": "collection", "reference": {"state": "known", "identity": self.collection}}},
             });
             with_transaction(&self.pool, async |connection| {
                 assume_owner(connection).await?;
@@ -544,10 +575,42 @@ mod managed_cleanup {
         }
 
         async fn prepare(&self) -> DeletionControlState {
-            self.storage()
+            let prepared = self
+                .storage()
                 .prepare_hot_object_history_deletion(self.before.clone(), self.request.clone())
                 .await
+                .unwrap();
+            self.storage()
+                .observe_deletion_checkpoint(DeletionAuditObservation::new(
+                    prepared,
+                    DeletionCheckpointIdentity::new("a".repeat(64)).unwrap(),
+                    DeletionAuditProtection::Intent,
+                ))
+                .await
                 .unwrap()
+        }
+
+        async fn protect_completion(
+            &self,
+            original: ApplicationReapplication,
+        ) -> ApplicationReapplication {
+            let current = self.storage().read_deletion_control().await.unwrap();
+            assert_eq!(current.revision(), original.revision());
+            self.storage()
+                .observe_deletion_checkpoint(DeletionAuditObservation::new(
+                    current,
+                    DeletionCheckpointIdentity::new("b".repeat(64)).unwrap(),
+                    DeletionAuditProtection::Completion,
+                ))
+                .await
+                .unwrap();
+            self.storage()
+                .capture_deletion_control()
+                .await
+                .unwrap()
+                .reapplication()
+                .unwrap()
+                .clone()
         }
 
         fn cleanup(&self, state: DeletionControlState) -> HotObjectHistoryCleanup {
@@ -557,6 +620,30 @@ mod managed_cleanup {
                 DeletionCheckpointIdentity::new("a".repeat(64)).unwrap(),
             )
             .unwrap()
+        }
+
+        async fn completed_audit(&self) -> DeletionControlState {
+            let prepared = self.prepare().await;
+            let removed = self
+                .storage()
+                .cleanup_hot_object_history(self.cleanup(prepared))
+                .await
+                .unwrap();
+            self.storage()
+                .observe_deletion_checkpoint(DeletionAuditObservation::new(
+                    removed,
+                    DeletionCheckpointIdentity::new("b".repeat(64)).unwrap(),
+                    DeletionAuditProtection::Completion,
+                ))
+                .await
+                .unwrap()
+        }
+
+        async fn audit_rows(&self) -> Value {
+            with_transaction(&self.pool, async |connection| {
+                Ok::<_, PostgresStorageError>(sql_query("SELECT coalesce(jsonb_agg(to_jsonb(e) - ARRAY['id','dispatched_at','fanout_locked_until','fanout_claim_token','logical_identity'] ORDER BY event_id), '[]'::jsonb) AS material FROM public.events e WHERE entity_type='lifecycle' AND metadata #>> '{lifecycle,operation_id}'=$1")
+                    .bind::<Text, _>(self.request.intent().to_string()).get_result::<Material>(connection).await?.material)
+            }).await.unwrap()
         }
 
         async fn finish(self) {
@@ -574,6 +661,11 @@ mod managed_cleanup {
                     .bind::<Text, _>(&self.name)
                     .execute(connection)
                     .await?;
+                // Owner-only fixture cleanup must opt into the append-only table's
+                // purge guard before removing this operation's audit records.
+                connection.batch_execute("SET LOCAL events.allow_purge = 'on'").await?;
+                sql_query("DELETE FROM public.events WHERE entity_type='lifecycle' AND metadata #>> '{lifecycle,operation_id}'=$1")
+                    .bind::<Text, _>(self.request.intent().to_string()).execute(connection).await?;
                 sql_query("UPDATE hubuum_control.deletion_authority SET material=$1 WHERE id=1")
                     .bind::<Jsonb, _>(serde_json::to_value(&self.before).unwrap())
                     .execute(connection)
@@ -586,11 +678,181 @@ mod managed_cleanup {
         }
     }
 
+    #[rstest]
+    #[case::canonical_survives(true)]
+    #[case::canonical_was_purged(false)]
+    #[tokio::test]
+    async fn recovery_preserves_original_audit_facts_without_duplicate_success(
+        #[case] keep_canonical: bool,
+    ) {
+        let _guard = CONTROL_TEST_LOCK.lock().await;
+        let fixture = Fixture::new(true).await;
+        let completed = fixture.completed_audit().await;
+        let original = fixture.audit_rows().await;
+        assert_eq!(original.as_array().unwrap().len(), 5);
+        with_transaction(&fixture.pool, async |connection| {
+            assume_owner(connection).await?;
+            sql_query("UPDATE hubuum_control.deletion_authority SET material=$1 WHERE id=1")
+                .bind::<Jsonb, _>(serde_json::to_value(&fixture.before).unwrap()).execute(connection).await?;
+            if !keep_canonical {
+                connection.batch_execute("SET LOCAL events.allow_purge='on'").await?;
+                sql_query("DELETE FROM public.events WHERE entity_type='lifecycle' AND metadata #>> '{lifecycle,operation_id}'=$1")
+                    .bind::<Text, _>(fixture.request.intent().to_string()).execute(connection).await?;
+            }
+            Ok::<_, PostgresStorageError>(())
+        }).await.unwrap();
+        let result = fixture
+            .storage()
+            .commit_deletion_control(fixture.before.recover_from(&completed).unwrap())
+            .await;
+        let recovered = fixture.audit_rows().await;
+        fixture.finish().await;
+        result.unwrap();
+        assert_eq!(recovered, original);
+    }
+
+    #[tokio::test]
+    async fn conflicting_canonical_audit_rolls_back_recovery() {
+        let _guard = CONTROL_TEST_LOCK.lock().await;
+        let fixture = Fixture::new(true).await;
+        let completed = fixture.completed_audit().await;
+        with_transaction(&fixture.pool, async |connection| {
+            assume_owner(connection).await?;
+            sql_query("UPDATE hubuum_control.deletion_authority SET material=$1 WHERE id=1")
+                .bind::<Jsonb, _>(serde_json::to_value(&fixture.before).unwrap()).execute(connection).await?;
+            // Simulate a conflicting privileged restore. Ordinary writers remain
+            // subject to the append-only trigger, restored within this transaction.
+            connection.batch_execute("ALTER TABLE public.events DISABLE TRIGGER events_append_only").await?;
+            sql_query("UPDATE public.events SET summary='conflicting restored fact' WHERE entity_type='lifecycle' AND metadata #>> '{lifecycle,operation_id}'=$1")
+                .bind::<Text, _>(fixture.request.intent().to_string()).execute(connection).await?;
+            connection.batch_execute("ALTER TABLE public.events ENABLE TRIGGER events_append_only").await?;
+            Ok::<_, PostgresStorageError>(())
+        }).await.unwrap();
+        let events = fixture.audit_rows().await;
+        let application = capture_application_fixture(&fixture.pool).await;
+        let result = fixture
+            .storage()
+            .commit_deletion_control(fixture.before.recover_from(&completed).unwrap())
+            .await;
+        let authority_after = fixture.storage().read_deletion_control().await.unwrap();
+        let events_after = fixture.audit_rows().await;
+        let application_after = capture_application_fixture(&fixture.pool).await;
+        let authority_before = fixture.before.clone();
+        fixture.finish().await;
+        assert_eq!(result.unwrap_err().kind(), StorageErrorKind::Backend);
+        assert_eq!(
+            (authority_after, events_after, application_after),
+            (authority_before, events, application)
+        );
+    }
+
     fn identity_evidence(identity: StorageRecordIdentity) -> StorageIdentityEvidence {
         serde_json::from_value(serde_json::json!({
             "subject": {"kind": "resource", "identity": {"state": "known", "identity": identity.resource()}, "version": identity.version()},
             "references": {},
         })).unwrap()
+    }
+
+    #[rstest]
+    #[case::intent(DeletionAuditTransition::Requested)]
+    #[case::restriction(DeletionAuditTransition::AccessRestricted)]
+    #[case::recovery_protection(DeletionAuditTransition::RecoveryProtected)]
+    #[case::physical_removal(DeletionAuditTransition::CopyRemoved)]
+    #[case::completion(DeletionAuditTransition::Completed)]
+    #[tokio::test]
+    async fn required_audit_failure_rolls_back_the_exact_transition(
+        #[case] transition: DeletionAuditTransition,
+    ) {
+        let _guard = CONTROL_TEST_LOCK.lock().await;
+        let fixture = Fixture::new(true).await;
+        let before = match transition {
+            DeletionAuditTransition::Requested | DeletionAuditTransition::AccessRestricted => {
+                fixture.before.clone()
+            }
+            DeletionAuditTransition::RecoveryProtected => fixture
+                .storage()
+                .prepare_hot_object_history_deletion(
+                    fixture.before.clone(),
+                    fixture.request.clone(),
+                )
+                .await
+                .unwrap(),
+            DeletionAuditTransition::CopyRemoved => fixture.prepare().await,
+            DeletionAuditTransition::Completed => {
+                let prepared = fixture.prepare().await;
+                fixture
+                    .storage()
+                    .cleanup_hot_object_history(fixture.cleanup(prepared))
+                    .await
+                    .unwrap()
+            }
+        };
+        let copy_existed = fixture.exists(fixture.request.target()).await;
+        let count = async || {
+            with_transaction(&fixture.pool, async |connection| {
+            Ok::<_, PostgresStorageError>(sql_query("SELECT count(*)::bigint AS count FROM public.events WHERE entity_type='lifecycle' AND metadata #>> '{lifecycle,operation_id}'=$1")
+                .bind::<Text, _>(fixture.request.intent().to_string()).get_result::<AuditCount>(connection).await?.count)
+        }).await.unwrap()
+        };
+        let before_events = count().await;
+        let function = format!("hubuum_test_reject_audit_{}", Uuid::new_v4().simple());
+        let setup = format!("CREATE FUNCTION public.{function}() RETURNS trigger LANGUAGE plpgsql AS $body$ BEGIN RAISE EXCEPTION 'required audit unavailable'; END $body$;
+            CREATE TRIGGER {function} BEFORE INSERT ON public.events FOR EACH ROW
+            WHEN (NEW.entity_type='lifecycle' AND NEW.metadata #>> '{{lifecycle,operation_id}}'='{operation}' AND NEW.metadata #>> '{{lifecycle,name}}'='{name}')
+            EXECUTE FUNCTION public.{function}();", operation=fixture.request.intent(), name=transition.name());
+        with_transaction(&fixture.pool, async |connection| {
+            assume_owner(connection).await?;
+            connection.batch_execute(&setup).await?;
+            Ok::<_, PostgresStorageError>(())
+        })
+        .await
+        .unwrap();
+        let result = match transition {
+            DeletionAuditTransition::Requested | DeletionAuditTransition::AccessRestricted => {
+                fixture
+                    .storage()
+                    .prepare_hot_object_history_deletion(before.clone(), fixture.request.clone())
+                    .await
+            }
+            DeletionAuditTransition::CopyRemoved => {
+                fixture
+                    .storage()
+                    .cleanup_hot_object_history(fixture.cleanup(before.clone()))
+                    .await
+            }
+            DeletionAuditTransition::RecoveryProtected | DeletionAuditTransition::Completed => {
+                fixture
+                    .storage()
+                    .observe_deletion_checkpoint(DeletionAuditObservation::new(
+                        before.clone(),
+                        DeletionCheckpointIdentity::new("b".repeat(64)).unwrap(),
+                        if transition == DeletionAuditTransition::Completed {
+                            DeletionAuditProtection::Completion
+                        } else {
+                            DeletionAuditProtection::Intent
+                        },
+                    ))
+                    .await
+            }
+        };
+        with_transaction(&fixture.pool, async |connection| {
+            assume_owner(connection).await?;
+            connection
+                .batch_execute(&format!("DROP FUNCTION public.{function}() CASCADE"))
+                .await?;
+            Ok::<_, PostgresStorageError>(())
+        })
+        .await
+        .unwrap();
+        let after = fixture.storage().read_deletion_control().await.unwrap();
+        let remaining = fixture.exists(fixture.request.target()).await;
+        let after_events = count().await;
+        fixture.finish().await;
+        assert_eq!(result.unwrap_err().kind(), StorageErrorKind::Backend);
+        assert_eq!(
+            (after, remaining, after_events),
+            (before, copy_existed, before_events)
+        );
     }
 
     fn derived_version() -> VersionIdentity {
@@ -1386,6 +1648,7 @@ mod managed_cleanup {
             .capture_application_execution(Some(owner.clone()))
             .await
             .unwrap_err();
+        let receipt = fixture.protect_completion(receipt).await;
         fixture
             .storage()
             .release_application_exposure(
@@ -1448,6 +1711,7 @@ mod managed_cleanup {
             )
             .await
             .unwrap();
+        let first = fixture.protect_completion(first).await;
         fixture
             .storage()
             .release_application_exposure(

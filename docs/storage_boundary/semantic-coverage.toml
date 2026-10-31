@@ -70,6 +70,7 @@ event_coordination = [
 retention = ["TokenRetentionStorage::purge_expired_tokens", "AuthenticationStorage::purge_credential_sources", "AuthenticationStorage::purge_auth_sessions"]
 maintenance = [
     "DeletionControlStorage::commit_deletion_control",
+    "DeletionControlStorage::observe_deletion_checkpoint",
     "DeletionControlStorage::register_runtime",
     "DeletionControlStorage::register_runtime_isolated",
     "DeletionControlStorage::capture_application_execution",
@@ -297,9 +298,15 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.DeletionControlStorage]
 source = "crates/hubuum-storage-core/src/deletion_control.rs"
-methods = ["read_application_control", "register_runtime_isolated", "capture_application_execution", "capture_application_execution_with_maintenance", "acknowledge_runtime_drain", "reapply_deletion_decisions", "release_application_exposure", "recover_application_control", "read_deletion_control", "capture_deletion_control", "register_runtime", "unregister_runtime", "prepare_hot_object_history_deletion", "cleanup_hot_object_history", "commit_deletion_control"]
-effects = { point_read = ["read_application_control", "read_deletion_control", "capture_deletion_control"], workflow_mutation = ["register_runtime_isolated", "capture_application_execution", "capture_application_execution_with_maintenance", "acknowledge_runtime_drain", "reapply_deletion_decisions", "release_application_exposure", "recover_application_control", "register_runtime", "unregister_runtime", "prepare_hot_object_history_deletion", "cleanup_hot_object_history", "commit_deletion_control"] }
+methods = ["read_application_control", "register_runtime_isolated", "capture_application_execution", "capture_application_execution_with_maintenance", "acknowledge_runtime_drain", "reapply_deletion_decisions", "release_application_exposure", "recover_application_control", "read_deletion_control", "capture_deletion_control", "register_runtime", "unregister_runtime", "prepare_hot_object_history_deletion", "cleanup_hot_object_history", "commit_deletion_control", "observe_deletion_checkpoint"]
+effects = { point_read = ["read_application_control", "read_deletion_control", "capture_deletion_control"], workflow_mutation = ["register_runtime_isolated", "capture_application_execution", "capture_application_execution_with_maintenance", "acknowledge_runtime_drain", "reapply_deletion_decisions", "release_application_exposure", "recover_application_control", "register_runtime", "unregister_runtime", "prepare_hot_object_history_deletion", "cleanup_hot_object_history", "commit_deletion_control", "observe_deletion_checkpoint"] }
 shared_scenarios = [
+    "crates/hubuum-storage-core/src/deletion_control/audit_tests.rs::recovered_canonical_projection_keeps_original_identity_and_time",
+    "crates/hubuum-storage-core/src/deletion_control/audit_tests.rs::completion_evidence_preserves_the_existing_physical_reapplication_proof",
+    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::unavailable_required_audit_rolls_back_intent_and_canonical_events",
+    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::ordinary_event_purge_preserves_protected_original_audit_facts",
+    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::control_recovery_rehydrates_original_facts_without_duplicate_success",
+    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::application_release_requires_the_required_completion_audit",
     "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::worker_admission_observes_maintenance_and_preserves_its_permit",
     "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::worker_admission_rejects_a_foreign_inherited_permit",
     "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::worker_admission_cannot_refresh_an_old_permit_after_release",
@@ -330,6 +337,7 @@ shared_scenarios = [
     "crates/hubuum-storage-memory/src/deletion_control/tests.rs::logical_restore_preserves_runtime_registration",
 ]
 native_scenarios = [
+    "crates/hubuum-storage-postgres/tests/deletion_control.rs::required_audit_failure_rolls_back_the_exact_transition",
     "crates/hubuum-storage-postgres/tests/deletion_control.rs::repeatable_read_before_gate_cannot_reuse_revoked_admission",
     "crates/hubuum-storage-postgres/tests/deletion_control.rs::runtime_drain_and_exact_checkpoint_release_fence_old_work",
     "crates/hubuum-storage-postgres/tests/deletion_control.rs::unknown_unrelated_history_prevents_removed_copy_reapplication",
