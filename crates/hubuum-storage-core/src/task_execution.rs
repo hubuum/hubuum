@@ -9,10 +9,11 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    StorageError, StorageRemoteTargetHttpMethod, StorageRemoteTargetSubjectType, StorageTask,
-    StorageTaskCancellationOutcome, StorageTaskCancellationRequest, StorageTaskDurations,
-    StorageTaskExecutionAdmission, StorageTaskExecutionObservation, StorageTaskKind,
-    StorageTaskOutputLookup, StorageTaskRemoteDispatch, StorageTaskStatus, StorageValidationError,
+    ApplicationFence, StorageError, StorageRemoteTargetHttpMethod, StorageRemoteTargetSubjectType,
+    StorageTask, StorageTaskCancellationOutcome, StorageTaskCancellationRequest,
+    StorageTaskDurations, StorageTaskExecutionAdmission, StorageTaskExecutionObservation,
+    StorageTaskKind, StorageTaskOutputLookup, StorageTaskRemoteDispatch, StorageTaskStatus,
+    StorageValidationError,
 };
 
 /// Validated lease duration shared with a storage adapter.
@@ -66,15 +67,28 @@ impl fmt::Debug for StorageTaskClaimToken {
 pub struct StorageTaskLease {
     task_id: TaskId,
     token: StorageTaskClaimToken,
+    execution_fence: Option<ApplicationFence>,
 }
 
 impl StorageTaskLease {
     #[must_use]
     pub const fn new(task_id: TaskId, token: StorageTaskClaimToken) -> Self {
-        Self { task_id, token }
+        Self {
+            task_id,
+            token,
+            execution_fence: None,
+        }
     }
 
     #[must_use]
+    pub const fn with_execution_fence(mut self, fence: ApplicationFence) -> Self {
+        self.execution_fence = Some(fence);
+        self
+    }
+    pub const fn execution_fence(&self) -> Option<ApplicationFence> {
+        self.execution_fence
+    }
+
     pub const fn task_id(&self) -> TaskId {
         self.task_id
     }

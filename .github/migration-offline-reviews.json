@@ -72,6 +72,13 @@
           "deletion_authority_material_check"
         ]
       }
+    },
+    {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-10-29-000006_application_reapplication/up.sql",
+      "sha256": "5c87d36455bfeae8e17daaef9507112c370d9cbfb3b9bf062ac85a097d2459cb",
+      "reason": "Application-incarnation permits, exact runtime drain acknowledgements, restore reapplication and persisted task-claim fences require every producer to use the new protocol. Older binaries cannot establish process isolation or prevent stale publication.",
+      "upgrade_action": "Stop every older API, worker, restore executor and administrator producer; apply the migration and reconcile runtime grants; configure the independent repository on every producer and start matching binaries. Preserve all existing runtime registrations and recovery material. See docs/deletion_recovery.md#upgrade-and-rollback.",
+      "drop_constraints": {}
     }
   ]
 }

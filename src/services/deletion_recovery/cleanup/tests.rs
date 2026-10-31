@@ -296,19 +296,32 @@ async fn invalid_independent_evidence_cannot_commit_an_intent_or_remove_a_copy(
 }
 
 #[tokio::test]
-async fn registered_runtime_prevents_cleanup_intent() {
+async fn registered_runtime_retains_protected_intent_until_drained() {
     let fixture = Fixture::new(true).await;
     let registration = fixture.storage.register_runtime().await.unwrap();
     assert!(fixture.run().await.is_err());
     assert!(fixture.contains_copy().await);
+    let authority = fixture.storage.read_deletion_control().await.unwrap();
+    assert_eq!(authority.intents().len(), 1);
+    let intent = &authority.intents()[&fixture.intent];
+    assert_eq!(
+        intent.subject(),
+        &DeletionSubject::Version {
+            identity: fixture.target.version()
+        }
+    );
+    assert_eq!(intent.copies().len(), 1);
+    let (copy, binding) = intent.bindings().first_key_value().unwrap();
+    assert_eq!(binding.target(), fixture.target);
+    assert_eq!(intent.copies()[copy], DeletionCopyState::Pending);
+    assert_eq!(fixture.repository().latest().unwrap().state(), &authority);
     assert!(
-        fixture
+        !fixture
             .storage
-            .read_deletion_control()
+            .read_application_control()
             .await
             .unwrap()
-            .intents()
-            .is_empty()
+            .is_released_for(&authority)
     );
     fixture
         .storage
@@ -396,4 +409,121 @@ async fn failed_completion_publication_returns_pending_then_retry_recovers() {
         report.completion_checkpoint,
         fixture.repository().latest().unwrap().identity()
     );
+}
+
+#[tokio::test]
+async fn protected_reapplication_reopens_only_the_verified_application_image() {
+    let fixture = Fixture::new(true).await;
+    fixture.run().await.unwrap();
+    let report = super::super::reapply(&fixture.storage, &fixture.directory, &fixture.key)
+        .await
+        .unwrap();
+    assert!(report.application_quarantine_released);
+    let application = fixture.storage.read_application_control().await.unwrap();
+    let checkpoint = fixture.repository().latest().unwrap();
+    assert_eq!(checkpoint.reapplication(), application.reapplication());
+    assert_eq!(
+        application.checkpoint().unwrap().as_str(),
+        checkpoint.identity()
+    );
+}
+
+enum StatusPhase {
+    CleanupRecorded,
+    Reapplied,
+    Recovered,
+}
+
+#[tokio::test]
+async fn pending_deletion_status_matches_shared_consumer_fixture() {
+    let fixture = Fixture::new(true).await;
+    fixture.prepare().await;
+    let report = super::super::status(&fixture.storage, &fixture.directory, &fixture.key)
+        .await
+        .unwrap();
+    let mut actual = serde_json::to_value(report).unwrap();
+    let expected: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tests/fixtures/lifecycle/control_status.json"
+    ))
+    .unwrap();
+    assert_eq!(actual["intents"][0]["intent"], fixture.intent.to_string());
+    actual["intents"][0]["intent"] = expected["intents"][0]["intent"].clone();
+    assert_eq!(actual, expected);
+}
+
+#[rstest]
+#[case::before_reapplication(StatusPhase::CleanupRecorded, false)]
+#[case::after_reapplication(StatusPhase::Reapplied, true)]
+#[case::after_physical_recovery(StatusPhase::Recovered, false)]
+#[tokio::test]
+async fn completion_status_requires_independently_protected_current_application(
+    #[case] phase: StatusPhase,
+    #[case] confirmed: bool,
+) {
+    let fixture = Fixture::new(true).await;
+    fixture.run().await.unwrap();
+    if matches!(phase, StatusPhase::Reapplied | StatusPhase::Recovered) {
+        super::super::reapply(&fixture.storage, &fixture.directory, &fixture.key)
+            .await
+            .unwrap();
+    }
+    if matches!(phase, StatusPhase::Recovered) {
+        super::super::recover(&fixture.storage, &fixture.directory, &fixture.key)
+            .await
+            .unwrap();
+    }
+    let report = super::super::status(&fixture.storage, &fixture.directory, &fixture.key)
+        .await
+        .unwrap();
+    let value = serde_json::to_value(report).unwrap();
+    assert_eq!(
+        value["intents"][0]["confirmed_managed_scope_completion"],
+        confirmed
+    );
+}
+
+#[tokio::test]
+async fn deletion_status_excludes_subjects_copy_locations_and_erased_payloads() {
+    let fixture = Fixture::new(true).await;
+    fixture.run().await.unwrap();
+    let report = super::super::status(&fixture.storage, &fixture.directory, &fixture.key)
+        .await
+        .unwrap();
+    let encoded = serde_json::to_string(&report).unwrap();
+    for private in [
+        fixture.target.resource().to_string(),
+        fixture.target.version().to_string(),
+        fixture.key.display().to_string(),
+        fixture.directory.display().to_string(),
+        "old version".to_owned(),
+    ] {
+        assert!(
+            !encoded.contains(&private),
+            "Status disclosed private receipt material"
+        );
+    }
+}
+
+#[tokio::test]
+async fn physical_recovery_requires_fresh_reapplication_even_at_the_same_authority_revision() {
+    let fixture = Fixture::new(true).await;
+    fixture.run().await.unwrap();
+    super::super::reapply(&fixture.storage, &fixture.directory, &fixture.key)
+        .await
+        .unwrap();
+    let previous = fixture.storage.read_application_control().await.unwrap();
+    super::super::recover(&fixture.storage, &fixture.directory, &fixture.key)
+        .await
+        .unwrap();
+    let recovered = fixture.storage.read_application_control().await.unwrap();
+    assert_ne!(
+        previous.fence().incarnation(),
+        recovered.fence().incarnation()
+    );
+    assert!(!recovered.is_released_for(&fixture.storage.read_deletion_control().await.unwrap()));
+    let report = super::super::reapply(&fixture.storage, &fixture.directory, &fixture.key)
+        .await
+        .unwrap();
+    assert!(report.application_quarantine_released);
+    assert!(report.control_revision > previous.fence().revision());
 }

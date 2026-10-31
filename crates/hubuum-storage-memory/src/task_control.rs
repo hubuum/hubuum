@@ -5,7 +5,7 @@ impl MemoryStorage {
         &self,
         request: StorageTaskCancellationRequest,
     ) -> Result<StorageTaskCancellationOutcome, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_control().await;
         let task = state
             .tasks
             .get_mut(&request.task_id().id())
@@ -64,8 +64,8 @@ impl MemoryStorage {
         request: StorageTaskExecutionAdmission,
     ) -> Result<StorageTaskExecutionObservation, StorageError> {
         let (lease, limit) = request.into_parts();
-        let mut state = self.state.write().await;
-        state.ensure_task_execution_allowed()?;
+        let mut state = self.state.write().await?;
+        state.ensure_task_lease_current(&lease)?;
         let task = state
             .tasks
             .get_mut(&lease.task_id().id())
@@ -90,7 +90,7 @@ impl MemoryStorage {
         &self,
         lease: StorageTaskLease,
     ) -> Result<StorageTaskExecutionObservation, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read_control().await;
         let task = state
             .tasks
             .get(&lease.task_id().id())
@@ -106,7 +106,7 @@ impl MemoryStorage {
         &self,
         lease: StorageTaskLease,
     ) -> Result<StorageTask, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_control().await;
         let task = state
             .tasks
             .get(&lease.task_id().id())
@@ -126,8 +126,8 @@ impl MemoryStorage {
         request: StorageTaskRemoteDispatch,
     ) -> Result<(), StorageError> {
         let (lease, target) = request.into_parts();
-        let mut state = self.state.write().await;
-        state.ensure_task_execution_allowed()?;
+        let mut state = self.state.write().await?;
+        state.ensure_task_lease_current(&lease)?;
         let task = state
             .tasks
             .get(&lease.task_id().id())
@@ -178,8 +178,23 @@ impl MemoryStorage {
 }
 
 impl MemoryState {
+    pub(super) fn ensure_task_lease_current(
+        &self,
+        lease: &StorageTaskLease,
+    ) -> Result<(), StorageError> {
+        if lease.execution_fence() != Some(self.application_control.fence()) {
+            return Err(StorageError::unavailable(
+                "Task lease belongs to a superseded application generation",
+            ));
+        }
+        self.ensure_task_execution_allowed()
+    }
+
     pub(super) fn ensure_task_execution_allowed(&self) -> Result<(), StorageError> {
-        if !self.deletion_control.permits_exposure() {
+        if !self
+            .application_control
+            .is_released_for(&self.deletion_control)
+        {
             return Err(StorageError::unavailable(
                 "Deletion recovery quarantine prevents task execution and publication",
             ));
@@ -519,7 +534,15 @@ mod tests {
             ))
             .await;
         assert!(result.is_err());
-        assert!(storage.state.read().await.backup_outputs.is_empty());
+        assert!(
+            storage
+                .state
+                .read()
+                .await
+                .unwrap()
+                .backup_outputs
+                .is_empty()
+        );
     }
 
     #[rstest::rstest]
@@ -569,7 +592,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let mut staged = storage.state.read().await.clone();
+        let mut staged = storage.state.read().await.unwrap().clone();
         let generation = staged.generation.clone();
         staged.next_collection_id += 1;
         quarantine(&storage).await;
@@ -610,9 +633,9 @@ mod tests {
                 .request_task_cancellation(request.clone())
                 .await
                 .unwrap();
-            let events = storage.state.read().await.task_events.clone();
+            let events = storage.state.read().await.unwrap().task_events.clone();
             storage.request_task_cancellation(request).await.unwrap();
-            assert!(storage.state.read().await.task_events == events);
+            assert!(storage.state.read().await.unwrap().task_events == events);
         });
     }
 
@@ -627,7 +650,7 @@ mod tests {
                 .unwrap()
                 .unwrap();
             let (_, lease) = claim.into_parts();
-            let mut staged = storage.state.read().await.clone();
+            let mut staged = storage.state.read().await.unwrap().clone();
             let generation = staged.generation.clone();
             staged.next_collection_id += 1;
             storage

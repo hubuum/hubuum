@@ -119,14 +119,14 @@ impl QueryUsageStorage for MemoryStorage {
     async fn query_observation_control(
         &self,
     ) -> Result<StorageQueryObservationControl, StorageError> {
-        Ok(self.state.read().await.query_observation_control)
+        Ok(self.state.read().await?.query_observation_control)
     }
 
     async fn set_query_observation_control(
         &self,
         control: StorageQueryObservationControl,
     ) -> Result<(), StorageError> {
-        self.state.write().await.query_observation_control = control;
+        self.state.write().await?.query_observation_control = control;
         Ok(())
     }
 
@@ -134,7 +134,7 @@ impl QueryUsageStorage for MemoryStorage {
         &self,
         scope: StorageQueryUsageScope,
     ) -> Result<Vec<StorageQueryUsageDeclaration>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         check_scope(&state, scope)?;
         Ok(state
             .query_usage
@@ -148,7 +148,7 @@ impl QueryUsageStorage for MemoryStorage {
         &self,
         request: StorageQueryUsageCreate,
     ) -> Result<StorageMutationOutcome<StorageQueryUsageDeclaration>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         check_scope(&state, request.scope())?;
         check_pattern(&state, request.scope(), request.pattern(), None)?;
         let id = ResourceId::new(state.next_query_usage_id)
@@ -183,7 +183,7 @@ impl QueryUsageStorage for MemoryStorage {
         &self,
         request: StorageQueryUsageReplace,
     ) -> Result<StorageMutationOutcome<StorageQueryUsageDeclaration>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let before = current(
             &state,
             request.scope(),
@@ -232,7 +232,7 @@ impl QueryUsageStorage for MemoryStorage {
         &self,
         request: StorageQueryUsageDelete,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let before = current(
             &state,
             request.scope(),

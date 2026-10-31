@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.12`.
+Status: accepted; current experimental release train is `0.13`.
 
 ## Supported Crate Graph
 
@@ -567,3 +567,25 @@ Control format 2 adds explicit copy bindings and receipts. Continue decoding and
 encoding format 1 byte-for-byte: checkpoint authentication depends on its original
 canonical representation. Unknown legacy copies remain unexecutable and retain
 their original outcomes. See [managed cleanup](deletion_recovery.md#offline-managed-copy-cleanup).
+
+## Upgrading from 0.12 to 0.13
+
+Upgrade all ten SDK crates together. Every complete adapter now implements
+application-incarnation fencing, runtime-owner binding, exact drain
+acknowledgements, transactional decision reapplication, and exposure release.
+`ExecutionStorage` exposes the current scope and synchronous scope execution for
+streaming response polling; nested scopes preserve the outer application permit.
+`StorageTaskLease` carries the captured application fence. Adapters persist and
+verify the task claim's original fence before productive transitions, even when
+another caller supplies a freshly admitted execution scope.
+
+Logical replacement preserves authority and runtime registrations, rotates the
+application incarnation, and quarantines retained obligations until independently
+protected reapplication completes. A checkpoint's optional reapplication receipt
+never imports local release permission. An explicitly unbound adapter remains
+available for privileged administration and focused tests; production composition
+binds every capability port and provider to its registered owner and rejects
+missing, different-owner, stale, or revoked permits.
+
+See [deletion recovery](deletion_recovery.md) for the coordinated offline upgrade,
+process-isolation contract, checkpoint ordering, and conservative failure states.

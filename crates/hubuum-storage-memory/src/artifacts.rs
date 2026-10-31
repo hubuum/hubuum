@@ -131,7 +131,7 @@ impl MemoryState {
 #[async_trait]
 impl ArtifactStore for MemoryStorage {
     async fn register_destination(&self, destination: &Destination) -> ArtifactResult<()> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await.map_err(boundary)?;
         if let Some(name) = state.artifacts.destinations.get(&destination.id()) {
             return if name == destination.name() {
                 Ok(())
@@ -158,7 +158,7 @@ impl ArtifactStore for MemoryStorage {
         identity: &ArtifactIdentity,
         limits: ArtifactLimits,
     ) -> ArtifactResult<()> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await.map_err(boundary)?;
         if !state
             .artifacts
             .destinations
@@ -203,7 +203,7 @@ impl ArtifactStore for MemoryStorage {
         ordinal: u32,
         bytes: &[u8],
     ) -> ArtifactResult<()> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await.map_err(boundary)?;
         let attempt = state.artifacts.attempt_mut(identity)?;
         attempt.writable()?;
         if let Some(old) = attempt.blocks.get(&ordinal) {
@@ -231,7 +231,7 @@ impl ArtifactStore for MemoryStorage {
         Ok(())
     }
     async fn seal(&self, manifest: &ArtifactManifest) -> ArtifactResult<()> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await.map_err(boundary)?;
         let attempt = state.artifacts.attempt_mut(manifest.identity())?;
         attempt.writable()?;
         ArtifactManifest::decode(&manifest.encode(), &attempt.identity, attempt.limits)?;
@@ -245,13 +245,13 @@ impl ArtifactStore for MemoryStorage {
         Ok(())
     }
     async fn manifest(&self, identity: &ArtifactIdentity) -> ArtifactResult<Vec<u8>> {
-        let state = self.state.read().await;
+        let state = self.state.read().await.map_err(boundary)?;
         let attempt = state.artifacts.attempt(identity)?;
         attempt.readable()?;
         Ok(attempt.manifest.as_ref().ok_or_else(conflict)?.encode())
     }
     async fn published_manifest(&self, reference: &ArtifactReference) -> ArtifactResult<Vec<u8>> {
-        let state = self.state.read().await;
+        let state = self.state.read().await.map_err(boundary)?;
         let attempt = state.artifacts.attempt(reference.identity())?;
         if attempt.phase != Phase::Published || attempt.reference.as_ref() != Some(reference) {
             return Err(conflict());
@@ -263,7 +263,7 @@ impl ArtifactStore for MemoryStorage {
         identity: &ArtifactIdentity,
         ordinal: u32,
     ) -> ArtifactResult<Option<Vec<u8>>> {
-        let state = self.state.read().await;
+        let state = self.state.read().await.map_err(boundary)?;
         let attempt = state.artifacts.attempt(identity)?;
         attempt.readable()?;
         Ok(attempt
@@ -272,7 +272,7 @@ impl ArtifactStore for MemoryStorage {
             .map(|bytes| bytes.as_ref().clone()))
     }
     async fn publish(&self, proof: &VerifiedArtifact) -> ArtifactResult<ArtifactReference> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await.map_err(boundary)?;
         if state
             .artifacts
             .attempt(proof.manifest().identity())?
@@ -284,7 +284,7 @@ impl ArtifactStore for MemoryStorage {
         state.artifacts.publish(proof)
     }
     async fn abort(&self, identity: &ArtifactIdentity) -> ArtifactResult<()> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await.map_err(boundary)?;
         let attempt = state.artifacts.attempt_mut(identity)?;
         if attempt.phase == Phase::Published {
             return Err(conflict());
@@ -295,7 +295,7 @@ impl ArtifactStore for MemoryStorage {
         Ok(())
     }
     async fn cleanup(&self) -> ArtifactResult<u32> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await.map_err(boundary)?;
         let now = Utc::now();
         let candidate = state
             .artifacts
@@ -390,7 +390,7 @@ impl TaskArtifactStore for MemoryStorage {
         reservation: ArtifactReservation,
         output_expires_at: DateTime<Utc>,
     ) -> ArtifactResult<()> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await.map_err(boundary)?;
         let task = state
             .tasks
             .get(&lease.task_id().id())

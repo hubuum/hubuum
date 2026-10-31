@@ -81,6 +81,103 @@ async fn successful_nonempty_http_json_response_confirms_settlement() {
     assert!(state.is_settled());
 }
 
+#[actix_web::test]
+async fn streaming_body_inherits_the_request_permit_after_authority_changes() {
+    let storage = StorageHandle::memory();
+    let registration = storage.register_runtime().await.unwrap();
+    let storage = storage.with_runtime_owner(registration.owner());
+    let expected = storage.admit_application_work().await.unwrap();
+    let permissions = Arc::new(LocalPermissionBackend::new(storage.clone(), "admin".into()));
+    let body_storage = storage.clone();
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(Data::new(AppContext::new(storage.clone(), permissions)))
+            .wrap(from_fn(|request, next| {
+                reject_with_activity(
+                    request,
+                    next,
+                    || MaintenanceActivityGuard::isolated().1,
+                    HttpWorkGuard::isolated().1,
+                )
+            }))
+            .route(
+                "/",
+                web::get().to(move || {
+                    let storage = body_storage.clone();
+                    let expected = expected.clone();
+                    async move {
+                        assert_eq!(storage.admit_application_work().await.unwrap(), expected);
+                        HttpResponse::Ok().streaming(stream::once(async move {
+                            let scope = storage.current_execution_scope();
+                            assert_eq!(scope.application_access_override(), Some(&expected));
+                            // A nested operation must inherit, rather than recapture
+                            // the now-quarantined application's current authority.
+                            assert_eq!(storage.admit_application_work().await.unwrap(), expected);
+                            Ok::<_, Error>(Bytes::from_static(b"scoped"))
+                        }))
+                    }
+                }),
+            ),
+    )
+    .await;
+    let response =
+        actix_test::call_service(&app, actix_test::TestRequest::get().to_request()).await;
+    let before = storage.read_deletion_control().await.unwrap();
+    storage
+        .commit_deletion_control(
+            before
+                .record_intent(
+                    Uuid::new_v4(),
+                    DeletionSubject::Version {
+                        identity: hubuum_domain::VersionIdentity::generate(),
+                    },
+                    vec![Uuid::new_v4()],
+                )
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(storage.admit_application_work().await.is_err());
+
+    assert_eq!(to_bytes(response.into_body()).await.unwrap(), "scoped");
+}
+
+#[rstest]
+#[case::health("/healthz")]
+#[case::readiness("/readyz")]
+#[case::metrics("/metrics")]
+#[actix_web::test]
+async fn operational_request_cancellation_does_not_block_application_drain(
+    #[case] path: &'static str,
+) {
+    let storage = StorageHandle::memory();
+    let permissions = Arc::new(LocalPermissionBackend::new(storage.clone(), "admin".into()));
+    let state = Arc::new(HttpWorkState::default());
+    let request_state = Arc::clone(&state);
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(Data::new(AppContext::new(storage, permissions)))
+            .wrap(from_fn(move |request, next| {
+                reject_with_activity(
+                    request,
+                    next,
+                    || panic!("operational polling must not acquire drain activity"),
+                    HttpWorkGuard::begin_with_state(Arc::clone(&request_state)),
+                )
+            }))
+            .route(path, web::get().to(pending::<HttpResponse>)),
+    )
+    .await;
+    let mut request = Box::pin(actix_test::call_service(
+        &app,
+        actix_test::TestRequest::get().uri(path).to_request(),
+    ));
+    assert!(request.as_mut().now_or_never().is_none());
+    drop(request);
+
+    assert!(state.is_settled());
+}
+
 #[rstest]
 #[case::normal(false, 200)]
 #[case::quarantined(true, 503)]

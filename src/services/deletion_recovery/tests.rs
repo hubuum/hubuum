@@ -72,6 +72,71 @@ impl Drop for Fixture {
     }
 }
 
+enum StatusScenario {
+    Protected,
+    Pending,
+    RolledBack,
+    Unavailable,
+    WrongLineage,
+}
+
+#[rstest]
+#[case::protected(StatusScenario::Protected, "protected", "none")]
+#[case::pending(StatusScenario::Pending, "pending", "publish_checkpoint")]
+#[case::rollback(StatusScenario::RolledBack, "blocked", "recover_control")]
+#[case::unavailable(StatusScenario::Unavailable, "blocked", "restore_independent_evidence")]
+#[case::wrong_lineage(StatusScenario::WrongLineage, "blocked", "resolve_control_lineage")]
+#[tokio::test]
+async fn deletion_status_reports_bounded_recovery_guidance(
+    #[case] scenario: StatusScenario,
+    #[case] protection: &str,
+    #[case] next_action: &str,
+) {
+    let fixture = Fixture::new().await;
+    let storage = match scenario {
+        StatusScenario::Protected => fixture.storage.clone(),
+        StatusScenario::Pending => {
+            let state = fixture.storage.read_deletion_control().await.unwrap();
+            let change = state
+                .record_intent(
+                    Uuid::new_v4(),
+                    DeletionSubject::Version {
+                        identity: serde_json::from_value(serde_json::json!(Uuid::new_v4()))
+                            .unwrap(),
+                    },
+                    vec![Uuid::new_v4()],
+                )
+                .unwrap();
+            fixture
+                .storage
+                .commit_deletion_control(change)
+                .await
+                .unwrap();
+            fixture.storage.clone()
+        }
+        StatusScenario::RolledBack => {
+            fixture.checkpoint_ahead_of_primary().await;
+            fixture.storage.clone()
+        }
+        StatusScenario::Unavailable => {
+            fs::remove_file(fixture.directory.join("HEAD")).unwrap();
+            fixture.storage.clone()
+        }
+        StatusScenario::WrongLineage => StorageHandle::memory(),
+    };
+    let report = status(&storage, &fixture.directory, &fixture.key)
+        .await
+        .unwrap();
+    let value = serde_json::to_value(report).unwrap();
+    assert_eq!(
+        (&value["recovery_protection"], &value["next_action"]),
+        (
+            &serde_json::json!(protection),
+            &serde_json::json!(next_action)
+        ),
+    );
+}
+
 #[tokio::test]
 async fn recovery_imports_missing_authority_without_releasing_quarantine() {
     let fixture = Fixture::new().await;
@@ -225,4 +290,122 @@ async fn recovered_authority_restricts_http_exposure(#[case] path: &str, #[case]
     .await;
     let response = test::call_service(&app, test::TestRequest::get().uri(path).to_request()).await;
     assert_eq!(response.status().as_u16(), status);
+}
+
+#[tokio::test]
+async fn offline_recovery_requires_process_exit_and_revokes_old_runtime_access() {
+    let fixture = Fixture::new().await;
+    let permit = require_runtime_permit(&fixture.storage, &fixture.options())
+        .await
+        .unwrap();
+    let registration = fixture
+        .storage
+        .register_runtime_isolated(permit.isolation_domain())
+        .await
+        .unwrap();
+    let bound = fixture
+        .storage
+        .clone()
+        .with_runtime_owner(registration.owner());
+    assert!(bound.admit_application_work().await.is_ok());
+    assert!(
+        recover(&fixture.storage, &fixture.directory, &fixture.key)
+            .await
+            .is_err()
+    );
+    // Model OS release after process death; protected registration survives.
+    drop(permit);
+    recover(&fixture.storage, &fixture.directory, &fixture.key)
+        .await
+        .unwrap();
+    reapply(&fixture.storage, &fixture.directory, &fixture.key)
+        .await
+        .unwrap();
+    assert!(bound.admit_application_work().await.is_err());
+}
+
+#[tokio::test]
+async fn unknown_recovered_copy_cannot_be_released_by_reapplication() {
+    let fixture = Fixture::new().await;
+    fixture.checkpoint_ahead_of_primary().await;
+    recover(&fixture.storage, &fixture.directory, &fixture.key)
+        .await
+        .unwrap();
+    assert!(
+        reapply(&fixture.storage, &fixture.directory, &fixture.key)
+            .await
+            .is_err()
+    );
+    assert!(
+        require_runtime_permit(&fixture.storage, &fixture.options())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn abandoned_runtime_lifetime_keeps_process_isolation_until_exit() {
+    let fixture = Fixture::new().await;
+    let permit = require_runtime_permit(&fixture.storage, &fixture.options())
+        .await
+        .unwrap();
+    drop(permit.into_runtime_lifetime());
+    assert!(
+        runtime_isolation(&fixture.directory, &fixture.key, true)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn explicit_settled_runtime_lifetime_releases_process_isolation() {
+    let fixture = Fixture::new().await;
+    let permit = require_runtime_permit(&fixture.storage, &fixture.options())
+        .await
+        .unwrap();
+    permit.into_runtime_lifetime().release();
+    assert!(
+        runtime_isolation(&fixture.directory, &fixture.key, true)
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn restore_executor_requires_latest_independent_authority_before_replay() {
+    let fixture = Fixture::new().await;
+    fixture.checkpoint_ahead_of_primary().await;
+    assert!(
+        require_control_runtime_lifetime(&fixture.storage, &fixture.options())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn restore_executor_can_hold_isolation_while_application_is_quarantined() {
+    let fixture = Fixture::new().await;
+    fixture.checkpoint_ahead_of_primary().await;
+    recover(&fixture.storage, &fixture.directory, &fixture.key)
+        .await
+        .unwrap();
+    let lifetime = require_control_runtime_lifetime(&fixture.storage, &fixture.options())
+        .await
+        .unwrap();
+    assert!(
+        require_runtime_permit(&fixture.storage, &fixture.options())
+            .await
+            .is_err()
+    );
+    assert!(
+        recover(&fixture.storage, &fixture.directory, &fixture.key)
+            .await
+            .is_err()
+    );
+    lifetime.release();
+    assert!(
+        recover(&fixture.storage, &fixture.directory, &fixture.key)
+            .await
+            .is_ok()
+    );
 }

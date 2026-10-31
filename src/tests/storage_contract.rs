@@ -2147,21 +2147,10 @@ async fn postgres_rolls_back_task_finalization_at_an_injected_failure() {
         )
         .await
         .expect("task rollback fixture should be created");
-    let claim_token = uuid::Uuid::new_v4();
-    hubuum_storage_postgres::test_support::assign_task_lease(
-        pool.get_ref(),
-        task.id(),
-        StorageTaskStatus::Validating,
-        claim_token,
-        chrono::Utc::now().naive_utc()
-            + chrono::Duration::try_minutes(1).expect("valid failpoint lease"),
-    )
-    .await
-    .expect("task rollback fixture should receive a live claim");
-    let lease = StorageTaskLease::new(
-        task.id(),
-        StorageTaskClaimToken::new(claim_token.to_string()),
-    );
+    let claim = hubuum_storage_postgres::test_support::claim_task_by_id(pool.get_ref(), task.id())
+        .await
+        .expect("task rollback fixture should receive a live fenced claim");
+    let lease = claim.lease().clone();
 
     let error = PostgresFaultController::failing(PostgresFaultPoint::TaskFinalizeAfterEvent)
         .run(
@@ -3562,6 +3551,29 @@ async fn every_available_storage_backend_supplies_execution_context() {
             .await;
 
         assert_eq!(AtomicUsize::load(evaluations.as_ref(), Ordering::SeqCst), 4);
+    }
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_restores_scope_after_synchronous_polling() {
+    for backend in available_backends() {
+        backend
+            .run_in_scope(
+                StorageExecutionScope::default().with_call_site(StorageCallSite::HttpRequest),
+                async {
+                    let polled = backend.run_in_scope_sync(
+                        StorageExecutionScope::default()
+                            .with_call_site(StorageCallSite::TaskWorker),
+                        || backend.current_execution_scope().call_site_override(),
+                    );
+                    assert_eq!(polled, Some(StorageCallSite::TaskWorker));
+                    assert_eq!(
+                        backend.current_execution_scope().call_site_override(),
+                        Some(StorageCallSite::HttpRequest)
+                    );
+                },
+            )
+            .await;
     }
 }
 
@@ -6419,21 +6431,11 @@ async fn every_available_storage_backend_supplies_computed_fields() {
             .expect("rebuild request should identify its task");
         let lease = match &environment {
             BackendTestEnvironment::Postgres { pool } => {
-                let claim_token = uuid::Uuid::new_v4();
-                hubuum_storage_postgres::test_support::assign_task_lease(
-                    pool,
-                    rebuild_task_id,
-                    StorageTaskStatus::Validating,
-                    claim_token,
-                    chrono::Utc::now().naive_utc()
-                        + chrono::Duration::try_minutes(1).expect("valid compatibility lease"),
-                )
-                .await
-                .expect("compatibility rebuild should receive a live backend claim");
-                StorageTaskLease::new(
-                    rebuild_task_id,
-                    StorageTaskClaimToken::new(claim_token.to_string()),
-                )
+                hubuum_storage_postgres::test_support::claim_task_by_id(pool, rebuild_task_id)
+                    .await
+                    .expect("compatibility rebuild should receive a live fenced claim")
+                    .lease()
+                    .clone()
             }
             BackendTestEnvironment::Memory { .. } => backend
                 .claim_next_task(

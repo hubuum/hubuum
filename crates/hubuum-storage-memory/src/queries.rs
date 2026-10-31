@@ -9,7 +9,7 @@ impl CatalogStorage for MemoryStorage {
     ) -> Result<StoragePage<StorageCollection>, StorageError> {
         let (options, visibility) = query.into_parts();
         let filters = ResourceFilters::new(&options)?;
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let rows = state
             .collections
             .values()
@@ -34,7 +34,7 @@ impl CatalogStorage for MemoryStorage {
     ) -> Result<StoragePage<StorageClassWithCollection>, StorageError> {
         let (options, visibility) = query.into_parts();
         let filters = ResourceFilters::new(&options)?;
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let rows = state
             .classes
             .values()
@@ -55,7 +55,7 @@ impl CatalogStorage for MemoryStorage {
     ) -> Result<StoragePage<StorageObject>, StorageError> {
         let (options, visibility) = query.into_parts();
         let filters = ObjectFilters::new(options.filters())?;
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let rows = state
             .objects
             .values()
@@ -78,7 +78,7 @@ impl ComputedFieldStorage for MemoryStorage {
         &self,
         class_id: ClassId,
     ) -> Result<StorageClassComputationState, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         if let Some(computation_state) = state.computation_states.get(&class_id.id()) {
             return Ok(computation_state.clone());
         }
@@ -95,7 +95,7 @@ impl ComputedFieldStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .computed_fields
             .values()
             .filter(|definition| {
@@ -114,7 +114,7 @@ impl ComputedFieldStorage for MemoryStorage {
         let rows = self
             .state
             .read()
-            .await
+            .await?
             .computed_fields
             .values()
             .filter(|definition| {
@@ -132,7 +132,7 @@ impl ComputedFieldStorage for MemoryStorage {
     ) -> Result<StorageComputedFieldDefinition, StorageError> {
         self.state
             .read()
-            .await
+            .await?
             .computed_fields
             .get(&definition_id.id())
             .cloned()
@@ -149,7 +149,7 @@ impl ComputedFieldStorage for MemoryStorage {
         request: StorageSharedComputedFieldCreate,
     ) -> Result<StorageMutationOutcome<StorageComputedFieldMutation>, StorageError> {
         let (class_id, collection_id, actor_id, input, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let class = state.classes.get(&class_id.id()).cloned().ok_or_else(|| {
             StorageError::not_found(format!("Class {} was not found", class_id.id()))
         })?;
@@ -229,7 +229,7 @@ impl ComputedFieldStorage for MemoryStorage {
     ) -> Result<StorageMutationOutcome<StorageComputedFieldMutation>, StorageError> {
         let (class_id, collection_id, definition_id, actor_id, patch, context) =
             request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let class = state.classes.get(&class_id.id()).ok_or_else(|| {
             StorageError::not_found(format!("Class {} was not found", class_id.id()))
         })?;
@@ -285,7 +285,7 @@ impl ComputedFieldStorage for MemoryStorage {
         request: StorageSharedComputedFieldDelete,
     ) -> Result<StorageMutationOutcome<StorageClassComputationState>, StorageError> {
         let (class_id, collection_id, definition_id, _, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let class = state.classes.get(&class_id.id()).cloned().ok_or_else(|| {
             StorageError::not_found(format!("Class {} was not found", class_id.id()))
         })?;
@@ -339,7 +339,7 @@ impl ComputedFieldStorage for MemoryStorage {
         request: StoragePersonalComputedFieldCreate,
     ) -> Result<StorageMutationOutcome<StorageComputedFieldDefinition>, StorageError> {
         let (class_id, owner_id, input, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         if !state.classes.contains_key(&class_id.id()) {
             return Err(StorageError::not_found(format!(
                 "Class {} was not found",
@@ -396,7 +396,7 @@ impl ComputedFieldStorage for MemoryStorage {
         request: StoragePersonalComputedFieldUpdate,
     ) -> Result<StorageMutationOutcome<StorageComputedFieldDefinition>, StorageError> {
         let (owner_id, definition_id, patch, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let current = state
             .computed_fields
             .get(&definition_id.id())
@@ -425,7 +425,7 @@ impl ComputedFieldStorage for MemoryStorage {
         request: StoragePersonalComputedFieldDelete,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let (owner_id, definition_id, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let Some(definition) = state.computed_fields.get(&definition_id.id()).cloned() else {
             return Ok(StorageMutationOutcome::unchanged(()));
         };
@@ -452,7 +452,7 @@ impl ComputedFieldStorage for MemoryStorage {
     ) -> Result<StorageClassComputationState, StorageError> {
         let (class_id, collection_id, actor_id) = request.into_parts();
         let actor_id = actor_id.unwrap_or_else(|| PrincipalId::new(1).expect("admin id is valid"));
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let class = state.classes.get(&class_id.id()).cloned().ok_or_else(|| {
             StorageError::not_found(format!("Class {} was not found", class_id.id()))
         })?;
@@ -504,6 +504,7 @@ impl ComputedFieldStorage for MemoryStorage {
             initiator_principal_id: Some(actor_id),
             trace_link: None,
             claim_token: None,
+            execution_fence: None,
         };
         let task = record.projection()?;
         state.store_task(task_id.id(), record)?;
@@ -534,8 +535,8 @@ impl ComputedFieldStorage for MemoryStorage {
         &self,
         lease: StorageTaskLease,
     ) -> Result<StorageTask, StorageError> {
-        let mut state = self.state.write().await;
-        state.ensure_task_execution_allowed()?;
+        let mut state = self.state.write().await?;
+        state.ensure_task_lease_current(&lease)?;
         let class_id = state
             .computed_rebuild_tasks
             .get(&lease.task_id().id())
@@ -600,7 +601,7 @@ impl ComputedObjectStorage for MemoryStorage {
             })
             .map(|(computed, filter)| Ok((computed, StringFilter::new(filter)?)))
             .collect::<Result<Vec<_>, StorageError>>()?;
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut rows = state
             .objects
             .values()
@@ -670,7 +671,7 @@ impl ComputedObjectStorage for MemoryStorage {
         query: StorageComputedObjectEnrichmentQuery,
     ) -> Result<Vec<StorageComputedObject>, StorageError> {
         let (objects, personal_owner_id) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         objects
             .into_iter()
             .map(|object| computed_object(&state, object, personal_owner_id))
@@ -687,7 +688,7 @@ impl ObjectAggregateStorage for MemoryStorage {
     ) -> Result<StorageObjectAggregatePage, StorageError> {
         let filters = ObjectFilters::new(query.options().filters())?;
         let (collection_name, mut objects) = {
-            let state = self.state.read().await;
+            let state = self.state.read().await?;
             let collection = state
                 .collections
                 .get(&query.target().collection_id().id())
@@ -755,7 +756,7 @@ impl ObjectAggregateStorage for MemoryStorage {
             measures: Vec<Vec<f64>>,
         }
 
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let dimension_value = |object: &StorageObject,
                                dimension: &StorageObjectAggregateDimension|
          -> serde_json::Value {
@@ -1007,7 +1008,7 @@ impl RelationQueryStorage for MemoryStorage {
         let rows = self
             .state
             .read()
-            .await
+            .await?
             .class_relations
             .values()
             .filter(|relation| filters.matches(relation.metadata().id().id(), "", ""))
@@ -1024,7 +1025,7 @@ impl RelationQueryStorage for MemoryStorage {
         let rows = self
             .state
             .read()
-            .await
+            .await?
             .object_relations
             .values()
             .cloned()
@@ -1041,7 +1042,7 @@ impl RelationQueryStorage for MemoryStorage {
         let rows = self
             .state
             .read()
-            .await
+            .await?
             .class_relations
             .values()
             .filter(|relation| {
@@ -1061,7 +1062,7 @@ impl RelationQueryStorage for MemoryStorage {
         let rows = self
             .state
             .read()
-            .await
+            .await?
             .object_relations
             .values()
             .filter(|relation| {
@@ -1082,7 +1083,7 @@ impl RelationQueryStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .class_relations
             .values()
             .filter(|relation| {
@@ -1103,7 +1104,7 @@ impl RelationQueryStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .class_relations
             .values()
             .filter(|relation| {
@@ -1124,7 +1125,7 @@ impl RelationQueryStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .object_relations
             .values()
             .filter(|relation| {
@@ -1148,7 +1149,7 @@ impl RelationQueryStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .object_relations
             .values()
             .filter(|relation| {
@@ -1168,7 +1169,7 @@ impl RelationQueryStorage for MemoryStorage {
         let from_filters = ResourceFilters::new(&regex_options.from)?;
         let to_filters = ResourceFilters::new(&regex_options.to)?;
         let root_id = ClassId::from(root_id);
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let root = state
             .classes
             .get(&root_id.id())
@@ -1227,7 +1228,7 @@ impl RelationQueryStorage for MemoryStorage {
         let from_filters = ObjectFilters::new(regex_options.from.filters())?;
         let to_filters = ObjectFilters::new(regex_options.to.filters())?;
         let root_id = ObjectId::from(root_id);
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let root = state
             .objects
             .get(&root_id.id())
@@ -1280,7 +1281,7 @@ impl RelationQueryStorage for MemoryStorage {
         if limit <= 0 {
             return Ok(Vec::new());
         }
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut rows = Vec::new();
         for root_id in root_ids {
             let Some(root) = state.objects.get(&root_id.id()) else {
@@ -1340,7 +1341,7 @@ impl RelationQueryStorage for MemoryStorage {
         if per_root_cap <= 0 {
             return Ok(Vec::new());
         }
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut rows = Vec::new();
         for root_id in root_ids {
             let mut root_count = 0_i32;
@@ -1385,7 +1386,7 @@ impl UnifiedSearchStorage for MemoryStorage {
         query: StorageUnifiedSearchQuery,
     ) -> Result<StorageCandidatePage<StorageUnifiedSearchCandidate<StorageCollection>>, StorageError>
     {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut ranked = state
             .collections
             .values()
@@ -1435,7 +1436,7 @@ impl UnifiedSearchStorage for MemoryStorage {
         StorageCandidatePage<StorageUnifiedSearchCandidate<StorageClassWithCollection>>,
         StorageError,
     > {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut ranked = state
             .classes
             .values()
@@ -1490,7 +1491,7 @@ impl UnifiedSearchStorage for MemoryStorage {
         query: StorageUnifiedSearchQuery,
     ) -> Result<StorageCandidatePage<StorageUnifiedSearchCandidate<StorageObject>>, StorageError>
     {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut ranked = state
             .objects
             .values()

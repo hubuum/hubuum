@@ -17,7 +17,9 @@ use crate::errors::ApiError;
 use crate::models::MaintenanceState;
 use crate::permissions::AppContext;
 use crate::restores::{MaintenanceActivityGuard, current_maintenance_state};
-use crate::storage::{StorageCallSite, with_storage_call_site};
+use crate::storage::{
+    ExecutionStorage, StorageCallSite, StorageExecutionScope, StorageHandle, with_storage_call_site,
+};
 
 static HTTP_WORK: LazyLock<Arc<HttpWorkState>> =
     LazyLock::new(|| Arc::new(HttpWorkState::default()));
@@ -162,6 +164,34 @@ impl MessageBody for MaintenanceBody {
     }
 }
 
+/// Preserve admission's exact application permit when a response performs lazy
+/// storage work after its handler has returned.
+struct ExecutionBody {
+    body: BoxBody,
+    storage: StorageHandle,
+    scope: StorageExecutionScope,
+}
+
+impl MessageBody for ExecutionBody {
+    type Error = <BoxBody as MessageBody>::Error;
+
+    fn size(&self) -> BodySize {
+        self.body.size()
+    }
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<Option<Result<Bytes, Self::Error>>> {
+        let Self {
+            body,
+            storage,
+            scope,
+        } = self.get_mut();
+        storage.run_in_scope_sync(scope.clone(), || body.as_pin_mut().poll_next(context))
+    }
+}
+
 async fn protect_response<B: MessageBody + 'static>(
     activity: Option<MaintenanceActivityGuard>,
     http_work: HttpWorkGuard,
@@ -202,6 +232,7 @@ async fn reject_with_activity(
     let storage = AppContext::from_http_request(req.request())?
         .backend()
         .clone();
+    let work_storage = storage.clone();
     with_storage_call_site(&storage, StorageCallSite::HttpRequest, async move {
         let metrics_path = req
             .app_data::<Data<RunningConfig>>()
@@ -211,12 +242,36 @@ async fn reject_with_activity(
         // polling must not keep the restore operation waiting for itself.
         let activity =
             (!allowed && !initiates_restore(req.method(), req.path())).then(begin_activity);
-        protect_response(activity, http_work, async move {
+        let requires_admission = !allowed
+            || (req.path().starts_with("/api/v1/restores/") && req.path().ends_with("/status"));
+        let http_work = if requires_admission {
+            http_work
+        } else {
+            // Health and numeric operational telemetry do not expose resource
+            // payloads. Polling them must not prevent the application barrier.
+            http_work.complete();
+            HttpWorkGuard { state: None }
+        };
+        let scope = if requires_admission {
+            match work_storage.admit_application_work().await {
+                Ok(permit) => Some(
+                    work_storage
+                        .current_execution_scope()
+                        .with_application_access(permit),
+                ),
+                Err(error) => {
+                    http_work.complete();
+                    let response = ApiError::from(error).error_response();
+                    return Ok(req.into_response(response).map_into_boxed_body());
+                }
+            }
+        } else {
+            None
+        };
+        let response = protect_response(activity, http_work, async move {
             // Restore status remains available during restore draining, but must
             // not bypass deletion recovery quarantine.
-            if !allowed
-                || (req.path().starts_with("/api/v1/restores/") && req.path().ends_with("/status"))
-            {
+            if requires_admission {
                 // Activity begins before the maintenance read. Confirmation
                 // owns draining and cannot wait on itself, but its HTTP work
                 // must still settle before offline cleanup can be authorized.
@@ -238,8 +293,21 @@ async fn reject_with_activity(
             next.call(req)
                 .await
                 .map(ServiceResponse::map_into_boxed_body)
-        })
-        .await
+        });
+        match scope {
+            Some(scope) => {
+                let response = work_storage.run_in_scope(scope.clone(), response).await?;
+                Ok(response.map_body(|_, body| {
+                    ExecutionBody {
+                        body,
+                        storage: work_storage,
+                        scope,
+                    }
+                    .boxed()
+                }))
+            }
+            None => response.await,
+        }
     })
     .await
 }

@@ -17,6 +17,7 @@ fn settled_shutdown() -> RuntimeShutdown {
         templates: Ok(()),
         active_work: 0,
         http_settled: true,
+        application_settled: true,
     }
 }
 
@@ -27,6 +28,7 @@ enum UnsettledWork {
     TemplateFailure,
     ActiveRequest,
     AbandonedHttp,
+    AbandonedApplication,
 }
 
 #[rstest]
@@ -36,6 +38,7 @@ enum UnsettledWork {
 #[case::template_failure(UnsettledWork::TemplateFailure)]
 #[case::active_request(UnsettledWork::ActiveRequest)]
 #[case::abandoned_http(UnsettledWork::AbandonedHttp)]
+#[case::abandoned_application(UnsettledWork::AbandonedApplication)]
 #[actix_web::test]
 async fn uncertain_shutdown_never_starts_registration_removal(#[case] work: UnsettledWork) {
     let mut shutdown = settled_shutdown();
@@ -48,6 +51,7 @@ async fn uncertain_shutdown_never_starts_registration_removal(#[case] work: Unse
         }
         UnsettledWork::ActiveRequest => shutdown.active_work = 1,
         UnsettledWork::AbandonedHttp => shutdown.http_settled = false,
+        UnsettledWork::AbandonedApplication => shutdown.application_settled = false,
     }
     let removed = Cell::new(false);
 

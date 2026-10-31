@@ -8,7 +8,7 @@ impl MemoryStorage {
         references: &mut BTreeMap<String, MemoryImportReference>,
     ) -> Result<Option<ResourceRevision>, StorageError> {
         let parts = input.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let existing = state.identity_scope_by_name(&parts.name).cloned();
         if let Some(current) = &existing {
             assert_import_revision(parts.condition, current.revision())?;
@@ -74,7 +74,7 @@ impl MemoryStorage {
                 references,
             )
             .await?;
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let existing = state
             .groups
             .values()
@@ -159,7 +159,7 @@ impl MemoryStorage {
                 references,
             )
             .await?;
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let existing = state
             .memberships
             .get(&(principal_id.id(), group_id.id()))

@@ -7,7 +7,7 @@ application data.
 
 Hubuum can create versioned full-system logical backups and perform a staged,
 destructive system restore. Backup generation uses one PostgreSQL
-`REPEATABLE READ, READ ONLY` transaction, so every section in a document is
+`REPEATABLE READ` transaction with the shared deletion-authority lock, so every section in a document is
 read from the same database snapshot.
 
 Backup/restore is the disaster-recovery path: it preserves identifiers and
@@ -353,7 +353,8 @@ fails the backup with a size/resource-limit error; no partial artifact is stored
 or written. Diagnostics include scanned rows and retained logical row counts and
 bytes, without row contents.
 
-PostgreSQL uses one repeatable-read, read-only transaction and fetches one source
+PostgreSQL uses one repeatable-read snapshot transaction, holds the shared
+deletion-authority lock through capture, and fetches one source
 row at a time from cursors ordered by primary keys. Excluded history rows still
 consume the work budget. At most one additional row is fetched to detect that
 the row ceiling would be exceeded; that row is never retained. Eligibility uses indexed task/event lookups instead of

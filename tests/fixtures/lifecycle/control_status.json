@@ -1,0 +1,22 @@
+{
+  "format": 1,
+  "control_revision": 1,
+  "checkpoint_revision": 0,
+  "recovery_protection": "pending",
+  "block_reason": null,
+  "access_restricted": true,
+  "next_action": "publish_checkpoint",
+  "intents": [
+    {
+      "intent": "bcdf80ed-4ba2-435a-ab11-db89ead89a33",
+      "generation": 1,
+      "recovery_protection": "pending",
+      "pending_copies": 1,
+      "blocked_copies": 0,
+      "recorded_removed_copies": 0,
+      "unbound_copies": 0,
+      "confirmed_managed_scope_completion": false,
+      "next_action": "publish_checkpoint"
+    }
+  ]
+}

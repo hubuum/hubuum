@@ -6,7 +6,7 @@ use hubuum_domain::{JsonSchemaError, JsonSchemaErrorKind, PositiveIdError, Resou
 use hubuum_events_core::{AuditDocumentError, EventIdentifierError};
 use hubuum_storage_core::{
     StorageCandidatePage, StorageCandidatePageLimit, StorageError, StorageErrorKind, StoragePage,
-    TaskCapacityRejection,
+    StorageValidationError, TaskCapacityRejection,
 };
 use hubuum_task_core::TaskStopReason;
 use tracing::{debug, error};
@@ -187,6 +187,12 @@ where
     E: fmt::Debug,
 {
     result.map_err(|error| PostgresStorageError::invalid_persisted_value(projection, error))
+}
+
+impl From<StorageValidationError> for PostgresStorageError {
+    fn from(error: StorageValidationError) -> Self {
+        Self::validation_failed(error.to_string())
+    }
 }
 
 impl From<JsonSchemaError> for PostgresStorageError {

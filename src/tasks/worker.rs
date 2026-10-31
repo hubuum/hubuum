@@ -23,7 +23,7 @@ use crate::observability::{metrics, tracing as telemetry};
 #[cfg(test)]
 use crate::permissions::LocalPermissionBackend;
 use crate::permissions::{AppContext, require_unscoped_runtime_admin};
-use crate::restores::{MaintenanceActivityGuard, current_maintenance_state};
+use crate::restores::{MaintenanceActivityGuard, track_application_completion};
 use crate::services::authentication::ExecutionPrincipal;
 use crate::services::exports::execute_export_task;
 use crate::services::tasks::{
@@ -31,8 +31,9 @@ use crate::services::tasks::{
     purge_expired_export_outputs, recover_expired_task_leases, renew_task_lease,
 };
 use crate::storage::{
-    StorageCallSite, StorageNotification, spawn_storage_notification_listener, storage_handle,
-    with_mutation_provenance, with_storage_call_site, with_storage_call_site_send,
+    ExecutionStorage, StorageCallSite, StorageNotification, spawn_storage_notification_listener,
+    storage_handle, with_mutation_provenance, with_storage_call_site, with_storage_call_site_send,
+    with_storage_execution_scope_send,
 };
 
 use super::TaskWorkerSettings;
@@ -288,15 +289,32 @@ async fn process_one_task_with_settings(
     shutdown: Option<&ShutdownSignal>,
     backup_settings: &BackupSettings,
 ) -> Result<bool, ApiError> {
+    let storage = context.backend();
     let _activity = MaintenanceActivityGuard::begin();
-    if !current_maintenance_state(context.backend())
+    let (permit, maintenance) = storage
+        .admit_application_work_with_maintenance()
         .await?
-        .is_normal()
-    {
+        .into_parts();
+    if !maintenance.is_normal() {
         metrics::task_worker_iteration("idle");
         return Ok(false);
     }
+    let scope = storage
+        .current_execution_scope()
+        .with_application_access(permit);
+    // Keep dispatch boxed before completion/scope wrappers: its full future
+    // exceeds a normal worker stack even when the queue is empty.
+    let work = Box::pin(process_admitted_task(context, shutdown, backup_settings));
+    storage
+        .run_in_scope(scope, track_application_completion(work))
+        .await
+}
 
+async fn process_admitted_task(
+    context: &AppContext,
+    shutdown: Option<&ShutdownSignal>,
+    backup_settings: &BackupSettings,
+) -> Result<bool, ApiError> {
     maybe_recover_expired_task_leases(context).await?;
 
     if let Err(error) = maybe_cleanup_expired_task_outputs(context).await {
@@ -355,10 +373,10 @@ async fn process_one_task_with_settings(
                         _ = shutdown.requested() => Err(ApiError::ServiceUnavailable(
                             "Task interrupted by graceful server shutdown".to_string(),
                         )),
-                        result = super::control::execute(context, &task, settings.execution_limit(task_kind_from_db(&task.kind)?), process_claimed_task(context, &task, backup_settings)) => result,
+                        result = execute_with_control(context, &task, backup_settings, settings) => result,
                     }
                 }
-                None => super::control::execute(context, &task, settings.execution_limit(task_kind_from_db(&task.kind)?), process_claimed_task(context, &task, backup_settings)).await,
+                None => execute_with_control(context, &task, backup_settings, settings).await,
             }
         };
         let mut ownership_lost = false;
@@ -490,6 +508,9 @@ fn start_task_lease_heartbeat(
     let settings = task_worker_settings();
     let task_id = task.id;
     let lease = task.lease().clone();
+    // The heartbeat runs on a separate runtime, whose task locals do not inherit
+    // the claim's captured authority and application incarnation.
+    let execution_scope = storage.current_execution_scope();
     Some(spawn_task_lease_monitor(
         task_id,
         settings,
@@ -497,11 +518,16 @@ fn start_task_lease_heartbeat(
         move || {
             let storage = storage.clone();
             let lease = lease.clone();
+            let execution_scope = execution_scope.clone();
             async move {
-                with_storage_call_site_send(
+                with_storage_execution_scope_send(
                     &storage,
-                    StorageCallSite::TaskLease,
-                    renew_task_lease(&storage, lease, settings.lease_duration()),
+                    execution_scope,
+                    with_storage_call_site_send(
+                        &storage,
+                        StorageCallSite::TaskLease,
+                        renew_task_lease(&storage, lease, settings.lease_duration()),
+                    ),
                 )
                 .await
             }
@@ -754,6 +780,23 @@ fn duration_since(timestamp: chrono::NaiveDateTime) -> Option<Duration> {
     (elapsed >= 0).then(|| Duration::from_millis(elapsed as u64))
 }
 
+async fn execute_with_control(
+    context: &AppContext,
+    task: &ClaimedTask,
+    backup_settings: &BackupSettings,
+    settings: TaskWorkerSettings,
+) -> Result<TaskStatus, ApiError> {
+    super::control::execute(
+        context,
+        task,
+        settings.execution_limit(task_kind_from_db(&task.kind)?),
+        // Keep the dispatch state on the heap before control adds its own
+        // admission, cancellation tracking and task-local scope wrappers.
+        Box::pin(process_claimed_task(context, task, backup_settings)),
+    )
+    .await
+}
+
 async fn process_claimed_task(
     context: &AppContext,
     task: &ClaimedTask,
@@ -818,6 +861,59 @@ async fn process_claimed_task(
 
 fn task_span_outcome(terminal_status: Option<TaskStatus>) -> &'static str {
     terminal_status.map(TaskStatus::as_str).unwrap_or("error")
+}
+
+#[cfg(test)]
+mod worker_future_tests {
+    use std::mem::size_of;
+    use std::sync::Arc;
+
+    use crate::storage::StorageHandle;
+
+    use super::*;
+
+    fn future_size<F: Future>(_: impl FnOnce() -> F) -> usize {
+        size_of::<F>()
+    }
+
+    fn execution_future_size<'a, F: Future>(_: impl FnOnce(&'a ClaimedTask) -> F) -> usize {
+        size_of::<F>()
+    }
+
+    #[test]
+    fn idle_iteration_runs_on_a_standard_worker_stack() {
+        let storage = StorageHandle::memory();
+        let context = AppContext::new(
+            storage.clone(),
+            Arc::new(LocalPermissionBackend::new(storage, "admin".into())),
+        );
+        let settings =
+            BackupSettings::new(1, StorageBackupBudget::new(1024 * 1024, 100).unwrap()).unwrap();
+        let iteration = future_size(|| process_one_task_with_settings(&context, None, &settings));
+        assert!(
+            iteration < 16 * 1024,
+            "worker iteration exceeds its future-size budget: {iteration} bytes"
+        );
+        let execution = execution_future_size(|task| {
+            execute_with_control(&context, task, &settings, task_worker_settings())
+        });
+        assert!(
+            execution < 16 * 1024,
+            "controlled execution exceeds its future-size budget: {execution} bytes"
+        );
+        let claimed = std::thread::Builder::new()
+            .name("task-worker-stack-regression".into())
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || {
+                actix_rt::System::new()
+                    .block_on(process_one_task_with_settings(&context, None, &settings))
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
+        assert!(!claimed, "the isolated queue is empty");
+    }
 }
 
 #[cfg(test)]

@@ -10,6 +10,8 @@ use uuid::Uuid;
 
 use crate::{StorageError, StorageIdentityResourceKind, StorageValidationError};
 
+mod application;
+pub use application::*;
 mod cleanup;
 pub use cleanup::*;
 #[cfg(test)]
@@ -374,6 +376,25 @@ impl DeletionControlState {
         })
     }
 
+    /// Adapter-only final transition after all retained decisions have been
+    /// reapplied to the current application. Even unchanged Removed outcomes
+    /// need a new revision so their reapplication gets a distinct checkpoint.
+    pub fn record_application_reapplication(
+        &self,
+    ) -> Result<DeletionControlChange, StorageValidationError> {
+        if self.intents.values().any(|intent| {
+            intent.bindings.len() != intent.copies.len() || !intent.is_physically_complete()
+        }) {
+            return Err(invalid(
+                "Unbound or incomplete deletion obligations prevent application reapplication",
+            ));
+        }
+        Ok(DeletionControlChange {
+            previous: self.clone(),
+            next: self.successor()?,
+        })
+    }
+
     fn successor(&self) -> Result<Self, StorageValidationError> {
         let mut next = self.clone();
         next.revision = next
@@ -509,11 +530,31 @@ impl DeletionRecoveryPosition {
 pub struct DeletionControlCapture {
     state: DeletionControlState,
     position: DeletionRecoveryPosition,
+    reapplication: Option<ApplicationReapplication>,
 }
 
 impl DeletionControlCapture {
     pub fn new(state: DeletionControlState, position: DeletionRecoveryPosition) -> Self {
-        Self { state, position }
+        Self {
+            state,
+            position,
+            reapplication: None,
+        }
+    }
+    pub fn with_reapplication(
+        mut self,
+        receipt: ApplicationReapplication,
+    ) -> Result<Self, StorageValidationError> {
+        if receipt.revision() != self.state.revision() {
+            return Err(invalid(
+                "Reapplication does not cover the captured authority revision",
+            ));
+        }
+        self.reapplication = Some(receipt);
+        Ok(self)
+    }
+    pub const fn reapplication(&self) -> Option<&ApplicationReapplication> {
+        self.reapplication.as_ref()
     }
     pub const fn state(&self) -> &DeletionControlState {
         &self.state
@@ -536,7 +577,49 @@ pub trait DeletionControlStorage: Send + Sync {
     async fn capture_deletion_control(&self) -> Result<DeletionControlCapture, StorageError>;
     /// Register before opening listeners or starting workers. A crashed or
     /// uncertain runtime remains registered; registrations never expire.
-    async fn register_runtime(&self) -> Result<RuntimeRegistration, StorageError>;
+    async fn register_runtime(&self) -> Result<RuntimeRegistration, StorageError> {
+        self.register_runtime_isolated(None).await
+    }
+    async fn register_runtime_isolated(
+        &self,
+        isolation: Option<RuntimeIsolationDomain>,
+    ) -> Result<RuntimeRegistration, StorageError>;
+    async fn capture_application_execution(
+        &self,
+        owner: Option<RuntimeOwner>,
+    ) -> Result<StorageExecutionPermit, StorageError>;
+    /// Admit a worker batch and observe maintenance using one consistent acquisition.
+    /// An ambient application permit must be validated and inherited, never refreshed.
+    async fn capture_application_execution_with_maintenance(
+        &self,
+        owner: Option<RuntimeOwner>,
+    ) -> Result<ApplicationWorkAdmission, StorageError>;
+    async fn read_application_control(&self) -> Result<ApplicationControlState, StorageError>;
+    async fn acknowledge_runtime_drain(
+        &self,
+        owner: RuntimeOwner,
+        fence: ApplicationFence,
+    ) -> Result<(), StorageError>;
+    /// Root must hold a durable independent checkpoint session covering expected.
+    async fn reapply_deletion_decisions(
+        &self,
+        expected: DeletionControlState,
+        fence: ApplicationFence,
+        checkpoint: DeletionCheckpointIdentity,
+    ) -> Result<ApplicationReapplication, StorageError>;
+    /// Root must have independently published and read back this exact receipt.
+    async fn release_application_exposure(
+        &self,
+        receipt: ApplicationReapplication,
+        checkpoint: DeletionCheckpointIdentity,
+    ) -> Result<(), StorageError>;
+    /// Root must hold actual exclusive process isolation for this exact domain.
+    /// Unknown or mismatched registered domains block retirement.
+    async fn recover_application_control(
+        &self,
+        change: DeletionControlChange,
+        isolation: RuntimeIsolationDomain,
+    ) -> Result<ApplicationFence, StorageError>;
     /// Consume ownership only after every listener, request and worker has stopped.
     async fn unregister_runtime(
         &self,

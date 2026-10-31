@@ -74,16 +74,13 @@ impl BaselineIdentities {
 
     pub(super) fn resource(&self, row: &mut StorageBackupRow) -> Result<(), StorageError> {
         let source = evidence(row)?;
-        let Some(Subject::Resource { identity, version }) = source.subject() else {
+        let Some(Subject::Resource { version, .. }) = source.subject() else {
             return Err(invalid("Resource baseline has no resource identity"));
-        };
-        let subject = Subject::Resource {
-            identity,
-            version: self.version("restore-resource-baseline", json!(version)),
         };
         attach(
             row,
-            Evidence::try_new(Some(subject), source.references().clone())
+            source
+                .at_restore_baseline(self.version("restore-resource-baseline", json!(version)))
                 .map_err(|error| error.into_request_error())?,
         )
     }
@@ -324,5 +321,93 @@ mod tests {
             .unwrap()
         };
         assert_eq!(identity(first) == identity(second), retry);
+    }
+
+    #[test]
+    fn repeated_history_free_backup_replay_retains_original_source_in_state_and_history() {
+        let source = source();
+        let original = evidence(
+            &source
+                .replay()
+                .state_rows(State::Collections)
+                .next()
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap()
+        .subject()
+        .unwrap()
+        .record_identity()
+        .unwrap()
+        .version();
+        let first = source
+            .replay()
+            .identity_restore_boundary(LegacyIdentityCohort::generate(), chrono::Utc::now())
+            .unwrap();
+        let first_identity = evidence(
+            &first
+                .replay()
+                .state_rows(State::Collections)
+                .next()
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        let first_version = first_identity
+            .subject()
+            .unwrap()
+            .record_identity()
+            .unwrap()
+            .version();
+        let state = State::ALL
+            .iter()
+            .copied()
+            .map(|section| {
+                (
+                    section,
+                    first
+                        .replay()
+                        .state_rows(section)
+                        .collect::<Result<Vec<_>, _>>()
+                        .unwrap(),
+                )
+            })
+            .collect();
+        let backup = StorageBackupReplay::from_snapshot(
+            StorageBackupSnapshot::try_new(state, None).unwrap(),
+            StorageBackupBudget::new(1_000_000, 100).unwrap(),
+        )
+        .unwrap()
+        .upgrade_logical_identities(StorageIdentityUpgrade::Native)
+        .unwrap();
+        let second = backup
+            .replay()
+            .identity_restore_boundary(LegacyIdentityCohort::generate(), chrono::Utc::now())
+            .unwrap();
+        let current = evidence(
+            &second
+                .replay()
+                .state_rows(State::Collections)
+                .next()
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        let history = evidence(
+            &second
+                .replay()
+                .history_rows(History::CollectionHistory)
+                .next()
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            current.restore_source_versions(),
+            history.restore_source_versions()
+        );
+        assert!(current.restore_source_versions().contains(original));
+        assert!(current.restore_source_versions().contains(first_version));
+        assert!(current.has_unknown_restore_source());
     }
 }

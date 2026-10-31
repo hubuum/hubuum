@@ -230,7 +230,7 @@ impl MemoryStorage {
         let current = self
             .state
             .read()
-            .await
+            .await?
             .objects
             .get(&object_id.id())
             .cloned()
@@ -301,7 +301,7 @@ impl MemoryStorage {
                 }
             }
         };
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let existing = state
             .computed_fields
             .values()
