@@ -1,4 +1,6 @@
+use chrono::{DateTime, Utc};
 use std::fmt;
+use uuid::Variant;
 
 use super::*;
 use crate::StorageRecordIdentity;
@@ -124,9 +126,11 @@ impl HotObjectHistoryDeletion {
         copy: Uuid,
         target: StorageRecordIdentity,
     ) -> Result<Self, StorageValidationError> {
-        if intent.is_nil() || copy.is_nil() {
+        if [intent, copy].iter().any(|identity| {
+            identity.get_variant() != Variant::RFC4122 || identity.get_version().is_none()
+        }) {
             return Err(invalid(
-                "Deletion intent and copy identities must be non-nil",
+                "Deletion intent and copy identities must be non-nil RFC UUIDs",
             ));
         }
         Ok(Self {
@@ -150,7 +154,7 @@ impl HotObjectHistoryDeletion {
             target: self.target,
         }
     }
-    fn matches(&self, intent: &DeletionIntent) -> bool {
+    pub(super) fn matches(&self, intent: &DeletionIntent) -> bool {
         intent.subject
             == (DeletionSubject::Version {
                 identity: self.target.version(),
@@ -243,6 +247,7 @@ impl DeletionControlState {
     pub fn record_hot_object_history_removed(
         &self,
         cleanup: &HotObjectHistoryCleanup,
+        now: DateTime<Utc>,
     ) -> Result<DeletionControlChange, StorageValidationError> {
         if self != cleanup.expected() {
             return Err(invalid(
@@ -265,6 +270,16 @@ impl DeletionControlState {
                 next: self.clone(),
             });
         }
+        if intent.audit.as_ref().is_some_and(|audit| {
+            !audit
+                .events()
+                .iter()
+                .any(|event| event.transition() == DeletionAuditTransition::RecoveryProtected)
+        }) {
+            return Err(invalid(
+                "Required audit recovery protection must commit before copy removal",
+            ));
+        }
         let mut next = self.successor()?;
         let intent = next
             .intents
@@ -279,6 +294,14 @@ impl DeletionControlState {
                 checkpoint: cleanup.checkpoint.clone(),
             },
         );
+        if let Some(audit) = &mut intent.audit {
+            audit.record(
+                DeletionAuditTransition::CopyRemoved,
+                next.revision,
+                now,
+                Some(cleanup.checkpoint.clone()),
+            );
+        }
         Ok(DeletionControlChange {
             previous: self.clone(),
             next,

@@ -1,7 +1,24 @@
 use super::*;
-use diesel::sql_types::{BigInt, Integer, Text};
+use chrono::{DateTime, NaiveDateTime, Utc};
+use diesel::dsl::sql;
+use diesel::select;
+use diesel::sql_types::{BigInt, Integer, Text, Timestamp};
 use hubuum_storage_postgres::diesel_async_prelude::RunQueryDsl;
-use hubuum_storage_postgres::{capture_queries, with_connection, with_transaction};
+use hubuum_storage_postgres::{PostgresPool, capture_queries, with_connection, with_transaction};
+
+// PostgreSQL may run on another host or in a VM with a different wall clock.
+// Bound database-generated timestamps with the same clock, preserving the
+// timezone assertion without assuming sub-millisecond host synchronization.
+async fn database_utc_now(pool: &PostgresPool) -> DateTime<Utc> {
+    with_connection(pool, async |connection| {
+        select(sql::<Timestamp>("clock_timestamp() AT TIME ZONE 'UTC'"))
+            .get_result::<NaiveDateTime>(connection)
+            .await
+    })
+    .await
+    .unwrap()
+    .and_utc()
+}
 
 impl SchemaFixture {
     async fn set_worker_timezone(&mut self, timezone: &str) {
@@ -52,7 +69,11 @@ async fn nonterminal_schema_task_timestamps_are_utc(
     };
     let lease = fixture.claim(task_id, 60_000).await;
     fixture.set_worker_timezone(timezone).await;
-    let before = chrono::Utc::now();
+    let BackendTestEnvironment::Postgres { pool } = &fixture.environment else {
+        unreachable!()
+    };
+    let clock_pool = pool.clone();
+    let before = database_utc_now(&clock_pool).await;
     let work = fixture
         .backend
         .process_schema_work(
@@ -61,7 +82,7 @@ async fn nonterminal_schema_task_timestamps_are_utc(
         )
         .await
         .unwrap();
-    let after = chrono::Utc::now();
+    let after = database_utc_now(&clock_pool).await;
     assert_eq!(work.status(), StorageSchemaWorkStatus::Running);
     assert_eq!(work.examined(), 1);
 
@@ -108,14 +129,18 @@ async fn terminal_schema_task_timestamps_are_utc(
     // Complete or delete an existing task from a worker connection in another zone.
     fixture.set_worker_timezone(timezone).await;
     let backend = fixture.backend.clone();
-    let before = chrono::Utc::now();
+    let BackendTestEnvironment::Postgres { pool } = &fixture.environment else {
+        unreachable!()
+    };
+    let clock_pool = pool.clone();
+    let before = database_utc_now(&clock_pool).await;
     if let Some(lease) = lease {
         fixture
             .finish_claimed(lease, StorageSchemaBatchLimits::default())
             .await;
     }
     fixture.cleanup().await;
-    let after = chrono::Utc::now();
+    let after = database_utc_now(&clock_pool).await;
     // Loading validates the terminal timestamps against created_at and updated_at.
     let (task, _) = backend.get_task_access(task_id).await.unwrap().into_parts();
     assert_eq!(

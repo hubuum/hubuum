@@ -2077,6 +2077,7 @@
             "mark_external_sync_attempted",
             "move_collection",
             "observe_credential_source",
+            "observe_deletion_checkpoint",
             "patch_object_data",
             "poll_task_execution",
             "preflight_import",
@@ -2535,6 +2536,7 @@
             "mark_external_sync_attempted",
             "move_collection",
             "observe_credential_source",
+            "observe_deletion_checkpoint",
             "patch_object_data",
             "poll_task_execution",
             "preflight_import",
@@ -7830,6 +7832,14 @@
       {
         "name": "restore",
         "actions": [
+          "succeeded"
+        ]
+      },
+      {
+        "name": "lifecycle",
+        "actions": [
+          "queued",
+          "updated",
           "succeeded"
         ]
       }

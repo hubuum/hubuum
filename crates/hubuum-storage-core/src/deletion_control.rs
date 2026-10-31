@@ -1,12 +1,12 @@
 //! Restore-independent deletion authority. These records contain identities,
 //! never deleted payloads. Cleanup execution belongs to the owning lifecycle.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
 use hubuum_domain::{ResourceIdentity, VersionIdentity};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use uuid::{Uuid, Variant};
 
 use crate::{StorageError, StorageIdentityResourceKind, StorageValidationError};
 
@@ -14,6 +14,10 @@ mod application;
 pub use application::*;
 mod cleanup;
 pub use cleanup::*;
+mod audit;
+pub use audit::*;
+#[cfg(test)]
+mod audit_tests;
 #[cfg(test)]
 mod cleanup_tests;
 
@@ -55,6 +59,8 @@ pub struct DeletionIntent {
     bindings: BTreeMap<Uuid, DeletionCopyBinding>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     receipts: BTreeMap<Uuid, DeletionCopyReceipt>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    audit: Option<DeletionAudit>,
 }
 
 #[derive(Deserialize)]
@@ -67,6 +73,8 @@ struct IntentInput {
     bindings: BTreeMap<Uuid, DeletionCopyBinding>,
     #[serde(default)]
     receipts: BTreeMap<Uuid, DeletionCopyReceipt>,
+    #[serde(default)]
+    audit: Option<DeletionAudit>,
 }
 
 impl TryFrom<IntentInput> for DeletionIntent {
@@ -106,12 +114,31 @@ impl TryFrom<IntentInput> for DeletionIntent {
         {
             return Err(invalid("Deletion receipt has no managed copy binding"));
         }
+        if let Some(audit) = &value.audit {
+            let removed = audit
+                .events()
+                .iter()
+                .any(|event| event.transition() == DeletionAuditTransition::CopyRemoved);
+            if value.bindings.len() != 1
+                || value.copies.len() != 1
+                || removed
+                    != value
+                        .copies
+                        .values()
+                        .all(|state| *state == DeletionCopyState::Removed)
+            {
+                return Err(invalid(
+                    "Protected audit evidence differs from managed copy state",
+                ));
+            }
+        }
         Ok(Self {
             subject: value.subject,
             generation: value.generation,
             copies: value.copies,
             bindings: value.bindings,
             receipts: value.receipts,
+            audit: value.audit,
         })
     }
 }
@@ -131,6 +158,9 @@ impl DeletionIntent {
     }
     pub fn receipts(&self) -> &BTreeMap<Uuid, DeletionCopyReceipt> {
         &self.receipts
+    }
+    pub const fn audit(&self) -> Option<&DeletionAudit> {
+        self.audit.as_ref()
     }
     pub fn is_physically_complete(&self) -> bool {
         self.copies
@@ -165,7 +195,7 @@ impl TryFrom<ControlInput> for DeletionControlState {
     type Error = StorageValidationError;
 
     fn try_from(value: ControlInput) -> Result<Self, Self::Error> {
-        if !matches!(value.format, 1 | 2)
+        if !matches!(value.format, 1..=3)
             || value.lineage.is_nil()
             || value.epoch.is_nil()
             || value.revision < 0
@@ -173,14 +203,31 @@ impl TryFrom<ControlInput> for DeletionControlState {
         {
             return Err(invalid("Invalid deletion control header or intent bound"));
         }
+        let mut audit_ids = BTreeSet::new();
         for (id, intent) in &value.intents {
             if id.is_nil()
                 || intent.generation > value.revision
                 || (value.format == 1
                     && (!intent.bindings.is_empty() || !intent.receipts.is_empty()))
+                || (value.format < 3 && intent.audit.is_some())
             {
                 return Err(invalid(
                     "Invalid deletion intent generation or copy obligations",
+                ));
+            }
+            if let Some(audit) = &intent.audit
+                && (id.get_variant() != Variant::RFC4122
+                    || id.get_version().is_none()
+                    || !audit_ids.insert(audit.membership())
+                    || audit.events()[0].revision() != intent.generation
+                    || audit.events().iter().any(|event| {
+                        event.revision() < intent.generation
+                            || event.revision() > value.revision
+                            || !audit_ids.insert(event.identity())
+                    }))
+            {
+                return Err(invalid(
+                    "Audit identities or revisions conflict with protected authority",
                 ));
             }
         }
@@ -323,6 +370,7 @@ impl DeletionControlState {
                 copies,
                 bindings: BTreeMap::new(),
                 receipts: BTreeMap::new(),
+                audit: None,
             },
         );
         Ok(DeletionControlChange {
@@ -416,6 +464,12 @@ impl DeletionControlState {
                         && current.generation == old.generation
                         && current.copies.keys().eq(old.copies.keys())
                         && current.bindings == old.bindings
+                        && old.audit.as_ref().is_none_or(|required| {
+                            current
+                                .audit
+                                .as_ref()
+                                .is_some_and(|audit| audit.covers(required))
+                        })
                         && old
                             .receipts
                             .iter()
@@ -568,6 +622,12 @@ impl DeletionControlCapture {
 /// application logical replacement must preserve these records independently.
 #[async_trait]
 pub trait DeletionControlStorage: Send + Sync {
+    /// Commit the independently verified checkpoint observation and canonical
+    /// audit fact together, using the adapter's authoritative recording clock.
+    async fn observe_deletion_checkpoint(
+        &self,
+        observation: DeletionAuditObservation,
+    ) -> Result<DeletionControlState, StorageError>;
     /// Read minimal authority without physical backup coordinates. Adapters may
     /// override this to provide a read-only runtime capability while reserving
     /// capture and mutations for the privileged checkpoint operator.
@@ -741,7 +801,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case("format", serde_json::json!(3))]
+    #[case("format", serde_json::json!(4))]
     #[case("lineage", serde_json::json!(Uuid::nil()))]
     #[case("epoch", serde_json::json!(Uuid::nil()))]
     #[case("revision", serde_json::json!(-1))]

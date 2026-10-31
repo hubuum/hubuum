@@ -266,7 +266,8 @@ impl ApplicationControlState {
         self.checkpoint.as_ref()
     }
     pub fn is_released_for(&self, authority: &DeletionControlState) -> bool {
-        self.fence.revision == authority.revision()
+        authority.has_required_audit_completion()
+            && self.fence.revision == authority.revision()
             && self.released_revision == Some(authority.revision())
             && ((authority.intents().is_empty() && self.checkpoint.is_none())
                 || (self.checkpoint.is_some()
@@ -309,6 +310,40 @@ impl ApplicationControlState {
             released_revision: Some(self.fence.revision),
             checkpoint: Some(checkpoint),
         })
+    }
+
+    /// Preserve an already recorded physical reapplication proof when the only
+    /// new authority is its required completion audit evidence. This cannot
+    /// bless a new intent, copy outcome, binding, incarnation or recovery image.
+    pub fn with_completed_audit(
+        &self,
+        change: &DeletionAuditChange,
+    ) -> Result<Option<Self>, StorageValidationError> {
+        if change.protection() != DeletionAuditProtection::Completion {
+            return Err(invalid(
+                "Only completion audit evidence can advance reapplication",
+            ));
+        }
+        if change.previous() == change.next() {
+            return Ok(None);
+        }
+        let before = change.previous();
+        let after = change.next();
+        if !self.reapplication.as_ref().is_some_and(|receipt| {
+            receipt.fence() == self.fence && receipt.revision() == before.revision()
+        }) {
+            return Ok(None);
+        }
+        if !after.covers(before) || !after.has_required_audit_completion() {
+            return Err(invalid(
+                "Audit completion cannot replace physical reapplication evidence",
+            ));
+        }
+        self.record_reapplication(ApplicationReapplication::new(ApplicationFence::new(
+            self.fence.incarnation(),
+            after.revision(),
+        )?))
+        .map(Some)
     }
     pub fn validate_execution(
         &self,

@@ -1,5 +1,6 @@
 use super::*;
 use crate::StorageRecordIdentity;
+use chrono::Utc;
 use rstest::rstest;
 
 fn request() -> HotObjectHistoryDeletion {
@@ -45,7 +46,7 @@ fn v2_managed_scope_and_receipt_roundtrip(#[case] removed: bool) {
         )
         .unwrap();
         state = state
-            .record_hot_object_history_removed(&cleanup)
+            .record_hot_object_history_removed(&cleanup, Utc::now())
             .unwrap()
             .next()
             .clone();
@@ -104,7 +105,9 @@ fn cleanup_receipt_binds_protecting_checkpoint_and_cannot_be_rewritten() {
     let checkpoint = DeletionCheckpointIdentity::new("a".repeat(64)).unwrap();
     let cleanup =
         HotObjectHistoryCleanup::new(state.clone(), request.clone(), checkpoint.clone()).unwrap();
-    let completed = state.record_hot_object_history_removed(&cleanup).unwrap();
+    let completed = state
+        .record_hot_object_history_removed(&cleanup, Utc::now())
+        .unwrap();
     let retry = HotObjectHistoryCleanup::new(
         completed.next().clone(),
         request.clone(),
@@ -113,7 +116,7 @@ fn cleanup_receipt_binds_protecting_checkpoint_and_cannot_be_rewritten() {
     .unwrap();
     let retried = completed
         .next()
-        .record_hot_object_history_removed(&retry)
+        .record_hot_object_history_removed(&retry, Utc::now())
         .unwrap();
     assert_eq!(
         retried.next().intents()[&request.intent()].receipts()[&request.copy()].checkpoint(),

@@ -167,8 +167,11 @@ impl Fixture {
     async fn protect(&self, request: HotObjectHistoryDeletion) -> ProtectedHotCopy {
         let session = self.repository().into_session().unwrap();
         let capture = self.storage.capture_deletion_control().await.unwrap();
-        let expected = capture.state().clone();
         let session = publish(session, capture).await.unwrap();
+        let (session, expected) =
+            protect_audit(&self.storage, session, DeletionAuditProtection::Intent)
+                .await
+                .unwrap();
         ProtectedHotCopy::new(session, expected, request).unwrap()
     }
 }
@@ -190,6 +193,22 @@ async fn completion_report_requires_independent_removal_evidence() {
     assert_eq!(intent.copies()[&report.copy], DeletionCopyState::Removed);
     assert_eq!(checkpoint.identity(), report.completion_checkpoint);
     assert!(!report.application_quarantine_released);
+}
+
+#[tokio::test]
+async fn acknowledgement_covers_the_complete_audit_evidence() {
+    let fixture = Fixture::new(true).await;
+    let report = fixture.run().await.unwrap();
+    let checkpoint = fixture.repository().latest().unwrap();
+    let audit = report.audit.as_ref().unwrap();
+    assert_eq!(
+        audit.events().last().unwrap().transition(),
+        hubuum_storage_core::DeletionAuditTransition::Completed
+    );
+    assert_eq!(
+        checkpoint.state().intents()[&report.intent].audit(),
+        Some(audit)
+    );
 }
 
 #[tokio::test]
@@ -428,6 +447,24 @@ async fn protected_reapplication_reopens_only_the_verified_application_image() {
     );
 }
 
+#[tokio::test]
+async fn audited_status_preserves_exact_membership_and_original_facts() {
+    let fixture = Fixture::new(true).await;
+    let (_, prepared) = fixture.prepare().await;
+    let report = super::super::status(&fixture.storage, &fixture.directory, &fixture.key)
+        .await
+        .unwrap();
+    let value = serde_json::to_value(report).unwrap();
+    assert_eq!(
+        value["intents"][0]["audit_evidence"],
+        serde_json::json!({
+            "state": "retained",
+            "target": fixture.target,
+            "audit": prepared.intents()[&fixture.intent].audit().unwrap(),
+        })
+    );
+}
+
 enum StatusPhase {
     CleanupRecorded,
     Reapplied,
@@ -435,9 +472,17 @@ enum StatusPhase {
 }
 
 #[tokio::test]
-async fn pending_deletion_status_matches_shared_consumer_fixture() {
+async fn legacy_pending_deletion_status_matches_shared_consumer_fixture() {
     let fixture = Fixture::new(true).await;
-    fixture.prepare().await;
+    let request =
+        HotObjectHistoryDeletion::new(fixture.intent, Uuid::new_v4(), fixture.target).unwrap();
+    let before = fixture.storage.read_deletion_control().await.unwrap();
+    // Legacy format-2 decisions must explicitly report that audit was not recorded.
+    fixture
+        .storage
+        .commit_deletion_control(before.record_hot_object_history_intent(&request).unwrap())
+        .await
+        .unwrap();
     let report = super::super::status(&fixture.storage, &fixture.directory, &fixture.key)
         .await
         .unwrap();
@@ -483,7 +528,7 @@ async fn completion_status_requires_independently_protected_current_application(
 }
 
 #[tokio::test]
-async fn deletion_status_excludes_subjects_copy_locations_and_erased_payloads() {
+async fn deletion_status_excludes_copy_locations_and_erased_payloads() {
     let fixture = Fixture::new(true).await;
     fixture.run().await.unwrap();
     let report = super::super::status(&fixture.storage, &fixture.directory, &fixture.key)
@@ -491,8 +536,6 @@ async fn deletion_status_excludes_subjects_copy_locations_and_erased_payloads() 
         .unwrap();
     let encoded = serde_json::to_string(&report).unwrap();
     for private in [
-        fixture.target.resource().to_string(),
-        fixture.target.version().to_string(),
         fixture.key.display().to_string(),
         fixture.directory.display().to_string(),
         "old version".to_owned(),

@@ -1,9 +1,11 @@
 use std::path::Path;
 
 use hubuum_storage_core::{
-    DeletionCheckpointIdentity, DeletionControlCapture, DeletionControlStorage,
+    DeletionAuditProtection, DeletionCheckpointIdentity, DeletionControlCapture,
+    DeletionControlStorage,
 };
 
+use super::cleanup::protect_audit;
 use super::repository::{CheckpointRepository, CheckpointSession};
 use super::{ControlRecoveryReport, report, unavailable};
 use crate::errors::ApiError;
@@ -55,8 +57,10 @@ pub(crate) async fn reapply(
     } else {
         publish(session, capture).await?
     };
+    let (session, expected) =
+        protect_audit(&storage, session, DeletionAuditProtection::Intent).await?;
     let application = storage.read_application_control().await?;
-    let receipt = storage
+    let mut receipt = storage
         .reapply_deletion_decisions(expected, application.fence(), identity(&session)?)
         .await?;
     let capture = storage.capture_deletion_control().await?;
@@ -70,6 +74,21 @@ pub(crate) async fn reapply(
         return Err(unavailable(
             "Independent checkpoint does not protect this application reapplication",
         ));
+    }
+    let (session, completed) =
+        protect_audit(&storage, session, DeletionAuditProtection::Completion).await?;
+    if completed.revision() != receipt.revision() {
+        receipt = session
+            .checkpoint()
+            .reapplication()
+            .filter(|updated| {
+                updated.incarnation() == receipt.incarnation()
+                    && updated.revision() == completed.revision()
+            })
+            .cloned()
+            .ok_or_else(|| {
+                unavailable("Independent completion evidence does not cover this reapplication")
+            })?;
     }
     // The session owns publication exclusion across this exact release CAS.
     storage

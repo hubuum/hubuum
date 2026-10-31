@@ -9,6 +9,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Preserve exact offline deletion membership and original lifecycle audit facts
+  in independent recovery evidence. Required audit failure prevents the transition
+  or completion acknowledgement; unchanged retries retain their original event IDs.
+  Administrator status reports retained evidence after ordinary event expiry.
+
 - Add read-only `hubuum-admin --control-status` JSON reports for protected
   deletion recovery, bounded copy blockers and operator actions. Completion
   confirmation requires independently protected reapplication of the current
@@ -51,6 +56,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   restore; stale claims cannot occupy capacity after reconciliation.
 
 ### Changed
+
+- **Breaking storage SDK and operational change:** upgrade all ten SDK crates to
+  `0.14.0` together; adapters must implement atomic
+  `observe_deletion_checkpoint` and preserve lifecycle event identities and recording
+  times through recovery. Stop older producers, apply
+  `2026-10-30-000001_protected_deletion_audit`, reconcile grants and deploy matching
+  binaries. Retain the independent repository; format-3 evidence prevents downgrade.
+  See the [0.14 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-013-to-014).
 
 - **Breaking configuration limit:** export and backup output settings now have a
   64 GiB format ceiling. Before restarting upgraded processes, reduce

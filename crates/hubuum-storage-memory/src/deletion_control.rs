@@ -1,13 +1,46 @@
 use super::*;
 use hubuum_storage_core::{
     ApplicationReapplication, ApplicationWorkAdmission, DELETION_CONTROL_MAX_RUNTIMES,
-    DeletionCheckpointIdentity, HotObjectHistoryCleanup, HotObjectHistoryDeletion,
-    RuntimeRegistration, StorageExecutionPermit, StorageIdentityResourceKind,
-    StorageIdentitySubject, StorageIdentityTarget, StorageRecordIdentity,
+    DeletionAuditObservation, DeletionCheckpointIdentity, HotObjectHistoryCleanup,
+    HotObjectHistoryDeletion, RuntimeRegistration, StorageExecutionPermit,
+    StorageIdentityResourceKind, StorageIdentitySubject, StorageIdentityTarget,
+    StorageRecordIdentity,
 };
 
 #[async_trait]
 impl DeletionControlStorage for MemoryStorage {
+    async fn observe_deletion_checkpoint(
+        &self,
+        observation: DeletionAuditObservation,
+    ) -> Result<DeletionControlState, StorageError> {
+        let mut state = self.state.write_control().await;
+        if &state.deletion_control != observation.expected() {
+            return Err(StorageError::conflict(
+                "Deletion authority changed before checkpoint observation",
+            ));
+        }
+        let change = state
+            .deletion_control
+            .record_audit_protection(
+                observation.checkpoint().clone(),
+                Utc::now(),
+                observation.protection(),
+            )
+            .map_err(invalid_contract_value)?;
+        let application = if observation.protection() == DeletionAuditProtection::Completion {
+            state
+                .application_control
+                .with_completed_audit(&change)
+                .map_err(invalid_contract_value)?
+        } else {
+            None
+        };
+        state.apply_deletion_authority(change.next().clone())?;
+        if let Some(application) = application {
+            state.application_control = application;
+        }
+        Ok(state.deletion_control.clone())
+    }
     async fn register_runtime_isolated(
         &self,
         isolation: Option<RuntimeIsolationDomain>,
@@ -155,7 +188,7 @@ impl DeletionControlStorage for MemoryStorage {
                 removals.insert(index);
             }
             next = next
-                .record_hot_object_history_removed(&cleanup)
+                .record_hot_object_history_removed(&cleanup, Utc::now())
                 .map_err(invalid_contract_value)?
                 .next()
                 .clone();
@@ -193,10 +226,10 @@ impl DeletionControlStorage for MemoryStorage {
         };
         // Every target and authority transition is validated before any physical
         // removal, so a later unsupported obligation cannot partially apply.
+        state.apply_deletion_authority(next)?;
         for index in removals.into_iter().rev() {
             state.history.remove(index);
         }
-        state.deletion_control = next;
         state.application_control = application;
         Ok(receipt)
     }
@@ -207,7 +240,9 @@ impl DeletionControlStorage for MemoryStorage {
         checkpoint: DeletionCheckpointIdentity,
     ) -> Result<(), StorageError> {
         let mut state = self.state.write_control().await;
-        if receipt.revision() != state.deletion_control.revision() {
+        if receipt.revision() != state.deletion_control.revision()
+            || !state.deletion_control.has_required_audit_completion()
+        {
             return Err(StorageError::conflict(
                 "Deletion authority changed before exposure release",
             ));
@@ -248,8 +283,8 @@ impl DeletionControlStorage for MemoryStorage {
         }
         let fence = ApplicationFence::new(Uuid::new_v4(), change.next().revision())
             .map_err(invalid_contract_value)?;
+        state.apply_deletion_authority(change.next().clone())?;
         state.runtime_registrations.clear();
-        state.deletion_control = change.next().clone();
         state.application_control = ApplicationControlState::quarantined(fence);
         Ok(fence)
     }
@@ -277,7 +312,7 @@ impl DeletionControlStorage for MemoryStorage {
                 "Deletion authority changed; recapture before retrying",
             ));
         }
-        let change = state
+        let mut change = state
             .deletion_control
             .record_hot_object_history_intent(&request)
             .map_err(invalid_contract_value)?;
@@ -285,14 +320,30 @@ impl DeletionControlStorage for MemoryStorage {
             .deletion_control
             .intents()
             .contains_key(&request.intent());
-        if state
-            .closed_object_history_copy(request.target())?
-            .is_none()
-            && !existing
-        {
+        let row = state.closed_object_history_copy(request.target())?;
+        if row.is_none() && !existing {
             return Err(StorageError::not_found(
                 "The exact closed object-history copy was not found",
             ));
+        }
+        if !existing {
+            let collection = match state.history[row.expect("new intent requires a closed row")]
+                .logical_identity
+                .references()
+                .get("/collection_id")
+            {
+                Some(StorageCapturedIdentity::Resource {
+                    family: StorageIdentityResourceKind::Collection,
+                    reference,
+                }) => reference.known_identity(),
+                _ => None,
+            }
+            .ok_or_else(|| {
+                StorageError::conflict("Historical collection identity is unresolved")
+            })?;
+            change = change
+                .with_hot_history_audit(&request, collection, Utc::now())
+                .map_err(invalid_contract_value)?;
         }
         state.apply_deletion_authority(change.next().clone())?;
         Ok(state.deletion_control.clone())
@@ -311,7 +362,7 @@ impl DeletionControlStorage for MemoryStorage {
         }
         let change = state
             .deletion_control
-            .record_hot_object_history_removed(&request)
+            .record_hot_object_history_removed(&request, Utc::now())
             .map_err(invalid_contract_value)?;
         let removal = state.closed_object_history_copy(request.request().target())?;
         state.apply_deletion_authority(change.next().clone())?;
@@ -414,11 +465,66 @@ impl MemoryState {
 
     fn apply_deletion_authority(&mut self, next: DeletionControlState) -> Result<(), StorageError> {
         if self.deletion_control != next {
+            next.encode().map_err(invalid_contract_value)?;
             let fence = ApplicationFence::new(
                 self.application_control.fence().incarnation(),
                 next.revision(),
             )
             .map_err(invalid_contract_value)?;
+            let pending = next
+                .new_audit_events_since(&self.deletion_control)
+                .map_err(invalid_contract_value)?;
+            let mut envelopes = Vec::with_capacity(pending.len());
+            let mut sequence = self.next_event_sequence;
+            for event in pending {
+                let existing = self
+                    .events
+                    .iter()
+                    .map(|record| record.as_parts().0)
+                    .find(|record| record.event_id() == event.event_id().as_uuid());
+                let envelope = EventEnvelope::builder()
+                    .id(
+                        EventSequence::new(existing.map_or(sequence, |record| record.id().get()))
+                            .map_err(|error| StorageError::backend_failure(error.to_string()))?,
+                    )
+                    .event_id(event.event_id().as_uuid())
+                    .occurred_at(event.occurred_at().expect("protected audit occurrence"))
+                    .entity_type(event.entity_type())
+                    .action(event.action())
+                    .actor_kind(event.actor_kind())
+                    .provenance(Provenance {
+                        actor: ProvenanceActor {
+                            kind: Some("system".into()),
+                            principal: None,
+                        },
+                        initiator: None,
+                        task_id: None,
+                    })
+                    .summary(event.summary().to_owned())
+                    .metadata(event.metadata().clone())
+                    .schema_version(event.schema_version())
+                    .try_build()
+                    .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+                if let Some(existing) = existing {
+                    if existing != &envelope {
+                        return Err(StorageError::backend_failure(
+                            "Retained lifecycle event conflicts with canonical history",
+                        ));
+                    }
+                    continue;
+                }
+                sequence = sequence
+                    .checked_add(1)
+                    .ok_or_else(|| StorageError::unavailable("Audit sequence exhausted"))?;
+                envelopes.push(envelope);
+            }
+            for envelope in envelopes {
+                let identity = self.logical_identities.event(&envelope, None, None);
+                self.events.push(
+                    StorageRecordedEvent::new(envelope, None, None).with_logical_identity(identity),
+                );
+            }
+            self.next_event_sequence = sequence;
             self.application_control = ApplicationControlState::quarantined(fence);
             self.deletion_control = next;
         }

@@ -12,6 +12,17 @@ Consumer review is still required; the review table below records inspected
 source, not consumer approval. Unrelated foundations and task/SSE work can ship
 independently.
 
+## Implemented protected-deletion slice
+
+The [offline deletion foundation](deletion_recovery.md#protected-audit-evidence)
+implements five audit-only transitions for one exact closed object-history copy:
+request, access restriction, independent recovery protection, copy removal and
+completion. Their original identities, times and exact membership survive recovery
+through the protected control lineage. This introduces the `lifecycle` catalog
+entity, while subscription creation, updates and test delivery reject it.
+The broader transition catalog, public evidence endpoints and safe sink projection
+below remain proposals requiring their owning implementation and qualification.
+
 ## Existing guarantees and gaps
 
 Reuse the [canonical event stream](events.md), `AuditDocument`, event catalog,
@@ -52,9 +63,10 @@ update and review rather than silently expanding an existing export contract.
 The envelope's `schema_version` remains separate: lifecycle examples use version
 1 with null snapshots; existing revision-aware documents remain version 2.
 Do not change historical event meaning or infer lifecycle completion from a
-generic `task.succeeded` event. No lifecycle catalog entry is activated by this
-proposal. Adding it later requires exhaustive server/adapter matches, OpenAPI,
-backup-reader compatibility and the consumer checks below.
+generic `task.succeeded` event. The proposal alone activates no transition. The protected-deletion slice above
+uses the lifecycle catalog for audit-only facts. Further activation requires
+exhaustive server/adapter matches, OpenAPI, backup-reader compatibility and the
+consumer checks below.
 
 Each row below is a named v1 event. **Eligible** means an explicit subscription
 may select its safe sink projection; no subscription is created automatically.
