@@ -35,7 +35,8 @@
     "hubuum_acknowledge_runtime_drain",
     "hubuum_record_task_execution_claim",
     "hubuum_task_execution_claim_allowed",
-    "hubuum_pending_restore_job"
+    "hubuum_pending_restore_job",
+    "hubuum_schedule_task"
   ],
   "runtime_function_policy": "all_security_invoker_plus_allowlisted_security_definer",
   "restore": "isolated_migrator_executor",

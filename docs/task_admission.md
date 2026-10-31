@@ -6,8 +6,8 @@ the same logical contract. Application configuration and HTTP errors remain
 outside the SDK. This implements [#506](https://github.com/hubuum/hubuum/issues/506)
 on the durable identity foundation from #505.
 
-Fair selection, worker-pool availability and reserved execution scheduling belong
-to #507. External artifact/provider obligations are added with #508/#516, rather
+Fair selection, worker-pool availability and reserved execution scheduling are
+described in [shared task scheduling](task_scheduling.md). External artifact/provider obligations are added with #508/#516, rather
 than represented by unused placeholder tables here.
 
 ## Ownership and restore reconciliation
@@ -37,7 +37,7 @@ The affected scope drains before new work can be admitted or claimed.
 Internal computed/schema repair has a distinct admission allowance that ordinary
 submissions cannot consume. An ordinary caller cannot select the internal lane.
 Finite internal limits still apply. Execution reservations and their single-worker
-fallback are specified and implemented by #507.
+fallback follow [shared task scheduling](task_scheduling.md).
 
 Only administrator diagnostics disclose deployment totals. Public capacity
 rejections use bounded reason codes and do not include another principal's

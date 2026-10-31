@@ -10,7 +10,7 @@ use hubuum_scale_core::lifecycle::{
 };
 use serde_json::json;
 
-use super::{PostgresScaleBackend, load_dataset_with_pool};
+use super::{PostgresScaleBackend, initialize_benchmark_identities, load_raw_dataset_with_pool};
 use crate::{PostgresConnection, PostgresStorageError, with_transaction};
 
 #[derive(QueryableByName)]
@@ -79,7 +79,7 @@ impl LifecycleBenchmarkBackend for PostgresScaleBackend {
         let profile = fixture.profile();
         let workload = fixture.workload();
         // This already rejects anything but a freshly migrated disposable DB.
-        load_dataset_with_pool(profile, &self.pool)
+        load_raw_dataset_with_pool(profile, &self.pool)
             .await
             .map_err(measurement_error)?;
         let before = self.lifecycle_inventory().await?;
@@ -102,6 +102,9 @@ impl LifecycleBenchmarkBackend for PostgresScaleBackend {
                 break;
             }
             with_transaction(&self.pool, async |connection| {
+                // These are unpublished synthetic rows. Capture immutable
+                // ownership once, after the complete recipe is assembled.
+                connection.batch_execute("SET LOCAL session_replication_role=replica").await?;
                 let batch = json!(batch);
                 diesel::sql_query(
                     "UPDATE tasks SET kind = CASE WHEN fixture.output_bytes > 0 THEN 'export' ELSE tasks.kind END, \
@@ -124,6 +127,9 @@ impl LifecycleBenchmarkBackend for PostgresScaleBackend {
                 Ok::<_, PostgresStorageError>(())
             }).await.map_err(measurement_error)?;
         }
+        initialize_benchmark_identities(&self.pool)
+            .await
+            .map_err(measurement_error)?;
         for start in (1..=profile.totals.objects).step_by(128) {
             let end = (start + 127).min(profile.totals.objects);
             let batch: Vec<_> = (start..=end)

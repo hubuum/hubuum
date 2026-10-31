@@ -1,5 +1,6 @@
 use super::*;
 use hubuum_storage_core::artifacts::*;
+use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
 
 #[rstest]
 #[tokio::test]
@@ -49,7 +50,10 @@ async fn seed(fixture: &RestoreContractFixture) -> (hubuum_domain::TaskId, Artif
     }
     let task_id = fixture.create_task(StorageTaskKind::Export).await.unwrap();
     let claim = storage
-        .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+        .claim_next_task(StorageTaskClaimRequest::new(
+            TaskWorkerId::generate(),
+            StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+        ))
         .await
         .unwrap()
         .unwrap();

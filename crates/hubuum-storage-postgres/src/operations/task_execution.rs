@@ -2,13 +2,14 @@
 use hubuum_storage_core::StorageBackupTaskContent;
 use hubuum_storage_core::artifacts::VerifiedArtifact;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use chrono::NaiveDateTime;
 use diesel::dsl::sql;
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, OptionalExtension, QueryDsl};
-use diesel::sql_types::{Array, BigInt, Bool, Integer, Jsonb, Nullable, Text, Timestamp};
+use diesel::sql_types::{
+    Array, BigInt, Bool, Integer, Jsonb, Nullable, Text, Timestamp, Uuid as SqlUuid,
+};
 use diesel::{Insertable, QueryableByName, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{PrincipalId, TaskId};
@@ -18,10 +19,11 @@ use hubuum_events_core::{
 use hubuum_storage_core::{
     ApplicationFence, StorageBackupTaskArtifact, StorageExportTaskArtifact,
     StorageRemoteCallTaskArtifact, StorageSchemaProfileArtifact, StorageTask,
-    StorageTaskActiveUpdate, StorageTaskClaim, StorageTaskClaimToken, StorageTaskCompletion,
-    StorageTaskCompletionPayload, StorageTaskEventAppend, StorageTaskEventInput,
-    StorageTaskFailure, StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration,
-    StorageTaskOutputLookup, StorageTaskResultCounts, StorageTaskStatus, StorageTaskTerminalUpdate,
+    StorageTaskActiveUpdate, StorageTaskClaim, StorageTaskClaimRequest, StorageTaskClaimToken,
+    StorageTaskCompletion, StorageTaskCompletionPayload, StorageTaskEventAppend,
+    StorageTaskEventInput, StorageTaskFailure, StorageTaskKind, StorageTaskLease,
+    StorageTaskLeaseDuration, StorageTaskOutputLookup, StorageTaskResultCounts, StorageTaskStatus,
+    StorageTaskTerminalUpdate,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -38,25 +40,6 @@ const DATABASE_UTC_LEASE_EXPIRY_SQL_PREFIX: &str = "((clock_timestamp() AT TIME 
 const DATABASE_LEASE_EXPIRY_SQL_SUFFIX: &str = " * INTERVAL '1 millisecond'))";
 const LEASE_EXPIRED_MESSAGE: &str =
     "Task worker lease expired; task failed without automatic replay";
-
-const CLAIM_NEXT_QUEUED_TASK_SQL: &str = "\
-    WITH eligible AS MATERIALIZED (SELECT public.hubuum_task_claimable_tasks() AS id) \
-    SELECT candidate.id \
-    FROM unnest($2::text[]) WITH ORDINALITY AS claim_order(kind, priority) \
-    CROSS JOIN LATERAL ( \
-        SELECT id \
-        FROM tasks \
-        WHERE status = $1 \
-          AND tasks.kind = claim_order.kind \
-          AND tasks.id IN (SELECT id FROM eligible) \
-        ORDER BY created_at ASC, id ASC \
-        FOR UPDATE SKIP LOCKED \
-        LIMIT 1 \
-    ) AS candidate \
-    ORDER BY claim_order.priority \
-    LIMIT 1";
-
-static NEXT_TASK_KIND: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone, Copy)]
 pub(super) struct ClaimedTask {
@@ -147,12 +130,6 @@ struct NewRemoteCallResultRow {
 }
 
 #[derive(QueryableByName)]
-struct ClaimableTaskId {
-    #[diesel(sql_type = Integer)]
-    id: i32,
-}
-
-#[derive(QueryableByName)]
 struct DatabaseTimeRow {
     #[diesel(sql_type = Timestamp)]
     now: NaiveDateTime,
@@ -160,54 +137,41 @@ struct DatabaseTimeRow {
 
 pub async fn claim_next_task(
     runtime: &PostgresRuntime,
-    lease_duration: StorageTaskLeaseDuration,
+    request: StorageTaskClaimRequest,
 ) -> Result<Option<StorageTaskClaim>, PostgresStorageError> {
-    let lease_milliseconds = validate_lease_duration(lease_duration)?;
+    let lease_milliseconds = validate_lease_duration(request.lease_duration())?;
     let row = runtime
         .with_transaction(async move |connection| {
             if !maintenance_is_normal(connection).await? {
                 return Ok(None);
             }
-            diesel::sql_query("SELECT public.hubuum_task_capacity_lock()")
-                .execute(connection)
-                .await?;
-            let task_kinds = StorageTaskKind::ALL.map(StorageTaskKind::as_str);
-            let first_kind = NEXT_TASK_KIND.fetch_add(1, Ordering::Relaxed) % task_kinds.len();
-            let claim_order =
-                std::array::from_fn::<_, { StorageTaskKind::ALL.len() }, _>(|offset| {
-                    task_kinds[(first_kind + offset) % task_kinds.len()]
-                });
-            let selected = diesel::sql_query(CLAIM_NEXT_QUEUED_TASK_SQL)
-                .bind::<Text, _>(StorageTaskStatus::Queued.as_str())
-                .bind::<Array<Text>, _>(claim_order.to_vec())
-                .get_result::<ClaimableTaskId>(connection)
-                .await
-                .optional()?
-                .map(|row| row.id);
-            let Some(task_id) = selected else {
-                return Ok(None);
-            };
-            use crate::schema::tasks::dsl as tasks;
+            let worker =
+                Uuid::parse_str(&request.worker().as_string()).expect("typed worker identity");
+            let supported: Vec<_> = request
+                .kinds()
+                .iter()
+                .map(StorageTaskKind::as_str)
+                .collect();
             let claim_token = Uuid::new_v4();
-            let claimed_at = database_now(connection).await?;
-            let row = diesel::update(tasks::tasks.filter(tasks::id.eq(task_id)))
-                .set((
-                    tasks::status.eq(StorageTaskStatus::Validating.as_str()),
-                    tasks::started_at.eq(sql::<Nullable<Timestamp>>("COALESCE(started_at, ")
-                        .bind::<Timestamp, _>(claimed_at)
-                        .sql(")")),
-                    tasks::lease_token.eq(Some(claim_token)),
-                    tasks::lease_expires_at.eq(sql::<Nullable<Timestamp>>(
-                        DATABASE_UTC_LEASE_EXPIRY_SQL_PREFIX,
-                    )
-                    .bind::<BigInt, _>(lease_milliseconds)
-                    .sql(DATABASE_LEASE_EXPIRY_SQL_SUFFIX)),
-                    tasks::attempt_count.eq(tasks::attempt_count + 1),
-                    tasks::updated_at.eq(claimed_at),
-                ))
-                .returning(TaskRow::as_returning())
-                .get_result::<TaskRow>(connection)
-                .await?;
+            // The materialized candidate runs once. Its lock, scheduler turn,
+            // task lease and worker binding commit with the lifecycle event.
+            let row = diesel::sql_query(
+                "WITH candidate AS MATERIALIZED (SELECT public.hubuum_schedule_task($1,$2,$3) AS id) \
+                 UPDATE public.tasks AS task SET status='validating', \
+                 started_at=coalesce(task.started_at,statement_timestamp() AT TIME ZONE 'UTC'), \
+                 lease_token=$4, \
+                 lease_expires_at=(clock_timestamp() AT TIME ZONE 'UTC')+$3*interval '1 millisecond', \
+                 attempt_count=task.attempt_count+1, updated_at=statement_timestamp() AT TIME ZONE 'UTC' \
+                 FROM candidate WHERE task.id=candidate.id RETURNING task.*",
+            )
+            .bind::<SqlUuid, _>(worker)
+            .bind::<Array<Text>, _>(supported)
+            .bind::<BigInt, _>(lease_milliseconds)
+            .bind::<SqlUuid, _>(claim_token)
+            .get_result::<TaskRow>(connection)
+            .await
+            .optional()?;
+            let Some(row) = row else { return Ok(None); };
             append_task_lifecycle_event(
                 connection,
                 &row,

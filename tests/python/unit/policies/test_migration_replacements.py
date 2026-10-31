@@ -102,6 +102,22 @@ class OfflineReviewTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             MODULE.approved_offline_drops(review, "up.sql", "sql")
 
+    def test_function_rename_requires_named_source_and_destination(self):
+        review = self.review("sql")
+        review["reviews"][0]["rename_functions"] = {"old_claim": "previous_claim"}
+        self.assertEqual(MODULE.approved_offline_drops(review, "up.sql", "sql"), {
+            "OFFLINE:DELIVERIES:NORMAL_UNIQUE",
+            "OFFLINE_FUNCTION_RENAME:OLD_CLAIM:PREVIOUS_CLAIM",
+        })
+
+    def test_function_rename_rejects_invalid_identifiers(self):
+        for source, destination in (("old;drop", "previous"), ("old", "previous;drop")):
+            with self.subTest(source=source, destination=destination):
+                review = self.review("sql")
+                review["reviews"][0]["rename_functions"] = {source: destination}
+                with self.assertRaises(ValueError):
+                    MODULE.approved_offline_drops(review, "up.sql", "sql")
+
 
 if __name__ == "__main__":
     unittest.main()

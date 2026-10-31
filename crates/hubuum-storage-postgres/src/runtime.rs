@@ -31,6 +31,7 @@ const REQUIRED_DATABASE_MIGRATION_VERSIONS: &[&str] = &[
     "20260903000003",
     "20261027000002",
     "20261027000003",
+    "20261029000001",
     REQUIRED_DATABASE_MIGRATION_VERSION,
 ];
 pub const DEFAULT_COMPUTED_REINDEX_BATCH_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
@@ -1276,6 +1277,7 @@ mod tests {
     #[case::complete(None)]
     #[case::trace_schema(Some("20260903000002"))]
     #[case::trace_validation(Some("20260903000003"))]
+    #[case::artifact_outputs(Some("20261029000001"))]
     #[case::latest(Some(REQUIRED_DATABASE_MIGRATION_VERSION))]
     #[tokio::test]
     async fn readiness_requires_every_schema_checkpoint(#[case] missing: Option<&str>) {

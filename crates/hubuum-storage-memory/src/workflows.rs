@@ -574,7 +574,7 @@ impl TaskExecutionStorage for MemoryStorage {
 
     async fn claim_next_task(
         &self,
-        lease_duration: StorageTaskLeaseDuration,
+        request: hubuum_storage_core::StorageTaskClaimRequest,
     ) -> Result<Option<StorageTaskClaim>, StorageError> {
         let mut state = self.state.write().await?;
         if !state
@@ -585,23 +585,15 @@ impl TaskExecutionStorage for MemoryStorage {
             return Ok(None);
         }
         state.task_capacity = state.task_accounting_snapshot()?;
-        let mut selected = None;
-        for task in state
-            .tasks
-            .values()
-            .filter(|task| task.status == StorageTaskStatus::Queued)
-        {
-            if state.task_claim_has_capacity(task.id)? {
-                selected = Some(task.id);
-                break;
-            }
-        }
-        let Some(task_id) = selected else {
+        let now = Utc::now();
+        let Some(selection) = state.select_scheduled_task(request, now)? else {
             return Ok(None);
         };
-        let now = Utc::now();
+        let task_id = selection.id();
         let expires_at = now
-            .checked_add_signed(Duration::milliseconds(lease_duration.milliseconds()))
+            .checked_add_signed(Duration::milliseconds(
+                request.lease_duration().milliseconds(),
+            ))
             .ok_or_else(|| StorageError::invalid_input("Task lease duration is too large"))?;
         state.charge_task_claim(task_id)?;
         let claim_token = Uuid::new_v4().to_string();
@@ -618,6 +610,10 @@ impl TaskExecutionStorage for MemoryStorage {
         task.claim_token = Some(claim_token.clone());
         task.execution_fence = Some(fence);
         let projection = task.projection()?;
+        state
+            .task_capacity
+            .scheduler
+            .assign_worker(request.worker(), task_id, claim_token.clone());
         let lease = StorageTaskLease::new(task_id, StorageTaskClaimToken::new(claim_token))
             .with_execution_fence(fence);
         state.append_task_event_record(
@@ -627,9 +623,9 @@ impl TaskExecutionStorage for MemoryStorage {
                 "Task claimed for validation",
             ),
         )?;
-        StorageTaskClaim::try_new(projection, lease)
-            .map(Some)
-            .map_err(invalid_contract_value)
+        let claim = StorageTaskClaim::try_new(projection, lease).map_err(invalid_contract_value)?;
+        state.task_capacity.scheduler.commit_selection(selection);
+        Ok(Some(claim))
     }
 
     async fn renew_task_lease(
@@ -650,6 +646,8 @@ impl TaskExecutionStorage for MemoryStorage {
                 .ok_or_else(|| StorageError::invalid_input("Task lease duration is too large"))?,
         );
         task.updated_at = now;
+        let expires = task.lease_expires_at.expect("renewed lease");
+        state.task_capacity.scheduler.renew_worker(&lease, expires);
         Ok(true)
     }
 

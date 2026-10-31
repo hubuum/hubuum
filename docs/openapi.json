@@ -38622,6 +38622,7 @@
         "type": "object",
         "description": "One consistent view of the policy, maintenance generation and accounting.",
         "required": [
+          "scheduling",
           "policy",
           "generation",
           "ordinary",
@@ -38648,6 +38649,9 @@
           },
           "policy": {
             "$ref": "#/components/schemas/StorageTaskPolicy"
+          },
+          "scheduling": {
+            "$ref": "#/components/schemas/TaskSchedulingSnapshot"
           },
           "work_budget_blocked": {
             "type": "integer",
@@ -39578,6 +39582,7 @@
         "type": "object",
         "description": "Complete deployment policy. No member binds an integer database identity.\nTask owners and collection membership are captured separately at admission.",
         "required": [
+          "scheduling",
           "deployment",
           "principal",
           "collection",
@@ -39606,6 +39611,9 @@
           },
           "principal": {
             "$ref": "#/components/schemas/TaskScopeCapacity"
+          },
+          "scheduling": {
+            "$ref": "#/components/schemas/TaskSchedulingPolicy"
           }
         }
       },
@@ -40002,6 +40010,23 @@
         },
         "additionalProperties": false
       },
+      "TaskKindWeight": {
+        "type": "object",
+        "required": [
+          "kind",
+          "weight"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/TaskKind"
+          },
+          "weight": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "TaskLinks": {
         "type": "object",
         "required": [
@@ -40336,6 +40361,130 @@
           }
         }
       },
+      "TaskSchedulingMode": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "reserved"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "shared"
+                ]
+              },
+              "reason": {
+                "$ref": "#/components/schemas/TaskSharedCapacityReason"
+              }
+            }
+          }
+        ]
+      },
+      "TaskSchedulingPolicy": {
+        "type": "object",
+        "description": "Complete scheduling policy, persisted with admission in one revision.",
+        "required": [
+          "execution_slots",
+          "internal_reserved_slots",
+          "promotion_interval",
+          "overdue_seconds",
+          "weights"
+        ],
+        "properties": {
+          "execution_slots": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "internal_reserved_slots": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "overdue_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "promotion_interval": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "weights": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskKindWeight"
+            }
+          }
+        }
+      },
+      "TaskSchedulingSnapshot": {
+        "type": "object",
+        "description": "Aggregate diagnostics only; worker and principal identities stay private.",
+        "required": [
+          "mode",
+          "eligible_slots",
+          "internal_capable_slots",
+          "unsupported_kinds",
+          "successful_claims",
+          "promoted_claims",
+          "ordinary_position"
+        ],
+        "properties": {
+          "eligible_slots": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "internal_capable_slots": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "mode": {
+            "$ref": "#/components/schemas/TaskSchedulingMode"
+          },
+          "ordinary_position": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "promoted_claims": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "successful_claims": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "unsupported_kinds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskKind"
+            }
+          }
+        }
+      },
       "TaskScopeCapacity": {
         "type": "object",
         "description": "Independent ceilings for one admission scope. Reductions drain existing\nwork; a lower outstanding limit does not revoke existing execution claims.",
@@ -40356,6 +40505,15 @@
           }
         },
         "additionalProperties": false
+      },
+      "TaskSharedCapacityReason": {
+        "type": "string",
+        "enum": [
+          "single_slot",
+          "insufficient_workers",
+          "insufficient_internal_workers",
+          "no_ordinary_workers"
+        ]
       },
       "TaskStatus": {
         "type": "string",
