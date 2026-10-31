@@ -20,6 +20,16 @@ instead of depending on rootless bridge DNS. Owned control/key mounts receive
 shared SELinux labels so multiple replicas can access the same protected files;
 their 0700/0600 modes remain enforced.
 
+When the driver runs inside the container engine's Linux host (for example, a
+Linux helper on Docker Desktop), use `--direct-container-network` if published
+loopback ports are reachable only from the desktop host. This explicitly selects
+the inspected addresses on the disposable fixture's own network for API and
+native database connections, including after a recovery restart. It does not
+select an existing database. Remote-effect probes reach the helper through that
+same network's inspected gateway. Reports record the connection mode; database RTT
+must still satisfy the selected profile. The default uses published ports for
+ordinary Linux and rootless deployments.
+
 ```bash
 source .env
 cargo build --locked --release -p hubuum-scale-benchmark

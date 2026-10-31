@@ -12,6 +12,42 @@ from integration import task_retention as RETENTION
 
 
 class TaskRetentionMeasurementTests(unittest.TestCase):
+    def test_direct_endpoint_uses_only_the_managed_network(self):
+        deployment = RETENTION.RetentionDeployment.__new__(RETENTION.RetentionDeployment)
+        deployment.name = "owned-fixture"
+        deployment.direct_container_network = True
+        deployment.docker = MagicMock(return_value=SimpleNamespace(stdout=json.dumps({
+            "unrelated": {"IPAddress": "10.1.0.1"}, "owned-fixture": {"IPAddress": "10.2.0.2"},
+        })))
+        self.assertEqual(deployment.host_endpoint("owned-fixture-db", 5432), "10.2.0.2:5432")
+
+    def test_direct_endpoint_rejects_missing_or_unusable_managed_addresses(self):
+        deployment = RETENTION.RetentionDeployment.__new__(RETENTION.RetentionDeployment)
+        deployment.name = "owned-fixture"
+        deployment.direct_container_network = True
+        for networks in ({"other": {"IPAddress": "10.2.0.2"}}, *(
+                {"owned-fixture": {"IPAddress": address}}
+                for address in ("", "0.0.0.0", "127.0.0.1", "224.0.0.1"))):
+            with self.subTest(networks=networks), self.assertRaises(ValueError):
+                deployment.docker = MagicMock(return_value=SimpleNamespace(stdout=json.dumps(networks)))
+                deployment.host_endpoint("owned-fixture-db", 5432)
+
+    def test_default_endpoint_keeps_the_published_port(self):
+        deployment = RETENTION.RetentionDeployment.__new__(RETENTION.RetentionDeployment)
+        deployment.direct_container_network = False
+        deployment.docker = MagicMock(return_value=SimpleNamespace(stdout="127.0.0.1:32999\n"))
+        self.assertEqual(deployment.host_endpoint("owned-fixture-db", 5432), "127.0.0.1:32999")
+        deployment.docker.assert_called_once_with("port", "owned-fixture-db", "5432/tcp")
+
+    def test_direct_effect_fixture_uses_the_managed_network_gateway(self):
+        deployment = RETENTION.RetentionDeployment.__new__(RETENTION.RetentionDeployment)
+        deployment.name = "owned-fixture"
+        deployment.docker = MagicMock(return_value=SimpleNamespace(stdout=json.dumps({
+            "unrelated": {"Gateway": "10.1.0.1"},
+            "owned-fixture": {"IPAddress": "10.2.0.2", "Gateway": "10.2.0.1"},
+        })))
+        self.assertEqual(deployment.network_address("owned-fixture-db", "Gateway"), "10.2.0.1")
+
     def test_administrator_retries_only_lock_refusal_and_retains_elapsed_attempts(self):
         busy = RuntimeError('Docker run failed (1): Error: ServiceUnavailable("Control repository is busy; retry without bypassing protection")\n')
         with tempfile.TemporaryDirectory() as temporary:
@@ -161,6 +197,7 @@ class TaskRetentionMeasurementTests(unittest.TestCase):
                 profile="diagnostic", steady_seconds=0,
                 recovery_probes=False,
                 cpu_affinity=False,
+                direct_container_network=False,
                 output_probe=False,
                 physical_recovery_probes=False,
                 safety_probes=False,

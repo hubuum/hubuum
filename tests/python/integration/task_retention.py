@@ -221,7 +221,7 @@ class Monitor:
 
 class RetentionDeployment(Deployment):
     def __init__(self, image, root, profile="diagnostic", recovery_probes=False, affinity=False,
-                 safety_probes=False):
+                 safety_probes=False, *, direct_container_network=False):
         super().__init__(image, POSTGRES_IMAGE)
         self.root = root
         self.repository = root / "repository"
@@ -231,6 +231,8 @@ class RetentionDeployment(Deployment):
         self.key.chmod(0o600)
         self.role = "api"
         self.profile = profile
+        self.direct_container_network = direct_container_network
+        self.effect_host = "host-gateway"
         self.application_containers = []
         self.recovery_probes = recovery_probes
         self.safety_probes = safety_probes
@@ -274,9 +276,11 @@ class RetentionDeployment(Deployment):
             if address.is_unspecified or address.is_multicast:
                 raise ValueError("Managed PostgreSQL container has no usable network address")
             self.database_ip = str(address)
-            address = self.docker("port", name, "5432/tcp").stdout.strip()
+            address = self.host_endpoint(name, 5432)
             self.host_url = f"postgres://corpus:{self.password}@{address}/source?sslmode=disable"
             if self.recovery_probes or self.safety_probes:
+                if self.direct_container_network:
+                    self.effect_host = self.network_address(name, "Gateway")
                 self.effects = EffectFixture(self.root / "effects").__enter__()
             return self
         except BaseException:
@@ -289,6 +293,21 @@ class RetentionDeployment(Deployment):
         finally:
             if self.effects is not None:
                 self.effects.__exit__(*error)
+
+    def host_endpoint(self, container, port):
+        if not self.direct_container_network:
+            return self.docker("port", container, f"{port}/tcp").stdout.strip()
+        return f"{self.network_address(container, 'IPAddress')}:{port}"
+
+    def network_address(self, container, field):
+        networks = json.loads(self.docker("inspect", "--format", "{{json .NetworkSettings.Networks}}", container).stdout)
+        network = networks.get(self.name)
+        if not network:
+            raise ValueError("Measured container is outside its managed fixture network")
+        address = ipaddress.IPv4Address(network.get(field, ""))
+        if address.is_unspecified or address.is_multicast or address.is_loopback:
+            raise ValueError("Measured container has no usable network address")
+        return str(address)
 
     def environment(self, database):
         values = [*super().environment(database),
@@ -317,7 +336,7 @@ class RetentionDeployment(Deployment):
             "HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS": "1",
         }
         if self.effects is not None:
-            values += ["--add-host", "retention-effect:host-gateway",
+            values += ["--add-host", f"retention-effect:{self.effect_host}",
                        "--volume", f"{self.effects.certificate.resolve()}:/effect-ca.pem:ro,z"]
             config.update({"SSL_CERT_FILE": "/effect-ca.pem",
                            "HUBUUM_REMOTE_CALL_ALLOW_PRIVATE_TARGETS": "true"})
@@ -426,7 +445,7 @@ class RetentionDeployment(Deployment):
         self.docker("run", "--detach", "--name", name, "--network", self.name,
                     "--publish", "127.0.0.1::8080", *self.environment("source"),
                     *self.application_command(name, f"{role}-{index}"))
-        address = self.docker("port", name, "8080/tcp").stdout.strip()
+        address = self.host_endpoint(name, 8080)
         api = Api("http://" + address)
 
         def ready():
@@ -572,7 +591,8 @@ def measured_run(arguments, root, run_index):
     recipe = root / "workload.json"
     write_json(recipe, workload)
     with RetentionDeployment(arguments.image, root, arguments.profile, arguments.recovery_probes,
-                             arguments.cpu_affinity, arguments.safety_probes) as deployment:
+                             arguments.cpu_affinity, arguments.safety_probes,
+                             direct_container_network=arguments.direct_container_network) as deployment:
         deployment.admin("source", "--migrate")
         deployment.admin("source", "--control-checkpoint", "/control", "--control-checkpoint-key", "/control.key", "--initialize-control-checkpoint")
         deployment.admin("source", "--task-retention", "set-policy", "--task-retention-deduplication-seconds", "120", "--task-retention-details-seconds", "30")
@@ -657,6 +677,7 @@ def measured_run(arguments, root, run_index):
                 "monitor_errors": monitor.errors, "measurement_valid": not monitor.errors and monitor.samples > 0,
                 "enforced_resources": monitor.enforcement, "cpu_affinity_plan": deployment.cpu_plan,
                 "container_engine": deployment.engine,
+                "direct_container_network": arguments.direct_container_network,
                 "workload_completed": completed,
                 "repository_peak_sampled_bytes": monitor.repository_peak_bytes,
                 "repository_peak_sampled_files": monitor.repository_peak_files,
@@ -701,6 +722,8 @@ def main(argv=None):
     parser.add_argument("--recovery-probes", action="store_true")
     parser.add_argument("--cpu-affinity", action="store_true",
                         help="Use verified fixed CPU masks; image must include taskset")
+    parser.add_argument("--direct-container-network", action="store_true",
+                        help="Connect through inspected fixture addresses when running inside the container engine's Linux host")
     parser.add_argument("--output-probe", action="store_true",
                         help="Also measure one real export output expiry; requires at least one hour")
     parser.add_argument("--physical-recovery-probes", action="store_true",

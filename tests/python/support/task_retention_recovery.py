@@ -67,10 +67,13 @@ def _refresh_database_address(deployment):
     address = ipaddress.ip_address(network.get("IPAddress", ""))
     if address.is_unspecified or address.is_multicast:
         raise ValueError("Restored database has no usable network address")
-    published = deployment.docker("port", name, "5432/tcp").stdout.strip()
-    match = re.fullmatch(r"127\.0\.0\.1:([0-9]{1,5})", published)
-    if not match or not 1 <= int(match[1]) <= 65535:
-        raise ValueError("Restored database has no single loopback port binding")
+    if deployment.direct_container_network:
+        published = deployment.host_endpoint(name, 5432)
+    else:
+        published = deployment.docker("port", name, "5432/tcp").stdout.strip()
+        match = re.fullmatch(r"127\.0\.0\.1:([0-9]{1,5})", published)
+        if not match or not 1 <= int(match[1]) <= 65535:
+            raise ValueError("Restored database has no single loopback port binding")
     deployment.database_ip = str(address)
     deployment.host_url = f"postgres://corpus:{deployment.password}@{published}/source?sslmode=disable"
 
