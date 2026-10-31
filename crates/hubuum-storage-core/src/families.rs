@@ -8,16 +8,17 @@ use crate::artifacts::{ArtifactStore, TaskArtifactStore};
 use crate::{
     AuditEventStorage, AuthenticationStorage, AuthorizationDataStorage, BackupSnapshotStorage,
     CatalogStorage, ClassRelationStorage, ClassStorage, CollectionAuthorizationQueryStorage,
-    CollectionStorage, ComputedFieldStorage, ComputedObjectStorage, EventConfigurationStorage,
-    EventDeliveryAdministrationStorage, EventDeliveryWorkerStorage, EventFanoutStorage,
-    EventHealthStorage, EventRetentionStorage, ExecutionStorage, ExportTemplateStorage,
-    ExternalIdentityStorage, GroupMembershipStorage, GroupStorage, HistoryStorage,
-    IdentityScopeStorage, ImportStorage, InventoryStorage, LocalIdentityCredentialStorage,
-    LogicalIdentityStorage, MetricsStorage, ObjectAggregateStorage, ObjectRelationStorage,
-    ObjectStorage, OperationalStateStorage, PrincipalStorage, QueryUsageStorage,
-    RelationQueryStorage, RemoteTargetStorage, RestoreStorage, SchemaEvolutionStorage,
-    ServiceAccountStorage, TaskCapacityStorage, TaskExecutionStorage, TaskQueueStorage,
-    TokenRetentionStorage, TokenStorage, TransactionStorage, UnifiedSearchStorage, UserStorage,
+    CollectionStorage, ComputedFieldStorage, ComputedObjectStorage, DeletionControlStorage,
+    EventConfigurationStorage, EventDeliveryAdministrationStorage, EventDeliveryWorkerStorage,
+    EventFanoutStorage, EventHealthStorage, EventRetentionStorage, ExecutionStorage,
+    ExportTemplateStorage, ExternalIdentityStorage, GroupMembershipStorage, GroupStorage,
+    HistoryStorage, IdentityScopeStorage, ImportStorage, InventoryStorage,
+    LocalIdentityCredentialStorage, LogicalIdentityStorage, MetricsStorage, ObjectAggregateStorage,
+    ObjectRelationStorage, ObjectStorage, OperationalStateStorage, PrincipalStorage,
+    QueryUsageStorage, RelationQueryStorage, RemoteTargetStorage, RestoreStorage,
+    SchemaEvolutionStorage, ServiceAccountStorage, TaskCapacityStorage, TaskExecutionStorage,
+    TaskQueueStorage, TokenRetentionStorage, TokenStorage, TransactionStorage,
+    UnifiedSearchStorage, UserStorage,
 };
 
 /// Atomic domain-resource lifecycle and transaction behavior.
@@ -164,11 +165,20 @@ impl<T> EventStorage for T where
 
 /// Cross-cutting execution, metrics, operational state, and token retention.
 pub trait OperationalStorage:
-    MetricsStorage + OperationalStateStorage + TokenRetentionStorage + ExecutionStorage
+    MetricsStorage
+    + OperationalStateStorage
+    + TokenRetentionStorage
+    + ExecutionStorage
+    + DeletionControlStorage
 {
 }
 
 impl<T> OperationalStorage for T where
-    T: MetricsStorage + OperationalStateStorage + TokenRetentionStorage + ExecutionStorage + ?Sized
+    T: MetricsStorage
+        + OperationalStateStorage
+        + TokenRetentionStorage
+        + ExecutionStorage
+        + DeletionControlStorage
+        + ?Sized
 {
 }

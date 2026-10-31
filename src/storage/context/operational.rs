@@ -1,6 +1,36 @@
 use super::*;
 
 #[async_trait]
+impl DeletionControlStorage for StorageHandle {
+    async fn capture_deletion_control(&self) -> Result<DeletionControlCapture, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::DeletionControl,
+            "capture_deletion_control",
+            async { dispatch_backend!(self, |backend| backend.capture_deletion_control().await) },
+        )
+        .await
+    }
+
+    async fn commit_deletion_control(
+        &self,
+        change: DeletionControlChange,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::DeletionControl,
+            "commit_deletion_control",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .commit_deletion_control(change)
+                    .await)
+            },
+        )
+        .await
+    }
+}
+
+#[async_trait]
 impl OperationalStateStorage for StorageHandle {
     async fn get_readiness_snapshot(&self) -> Result<StorageReadinessSnapshot, StorageError> {
         self.observe_storage_call(

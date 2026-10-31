@@ -519,6 +519,7 @@ Sink and subscription mutations include their lifecycle events atomically.
 Required traits:
 
 - `MetricsStorage` and `OperationalStateStorage`;
+- `DeletionControlStorage`;
 - `EventDeliveryWorkerStorage`, `EventFanoutStorage`, `EventHealthStorage`, and
   `EventRetentionStorage`;
 - `TokenRetentionStorage`; and
@@ -529,6 +530,13 @@ retention, worker claims and acknowledgements, and the execution context
 applied across requests and workers. `WorkerNotificationProvider` is an
 optional application-composition provider: adapters may implement it for
 lower-latency wake-ups, but it is not part of `StorageBackend`.
+
+`DeletionControlStorage` owns privileged capture and exact-predecessor transitions
+for protected deletion authority. Logical replacement must preserve these records
+and reject retained intents until restriction reapplication is implemented.
+The application owns independent checkpoint publication and recovery evidence;
+see the [deletion recovery foundation](../deletion_recovery.md) for its durability
+contract and activation gates.
 
 Queue and gauge snapshots correlate optional oldest/last timestamps with their
 counts. A positive queued, active, due, pending, or terminal count requires the

@@ -346,6 +346,7 @@ impl MemoryTokenRecord {
 #[derive(Clone)]
 struct MemoryState {
     artifacts: artifacts::Artifacts,
+    deletion_control: DeletionControlState,
     task_capacity: task_capacity::MemoryTaskCapacity,
     logical_identities: logical_identity::MemoryLogicalIdentities,
     generation: Arc<()>,
@@ -840,6 +841,7 @@ mod backup;
 mod computed_history;
 mod credential_activity;
 mod credential_approval;
+mod deletion_control;
 mod events;
 mod execution;
 mod identity;

@@ -204,6 +204,11 @@ for an exception.
   ordinary domain lifecycle shortcut.
 - Retention: `TokenRetentionStorage::purge_expired_tokens` applies configured
   expiry and emits the token-purge semantics owned by the retention worker.
+- Deletion authority maintenance: `DeletionControlStorage::commit_deletion_control`
+  persists a validated exact-predecessor transition under privileged authority.
+  It retains only UUID selectors and copy outcomes outside logical application
+  replacement. Independent checkpoint evidence and exposure gates are separate
+  from this control mutation; no erasure executor is enabled by the foundation.
 - Task policy maintenance: `TaskCapacityStorage::initialize_task_policy`
   establishes deployment control state only once; subsequent initializers read
   the existing policy. `TaskCapacityStorage::replace_task_policy` is an explicit

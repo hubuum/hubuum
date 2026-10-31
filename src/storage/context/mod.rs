@@ -7,6 +7,7 @@ use hubuum_domain::{
     PrincipalId, RemoteTargetId, RestoreJobId, ServiceAccountId, TaskId, TokenId, UserId,
 };
 use hubuum_storage_core::{
+    DeletionControlCapture, DeletionControlChange, DeletionControlStorage,
     QueryUsageAnalysisProvider, QueryUsageStorage, StorageQueryObservationSettings,
 };
 use hubuum_storage_core::{StorageComputedFieldHistoryQuery, StorageHistoricalComputedFields};

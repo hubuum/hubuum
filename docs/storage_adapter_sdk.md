@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.9`.
+Status: accepted; current experimental release train is `0.10`.
 
 ## Supported Crate Graph
 
@@ -196,6 +196,18 @@ CI builds rustdoc with warnings denied and all features enabled. It runs
 maintainer-controlled operation because crates.io versions cannot be replaced.
 
 ## Adapter Upgrade Process
+
+### Deletion authority foundation: 0.9 to 0.10
+
+Update all ten supported SDK crates together to 0.10.0. The complete operational
+family now requires `DeletionControlStorage`. Implement privileged, bounded
+capture and atomic exact-predecessor transitions for `DeletionControlState`.
+Keep its records outside logical application replacement. Retained decisions
+must prevent restored exposure until restriction reapplication is implemented;
+the initial adapters conservatively reject replacement whenever intents exist.
+See [deletion recovery](deletion_recovery.md) for the independent repository
+contract and the remaining activation gates. This is a breaking Rust SDK change;
+it does not enable a deletion endpoint or promise permanent-erasure completion.
 
 Adapter authors should upgrade `hubuum-storage-core` and
 `hubuum-storage-conformance` to the same exact SDK version, update every direct

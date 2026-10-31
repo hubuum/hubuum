@@ -611,6 +611,12 @@ async fn apply_restore_replay_parts(
                 let started_at = Utc::now().naive_utc();
                 diesel::sql_query("UPDATE credential_approvals SET invalidated_at=timezone('UTC', clock_timestamp()) WHERE consumed_at IS NULL AND invalidated_at IS NULL").execute(connection).await?;
                 enable_restore_session_settings(connection).await?;
+                // Retained authority is not part of the application snapshot.
+                // Until lifecycle consumers can reapply every restriction, fail
+                // inside the replacement transaction rather than expose erased
+                // identities from an older backup.
+                diesel::sql_query("SELECT public.hubuum_check_deletion_restore_gate()")
+                    .execute(connection).await?;
                 replace_backend_replay(connection, snapshot.into_replay())
                     .await?;
                 diesel::sql_query("SELECT public.hubuum_reconcile_task_capacity()")

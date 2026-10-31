@@ -102,6 +102,7 @@ pub mod events {
 
 /// Execution context, observation, operational state, and process integration.
 pub mod operational {
+    pub use crate::deletion_control::*;
     pub use crate::execution::*;
     pub use crate::metrics::*;
     pub use crate::operational::{

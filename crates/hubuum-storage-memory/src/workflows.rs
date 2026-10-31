@@ -1238,6 +1238,11 @@ impl RestoreStorage for MemoryStorage {
     ) -> Result<StorageRestoreCompletion, StorageError> {
         let (job_id, metadata, snapshot, source_includes_history) = request.into_parts();
         let mut state = self.state.write().await;
+        if !state.deletion_control.intents().is_empty() {
+            return Err(StorageError::conflict(
+                "Deletion authority requires reapplication before logical restore; keep recovery quarantined",
+            ));
+        }
         if state.maintenance_state != MaintenanceState::Draining
             || state.maintenance_restore_job_id != Some(job_id)
         {
@@ -1265,6 +1270,7 @@ impl RestoreStorage for MemoryStorage {
             state.artifacts.clone(),
         )?;
         replacement.credential_approvals = state.credential_approvals.clone();
+        replacement.deletion_control = state.deletion_control.clone();
         replacement.query_observation_control = state.query_observation_control;
         for (_, approval) in replacement.credential_approvals.values_mut() {
             approval.invalidate(Utc::now());
