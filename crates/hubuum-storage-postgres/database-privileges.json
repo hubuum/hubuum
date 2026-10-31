@@ -22,7 +22,9 @@
     "hubuum_task_policy_replace",
     "hubuum_task_capacity_lock",
     "hubuum_bind_task_artifact",
-    "hubuum_task_claimable_tasks"
+    "hubuum_task_claimable_tasks",
+    "hubuum_deletion_control_read",
+    "hubuum_deletion_exposure_allowed"
   ],
   "runtime_function_policy": "all_security_invoker_plus_allowlisted_security_definer",
   "restore": "isolated_migrator_executor",

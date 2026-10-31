@@ -858,6 +858,9 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
         settings: hubuum_domain::EventDeliverySettings,
     ) -> Result<StorageEventDeliveryBatch, StorageError> {
         let mut state = self.state.write().await;
+        if !state.deletion_control.permits_exposure() {
+            return Ok(StorageEventDeliveryBatch::new(Vec::new(), None));
+        }
         let now = Utc::now();
         let locked_until = settings
             .lock_deadline(now.naive_utc())
@@ -1270,6 +1273,9 @@ impl EventFanoutStorage for MemoryStorage {
         settings: EventFanoutSettings,
     ) -> Result<StorageEventFanoutOutcome, StorageError> {
         let mut state = self.state.write().await;
+        if !state.deletion_control.permits_exposure() {
+            return Ok(StorageEventFanoutOutcome::new(0, Vec::new()));
+        }
         let events = state
             .events
             .iter()
@@ -1430,6 +1436,9 @@ impl EventRetentionStorage for MemoryStorage {
             .map(|value| DateTime::from_naive_utc_and_offset(value, Utc))
             .ok_or_else(|| StorageError::internal("event retention cutoff overflowed"))?;
         let mut state = self.state.write().await;
+        if !state.deletion_control.permits_exposure() {
+            return Ok(None);
+        }
         let retained = state
             .events
             .iter()
@@ -1463,6 +1472,9 @@ impl EventRetentionStorage for MemoryStorage {
         batch_id: StorageEventRetentionBatchId,
     ) -> Result<StorageEventRetentionSummary, StorageError> {
         let mut state = self.state.write().await;
+        if !state.deletion_control.permits_exposure() {
+            return Ok(StorageEventRetentionSummary::default());
+        }
         let Some(event_ids) = state.event_retention_batches.remove(&batch_id.as_uuid()) else {
             return Ok(StorageEventRetentionSummary::default());
         };

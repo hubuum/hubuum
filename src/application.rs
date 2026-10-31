@@ -44,6 +44,7 @@ use crate::middlewares::rate_limit::{
 use crate::permissions::{AppContext, build_permission_backend};
 use crate::restores::{RestoreSettings, ensure_restore_coordinator_running};
 use crate::secrets::DatabaseCredential;
+use crate::services::deletion_recovery::{RuntimeRecoveryPermit, require_runtime_permit};
 use crate::services::event_administration::count_enabled_event_sinks;
 use crate::storage::{
     OperationalStateStorage, StorageBackendKind, StorageDatabaseRole, StorageDatabaseRoleNames,
@@ -64,6 +65,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         app_context,
         backup_settings,
         restore_settings,
+        _recovery,
     } = initialize_services(&mut config).await;
     let storage_backend = app_context.storage_backend_descriptor();
     if config.metrics_enabled {
@@ -205,6 +207,7 @@ async fn initialize_runtime() -> (AppConfig, observability::tracing::TraceRuntim
 }
 
 struct RuntimeServices {
+    _recovery: RuntimeRecoveryPermit,
     app_context: AppContext,
     backup_settings: BackupSettings,
     restore_settings: RestoreSettings,
@@ -258,6 +261,14 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
             EXIT_CODE_DATABASE_ERROR,
         );
     }
+    let recovery = require_runtime_permit(&storage, &config.control_recovery)
+        .await
+        .unwrap_or_else(|error| {
+            fatal_error(
+                &format!("Recovery startup gate: {error}"),
+                EXIT_CODE_DATABASE_ERROR,
+            )
+        });
     let initial_policy = config
         .initial_task_admission_policy()
         .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
@@ -391,6 +402,7 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
     storage.start_query_observation_control();
     let app_context = AppContext::new(storage, permission_backend);
     RuntimeServices {
+        _recovery: recovery,
         app_context,
         backup_settings,
         restore_settings,

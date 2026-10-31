@@ -4,6 +4,7 @@ use std::fmt;
 pub enum MaintenanceState {
     Normal,
     Draining,
+    RecoveryQuarantine,
 }
 
 impl MaintenanceState {
@@ -11,6 +12,7 @@ impl MaintenanceState {
         match self {
             Self::Normal => "normal",
             Self::Draining => "draining",
+            Self::RecoveryQuarantine => "recovery_quarantine",
         }
     }
 
@@ -39,6 +41,7 @@ impl TryFrom<&str> for MaintenanceState {
         match value {
             "normal" => Ok(Self::Normal),
             "draining" => Ok(Self::Draining),
+            "recovery_quarantine" => Ok(Self::RecoveryQuarantine),
             _ => Err(MaintenanceStateParseError {
                 value: value.to_string(),
             }),
@@ -61,6 +64,7 @@ mod tests {
     #[rstest]
     #[case("normal", MaintenanceState::Normal)]
     #[case("draining", MaintenanceState::Draining)]
+    #[case("recovery_quarantine", MaintenanceState::RecoveryQuarantine)]
     fn database_values_map_to_maintenance_states(
         #[case] value: &str,
         #[case] expected: MaintenanceState,

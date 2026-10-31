@@ -14,6 +14,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Templates replay indexed temporary files; backup capture reuses its row spool.
   Configure spool and worker resident limits with
   `HUBUUM_ARTIFACT_MAX_SPOOL_BYTES` and `HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES`.
+- Offline authenticated control recovery restores missing deletion authority.
+  Configured API and worker startup checks independent recovery evidence; retained
+  deletion decisions enforce deployment-wide recovery quarantine.
+
 - Administrator commands can publish authenticated deletion-control checkpoints
   to an independent durable directory and verify recovered authority against the
   latest checkpoint. This foundation keeps permanent deletion and recovery
@@ -44,6 +48,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Reconcile task-owned artifacts before downgrading. New export replay rows and
   backup source rows are capped at 4 MiB; related template input is capped at
   8 MiB per batch and hydrated output at 4 MiB per row. Narrow oversized queries.
+- **Breaking Rust SDK change:** upgrade all ten SDK crates to 0.11.0 and handle
+  `MaintenanceState::RecoveryQuarantine` in adapter maintenance, readiness, and
+  worker gates. Follow the [0.11 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-010-to-011).
+- **Breaking operational change:** stop runtime replicas, apply the recovery-gate
+  migration, and reconcile split-role grants before restarting matching binaries.
+  Deployments requiring physical recovery protection must configure
+  `HUBUUM_CONTROL_RECOVERY_DIRECTORY` and `HUBUUM_CONTROL_RECOVERY_KEY` outside
+  database backups on every runtime replica. Retained deletion intents prevent
+  startup and ordinary exposure until lifecycle restrictions can be reapplied.
+
 - **Breaking Rust SDK change:** the storage SDK moves to 0.10.0 and requires
   `DeletionControlStorage` for complete adapters. Upgrade all ten SDK crates
   together, preserve control authority across logical replacement, and implement

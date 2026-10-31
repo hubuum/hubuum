@@ -1,12 +1,11 @@
 # Deletion authority and independent checkpoint foundation
 
-This is the first implementation slice of
-[#511](https://github.com/hubuum/hubuum/issues/511). It adds protected control
-records, independent checkpoint publication, and administrator coverage checks.
-It does **not** enable permanent deletion, automatic control import, or release
-physical-recovery quarantine. Retention and erasure consumers must remain gated
-until restriction reapplication, execution fencing, and recovery integration are
-complete. The issue remains open.
+This implements protected control records, independent checkpoint publication,
+offline control recovery, and runtime recovery quarantine for
+[#511](https://github.com/hubuum/hubuum/issues/511). It does **not** enable permanent
+deletion or selective restriction reapplication. Retained decisions restrict the
+entire deployment, including completed deletions, so recovering authority cannot
+expose data that an older application backup may contain. The issue remains open.
 
 ## Authority and ownership
 
@@ -23,7 +22,9 @@ does not acknowledge completion to a caller. Completion requires a new independe
 checkpoint covering the recorded outcomes.
 
 PostgreSQL stores the bounded material in `hubuum_control.deletion_authority`,
-without foreign keys into application tables. Runtime roles have no access.
+without foreign keys into application tables. Runtime roles can read minimal
+authority through an allowlisted function, but have no direct control-table
+access or mutation authority.
 Privileged transitions compare the entire expected predecessor in one transaction.
 The complete memory adapter implements the same state transitions and preserves
 control state across application replay. Common storage tracing and metrics cover
@@ -126,13 +127,75 @@ The JSON report includes `authority_covered` and always reports
 `application_quarantine_released: false`. Successful coverage is necessary but
 does not reapply restrictions, authorize cleanup, or release traffic. A stale or
 wrong-lineage database returns an error. Preserve the database and independent
-repository and recover the missing control material before retrying; this slice
-does not provide an automatic import or epoch-reset command.
+repository and recover the missing control material before retrying. Use the
+offline recovery command below when the authenticated checkpoint is a compatible
+successor. Conflicting lineages/epochs or divergent decisions require
+operator recovery of the correct deployment; they cannot be reset or merged.
 
 Initialization requires empty control authority and an empty directory. It cannot
 repair a missing `HEAD` in an existing repository. An interrupted first bootstrap
 requires an operator to establish that no checkpoint was acknowledged before
 reprovisioning; do not delete files to bypass an uncertain recovery history.
+
+## Offline control recovery and runtime gates
+
+Apply the recovery-gate migration and reconcile split-role grants with all API
+and worker replicas stopped. Configure both settings on every runtime replica,
+keeping configuration outside the primary database rollback boundary:
+
+```bash
+HUBUUM_CONTROL_RECOVERY_DIRECTORY=/independent/control
+HUBUUM_CONTROL_RECOVERY_KEY=/independent-secrets/control.key
+```
+
+The equivalent flags are `--control-recovery-directory` and
+`--control-recovery-key`. The trusted runtime and administrator must share the
+Unix owner account for this repository; the existing owner-only files remain
+required. Treat that account and host as trusted checkpoint writers because
+HMAC verification uses the signing key. Paths and key contents are omitted from
+administrator configuration; `control_recovery_required` reports activation.
+
+Every runtime role checks authority before it binds an HTTP listener, initializes
+application workers, or joins the restore coordinator. Missing/unavailable latest
+evidence, invalid authentication, a different lineage/epoch, or a rolled-back
+primary prevents startup. Omitting both settings is supported only for deployments
+without physical-recovery guarantees; configuration is an operator trust boundary
+and must not be removed to bypass a failed gate. Retained local intents block
+startup even without these settings.
+
+With all replicas stopped, recover missing control material:
+
+```bash
+hubuum-admin --recover-control /independent/control \
+  --control-checkpoint-key /independent-secrets/control.key
+```
+
+Recovery holds the repository publication lock from authenticated latest lookup
+through the primary transaction and independent read-back. An exact-predecessor
+comparison rejects competing primary changes. A compatible newer local ledger is
+preserved. Different lineage/epoch, conflicting decisions, and same-revision
+conflicts fail without replacing authority. Recovery neither adopts another
+lineage nor resets the epoch. Physical WAL coordinates remain evidence of the
+captured context; recovery does not compare LSNs across timelines.
+
+A crash before commit leaves the primary unchanged. A crash after commit and
+before acknowledgement is retried idempotently. The OS releases the publication
+lock when the process dies; the next attempt authenticates the latest evidence
+again. Do not copy an arbitrary older checkpoint into `HEAD` to make recovery pass.
+
+Importing authority reapplies the conservative **deployment-wide restriction**:
+maintenance/readiness reports `recovery_quarantine`, application requests return
+503 (including restore-status requests), and task/event claims and retention work
+remain stopped. Health and metrics probes remain available on already-running
+processes. Startup rejects retained intents; recovery reports always keep
+`application_quarantine_released: false`. Selective reapplication is still required
+before a deployment with retained intents can resume useful application traffic.
+
+Physical rollback and control recovery are offline operations. These checks do
+not fence in-flight operations across a live database replacement, and they do not
+authorize online deletion producers. Keep such producers disabled until transactional
+restriction and execution fencing are implemented. Logical application restore
+continues to reject retained intents before replacing any data.
 
 ## Logical restore gate and remaining activation work
 
@@ -148,8 +211,8 @@ Before #511 can be completed or any deletion consumer activated, implement:
   carried into cleanup and acknowledgement operations;
 - independently protected intent and completion acknowledgements around real
   physical-copy operations;
-- privileged control recovery/import, epoch handling, and startup/exposure gates
-  that require current independent evidence;
+- explicit recovery-epoch transitions and selective exposure release after
+  restriction reapplication;
 - restriction reapplication after logical restore, replacing the conservative
   rejection only when every affected exposure is fenced; and
 - process-crash, physical-rollback, and copy-retention-horizon integration tests

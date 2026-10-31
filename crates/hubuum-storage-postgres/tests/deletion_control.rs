@@ -4,21 +4,143 @@ use diesel::sql_types::{Bool, Jsonb, Text};
 use diesel::{QueryableByName, sql_query};
 use diesel_async::{RunQueryDsl, SimpleAsyncConnection};
 use hubuum_storage_core::{
-    DeletionControlState, DeletionControlStorage, DeletionSubject, StorageErrorKind,
+    DeletionControlState, DeletionControlStorage, DeletionCopyState, DeletionSubject,
+    StorageErrorKind,
 };
 use hubuum_storage_postgres::test_support::{
     database_role_tests_enabled, integration_test_database_roles, integration_test_migration_pool,
+    integration_test_pool,
 };
 use hubuum_storage_postgres::{
     PostgresConnection, PostgresStorage, PostgresStorageError, with_transaction,
 };
+use rstest::rstest;
 use serde_json::Value;
 use uuid::Uuid;
+
+static CONTROL_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[tokio::test]
+async fn connection_loss_during_control_recovery_rolls_back_import() {
+    use hubuum_storage_postgres::test_support::terminate_backend;
+    use hubuum_storage_postgres::{PostgresFaultController, PostgresFaultPoint};
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let pool = integration_test_migration_pool(2);
+    let storage = PostgresStorage::unobserved(pool.clone());
+    let before = storage.read_deletion_control().await.unwrap();
+    let required = before
+        .record_intent(
+            Uuid::new_v4(),
+            DeletionSubject::Version {
+                identity: serde_json::from_value(serde_json::json!(Uuid::new_v4())).unwrap(),
+            },
+            vec![Uuid::new_v4()],
+        )
+        .unwrap();
+    let change = before.recover_from(required.next()).unwrap();
+    let controller = PostgresFaultController::pausing(PostgresFaultPoint::TransactionBeforeCommit);
+    let task_controller = controller.clone();
+    let task_storage = storage.clone();
+    let task = tokio::spawn(async move {
+        task_controller
+            .run(task_storage.commit_deletion_control(change))
+            .await
+    });
+    let reached = timeout(Duration::from_secs(5), controller.wait_until_reached())
+        .await
+        .unwrap();
+    terminate_backend(&pool, reached.backend_pid().unwrap())
+        .await
+        .unwrap();
+    controller.resume();
+    let result = timeout(Duration::from_secs(5), task)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(result.is_err());
+    assert_eq!(storage.read_deletion_control().await.unwrap(), before);
+}
 
 #[derive(QueryableByName)]
 struct Material {
     #[diesel(sql_type = Jsonb)]
     material: Value,
+}
+
+#[derive(QueryableByName)]
+struct Gate {
+    #[diesel(sql_type = Bool)]
+    allowed: bool,
+}
+
+#[tokio::test]
+async fn runtime_can_read_authority_without_control_table_write_access() {
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let pool = integration_test_pool(1);
+    let storage = PostgresStorage::unobserved(pool.clone());
+    storage
+        .read_deletion_control()
+        .await
+        .expect("read-only runtime function");
+    if database_role_tests_enabled() {
+        let can_write = with_transaction(&pool, async |connection| {
+            Ok::<_, PostgresStorageError>(sql_query("SELECT has_table_privilege(current_user, c.oid, 'UPDATE') AS allowed FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'hubuum_control' AND c.relname = 'deletion_authority'")
+                .get_result::<Gate>(connection).await?.allowed)
+        }).await.unwrap();
+        assert!(!can_write);
+    }
+}
+
+#[rstest]
+#[case::pending(DeletionCopyState::Pending)]
+#[case::blocked(DeletionCopyState::Blocked)]
+#[case::removed(DeletionCopyState::Removed)]
+#[tokio::test]
+async fn recovered_decisions_restrict_exposure_transactionally(#[case] outcome: DeletionCopyState) {
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let pool = integration_test_migration_pool(1);
+    with_transaction(&pool, async |connection| {
+        assume_owner(connection).await?;
+        connection
+            .batch_execute("SAVEPOINT recovery_fixture")
+            .await?;
+        let before = sql_query(
+            "SELECT material FROM hubuum_control.deletion_authority WHERE id=1 FOR UPDATE",
+        )
+        .get_result::<Material>(connection)
+        .await?;
+        let initial: DeletionControlState = serde_json::from_value(before.material).unwrap();
+        let id = Uuid::new_v4();
+        let copy = Uuid::new_v4();
+        let intent = initial
+            .record_intent(
+                id,
+                DeletionSubject::Version {
+                    identity: serde_json::from_value(serde_json::json!(Uuid::new_v4())).unwrap(),
+                },
+                vec![copy],
+            )
+            .unwrap();
+        let recovered = intent.next().record_copy(id, copy, outcome).unwrap();
+        sql_query("UPDATE hubuum_control.deletion_authority SET material=$1 WHERE id=1")
+            .bind::<Jsonb, _>(serde_json::to_value(recovered.next()).unwrap())
+            .execute(connection)
+            .await?;
+        let during = sql_query("SELECT public.hubuum_deletion_exposure_allowed() AS allowed")
+            .get_result::<Gate>(connection)
+            .await?
+            .allowed;
+        connection
+            .batch_execute("ROLLBACK TO SAVEPOINT recovery_fixture")
+            .await?;
+        assert!(!during);
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
+    .unwrap();
 }
 
 async fn assume_owner(connection: &mut PostgresConnection) -> Result<(), PostgresStorageError> {
@@ -33,6 +155,7 @@ async fn assume_owner(connection: &mut PostgresConnection) -> Result<(), Postgre
 
 #[tokio::test]
 async fn deletion_restore_gate_rejects_retained_decisions() {
+    let _guard = CONTROL_TEST_LOCK.lock().await;
     let pool = integration_test_migration_pool(1);
     with_transaction(&pool, async |connection| {
         assume_owner(connection).await?;
@@ -70,6 +193,7 @@ async fn deletion_restore_gate_rejects_retained_decisions() {
 
 #[tokio::test]
 async fn deletion_authority_has_no_cascading_application_references() {
+    let _guard = CONTROL_TEST_LOCK.lock().await;
     #[derive(QueryableByName)]
     struct ResultRow {
         #[diesel(sql_type = Bool)]
@@ -86,6 +210,7 @@ async fn deletion_authority_has_no_cascading_application_references() {
 
 #[tokio::test]
 async fn deletion_authority_compare_and_swap_rejects_old_snapshot() {
+    let _guard = CONTROL_TEST_LOCK.lock().await;
     let pool = integration_test_migration_pool(1);
     let before = with_transaction(&pool, async |connection| {
         assume_owner(connection).await?;

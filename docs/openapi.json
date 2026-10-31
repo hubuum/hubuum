@@ -37100,6 +37100,7 @@
         "type": "object",
         "required": [
           "artifacts",
+          "control_recovery_required",
           "schema_validation",
           "query_observations",
           "server",
@@ -37126,6 +37127,10 @@
           },
           "backups": {
             "$ref": "#/components/schemas/BackupConfig"
+          },
+          "control_recovery_required": {
+            "type": "boolean",
+            "description": "Runtime startup requires independently retained control evidence."
           },
           "database": {
             "$ref": "#/components/schemas/DatabaseConfig"

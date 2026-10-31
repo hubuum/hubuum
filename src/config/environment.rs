@@ -175,6 +175,8 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_BACKUP_MAX_CAPTURE_ROWS", Backups),
     option!("HUBUUM_RESTORE_STAGE_RETENTION_MINUTES", Restores),
     option!("HUBUUM_RESTORE_MAX_UPLOAD_BYTES", Restores),
+    option!("HUBUUM_CONTROL_RECOVERY_DIRECTORY", Restores, metadata),
+    option!("HUBUUM_CONTROL_RECOVERY_KEY", Restores, metadata),
     option!("HUBUUM_EXPORT_MAX_ACTIVE_TASKS_PER_USER", Exports),
     option!("HUBUUM_EXPORT_TEMPLATE_RECURSION_LIMIT", Exports),
     option!("HUBUUM_EXPORT_TEMPLATE_FUEL", Exports),
@@ -826,6 +828,8 @@ pub(crate) fn configuration_constraints() -> Vec<String> {
 /// dynamic namespace mapping and injects resolved values into consumers.
 pub const ENVIRONMENT_ADAPTER_PATHS: &[&str] = &[
     "src/config.rs",
+    #[cfg(any(test, feature = "integration-test-support"))]
+    "src/config/control_recovery.rs",
     "src/config/token_hash.rs",
     "src/administration.rs",
     "src/logger.rs",
