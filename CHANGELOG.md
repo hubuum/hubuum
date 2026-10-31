@@ -107,7 +107,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   backup source rows are capped at 4 MiB; related template input is capped at
   8 MiB per batch and hydrated output at 4 MiB per row. Narrow oversized queries.
 - **Breaking operational change:** stop older producers, apply migration
-  `2026-10-29-000007_task_retention`, reconcile grants and deploy matching binaries.
+  `2026-10-31-000008_task_retention`, reconcile grants and deploy matching binaries.
   Explicitly preview and enable finite legacy deduplication with the independent
   repository configured on every producer. Original terminal timestamps remain
   authoritative; old receipts may expire immediately. Existing task details
@@ -115,11 +115,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Legacy backups with reminted task or principal identities remain quarantined
   when correspondence to retained purges or receipt owners cannot be proven;
   restore from a backup with matching stable identity evidence.
-- **Breaking Rust SDK change:** upgrade all ten SDK crates to 0.14.0 and implement
+- **Breaking Rust SDK change:** upgrade all ten SDK crates to 0.15.0 and implement
   protected task admission, receipt/retention capabilities, composite checkpoints
   and combined exposure proofs. Policy replacement compares the policy revision;
   hold updates compare the captured hold decision, preserving concurrent receipts. See the
-  [0.14 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-013-to-014).
+  [0.15 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-014-to-015).
 
 - **Breaking operational change:** stop every older API, worker and administrator
   process, apply the application-reapplication migration and reconcile grants,

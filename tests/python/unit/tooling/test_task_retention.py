@@ -120,7 +120,7 @@ class TaskRetentionMeasurementTests(unittest.TestCase):
         self.assertEqual(environment["HUBUUM_MIGRATION_DATABASE_URL"], deployment.host_url)
 
     def test_affinity_plan_has_disjoint_process_budgets_and_reuses_local_role_slot(self):
-        with patch.object(RETENTION.os, "sched_getaffinity", return_value=set(range(16))):
+        with patch.object(RETENTION.os, "sched_getaffinity", return_value=set(range(16)), create=True):
             plan = RETENTION.affinity_plan("shared")
         names = ("database", "api-0", "api-1", "worker-0", "worker-1", "administrator")
         masks = [RETENTION.cpu_set(plan[name]) for name in names]
@@ -129,7 +129,7 @@ class TaskRetentionMeasurementTests(unittest.TestCase):
         self.assertEqual(plan["all-2"], plan["api-0"])
 
     def test_affinity_plan_refuses_insufficient_cpus(self):
-        with patch.object(RETENTION.os, "sched_getaffinity", return_value={0, 1}), \
+        with patch.object(RETENTION.os, "sched_getaffinity", return_value={0, 1}, create=True), \
                 self.assertRaisesRegex(ValueError, "Not enough"):
             RETENTION.affinity_plan("local")
 

@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use hubuum_storage_core::{
-    ApplicationControlState, ControlCheckpointCapture, DeletionAudit, DeletionControlState,
-    DeletionControlStorage, DeletionCopyState, StorageRecordIdentity, TaskRetentionStorage,
+    ApplicationControlState, ControlCheckpointCapture, DeletionAudit, DeletionControlStorage,
+    DeletionCopyState, StorageRecordIdentity, TaskRetentionStorage,
 };
 use serde::Serialize;
 use uuid::Uuid;

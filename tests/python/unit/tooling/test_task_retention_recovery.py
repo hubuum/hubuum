@@ -73,7 +73,7 @@ class TaskRetentionRecoveryTests(unittest.TestCase):
 
     def test_artifact_requires_owned_private_directory_and_no_symlink(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             deployment = SimpleNamespace(root=root)
             self.assertEqual(RECOVERY._owned_path(deployment, root / "copy.tar"), root / "copy.tar")
             (root / "link.tar").symlink_to(root / "copy.tar")
