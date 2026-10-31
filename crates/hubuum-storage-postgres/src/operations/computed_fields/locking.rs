@@ -8,6 +8,7 @@
 use super::read_repair::{self, BatchResult, RepairQueue};
 use crate::operations::task_execution;
 use crate::operations::task_rows::TaskRow;
+use crate::runtime::require_deletion_execution;
 use diesel::{ExpressionMethods, OptionalExtension, QueryDsl, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_storage_core::{
@@ -83,6 +84,7 @@ impl<'transaction> ComputedTransaction<'transaction> {
         class_id: i32,
         claimed: ClaimedTask,
     ) -> Result<LockedComputedClass<'transaction>, PostgresStorageError> {
+        require_deletion_execution(self.connection).await?;
         acquire_computed_class_shared_lock(self.connection, class_id).await?;
         runnable_claimed_task(self.connection, claimed).await?;
         self.lock_class_row(class_id).await
@@ -241,6 +243,7 @@ pub(super) async fn repair_queue_batch(
     let batch_size = runtime.computed_reindex_batch_size();
     runtime
         .with_transaction(async move |connection| {
+            require_deletion_execution(connection).await?;
             read_repair::lock_queue(connection, true).await?;
             let task = crate::schema::tasks::table
                 .find(claimed.id)

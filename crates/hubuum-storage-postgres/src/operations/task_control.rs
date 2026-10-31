@@ -19,6 +19,7 @@ use super::task_execution::{
     live_claimed_task, stored_task_kind, system_provenance,
 };
 use super::task_rows::TaskRow;
+use crate::runtime::require_deletion_execution;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
 /// Take computed-class locks before task/state locks, matching definition
@@ -51,6 +52,7 @@ pub async fn begin_remote_dispatch(
     let claimed = claimed_task(&lease)?;
     runtime
         .with_transaction(async move |connection| {
+            require_deletion_execution(connection).await?;
             let row = live_claimed_task(connection, claimed).await?;
             if stored_task_kind(&row)? != StorageTaskKind::RemoteCall {
                 return Err(PostgresStorageError::invalid_input(
@@ -134,6 +136,7 @@ pub async fn admit_task_execution(
     let claimed = claimed_task(&lease)?;
     runtime
         .with_transaction(async move |connection| {
+            require_deletion_execution(connection).await?;
             let row = live_claimed_task(connection, claimed).await?;
             let kind = stored_task_kind(&row)?;
             let now = database_now(connection).await?;

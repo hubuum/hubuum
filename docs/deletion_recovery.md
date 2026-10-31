@@ -192,10 +192,35 @@ processes. Startup rejects retained intents; recovery reports always keep
 before a deployment with retained intents can resume useful application traffic.
 
 Physical rollback and control recovery are offline operations. These checks do
-not fence in-flight operations across a live database replacement, and they do not
-authorize online deletion producers. Keep such producers disabled until transactional
-restriction and execution fencing are implemented. Logical application restore
-continues to reject retained intents before replacing any data.
+not authorize live database replacement or online deletion producers. Logical
+application restore continues to reject retained intents before replacing any
+data.
+
+### Productive task transactions and request draining
+
+The execution-fence migration adds a narrow runtime function that locks deletion
+authority for the duration of a productive task transaction. Task execution takes
+that shared lock before task or domain row locks; committing an intent takes the
+conflicting authority-row write lock. A productive transaction therefore finishes
+before the intent commits, or observes quarantine and fails before doing work.
+Output publication obeys the same ordering. The memory adapter checks authority
+under its state lock. Cancellation and failure settlement remain available so
+quarantine does not prevent workers from settling stopped work.
+
+Apply the migration and reconcile runtime grants before starting matching
+binaries. Every worker must use this fence; an older worker does not establish
+the guarantee. The fence protects database transactions and publication. It
+cannot retract a remote request already sent or stop arbitrary external
+computation. Read-only work may finish, but cannot publish a task result after
+quarantine takes effect.
+
+HTTP activity remains counted through handler execution and response-body
+completion, failure, or disconnect. Restore draining therefore cannot mistake a
+returned streaming response for completed activity. Health, readiness, metrics,
+and restore-status polling keep their operational exemptions; status requests
+still fail during recovery quarantine. The restore confirmation route is exempt
+from waiting for itself. This drain accounting does not itself revoke
+bytes already sent or prove that a disconnected replica has stopped.
 
 ## Logical restore gate and remaining activation work
 

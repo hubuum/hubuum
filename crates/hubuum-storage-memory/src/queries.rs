@@ -535,6 +535,7 @@ impl ComputedFieldStorage for MemoryStorage {
         lease: StorageTaskLease,
     ) -> Result<StorageTask, StorageError> {
         let mut state = self.state.write().await;
+        state.ensure_task_execution_allowed()?;
         let class_id = state
             .computed_rebuild_tasks
             .get(&lease.task_id().id())

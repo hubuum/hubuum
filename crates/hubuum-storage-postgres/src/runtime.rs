@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use diesel::QueryableByName;
 use diesel::result::{DatabaseErrorKind, Error as DieselError};
-use diesel::sql_types::{BigInt, Integer, Text};
+use diesel::sql_types::{BigInt, Bool, Integer, Text};
 use diesel_async::{AsyncConnection, RunQueryDsl};
 use hubuum_events_core::{EventContext, MutationProvenance, TraceLink};
 use hubuum_storage_core::{
@@ -289,8 +289,13 @@ impl PostgresRuntime {
             connection
                 .transaction::<R, PostgresStorageError, _>(async move |connection| {
                     context.apply(connection).await?;
-                    self.execute_controlled(connection, context.task_execution.as_ref(), operation)
-                        .await
+                    self.execute_controlled(
+                        connection,
+                        context.task_execution.as_ref(),
+                        TaskExecutionAccess::Mutable,
+                        operation,
+                    )
+                    .await
                 })
                 .await
         };
@@ -343,6 +348,7 @@ impl PostgresRuntime {
         &self,
         connection: &mut PostgresConnection,
         execution: Option<&TaskExecutionContext>,
+        access: TaskExecutionAccess,
         operation: F,
     ) -> Result<R, PostgresStorageError>
     where
@@ -367,10 +373,22 @@ impl PostgresRuntime {
         let pid = diesel::select(diesel::dsl::sql::<Integer>("pg_backend_pid()"))
             .get_result::<i32>(connection)
             .await?;
-        let work = operation(connection);
+        // Authority lock waits belong to the same cancellation boundary as the
+        // task's SQL. User cancellation must be able to cancel a blocked gate.
+        let work = async {
+            match access {
+                TaskExecutionAccess::Mutable => require_deletion_execution(connection).await?,
+                TaskExecutionAccess::ReadOnlySnapshot => {
+                    require_deletion_snapshot_exposure(connection).await?;
+                }
+            }
+            operation(connection)
+                .await
+                .map_err(PostgresStorageError::from)
+        };
         tokio::pin!(work);
         let result = tokio::select! {
-            result = &mut work => result.map_err(PostgresStorageError::from),
+            result = &mut work => result,
             reason = wait_for_task_stop(execution) => {
                 let cancel = async {
                     let mut cancel_connection = self.acquire_connection_from(&self.task_lease_pool).await?;
@@ -413,6 +431,7 @@ impl PostgresRuntime {
                     .execute_controlled(
                         &mut *connection,
                         context.task_execution.as_ref(),
+                        TaskExecutionAccess::Mutable,
                         operation,
                     )
                     .await?;
@@ -458,8 +477,13 @@ impl PostgresRuntime {
                     .execute(connection)
                     .await?;
                 context.apply(connection).await?;
-                self.execute_controlled(connection, context.task_execution.as_ref(), operation)
-                    .await
+                self.execute_controlled(
+                    connection,
+                    context.task_execution.as_ref(),
+                    TaskExecutionAccess::ReadOnlySnapshot,
+                    operation,
+                )
+                .await
             })
             .await;
         self.record_completion("transaction", started_at, &result);
@@ -697,6 +721,43 @@ pub(crate) fn require_existing_revision_target<T>(
             Err(PostgresStorageError::not_found("Entity not found"))
         }
     }
+}
+
+/// Order productive task transactions against deletion intent commits. The
+/// SECURITY DEFINER function holds the authority row FOR SHARE until transaction
+/// completion, before application row and advisory locks are acquired.
+pub(crate) async fn require_deletion_execution(
+    connection: &mut PostgresConnection,
+) -> Result<(), PostgresStorageError> {
+    require_deletion_exposure(connection, "public.hubuum_deletion_execution_allowed()").await
+}
+
+async fn require_deletion_snapshot_exposure(
+    connection: &mut PostgresConnection,
+) -> Result<(), PostgresStorageError> {
+    require_deletion_exposure(connection, "public.hubuum_deletion_exposure_allowed()").await
+}
+
+async fn require_deletion_exposure(
+    connection: &mut PostgresConnection,
+    query: &'static str,
+) -> Result<(), PostgresStorageError> {
+    let allowed = diesel::select(diesel::dsl::sql::<Bool>(query))
+        .get_result::<bool>(connection)
+        .await?;
+    if !allowed {
+        return Err(PostgresStorageError::unavailable(
+            "Deletion recovery quarantine prevents task execution and publication",
+        ));
+    }
+    Ok(())
+}
+
+enum TaskExecutionAccess {
+    Mutable,
+    // PostgreSQL forbids row locks in READ ONLY snapshots. Capture may finish
+    // from an admitted snapshot; its eventual publication is fenced separately.
+    ReadOnlySnapshot,
 }
 
 struct TransactionLocalContext {

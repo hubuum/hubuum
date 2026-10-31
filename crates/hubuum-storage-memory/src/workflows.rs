@@ -762,6 +762,7 @@ impl TaskExecutionStorage for MemoryStorage {
     async fn append_task_event(&self, event: StorageTaskEventAppend) -> Result<(), StorageError> {
         let (lease, event) = event.into_parts();
         let mut state = self.state.write().await;
+        state.ensure_task_execution_allowed()?;
         let task = state
             .tasks
             .get(&lease.task_id().id())
@@ -778,6 +779,7 @@ impl TaskExecutionStorage for MemoryStorage {
     ) -> Result<StorageTask, StorageError> {
         let (lease, status, summary, counts, started_at) = update.into_parts();
         let mut state = self.state.write().await;
+        state.ensure_task_execution_allowed()?;
         let now = Utc::now();
         let task = state
             .tasks
@@ -816,6 +818,7 @@ impl TaskExecutionStorage for MemoryStorage {
         );
         let (lease, status, summary, counts, started_at) = update.into_parts();
         let mut guard = self.state.write().await;
+        guard.ensure_task_execution_allowed()?;
         let mut state = guard.clone();
         let stored = state
             .tasks
@@ -2153,6 +2156,7 @@ impl MemoryStorage {
 
     async fn check_import_claim(&self, lease: &StorageTaskLease) -> Result<(), StorageError> {
         let state = self.state.read().await;
+        state.ensure_task_execution_allowed()?;
         let task = state
             .tasks
             .get(&lease.task_id().id())
