@@ -160,6 +160,7 @@ nav = [
       { "Operational contracts" = "operational_contracts.md" },
       { "Scale benchmarks" = "scale_benchmarks.md" },
       { "Lifecycle budgets" = "performance/lifecycle_budgets.md" },
+      { "History segment prototype" = "performance/history_segment_prototype.md" },
       { "Artifact pipeline measurements" = "performance/artifact_pipeline.md" },
       { "Release profiles" = "performance/release_profiles.md" },
       { "Runtime measurements" = "performance/runtime_hardening.md" },

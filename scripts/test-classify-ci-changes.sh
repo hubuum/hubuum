@@ -84,6 +84,8 @@ for cursor_input in crates/hubuum-storage-postgres/src/cursor/query_plan_tests.r
 done
 
 for artifact_input in crates/hubuum-artifacts/Cargo.toml \
+  src/benchmark_support/history_segments.rs src/benchmark_support/history_segments/tests.rs \
+  examples/history_segments.rs \
   crates/hubuum-storage-core/src/artifacts/manifest.rs crates/hubuum-artifacts/tests/protocol.rs \
   crates/hubuum-artifacts/src/producer.rs src/backups/producer.rs \
   src/backups/producer/tests.rs \
