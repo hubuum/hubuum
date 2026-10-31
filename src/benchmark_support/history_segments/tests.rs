@@ -242,7 +242,7 @@ fn bounded_encoding_accounts_for_json_escaping() {
     ));
 }
 
-async fn verified_bytes(bytes: &[u8]) -> (MemoryStorage, VerifiedArtifact) {
+async fn verified_bytes(bytes: &[u8], block_bytes: u32) -> (MemoryStorage, VerifiedArtifact) {
     let store = MemoryStorage::new();
     let destination =
         Destination::new(DestinationId::generate(), "malformed-history-fixture").unwrap();
@@ -251,7 +251,8 @@ async fn verified_bytes(bytes: &[u8]) -> (MemoryStorage, VerifiedArtifact) {
         &store,
         ArtifactIdentity::new(destination.id()),
         ArtifactLimits::builder()
-            .block_bytes(BLOCK_BYTES)
+            .block_bytes(block_bytes)
+            .artifact_bytes(SEGMENT_BYTES as u64)
             .build()
             .unwrap(),
     )
@@ -286,7 +287,7 @@ async fn invalid_retained_format_is_rejected(#[case] variant: u8) {
         3 => bytes[5..9].copy_from_slice(&513_u32.to_le_bytes()),
         _ => bytes[footer..footer + 4].copy_from_slice(&((INDEX_BYTES + 1) as u32).to_le_bytes()),
     }
-    let (store, proof) = verified_bytes(&bytes).await;
+    let (store, proof) = verified_bytes(&bytes, BLOCK_BYTES).await;
     assert!(
         HistorySegment::open_verified(&store, proof, &mut ByteLimit::new(SEGMENT_BYTES).start())
             .await
@@ -303,7 +304,7 @@ async fn index_cannot_omit_record_bytes() {
     bytes.extend_from_slice(b"[]");
     bytes.extend_from_slice(&2_u32.to_le_bytes());
     bytes.extend_from_slice(FOOTER);
-    let (store, proof) = verified_bytes(&bytes).await;
+    let (store, proof) = verified_bytes(&bytes, BLOCK_BYTES).await;
     assert!(matches!(
         HistorySegment::open_verified(&store, proof, &mut ByteLimit::new(SEGMENT_BYTES).start())
             .await,
@@ -311,14 +312,29 @@ async fn index_cannot_omit_record_bytes() {
     ));
 }
 
+#[rstest]
+#[case::initial_blocks(1024 * 1024)]
+#[case::current_blocks(BLOCK_BYTES)]
 #[tokio::test]
-async fn retained_index_reopens_without_writer_state() {
+async fn retained_index_reopens_without_writer_state(#[case] block_bytes: u32) {
     let scope = scope();
     let resource = ResourceIdentity::generate();
-    let row = record(scope.clone(), resource, 10, 20);
+    let mut row = record(scope.clone(), resource, 10, 20);
+    row.payload = json!("x".repeat(1024 * 1024));
     let (store, segment) = fixture(vec![row.clone()], scope).await.unwrap();
-    let proof = segment.proof().clone();
+    let manifest = segment.proof().manifest();
+    let bytes = read_range(
+        &store,
+        manifest,
+        0,
+        manifest.byte_size() as usize,
+        &mut ByteLimit::new(SEGMENT_BYTES).start(),
+    )
+    .await
+    .unwrap();
     drop(segment);
+    drop(store);
+    let (store, proof) = verified_bytes(&bytes, block_bytes).await;
     let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
     let reopened = HistorySegment::open_verified(&store, proof, &mut budget)
         .await
@@ -379,7 +395,7 @@ async fn authentic_artifact_with_invalid_record_is_rejected(#[case] variant: u8)
     bytes.extend_from_slice(&index);
     bytes.extend_from_slice(&(index.len() as u32).to_le_bytes());
     bytes.extend_from_slice(FOOTER);
-    let (store, proof) = verified_bytes(&bytes).await;
+    let (store, proof) = verified_bytes(&bytes, BLOCK_BYTES).await;
     let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
     let segment = HistorySegment::open_verified(&store, proof, &mut budget)
         .await
@@ -392,11 +408,25 @@ async fn authentic_artifact_with_invalid_record_is_rejected(#[case] variant: u8)
     ));
 }
 
+#[rstest]
+#[case::length_prefix(2, 0)]
+#[case::payload(128, 0)]
+#[case::block_sized_frame(2, BLOCK_BYTES as usize)]
+#[case::largest_frame(2, ROW_BYTES)]
 #[tokio::test]
-async fn small_cross_block_record_exposes_p2_budget_gap() {
+async fn cross_block_reads_fit_p2_budget(
+    #[case] before_boundary: usize,
+    #[case] frame_bytes: usize,
+    #[values(false, true)] as_of: bool,
+) {
     let scope = scope();
     let resource = ResourceIdentity::generate();
-    let selected = record(scope.clone(), resource, 10, 20);
+    let mut selected = record(scope.clone(), resource, 10, 20);
+    if frame_bytes > 0 {
+        selected.payload = json!("");
+        let overhead = serde_json::to_vec(&selected).unwrap().len() + 4;
+        selected.payload = json!("x".repeat(frame_bytes - overhead));
+    }
     let version = selected.interval.version;
     let result_bytes = serde_json::to_vec(&selected).unwrap().len();
     let block_bytes = BLOCK_BYTES as usize;
@@ -404,23 +434,26 @@ async fn small_cross_block_record_exposes_p2_budget_gap() {
     let mut padding = record(scope.clone(), ResourceIdentity::generate(), 10, 20);
     padding.payload = json!("");
     let padding_overhead = serde_json::to_vec(&padding).unwrap().len() + 4;
-    // Put the selected frame's length prefix across the first block boundary.
-    padding.payload = json!("x".repeat(block_bytes - 2 - header_bytes - padding_overhead));
+    // Place the selected prefix or payload across a full block boundary.
+    padding.payload =
+        json!("x".repeat(block_bytes - before_boundary - header_bytes - padding_overhead));
     let mut trailing = record(scope.clone(), ResourceIdentity::generate(), 10, 20);
     trailing.payload = json!("x".repeat(block_bytes));
-    let (store, segment) = fixture(vec![padding, selected, trailing], scope)
+    let (store, segment) = fixture(vec![padding, selected.clone(), trailing], scope)
         .await
         .unwrap();
-    let p2_limit = (8 * result_bytes + block_bytes).min(result_bytes + 2 * block_bytes);
-    assert!(matches!(
-        segment
-            .exact(
-                &store,
-                resource,
-                version,
-                &mut ByteLimit::new(p2_limit).start()
-            )
-            .await,
-        Err(ArtifactError::Limit(_))
-    ));
+    let mib = 1024 * 1024;
+    let p2_limit = if as_of {
+        (16 * result_bytes + 2 * mib).min(result_bytes + 4 * mib)
+    } else {
+        (8 * result_bytes + mib).min(result_bytes + 2 * mib)
+    };
+    let mut budget = ByteLimit::new(p2_limit).start();
+    let restored = if as_of {
+        segment.as_of(&store, resource, at(10), &mut budget).await
+    } else {
+        segment.exact(&store, resource, version, &mut budget).await
+    }
+    .unwrap();
+    assert_eq!(restored, Some(selected));
 }

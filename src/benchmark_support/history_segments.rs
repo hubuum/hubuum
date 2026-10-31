@@ -23,7 +23,9 @@ use serde_json::{Value, from_slice, to_writer};
 const MAGIC: &[u8; 5] = b"HUBH\x01";
 const FOOTER: &[u8; 5] = b"HUBI\x01";
 // Retained format v1 must not follow future artifact write-policy defaults.
-const BLOCK_BYTES: u32 = 1024 * 1024;
+const MAX_BLOCK_BYTES: u32 = 1024 * 1024;
+// Two fetched blocks must fit P2's 1 MiB allowance for small exact results.
+const BLOCK_BYTES: u32 = MAX_BLOCK_BYTES / 2;
 pub const SEGMENT_BYTES: usize = 64 * 1024 * 1024;
 pub const ROW_BYTES: usize = 4 * 1024 * 1024;
 pub const INDEX_BYTES: usize = 4 * 1024 * 1024;
@@ -250,7 +252,7 @@ impl HistorySegment {
         let manifest = proof.manifest();
         if manifest.byte_size() > SEGMENT_BYTES as u64
             || manifest.byte_size() < 18
-            || manifest.block_bytes() != BLOCK_BYTES
+            || manifest.block_bytes() > MAX_BLOCK_BYTES
         {
             return Err(ArtifactError::Corrupt(
                 "Invalid history segment size".into(),

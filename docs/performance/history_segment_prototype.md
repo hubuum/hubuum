@@ -31,7 +31,7 @@ block. A lookup miss describes only this segment, not complete query coverage.
 | --- | --- |
 | Complete segment, including index and framing | 64 MiB |
 | Encoded record, including its four-byte length | 4 MiB |
-| Artifact block | 1 MiB |
+| Artifact block | 512 KiB for new writes; retained reader ceiling 1 MiB |
 | Records per segment | 10,000 |
 | Encoded index | 4 MiB |
 | Scope header | 512 bytes |
@@ -57,27 +57,42 @@ physical block bytes for exact/as-of reads with a loaded index. UUIDs vary
 between runs; their encoded widths are constant. This is not a throughput or
 latency benchmark or an acceptance result.
 
-One unoptimized Rust 1.99.1 diagnostic on 2026-10-30 produced:
+One unoptimized Rust 1.99.1 diagnostic with 512 KiB write blocks on
+2026-10-31 produced:
 
 | Measurement | Bytes |
 | --- | --- |
 | Complete 10,000-record segment | 46,267,575 |
 | Embedded offset index | 2,157,478 |
-| Artifact manifest | 1,737 |
+| Artifact manifest | 3,321 |
 | Sample exact/as-of encoded record | 4,407 |
-| Exact physical block read, index already loaded | 1,048,576 |
-| As-of physical block read, index already loaded | 1,048,576 |
+| Exact physical block read, index already loaded | 524,288 |
+| As-of physical block read, index already loaded | 524,288 |
 
 The segment includes the index. These counts exclude database/catalog
 allocation and index-open traffic; they cannot establish P1/P2 acceptance for
 the eventual complete query pipeline.
 
-The `small_cross_block_record_exposes_p2_budget_gap` regression places a small
-record across two full 1 MiB blocks. Reading both exceeds P2's
-`8 × result bytes + 1 MiB` allowance, so the reader returns budget exhaustion.
-The format therefore still needs a measured packing or block-size decision
-before P2 can pass across all record positions. The favorable sample above is
-not evidence that this boundary case meets the target.
+New writes use 512 KiB blocks. Two full blocks then cost 1 MiB, so a small
+record crossing a block boundary fits P2's `8 × result bytes + 1 MiB`
+exact-read allowance. Larger contiguous frames add less than two blocks of
+rounding to their framed size, including the four-byte length prefix. The
+`cross_block_reads_fit_p2_budget` regressions check exact/as-of reads where the
+prefix or payload crosses a boundary, including block-sized and maximum-sized
+frames. Each read receives the smaller of P2's absolute and proportional limits;
+full physical blocks are still charged.
+
+The reader retains version 1's independent 1 MiB block ceiling and reads the
+original 1 MiB-block segments. The segment framing and embedded index are
+unchanged; block size is bound by the artifact manifest. Existing segments can
+still exhaust the smaller exact-read allowance at a boundary. They remain
+readable with a sufficient explicit budget; changing the write policy does not
+waive physical-read accounting or turn exhaustion into a complete empty result.
+
+These checks cover selected-frame traffic with the index already loaded. Cold
+index loading, dependency reads, and the complete production query pipeline
+remain unqualified. The smaller write blocks increase the manifest entry count
+from 45 to 89 at this scale; the table includes that cost.
 
 ## Remaining acceptance
 
