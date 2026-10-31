@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -14,7 +15,7 @@ use hubuum_storage_core::{
 };
 use hubuum_task_core::IdempotencyKey;
 use serde::Serialize;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, oneshot};
 
 use super::repository::{
     AuthenticatedPayloadCache, CheckpointRepository, CheckpointSession, DurableCheckpoint,
@@ -25,9 +26,10 @@ use super::{invalid_control, unavailable};
 use crate::config::ControlRecoveryOptions;
 use crate::errors::ApiError;
 use crate::observability::metrics::{CheckpointOperation, CheckpointTimer};
-use crate::storage::{StorageContext, storage_handle};
+use crate::storage::{StorageContext, StorageHandle, storage_handle};
 
 const MAX_PENDING_ADMISSIONS_PER_PASS: u32 = 8;
+const MAX_WAITING_ADMISSIONS_PER_BATCH: usize = 32;
 const MAX_PURGE_BATCHES_PER_PASS: u32 = 8;
 const MAX_SELECTED_TASKS: u32 = 64;
 
@@ -43,7 +45,14 @@ struct Configuration {
     // Coalesce work within this process. The owned repository session supplies
     // cross-process exclusion and survives cancellation during blocking IO.
     publication: Mutex<()>,
+    admissions: Mutex<VecDeque<WaitingAdmission>>,
     payload_cache: Arc<AuthenticatedPayloadCache>,
+}
+
+struct WaitingAdmission {
+    storage: StorageHandle,
+    ticket: TaskAdmissionTicket,
+    result: oneshot::Sender<Result<TaskActivationOutcome, ApiError>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -102,6 +111,7 @@ impl TaskReceiptService {
                 key_file,
                 key: repository.task_receipt_key()?,
                 publication: Mutex::new(()),
+                admissions: Mutex::new(VecDeque::new()),
                 payload_cache: Arc::new(AuthenticatedPayloadCache::default()),
             })
         })
@@ -231,24 +241,36 @@ impl TaskReceiptService {
         ticket: TaskAdmissionTicket,
     ) -> Result<TaskActivationOutcome, ApiError> {
         let configuration = self.configuration()?;
-        self.validate_activation(
-            &storage_handle(context)
-                .read_task_receipt_activation()
-                .await?,
-        )?;
-        let wait = CheckpointTimer::start(CheckpointOperation::CoalescingWait);
-        let _coalescing = configuration.publication.lock().await;
-        wait.finish(true);
-        let mut session = open_session(configuration).await?;
-        let already_captured = session.checkpoint().task_control().is_some_and(|control| {
-            control
-                .receipt(ticket.receipt().submission())
-                .is_some_and(|receipt| receipt.ticket() == &ticket)
-        });
-        if !already_captured {
-            session = publish_current(context, session).await?;
+        let storage = storage_handle(context);
+        self.validate_activation(&storage.read_task_receipt_activation().await?)?;
+        let (result, mut received) = oneshot::channel();
+        {
+            let mut waiting = configuration.admissions.lock().await;
+            // A blocked publisher must not retain an accumulating history of
+            // HTTP requests whose callers have already disconnected.
+            waiting.retain(|admission| !admission.result.is_closed());
+            waiting.push_back(WaitingAdmission {
+                storage,
+                ticket,
+                result,
+            });
         }
-        activate_captured(context, &session, ticket).await
+        let wait = CheckpointTimer::start(CheckpointOperation::CoalescingWait);
+        loop {
+            tokio::select! {
+                biased;
+                result = &mut received => {
+                    let result = result.unwrap_or_else(|_| Err(unavailable(
+                        "Task admission protection was interrupted; retry the same submission",
+                    )));
+                    wait.finish(result.is_ok());
+                    return result;
+                }
+                _coalescing = configuration.publication.lock() => {
+                    protect_waiting_admissions(configuration).await;
+                }
+            }
+        }
     }
 
     pub(crate) async fn sweep_task_retention(
@@ -404,6 +426,66 @@ impl TaskReceiptService {
             },
         }))
     }
+}
+
+/// Share a freshly verified, exclusively held repository session, never a
+/// cached activation proof. Each ticket still crosses its own storage CAS with
+/// a current application fence. A bounded batch releases publication ownership
+/// between groups so retention and recovery can make progress.
+async fn protect_waiting_admissions(configuration: &Arc<Configuration>) {
+    let mut batch: Vec<WaitingAdmission> = Vec::new();
+    {
+        let mut waiting = configuration.admissions.lock().await;
+        while let Some(next) = waiting.front() {
+            if next.result.is_closed() {
+                waiting.pop_front();
+                continue;
+            }
+            if batch.len() == MAX_WAITING_ADMISSIONS_PER_BATCH
+                || batch
+                    .first()
+                    .is_some_and(|first| !first.storage.same_instance(&next.storage))
+            {
+                break;
+            }
+            batch.push(waiting.pop_front().expect("nonempty admission queue"));
+        }
+    }
+    let Some(first) = batch.first() else {
+        return;
+    };
+    let session = async {
+        let session = open_session(configuration).await?;
+        let captured = session.checkpoint().task_control().is_some_and(|control| {
+            batch.iter().all(|admission| {
+                control
+                    .receipt(admission.ticket.receipt().submission())
+                    .is_some_and(|receipt| receipt.ticket() == &admission.ticket)
+            })
+        });
+        if captured {
+            Ok(session)
+        } else {
+            publish_current(&first.storage, session).await
+        }
+    }
+    .await;
+    match session {
+        Ok(session) => {
+            for admission in batch {
+                let result =
+                    activate_captured(&admission.storage, &session, admission.ticket).await;
+                let _ = admission.result.send(result);
+            }
+        }
+        Err(error) => {
+            for admission in batch {
+                let _ = admission.result.send(Err(error.clone()));
+            }
+        }
+    }
+    // Cancellation drops these senders and the owned session. Waiters fail
+    // closed; their durable pending receipts remain recoverable by maintenance.
 }
 
 async fn activate_captured(

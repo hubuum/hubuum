@@ -261,6 +261,12 @@ pub use api::StorageContext;
 pub(crate) use api::storage_handle;
 
 impl StorageHandle {
+    /// Whether both handles preserve the same configured storage instance.
+    /// This does not reveal or select a backend implementation.
+    pub(crate) fn same_instance(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     pub(crate) fn artifact_store(
         &self,
     ) -> Arc<dyn hubuum_storage_core::artifacts::TaskArtifactStore> {

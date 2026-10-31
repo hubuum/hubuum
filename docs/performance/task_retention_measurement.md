@@ -68,7 +68,12 @@ For the declared local or shared topology, select `--profile local` or
 API gracefully with one API/worker process and one execution slot. Shared uses
 two API processes, two workers with two slots each, and a 4 CPU/4 GiB database.
 `--steady-seconds 360` refills up to the initial receipt occupancy for three
-120-second windows, in batches of at most 256 actual submissions, then drains.
+120-second windows, in batches of at most 256 actual submissions by default, then drains.
+Use `--refill-max-batch 1000` when the smaller batch cannot replenish the target
+between cleanup observations. This bounds the number of arrivals per refill;
+the recipe's concurrency 32 and all application resource limits stay unchanged.
+Reports retain the selected bound. Refill and observation take real time, so
+neither setting establishes sustained occupancy without reviewing the raw samples.
 Every occupancy observation and eligible deadline remains in the report.
 Occupancy separates executable, terminal and recovery-unknown receipt outcomes,
 unexpired terminal receipts and eligible receipts. An executable receipt can
@@ -82,7 +87,7 @@ python3 -I -S tests/python/run.py integration task-retention \
   --scale-binary target/release/hubuum-scale-benchmark \
   --admin-binary target/release/hubuum-admin \
   --output-directory /tmp/hubuum-retention-local-five \
-  --profile local --steady-seconds 360 --runs 5
+  --profile local --steady-seconds 360 --refill-max-batch 1000 --runs 5
 ```
 
 Repeat with `--profile shared` and a fresh output directory. These commands still

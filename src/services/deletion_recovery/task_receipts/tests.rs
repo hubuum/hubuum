@@ -23,6 +23,7 @@ use super::*;
 use crate::permissions::{AppContext, LocalPermissionBackend};
 use crate::storage::StorageHandle;
 
+mod admission_batches;
 mod legacy_restore;
 
 struct Fixture {

@@ -654,7 +654,8 @@ def measured_run(arguments, root, run_index):
                     if arguments.steady_seconds:
                         observe += ["--steady-seconds", str(arguments.steady_seconds),
                                     "--refill-origins", *origins, "--refill-token-file", str(tokens),
-                                    "--refill-workload", str(recipe)]
+                                    "--refill-workload", str(recipe),
+                                    "--refill-max-batch", str(arguments.refill_max_batch)]
                     run_native(deployment, observe, timeout=arguments.timeout + 180)
                     if arguments.output_probe:
                         observe_output_probe(arguments, deployment, root)
@@ -688,6 +689,7 @@ def measured_run(arguments, root, run_index):
                 "workload_sha256": hashlib.sha256(recipe.read_bytes()).hexdigest(),
                 "warmup": {"readiness_probes": True, "authentication": True, "task_executions": 0},
                 "steady_seconds": arguments.steady_seconds,
+                "refill_max_batch": arguments.refill_max_batch,
                 "steady_state": arguments.steady_seconds > 0, "p6_acceptance": False,
                 "selected_probes": {"real_output_expiry": arguments.output_probe,
                                     "logical_recovery": arguments.recovery_probes,
@@ -719,6 +721,8 @@ def main(argv=None):
     parser.add_argument("--admission-only", action="store_true")
     parser.add_argument("--profile", choices=("diagnostic", "local", "shared"), default="diagnostic")
     parser.add_argument("--steady-seconds", type=int, default=0)
+    parser.add_argument("--refill-max-batch", type=int, default=256,
+                        help="Maximum actual submissions per refill (1..1000); concurrency remains in the workload recipe")
     parser.add_argument("--recovery-probes", action="store_true")
     parser.add_argument("--cpu-affinity", action="store_true",
                         help="Use verified fixed CPU masks; image must include taskset")
@@ -731,6 +735,8 @@ def main(argv=None):
     parser.add_argument("--safety-probes", action="store_true",
                         help="Exercise held/dependent details, large child cleanup, and an interrupted external effect")
     arguments = parser.parse_args(argv)
+    if not 1 <= arguments.refill_max_batch <= 1000:
+        parser.error("refill-max-batch must be 1..1000")
     if arguments.physical_recovery_probes:
         arguments.recovery_probes = True
     if (not 1 <= arguments.runs <= 5

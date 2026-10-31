@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 import json
+import io
 import subprocess
 import tempfile
 import unittest
@@ -12,6 +13,15 @@ from integration import task_retention as RETENTION
 
 
 class TaskRetentionMeasurementTests(unittest.TestCase):
+    def test_invalid_refill_bounds_fail_before_provisioning(self):
+        for batch in ("0", "1001"):
+            with self.subTest(batch=batch), patch.object(RETENTION, "measured_run") as measured, \
+                    patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+                RETENTION.main(["--image", "fixture", "--scale-binary", "missing",
+                                "--admin-binary", "missing", "--output-directory", "unused",
+                                "--refill-max-batch", batch])
+            measured.assert_not_called()
+
     def test_direct_endpoint_uses_only_the_managed_network(self):
         deployment = RETENTION.RetentionDeployment.__new__(RETENTION.RetentionDeployment)
         deployment.name = "owned-fixture"
@@ -194,7 +204,7 @@ class TaskRetentionMeasurementTests(unittest.TestCase):
             arguments = SimpleNamespace(
                 workload=workload, count=None, image="fixture", scale_binary=Path("scale"),
                 admin_binary=Path("admin"), timeout=30, admission_only=True,
-                profile="diagnostic", steady_seconds=0,
+                profile="diagnostic", steady_seconds=0, refill_max_batch=256,
                 recovery_probes=False,
                 cpu_affinity=False,
                 direct_container_network=False,
@@ -236,6 +246,7 @@ class TaskRetentionMeasurementTests(unittest.TestCase):
             report = json.loads((root / "resources.json").read_text(encoding="utf-8"))
             self.assertFalse(report["workload_completed"])
             self.assertFalse(report["p6_acceptance"])
+            self.assertEqual(report["refill_max_batch"], 256)
             self.assertEqual(report["samples"], 3)
             self.assertFalse((root / "tokens.json").exists())
             self.assertNotIn("sensitive-bearer", (root / "resources.json").read_text(encoding="utf-8"))
