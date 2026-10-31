@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use diesel::QueryableByName;
 use diesel::sql_types::{Integer, Jsonb, Text};
-use hubuum_domain::{ObjectId, PrincipalId};
+use hubuum_domain::{ClassId, CollectionId, ObjectId, PrincipalId};
 use hubuum_storage_core::{
-    ComputedFieldStorage, ComputedObjectStorage, ObjectStorage,
+    ComputedFieldStorage, ComputedObjectStorage, ObjectStorage, StorageComputedFieldRebuildRequest,
     StorageComputedObjectEnrichmentQuery, StorageTaskLeaseDuration, TaskExecutionStorage,
 };
 use hubuum_storage_postgres::diesel_async_prelude::RunQueryDsl;
@@ -132,6 +132,20 @@ fn benchmark_computed_enrichment(c: &mut Criterion) {
                 }
                 objects
             });
+            // Prepare fresh data outside timing without relying on best-effort
+            // read-repair admission.
+            if mode == "fresh" {
+                runtime
+                    .block_on(storage.request_computed_field_rebuild(
+                        StorageComputedFieldRebuildRequest::new(
+                            ClassId::new(class_id).unwrap(),
+                            CollectionId::new(collection_id).unwrap(),
+                            None,
+                        ),
+                    ))
+                    .unwrap();
+                runtime.block_on(drain_repairs(&storage, &pool));
+            }
             for page_size in [1, 20] {
                 let owner = (mode == "personal").then(|| PrincipalId::new(owner_id).unwrap());
                 let prepare = || {
@@ -150,32 +164,11 @@ fn benchmark_computed_enrichment(c: &mut Criterion) {
                     }
                     StorageComputedObjectEnrichmentQuery::new(objects[..page_size].to_vec(), owner)
                 };
-                // Warm up materializations and then report a captured query budget.
-                let warmup_deadline = Instant::now() + Duration::from_secs(10);
-                loop {
-                    let response = runtime
-                        .block_on(storage.enrich_objects_with_computed(prepare()))
-                        .unwrap();
-                    runtime.block_on(drain_repairs(&storage, &pool));
-                    if mode != "fresh" {
-                        break;
-                    }
-                    let body = serde_json::to_value(
-                        hubuum::benchmark_support::computed_response(response).unwrap(),
-                    )
+                // Warm the response path before reporting its captured query budget.
+                runtime
+                    .block_on(storage.enrich_objects_with_computed(prepare()))
                     .unwrap();
-                    if body.as_array().unwrap().iter().all(|object| {
-                        object["computed"]["shared"]["materialization_stale"] == false
-                    }) {
-                        break;
-                    }
-                    // Admission deliberately has a short deadline. Retry setup
-                    // outside timing until the fixture is demonstrably fresh.
-                    assert!(
-                        Instant::now() < warmup_deadline,
-                        "fresh fixture admission timed out"
-                    );
-                }
+                runtime.block_on(drain_repairs(&storage, &pool));
                 let (result, queries) = runtime.block_on(capture_queries(
                     storage.enrich_objects_with_computed(prepare()),
                 ));
