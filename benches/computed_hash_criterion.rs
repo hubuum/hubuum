@@ -120,10 +120,6 @@ fn benchmark_hash(c: &mut Criterion) {
         .and_then(|output| String::from_utf8(output.stdout).ok())
         .and_then(|output| output.trim().parse::<u64>().ok());
     let mut group = c.benchmark_group("computed_source_hash");
-    group
-        .sample_size(30)
-        .warm_up_time(Duration::from_secs(1))
-        .measurement_time(Duration::from_secs(3));
     for bytes in [1024, 262_144, 1_048_576] {
         for shape in ["string", "escaped", "wide"] {
             let data = match shape {
@@ -169,5 +165,10 @@ fn benchmark_hash(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, benchmark_hash);
+// CLI profiles override these standalone defaults equally on both revisions.
+criterion_group! {
+    name = benches;
+    config = Criterion::default().sample_size(30).warm_up_time(Duration::from_secs(1)).measurement_time(Duration::from_secs(3));
+    targets = benchmark_hash
+}
 criterion_main!(benches);

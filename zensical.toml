@@ -117,6 +117,7 @@ nav = [
     { "Contributor guide" = "contributing/index.md" },
     { "Development setup" = "development.md" },
     { "Testing" = "testing.md" },
+    { "Benchmark CI controls" = "benchmark_ci.md" },
     { "Regex fuzzing & limits" = "regex-testing.md" },
     { "Operation budgets" = "operation_budgets.md" },
     { "Documentation" = "contributing/documentation.md" },

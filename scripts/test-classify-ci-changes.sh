@@ -469,6 +469,18 @@ assert_flag "$benchmark_output" runtime_benchmark true
 assert_flag "$benchmark_output" artifacts false
 assert_flag "$benchmark_output" scale_benchmark false
 
+for benchmark_input in .github/benchmark-policy.json .github/workflows/benchmark-report.yml \
+  .github/workflows/benchmark-cache.yml scripts/benchmark-policy.py scripts/benchmark-report.py \
+  scripts/benchmark-cache.py scripts/benchmark_github.py \
+  tests/python/unit/tooling/test_benchmark_policy.py tests/python/unit/tooling/test_benchmark_report.py \
+  tests/python/unit/tooling/test_benchmark_cache.py; do
+  benchmark_input_output="$(bash "$classifier" "$benchmark_input")"
+  assert_flag "$benchmark_input_output" code true
+  assert_flag "$benchmark_input_output" benchmarks true
+  assert_flag "$benchmark_input_output" runtime_benchmark true
+  assert_flag "$benchmark_input_output" container false
+done
+
 # Release-profile measurement tools and workloads are build inputs.
 for profile_input in scripts/compare-release-profiles.py tests/python/unit/tooling/test_release_profiles.py; do
   profile_output="$(bash "$classifier" "$profile_input")"
@@ -510,7 +522,9 @@ def build_inputs(name):
     # including future toolchain, feature, and external-input declarations.
     for key in tuple(inputs):
         if key.startswith(("criterion_", "regression_")) or key in {
-            "fail_on_regression", "compile_only", "comment_mode", "cache_save"
+            "fail_on_regression", "compile_only", "comment_mode", "cache_save",
+            "cache_save_build", "cache_save_executables", "profile",
+            "benchmark_config_json", "select_tags_json", "select_targets_json", "base_sha"
         }:
             del inputs[key]
     return implementation, inputs
@@ -518,7 +532,7 @@ def build_inputs(name):
 
 if build_inputs("benchmarks") != build_inputs("warm-cache"):
     raise SystemExit("PR benchmark and main cache-warming build inputs must match")
-if "github.event_name == 'pull_request' &&" not in job("changes"):
+if "inputs.warm_only" not in job("changes"):
     raise SystemExit("PR change classification must not run during cache warming")
 for required in (
     "github.ref == 'refs/heads/main'",

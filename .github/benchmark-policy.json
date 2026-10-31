@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "default_profile": "standard",
+  "scopes": ["micro", "postgres", "runtime", "resources"],
+  "profiles": {
+    "quick": {"criterion_args": "--noplot --sample-size 10 --warm-up-time 0.5 --measurement-time 1 --nresamples 1000"},
+    "standard": {"criterion_args": "--noplot --sample-size 20 --warm-up-time 1 --measurement-time 2 --nresamples 10000"},
+    "thorough": {"criterion_args": "--noplot --sample-size 100 --warm-up-time 3 --measurement-time 10 --nresamples 100000"}
+  },
+  "tag_scopes": {
+    "query": ["micro"],
+    "auth": ["micro"],
+    "schema": ["micro", "resources"],
+    "templates": ["micro", "resources"],
+    "storage": ["micro", "postgres"],
+    "computed": ["postgres"],
+    "budgets": ["micro"]
+  },
+  "target_tags": [
+    {"pattern": "*query*", "tags": ["query"]},
+    {"pattern": "*integer_list*", "tags": ["query"]},
+    {"pattern": "*search_operator*", "tags": ["query"]},
+    {"pattern": "*jsonb_type*", "tags": ["query"]},
+    {"pattern": "*search*", "tags": ["query"]},
+    {"pattern": "*cursor*", "tags": ["query"]},
+    {"pattern": "*permission*", "tags": ["auth"]},
+    {"pattern": "*password*", "tags": ["auth"]},
+    {"pattern": "*token*", "tags": ["auth"]},
+    {"pattern": "*request_hash*", "tags": ["auth"]},
+    {"pattern": "*schema*", "tags": ["schema"]},
+    {"pattern": "*object_validation*", "tags": ["schema"]},
+    {"pattern": "*template*", "tags": ["templates"]},
+    {"pattern": "*size_limited_writer*", "tags": ["templates"]},
+    {"pattern": "*storage*", "tags": ["storage"]},
+    {"pattern": "*computed*", "tags": ["computed"]},
+    {"pattern": "*operation_budget*", "tags": ["budgets"]}
+  ],
+  "quick_filters": {
+    "schema_validation_criterion": "16384",
+    "computed_hash_criterion": "1024",
+    "computed_enrichment_criterion": "1024",
+    "storage_postgres_criterion": "storage_postgres/collection_point_read"
+  },
+  "path_rules": [
+    {"patterns": ["crates/hubuum-query/**", "src/models/search/**", "src/models/search.rs", "src/models/query_usage.rs", "src/utilities/query*"], "tags": ["query"]},
+    {"patterns": ["src/permissions/**", "src/models/permissions.rs", "src/models/token*", "src/utilities/auth*", "crates/hubuum-auth-*/**"], "tags": ["auth"]},
+    {"patterns": ["crates/hubuum-templates/**", "src/templates/**", "src/models/template*", "docs/export_template_guide.md"], "tags": ["templates"]},
+    {"patterns": ["crates/hubuum-domain/src/json_schema*", "crates/hubuum-domain/src/json_schema/**", "crates/hubuum-schema-diagnostics/**"], "tags": ["schema"]},
+    {"patterns": ["src/storage/postgres/**", "crates/hubuum-storage-postgres/**", "benches/support/**"], "scopes": ["postgres", "runtime"], "tags": ["storage"]},
+    {"patterns": ["crates/hubuum-computed-fields/**", "src/services/computed*", "src/services/computed*/**", "src/models/computed*"], "tags": ["computed"]},
+    {"patterns": ["src/bin/runtime_behavior_check.rs", "src/runtime_behavior/**", "src/tasks/**", "src/events/**", "src/config*", "src/config/**"], "scopes": ["runtime", "micro", "postgres", "resources"]},
+    {"patterns": ["benches/template_schema_concurrency/**", "tests/python/integration/schema_budget.py"], "scopes": ["resources"]},
+    {"patterns": ["benches/**", "crates/*/benches/**"], "benchmark_paths": true},
+    {"patterns": ["Cargo.toml", "Cargo.lock", "build.rs", "crates/*/Cargo.toml", "crates/*/Cargo.lock", "crates/*/build.rs", ".cargo/**", "rust-toolchain*", ".python-version", ".github/benchmark-policy.json", ".github/workflows/benchmarks.yml", ".github/workflows/benchmark-report.yml", "scripts/benchmark-*", "scripts/classify-ci-changes.sh", "scripts/test-classify-ci-changes.sh", "scripts/ci-changed-paths.sh", "tests/python/unit/tooling/test_benchmark*"], "scopes": ["micro", "postgres", "runtime", "resources"]}
+  ],
+  "ignore_paths": ["*.md", "docs/**", "tests/**", "src/tests/**", "observability/**", "docker/**", "Dockerfile", "entrypoint.sh", ".dockerignore", ".github/workflows/ci.yml", ".github/ISSUE_TEMPLATE/**", ".github/PULL_REQUEST_TEMPLATE*", ".gitignore", ".gitattributes", "LICENSE", "zensical.toml", ".markdownlint.json", "scale-benchmarks/**", "crates/hubuum-scale-*/**", ".github/workflows/scale-benchmarks.yml"]
+}

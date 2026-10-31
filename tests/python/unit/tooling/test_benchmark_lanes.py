@@ -17,7 +17,7 @@ class BenchmarkLaneTests(unittest.TestCase):
         ]
         result = lanes.partition(targets)["include"]
         self.assertEqual(result, [
-            {"name": "standard", "benchmarks": targets[:2]},
+            {"name": "micro", "benchmarks": targets[:2]},
             {"name": "postgres", "benchmarks": targets[2:]},
         ])
 
@@ -30,5 +30,5 @@ class BenchmarkLaneTests(unittest.TestCase):
 
     def test_empty_lane_is_not_scheduled(self):
         self.assertEqual(lanes.partition([{"name": "query_criterion"}]), {"include": [
-            {"name": "standard", "benchmarks": [{"name": "query_criterion"}]},
+            {"name": "micro", "benchmarks": [{"name": "query_criterion"}]},
         ]})

@@ -26,7 +26,6 @@ fn schema_validation(c: &mut Criterion) {
         ),
     ] {
         let mut group = c.benchmark_group(name);
-        group.sample_size(20);
         for bytes in payload_sizes {
             let document =
                 json!({"payload": "x".repeat(bytes), "samples": (0..128).collect::<Vec<_>>()});
@@ -54,5 +53,10 @@ fn schema_validation(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, schema_validation);
+// CLI profiles override these standalone defaults equally on both revisions.
+criterion_group! {
+    name = benches;
+    config = Criterion::default().sample_size(20);
+    targets = schema_validation
+}
 criterion_main!(benches);

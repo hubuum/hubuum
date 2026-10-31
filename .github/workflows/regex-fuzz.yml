@@ -82,6 +82,7 @@ jobs:
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component clippy --component rustfmt
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: "fuzz -> target"
           shared-key: portable-regex-fuzz
       - name: Install pinned cargo-fuzz

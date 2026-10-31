@@ -21,6 +21,7 @@ concurrency:
     ${{ github.workflow }}-${{ github.ref }}-${{
       (github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
       github.event.label.name != 'ci:full' &&
+      github.event.label.name != 'ci:validate' &&
       format('ignored-label-{0}', github.event.label.name) ||
       'validation'
     }}
@@ -43,7 +44,7 @@ jobs:
       (
         github.event_name != 'pull_request' ||
         (github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
-        github.event.label.name == 'ci:full'
+        (github.event.label.name == 'ci:full' || github.event.label.name == 'ci:validate')
       )
     runs-on: ubuntu-24.04
     outputs:
@@ -102,7 +103,7 @@ jobs:
           MARKDOWN_CHANGED: ${{ steps.paths.outputs.markdown }}
           IS_PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
           IS_DRAFT: ${{ github.event.pull_request.draft || false }}
-          FORCE_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}
+          FORCE_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') || contains(github.event.pull_request.labels.*.name, 'ci:validate') }}
         run: |
           full_requested=false
           if [[ "$IS_PULL_REQUEST" != "true" || "$IS_DRAFT" != "true" || "$FORCE_FULL" == "true" ]]; then
@@ -189,7 +190,7 @@ jobs:
     name: Rust dependency and license policy
     needs: changes
     if: >-
-      always() &&
+      !cancelled() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
         needs.changes.outputs.code == 'true'
@@ -228,7 +229,7 @@ jobs:
     name: Python tests (${{ matrix.python-version }})
     needs: changes
     if: >-
-      always() &&
+      !cancelled() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
         needs.changes.outputs.code == 'true' ||
@@ -253,7 +254,7 @@ jobs:
     name: Monitoring integration (${{ matrix.engine }})
     needs: changes
     if: >-
-      always() &&
+      !cancelled() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
         needs.changes.outputs.code == 'true' ||
@@ -290,7 +291,7 @@ jobs:
     name: Rust API policy
     needs: changes
     if: >-
-      always() &&
+      !cancelled() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
         needs.changes.outputs.rust == 'true' ||
@@ -389,6 +390,7 @@ jobs:
       - name: Cache lint dependencies
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          save-if: ${{ github.event_name != 'pull_request' }}
           shared-key: lint
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
@@ -429,6 +431,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          save-if: ${{ github.event_name != 'pull_request' }}
           shared-key: deployment-build-contracts
       - name: Install build dependencies
         run: |
@@ -456,7 +459,7 @@ jobs:
     name: OpenAPI contract
     needs: changes
     if: >-
-      always() &&
+      !cancelled() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
         needs.changes.outputs.run_openapi == 'true'
@@ -471,6 +474,8 @@ jobs:
           fetch-depth: 0
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - name: Prepare OpenAPI report directory
         run: mkdir -p openapi-contract
       - name: Generate OpenAPI JSON
@@ -621,7 +626,7 @@ jobs:
     name: Operational contract
     needs: changes
     if: >-
-      always() &&
+      !cancelled() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
         needs.changes.outputs.run_operational_contract == 'true'
@@ -640,6 +645,8 @@ jobs:
           python-version-file: .python-version
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - name: Prepare operational-contract report directory
         run: mkdir -p operational-contract
       - name: Generate operational contracts
@@ -831,6 +838,7 @@ jobs:
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          save-if: ${{ github.event_name != 'pull_request' }}
           key: ${{ matrix.feature.name }}
       - name: Install database libraries on Linux
         run: |
@@ -886,6 +894,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - name: Run the shared limiter contract
         run: >-
           cargo test --locked --lib
@@ -912,6 +922,8 @@ jobs:
           python-version-file: .python-version
       - name: Cache Cargo and target directories
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - name: Test production transports against pinned TLS fixtures
         run: python3 tests/python/run.py integration event-transports
 
@@ -919,7 +931,7 @@ jobs:
     name: Treetop authorization conformance
     needs: changes
     if: >-
-      always() &&
+      !cancelled() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
         needs.changes.outputs.treetop_conformance == 'true'
@@ -950,6 +962,8 @@ jobs:
           python-version-file: .python-version
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - name: Prepare conformance report directory
         run: mkdir -p treetop-conformance
       - name: Install conformance dependencies
@@ -1019,6 +1033,7 @@ jobs:
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          save-if: ${{ github.event_name != 'pull_request' }}
           shared-key: ${{ matrix.platform.target }}-${{ matrix.toolchain }}-ci-test-release
       
       - name: Install Linux dependencies
@@ -1249,6 +1264,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - name: Install release build dependencies
         run: |
           sudo apt-get update --yes
@@ -1260,7 +1277,7 @@ jobs:
     name: Container build (production features)
     needs: changes
     if: >-
-      always() &&
+      !cancelled() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
         (
@@ -1303,7 +1320,7 @@ jobs:
             CARGO_BUILD_FLAGS=-F tls-rustls -F tls-openssl --locked --release
             HUBUUM_BUILD_GIT_SHA=${{ github.sha }}
           cache-from: type=gha,scope=container-amd64-production
-          cache-to: type=gha,mode=max,scope=container-amd64-production
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=max,scope=container-amd64-production' || '' }}
       - name: Export static release binaries
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -1551,7 +1568,7 @@ jobs:
       ${{
         (
           (github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
-          github.event.label.name == 'ci:full'
+          (github.event.label.name == 'ci:full' || github.event.label.name == 'ci:validate')
         ) && 'CI gate' || 'CI policy event ignored'
       }}
     if: >-
@@ -1668,6 +1685,8 @@ jobs:
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable 2026-10-22
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - name: Make release scripts executable
         run: chmod +x scripts/*.sh
       - name: Check release metadata
@@ -1768,6 +1787,7 @@ jobs:
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          save-if: ${{ github.event_name != 'pull_request' }}
           shared-key: ${{ matrix.platform.target }}-stable-release
       
       - name: Build release binaries (macOS, all production features)
@@ -2127,6 +2147,7 @@ jobs:
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          save-if: ${{ github.event_name != 'pull_request' }}
           shared-key: ${{ matrix.platform.target }}-stable-release
           key: ${{ matrix.feature.ext }}
       - name: Build self-contained main binaries

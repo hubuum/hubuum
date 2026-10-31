@@ -1,5 +1,8 @@
 # Testing guide
 
+See [benchmark CI controls](benchmark_ci.md) for independent performance scopes,
+subject tags, measurement profiles, and full-validation labels.
+
 Use the language that owns the behavior being verified. Rust tests prove Hubuum's
 application contracts. Python tests prove repository tooling and the assembled
 deployment. A Python process starting a Rust test does not move that contract
