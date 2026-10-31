@@ -285,10 +285,10 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.DeletionControlStorage]
 source = "crates/hubuum-storage-core/src/deletion_control.rs"
-methods = ["capture_deletion_control", "commit_deletion_control"]
-effects = { point_read = ["capture_deletion_control"], workflow_mutation = ["commit_deletion_control"] }
+methods = ["read_deletion_control", "capture_deletion_control", "commit_deletion_control"]
+effects = { point_read = ["read_deletion_control", "capture_deletion_control"], workflow_mutation = ["commit_deletion_control"] }
 shared_scenarios = ["crates/hubuum-storage-memory/src/deletion_control.rs::competing_control_changes_cannot_both_commit"]
-native_scenarios = ["crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_restore_gate_rejects_retained_decisions", "crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_authority_has_no_cascading_application_references", "crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_authority_compare_and_swap_rejects_old_snapshot"]
+native_scenarios = ["crates/hubuum-storage-postgres/tests/deletion_control.rs::connection_loss_during_control_recovery_rolls_back_import", "crates/hubuum-storage-postgres/tests/deletion_control.rs::runtime_can_read_authority_without_control_table_write_access", "crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_restore_gate_rejects_retained_decisions", "crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_authority_has_no_cascading_application_references", "crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_authority_compare_and_swap_rejects_old_snapshot"]
 
 [traits.TokenRetentionStorage]
 source = "crates/hubuum-storage-core/src/operational.rs"

@@ -576,7 +576,9 @@ impl TaskExecutionStorage for MemoryStorage {
         lease_duration: StorageTaskLeaseDuration,
     ) -> Result<Option<StorageTaskClaim>, StorageError> {
         let mut state = self.state.write().await;
-        if state.maintenance_state != MaintenanceState::Normal {
+        if !state.deletion_control.permits_exposure()
+            || state.maintenance_state != MaintenanceState::Normal
+        {
             return Ok(None);
         }
         state.task_capacity = state.task_accounting_snapshot()?;

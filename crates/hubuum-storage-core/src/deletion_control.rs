@@ -172,6 +172,39 @@ impl DeletionControlState {
         &self.intents
     }
 
+    /// Conservative exposure restriction until individual lifecycle consumers
+    /// can reapply every retained decision, including completed deletions.
+    pub fn permits_exposure(&self) -> bool {
+        self.intents.is_empty()
+    }
+
+    /// Restore authenticated recovery material without discarding local work.
+    /// The caller must authenticate the latest independent checkpoint and keep
+    /// its publication lock through the compare-and-swap and read-back.
+    pub fn recover_from(
+        &self,
+        required: &Self,
+    ) -> Result<DeletionControlChange, StorageValidationError> {
+        if self.revision == required.revision && self != required {
+            return Err(invalid(
+                "Conflicting deletion authority at the same revision",
+            ));
+        }
+        let next = if self.covers(required) {
+            self
+        } else if required.covers(self) {
+            required
+        } else {
+            return Err(invalid(
+                "Recovery authority has a different lineage, epoch, or conflicting decisions; keep recovery quarantined",
+            ));
+        };
+        Ok(DeletionControlChange {
+            previous: self.clone(),
+            next: next.clone(),
+        })
+    }
+
     /// Decode untrusted persisted/recovery bytes once at the boundary.
     pub fn decode(bytes: &[u8]) -> Result<Self, StorageValidationError> {
         if bytes.len() > DELETION_CONTROL_MAX_BYTES {
@@ -429,6 +462,12 @@ impl DeletionControlCapture {
 /// application logical replacement must preserve these records independently.
 #[async_trait]
 pub trait DeletionControlStorage: Send + Sync {
+    /// Read minimal authority without physical backup coordinates. Adapters may
+    /// override this to provide a read-only runtime capability while reserving
+    /// capture and mutations for the privileged checkpoint operator.
+    async fn read_deletion_control(&self) -> Result<DeletionControlState, StorageError> {
+        Ok(self.capture_deletion_control().await?.state().clone())
+    }
     async fn capture_deletion_control(&self) -> Result<DeletionControlCapture, StorageError>;
     async fn commit_deletion_control(
         &self,
@@ -449,6 +488,61 @@ mod tests {
         DeletionSubject::Version {
             identity: serde_json::from_value(serde_json::json!(Uuid::new_v4())).unwrap(),
         }
+    }
+
+    #[rstest]
+    #[case::older_primary(false)]
+    #[case::newer_primary(true)]
+    fn recovery_preserves_the_complete_newer_authority(#[case] newer_primary: bool) {
+        let initial = empty();
+        let next = initial
+            .record_intent(Uuid::new_v4(), subject(), vec![Uuid::new_v4()])
+            .unwrap();
+        let (current, required) = if newer_primary {
+            (next.next(), &initial)
+        } else {
+            (&initial, next.next())
+        };
+        assert_eq!(current.recover_from(required).unwrap().next(), next.next());
+    }
+
+    #[rstest]
+    #[case::lineage("lineage")]
+    #[case::epoch("epoch")]
+    fn recovery_rejects_a_different_identity(#[case] field: &str) {
+        let initial = empty();
+        let mut raw = serde_json::to_value(&initial).unwrap();
+        raw[field] = serde_json::json!(Uuid::new_v4());
+        let other: DeletionControlState = serde_json::from_value(raw).unwrap();
+        assert!(initial.recover_from(&other).is_err());
+    }
+
+    #[test]
+    fn recovery_rejects_divergent_decisions() {
+        let initial = empty();
+        let first = initial
+            .record_intent(Uuid::new_v4(), subject(), vec![Uuid::new_v4()])
+            .unwrap();
+        let second = initial
+            .record_intent(Uuid::new_v4(), subject(), vec![Uuid::new_v4()])
+            .unwrap();
+        let later = second
+            .next()
+            .record_intent(Uuid::new_v4(), subject(), vec![Uuid::new_v4()])
+            .unwrap();
+        assert!(first.next().recover_from(later.next()).is_err());
+    }
+
+    #[rstest]
+    #[case::pending(DeletionCopyState::Pending)]
+    #[case::blocked(DeletionCopyState::Blocked)]
+    #[case::removed(DeletionCopyState::Removed)]
+    fn retained_decisions_always_restrict_exposure(#[case] outcome: DeletionCopyState) {
+        let id = Uuid::new_v4();
+        let copy = Uuid::new_v4();
+        let intent = empty().record_intent(id, subject(), vec![copy]).unwrap();
+        let state = intent.next().record_copy(id, copy, outcome).unwrap();
+        assert!(!state.next().permits_exposure());
     }
 
     #[test]

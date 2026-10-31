@@ -531,8 +531,11 @@ applied across requests and workers. `WorkerNotificationProvider` is an
 optional application-composition provider: adapters may implement it for
 lower-latency wake-ups, but it is not part of `StorageBackend`.
 
-`DeletionControlStorage` owns privileged capture and exact-predecessor transitions
-for protected deletion authority. Logical replacement must preserve these records
+`DeletionControlStorage` owns read-only runtime authority reads, privileged
+capture, and exact-predecessor transitions for protected deletion authority.
+Recovery may advance several revisions while preserving all newer local decisions.
+Maintenance/readiness and worker claims enforce `RecoveryQuarantine` whenever
+retained intents remain. Logical replacement must preserve these records
 and reject retained intents until restriction reapplication is implemented.
 The application owns independent checkpoint publication and recovery evidence;
 see the [deletion recovery foundation](../deletion_recovery.md) for its durability

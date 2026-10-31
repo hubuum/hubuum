@@ -23,6 +23,8 @@ use environment::{constraints, validate_configuration_bounds};
 
 pub mod artifacts;
 mod client_network;
+mod control_recovery;
+pub use control_recovery::ControlRecoveryOptions;
 mod defaults;
 mod query_observations;
 mod schema_validation;
@@ -244,6 +246,9 @@ pub struct AppConfig {
     #[command(flatten)]
     #[serde(default)]
     pub artifacts: artifacts::ArtifactOptions,
+    #[command(flatten)]
+    #[serde(default)]
+    pub control_recovery: ControlRecoveryOptions,
     #[command(flatten)]
     #[serde(default)]
     pub schema_validation: SchemaValidationOptions,
@@ -1446,6 +1451,7 @@ impl AppConfig {
         self.schema_limits = self.schema_validation.validate()?;
         self.artifacts
             .validate(self.export_max_output_bytes, self.backup_max_output_bytes)?;
+        self.control_recovery.paths()?;
         if self.actix_workers == 0 {
             return Err(ApiError::BadRequest(
                 "actix_workers must be greater than 0".to_string(),
@@ -2009,6 +2015,7 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
     }
 
     let config = AppConfig {
+        control_recovery: ControlRecoveryOptions::from_environment(),
         schema_validation: SchemaValidationOptions::from_environment()?,
         query_observations: QueryObservationOptions::from_environment()?,
         artifacts: artifacts::ArtifactOptions::from_environment()?,

@@ -56,6 +56,19 @@ pub(super) struct DurableCheckpoint {
     payload: Payload,
 }
 
+/// Keep latest-reference publication excluded until recovery commits and its
+/// state is independently read back. Process death releases the OS lock.
+pub(super) struct RecoveryEvidence {
+    checkpoint: DurableCheckpoint,
+    _lock: File,
+}
+
+impl RecoveryEvidence {
+    pub(super) fn state(&self) -> &DeletionControlState {
+        self.checkpoint.state()
+    }
+}
+
 impl DurableCheckpoint {
     pub(super) fn state(&self) -> &DeletionControlState {
         &self.payload.state
@@ -175,9 +188,18 @@ impl CheckpointRepository {
         Ok(signed.payload)
     }
 
+    #[cfg(test)]
     pub(super) fn latest(&self) -> Result<DurableCheckpoint, ApiError> {
         let _lock = self.lock()?;
         self.latest_locked()
+    }
+
+    pub(super) fn recovery_evidence(&self) -> Result<RecoveryEvidence, ApiError> {
+        let lock = self.lock()?;
+        Ok(RecoveryEvidence {
+            checkpoint: self.latest_locked()?,
+            _lock: lock,
+        })
     }
 
     fn latest_locked(&self) -> Result<DurableCheckpoint, ApiError> {
@@ -399,6 +421,68 @@ mod tests {
         fn head(&self) -> PathBuf {
             self.repository.root.join("HEAD")
         }
+    }
+
+    #[test]
+    fn recovery_evidence_prevents_concurrent_latest_publication() {
+        let fixture = Fixture::new();
+        fixture.repository.publish(&fixture.initial, true).unwrap();
+        let evidence = fixture.repository.recovery_evidence().unwrap();
+        assert!(fixture.repository.publish(&fixture.initial, false).is_err());
+        drop(evidence);
+        assert!(fixture.repository.publish(&fixture.initial, false).is_ok());
+    }
+
+    #[test]
+    #[ignore = "subprocess fixture for recovery lock crash test"]
+    fn hold_recovery_lock_child() {
+        let root = std::env::current_dir().unwrap();
+        let repository =
+            CheckpointRepository::open(&root.join("repository"), &root.join("key")).unwrap();
+        let _evidence = repository.recovery_evidence().unwrap();
+        fs::write(root.join("locked"), b"ready").unwrap();
+        loop {
+            std::thread::park();
+        }
+    }
+
+    #[test]
+    fn killed_recovery_process_releases_publication_lock_without_changing_evidence() {
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        let fixture = Fixture::new();
+        fixture.repository.publish(&fixture.initial, true).unwrap();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "services::deletion_recovery::repository::tests::hold_recovery_lock_child",
+                "--ignored",
+            ])
+            .current_dir(&fixture.root)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !fixture.root.join("locked").exists() && Instant::now() < deadline {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let locked = fixture.root.join("locked").exists();
+        let was_excluded = fixture.repository.recovery_evidence().is_err();
+        let _ = child.kill();
+        child.wait().unwrap();
+        assert!(
+            locked && was_excluded,
+            "child must hold the independent publication lock"
+        );
+        assert_eq!(
+            fixture.repository.recovery_evidence().unwrap().state(),
+            fixture.initial.state()
+        );
     }
 
     impl Drop for Fixture {

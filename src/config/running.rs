@@ -12,6 +12,8 @@ use super::{AppConfig, ClientAllowlist, token_hash_key_ring};
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct RunningConfig {
     pub artifacts: super::artifacts::ArtifactOptions,
+    /// Runtime startup requires independently retained control evidence.
+    pub control_recovery_required: bool,
     pub schema_validation: SchemaValidationConfig,
     pub query_observations: QueryObservationConfig,
     pub server: ServerConfig,
@@ -425,6 +427,7 @@ impl RunningConfig {
                 migrator_role: config.database_migrator_role.clone(),
                 runtime_role: config.database_runtime_role.clone(),
             },
+            control_recovery_required: config.control_recovery.configured(),
             task_capacity: None,
             tasks: TaskConfig {
                 workers: config.task_workers,

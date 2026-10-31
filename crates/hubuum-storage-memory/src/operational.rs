@@ -77,12 +77,17 @@ impl OperationalStateStorage for MemoryStorage {
     async fn get_readiness_snapshot(&self) -> Result<StorageReadinessSnapshot, StorageError> {
         Ok(StorageReadinessSnapshot::new(
             true,
-            self.state.read().await.maintenance_state,
+            self.get_maintenance_state().await?,
         ))
     }
 
     async fn get_maintenance_state(&self) -> Result<MaintenanceState, StorageError> {
-        Ok(self.state.read().await.maintenance_state)
+        let state = self.state.read().await;
+        Ok(if state.deletion_control.permits_exposure() {
+            state.maintenance_state
+        } else {
+            MaintenanceState::RecoveryQuarantine
+        })
     }
 
     async fn get_task_queue_snapshot(

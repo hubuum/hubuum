@@ -75,6 +75,8 @@ for history_handler in src/models/history/computed.rs src/api/v1/handlers/classe
 done
 
 for cursor_input in crates/hubuum-storage-postgres/src/cursor/query_plan_tests.rs \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000003_deletion_recovery_gate/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000003_deletion_recovery_gate/down.sql \
   crates/hubuum-storage-postgres/migrations/2026-10-29-000002_deletion_authority/up.sql \
   crates/hubuum-storage-postgres/migrations/2026-10-29-000002_deletion_authority/down.sql \
   crates/hubuum-storage-postgres/migrations/2026-09-13-000001_byte_ordered_cursor_indexes/up.sql \
@@ -120,7 +122,8 @@ assert_flag "$artifact_driver_unit_output" rust false
 for deletion_input in crates/hubuum-storage-core/src/deletion_control.rs \
   crates/hubuum-storage-memory/src/deletion_control.rs \
   crates/hubuum-storage-postgres/tests/deletion_control.rs \
-  src/services/deletion_recovery/repository.rs; do
+  src/services/deletion_recovery/repository.rs \
+  src/services/deletion_recovery/tests.rs src/config/control_recovery.rs; do
   deletion_output="$(bash "$classifier" "$deletion_input")"
   assert_flag "$deletion_output" code true
   assert_flag "$deletion_output" rust true

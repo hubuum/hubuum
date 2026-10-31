@@ -2089,6 +2089,7 @@
             "purge_expired_schema_profile_outputs",
             "purge_expired_tokens",
             "query_observation_control",
+            "read_deletion_control",
             "record_claimed_import_results",
             "record_credential_creation",
             "record_import_results",
@@ -2534,6 +2535,7 @@
             "purge_expired_schema_profile_outputs",
             "purge_expired_tokens",
             "query_observation_control",
+            "read_deletion_control",
             "record_claimed_import_results",
             "record_credential_creation",
             "record_import_results",
@@ -3914,6 +3916,46 @@
       "allowed_values": [],
       "minimum": 1,
       "maximum": 1000,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_CONTROL_RECOVERY_DIRECTORY",
+      "owner": "restores",
+      "exposure": "sensitive_metadata",
+      "value_kind": "path",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_CONTROL_RECOVERY_KEY",
+      "owner": "restores",
+      "exposure": "sensitive_metadata",
+      "value_kind": "path",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
       "runtime_roles": [
         "all",
         "api",
@@ -7932,6 +7974,44 @@
           "requires": []
         },
         {
+          "id": "control_recovery_directory",
+          "long": "control-recovery-directory",
+          "short": null,
+          "environment": "HUBUUM_CONTROL_RECOVERY_DIRECTORY",
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "control_recovery_key"
+          ]
+        },
+        {
+          "id": "control_recovery_key",
+          "long": "control-recovery-key",
+          "short": null,
+          "environment": "HUBUUM_CONTROL_RECOVERY_KEY",
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "control_recovery_directory"
+          ]
+        },
+        {
           "id": "schema_max_bytes",
           "long": "schema-max-bytes",
           "short": null,
@@ -10795,6 +10875,43 @@
             "restore_executor",
             "token_key_status",
             "verify_backup"
+          ],
+          "requires": [
+            "control_checkpoint_key"
+          ]
+        },
+        {
+          "id": "recover_control",
+          "long": "recover-control",
+          "short": null,
+          "environment": null,
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [
+            "audit_templates",
+            "backup",
+            "check_database_privileges",
+            "control_checkpoint",
+            "database_ready",
+            "database_role_grants_sql",
+            "database_role_setup_sql",
+            "export_template_health",
+            "migrate",
+            "migration_mode",
+            "reconcile_query_usage",
+            "reset_password",
+            "restore",
+            "restore_executor",
+            "token_key_status",
+            "verify_backup",
+            "verify_control_recovery"
           ],
           "requires": [
             "control_checkpoint_key"
