@@ -19,6 +19,7 @@ from pathlib import Path
 
 IDENTIFIER = r"[a-z_][a-z_0-9]*"
 TABLE = rf"(?:public\.)?{IDENTIFIER}"
+OFFLINE_TABLE = rf"(?:(?:public|hubuum_control)\.)?{IDENTIFIER}"
 ALTER = re.compile(rf"^\s*ALTER\s+TABLE\s+({TABLE})\s+([^;]+);", re.I | re.M)
 ADD = re.compile(rf"ADD\s+CONSTRAINT\s+({IDENTIFIER})\s+(.+)", re.I | re.S)
 CHECK = re.compile(
@@ -91,9 +92,10 @@ def approved_offline_drops(reviews, candidate_path, candidate):
             raise ValueError("Offline migration SQL changed; review its new content and hash")
         for table, names in review["drop_constraints"].items():
             for name in names:
-                if not re.fullmatch(IDENTIFIER, table) or not re.fullmatch(IDENTIFIER, name):
+                if not re.fullmatch(OFFLINE_TABLE, table) or not re.fullmatch(IDENTIFIER, name):
                     raise ValueError("Offline review contains an invalid constraint identifier")
-                approved.add(f"OFFLINE:{table}:{name}".upper())
+                table_identity = table.removeprefix("public.")
+                approved.add(f"OFFLINE:{table_identity}:{name}".upper())
     return approved
 
 

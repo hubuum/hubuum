@@ -41,6 +41,6 @@ impl Drop for MaintenanceActivityGuard {
     }
 }
 
-pub(super) fn active_maintenance_work() -> usize {
+pub(crate) fn active_maintenance_work() -> usize {
     ACTIVE_MAINTENANCE_WORK.load(Ordering::Acquire)
 }

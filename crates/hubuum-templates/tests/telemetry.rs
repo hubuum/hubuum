@@ -52,7 +52,7 @@ async fn lifecycle_logging_reports_results_without_template_content() {
     .await
     .err()
     .expect("undefined value must fail");
-    shutdown_template_workers().await;
+    shutdown_template_workers().await.unwrap();
     let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
     for lifecycle in ["admitted", "started", "completed", "render_failed"] {
         assert!(logs.contains(lifecycle), "missing {lifecycle}: {logs}");

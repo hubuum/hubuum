@@ -8,7 +8,10 @@
 
 use hubuum_domain::PrincipalIdentity;
 
-use hubuum_storage_core::{StorageExternalSyncFailure, StorageQueryObservationControl};
+use hubuum_storage_core::{
+    DeletionControlState, HotObjectHistoryCleanup, HotObjectHistoryDeletion, RuntimeRegistration,
+    StorageExternalSyncFailure, StorageQueryObservationControl,
+};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -28,6 +31,28 @@ struct CompleteExternalAdapter;
 
 #[async_trait]
 impl DeletionControlStorage for CompleteExternalAdapter {
+    async fn register_runtime(&self) -> Result<RuntimeRegistration, StorageError> {
+        fixture_result()
+    }
+    async fn unregister_runtime(
+        &self,
+        registration: RuntimeRegistration,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn prepare_hot_object_history_deletion(
+        &self,
+        expected: DeletionControlState,
+        request: HotObjectHistoryDeletion,
+    ) -> Result<DeletionControlState, StorageError> {
+        fixture_result()
+    }
+    async fn cleanup_hot_object_history(
+        &self,
+        request: HotObjectHistoryCleanup,
+    ) -> Result<DeletionControlState, StorageError> {
+        fixture_result()
+    }
     async fn capture_deletion_control(&self) -> Result<DeletionControlCapture, StorageError> {
         fixture_result()
     }

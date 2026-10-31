@@ -158,4 +158,60 @@ for scenario in widened narrowing missing-lock missing-statement nontransactiona
   fi
 done
 
+for scenario in public-qualified control-qualified arbitrary-schema wrong-schema missing-lock stale-review; do
+  candidate="$adapter_migrations/0002_candidate"
+  rm -f "$candidate/metadata.toml"
+  review_table='hubuum_control.widgets'
+  candidate_table="$review_table"
+  if [[ "$scenario" == public-qualified ]]; then
+    review_table='public.widgets'
+    candidate_table="$review_table"
+  elif [[ "$scenario" == arbitrary-schema ]]; then
+    review_table='audit.widgets'
+    candidate_table="$review_table"
+  elif [[ "$scenario" == wrong-schema ]]; then
+    candidate_table='public.widgets'
+  fi
+  {
+    if [[ "$scenario" != missing-lock ]]; then
+      printf '%s\n' "SET LOCAL lock_timeout = '5s';"
+    fi
+    printf '%s\n' "SET LOCAL statement_timeout = '60s';"
+    printf '%s\n' "ALTER TABLE $candidate_table DROP CONSTRAINT widgets_check; -- hubuum-compat: reviewed-offline-drop"
+    printf '%s\n' "ALTER TABLE $candidate_table ADD CONSTRAINT widgets_check CHECK (revision >= 0) NOT VALID;"
+    printf '%s\n' "ALTER TABLE $candidate_table VALIDATE CONSTRAINT widgets_check;"
+  } > "$candidate/up.sql"
+  mkdir -p "$test_root/.github"
+  python3 - "$test_root" "$review_table" <<'PYREVIEW'
+import hashlib
+import json
+import sys
+from pathlib import Path
+root = Path(sys.argv[1])
+path = "crates/hubuum-storage-postgres/migrations/0002_candidate/up.sql"
+review = {"schema_version": 1, "reviews": [{
+    "migration": path,
+    "sha256": hashlib.sha256((root / path).read_bytes()).hexdigest(),
+    "reason": "Fixture offline schema migration",
+    "upgrade_action": "Stop every older runtime before upgrading",
+    "drop_constraints": {sys.argv[2]: ["widgets_check"]},
+}]}
+(root / ".github/migration-offline-reviews.json").write_text(json.dumps(review))
+PYREVIEW
+  if [[ "$scenario" == stale-review ]]; then
+    printf '%s\n' 'SELECT 1;' >> "$candidate/up.sql"
+  fi
+  git -C "$test_root" add .
+  git -C "$test_root" commit --quiet -m "offline-$scenario"
+  if bash "$test_root/scripts/check-migration-compatibility.sh" v1.0.0 >/dev/null 2>&1; then
+    if [[ "$scenario" != public-qualified && "$scenario" != control-qualified ]]; then
+      echo "$scenario offline review unexpectedly passed compatibility review" >&2
+      exit 1
+    fi
+  elif [[ "$scenario" == public-qualified || "$scenario" == control-qualified ]]; then
+    echo "$scenario offline review unexpectedly failed compatibility review" >&2
+    exit 1
+  fi
+done
+
 echo "Migration compatibility checker tests passed."

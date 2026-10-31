@@ -12,6 +12,22 @@ use super::*;
 
 const CAPACITY: usize = MAX_CONCURRENT_WORKERS + MAX_WAITING_WORKERS;
 
+#[tokio::test]
+async fn lost_supervisor_cannot_confirm_shutdown() {
+    let (jobs, _incoming) = mpsc::channel(1);
+    let (stopping, _stop) = watch::channel(false);
+    let (finished, stopped) = watch::channel(false);
+    drop(finished);
+    let runtime = WorkerRuntime {
+        jobs,
+        capacity: Arc::new(Semaphore::new(1)),
+        stopping,
+        stopped,
+    };
+
+    assert!(runtime.shutdown().await.is_err());
+}
+
 struct Fixture {
     runtime: WorkerRuntime,
     directory: TempDir,
@@ -148,7 +164,7 @@ async fn saturation_rejects_excess_work_without_blocking_the_caller() {
                 .exists()
         );
     }
-    fixture.runtime.shutdown().await;
+    fixture.runtime.shutdown().await.unwrap();
 }
 
 #[rstest]
@@ -166,7 +182,7 @@ async fn cancellation_reaps_the_child_before_releasing_capacity(#[case] input_by
     drop(result);
     fixture.idle().await;
     assert_reaped(pid);
-    fixture.runtime.shutdown().await;
+    fixture.runtime.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -177,7 +193,7 @@ async fn execution_deadline_kills_and_reaps_a_stalled_worker() {
     assert!(error(result.await.unwrap()).contains("deadline"));
     fixture.idle().await;
     assert_reaped(pid);
-    fixture.runtime.shutdown().await;
+    fixture.runtime.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -189,7 +205,7 @@ async fn admission_deadline_never_starts_a_queued_child() {
     assert!(!fixture.directory.path().join("expired").exists());
     drop(active);
     fixture.idle().await;
-    fixture.runtime.shutdown().await;
+    fixture.runtime.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -197,7 +213,7 @@ async fn shutdown_drains_active_and_queued_work_and_closes_admission() {
     let fixture = Fixture::new();
     let active = fixture.occupy().await;
     let queued = fixture.sleeping("shutdown-queued", String::new(), Duration::from_secs(30));
-    fixture.runtime.shutdown().await;
+    fixture.runtime.shutdown().await.unwrap();
     assert!(error(queued.await.unwrap()).contains("shutting down"));
     for (index, response) in active.into_iter().enumerate() {
         assert!(error(response.await.unwrap()).contains("shutting down"));
@@ -235,7 +251,7 @@ async fn protocol_failures_return_capacity_and_allow_recovery(
         result.await.unwrap().unwrap().pop().unwrap().into_parts().0,
         "healthy"
     );
-    fixture.runtime.shutdown().await;
+    fixture.runtime.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -248,7 +264,7 @@ async fn spawn_failure_returns_capacity() {
     );
     assert!(error(result.await.unwrap()).contains("install it beside"));
     fixture.idle().await;
-    fixture.runtime.shutdown().await;
+    fixture.runtime.shutdown().await.unwrap();
 }
 
 #[test]
@@ -267,7 +283,7 @@ fn dropping_the_request_runtime_does_not_abandon_its_child() {
     cleanup.block_on(async {
         fixture.idle().await;
         assert_reaped(pid);
-        fixture.runtime.shutdown().await;
+        fixture.runtime.shutdown().await.unwrap();
     });
 }
 
@@ -300,7 +316,7 @@ async fn continuous_admission_drains_completed_job_tracking() {
         );
     }
     fixture.idle().await;
-    fixture.runtime.shutdown().await;
+    fixture.runtime.shutdown().await.unwrap();
 }
 
 #[tokio::test]

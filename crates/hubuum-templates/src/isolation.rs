@@ -472,21 +472,30 @@ impl WorkerRuntime {
         })
     }
 
-    async fn shutdown(&self) {
+    async fn shutdown(&self) -> Result<(), TemplateError> {
         self.capacity.close();
         let _ = self.stopping.send(true);
         let mut stopped = self.stopped.clone();
-        let _ = stopped.wait_for(|value| *value).await;
+        stopped
+            .wait_for(|value| *value)
+            .await
+            .map(|_| ())
+            .map_err(|_| {
+                TemplateError::boundary(
+                    "template supervisor stopped without confirming child cleanup",
+                )
+            })
     }
 }
 
 /// Stop admission and drain children before the application's telemetry/runtime
 /// shuts down. The supervisor is independent of individual HTTP runtimes.
-pub async fn shutdown_template_workers() {
+pub async fn shutdown_template_workers() -> Result<(), TemplateError> {
     SHUTTING_DOWN.store(true, Ordering::SeqCst);
     if let Some(Ok(runtime)) = RUNTIME.get() {
-        runtime.shutdown().await;
+        runtime.shutdown().await?;
     }
+    Ok(())
 }
 
 async fn execute(request: WorkerRequest<'_>) -> Result<Vec<RenderedTemplate>, TemplateError> {
@@ -510,7 +519,7 @@ async fn execute_pinned(
     // Shutdown may have raced the first lazy initialization. Never submit work
     // to a supervisor that was not yet visible to the shutdown caller.
     if SHUTTING_DOWN.load(Ordering::SeqCst) {
-        runtime.shutdown().await;
+        runtime.shutdown().await?;
         return Err(TemplateError::boundary(
             "template supervisor is shutting down",
         ));

@@ -14,14 +14,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Templates replay indexed temporary files; backup capture reuses its row spool.
   Configure spool and worker resident limits with
   `HUBUUM_ARTIFACT_MAX_SPOOL_BYTES` and `HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES`.
+- Administrators can remove one exact closed object-history version through
+  `--delete-object-history-version`. The command requires stopped runtimes and
+  independent protection of both its intent and completion receipt. It removes
+  only that hot history copy and keeps recovery quarantine active.
+
 - Offline authenticated control recovery restores missing deletion authority.
   Configured API and worker startup checks independent recovery evidence; retained
   deletion decisions enforce deployment-wide recovery quarantine.
 
 - Administrator commands can publish authenticated deletion-control checkpoints
   to an independent durable directory and verify recovered authority against the
-  latest checkpoint. This foundation keeps permanent deletion and recovery
-  quarantine release disabled; see [deletion recovery](docs/deletion_recovery.md).
+  latest checkpoint. These checkpoint commands alone authorize neither physical
+  cleanup nor quarantine release; see [deletion recovery](docs/deletion_recovery.md).
 
 - Shared task admission and execution limits across API/worker replicas, with
   separate resident-byte and cumulative-work accounting, internal repair
@@ -48,6 +53,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Reconcile task-owned artifacts before downgrading. New export replay rows and
   backup source rows are capped at 4 MiB; related template input is capped at
   8 MiB per batch and hydrated output at 4 MiB per row. Narrow oversized queries.
+- **Breaking Rust SDK change:** upgrade all ten SDK crates to 0.12.0 and implement
+  protected runtime registrations and exact managed-copy prepare/cleanup in every
+  complete adapter. Preserve registrations across logical restore and keep
+  legacy unbound deletion obligations unchanged. See the
+  [0.12 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-011-to-012).
+- **Breaking operational change:** stop every older API/worker process, apply the
+  managed-cleanup migration and reconcile grants before starting matching binaries.
+  The migration rejects malformed or duplicate object-history version UUIDs;
+  repair their identity provenance before retrying. Runtime registrations have no
+  expiry: crashed processes or uncertain request/worker shutdown block offline
+  cleanup. There is no force-clear operation or automatic quarantine release.
+  Retain independent v2 control checkpoints; older binaries cannot read them.
+
 - **Breaking Rust SDK change:** upgrade all ten SDK crates to 0.11.0 and handle
   `MaintenanceState::RecoveryQuarantine` in adapter maintenance, readiness, and
   worker gates. Follow the [0.11 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-010-to-011).
@@ -102,6 +120,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Artifact cleanup backs off after an empty batch using the configured output
   cleanup interval, avoiding an extra database acquisition on every idle worker
   poll while retaining bounded draining and retries when work remains.
+- Restore and offline verification accept the original manifest exclusions in
+  backup formats 6–11, including backups created before protected deletion
+  authority was introduced. New backups retain the current format-12 manifest.
+
 - Restore draining now waits for active HTTP handlers and streamed response
   bodies to finish or disconnect. Deletion recovery quarantine fences productive
   task transactions and output publication against committed deletion intents,

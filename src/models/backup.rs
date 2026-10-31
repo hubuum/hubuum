@@ -15,6 +15,16 @@ use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
 use super::principal::Principal;
 
 pub const CURRENT_BACKUP_VERSION: i32 = 12;
+// Formats 6–12 originally used this exact manifest.
+// Keep it independent of the current writer's exclusions for compatibility.
+pub(crate) const HISTORICAL_BACKUP_MANIFEST_EXCLUSIONS: &[&str] = &[
+    "backup_task_outputs (backup artifacts never recursively contain prior backups)",
+    "authentication tokens and token scopes (credentials must be reissued after restore)",
+    "class reachability cache (rebuilt by database triggers during restore)",
+    "computed-field class state and materialized object cache (rebuilt after restore)",
+    "active tasks and non-terminal event deliveries",
+    "restore control-plane tables and server instance heartbeats",
+];
 pub(crate) const BACKUP_MANIFEST_EXCLUSIONS: &[&str] = &[
     "backup_task_outputs (backup artifacts never recursively contain prior backups)",
     "authentication tokens and token scopes (credentials must be reissued after restore)",
@@ -22,6 +32,7 @@ pub(crate) const BACKUP_MANIFEST_EXCLUSIONS: &[&str] = &[
     "computed-field class state and materialized object cache (rebuilt after restore)",
     "active tasks and non-terminal event deliveries",
     "restore control-plane tables and server instance heartbeats",
+    "protected deletion authority and runtime registrations (retained independently of logical restore)",
 ];
 
 /// Immutable identity snapshot recorded with a restore stage and its provenance event.

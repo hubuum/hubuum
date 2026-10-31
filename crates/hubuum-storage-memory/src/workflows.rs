@@ -1276,6 +1276,7 @@ impl RestoreStorage for MemoryStorage {
         )?;
         replacement.credential_approvals = state.credential_approvals.clone();
         replacement.deletion_control = state.deletion_control.clone();
+        replacement.runtime_registrations = state.runtime_registrations.clone();
         replacement.query_observation_control = state.query_observation_control;
         for (_, approval) in replacement.credential_approvals.values_mut() {
             approval.invalidate(Utc::now());

@@ -3,7 +3,7 @@ use hubuum_templates::{TemplateExecution, TemplateLimits, shutdown_template_work
 
 #[tokio::test]
 async fn shutdown_before_first_use_keeps_admission_closed() {
-    shutdown_template_workers().await;
+    shutdown_template_workers().await.unwrap();
     let error = TemplateExecution::new(
         "after-shutdown",
         "must not render",
