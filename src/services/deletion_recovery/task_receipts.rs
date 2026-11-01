@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures_util::future::join_all;
 use hubuum_domain::PrincipalIdentity;
@@ -17,6 +18,7 @@ use hubuum_storage_core::{
 use hubuum_task_core::IdempotencyKey;
 use serde::Serialize;
 use tokio::sync::{Mutex, oneshot};
+use tokio::time::{Instant, sleep_until};
 
 use super::repository::{
     AuthenticatedPayloadCache, CheckpointRepository, CheckpointSession, DurableCheckpoint,
@@ -456,7 +458,7 @@ async fn protect_waiting_admissions(configuration: &Arc<Configuration>) {
         return;
     };
     let session = async {
-        let session = open_session(configuration).await?;
+        let session = wait_for_admission_session(configuration).await?;
         let captured = session.checkpoint().task_control().is_some_and(|control| {
             batch.iter().all(|admission| {
                 control
@@ -610,6 +612,22 @@ async fn open_session(configuration: &Arc<Configuration>) -> Result<CheckpointSe
     try_open_session(configuration)
         .await?
         .ok_or_else(repository_busy)
+}
+
+async fn wait_for_admission_session(
+    configuration: &Arc<Configuration>,
+) -> Result<CheckpointSession, ApiError> {
+    // Contention between replicas must not turn one pending admission into a
+    // storm of fully authenticated HTTP retries. Only a busy lock is retried;
+    // every attempt still opens and verifies the independent repository.
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < deadline {
+        if let Some(session) = try_open_session(configuration).await? {
+            return Ok(session);
+        }
+        sleep_until(deadline.min(Instant::now() + Duration::from_millis(10))).await;
+    }
+    Err(repository_busy())
 }
 
 async fn try_open_session(

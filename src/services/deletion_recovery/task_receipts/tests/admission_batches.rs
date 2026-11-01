@@ -1,3 +1,5 @@
+use tokio::time::timeout;
+
 use super::*;
 
 async fn enqueue(
@@ -42,6 +44,121 @@ async fn tickets(fixture: &Fixture, count: usize) -> Vec<TaskAdmissionTicket> {
         );
     }
     tickets
+}
+
+#[actix_web::test]
+async fn admission_waits_for_another_publishers_lock_without_a_new_request() {
+    let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
+    let ticket = fixture
+        .admit("other-publisher", StorageTaskKind::Import)
+        .await;
+    let held = open_session(fixture.service.configuration().unwrap())
+        .await
+        .unwrap();
+    let service = fixture.service.clone();
+    let storage = fixture.storage.clone();
+    let mut request =
+        actix_rt::spawn(async move { service.protect_admission(&storage, ticket).await });
+    assert!(
+        timeout(Duration::from_millis(50), &mut request)
+            .await
+            .is_err()
+    );
+    drop(held);
+    assert!(matches!(
+        timeout(Duration::from_secs(3), request)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
+        TaskActivationOutcome::Activated(_)
+    ));
+}
+
+#[actix_web::test]
+async fn exhausted_admission_lock_wait_leaves_the_exact_ticket_pending() {
+    let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
+    let ticket = fixture.admit("busy-budget", StorageTaskKind::Import).await;
+    let _held = open_session(fixture.service.configuration().unwrap())
+        .await
+        .unwrap();
+    let result = timeout(
+        Duration::from_secs(3),
+        fixture
+            .service
+            .protect_admission(&fixture.storage, ticket.clone()),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(result, Err(ApiError::ServiceUnavailable(message))
+        if message == "Control repository is busy; retry without bypassing protection"));
+    assert_eq!(
+        fixture
+            .storage
+            .list_pending_task_admissions(8)
+            .await
+            .unwrap(),
+        vec![ticket]
+    );
+}
+
+#[actix_web::test]
+async fn admission_lock_wait_rechecks_the_key_instead_of_retrying_authentication_failure() {
+    let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
+    let ticket = fixture
+        .admit("changed-key-during-wait", StorageTaskKind::Import)
+        .await;
+    let _held = open_session(fixture.service.configuration().unwrap())
+        .await
+        .unwrap();
+    let service = fixture.service.clone();
+    let storage = fixture.storage.clone();
+    let mut request =
+        actix_rt::spawn(async move { service.protect_admission(&storage, ticket).await });
+    assert!(
+        timeout(Duration::from_millis(50), &mut request)
+            .await
+            .is_err()
+    );
+    fs::write(fixture.root.join("key"), [72; 32]).unwrap();
+    let result = timeout(Duration::from_secs(3), request)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(result, Err(ApiError::ServiceUnavailable(message))
+        if message == "Control authentication key changed while task admission was running"));
+}
+
+#[actix_web::test]
+async fn cancelling_an_admission_lock_wait_keeps_the_task_recoverable() {
+    let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
+    let ticket = fixture
+        .admit("cancelled-lock-wait", StorageTaskKind::Import)
+        .await;
+    let held = open_session(fixture.service.configuration().unwrap())
+        .await
+        .unwrap();
+    let service = fixture.service.clone();
+    let storage = fixture.storage.clone();
+    let retry = ticket.clone();
+    let mut request =
+        actix_rt::spawn(async move { service.protect_admission(&storage, ticket).await });
+    assert!(
+        timeout(Duration::from_millis(50), &mut request)
+            .await
+            .is_err()
+    );
+    request.abort();
+    assert!(request.await.unwrap_err().is_cancelled());
+    drop(held);
+    assert!(matches!(
+        fixture
+            .service
+            .protect_admission(&fixture.storage, retry)
+            .await
+            .unwrap(),
+        TaskActivationOutcome::Activated(_)
+    ));
 }
 
 #[rstest::rstest]

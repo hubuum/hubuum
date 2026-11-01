@@ -300,6 +300,11 @@ overlap while that session stays locked. PostgreSQL activation holds shared
 deletion and retention authority locks through its transaction, plus the exact
 task row lock. Receipt changes, retention policy/hold changes and recovery retain
 exclusive authority locks, so concurrency does not weaken the generation fence.
+Before returning HTTP 503 for a busy repository, an admission batch waits up to
+one second to acquire the cross-replica publication lock. Each attempt reopens
+the repository and checks its key; an acquired session verifies current recovery
+evidence. Authentication and recovery failures still fail immediately. Waiting
+does not renew a task deadline or authorize execution without its exact proof.
 
 Protected receipt and detail maintenance runs at the configured task-worker poll
 interval, including after an idle pass. It does not inherit the legacy output
