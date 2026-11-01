@@ -61,6 +61,30 @@ enum FileChange {
 }
 
 #[rstest]
+#[case::read_then_cache(false)]
+#[case::publish_then_cache(true)]
+fn publication_cache_still_requires_the_independent_signed_file(#[case] publish_cached: bool) {
+    let fixture = Fixture::new();
+    let cache = Arc::new(AuthenticatedPayloadCache::default());
+    let current = if publish_cached {
+        cached_repository(&fixture, &cache)
+            .publish(&fixture.initial, true)
+            .unwrap()
+    } else {
+        fixture.repository.publish(&fixture.initial, true).unwrap();
+        cached_repository(&fixture, &cache).latest().unwrap()
+    };
+    let material = fixture
+        .repository
+        .root
+        .join(format!("{}.json", current.identity()));
+    let mut bytes = fs::read(&material).unwrap();
+    bytes[0] ^= 1;
+    fs::write(&material, bytes).unwrap();
+    assert!(cached_repository(&fixture, &cache).latest().is_err());
+}
+
+#[rstest]
 #[case::missing(FileChange::Missing)]
 #[case::corrupt_same_length(FileChange::CorruptSameLength)]
 #[case::truncated(FileChange::Truncated)]

@@ -76,6 +76,56 @@ async fn admission_waits_for_another_publishers_lock_without_a_new_request() {
 }
 
 #[actix_web::test]
+async fn admissions_arriving_during_lock_wait_share_the_acquired_session() {
+    let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
+    let tickets = tickets(&fixture, 2).await;
+    let configuration = fixture.service.configuration().unwrap();
+    let held = open_session(configuration).await.unwrap();
+    let (first, mut first_result) = oneshot::channel();
+    configuration
+        .admissions
+        .lock()
+        .await
+        .push_back(WaitingAdmission {
+            storage: fixture.storage.clone(),
+            ticket: tickets[0].clone(),
+            result: first,
+        });
+    let publisher_configuration = Arc::clone(configuration);
+    let mut publisher = actix_rt::spawn(async move {
+        protect_waiting_admissions(&publisher_configuration).await;
+    });
+    assert!(
+        timeout(Duration::from_millis(50), &mut publisher)
+            .await
+            .is_err()
+    );
+
+    let (second, mut second_result) = oneshot::channel();
+    configuration
+        .admissions
+        .lock()
+        .await
+        .push_back(WaitingAdmission {
+            storage: fixture.storage.clone(),
+            ticket: tickets[1].clone(),
+            result: second,
+        });
+    drop(held);
+    timeout(Duration::from_secs(3), publisher)
+        .await
+        .unwrap()
+        .unwrap();
+
+    for result in [&mut first_result, &mut second_result] {
+        assert!(matches!(
+            result.try_recv().unwrap().unwrap(),
+            TaskActivationOutcome::Activated(_)
+        ));
+    }
+}
+
+#[actix_web::test]
 async fn exhausted_admission_lock_wait_leaves_the_exact_ticket_pending() {
     let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
     let ticket = fixture.admit("busy-budget", StorageTaskKind::Import).await;

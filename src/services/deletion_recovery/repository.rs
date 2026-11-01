@@ -613,7 +613,7 @@ impl CheckpointRepository {
             lineage: payload.state.lineage(),
             epoch: payload.state.epoch(),
             revision: payload.state.revision(),
-            sha256,
+            sha256: sha256.clone(),
             task_revision: payload
                 .task_control
                 .as_ref()
@@ -631,6 +631,16 @@ impl CheckpointRepository {
             .map_err(|_| unavailable("Cannot publish latest checkpoint"))?;
         measured_io::sync_directory(&self.directory)
             .map_err(|_| unavailable("Cannot durably publish latest checkpoint"))?;
+        if let Some(cache) = &self.payload_cache {
+            // This exact immutable payload was validated, signed, written and
+            // read back above. Reuse its decoding, while latest_locked still
+            // authenticates HEAD and checks the file, digest and durability.
+            cache.remember(
+                sha256,
+                self.task_receipt_key()?.fingerprint()?,
+                Arc::new(payload),
+            )?;
+        }
         let current = self.latest_locked()?;
         self.collect_superseded(&current)?;
         Ok(current)

@@ -46,7 +46,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Exact-ticket activations overlap under shared authority locks; retention changes
   and recovery remain excluded until those activations finish.
   Admission briefly waits for a contended cross-replica publication lock before
-  returning HTTP 503, avoiding repeated full requests during ordinary contention.
+  returning HTTP 503 and groups requests that arrive during that wait, avoiding
+  repeated full requests and checkpoint work during ordinary contention.
   Protected maintenance checks for newly eligible work at the worker poll cadence
   after idle passes, avoiding the legacy output cleanup timer's five-minute delay.
 

@@ -13,6 +13,12 @@ struct Capture {
     task_reapplication: Option<TaskControlReapplication>,
 }
 
+#[derive(QueryableByName)]
+struct EncodedCapture {
+    #[diesel(sql_type = Text)]
+    material: String,
+}
+
 pub(crate) async fn state_on(
     connection: &mut PostgresConnection,
 ) -> Result<TaskControlState, PostgresStorageError> {
@@ -25,10 +31,15 @@ pub(crate) async fn state_on(
 pub(crate) async fn capture_on(
     connection: &mut PostgresConnection,
 ) -> Result<ControlCheckpointCapture, PostgresStorageError> {
-    let row = diesel::sql_query("SELECT public.hubuum_task_control_capture() AS material")
-        .get_result::<MaterialRow>(connection)
+    // Decode the complete bounded snapshot directly into its validated types.
+    // A generic JSON value would allocate a second tree for every receipt before
+    // performing exactly the same fallible domain deserialization.
+    let row = diesel::sql_query("SELECT public.hubuum_task_control_capture()::text AS material")
+        .get_result::<EncodedCapture>(connection)
         .await?;
-    let capture: Capture = decode(row.material)?;
+    let capture: Capture = serde_json::from_str(&row.material).map_err(|error| {
+        PostgresStorageError::invalid_persisted_value("task retention authority", error)
+    })?;
     let application = crate::backend::deletion_control::decode_application(capture.application)?;
     let mut deletion = DeletionControlCapture::new(
         capture.deletion,

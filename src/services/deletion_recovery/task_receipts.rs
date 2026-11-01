@@ -436,6 +436,13 @@ impl TaskReceiptService {
 /// a current application fence. A bounded batch releases publication ownership
 /// between groups so retention and recovery can make progress.
 async fn protect_waiting_admissions(configuration: &Arc<Configuration>) {
+    if configuration.admissions.lock().await.is_empty() {
+        return;
+    }
+    // Include requests that arrive while another process owns publication or
+    // while this session verifies its checkpoint. Selecting first strands those
+    // waiters in another session even when the capture already includes them.
+    let session = wait_for_admission_session(configuration).await;
     let mut batch: Vec<WaitingAdmission> = Vec::new();
     {
         let mut waiting = configuration.admissions.lock().await;
@@ -458,7 +465,7 @@ async fn protect_waiting_admissions(configuration: &Arc<Configuration>) {
         return;
     };
     let session = async {
-        let session = wait_for_admission_session(configuration).await?;
+        let session = session?;
         let captured = session.checkpoint().task_control().is_some_and(|control| {
             batch.iter().all(|admission| {
                 control
