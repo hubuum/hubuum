@@ -315,6 +315,12 @@ complete snapshots as JSON text for direct decoding into validated domain types;
 stored receipt and authority records remain JSONB. The publisher can reuse the exact
 immutable payload it just signed and read back; every session still checks the
 independent files, authenticated HEAD, digest, key and durability afresh.
+At most three authenticated decodings are retained per configured receipt
+service, covering the current, previous and collectible checkpoint. Collection
+also reads and checks the actual file and signing key before reuse, charges the
+same byte budget, and independently checks that the current checkpoint supersedes
+the candidate. Missing, changed or unauthenticated files cannot be collected by
+consulting the cache alone.
 
 Protected receipt and detail maintenance runs at the configured task-worker poll
 interval, including after an idle pass. It does not inherit the legacy output

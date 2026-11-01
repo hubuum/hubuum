@@ -36,8 +36,8 @@ fn reopened_sessions_reuse_only_the_exact_authenticated_payload() {
 }
 
 #[test]
-fn another_publisher_advances_a_warmed_cache_and_releases_its_old_entry() {
-    let fixture = Fixture::new();
+fn another_publisher_advances_a_warmed_cache_with_bounded_history() {
+    let mut fixture = Fixture::new();
     fixture.repository.publish(&fixture.initial, true).unwrap();
     let cache = Arc::new(AuthenticatedPayloadCache::default());
     let before = cached_repository(&fixture, &cache).latest().unwrap();
@@ -45,10 +45,16 @@ fn another_publisher_advances_a_warmed_cache_and_releases_its_old_entry() {
     drop(before);
     assert!(old_payload.upgrade().is_some());
 
-    let next = fixture.next();
-    fixture.repository.publish(&next, false).unwrap();
-    let after = cached_repository(&fixture, &cache).latest().unwrap();
-    assert_eq!(after.state(), next.state());
+    for index in 0..3 {
+        let next = fixture.next();
+        fixture.repository.publish(&next, false).unwrap();
+        let after = cached_repository(&fixture, &cache).latest().unwrap();
+        assert_eq!(after.state(), next.state());
+        fixture.initial = next;
+        if index < 2 {
+            assert!(old_payload.upgrade().is_some());
+        }
+    }
     assert!(old_payload.upgrade().is_none());
 }
 

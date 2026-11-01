@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use hubuum_storage_core::TaskControlState;
 use uuid::Uuid;
@@ -144,7 +145,7 @@ impl CheckpointRepository {
         &self,
         identity: &str,
         remaining: &mut u64,
-    ) -> Result<Option<Payload>, ApiError> {
+    ) -> Result<Option<Arc<Payload>>, ApiError> {
         let path = self.root.join(format!("{identity}.json"));
         let Some(bytes) = read_candidate(&path, remaining)? else {
             return Ok(None);
@@ -152,7 +153,14 @@ impl CheckpointRepository {
         if digest(&bytes) != identity {
             return Ok(None);
         }
-        Ok(self.verified(&bytes).ok())
+        if let Some(cache) = &self.payload_cache
+            && let Some(payload) = cache.get(identity, &self.task_receipt_key()?.fingerprint()?)?
+        {
+            return Ok(Some(payload));
+        }
+        // Do not let unrelated directory candidates displace the recently
+        // published decodings. Authentication and dominance are still required.
+        Ok(self.verified(&bytes).ok().map(Arc::new))
     }
 }
 
@@ -232,6 +240,7 @@ fn is_temporary_head(value: &str) -> bool {
 #[cfg(all(test, unix))]
 mod tests {
     use std::fs::OpenOptions;
+    use std::os::unix::fs::{PermissionsExt, symlink};
     use std::time::Duration;
 
     use chrono::{TimeZone, Utc};
@@ -245,7 +254,81 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    use crate::services::deletion_recovery::repository::AuthenticatedPayloadCache;
     use crate::services::deletion_recovery::repository::tests::Fixture;
+
+    enum CandidateChange {
+        None,
+        Missing,
+        Corrupt,
+        Truncated,
+        Symlink,
+        PublicPermissions,
+        Key,
+    }
+
+    #[rstest]
+    #[case::unchanged(CandidateChange::None)]
+    #[case::missing(CandidateChange::Missing)]
+    #[case::corrupt(CandidateChange::Corrupt)]
+    #[case::truncated(CandidateChange::Truncated)]
+    #[case::symlink(CandidateChange::Symlink)]
+    #[case::public_permissions(CandidateChange::PublicPermissions)]
+    #[case::changed_key(CandidateChange::Key)]
+    fn collection_reuses_decoding_only_after_fresh_file_and_key_checks(
+        #[case] change: CandidateChange,
+    ) {
+        let fixture = Fixture::new();
+        let key = fixture.repository.root.parent().unwrap().join("key");
+        let cache = Arc::new(AuthenticatedPayloadCache::default());
+        let repository = CheckpointRepository::open(&fixture.repository.root, &key)
+            .unwrap()
+            .with_payload_cache(Arc::clone(&cache));
+        let checkpoint = repository.publish(&fixture.initial, true).unwrap();
+        let path = repository
+            .root
+            .join(format!("{}.json", checkpoint.identity()));
+        let unchanged = matches!(change, CandidateChange::None);
+        match change {
+            CandidateChange::None => {}
+            CandidateChange::Missing => fs::remove_file(&path).unwrap(),
+            CandidateChange::Corrupt => {
+                let mut bytes = fs::read(&path).unwrap();
+                bytes[0] ^= 1;
+                fs::write(&path, bytes).unwrap();
+            }
+            CandidateChange::Truncated => {
+                let bytes = fs::read(&path).unwrap();
+                fs::write(&path, &bytes[..bytes.len() / 2]).unwrap();
+            }
+            CandidateChange::Symlink => {
+                let original = repository.root.join("original");
+                fs::rename(&path, &original).unwrap();
+                symlink(original, &path).unwrap();
+            }
+            CandidateChange::PublicPermissions => {
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+            }
+            CandidateChange::Key => fs::write(&key, [43; 32]).unwrap(),
+        }
+        let repository = CheckpointRepository::open(&fixture.repository.root, &key)
+            .unwrap()
+            .with_payload_cache(cache);
+        let _lock = repository.lock().unwrap();
+        let mut budget = MAX_AUTHENTICATION_BYTES;
+        let candidate = repository
+            .retention_payload(checkpoint.identity(), &mut budget)
+            .unwrap();
+        if unchanged {
+            assert!(Arc::ptr_eq(&candidate.unwrap(), &checkpoint.payload));
+            assert_eq!(
+                budget,
+                MAX_AUTHENTICATION_BYTES - fs::metadata(path).unwrap().len()
+            );
+        } else {
+            assert!(candidate.is_none());
+        }
+    }
 
     fn next(capture: &DeletionControlCapture) -> DeletionControlCapture {
         let change = capture

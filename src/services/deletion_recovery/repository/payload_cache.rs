@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use hubuum_storage_core::ControlKeyFingerprint;
@@ -5,12 +6,16 @@ use hubuum_storage_core::ControlKeyFingerprint;
 use super::{Payload, unavailable};
 use crate::errors::ApiError;
 
-/// One immutable authenticated decoding, scoped to a configured receipt service.
+// Publication retains the current checkpoint and its predecessor, then collects
+// the preceding checkpoint. Bound decoding reuse to that same three-file window.
+const MAX_ENTRIES: usize = 3;
+
+/// Bounded immutable authenticated decodings, scoped to a configured receipt service.
 /// This never caches file availability, HEAD, a durable proof, or a lock. Readers
 /// must independently check the complete signed file before consulting it.
 #[derive(Default)]
 pub(in crate::services::deletion_recovery) struct AuthenticatedPayloadCache {
-    entry: Mutex<Option<Entry>>,
+    entries: Mutex<VecDeque<Entry>>,
 }
 
 struct Entry {
@@ -25,11 +30,11 @@ impl AuthenticatedPayloadCache {
         signed_sha256: &str,
         key_fingerprint: &ControlKeyFingerprint,
     ) -> Result<Option<Arc<Payload>>, ApiError> {
-        let entry = self
-            .entry
+        let entries = self
+            .entries
             .lock()
             .map_err(|_| unavailable("Authenticated checkpoint cache is unavailable"))?;
-        Ok(entry.as_ref().and_then(|entry| {
+        Ok(entries.iter().find_map(|entry| {
             (entry.signed_sha256 == signed_sha256 && &entry.key_fingerprint == key_fingerprint)
                 .then(|| Arc::clone(&entry.payload))
         }))
@@ -41,11 +46,17 @@ impl AuthenticatedPayloadCache {
         key_fingerprint: ControlKeyFingerprint,
         payload: Arc<Payload>,
     ) -> Result<(), ApiError> {
-        let mut entry = self
-            .entry
+        let mut entries = self
+            .entries
             .lock()
             .map_err(|_| unavailable("Authenticated checkpoint cache is unavailable"))?;
-        *entry = Some(Entry {
+        entries.retain(|entry| {
+            entry.signed_sha256 != signed_sha256 || entry.key_fingerprint != key_fingerprint
+        });
+        if entries.len() == MAX_ENTRIES {
+            entries.pop_front();
+        }
+        entries.push_back(Entry {
             signed_sha256,
             key_fingerprint,
             payload,

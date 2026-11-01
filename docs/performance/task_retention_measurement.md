@@ -322,3 +322,31 @@ counters motivate a bounded coalescing window before publication, while retainin
 the per-ticket activation checks. That subsequent change requires fresh runs.
 Raw reports and their source/image metadata are retained under
 `target/retention-544-20261031/shared-json-capture-1`.
+
+## Bounded admission coalescing diagnostic
+
+Source `e8147393d1f84b5d23f486547904c338678910fd` completed a fresh shared
+profile with the same initial 10,000 receipts, concurrency 32, resource limits,
+and 360-second refill window. The production runtime and administrator came
+from that source; the native load generator's 661 build inputs were byte-identical
+to its recorded `f4a00fd1` source. No other builds or tests ran concurrently.
+
+| Observation | Recorded value |
+| --- | --- |
+| Initial admission | 10,000 tasks in 89,757 ms |
+| Total admitted and fully drained | 22,750 tasks |
+| Eligible detail expirations / p95 lag | 20,592 / 35,920 ms |
+| Eligible receipt expirations / p95 lag | 15,937 / 23,759 ms |
+| Unknown deadlines / censored eligible observations | 0 / 0 |
+| Steady pre-refill receipt observations | Minimum 5,797; median 10,000 |
+
+Expiry timing and enforced resources pass, but this run does **not** qualify:
+receipt occupancy is not sustained near 10,000. Left-held interpolation of the
+pre-refill observations averages 8,026.98 receipts; this is an interpolation,
+not a proven lower bound or an acceptance tolerance. The first full refills take
+about 15–16 seconds and approximately 60 checkpoint publications per 1,000 tasks.
+Snapshot collection accounts for about three seconds of those refills. The next
+candidate reuses a bounded history of authenticated decodings for collection,
+with fresh file and key checks. That candidate requires fresh measurements.
+Raw reports and source/image metadata are retained under
+`target/retention-544-20261031/shared-coalescing-window-1`.
