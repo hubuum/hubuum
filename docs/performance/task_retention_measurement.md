@@ -75,6 +75,11 @@ recipe's submission concurrency while observations continue during a refill.
 The observer joins the producer, including on failure, before the fixture
 can be removed. Its existing 120-second process timeout and 512 MiB resident
 limit still apply, and every admitted identity must appear in the final evidence.
+Cleanup is performed by the running production workers. The observer invokes
+read-only administrator `status`, verifies the returned checkpoint identity and
+checks physical database removal. It does not invoke extra cleanup sweeps.
+A busy publication lock is retried at the observer's normal one-second cadence.
+Standalone observer use therefore requires active production workers as well.
 Use `--refill-max-batch 1000` when the smaller batch cannot replenish the target
 between cleanup observations. This bounds the number of arrivals per refill;
 the recipe's concurrency 32 and all application resource limits stay unchanged.
@@ -442,3 +447,32 @@ These diagnostics serialized each refill with the full cleanup observation pass.
 The subsequent concurrent producer removes that serialization without raising
 submission concurrency or changing expiry, population, or resource targets.
 Fresh measurements are required; the driver change alone establishes no P6 result.
+
+## Concurrent-refill diagnostic
+
+Measurement source `b68e16829762b711f322d9b07b23504832616822` used the
+byte-identical, verified `861cb8cc` production runtime with concurrent refill and
+the earlier administrator-driven cleanup observations. The full suite passed
+7,249 tests before the isolated shared run. Resource limits, principal skew,
+concurrency, the 10,000-receipt target and 360-second steady phase were unchanged.
+
+| Observation | Recorded value |
+| --- | --- |
+| Initial admission | 10,000 tasks in 74,874 ms |
+| Total admitted and fully drained | 23,993 tasks |
+| Eligible detail expirations / p95 lag | 20,554 / 11,426 ms |
+| Eligible receipt expirations / p95 lag | 15,847 / 11,609 ms |
+| Unknown deadlines / censored eligible observations | 0 / 0 |
+| Steady receipt observations | Minimum 6,040; median 10,000 |
+| Administrator attempts / repository-busy refusals | 577 / 429 |
+
+Resources and expiry timing pass, but occupancy remains underfilled. Left-held
+interpolation of the receipt observations averages 8,246.32; it is neither a
+proven lower bound nor an acceptance tolerance. Concurrent observations improve
+the recorded removal time bounds, but extra cleanup invocations compete with
+admission for publication ownership. The subsequent observer reads status at
+its normal cadence and leaves cleanup to production workers. It must still
+prove physical removal and independently protected retirement under the same
+deadlines; passing this diagnostic does not qualify that change or establish P6.
+Raw reports and source/image metadata remain under
+`target/retention-544-20261031/shared-concurrent-refill-1`.

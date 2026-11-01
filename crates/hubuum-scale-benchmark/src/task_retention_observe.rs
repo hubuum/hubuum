@@ -1,4 +1,5 @@
 //! Observe real database clocks, physical cleanup, and verified publication.
+//! Production workers perform cleanup; the observer only requests status.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -419,7 +420,7 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
             .env("HUBUUM_MIGRATION_DATABASE_URL", &options.database_url)
             .env("HUBUUM_DATABASE_ROLE_MODE", "single")
             .env("HUBUUM_CONTROL_CHECKPOINT_MEASURE", "true")
-            .args(["--task-retention", "run", "--control-recovery-directory"])
+            .args(["--task-retention", "status", "--control-recovery-directory"])
             .arg(&options.repository)
             .arg("--control-recovery-key")
             .arg(&options.key_file)
@@ -446,11 +447,11 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
                 if started.elapsed() >= Duration::from_secs(options.timeout_seconds) {
                     break;
                 }
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
             return Err(format!(
-                "Production retention pass {pass} failed with {}",
+                "Production retention observation {pass} failed with {}",
                 result.status
             )
             .into());
@@ -618,6 +619,7 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
         "full_drain_note":"A drain timeout is not itself an eligible-expiry percentile breach; inspect each denominator and p95_status",
         "observation_time_bounds":"source clocks and query starts round down to milliseconds; removal observations add a checked one-millisecond margin to query completion for an upper bound",
         "refill_execution":"one bounded producer concurrent with expiry observations",
+        "cleanup_execution":"production workers; observer invokes read-only administrator status",
         "steady_seconds":options.steady_seconds,"steady_started_ms":steady_started_ms,"steady_until_ms":steady_until_ms,"occupancy":occupancy,
         "steady_receipt_expiry":steady_receipt_lags,"steady_detail_expiry":steady_detail_lags,
         "database_environment":database_environment,"database_round_trip_nanos":database_round_trip_nanos,
