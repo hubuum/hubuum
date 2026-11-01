@@ -164,7 +164,8 @@ done
 for fuzz_dependency in crates/hubuum-regex/src/lib.rs \
   crates/hubuum-storage-postgres/src/regex_compiler.rs \
   crates/hubuum-storage-memory/src/regex_compiler.rs \
-  crates/hubuum-domain/src/lib.rs Cargo.toml Cargo.lock \
+  crates/hubuum-domain/Cargo.toml crates/hubuum-storage-core/build.rs \
+  .cargo/config.toml rust-toolchain.toml Cargo.toml Cargo.lock \
   scripts/classify-ci-changes.sh scripts/ci-changed-paths.sh deny.toml \
   scripts/run-cargo-deny.sh scripts/check-supply-chain-policy.py \
   .github/supply-chain-tools.env .github/supply-chain-exceptions.json; do
@@ -178,6 +179,10 @@ assert_flag "$restore_fixture_output" code true
 assert_flag "$restore_fixture_output" rust true
 
 assert_flag "$(bash "$classifier" docs/testing.md)" regex_fuzz false
+for unrelated_crate in crates/hubuum-domain/src/lib.rs \
+  crates/hubuum-storage-postgres/src/operations/tasks.rs crates/hubuum-query/src/parse.rs; do
+  assert_flag "$(bash "$classifier" "$unrelated_crate")" regex_fuzz false
+done
 assert_flag "$(bash "$classifier" new-build-input.bin)" regex_fuzz true
 
 for corpus_path in .gitattributes test-corpora/comprehensive.json test-corpora/comprehensive.manifest.json \

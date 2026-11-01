@@ -67,6 +67,7 @@ jobs:
       run_operational_contract: ${{ steps.policy.outputs.run_operational_contract }}
       run_container: ${{ steps.policy.outputs.run_container }}
       run_tasks: ${{ steps.policy.outputs.run_tasks }}
+      full_requested: ${{ steps.policy.outputs.full_requested }}
       feature_matrix: ${{ steps.policy.outputs.feature_matrix }}
     steps:
       - name: Check out repository
@@ -139,12 +140,12 @@ jobs:
           fi
 
           run_openapi=false
-          if [[ "$run_rust_ci" == "true" || "$OPENAPI_CHANGED" == "true" ]]; then
+          if [[ "$full_requested" == "true" && ("$run_rust_ci" == "true" || "$OPENAPI_CHANGED" == "true") ]]; then
             run_openapi=true
           fi
 
           run_operational_contract=false
-          if [[ "$run_rust_ci" == "true" || "$OPERATIONAL_CONTRACT_CHANGED" == "true" ]]; then
+          if [[ "$full_requested" == "true" && ("$run_rust_ci" == "true" || "$OPERATIONAL_CONTRACT_CHANGED" == "true") ]]; then
             run_operational_contract=true
           fi
 
@@ -165,6 +166,7 @@ jobs:
           fi
 
           {
+            echo "full_requested=$full_requested"
             echo "run_format=$run_format"
             echo "run_markdown=$run_markdown"
             echo "run_default_suite=$run_default_suite"
@@ -242,7 +244,7 @@ jobs:
       (
         startsWith(github.ref, 'refs/tags/v') ||
         needs.changes.outputs.code == 'true' ||
-        needs.changes.outputs.markdown == 'true'
+        needs.changes.outputs.run_full_ci == 'true'
       )
     runs-on: ubuntu-24.04
     strategy:
@@ -266,8 +268,7 @@ jobs:
       !cancelled() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
-        needs.changes.outputs.code == 'true' ||
-        needs.changes.outputs.markdown == 'true'
+        needs.changes.outputs.run_full_ci == 'true'
       )
     runs-on: ubuntu-24.04
     strategy:
@@ -319,6 +320,7 @@ jobs:
       - name: Validate Rust API classifications
         run: python3 scripts/check-rust-api-policy.py
       - name: Select supported Rust packages
+        if: startsWith(github.ref, 'refs/tags/v') || needs.changes.outputs.full_requested == 'true'
         id: supported
         run: |
           packages="$(python3 scripts/check-rust-api-policy.py --supported-packages)"
@@ -868,12 +870,12 @@ jobs:
       - name: Compile tests (${{ matrix.feature.name }})
         run: cargo test ${{ matrix.feature.args }} -F integration-test-support --locked --release --no-run
       - name: Test PostgreSQL adapter-native contracts
-        if: matrix.feature.name == 'default'
+        if: matrix.feature.name == 'default' && needs.changes.outputs.run_rust_ci == 'true'
         run: >-
           cargo test -p hubuum-storage-postgres
           -F integration-test-support,scale-benchmark-support,embedded-migrations --locked --release
       - name: Test workspace package contracts
-        if: matrix.feature.name == 'default'
+        if: matrix.feature.name == 'default' && needs.changes.outputs.run_rust_ci == 'true'
         run: cargo test --workspace --exclude hubuum --exclude hubuum-storage-postgres --all-features --locked --release
       - name: Test (${{ matrix.feature.name }})
         run: >-
@@ -943,7 +945,7 @@ jobs:
       !cancelled() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
-        needs.changes.outputs.treetop_conformance == 'true'
+        (needs.changes.outputs.full_requested == 'true' && needs.changes.outputs.treetop_conformance == 'true')
       )
     runs-on: ubuntu-24.04
     env:

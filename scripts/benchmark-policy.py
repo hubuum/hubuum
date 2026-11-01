@@ -76,7 +76,7 @@ def resolve(paths, *, labels=(), draft=False, manual=None, policy=None):
         if selected - set(available):
             raise ValueError(f"Unknown benchmark {kind}: {', '.join(sorted(selected - set(available)))}")
     explicit = bool(scopes or tags or targets)
-    requested = force_all or explicit or bool(profiles) or not draft
+    requested = force_all or explicit or not draft
     reasons, benchmark_paths = [], []
     if force_all:
         scopes, tags, targets = set(policy["scopes"]), set(), set()

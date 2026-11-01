@@ -132,10 +132,14 @@ compiler implementations remain enabled.
 ## CI, replay, and minimization
 
 The `Portable regex fuzzing` workflow runs both targets for 45 seconds each on
-affected pull requests and `main` pushes, and for 600 seconds each daily and on
+affected ready pull requests and `main` pushes, and for 600 seconds each daily and on
 manual dispatch. The classifier includes the fuzz harness, dictionary, seed and
-regression inputs, workspace dependency changes, and its own workflow. Unknown
-paths remain conservative.
+regression inputs, the portable regex crate and adapter regex compilers, shared
+dependency/build inputs, and its own workflow. Unrelated crate source changes
+do not select fuzzing; unknown paths remain conservative. Drafts defer fuzzing
+until marked ready, and returning to draft cancels superseded fuzz work. Use
+manual dispatch for an exceptional early fuzz investigation. Full correctness
+labels do not override the draft fuzz policy.
 
 The standalone lockfile is audited with the root dependency/license policy via
 `scripts/run-cargo-deny.sh REPORT fuzz/Cargo.toml`. NCSA covers the bundled

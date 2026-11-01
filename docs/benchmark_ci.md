@@ -3,7 +3,9 @@
 Correctness validation, performance scope, target tags, and measurement effort are
 independent controls. Ordinary ready PRs run affected performance work with the
 `standard` profile. Drafts retain their lightweight correctness tier and skip
-automatic performance work unless a performance selector is present.
+automatic performance work unless a scope/tag selector or broad performance
+label is present. Open PRs as drafts without broad CI labels, then mark ready as
+the final validation step before merging; no label is needed for that transition.
 
 ## Validation and compatibility labels
 
@@ -12,6 +14,12 @@ automatic performance work unless a performance selector is present.
 | `ci:validate` | Full production validation, including feature, platform, contract, and container checks | Normal affected-path policy; no forced benchmarks |
 | `ci:benchmarks` | Normal correctness policy | All four scopes, at least standard effort |
 | `ci:full` | Full production validation | All four scopes, at least standard effort |
+
+Reserve `ci:validate` for exceptional early correctness/production validation.
+Reserve `ci:full` for cases that also need every performance scope. Record the
+reason for either exception in the PR description. For investigations, prefer
+narrow scope/tag selectors with a profile, then remove the labels once evidence
+has been collected so later pushes do not repeat the work.
 
 Production container checks and the required CI gate remain independent of optional
 performance selection. Existing `ci:scale-large` and `ci:scale-huge` controls and
@@ -43,7 +51,8 @@ Adding `ci:bench:scope:postgres` also requests the complete PostgreSQL suite.
 
 `ci:full` and `ci:benchmarks` override narrowing and select every scope. The
 strongest profile wins, and those labels enforce at least `standard`. A profile
-label alone requests affected work, including on a draft. Unknown selectors fail
+label alone adjusts affected work on a ready PR; on a draft it does not request
+work without a scope/tag selector or broad performance label. Unknown selectors fail
 with an actionable error. Removing a selector or changing draft status recalculates
 selection; unrelated labels do not cancel active CI or benchmark jobs.
 

@@ -61,7 +61,19 @@ class BenchmarkPolicyTests(unittest.TestCase):
         paths = ["crates/hubuum-query/src/parser.rs"]
         self.assertEqual(policy.resolve(paths, draft=True)["scopes"], [])
         self.assertEqual(policy.resolve(paths, draft=False)["scopes"], ["micro"])
-        self.assertEqual(policy.resolve(paths, draft=True, labels=["ci:bench:profile:thorough"])["scopes"], ["micro"])
+        self.assertEqual(policy.resolve(paths, draft=True, labels=["ci:bench:profile:thorough"])["scopes"], [])
+
+    def test_draft_investigation_requires_scope_or_tag_with_its_profile(self):
+        actual = policy.resolve(["src/unknown.rs"], draft=True,
+                                labels=["ci:bench:tag:query", "ci:bench:profile:quick"])
+        self.assertEqual(actual["scopes"], ["micro"])
+        self.assertEqual(actual["profile"], "quick")
+
+    def test_profile_alone_adjusts_affected_work_on_ready_prs(self):
+        actual = policy.resolve(["crates/hubuum-query/src/parser.rs"],
+                                labels=["ci:bench:profile:quick"])
+        self.assertEqual(actual["scopes"], ["micro"])
+        self.assertEqual(actual["profile"], "quick")
 
     def test_strongest_profile_wins(self):
         actual = policy.resolve([], labels=["ci:bench:profile:quick", "ci:bench:profile:thorough"],

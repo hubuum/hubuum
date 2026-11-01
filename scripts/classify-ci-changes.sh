@@ -35,7 +35,11 @@ for path in "$@"; do
   fi
 
   case "$path" in
-    fuzz/* | crates/* | Cargo.toml | Cargo.lock | .python-version | deny.toml | \
+    fuzz/* | crates/hubuum-regex/* | \
+      crates/hubuum-storage-memory/src/regex_compiler.rs | crates/hubuum-storage-memory/src/regex_compiler/* | \
+      crates/hubuum-storage-postgres/src/regex_compiler.rs | crates/hubuum-storage-postgres/src/regex_compiler/* | \
+      crates/*/Cargo.toml | crates/*/Cargo.lock | crates/*/build.rs | \
+      Cargo.toml | Cargo.lock | .cargo/* | rust-toolchain* | .python-version | deny.toml | \
       .github/supply-chain-tools.env | .github/supply-chain-exceptions.json | \
       scripts/run-cargo-deny.sh | scripts/check-supply-chain-policy.py | \
       .github/workflows/regex-fuzz.yml | scripts/classify-ci-changes.sh | \
