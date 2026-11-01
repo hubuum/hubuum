@@ -28,7 +28,7 @@ class CiTierTests(unittest.TestCase):
         variables = dict.fromkeys(("CODE_CHANGED", "RUST_CHANGED", "CONTAINER_CHANGED",
                                   "OPENAPI_CHANGED", "OPERATIONAL_CONTRACT_CHANGED",
                                   "MARKDOWN_CHANGED", "IS_DRAFT", "FORCE_FULL"), "false")
-        variables.update(IS_PULL_REQUEST="true", **changes)
+        variables.update({"IS_PULL_REQUEST": "true", **changes})
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "outputs"
             subprocess.run(["bash", "-euo", "pipefail", "-c", script], check=True,
@@ -52,9 +52,57 @@ class CiTierTests(unittest.TestCase):
         self.assertEqual(result["run_default_suite"], "true")
         self.assertEqual(result["run_rust_ci"], "false")
 
+    def test_draft_contract_inputs_wait_for_final_validation(self):
+        result = self.policy(IS_DRAFT="true", CODE_CHANGED="true", RUST_CHANGED="true",
+                             OPENAPI_CHANGED="true", OPERATIONAL_CONTRACT_CHANGED="true")
+        for key in ("full_requested", "run_openapi", "run_operational_contract", "run_full_ci"):
+            self.assertEqual(result[key], "false", key)
+
+    def test_ready_contract_only_edits_still_run_contract_checks(self):
+        result = self.policy(OPENAPI_CHANGED="true", OPERATIONAL_CONTRACT_CHANGED="true")
+        self.assertEqual(result["run_openapi"], "true")
+        self.assertEqual(result["run_operational_contract"], "true")
+
+    def test_main_always_selects_final_validation_for_affected_inputs(self):
+        result = self.policy(IS_PULL_REQUEST="false", CODE_CHANGED="true", RUST_CHANGED="true",
+                             CONTAINER_CHANGED="true")
+        for key in ("full_requested", "run_rust_ci", "run_container", "run_openapi"):
+            self.assertEqual(result[key], "true", key)
+
+    def test_markdown_does_not_select_python_or_monitoring_jobs(self):
+        for name in ("python-tooling", "monitoring-integration"):
+            with self.subTest(job=name):
+                condition = job(name).split("    if: >-\n", 1)[1].split("    runs-on:", 1)[0]
+                self.assertNotIn("outputs.markdown", condition)
+                self.assertIn("outputs.run_full_ci == 'true'", condition)
+
+    def test_monitoring_waits_for_final_validation(self):
+        condition = job("monitoring-integration").split("    if: >-\n", 1)[1].split("    runs-on:", 1)[0]
+        self.assertNotIn("outputs.code", condition)
+
+    def test_expensive_package_checks_wait_for_final_validation(self):
+        package_selection = job("rust-api-policy").split("      - name: Select supported Rust packages\n", 1)[1]
+        self.assertIn("if: startsWith(github.ref, 'refs/tags/v') || needs.changes.outputs.full_requested == 'true'", package_selection)
+        smoke = job("feature-permutations")
+        for name in ("Test PostgreSQL adapter-native contracts", "Test workspace package contracts"):
+            with self.subTest(step=name):
+                step = smoke.split(f"      - name: {name}\n", 1)[1].split("      - name:", 1)[0]
+                self.assertIn("needs.changes.outputs.run_rust_ci == 'true'", step)
+
+    def test_external_authorization_waits_for_final_validation(self):
+        condition = job("treetop-authorization-conformance").split("    if: >-\n", 1)[1].split("    runs-on:", 1)[0]
+        self.assertIn("needs.changes.outputs.full_requested == 'true' &&", condition)
+
+    def test_fuzzing_rechecks_draft_transitions_and_waits_until_ready(self):
+        workflow = (ROOT / ".github/workflows/regex-fuzz.yml").read_text()
+        self.assertIn("ready_for_review, converted_to_draft", workflow)
+        self.assertIn("github.event_name != 'pull_request' || !github.event.pull_request.draft", workflow)
+
     def test_full_label_overrides_path_and_draft_selection(self):
         result = self.policy(FORCE_FULL="true", IS_DRAFT="true")
         for key in ("run_rust_ci", "run_full_ci", "run_container", "run_default_suite"):
+            self.assertEqual(result[key], "true", key)
+        for key in ("run_openapi", "run_operational_contract", "full_requested"):
             self.assertEqual(result[key], "true", key)
 
     def test_validate_label_requests_full_ci_without_selecting_performance(self):
