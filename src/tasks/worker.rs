@@ -731,10 +731,6 @@ async fn maybe_cleanup_expired_task_outputs(
             .map_err(crate::services::artifacts::error)
     })
     .await?;
-    let Some(reservation) = CleanupReservation::reserve(schedule, cleanup_interval)? else {
-        return Ok(false);
-    };
-
     let Some(sweep) = backend
         .task_receipts()
         .try_sweep_task_retention(backend)
@@ -747,7 +743,8 @@ async fn maybe_cleanup_expired_task_outputs(
     match sweep {
         TaskRetentionSweep::Disabled => {}
         TaskRetentionSweep::Protected { more, .. } => {
-            reservation.commit(more)?;
+            // The worker poll interval bounds both productive and idle protected
+            // passes. The legacy output timer must not delay newly eligible work.
             if more {
                 // A maintenance pass can activate protected admissions. Queue
                 // claimants have their own wakeup and never await this loop.
@@ -756,6 +753,10 @@ async fn maybe_cleanup_expired_task_outputs(
             return Ok(more);
         }
     }
+
+    let Some(reservation) = CleanupReservation::reserve(schedule, cleanup_interval)? else {
+        return Ok(false);
+    };
 
     metrics::task_output_cleanup_run(metrics::TaskOutputKind::Export);
     let deleted_exports = match purge_expired_export_outputs(backend).await {

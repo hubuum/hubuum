@@ -294,6 +294,12 @@ that separate erasure capability.
 
 ## Scheduler integration
 
+Protected receipt and detail maintenance runs at the configured task-worker poll
+interval, including after an idle pass. It does not inherit the legacy output
+cleanup interval (300 seconds by default). Each pass still releases publication
+ownership and waits for the next poll; its row, byte and manifest bounds remain
+in effect. Legacy output and artifact cleanup retain their configured interval.
+
 Receipt activation and task visibility are checked while choosing each queue
 head, before scheduling counters or worker leases advance. A pending receipt,
 retained purge restriction or unavailable recovery binding cannot execute or

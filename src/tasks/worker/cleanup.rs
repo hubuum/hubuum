@@ -41,9 +41,14 @@ async fn iteration(
     artifacts: &Mutex<CleanupSchedule>,
 ) -> Result<bool, ApiError> {
     let interval = task_worker_settings().export_output_cleanup_interval();
-    // Idle schedule checks require no backend call. Reservation and application
-    // admission are still checked before any actual maintenance operation.
-    if !due(tasks, interval)? && !due(artifacts, interval)? {
+    // Protected receipt/detail deadlines can be much shorter than the legacy
+    // output interval. Check their current authority each worker tick, including
+    // after an idle pass or activation while the runtime is already running.
+    // Unconfigured runtimes still avoid backend calls while output cleanup is idle.
+    if !context.task_receipts().is_configured()
+        && !due(tasks, interval)?
+        && !due(artifacts, interval)?
+    {
         return Ok(false);
     }
     let storage = context.backend();

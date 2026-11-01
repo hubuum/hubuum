@@ -401,6 +401,58 @@ async fn expiry_reuses_only_a_checkpoint_covering_the_selected_revision_and_anch
 }
 
 #[actix_web::test]
+async fn idle_protected_maintenance_rechecks_new_work_before_the_output_cleanup_interval() {
+    let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
+    let context = AppContext::new(
+        fixture.storage.clone(),
+        Arc::new(LocalPermissionBackend::new(
+            fixture.storage.clone(),
+            "admin".to_owned(),
+        )),
+    )
+    .with_task_receipts(fixture.service.clone());
+    let head = fixture.root.join("repository/HEAD");
+    let original = fs::read(&head).unwrap();
+    let shutdown = crate::lifecycle::ShutdownSignal::new();
+    let maintenance = actix_rt::spawn(crate::tasks::run_task_maintenance_for_test(
+        context,
+        Duration::from_millis(50),
+        shutdown.clone(),
+    ));
+    let completed = tokio::time::timeout(Duration::from_secs(5), async {
+        // The fixture's initial checkpoint predates protection activation. Its
+        // replacement identifies the first idle maintenance pass. Reading this
+        // atomically replaced file is synchronization only, not authority proof.
+        while fs::read(&head).unwrap() == original {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        // Wait until that pass releases publication ownership before adding work.
+        let idle = fixture
+            .service
+            .configuration()
+            .unwrap()
+            .publication
+            .lock()
+            .await;
+        let ticket = fixture.admit("after-idle", StorageTaskKind::Import).await;
+        drop(idle);
+        while fixture
+            .storage
+            .list_pending_task_admissions(8)
+            .await
+            .unwrap()
+            .contains(&ticket)
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    shutdown.request();
+    maintenance.await.unwrap();
+    completed.expect("an idle protected pass must not postpone new admissions for the 300-second output interval");
+}
+
+#[actix_web::test]
 async fn productive_background_pass_leaves_time_for_other_repository_publishers() {
     let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
     for index in 0..=MAX_PENDING_ADMISSIONS_PER_PASS {
