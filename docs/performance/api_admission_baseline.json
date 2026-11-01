@@ -1,0 +1,1696 @@
+{
+  "format_version": 1,
+  "recorded_at_utc": "2026-10-29T01:27:59.972970+00:00",
+  "classification": "local diagnostic; not constrained-profile or admission acceptance evidence",
+  "source_base_revision": "a2306812354bc7a107c247f48f0806250590ca1b",
+  "probe_path": "tests/api_platform_suite/api_admission.rs",
+  "probe_sha256": "514270b7331d70098ce3ba2bcd9764ff6235e8480fdb06a4fd19eddfe1ca5aea",
+  "recipe": "api-admission-v1",
+  "raw_evidence_sha256": "edf800d6e863b910ac969b42288648741dc672c46ab074902574c054ec87041c",
+  "raw_evidence_file": "target/api-admission-2026-10-29/raw-evidence.jsonl",
+  "environment": {
+    "host": {
+      "logical_cpus": 32,
+      "memory_bytes": 66613567488,
+      "kernel": "5.14.0-687.44.1.el9_8.x86_64",
+      "machine": "x86_64"
+    },
+    "postgres": {
+      "version": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+      "shared_buffers": "256MB",
+      "work_mem": "4MB",
+      "max_connections": "200",
+      "block_size": "8192"
+    },
+    "postgres_image_id": "a1be1c8380f5c8ca80b4ad72f6be191f8a283e0ecb2e9496b1ee67dc0022d0f1",
+    "container_cpu_quota": null,
+    "container_memory_limit_bytes": null,
+    "storage_medium": null,
+    "database_rtt_us": null,
+    "topology": "same-host loopback PostgreSQL; in-process Actix test application",
+    "exclusive_host": false,
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "build_profile": "unoptimized test; debuginfo=0; incremental=false",
+    "features": [
+      "integration-test-support",
+      "embedded-migrations"
+    ],
+    "request_pool_max_connections": 20,
+    "request_statement_timeout_ms": 30000,
+    "request_pool_acquire_timeout_ms": 2000,
+    "rustc_evidence": "Measured api_platform executable .comment section; corroborated by Cargo target .rustc_info.json."
+  },
+  "method": {
+    "authorization": "local_ordinary_collection_member",
+    "page_limit": 25,
+    "fixture_rounds_per_scenario": 5,
+    "warmups_per_round": 2,
+    "samples_per_round": 10,
+    "sequential_requests": true,
+    "timing_includes": [
+      "authentication",
+      "authorization",
+      "storage",
+      "serialization",
+      "body read",
+      "SQL capture"
+    ],
+    "timing_excludes": [
+      "fixture creation",
+      "ANALYZE",
+      "source inventory",
+      "app initialization",
+      "request construction",
+      "response validation",
+      "fixture cleanup",
+      "network transport"
+    ],
+    "fixture_database_reused_between_rounds": true,
+    "per_sample_metrics": "Each scalar applies to all ten elapsed_us samples in its round; checked against the raw observations.",
+    "database_scanned_rows": null,
+    "database_scanned_bytes": null,
+    "process_rss_bytes": null
+  },
+  "scenarios": [
+    {
+      "operation": "collection_audit",
+      "source_rows": 1000,
+      "include_total": false,
+      "summary": {
+        "median_of_round_medians_us": 15056.0,
+        "round_median_range_us": [
+          15015.0,
+          15439.5
+        ],
+        "slowest_sample_us": 16858
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "source_row_json_bytes": 1418571,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 20251,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            15845,
+            15180,
+            15171,
+            15601,
+            15483,
+            14933,
+            14825,
+            14811,
+            14778,
+            14792
+          ]
+        },
+        {
+          "round": 2,
+          "source_row_json_bytes": 1419000,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 20251,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            15887,
+            15221,
+            15194,
+            15658,
+            14836,
+            14851,
+            14823,
+            16607,
+            16858,
+            16508
+          ]
+        },
+        {
+          "round": 3,
+          "source_row_json_bytes": 1419000,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 20251,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            16048,
+            15389,
+            15360,
+            15816,
+            15009,
+            15058,
+            15001,
+            14992,
+            15022,
+            15054
+          ]
+        },
+        {
+          "round": 4,
+          "source_row_json_bytes": 1419000,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 20251,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            16077,
+            15372,
+            15384,
+            15878,
+            15269,
+            15096,
+            15019,
+            15004,
+            15007,
+            14999
+          ]
+        },
+        {
+          "round": 5,
+          "source_row_json_bytes": 1419000,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 20251,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            16033,
+            15392,
+            15334,
+            15787,
+            15009,
+            14975,
+            15015,
+            15003,
+            14986,
+            15015
+          ]
+        }
+      ]
+    },
+    {
+      "operation": "collection_audit",
+      "source_rows": 1000,
+      "include_total": true,
+      "summary": {
+        "median_of_round_medians_us": 15568.5,
+        "round_median_range_us": [
+          15546.0,
+          15781.0
+        ],
+        "slowest_sample_us": 16806
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "source_row_json_bytes": 1418000,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 10,
+            "response_body_bytes": 20251,
+            "response_rows": 25,
+            "total_queries": 13
+          },
+          "elapsed_us": [
+            16698,
+            15950,
+            15899,
+            16469,
+            15544,
+            15536,
+            15548,
+            15515,
+            15538,
+            15528
+          ]
+        },
+        {
+          "round": 2,
+          "source_row_json_bytes": 1419000,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 10,
+            "response_body_bytes": 20251,
+            "response_rows": 25,
+            "total_queries": 13
+          },
+          "elapsed_us": [
+            16616,
+            15939,
+            15893,
+            16458,
+            15567,
+            15570,
+            15551,
+            15536,
+            15538,
+            15537
+          ]
+        },
+        {
+          "round": 3,
+          "source_row_json_bytes": 1419000,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 10,
+            "response_body_bytes": 20251,
+            "response_rows": 25,
+            "total_queries": 13
+          },
+          "elapsed_us": [
+            16624,
+            15957,
+            15923,
+            16479,
+            15572,
+            15562,
+            15621,
+            15537,
+            15528,
+            15566
+          ]
+        },
+        {
+          "round": 4,
+          "source_row_json_bytes": 1419000,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 10,
+            "response_body_bytes": 20251,
+            "response_rows": 25,
+            "total_queries": 13
+          },
+          "elapsed_us": [
+            16636,
+            16240,
+            16683,
+            16806,
+            15692,
+            15648,
+            15627,
+            15870,
+            15653,
+            15605
+          ]
+        },
+        {
+          "round": 5,
+          "source_row_json_bytes": 1420688,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 10,
+            "response_body_bytes": 20326,
+            "response_rows": 25,
+            "total_queries": 13
+          },
+          "elapsed_us": [
+            16591,
+            15915,
+            15898,
+            16464,
+            15545,
+            15521,
+            15566,
+            15517,
+            15527,
+            15548
+          ]
+        }
+      ]
+    },
+    {
+      "operation": "collection_audit",
+      "source_rows": 10000,
+      "include_total": false,
+      "summary": {
+        "median_of_round_medians_us": 15045.0,
+        "round_median_range_us": [
+          15003.5,
+          15066.0
+        ],
+        "slowest_sample_us": 16077
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "source_row_json_bytes": 14210000,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 20326,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            16060,
+            15412,
+            15382,
+            15825,
+            15043,
+            15022,
+            15011,
+            15013,
+            15047,
+            15014
+          ]
+        },
+        {
+          "round": 2,
+          "source_row_json_bytes": 14210000,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 20326,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            16040,
+            15356,
+            15353,
+            15807,
+            15006,
+            15009,
+            14991,
+            14993,
+            14979,
+            15010
+          ]
+        },
+        {
+          "round": 3,
+          "source_row_json_bytes": 14210000,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 20326,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            16077,
+            15398,
+            15470,
+            16042,
+            15095,
+            15018,
+            15019,
+            15001,
+            15018,
+            15037
+          ]
+        },
+        {
+          "round": 4,
+          "source_row_json_bytes": 14210000,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 20326,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            16056,
+            15401,
+            15373,
+            15893,
+            15040,
+            15005,
+            15024,
+            15031,
+            14990,
+            15091
+          ]
+        },
+        {
+          "round": 5,
+          "source_row_json_bytes": 14210000,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 20326,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            16057,
+            15408,
+            15345,
+            15797,
+            15004,
+            14971,
+            15001,
+            14988,
+            15003,
+            14982
+          ]
+        }
+      ]
+    },
+    {
+      "operation": "collection_audit",
+      "source_rows": 10000,
+      "include_total": true,
+      "summary": {
+        "median_of_round_medians_us": 17598.0,
+        "round_median_range_us": [
+          17443.0,
+          18872.5
+        ],
+        "slowest_sample_us": 20063
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "source_row_json_bytes": 14210000,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 10,
+            "response_body_bytes": 20326,
+            "response_rows": 25,
+            "total_queries": 13
+          },
+          "elapsed_us": [
+            18711,
+            17951,
+            17905,
+            18368,
+            17630,
+            17548,
+            17566,
+            17402,
+            17404,
+            17399
+          ]
+        },
+        {
+          "round": 2,
+          "source_row_json_bytes": 14210000,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 10,
+            "response_body_bytes": 20326,
+            "response_rows": 25,
+            "total_queries": 13
+          },
+          "elapsed_us": [
+            20063,
+            19126,
+            18718,
+            19180,
+            18226,
+            18221,
+            18728,
+            19248,
+            18995,
+            18750
+          ]
+        },
+        {
+          "round": 3,
+          "source_row_json_bytes": 14210000,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 10,
+            "response_body_bytes": 20326,
+            "response_rows": 25,
+            "total_queries": 13
+          },
+          "elapsed_us": [
+            18774,
+            17814,
+            17810,
+            18406,
+            17422,
+            17365,
+            17415,
+            17425,
+            17325,
+            17461
+          ]
+        },
+        {
+          "round": 4,
+          "source_row_json_bytes": 14210805,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 10,
+            "response_body_bytes": 20351,
+            "response_rows": 25,
+            "total_queries": 13
+          },
+          "elapsed_us": [
+            18661,
+            17830,
+            17724,
+            18272,
+            17436,
+            17426,
+            17376,
+            17429,
+            17412,
+            17490
+          ]
+        },
+        {
+          "round": 5,
+          "source_row_json_bytes": 14220000,
+          "per_sample_metrics": {
+            "connection_checkouts": 9,
+            "control_queries": 3,
+            "domain_queries": 10,
+            "response_body_bytes": 20351,
+            "response_rows": 25,
+            "total_queries": 13
+          },
+          "elapsed_us": [
+            18740,
+            17945,
+            17927,
+            18366,
+            17525,
+            17590,
+            18099,
+            17758,
+            17654,
+            17524
+          ]
+        }
+      ]
+    },
+    {
+      "operation": "collection_history",
+      "source_rows": 1000,
+      "include_total": false,
+      "summary": {
+        "median_of_round_medians_us": 17570.0,
+        "round_median_range_us": [
+          16343.0,
+          18742.5
+        ],
+        "slowest_sample_us": 20697
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "source_row_json_bytes": 1149129,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 11,
+            "response_body_bytes": 20577,
+            "response_rows": 25,
+            "total_queries": 17
+          },
+          "elapsed_us": [
+            19315,
+            18414,
+            18087,
+            17622,
+            16493,
+            16102,
+            16152,
+            15983,
+            16193,
+            15976
+          ]
+        },
+        {
+          "round": 2,
+          "source_row_json_bytes": 1150168,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 11,
+            "response_body_bytes": 20577,
+            "response_rows": 25,
+            "total_queries": 17
+          },
+          "elapsed_us": [
+            20697,
+            18901,
+            17797,
+            17672,
+            16229,
+            16323,
+            16922,
+            16837,
+            16229,
+            16403
+          ]
+        },
+        {
+          "round": 3,
+          "source_row_json_bytes": 1150166,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 11,
+            "response_body_bytes": 20577,
+            "response_rows": 25,
+            "total_queries": 17
+          },
+          "elapsed_us": [
+            18829,
+            17641,
+            18271,
+            18327,
+            17196,
+            17056,
+            17553,
+            17485,
+            16534,
+            17785
+          ]
+        },
+        {
+          "round": 4,
+          "source_row_json_bytes": 1150166,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 11,
+            "response_body_bytes": 20577,
+            "response_rows": 25,
+            "total_queries": 17
+          },
+          "elapsed_us": [
+            19424,
+            19745,
+            19288,
+            19065,
+            17438,
+            17194,
+            17012,
+            17053,
+            17682,
+            17458
+          ]
+        },
+        {
+          "round": 5,
+          "source_row_json_bytes": 1150167,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 11,
+            "response_body_bytes": 20577,
+            "response_rows": 25,
+            "total_queries": 17
+          },
+          "elapsed_us": [
+            19898,
+            19418,
+            18109,
+            18800,
+            17701,
+            18240,
+            18696,
+            19038,
+            18571,
+            18789
+          ]
+        }
+      ]
+    },
+    {
+      "operation": "collection_history",
+      "source_rows": 1000,
+      "include_total": true,
+      "summary": {
+        "median_of_round_medians_us": 17386.5,
+        "round_median_range_us": [
+          16761.0,
+          18628.0
+        ],
+        "slowest_sample_us": 22819
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "source_row_json_bytes": 1150159,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 12,
+            "response_body_bytes": 20577,
+            "response_rows": 25,
+            "total_queries": 18
+          },
+          "elapsed_us": [
+            19342,
+            18383,
+            18172,
+            18136,
+            16721,
+            16796,
+            17558,
+            17397,
+            17029,
+            17025
+          ]
+        },
+        {
+          "round": 2,
+          "source_row_json_bytes": 1150128,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 12,
+            "response_body_bytes": 20577,
+            "response_rows": 25,
+            "total_queries": 18
+          },
+          "elapsed_us": [
+            19763,
+            18724,
+            18514,
+            18844,
+            17410,
+            17192,
+            17048,
+            16909,
+            17138,
+            16776
+          ]
+        },
+        {
+          "round": 3,
+          "source_row_json_bytes": 1150130,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 12,
+            "response_body_bytes": 20577,
+            "response_rows": 25,
+            "total_queries": 18
+          },
+          "elapsed_us": [
+            19613,
+            18932,
+            18562,
+            18584,
+            16996,
+            16828,
+            17160,
+            17093,
+            17454,
+            17319
+          ]
+        },
+        {
+          "round": 4,
+          "source_row_json_bytes": 1150197,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 12,
+            "response_body_bytes": 20577,
+            "response_rows": 25,
+            "total_queries": 18
+          },
+          "elapsed_us": [
+            22819,
+            21460,
+            21329,
+            20336,
+            18155,
+            18054,
+            18008,
+            18434,
+            18448,
+            18808
+          ]
+        },
+        {
+          "round": 5,
+          "source_row_json_bytes": 1150243,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 12,
+            "response_body_bytes": 20602,
+            "response_rows": 25,
+            "total_queries": 18
+          },
+          "elapsed_us": [
+            18817,
+            18158,
+            18147,
+            18156,
+            16796,
+            16712,
+            16675,
+            16726,
+            16643,
+            16681
+          ]
+        }
+      ]
+    },
+    {
+      "operation": "collection_history",
+      "source_rows": 10000,
+      "include_total": false,
+      "summary": {
+        "median_of_round_medians_us": 18441.0,
+        "round_median_range_us": [
+          17682.0,
+          20204.5
+        ],
+        "slowest_sample_us": 21967
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "source_row_json_bytes": 11525150,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 11,
+            "response_body_bytes": 20627,
+            "response_rows": 25,
+            "total_queries": 17
+          },
+          "elapsed_us": [
+            20099,
+            19130,
+            19041,
+            19278,
+            17824,
+            17545,
+            17510,
+            18092,
+            18673,
+            18209
+          ]
+        },
+        {
+          "round": 2,
+          "source_row_json_bytes": 11525273,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 11,
+            "response_body_bytes": 20627,
+            "response_rows": 25,
+            "total_queries": 17
+          },
+          "elapsed_us": [
+            19857,
+            19110,
+            20041,
+            19678,
+            18548,
+            18442,
+            18943,
+            18469,
+            18339,
+            18814
+          ]
+        },
+        {
+          "round": 3,
+          "source_row_json_bytes": 11525191,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 11,
+            "response_body_bytes": 20627,
+            "response_rows": 25,
+            "total_queries": 17
+          },
+          "elapsed_us": [
+            19525,
+            18651,
+            18340,
+            18766,
+            17723,
+            17577,
+            17555,
+            17521,
+            17641,
+            17609
+          ]
+        },
+        {
+          "round": 4,
+          "source_row_json_bytes": 11525337,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 11,
+            "response_body_bytes": 20627,
+            "response_rows": 25,
+            "total_queries": 17
+          },
+          "elapsed_us": [
+            21967,
+            21114,
+            20885,
+            21313,
+            20419,
+            19990,
+            19520,
+            19322,
+            19639,
+            19152
+          ]
+        },
+        {
+          "round": 5,
+          "source_row_json_bytes": 11525202,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 11,
+            "response_body_bytes": 20627,
+            "response_rows": 25,
+            "total_queries": 17
+          },
+          "elapsed_us": [
+            19131,
+            18356,
+            18343,
+            18751,
+            17684,
+            17620,
+            17710,
+            17637,
+            17598,
+            17617
+          ]
+        }
+      ]
+    },
+    {
+      "operation": "collection_history",
+      "source_rows": 10000,
+      "include_total": true,
+      "summary": {
+        "median_of_round_medians_us": 23022.5,
+        "round_median_range_us": [
+          21987.0,
+          23130.0
+        ],
+        "slowest_sample_us": 25111
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "source_row_json_bytes": 11525088,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 12,
+            "response_body_bytes": 20627,
+            "response_rows": 25,
+            "total_queries": 18
+          },
+          "elapsed_us": [
+            24229,
+            23473,
+            23492,
+            23821,
+            22400,
+            22327,
+            22224,
+            22487,
+            23134,
+            22911
+          ]
+        },
+        {
+          "round": 2,
+          "source_row_json_bytes": 11525114,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 12,
+            "response_body_bytes": 20627,
+            "response_rows": 25,
+            "total_queries": 18
+          },
+          "elapsed_us": [
+            23280,
+            22699,
+            22265,
+            23109,
+            21755,
+            21943,
+            21712,
+            22450,
+            22088,
+            24284
+          ]
+        },
+        {
+          "round": 3,
+          "source_row_json_bytes": 11515215,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 12,
+            "response_body_bytes": 20624,
+            "response_rows": 25,
+            "total_queries": 18
+          },
+          "elapsed_us": [
+            25111,
+            23957,
+            23307,
+            24620,
+            23024,
+            22980,
+            22884,
+            23236,
+            22885,
+            22858
+          ]
+        },
+        {
+          "round": 4,
+          "source_row_json_bytes": 11525195,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 12,
+            "response_body_bytes": 20652,
+            "response_rows": 25,
+            "total_queries": 18
+          },
+          "elapsed_us": [
+            23553,
+            22270,
+            22349,
+            23331,
+            22016,
+            21944,
+            21921,
+            21840,
+            21958,
+            21847
+          ]
+        },
+        {
+          "round": 5,
+          "source_row_json_bytes": 11535075,
+          "per_sample_metrics": {
+            "connection_checkouts": 12,
+            "control_queries": 6,
+            "domain_queries": 12,
+            "response_body_bytes": 20652,
+            "response_rows": 25,
+            "total_queries": 18
+          },
+          "elapsed_us": [
+            24414,
+            23443,
+            23162,
+            24317,
+            23032,
+            22892,
+            23636,
+            23007,
+            22884,
+            22774
+          ]
+        }
+      ]
+    },
+    {
+      "operation": "object_aggregate_groups",
+      "source_rows": 1000,
+      "include_total": false,
+      "summary": {
+        "median_of_round_medians_us": 12665.5,
+        "round_median_range_us": [
+          11318.5,
+          13069.5
+        ],
+        "slowest_sample_us": 13965
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "source_row_json_bytes": 962893,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 8,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 11
+          },
+          "elapsed_us": [
+            12513,
+            12370,
+            12350,
+            12347,
+            11322,
+            11260,
+            11263,
+            11315,
+            11256,
+            11269
+          ]
+        },
+        {
+          "round": 2,
+          "source_row_json_bytes": 964000,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 8,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 11
+          },
+          "elapsed_us": [
+            12734,
+            12481,
+            12432,
+            12492,
+            11356,
+            11325,
+            11312,
+            11292,
+            11297,
+            11316
+          ]
+        },
+        {
+          "round": 3,
+          "source_row_json_bytes": 964000,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 8,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 11
+          },
+          "elapsed_us": [
+            13781,
+            13943,
+            13922,
+            13754,
+            12588,
+            12529,
+            12666,
+            12794,
+            12648,
+            12598
+          ]
+        },
+        {
+          "round": 4,
+          "source_row_json_bytes": 964000,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 8,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 11
+          },
+          "elapsed_us": [
+            13916,
+            13965,
+            13825,
+            13810,
+            12707,
+            12684,
+            12728,
+            13088,
+            13051,
+            12998
+          ]
+        },
+        {
+          "round": 5,
+          "source_row_json_bytes": 964000,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 8,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 11
+          },
+          "elapsed_us": [
+            13931,
+            13782,
+            13727,
+            13726,
+            12677,
+            12654,
+            12625,
+            12621,
+            12624,
+            12613
+          ]
+        }
+      ]
+    },
+    {
+      "operation": "object_aggregate_groups",
+      "source_rows": 1000,
+      "include_total": true,
+      "summary": {
+        "median_of_round_medians_us": 18286.0,
+        "round_median_range_us": [
+          17079.5,
+          19598.0
+        ],
+        "slowest_sample_us": 22345
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "source_row_json_bytes": 964000,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            18227,
+            18152,
+            18029,
+            18105,
+            17009,
+            16965,
+            16942,
+            16922,
+            17150,
+            17005
+          ]
+        },
+        {
+          "round": 2,
+          "source_row_json_bytes": 964000,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            19586,
+            18273,
+            18260,
+            18263,
+            17300,
+            17608,
+            17409,
+            17131,
+            17289,
+            17402
+          ]
+        },
+        {
+          "round": 3,
+          "source_row_json_bytes": 964000,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            19892,
+            19288,
+            19220,
+            19629,
+            18512,
+            17794,
+            17330,
+            17335,
+            17300,
+            18060
+          ]
+        },
+        {
+          "round": 4,
+          "source_row_json_bytes": 965000,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            19421,
+            19212,
+            19080,
+            19062,
+            17966,
+            17961,
+            18795,
+            18515,
+            18805,
+            18771
+          ]
+        },
+        {
+          "round": 5,
+          "source_row_json_bytes": 964001,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            19880,
+            19624,
+            19632,
+            22345,
+            19572,
+            19568,
+            19133,
+            19716,
+            19496,
+            18520
+          ]
+        }
+      ]
+    },
+    {
+      "operation": "object_aggregate_groups",
+      "source_rows": 10000,
+      "include_total": false,
+      "summary": {
+        "median_of_round_medians_us": 42881.5,
+        "round_median_range_us": [
+          41068.5,
+          44354.0
+        ],
+        "slowest_sample_us": 47379
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "source_row_json_bytes": 9670000,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 8,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 11
+          },
+          "elapsed_us": [
+            43103,
+            43263,
+            42466,
+            42468,
+            41087,
+            40911,
+            41014,
+            40796,
+            41050,
+            40726
+          ]
+        },
+        {
+          "round": 2,
+          "source_row_json_bytes": 9650000,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 8,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 11
+          },
+          "elapsed_us": [
+            43333,
+            43193,
+            43606,
+            43537,
+            42157,
+            42811,
+            41923,
+            41905,
+            42240,
+            42952
+          ]
+        },
+        {
+          "round": 3,
+          "source_row_json_bytes": 9670000,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 8,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 11
+          },
+          "elapsed_us": [
+            44565,
+            45850,
+            47379,
+            46071,
+            43585,
+            43109,
+            42636,
+            43679,
+            44143,
+            45802
+          ]
+        },
+        {
+          "round": 4,
+          "source_row_json_bytes": 9670000,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 8,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 11
+          },
+          "elapsed_us": [
+            44049,
+            45232,
+            46402,
+            45394,
+            43352,
+            42688,
+            42524,
+            42129,
+            42879,
+            42387
+          ]
+        },
+        {
+          "round": 5,
+          "source_row_json_bytes": 9670000,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 8,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 11
+          },
+          "elapsed_us": [
+            42912,
+            43047,
+            42865,
+            42521,
+            41474,
+            42606,
+            41269,
+            41464,
+            41436,
+            42368
+          ]
+        }
+      ]
+    },
+    {
+      "operation": "object_aggregate_groups",
+      "source_rows": 10000,
+      "include_total": true,
+      "summary": {
+        "median_of_round_medians_us": 77769.0,
+        "round_median_range_us": [
+          76232.5,
+          153730.5
+        ],
+        "slowest_sample_us": 155149
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "source_row_json_bytes": 9670000,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            76957,
+            77122,
+            76881,
+            77258,
+            75823,
+            76242,
+            77004,
+            77009,
+            76389,
+            76037
+          ]
+        },
+        {
+          "round": 2,
+          "source_row_json_bytes": 9670000,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            77495,
+            77005,
+            77246,
+            77459,
+            76516,
+            75949,
+            75270,
+            75680,
+            75706,
+            75153
+          ]
+        },
+        {
+          "round": 3,
+          "source_row_json_bytes": 9670000,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            78552,
+            78311,
+            78456,
+            79463,
+            77822,
+            77516,
+            76748,
+            77716,
+            76897,
+            76983
+          ]
+        },
+        {
+          "round": 4,
+          "source_row_json_bytes": 9670001,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            153664,
+            154355,
+            155149,
+            154324,
+            151938,
+            152393,
+            152569,
+            153565,
+            153797,
+            153814
+          ]
+        },
+        {
+          "round": 5,
+          "source_row_json_bytes": 9680000,
+          "per_sample_metrics": {
+            "connection_checkouts": 8,
+            "control_queries": 3,
+            "domain_queries": 9,
+            "response_body_bytes": 2251,
+            "response_rows": 25,
+            "total_queries": 12
+          },
+          "elapsed_us": [
+            79161,
+            78710,
+            78403,
+            119880,
+            79102,
+            78861,
+            77887,
+            78980,
+            78849,
+            77639
+          ]
+        }
+      ]
+    }
+  ]
+}
