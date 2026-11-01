@@ -1897,6 +1897,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../task_retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task retention
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../supply-chain-security/" class="md-nav__link">
         
   
@@ -4918,6 +4945,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../performance/task_retention_measurement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task retention measurements
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../performance/release_profiles/" class="md-nav__link">
         
   
@@ -5634,6 +5688,14 @@ selectors recalculates work immediately. Returning to draft cancels superseded
 main CI, benchmark, and fuzz work, but explicit forcing labels remain effective.
 Scale and scheduler measurements have separate opt-in controls and are not
 cancelled by returning to draft.</p>
+<p>The <code>ci:tasks</code> label selects the dedicated task-system job on any pull request,
+including drafts and documentation changes, and requests its production image.
+This job also runs under <code>ci:full</code>; ordinary unlabelled CI skips it. It runs the
+memory adapter contracts, native retention contracts and 10,000-target query
+budgets, then a 100-task
+packaged admission, cleanup, hold, crash and restore drill. It reuses the verified
+production image and retains reports. It does not run the ten-load-run lifecycle
+performance qualification or the real one-hour output-expiry probe.</p>
 <p>The lightweight change classifier is implemented by
 <code>scripts/classify-ci-changes.sh</code>. Unknown file types are classified
 conservatively as code, container, artifact, and benchmark inputs. Keep its

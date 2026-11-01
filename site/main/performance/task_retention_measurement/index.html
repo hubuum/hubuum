@@ -1,0 +1,6295 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Model your assets, operate Hubuum, and build integrations with its API, clients, CLI, and web frontend.">
+      
+      
+      
+        <link rel="canonical" href="https://hubuum.github.io/hubuum/main/performance/task_retention_measurement/">
+      
+      
+        <link rel="prev" href="../artifact_pipeline/">
+      
+      
+        <link rel="next" href="../release_profiles/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.64">
+    
+    
+      
+        <title>Task retention measurements - Hubuum documentation</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.40d3fdbb.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+    
+    
+      <link rel="stylesheet" href="https://hubuum.github.io/assets/stylesheets/hubuum.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="deep-orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#task-retention-measurement" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+        <aside class="md-banner">
+          <div class="md-banner__inner md-grid md-typeset">
+            
+            
+  <nav class="hubuum-ecosystem" aria-label="Hubuum projects">
+    <a href="https://hubuum.github.io/"><strong>Hubuum</strong></a>
+    
+      <a href="https://hubuum.github.io/hubuum/">Server</a>
+    
+      <a href="https://hubuum.github.io/hubuum-frontend/">Frontend</a>
+    
+      <a href="https://hubuum.github.io/hubuum-cli/">CLI</a>
+    
+      <a href="https://hubuum.github.io/hubuum-client-rust/">Rust client</a>
+    
+      <a href="https://hubuum.github.io/hubuum-client-python/">Python client</a>
+    
+  </nav>
+  
+  
+    <strong>Development documentation</strong> — may describe unreleased changes.
+  
+  <label for="docs-version">Version</label>
+  <select id="docs-version" data-version="main"
+    data-manifest="../../../versions.json">
+    <option value="main">main</option>
+  </select>
+  
+
+          </div>
+          
+        </aside>
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Hubuum documentation" class="md-header__button md-logo" aria-label="Hubuum documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-network" viewBox="0 0 24 24"><rect width="6" height="6" x="16" y="16" rx="1"/><rect width="6" height="6" x="2" y="16" rx="1"/><rect width="6" height="6" x="9" y="2" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3M12 12V8"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Hubuum documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Task retention measurements
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="deep-orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="deep-orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/hubuum/hubuum" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M216.5 362.5c-66-8-112.5-55.5-112.5-117 0-25 9-52 24-70-6.5-16.5-5.5-51.5 2-66 20-2.5 47 8 63 22.5 19-6 39-9 63.5-9s44.5 3 62.5 8.5c15.5-14 43-24.5 63-22 7 13.5 8 48.5 1.5 65.5 16 19 24.5 44.5 24.5 70.5 0 61.5-46.5 108-113.5 116.5 17 11 28.5 35 28.5 62.5v52c0 15 12.5 23.5 27.5 17.5C441 459.5 512 369 512 257 512 115.5 397 0 255.5 0S0 115.5 0 257c0 111 70.5 203 165.5 237.5 13.5 5 26.5-4 26.5-17.5v-40c-7 3-16 5-24 5-33 0-52.5-18-66.5-51.5-5.5-13.5-11.5-21.5-23-23-6-.5-8-3-8-6 0-6 10-10.5 20-10.5 14.5 0 27 9 40 27.5 10 14.5 20.5 21 33 21s20.5-4.5 32-16c8.5-8.5 15-16 21-21"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hubuum/hubuum
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../.." class="md-tabs__link">
+          
+  
+  Overview
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/" class="md-tabs__link">
+          
+  
+  Get started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guide/" class="md-tabs__link">
+          
+  
+  User guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../administration/" class="md-tabs__link">
+          
+  
+  Administration
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../integrations/" class="md-tabs__link">
+          
+  
+  API & integrations
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../contributing/deployment-verification/" class="md-tabs__link">
+          
+  
+  Contributing
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Hubuum documentation" class="md-nav__button md-logo" aria-label="Hubuum documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-network" viewBox="0 0 24 24"><rect width="6" height="6" x="16" y="16" rx="1"/><rect width="6" height="6" x="2" y="16" rx="1"/><rect width="6" height="6" x="9" y="2" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3M12 12V8"/></svg>
+
+    </a>
+    Hubuum documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/hubuum/hubuum" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M216.5 362.5c-66-8-112.5-55.5-112.5-117 0-25 9-52 24-70-6.5-16.5-5.5-51.5 2-66 20-2.5 47 8 63 22.5 19-6 39-9 63.5-9s44.5 3 62.5 8.5c15.5-14 43-24.5 63-22 7 13.5 8 48.5 1.5 65.5 16 19 24.5 44.5 24.5 70.5 0 61.5-46.5 108-113.5 116.5 17 11 28.5 35 28.5 62.5v52c0 15 12.5 23.5 27.5 17.5C441 459.5 512 369 512 257 512 115.5 397 0 255.5 0S0 115.5 0 257c0 111 70.5 203 165.5 237.5 13.5 5 26.5-4 26.5-17.5v-40c-7 3-16 5-24 5-33 0-52.5-18-66.5-51.5-5.5-13.5-11.5-21.5-23-23-6-.5-8-3-8-6 0-6 10-10.5 20-10.5 14.5 0 27 9 40 27.5 10 14.5 20.5 21 33 21s20.5-4.5 32-16c8.5-8.5 15-16 21-21"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hubuum/hubuum
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_1" id="__nav_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Overview
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_1_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_1">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Overview
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Welcome
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Concepts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Ecosystem
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Releases & compatibility
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Get started
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_2">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Get started
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Choose your path
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/first-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Run your first server
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/example-dataset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Explore the Atlas dataset
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/first-requests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Make your first API requests
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  User guide
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  User guide
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Working with Hubuum
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Model & protect data
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_3_2">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Model & protect data
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../collection_hierarchy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Collections & inheritance
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../permissions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Permissions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../schema_evolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Class schemas & compliance
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../schema_profiling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema profiling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../query_usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Query usage declarations
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../computed_fields/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Computed fields
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../computed_read_repair/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Computed read repair
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../class_field_discovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Class field discovery
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../temporal_history/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  History & provenance
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Find & change data
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_3_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Find & change data
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../querying/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Querying & pagination
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../search_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Search
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../relationship_endpoints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Relationships
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../name_addressing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Address resources by name
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../object_data_json_patch/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Patch object data
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../resource_revisions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Revisions & conditional writes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Automate workflows
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_3_4">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Automate workflows
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../import_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Imports
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../export_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Exports
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../export_template_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Write export templates
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Background tasks
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../remote_targets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Remote actions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../events/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Events & audit
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../webhook_notifications/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Chat & notification webhooks
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Administration
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_4">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Administration
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../administration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Operate Hubuum
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Install & upgrade
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_4_2">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Install & upgrade
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Single-host deployment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../distributed_deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Distributed deployment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quick_start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Configuration reference
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../database_roles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  PostgreSQL roles
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../backup-restore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Backup & restore
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deletion_recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deletion recovery checkpoints
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task_retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task retention
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../supply-chain-security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Verify release artifacts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Identity & security
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_4_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Identity & security
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../auth_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Authentication & authorization
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../external_auth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  External identity providers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../credential_approvals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Credential approvals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../secret_sources/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Secrets & key rotation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../login_rate_limiting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Login rate limiting
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../treetop/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  External policy with Treetop
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Monitor & troubleshoot
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_4_4">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Monitor & troubleshoot
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../administration/troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Troubleshooting
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Metrics & alerts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../metrics-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Metric reference
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4_4" id="__nav_4_4_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Dashboards & runbooks
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_4_4_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_4_4_4">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Dashboards & runbooks
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Set up monitoring
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/runbooks/availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API availability
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/runbooks/api-slo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API SLOs
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/runbooks/database-pool/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Database pool saturation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/runbooks/task-queue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task queue delays
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/runbooks/worker-errors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Worker errors
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/runbooks/event-backlog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Event backlog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/runbooks/identity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Identity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/runbooks/integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Integrations
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/runbooks/backup-failure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Backup failures
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/runbooks/operator-jobs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  External operator jobs
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/runbooks/retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Retention
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/runbooks/metrics-stale/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Stale metrics
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Structured logs
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tracing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Distributed tracing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Pool tuning & load testing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime_hardening/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Runtime limits
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../json_schema_validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema validation limits
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../background_workers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Worker lifecycle
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../template_worker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Template worker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API & integrations
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_5">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  API & integrations
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Build an integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  HTTP API reference
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/clients/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Clients, CLI & frontend
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../query_support_matrix/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Query support matrix
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integration-coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Integration test coverage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Contributing
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+            <label class="md-nav__title" for="__nav_6">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Contributing
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/deployment-verification/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment verification
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/schema-evolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema evolution internals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/collection-hierarchy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Collection hierarchy internals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Contributor guide
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development setup
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Testing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../benchmark_ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Benchmark CI controls
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../regex-testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Regex fuzzing & limits
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operation_budgets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Operation budgets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/documentation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Documentation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/documentation-review/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Documentation review & roadmap
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_12" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_12" id="__nav_6_12_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Architecture
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_12_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_12">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Architecture
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../artifact_staging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Artifact staging foundation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage_boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Application & storage boundary
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../lifecycle_delivery_plan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Lifecycle delivery plan
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../lifecycle_audit_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Lifecycle audit contract proposal
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../lifecycle_task_policy_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task receipts & policy contract review
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../logical_identity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Logical identity across restore
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task_system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task execution
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task_admission/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task admission and capacity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task_scheduling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task scheduling and capacity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../computed_field_locking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Computed-field locking
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../generated/project_inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Project inventory
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_13" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_13" id="__nav_6_13_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage adapters
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_13_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_13">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Storage adapters
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage_adapter_sdk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  SDK compatibility
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage_boundary/contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage contract
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage_boundary/backend-author-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Backend author guide
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage_boundary/maintainer-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Maintainer guide
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage_boundary/capability-families/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Capability families
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage_boundary/query-semantics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Query semantics
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage_boundary/transactions-and-events/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Transactions & events
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage_boundary/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Testing & compatibility
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_14" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_14" id="__nav_6_14_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Rust API policies
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_14_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6_14">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Rust API policies
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust_api_boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Package boundaries
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust_api/hubuum-budget/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Budgets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust_api/hubuum-computed-fields/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Computed fields
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust_api/hubuum-domain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Domain
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust_api/hubuum-events-core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Events
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust_api/hubuum-query/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Query
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust_api/hubuum-regex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Regex
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust_api/hubuum-schema-diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema diagnostics
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust_api/hubuum-storage-conformance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage conformance
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust_api/hubuum-storage-core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage core
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust_api/hubuum-task-core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task core
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_15" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6_15" id="__nav_6_15_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Verification & releases
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_15_label" aria-expanded="true">
+            <label class="md-nav__title" for="__nav_6_15">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Verification & releases
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releasing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Release process
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operational_contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Operational contracts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scale_benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Scale benchmarks
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../lifecycle_budgets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Lifecycle budgets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../history_segment_prototype/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  History segment prototype
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../artifact_pipeline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Artifact pipeline measurements
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task retention measurements
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task retention measurements
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#reproduce-the-diagnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reproduce the diagnostic
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence-and-interpretation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Evidence and interpretation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#encoding-proofs-and-remaining-acceptance-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Encoding proofs and remaining acceptance work
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Encoding proofs and remaining acceptance work">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#shared-integration-diagnostic-on-2026-11-01" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Shared integration diagnostic on 2026-11-01
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bounded-admission-coalescing-diagnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Bounded admission coalescing diagnostic
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authenticated-collection-reuse-diagnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Authenticated collection reuse diagnostic
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#captured-queue-prefix-diagnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Captured queue-prefix diagnostic
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#growing-batch-experiment" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Growing-batch experiment
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#concurrent-refill-diagnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Concurrent-refill diagnostic
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#worker-only-cleanup-diagnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Worker-only cleanup diagnostic
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prompt-maintenance-diagnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Prompt-maintenance diagnostic
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#independent-refill-diagnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Independent-refill diagnostic
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../release_profiles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Release profiles
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../runtime_hardening/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Runtime measurements
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../computed_enrichment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Computed enrichment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../computed_hashing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Computed source hashing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../template_worker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Template measurements
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../treetop/test-fixture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Treetop conformance fixture
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#reproduce-the-diagnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reproduce the diagnostic
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence-and-interpretation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Evidence and interpretation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#encoding-proofs-and-remaining-acceptance-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Encoding proofs and remaining acceptance work
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Encoding proofs and remaining acceptance work">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#shared-integration-diagnostic-on-2026-11-01" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Shared integration diagnostic on 2026-11-01
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bounded-admission-coalescing-diagnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Bounded admission coalescing diagnostic
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authenticated-collection-reuse-diagnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Authenticated collection reuse diagnostic
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#captured-queue-prefix-diagnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Captured queue-prefix diagnostic
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#growing-batch-experiment" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Growing-batch experiment
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#concurrent-refill-diagnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Concurrent-refill diagnostic
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#worker-only-cleanup-diagnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Worker-only cleanup diagnostic
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prompt-maintenance-diagnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Prompt-maintenance diagnostic
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#independent-refill-diagnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Independent-refill diagnostic
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+      
+        
+  
+  
+    
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="../../contributing/deployment-verification/" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Contributing
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+    
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="../../releasing/" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Verification & releases
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+    <a href="https://github.com/hubuum/hubuum/edit/main/docs/performance/task_retention_measurement.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-pen" viewBox="0 0 24 24"><path d="M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"/><path d="M14 2v5a1 1 0 0 0 1 1h5M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="task-retention-measurement">Task retention measurement<a class="headerlink" href="#task-retention-measurement" title="Permanent link">&para;</a></h1>
+<p>P6 qualification is tracked in <a href="https://github.com/hubuum/hubuum/issues/561">#561</a>.
+On 2026-11-01, the maintainer approved completing the functional implementation
+in <a href="https://github.com/hubuum/hubuum/pull/544">#544</a> with P6 explicitly deferred,
+after reviewing the final diagnostic's failed timing bounds and complete drain.
+The 60-second expiry target, 300-second recovery target, resource ceilings and
+repeated-run criteria remain unchanged. This guide records diagnostics, not a
+claim that P6 has passed; dependent lifecycle performance acceptance still needs
+qualified evidence.</p>
+<p>The task retention driver exercises production HTTP admission, authenticated
+checkpoint publication, real worker completion and maintenance, and read-only
+administrator status. It uses database timestamps without modifying them. The checked-in
+driver supports an initial protected cohort, bounded steady refill, and cleanup,
+with a separate remote-effect recovery probe. Running it does not by itself
+establish that the P6 target in <a href="../lifecycle_budgets/">lifecycle budgets</a> passed;
+the raw denominators, occupancy, resource ceilings and recovery results matter.</p>
+<h2 id="reproduce-the-diagnostic">Reproduce the diagnostic<a class="headerlink" href="#reproduce-the-diagnostic" title="Permanent link">&para;</a></h2>
+<p>Use Python 3.11 or newer, Docker, Linux <code>/proc</code>, and binaries built from the same
+revision as the application image. The output directory must not exist. The
+driver creates a fresh disposable database and destroys its containers and
+network on completion or failure. It retains an owner-only checkpoint directory
+and synthetic measurement artifacts. Never point this driver at production.
+Fixture containers use the inspected address of their own PostgreSQL container
+instead of depending on rootless bridge DNS. Owned control/key mounts receive
+shared SELinux labels so multiple replicas can access the same protected files;
+their 0700/0600 modes remain enforced.</p>
+<p>When the driver runs inside the container engine's Linux host (for example, a
+Linux helper on Docker Desktop), use <code>--direct-container-network</code> if published
+loopback ports are reachable only from the desktop host. This explicitly selects
+the inspected addresses on the disposable fixture's own network for API and
+native database connections, including after a recovery restart. It does not
+select an existing database. Remote-effect probes reach the helper through that
+same network's inspected gateway. Reports record the connection mode; database RTT
+must still satisfy the selected profile. The default uses published ports for
+ordinary Linux and rootless deployments.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">source</span><span class="w"> </span>.env
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>cargo<span class="w"> </span>build<span class="w"> </span>--locked<span class="w"> </span>--release<span class="w"> </span>-p<span class="w"> </span>hubuum-scale-benchmark
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>cargo<span class="w"> </span>build<span class="w"> </span>--locked<span class="w"> </span>--release<span class="w"> </span>--features<span class="w"> </span>embedded-migrations<span class="w"> </span>--bin<span class="w"> </span>hubuum-admin
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>docker<span class="w"> </span>build<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span>--build-arg<span class="w"> </span><span class="s1">'CARGO_BUILD_FLAGS=-F tls-rustls -F tls-openssl --locked --release'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span>--tag<span class="w"> </span>hubuum-server:retention-measure<span class="w"> </span>.
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>python3<span class="w"> </span>-I<span class="w"> </span>-S<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>task-retention<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span>--image<span class="w"> </span>hubuum-server:retention-measure<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">  </span>--scale-binary<span class="w"> </span>target/release/hubuum-scale-benchmark<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">  </span>--admin-binary<span class="w"> </span>target/release/hubuum-admin<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">  </span>--output-directory<span class="w"> </span>/tmp/hubuum-retention-diagnostic<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">  </span>--runs<span class="w"> </span><span class="m">1</span>
+</code></pre></div>
+<p>Use <code>--count 100</code> for a smoke run, or <code>--admission-only</code> to isolate the initial
+protected admission phase. These options are recorded through the exact workload
+JSON and its SHA-256 digest. The default
+<a href="https://github.com/hubuum/hubuum/blob/main/scale-benchmarks/lifecycle/task-retention-v1.json">versioned workload</a>
+admits 10,000 distinct keyed dry-run import tasks at concurrency 32, with identical
+and conflicting retries every 100 submissions. These requests exercise real
+task creation and import results without persistent graph changes.</p>
+<p>The fixture explicitly configures a 120-second terminal-anchored receipt window,
+30-second task detail age, and capacity for 20,000 outstanding tasks. It starts
+the API before the worker so that the initial receipt cohort exists before
+terminal clocks begin. Both application containers receive 2 CPUs and a 512 MiB
+memory limit, with pool size 8; PostgreSQL receives 2 CPUs and 2 GiB. PostgreSQL
+uses the pinned image shared with the corpus driver and quiet disposable-fixture
+logging. This topology is named <code>task-retention-diagnostic-v1</code>; it is not the
+local or shared acceptance profile.</p>
+<p>For the declared local or shared topology, select <code>--profile local</code> or
+<code>--profile shared</code>. Both provision 32 distinct authenticated principals and use
+80% traffic skew toward the first principal. Local replaces its admission-only
+API gracefully with one API/worker process and one execution slot. Shared uses
+two API processes, two workers with two slots each, and a 4 CPU/4 GiB database.
+<code>--steady-seconds 360</code> refills up to the initial receipt occupancy for three
+120-second windows, in batches of at most 256 actual submissions by default, then drains.
+One bounded refill producer runs concurrently with expiry observations; a second
+batch cannot start until the first producer has completed. This preserves the
+recipe's submission concurrency while observations continue during a refill.
+The observer joins the producer, including on failure, before the fixture
+can be removed. Its existing 120-second process timeout and 512 MiB resident
+limit still apply, and every admitted identity must appear in the final evidence.
+Between producers, physical receipt observations over the complete registered
+cohort determine the next bounded refill. Receipt presence can only decrease
+during that scan, so the count conservatively bounds occupancy when selecting
+arrivals. Refill scheduling does not wait for administrator status-lock access;
+every decision records its observed count, requested arrivals and original time.
+These counts schedule load only. Cleanup success still requires both physical
+removal and independently verified checkpoint evidence.
+Cleanup is performed by the running production workers. The observer invokes
+read-only administrator <code>status</code>, verifies the returned checkpoint identity and
+checks physical database removal. It does not invoke extra cleanup sweeps.
+A busy publication lock is retried at the observer's normal one-second cadence.
+Standalone observer use therefore requires active production workers as well.
+Use <code>--refill-max-batch 1000</code> when the smaller batch cannot replenish the target
+between cleanup observations. This bounds the number of arrivals per refill;
+the recipe's concurrency 32 and all application resource limits stay unchanged.
+Reports retain the selected bound. Refill and observation take real time, so
+neither setting establishes sustained occupancy without reviewing the raw samples.
+Every occupancy observation and eligible deadline remains in the report.
+Occupancy separates executable, terminal and recovery-unknown receipt outcomes,
+unexpired terminal receipts and eligible receipts. An executable receipt can
+still await terminal settlement; it does not identify queued versus running
+work. Required refill follows observed receipt retirement, since the reuse
+window starts at completion and does not age queued work.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>python3<span class="w"> </span>-I<span class="w"> </span>-S<span class="w"> </span>tests/python/run.py<span class="w"> </span>integration<span class="w"> </span>task-retention<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--image<span class="w"> </span>hubuum-server:retention-measure<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--scale-binary<span class="w"> </span>target/release/hubuum-scale-benchmark<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--admin-binary<span class="w"> </span>target/release/hubuum-admin<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>--output-directory<span class="w"> </span>/tmp/hubuum-retention-local-five<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span>--profile<span class="w"> </span><span class="nb">local</span><span class="w"> </span>--steady-seconds<span class="w"> </span><span class="m">360</span><span class="w"> </span>--refill-max-batch<span class="w"> </span><span class="m">1000</span><span class="w"> </span>--runs<span class="w"> </span><span class="m">5</span>
+</code></pre></div>
+<p>Repeat with <code>--profile shared</code> and a fresh output directory. These commands still
+need actual execution and acceptance review. The fixture records its readiness
+and authentication warm-up; it does not fabricate completed warm-up tasks.
+Only HTTP 503 receives a bounded same-key retry. Actual unavailable attempts and
+total elapsed time remain visible, including repository lock contention.</p>
+<p>Administrator setup retries only the exact repository-lock refusal for a bounded
+30-second retry budget, retaining attempt counts and total elapsed time. Native
+cleanup observers retain every refused process attempt and retry within their
+original overall timeout/pass limit. Contention delays remain part of observed
+expiry lag; no source deadline or measurement window is renewed. Key mismatches,
+recovery-required outcomes and other failures still stop the run.</p>
+<p>Application startup also retries only an exited process whose exact fatal
+diagnostic identifies repository-lock contention, for at most 30 seconds from
+the original startup attempt. Every restart and total elapsed time is retained
+in <code>startup-*.json</code>. APIs must answer readiness and workers must serve their
+metrics listener before their process resource limits are verified. Other
+startup failures remain fatal; these retries never bypass the recovery gate or
+renew task deadlines.</p>
+<p>Some rootless engines expose a memory controller but no CPU quota controller.
+The driver refuses to treat requested <code>--cpus</code> flags as enforcement on those
+engines. Build a measurement-only image with <code>taskset</code>, then add <code>--cpu-affinity</code>
+to the driver command:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>docker<span class="w"> </span>build<span class="w"> </span>-f<span class="w"> </span>scale-benchmarks/lifecycle/affinity.Dockerfile<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--build-arg<span class="w"> </span><span class="nv">HUBUUM_IMAGE</span><span class="o">=</span>hubuum-server:retention-measure<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--tag<span class="w"> </span>hubuum-server:retention-affinity<span class="w"> </span>.
+</code></pre></div>
+<p>Use that derivative as <code>--image</code>. Production binaries and the production
+entrypoint are unchanged. Affinity assigns disjoint fixed logical CPU sets to
+the database, each application process, and native administrator/load-generator
+children. Two fixed logical CPUs impose a maximum concurrency of two; unlike a
+two-CPU quota, they do not permit short bursts across more CPUs. Record this
+stricter concurrency limit as the profile equivalence, together with actual
+hardware and storage. The driver verifies all observed threads and descendants,
+reads actual cgroup <code>memory.max</code>, and records <code>memory.peak</code>; native bounded child
+runners verify inherited affinity too. No affinity result is accepted solely
+because the launch command requested a mask. Formal runs require other builds
+and measurements to be stopped.</p>
+<p>For a separately identified recovery run, <code>--recovery-probes</code> provisions a
+verified HTTPS counter and invokes it through
+the real remote task worker. Rust checks concurrent duplicate recognition,
+changed-body conflicts, and exactly one effect before and after detail purge.
+The fixture holds that task while taking a real history-enabled backup, releases
+the hold through a protected checkpoint, and later stops runtimes, restores the
+older backup, and restarts a worker. The restored retry must report the same
+expired task identity with the effect count unchanged. Its receipt uses a
+separate prospective 7,200-second window so the recovery assertion remains
+within the original protection period.</p>
+<p><code>--physical-recovery-probes</code> additionally captures and restores a real PostgreSQL
+physical base backup of the disposable primary, including protected database
+tables, while preserving the independent checkpoint directory and HTTPS effect
+counter. It restores only the fixture's validated managed PostgreSQL volume
+while PostgreSQL is stopped, preserving its data ownership and system identity.
+The helper restarts PostgreSQL after restoring the stopped data directory,
+recovers the latest independent authority under the repository lifetime lock,
+interrupts actual protected reapplication under a controlled row
+lock, and retries cleanup before restarting a runtime. The separate report must
+identify the interruption and observed physical state; the remote effect count
+and expired receipt identity are checked again afterward.</p>
+<p>Add <code>--output-probe</code> to one separately identified run to create a real export
+whose task detail retention is disabled and whose output expires after one hour.
+The observer retains the database's original output deadline, waits for actual
+expiry, then requires both physical output absence and the protected
+<code>ExpiredOutputs</code> removal decision while the task row survives. This additional
+probe can age while the steady workload runs; it need not be repeated in each
+of the five receipt/detail timing runs. Its wall-clock delay is intentional.</p>
+<p><code>--safety-probes</code> adds a separate retention and interrupted-effect drill. It
+creates two real dry-run imports with 1,201 results each, protects their holds,
+and creates a retained schema repair report through the API. A gated HTTPS
+response keeps an unrelated remote task running after the fixture has counted
+its effect. Rust then observes bounded cleanup of the released import while the
+held import and report dependency survive past their original deadlines. The
+fixture kills its producing runtimes, performs protected recovery and
+reapplication, and requires the interrupted task's retry to preserve one effect.
+The drill explicitly raises remote transport and task timeouts to 900 seconds;
+fixture shutdown releases all response gates. It does not modify stored clocks.
+Source support alone is not evidence that this drill passed.</p>
+<h2 id="evidence-and-interpretation">Evidence and interpretation<a class="headerlink" href="#evidence-and-interpretation" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Artifact</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>workload.json</code>, <code>capacity-policy.json</code>, <code>activation.json</code></td>
+<td>Exact recipe, admission limits, and protected activation result.</td>
+</tr>
+<tr>
+<td><code>admission.json</code></td>
+<td>Every HTTP timing and original task UUID; duplicate responses must identify the same task and changed requests must conflict.</td>
+</tr>
+<tr>
+<td><code>metrics/*.prom</code></td>
+<td>Production publisher counters before and after admission.</td>
+</tr>
+<tr>
+<td><code>resources.json</code></td>
+<td>Sampled RSS, Linux process high-water marks, sampled repository occupancy, effective limits, and measurement errors.</td>
+</tr>
+<tr>
+<td><code>cleanup.json</code></td>
+<td>Original database anchors, verified physical removal observations, raw task lifetimes, censored work, and lag distributions.</td>
+</tr>
+<tr>
+<td><code>cleanup-processes/pass-*.json</code></td>
+<td>Actual administrator exit status, bounded output, process resource measurements, and publisher counters.</td>
+</tr>
+<tr>
+<td><code>cleanup-processes/latest-lifetimes.json</code></td>
+<td>Most recent original anchors and observations, retained even if a later cleanup invocation fails.</td>
+</tr>
+<tr>
+<td><code>cleanup-processes/refill-*.json</code></td>
+<td>Actual bounded refill admissions and their child-process resource reports.</td>
+</tr>
+<tr>
+<td><code>probe-*.json</code>, <code>logical-recovery.json</code></td>
+<td>Rust-verified external effect counts, retry results, and actual logical restore duration.</td>
+</tr>
+<tr>
+<td><code>safety-*.json</code></td>
+<td>Held and dependent detail observations, large-child cleanup, and interrupted-effect retry evidence from the separate safety drill.</td>
+</tr>
+</tbody>
+</table>
+<p>Application RSS and repository occupancy are sampled every 20 ms. Kernel
+<code>VmHWM</code> is reported separately from sampled RSS. The administrator process tree
+uses the existing bounded process runner, now with 20 ms sampling and Linux
+<code>wait4</code> RSS high-water accounting. Kernel and sampled values are separate;
+neither is an allocator-specific measurement. A failed sampler makes the
+resource report invalid; a failed workload remains a failed run even when
+diagnostic artifacts were retained.</p>
+<p>The database resource report retains database allocation and WAL observations.
+Its generic host-wide PostgreSQL CPU/RSS fields are unset; container process and
+cgroup measurements identify the disposable database being measured. The
+separate relation inventory includes TOAST and protected control allocation.
+The observer also records the actual PostgreSQL version/settings and ten
+<code>SELECT 1</code> round trips on one acquired connection after an excluded warm-up.
+Those timings include transport and server execution; they exclude pool
+acquisition and are not a claim of network-only latency.</p>
+<p>Publisher <code>read_bytes</code> and <code>write_bytes</code> count successful file read/write return
+values, including reads served from the page cache. They do not measure block
+device traffic. Operation counters include encoding/signing, verification,
+file and directory fsync, publication, garbage collection, and asynchronous
+coalescing wait. File lock durations measure nonblocking <code>flock</code> attempts;
+contention counts do not represent mutex wait. End-to-end HTTP and administrator
+timings include publication waits. Sampled directory size measures resident
+occupancy, not cumulative I/O. Runtime-isolation nonce-file I/O is outside the
+publisher counters.</p>
+<p>Cleanup requires both exact-UUID physical absence and the independently verified
+checkpoint's matching removal decision. Receipt retirement requires primary and
+checkpoint absence plus a protected expiry floor covering the original deadline.
+The observation interval and administrator publication delay remain in the
+reported lag; samples are conservative upper bounds. A timeout retains eligible
+unfinished items instead of dropping them from the denominator.
+Database deadlines round down to milliseconds, and removal observations use the
+query completion time with an upper rounding margin. Nonterminal evidence uses
+the query start time and an explicit active status, so a read crossing the steady
+window boundary cannot extend that evidence to its later completion. Lags end
+at the first verified removal observation.
+The report distinguishes freshly observed nonterminal work from missing deadline
+evidence. Censored samples contribute lower bounds and an explicit incomplete
+or breached percentile status. Full cohort drain has its own outcome: a drain
+timeout does not by itself establish an eligible-expiry percentile breach.</p>
+<h2 id="encoding-proofs-and-remaining-acceptance-work">Encoding proofs and remaining acceptance work<a class="headerlink" href="#encoding-proofs-and-remaining-acceptance-work" title="Permanent link">&para;</a></h2>
+<p>The Rust tests
+<code>ten_thousand_receipts_and_157_manifests_fit_the_declared_encoding_budgets</code> and
+<code>production_composite_publisher_round_trips_ten_thousand_receipts_and_bounds_live_files</code>
+construct validated bounded records, serialize them, and exercise the actual
+signed publisher. They test 10,000 receipts, 157 task manifests, receipt and
+retention byte caps, authenticated readback, and retained repository files.
+Their synthetic timestamps are suitable for encoding tests only. Run with
+<code>--nocapture</code> to retain actual byte counts; successful test results are distinct
+from runtime throughput or expiry measurements.</p>
+<p>The first constrained local attempt on 2026-10-29 did not complete admission.
+It used production revision <code>95afd176</code>, measurement client <code>1ec1cb80</code>, the local
+CPU-affinity profile, and a 10,000-task target. The 1,200-second admission timeout
+left 8,741 receipts in the independently protected checkpoint. This count does
+not prove that every receipt's task activated. Workers and expiry observation
+had not started, so the attempt provides no expiry or recovery timing result.</p>
+<table>
+<thead>
+<tr>
+<th>Observation</th>
+<th>Recorded value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Resource samples / monitor errors</td>
+<td>52,028 / 0</td>
+</tr>
+<tr>
+<td>API sampled RSS and kernel high-water</td>
+<td>229,249,024 bytes (218.63 MiB)</td>
+</tr>
+<tr>
+<td>Sampled repository peak</td>
+<td>18,043,280 bytes / 7 files</td>
+</tr>
+<tr>
+<td>Diagnostic checkpoint reads / writes</td>
+<td>26,539,271,742 / 738,003,752 bytes</td>
+</tr>
+<tr>
+<td>Diagnostic verification / publication time</td>
+<td>760.467 / 104.942 seconds</td>
+</tr>
+<tr>
+<td>Diagnostic publication count</td>
+<td>260</td>
+</tr>
+</tbody>
+</table>
+<p>The diagnostic counters are deltas from the initial metrics snapshot to one
+separately identified scrape before the timeout; they are not final totals.
+Verification includes typed decoding, validation and canonical reserialization.
+Publication includes nested operations, so these times must not be added.
+Writes already coalesced roughly 32 protected records per publication, while
+each admission reread and verified the growing checkpoint. This evidence motivates
+bounded reuse of authenticated immutable contents with fresh independent file,
+digest, reference, key and durability checks. It does not establish acceptance.
+The host exposes a MegaRAID controller with rotational-device metadata. The
+operator confirmed on 2026-10-30 that its backing drives are SSDs; this is
+operator evidence rather than direct media identification by the operating
+system. Resource enforcement and the remaining profile equivalence still need
+to be recorded with each acceptance run.</p>
+<p>P6 acceptance still requires five fresh runs with declared warm-up, demonstrated steady occupancy
+near 10,000 receipts and continuous capacity release/refill for at least three windows.
+The acceptance topology and workload must include the declared principal skew,
+concurrent replicas, output expiry, held and dependent tasks, large child sets,
+maximum chunk budgets, and an unrelated long-running task. The logical restore
+and whole-primary rollback helpers require successful real executions; adding
+their source does not establish recovery performance. Report outages, holds, recovery drain,
+oldest remaining obligations, database allocation/WAL, and repository storage
+properties separately. Production output retention currently has a minimum of
+one hour; an honest output-expiry run must allow that real deadline to elapse.
+Neither a diagnostic cohort drain nor unexecuted sustained-run support
+establishes the 60-second expiry p95 or 300-second recovery cleanup target.</p>
+<p>The SDK 0.16 integration adds receipt eligibility to the durable scheduler's
+candidate selection. The retained SDK 0.15 scheduler qualification predates those
+checks. Rerun the opt-in P3/P4 scheduler matrix on the final retention source as
+well as the P6 profiles before accepting its performance; passing correctness
+regressions does not establish the added checks' latency or utilization cost.</p>
+<h3 id="shared-integration-diagnostic-on-2026-11-01">Shared integration diagnostic on 2026-11-01<a class="headerlink" href="#shared-integration-diagnostic-on-2026-11-01" title="Permanent link">&para;</a></h3>
+<p>Source <code>f4a00fd18645245412ddad6a2aba24e8d53786c6</code> completed a fresh shared-profile
+run with 10,000 initial receipts and the unchanged 360-second refill window.
+The production image and measurement binaries came from that same source. CPU
+and memory enforcement passed, with no monitor errors and database RTT below
+2 ms. Other builds and correctness tests were stopped during the measurement.</p>
+<table>
+<thead>
+<tr>
+<th>Observation</th>
+<th>Recorded value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Initial admission</td>
+<td>10,000 tasks in 153,629 ms</td>
+</tr>
+<tr>
+<td>Total admitted and fully drained</td>
+<td>18,493 tasks</td>
+</tr>
+<tr>
+<td>Eligible detail expirations / p95 lag</td>
+<td>17,341 / 56,365 ms</td>
+</tr>
+<tr>
+<td>Eligible receipt expirations / p95 lag</td>
+<td>13,944 / 84,693 ms</td>
+</tr>
+<tr>
+<td>Unknown deadlines / censored eligible observations</td>
+<td>0 / 0</td>
+</tr>
+<tr>
+<td>Steady pre-refill receipt observations</td>
+<td>Minimum 5,235; median 10,000</td>
+</tr>
+</tbody>
+</table>
+<p>This run does <strong>not</strong> qualify: receipt expiry exceeds 60 seconds and the receipt
+population is not sustained near 10,000. Left-held interpolation of the pre-refill
+observations averages 8,106.52 receipts; this is an interpolation, not a proven
+lower bound or an acceptance tolerance. Recorded 1,000-task refills took
+21.7–27.4 seconds and required 118–139 complete checkpoint publications. These
+counters motivate a bounded coalescing window before publication, while retaining
+the per-ticket activation checks. That subsequent change requires fresh runs.
+Raw reports and their source/image metadata are retained under
+<code>target/retention-544-20261031/shared-json-capture-1</code>.</p>
+<h2 id="bounded-admission-coalescing-diagnostic">Bounded admission coalescing diagnostic<a class="headerlink" href="#bounded-admission-coalescing-diagnostic" title="Permanent link">&para;</a></h2>
+<p>Source <code>e8147393d1f84b5d23f486547904c338678910fd</code> completed a fresh shared
+profile with the same initial 10,000 receipts, concurrency 32, resource limits,
+and 360-second refill window. The production runtime and administrator came
+from that source; the native load generator's 661 build inputs were byte-identical
+to its recorded <code>f4a00fd1</code> source. No other builds or tests ran concurrently.</p>
+<table>
+<thead>
+<tr>
+<th>Observation</th>
+<th>Recorded value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Initial admission</td>
+<td>10,000 tasks in 89,757 ms</td>
+</tr>
+<tr>
+<td>Total admitted and fully drained</td>
+<td>22,750 tasks</td>
+</tr>
+<tr>
+<td>Eligible detail expirations / p95 lag</td>
+<td>20,592 / 35,920 ms</td>
+</tr>
+<tr>
+<td>Eligible receipt expirations / p95 lag</td>
+<td>15,937 / 23,759 ms</td>
+</tr>
+<tr>
+<td>Unknown deadlines / censored eligible observations</td>
+<td>0 / 0</td>
+</tr>
+<tr>
+<td>Steady pre-refill receipt observations</td>
+<td>Minimum 5,797; median 10,000</td>
+</tr>
+</tbody>
+</table>
+<p>Expiry timing and enforced resources pass, but this run does <strong>not</strong> qualify:
+receipt occupancy is not sustained near 10,000. Left-held interpolation of the
+pre-refill observations averages 8,026.98 receipts; this is an interpolation,
+not a proven lower bound or an acceptance tolerance. The first full refills take
+about 15–16 seconds and approximately 60 checkpoint publications per 1,000 tasks.
+Snapshot collection accounts for about three seconds of those refills. The next
+candidate reuses a bounded history of authenticated decodings for collection,
+with fresh file and key checks. That candidate requires fresh measurements.
+Raw reports and source/image metadata are retained under
+<code>target/retention-544-20261031/shared-coalescing-window-1</code>.</p>
+<h2 id="authenticated-collection-reuse-diagnostic">Authenticated collection reuse diagnostic<a class="headerlink" href="#authenticated-collection-reuse-diagnostic" title="Permanent link">&para;</a></h2>
+<p>Source <code>9878195356775b1a1fdcd58eb74a90b09731791e</code> completed another fresh shared
+profile with unchanged limits and workload. The production image and administrator
+match this source, and the native load generator retains its verified, unchanged
+661-input build tree. Full correctness verification passed before the run; no
+other builds or tests ran during measurement.</p>
+<table>
+<thead>
+<tr>
+<th>Observation</th>
+<th>Recorded value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Initial admission</td>
+<td>10,000 tasks in 80,803 ms</td>
+</tr>
+<tr>
+<td>Total admitted and fully drained</td>
+<td>23,824 tasks</td>
+</tr>
+<tr>
+<td>Eligible detail expirations / p95 lag</td>
+<td>20,315 / 43,746 ms</td>
+</tr>
+<tr>
+<td>Eligible receipt expirations / p95 lag</td>
+<td>16,029 / 18,267 ms</td>
+</tr>
+<tr>
+<td>Unknown deadlines / censored eligible observations</td>
+<td>0 / 0</td>
+</tr>
+<tr>
+<td>Steady pre-refill receipt observations</td>
+<td>Minimum 6,270; median 10,000</td>
+</tr>
+<tr>
+<td>Largest application high-water RSS</td>
+<td>278,196,224 bytes</td>
+</tr>
+</tbody>
+</table>
+<p>Expiry timing and resource enforcement pass, but occupancy again does <strong>not</strong>
+qualify. Left-held pre-refill interpolation averages 8,373.45 receipts, without
+establishing a lower bound or acceptance tolerance. The first 1,000-task refill
+takes 12,989 ms with 57 publications and 651 ms of collection work. The last takes
+14,406 ms with 64 publications and 771 ms of collection work. These nested metric
+durations must not be summed. Reusing authenticated collection decodings reduces
+that cost, but frequent full publication still limits replenishment. A subsequent
+candidate finishes an already captured queue prefix before publishing for newer
+uncaptured requests, preserving queue order and exact-ticket activation checks.
+That change requires fresh qualification. Raw reports and source/image metadata
+are retained under <code>target/retention-544-20261031/shared-collection-cache-1</code>.</p>
+<h2 id="captured-queue-prefix-diagnostic">Captured queue-prefix diagnostic<a class="headerlink" href="#captured-queue-prefix-diagnostic" title="Permanent link">&para;</a></h2>
+<p>Source <code>861cb8cc03c562733810eb0c2fbe5a7017dba75b</code> passed the full correctness
+suite and production build, then completed a fresh shared run with the unchanged
+10,000-receipt target, concurrency, resource limits and 360-second steady phase.
+The load generator's unchanged build inputs remain pinned to <code>f4a00fd1</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Observation</th>
+<th>Recorded value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Initial admission</td>
+<td>10,000 tasks in 75,887 ms</td>
+</tr>
+<tr>
+<td>Total admitted and fully drained</td>
+<td>24,813 tasks</td>
+</tr>
+<tr>
+<td>Eligible detail expirations / p95 lag</td>
+<td>20,212 / 24,075 ms</td>
+</tr>
+<tr>
+<td>Eligible receipt expirations / p95 lag</td>
+<td>15,928 / 19,583 ms</td>
+</tr>
+<tr>
+<td>Unknown deadlines / censored eligible observations</td>
+<td>0 / 0</td>
+</tr>
+<tr>
+<td>Steady pre-refill receipt observations</td>
+<td>Minimum 6,567; median 10,000</td>
+</tr>
+</tbody>
+</table>
+<p>Resources and expiry timing pass, but occupancy remains underfilled. Left-held
+pre-refill interpolation averages 8,581.56 receipts; it is neither a proven lower
+bound nor an acceptance tolerance. The first full refill takes 12,408 ms and
+48 publications; the last takes 13,694 ms and 47 publications. Initial admission
+records 10,000 <code>create_task</code> calls with 347.44 cumulative operation seconds, a
+34.74 ms mean including waits. Concurrent operation durations overlap and cannot
+be summed as elapsed runtime. This motivates gathering for another short interval
+only while reservations keep joining, with a fixed overall bound. It does not
+establish that the subsequent gathering change passes qualification.
+Raw reports and source/image metadata remain under
+<code>target/retention-544-20261031/shared-captured-prefix-1</code>.</p>
+<h2 id="growing-batch-experiment">Growing-batch experiment<a class="headerlink" href="#growing-batch-experiment" title="Permanent link">&para;</a></h2>
+<p>Source <code>01a6e6b83c64de3525f9cb5b892b7dca9f1fdbde</code> tested extending the
+admission gathering interval while arrivals continued, with a fixed 50 ms bound.
+It passed 7,247 correctness tests and the production build. Its fresh shared run
+retained the same resource limits, 10,000-receipt target and 360-second steady phase.</p>
+<table>
+<thead>
+<tr>
+<th>Observation</th>
+<th>Recorded value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Initial admission</td>
+<td>10,000 tasks in 75,922 ms</td>
+</tr>
+<tr>
+<td>Total admitted and fully drained</td>
+<td>24,188 tasks</td>
+</tr>
+<tr>
+<td>Eligible detail expirations / p95 lag</td>
+<td>18,977 / 35,686 ms</td>
+</tr>
+<tr>
+<td>Eligible receipt expirations / p95 lag</td>
+<td>14,842 / 20,188 ms</td>
+</tr>
+<tr>
+<td>Unknown deadlines / censored eligible observations</td>
+<td>0 / 0</td>
+</tr>
+<tr>
+<td>Steady pre-refill receipt observations</td>
+<td>Minimum 6,372; median 10,000</td>
+</tr>
+</tbody>
+</table>
+<p>Resources and expiry timing pass, but occupancy remains underfilled. Left-held
+pre-refill interpolation averages 8,568.94 receipts; it is neither a proven lower
+bound nor an acceptance tolerance. The extension showed no clear throughput
+benefit and was removed, restoring the fixed 10 ms gathering interval.
+Raw reports and source/image metadata remain under
+<code>target/retention-544-20261031/shared-growing-batches-1</code>.</p>
+<p>These diagnostics serialized each refill with the full cleanup observation pass.
+The subsequent concurrent producer removes that serialization without raising
+submission concurrency or changing expiry, population, or resource targets.
+Fresh measurements are required; the driver change alone establishes no P6 result.</p>
+<h2 id="concurrent-refill-diagnostic">Concurrent-refill diagnostic<a class="headerlink" href="#concurrent-refill-diagnostic" title="Permanent link">&para;</a></h2>
+<p>Measurement source <code>b68e16829762b711f322d9b07b23504832616822</code> used the
+byte-identical, verified <code>861cb8cc</code> production runtime with concurrent refill and
+the earlier administrator-driven cleanup observations. The full suite passed
+7,249 tests before the isolated shared run. Resource limits, principal skew,
+concurrency, the 10,000-receipt target and 360-second steady phase were unchanged.</p>
+<table>
+<thead>
+<tr>
+<th>Observation</th>
+<th>Recorded value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Initial admission</td>
+<td>10,000 tasks in 74,874 ms</td>
+</tr>
+<tr>
+<td>Total admitted and fully drained</td>
+<td>23,993 tasks</td>
+</tr>
+<tr>
+<td>Eligible detail expirations / p95 lag</td>
+<td>20,554 / 11,426 ms</td>
+</tr>
+<tr>
+<td>Eligible receipt expirations / p95 lag</td>
+<td>15,847 / 11,609 ms</td>
+</tr>
+<tr>
+<td>Unknown deadlines / censored eligible observations</td>
+<td>0 / 0</td>
+</tr>
+<tr>
+<td>Steady receipt observations</td>
+<td>Minimum 6,040; median 10,000</td>
+</tr>
+<tr>
+<td>Administrator attempts / repository-busy refusals</td>
+<td>577 / 429</td>
+</tr>
+</tbody>
+</table>
+<p>Resources and expiry timing pass, but occupancy remains underfilled. Left-held
+interpolation of the receipt observations averages 8,246.32; it is neither a
+proven lower bound nor an acceptance tolerance. Concurrent observations improve
+the recorded removal time bounds, but extra cleanup invocations compete with
+admission for publication ownership. The subsequent observer reads status at
+its normal cadence and leaves cleanup to production workers. It must still
+prove physical removal and independently protected retirement under the same
+deadlines; passing this diagnostic does not qualify that change or establish P6.
+Raw reports and source/image metadata remain under
+<code>target/retention-544-20261031/shared-concurrent-refill-1</code>.</p>
+<h2 id="worker-only-cleanup-diagnostic">Worker-only cleanup diagnostic<a class="headerlink" href="#worker-only-cleanup-diagnostic" title="Permanent link">&para;</a></h2>
+<p>Measurement source <code>f2f26876f10547af40d4d16a12d8770eae30d3f8</code> used the
+verified <code>861cb8cc</code> production runtime with concurrent refill and read-only
+status observations. All 7,249 correctness tests passed. The isolated shared run
+kept the same workload, resource ceilings and 360-second steady phase.</p>
+<table>
+<thead>
+<tr>
+<th>Observation</th>
+<th>Recorded value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Initial admission</td>
+<td>10,000 tasks in 75,218 ms</td>
+</tr>
+<tr>
+<td>Total admitted and fully drained</td>
+<td>23,698 tasks</td>
+</tr>
+<tr>
+<td>Eligible detail expirations / p95 lag</td>
+<td>20,164 / 91,531 ms; fails P6</td>
+</tr>
+<tr>
+<td>Eligible receipt expirations / p95 lag</td>
+<td>15,723 / 58,227 ms</td>
+</tr>
+<tr>
+<td>Unknown deadlines / censored eligible observations</td>
+<td>0 / 0</td>
+</tr>
+<tr>
+<td>Steady receipt observations</td>
+<td>Minimum 6,928; median 10,000</td>
+</tr>
+</tbody>
+</table>
+<p>Resource monitoring was valid and reported no errors. The real worker detail
+cleanup failed the 60-second p95 target; the earlier administrator-driven
+diagnostics had supplemented that maintenance. Occupancy also remained
+underfilled. Left-held interpolation averages 8,943.46 receipts and is neither
+a proven lower bound nor an acceptance tolerance.</p>
+<p>The maintenance loop discarded its productive-work result and always slept for
+the full poll interval. A repository-busy refusal also became an idle result.
+The subsequent scheduling change retries both after a bounded publisher pause,
+retaining normal cadence for idle, blocked-only and failed passes. Row, byte,
+manifest and resource bounds stay unchanged. Fresh worker-only measurements
+must establish whether that fix meets P6.
+Raw reports and source/image metadata remain under
+<code>target/retention-544-20261031/shared-worker-observation-1</code>.</p>
+<h2 id="prompt-maintenance-diagnostic">Prompt-maintenance diagnostic<a class="headerlink" href="#prompt-maintenance-diagnostic" title="Permanent link">&para;</a></h2>
+<p>Source <code>b470c94411f6dae6c98bc36d3646b73d33e28067</code> retains the same bounded
+passes and retries productive or repository-busy maintenance after at most
+100 ms. All 7,251 correctness tests and the real both-TLS production build passed
+before the isolated shared run.</p>
+<table>
+<thead>
+<tr>
+<th>Observation</th>
+<th>Recorded value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Initial admission</td>
+<td>10,000 tasks in 76,572 ms</td>
+</tr>
+<tr>
+<td>Total admitted and fully drained</td>
+<td>18,602 tasks</td>
+</tr>
+<tr>
+<td>Eligible detail expirations / p95 lag</td>
+<td>17,401 / 35,216 ms</td>
+</tr>
+<tr>
+<td>Eligible receipt expirations / p95 lag</td>
+<td>13,602 / 39,854 ms</td>
+</tr>
+<tr>
+<td>Unknown deadlines / censored eligible observations</td>
+<td>0 / 0</td>
+</tr>
+<tr>
+<td>Steady receipt observations</td>
+<td>Minimum 3,639; median 10,000</td>
+</tr>
+</tbody>
+</table>
+<p>Resource monitoring was valid and reported no errors. Expiry timing passes,
+but population is substantially underfilled, so this run does not qualify P6.
+Left-held interpolation averages 7,103.08 receipts and is neither a proven lower
+bound nor an acceptance tolerance. New refill batches still waited for a
+successful administrator status acquisition, coupling load generation to the
+same publication lock under measurement. The subsequent driver schedules
+refills from physical receipt observations before attempting status; protected
+cleanup proof and all workload/resource bounds remain mandatory. The production
+runtime is unchanged by that driver correction. Fresh measurements are required.
+Raw reports and source/image metadata remain under
+<code>target/retention-544-20261031/shared-maintenance-retry-1</code>.</p>
+<h2 id="independent-refill-diagnostic">Independent-refill diagnostic<a class="headerlink" href="#independent-refill-diagnostic" title="Permanent link">&para;</a></h2>
+<p>Measurement source <code>143609fc51744feced7dde33bdf8d2b25139a1cd</code> uses the
+unchanged, verified <code>b470c944</code> production image. All 7,251 correctness tests,
+strict Clippy, formatting, OpenAPI consistency and Markdown lint passed before
+the isolated shared run. The native measurement executable was rebuilt, with
+all production inputs checked byte-for-byte against the verified image source.</p>
+<table>
+<thead>
+<tr>
+<th>Observation</th>
+<th>Recorded value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Initial admission</td>
+<td>10,000 tasks in 75,752 ms</td>
+</tr>
+<tr>
+<td>Total admitted and fully drained</td>
+<td>21,603 tasks</td>
+</tr>
+<tr>
+<td>Eligible detail expirations / verified p95 upper bound</td>
+<td>19,505 / 142,130 ms; fails P6</td>
+</tr>
+<tr>
+<td>Eligible receipt expirations / verified p95 upper bound</td>
+<td>15,333 / 110,452 ms; fails P6</td>
+</tr>
+<tr>
+<td>Unknown deadlines / censored eligible observations</td>
+<td>0 / 0</td>
+</tr>
+<tr>
+<td>Steady receipt observations</td>
+<td>Minimum 5,706; median 10,000</td>
+</tr>
+<tr>
+<td>Refill producers started during a busy status pass</td>
+<td>13 of 13</td>
+</tr>
+<tr>
+<td>Total idle time between refill producers</td>
+<td>8,279 ms; largest gap 1,408 ms</td>
+</tr>
+<tr>
+<td>Administrator attempts / repository-busy refusals</td>
+<td>370 / 299</td>
+</tr>
+<tr>
+<td>Largest application kernel RSS high-water mark</td>
+<td>241,528,832 bytes, below 512 MiB</td>
+</tr>
+<tr>
+<td>Maximum measured database RTT</td>
+<td>326,625 ns, below the shared 2 ms limit</td>
+</tr>
+</tbody>
+</table>
+<p>The driver fully drained every admitted identity and retained complete eligible
+evidence, but correctly exited nonzero for the P6 timing failures. Resource
+monitoring was valid with no errors, and actual CPU/memory limits were verified.
+The population remained underfilled. Left-held interpolation averages 8,550.83
+receipts and is neither a proven lower bound nor an acceptance tolerance.</p>
+<p>Refills now proceed independently of status access. Repository-lock contention
+still delays independently verified completion observations. One separately
+recorded, read-only database spot check late in the drain found 18 eligible task
+rows with oldest lag 438.674 ms and five eligible receipts with oldest lag
+91.221 ms. That spot check is not a percentile, does not establish earlier
+physical cleanup latency and cannot replace the failing verified timing result.
+Future measurement must distinguish observation-lock delay from physical backlog
+while preserving the independent proof required for every cleanup success.</p>
+<p>Raw reports and source/image metadata remain under
+<code>target/retention-544-20261031/shared-refill-scheduling-1</code>; the additional spot
+check is recorded in <code>shared-refill-scheduling-1-physical-spotchecks.jsonl</code> beside
+that directory. This diagnostic establishes neither P6 acceptance nor the
+remaining repeated local/shared, real-hour output, or recovery qualification.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-circle-arrow-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../artifact_pipeline/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Artifact pipeline measurements">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Artifact pipeline measurements
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../release_profiles/" class="md-footer__link md-footer__link--next" aria-label="Next: Release profiles">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Release profiles
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Hubuum · MIT licensed
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+      <div class="md-progress" data-md-component="progress" role="progressbar"></div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["navigation.tabs","navigation.tabs.sticky","navigation.sections","navigation.path","navigation.top","navigation.footer","navigation.instant","navigation.instant.progress","content.action.edit","content.code.copy","toc.follow"],"redirect":null,"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.c04ba553.min.js"></script>
+      
+        <script src="../../assets/javascripts/versions.js"></script>
+      
+    
+  </body>
+</html>

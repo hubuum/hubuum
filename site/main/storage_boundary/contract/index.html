@@ -1897,6 +1897,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../task_retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task retention
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../supply-chain-security/" class="md-nav__link">
         
   
@@ -4211,6 +4238,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#protected-task-receipts-and-retention" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Protected task receipts and retention
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4974,6 +5012,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../performance/task_retention_measurement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task retention measurements
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../performance/release_profiles/" class="md-nav__link">
         
   
@@ -5445,6 +5510,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#protected-task-receipts-and-retention" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Protected task receipts and retention
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5815,7 +5891,9 @@ it establishes one current system-attributed snapshot for each live temporal
 resource, retaining its ID, revision, data, and resource timestamps. Temporal
 validity starts at the supplied restore boundary, represented at microsecond
 precision. Its <code>create</code> operation marks entry into the new retained timeline.
-Task, audit, and delivery history remains empty until the restore-success event.</p>
+Source task audit and terminal delivery provenance is replayed when included in the
+backup. Protected task receipt and retention authority remains independent of the
+application snapshot; restore cannot replace it with older matching/deletion state.</p>
 <p><code>RestoreStorage::apply_restore_replay</code> must persist these prepared rows atomically with
 the state replacement, derived-state reset/rebuild scheduling, success event,
 and terminal receipt. Adapters map logical rows to their native representation;
@@ -5972,6 +6050,23 @@ semantics: all requested permissions must occur in one group grant for that
 collection. Do not combine partial grants from different groups. Local permission
 batches use this operation for both endpoints of relations, including non-admin
 callers, without per-resource database calls.</p>
+<h2 id="protected-task-receipts-and-retention">Protected task receipts and retention<a class="headerlink" href="#protected-task-receipts-and-retention" title="Permanent link">&para;</a></h2>
+<p><code>TaskRetentionStorage</code> is mandatory for every complete backend. Its canonical
+authority uses stable identities, validated private-field records and a revision
+separate from deployment-wide deletion fences. Task creation returns a typed
+submission outcome; keyed work cannot be claimed until the exact admission
+generation is independently protected and atomically activated. Recognized
+duplicates never repeat capacity or approval consumption.</p>
+<p>Adapters implement both task-detail and expired-output scopes, immutable bounded
+manifest selection, physical row/byte accounting, child-write fencing, holds,
+available-output and dependency blockers, and exact completion recording. They
+preserve captured audit identities and prospective policy/deadline anchors in
+logical backups. A snapshot acquired before a purge intent may finish; later
+scoped reads observe its restrictions.</p>
+<p>Recovery preserves still-applicable receipts and full-lineage purge decisions,
+settles old nonterminal tasks conservatively, and requires composite exact
+reapplication before exposure release. See <a href="../../task_retention/">task retention</a>
+for deadlines, bounds, activation, independent checkpoint semantics and errors.</p>
 
 
 

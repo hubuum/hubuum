@@ -1897,6 +1897,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../task_retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task retention
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../supply-chain-security/" class="md-nav__link">
         
   
@@ -4407,6 +4434,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Verified artifacts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#task_retention" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>task_retention</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -5091,6 +5135,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../performance/task_retention_measurement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task retention measurements
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../performance/release_profiles/" class="md-nav__link">
         
   
@@ -5676,6 +5747,23 @@
       </span>
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Verified artifacts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#task_retention" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>task_retention</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -6317,6 +6405,13 @@ output metadata and terminal status. Restore copies portable frames into fresh
 identities and preserves all pre-existing physical obligations.</p>
 <p>The <a href="../../artifact_staging/">artifact contract</a> defines wire integrity, spool
 lifetime, finite limits, retained-reader compatibility, and cleanup accounting.</p>
+<h3 id="task_retention"><code>task_retention</code><a class="headerlink" href="#task_retention" title="Permanent link">&para;</a></h3>
+<p>Required trait: <code>TaskRetentionStorage</code>, within the workflow family.</p>
+<p>Owns protected receipt authority, immutable prospective policies, holds, bounded
+backfill and expiry selection, scoped task/output purge manifests, composite
+checkpoint capture and recovery reapplication. Runtime creation, duplicate lookup
+and exact admission activation remain on <code>TaskQueueStorage</code>. All selected
+backends implement the complete contract; see <a href="../../task_retention/">task retention</a>.</p>
 
 
 

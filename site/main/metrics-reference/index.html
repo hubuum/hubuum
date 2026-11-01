@@ -1905,6 +1905,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../task_retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task retention
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../supply-chain-security/" class="md-nav__link">
         
   
@@ -4723,6 +4750,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../performance/task_retention_measurement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task retention measurements
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../performance/release_profiles/" class="md-nav__link">
         
   
@@ -5119,6 +5173,62 @@
 <td>process</td>
 <td><code>status</code></td>
 <td>Computed-field rebuild duration</td>
+</tr>
+<tr>
+<td><code>hubuum_control_checkpoint_gc_bytes_total</code></td>
+<td>counter</td>
+<td>bytes</td>
+<td>process</td>
+<td>none</td>
+<td>File lengths of authenticated superseded checkpoints removed</td>
+</tr>
+<tr>
+<td><code>hubuum_control_checkpoint_gc_files_total</code></td>
+<td>counter</td>
+<td>none</td>
+<td>process</td>
+<td>none</td>
+<td>Authenticated superseded checkpoint files removed</td>
+</tr>
+<tr>
+<td><code>hubuum_control_checkpoint_io_bytes_total</code></td>
+<td>counter</td>
+<td>bytes</td>
+<td>process</td>
+<td><code>operation</code></td>
+<td>Actual checkpoint file data bytes read or written, including partial operations</td>
+</tr>
+<tr>
+<td><code>hubuum_control_checkpoint_lock_attempts_total</code></td>
+<td>counter</td>
+<td>none</td>
+<td>process</td>
+<td><code>outcome</code></td>
+<td>Nonblocking checkpoint publication lock attempts</td>
+</tr>
+<tr>
+<td><code>hubuum_control_checkpoint_lock_duration_seconds</code></td>
+<td>histogram</td>
+<td>seconds</td>
+<td>process</td>
+<td><code>outcome</code></td>
+<td>Checkpoint publication lock attempt duration</td>
+</tr>
+<tr>
+<td><code>hubuum_control_checkpoint_operation_duration_seconds</code></td>
+<td>histogram</td>
+<td>seconds</td>
+<td>process</td>
+<td><code>operation</code>, <code>outcome</code></td>
+<td>Checkpoint publisher operation duration</td>
+</tr>
+<tr>
+<td><code>hubuum_control_checkpoint_operations_total</code></td>
+<td>counter</td>
+<td>none</td>
+<td>process</td>
+<td><code>operation</code>, <code>outcome</code></td>
+<td>Checkpoint publisher operation outcomes</td>
 </tr>
 <tr>
 <td><code>hubuum_db_connection_acquire_duration_seconds</code></td>

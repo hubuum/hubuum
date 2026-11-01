@@ -1897,6 +1897,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../task_retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task retention
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../supply-chain-security/" class="md-nav__link">
         
   
@@ -4803,6 +4830,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../task_retention_measurement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task retention measurements
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../release_profiles/" class="md-nav__link">
         
   
@@ -5427,6 +5481,18 @@ revised with evidence, and cannot waive H1–H5.</p>
 </tr>
 </tbody>
 </table>
+<p>The task-retention observer writes its raw report before returning failure when
+steady detail or receipt expiry misses P6, or lacks complete eligible evidence.
+This stops later output-expiry and recovery probes from running after a known
+latency failure. A bounded smoke drill without a steady phase remains a
+correctness check and cannot establish P6 acceptance.</p>
+<p>On 2026-11-01, the maintainer approved completing the functional task-retention
+implementation in <a href="https://github.com/hubuum/hubuum/pull/544">#544</a> while deferring
+P6 qualification to <a href="https://github.com/hubuum/hubuum/issues/561">#561</a>, after
+reviewing the failed diagnostic bounds and successful full drain/resource checks.
+This changes that PR's delivery scope, not P6's targets or any resource ceiling.
+Dependent lifecycle performance acceptance still requires qualifying P6 evidence;
+the <a href="../task_retention_measurement/">measurement guide</a> retains the failures.</p>
 <p>P4 proposes an eight-claim promotion interval for evaluation, not shipped defaults.
 Catalog/segment limits reflect bounded block reads and an initial 5% online
 metadata envelope. Memory/spool ceilings support four concurrent streams without

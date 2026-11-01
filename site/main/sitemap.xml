@@ -115,6 +115,9 @@
         <loc>https://hubuum.github.io/hubuum/main/deletion_recovery/</loc>
       </url>
       <url>
+        <loc>https://hubuum.github.io/hubuum/main/task_retention/</loc>
+      </url>
+      <url>
         <loc>https://hubuum.github.io/hubuum/main/supply-chain-security/</loc>
       </url>
       <url>
@@ -359,6 +362,9 @@
       </url>
       <url>
         <loc>https://hubuum.github.io/hubuum/main/performance/artifact_pipeline/</loc>
+      </url>
+      <url>
+        <loc>https://hubuum.github.io/hubuum/main/performance/task_retention_measurement/</loc>
       </url>
       <url>
         <loc>https://hubuum.github.io/hubuum/main/performance/release_profiles/</loc>

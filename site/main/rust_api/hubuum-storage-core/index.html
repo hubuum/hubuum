@@ -1897,6 +1897,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../task_retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task retention
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../supply-chain-security/" class="md-nav__link">
         
   
@@ -4803,6 +4830,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../performance/task_retention_measurement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Task retention measurements
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../performance/release_profiles/" class="md-nav__link">
         
   
@@ -5184,7 +5238,7 @@
 
 
 <h1 id="hubuum-storage-core-rust-api-policy"><code>hubuum-storage-core</code> Rust API Policy<a class="headerlink" href="#hubuum-storage-core-rust-api-policy" title="Permanent link">&para;</a></h1>
-<p>Status: experimental public API in the storage SDK <code>0.13</code> release train.</p>
+<p>Status: experimental public API in the storage SDK <code>0.14</code> release train.</p>
 <h2 id="purpose-and-callers">Purpose and Callers<a class="headerlink" href="#purpose-and-callers" title="Permanent link">&para;</a></h2>
 <p><code>hubuum-storage-core</code> is the complete backend-neutral storage extension
 contract. It exposes capability traits, private-field DTOs, the bounded
@@ -5336,8 +5390,8 @@ receipts, no-op behavior, rollback, outbox-to-sink delivery, telemetry, exact
 revision conflicts, retention retry identity, delivery recovery, restore
 coordination rollback, and lease-loss finalization, while each backend owns
 native query, transaction, migration, connection-loss, and failure tests.
-External-crate integration tests implement all 45 complete-backend traits,
-compile every one of their 250 methods, exercise every transaction port, and
+External-crate integration tests implement all 50 complete-backend traits,
+compile every one of their 349 methods, exercise every transaction port, and
 name public construction paths for all current adapter-returned values. CI also
 packages the crate, builds rustdoc with warnings denied, and compares it with
 the latest crates.io release when a baseline exists.</p>
