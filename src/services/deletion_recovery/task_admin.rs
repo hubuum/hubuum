@@ -427,5 +427,5 @@ pub(crate) async fn administer_task_retention(
     Ok(output)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;

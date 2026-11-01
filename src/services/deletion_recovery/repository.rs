@@ -1,4 +1,5 @@
 use std::fs::{self, File, OpenOptions};
+#[cfg(unix)]
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

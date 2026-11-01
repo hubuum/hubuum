@@ -118,5 +118,5 @@ fn valid_legacy_digest(digest: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;

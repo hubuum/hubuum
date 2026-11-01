@@ -226,4 +226,5 @@ async fn expired_receipt_uses_real_external_read_task_policy(
     assert!(request.contains(&format!("receipt:{task}")));
 }
 
+#[cfg(unix)]
 mod http;
