@@ -852,6 +852,59 @@ impl AdmissionFixture {
     }
 }
 
+#[rstest]
+#[case::state_valid(false, false)]
+#[case::state_invalid(false, true)]
+#[case::capture_valid(true, false)]
+#[case::capture_invalid(true, true)]
+#[tokio::test]
+async fn native_snapshot_readers_validate_receipt_material(
+    #[case] capture: bool,
+    #[case] invalid: bool,
+) {
+    use hubuum_storage_core::{
+        StorageErrorKind, StorageTaskSubmissionOutcome, TaskQueueStorage, TaskRetentionStorage,
+    };
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let fixture = AdmissionFixture::new().await;
+    let storage = fixture.runtime();
+    let StorageTaskSubmissionOutcome::PendingProtection(ticket) =
+        storage.create_task(fixture.request()).await.unwrap()
+    else {
+        panic!("pending admission")
+    };
+    if invalid {
+        with_transaction(&fixture.pool, async |connection| {
+            assume_owner(connection).await?;
+            sql_query("UPDATE hubuum_control.task_receipts SET material=jsonb_set(material,'{window_secs}','0'::jsonb) WHERE generation=$1")
+                .bind::<SqlUuid, _>(ticket.receipt().generation().value())
+                .execute(connection).await?;
+            Ok::<_, PostgresStorageError>(())
+        }).await.unwrap();
+    }
+    let result = if capture {
+        storage
+            .capture_control_checkpoint()
+            .await
+            .map(|value| value.task_control().clone())
+    } else {
+        storage.read_task_control().await
+    };
+    fixture.finish().await;
+    if invalid {
+        assert_eq!(result.unwrap_err().kind(), StorageErrorKind::Backend);
+    } else {
+        assert_eq!(
+            result
+                .unwrap()
+                .receipt(ticket.receipt().submission())
+                .unwrap()
+                .ticket(),
+            &ticket
+        );
+    }
+}
+
 #[tokio::test]
 async fn native_adapter_satisfies_shared_protected_admission_contract() {
     let _guard = CONTROL_TEST_LOCK.lock().await;

@@ -1,6 +1,7 @@
 //! Administrative replacement and consistent capture of protected task state.
 
 use super::*;
+use serde::de::DeserializeOwned;
 
 #[derive(Deserialize)]
 struct Capture {
@@ -14,18 +15,26 @@ struct Capture {
 }
 
 #[derive(QueryableByName)]
-struct EncodedCapture {
+struct EncodedMaterial {
     #[diesel(sql_type = Text)]
     material: String,
+}
+
+impl EncodedMaterial {
+    fn decode<T: DeserializeOwned>(self) -> Result<T, PostgresStorageError> {
+        serde_json::from_str(&self.material).map_err(|error| {
+            PostgresStorageError::invalid_persisted_value("task retention authority", error)
+        })
+    }
 }
 
 pub(crate) async fn state_on(
     connection: &mut PostgresConnection,
 ) -> Result<TaskControlState, PostgresStorageError> {
-    let row = diesel::sql_query("SELECT public.hubuum_task_control_read() AS material")
-        .get_result::<MaterialRow>(connection)
+    let row = diesel::sql_query("SELECT public.hubuum_task_control_read()::text AS material")
+        .get_result::<EncodedMaterial>(connection)
         .await?;
-    decode(row.material)
+    row.decode()
 }
 
 pub(crate) async fn capture_on(
@@ -35,11 +44,9 @@ pub(crate) async fn capture_on(
     // A generic JSON value would allocate a second tree for every receipt before
     // performing exactly the same fallible domain deserialization.
     let row = diesel::sql_query("SELECT public.hubuum_task_control_capture()::text AS material")
-        .get_result::<EncodedCapture>(connection)
+        .get_result::<EncodedMaterial>(connection)
         .await?;
-    let capture: Capture = serde_json::from_str(&row.material).map_err(|error| {
-        PostgresStorageError::invalid_persisted_value("task retention authority", error)
-    })?;
+    let capture: Capture = row.decode()?;
     let application = crate::backend::deletion_control::decode_application(capture.application)?;
     let mut deletion = DeletionControlCapture::new(
         capture.deletion,

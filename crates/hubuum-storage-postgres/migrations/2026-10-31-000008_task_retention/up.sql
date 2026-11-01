@@ -156,28 +156,30 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
 $$;
 REVOKE ALL ON FUNCTION public.hubuum_task_artifact_cleanup_allowed(UUID) FROM PUBLIC;
 
-CREATE FUNCTION public.hubuum_task_control_read() RETURNS JSONB
+-- Complete snapshots cross the adapter boundary as JSON text. Avoid rebuilding
+-- their stored JSONB records into multiple nested binary trees.
+CREATE FUNCTION public.hubuum_task_control_read() RETURNS JSON
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-    SELECT jsonb_build_object('lineage',d.material->'lineage','epoch',d.material->'epoch',
+    SELECT json_build_object('lineage',d.material->'lineage','epoch',d.material->'epoch',
         'revision',c.revision,'hold_release_revision',c.hold_release_revision,'activation',c.activation,'receipt_expiry_floor',c.receipt_expiry_floor,
-        'receipts',COALESCE((SELECT jsonb_agg(material ORDER BY principal_identity,protected_key) FROM hubuum_control.task_receipts),'[]'::jsonb),
-        'policies',COALESCE((SELECT jsonb_object_agg(revision::text,material) FROM hubuum_control.task_retention_policies),'{}'::jsonb),
-        'holds',COALESCE((SELECT jsonb_object_agg(id::text,material) FROM hubuum_control.task_retention_holds),'{}'::jsonb),
-        'purge_batches',COALESCE((SELECT jsonb_object_agg(id::text,material) FROM hubuum_control.task_purge_batches),'{}'::jsonb))
+        'receipts',COALESCE((SELECT json_agg(material ORDER BY principal_identity,protected_key) FROM hubuum_control.task_receipts),'[]'::json),
+        'policies',COALESCE((SELECT json_object_agg(revision::text,material) FROM hubuum_control.task_retention_policies),'{}'::json),
+        'holds',COALESCE((SELECT json_object_agg(id::text,material) FROM hubuum_control.task_retention_holds),'{}'::json),
+        'purge_batches',COALESCE((SELECT json_object_agg(id::text,material) FROM hubuum_control.task_purge_batches),'{}'::json))
     FROM hubuum_control.task_retention_control c CROSS JOIN hubuum_control.deletion_authority d
     WHERE c.id=1 AND d.id=1
 $$;
 REVOKE ALL ON FUNCTION public.hubuum_task_control_read() FROM PUBLIC;
 
-CREATE FUNCTION public.hubuum_task_control_capture() RETURNS JSONB
+CREATE FUNCTION public.hubuum_task_control_capture() RETURNS JSON
 LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog AS $$
     WITH position AS MATERIALIZED (SELECT pg_current_wal_insert_lsn() AS lsn)
-    SELECT jsonb_build_object('task_control',public.hubuum_task_control_read(),
+    SELECT json_build_object('task_control',public.hubuum_task_control_read(),
         'deletion',d.material,'application',public.hubuum_application_control_read(),
         'system_identifier',(pg_control_system()).system_identifier::text,
         'wal_file',pg_walfile_name(position.lsn),'lsn',position.lsn::text,
         'task_reapplication',CASE WHEN c.reapplied_revision<=c.revision AND c.reapplied_incarnation=a.incarnation
-           THEN jsonb_build_object('incarnation',c.reapplied_incarnation,'task_revision',c.reapplied_revision) END)
+           THEN json_build_object('incarnation',c.reapplied_incarnation,'task_revision',c.reapplied_revision) END)
     FROM hubuum_control.deletion_authority d CROSS JOIN hubuum_control.task_retention_control c
     CROSS JOIN hubuum_control.application_control a CROSS JOIN position
     WHERE d.id=1 AND c.id=1 AND a.id=1

@@ -306,8 +306,9 @@ the repository and checks its key; an acquired session verifies current recovery
 evidence. Authentication and recovery failures still fail immediately. Waiting
 does not renew a task deadline or authorize execution without its exact proof.
 The bounded group is selected after session acquisition, so requests arriving
-during lock contention or verification can share that session. Checkpoint capture
-decodes directly into validated domain types. The publisher can reuse the exact
+during lock contention or verification can share that session. PostgreSQL builds
+complete snapshots as JSON text for direct decoding into validated domain types;
+stored receipt and authority records remain JSONB. The publisher can reuse the exact
 immutable payload it just signed and read back; every session still checks the
 independent files, authenticated HEAD, digest, key and durability afresh.
 
