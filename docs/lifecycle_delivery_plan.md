@@ -100,7 +100,8 @@ status and acceptance evidence:
   and its [measurements](performance/task_retention_measurement.md).
 - #514: an opt-in [history segment prototype](performance/history_segment_prototype.md)
   provides experimental evidence; it does not enable production segmentation.
-- #516: durable waiting remains under review in #538 and is not enabled.
+- #516: #538 provides the dormant durable-waiting foundation. Provider
+  integration and production activation remain pending.
 - #521: [measurement and acceptance work](performance/api_admission.md) is
   available independently of those branches. Shared synchronous-request
   reservations and their recovery guarantees remain to be implemented.
