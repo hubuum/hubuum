@@ -1030,8 +1030,8 @@ for wait_input in crates/hubuum-storage-core/src/task_waiting.rs \
   crates/hubuum-storage-conformance/src/task_waiting.rs \
   crates/hubuum-storage-memory/src/task_waits.rs \
   crates/hubuum-storage-postgres/src/operations/task_control.rs \
-  crates/hubuum-storage-postgres/migrations/2026-10-29-000001_task_waiting/up.sql \
-  crates/hubuum-storage-postgres/migrations/2026-10-29-000001_task_waiting/down.sql; do
+  crates/hubuum-storage-postgres/migrations/2026-11-01-000001_task_waiting/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-01-000001_task_waiting/down.sql; do
   wait_output="$(bash "$classifier" "$wait_input")"
   assert_flag "$wait_output" rust true
   assert_flag "$wait_output" container true

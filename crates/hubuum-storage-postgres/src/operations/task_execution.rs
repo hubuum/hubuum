@@ -309,7 +309,7 @@ pub async fn recover_expired_task_leases(
             let stale = tasks::tasks
                 .filter(tasks::deleted_at.is_null())
                 .filter(sql::<Bool>("id IN (WITH candidates AS MATERIALIZED (SELECT t.id,octet_length(to_jsonb(t)::text)::bigint AS bytes FROM public.tasks t WHERE deleted_at IS NULL AND ((status IN ('validating','running') AND (lease_expires_at IS NULL OR lease_expires_at<=").bind::<Timestamp,_>(now)
-                    .sql(")) OR (status='queued' AND (execution_deadline_at<=").bind::<Timestamp,_>(now)
+                    .sql(")) OR (status IN ('queued','waiting') AND (execution_deadline_at<=").bind::<Timestamp,_>(now)
                     .sql(" OR (receipt_generation IS NOT NULL AND receipt_checkpoint IS NULL AND receipt_protection_deadline<=").bind::<Timestamp,_>(now)
                     .sql(")))) ORDER BY id LIMIT ").bind::<BigInt,_>(remaining)
                     .sql("), bounded AS (SELECT id,bytes,sum(CASE WHEN bytes<=").bind::<BigInt,_>(remaining_bytes)

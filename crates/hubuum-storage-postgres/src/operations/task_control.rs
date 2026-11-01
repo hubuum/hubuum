@@ -63,6 +63,7 @@ pub async fn wait_task(
                     PostgresStorageError::not_found("Task was not found")
                 });
             }
+            require_claimed_execution(connection, claimed).await?;
             let row = live_claimed_task(connection, claimed).await?;
             if !matches!(
                 stored_task_kind(&row)?,

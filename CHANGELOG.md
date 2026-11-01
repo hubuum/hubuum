@@ -199,12 +199,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   cancellation completes without an execution lease; private checkpoints and
   wake tokens are never exposed through the task API.
 - **Breaking (supported Rust crates / storage SDK):** advance all ten SDK
-  dependencies together to `0.9.0`. Adapters must implement
+  dependencies together to `0.17.0`. Adapters must implement
   `wait_task` and `resume_task`, preserve bounded typed checkpoints and original
   deadlines, and handle nonterminal `StorageTaskStatus::Waiting` without counting
   it as occupied execution. See the
-  [0.9 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-08-to-09).
-- **Breaking operational change:** install the durable-wait migration during a
+  [0.17 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-016-to-017).
+- **Breaking operational change:** install durable-wait migration `20261101000001` during a
   rolling upgrade while waiting remains dormant. Drain old workers and deploy
   matching API/worker binaries before enabling consumers. Current executors
   reject stored checkpoints they cannot interpret. Finish or

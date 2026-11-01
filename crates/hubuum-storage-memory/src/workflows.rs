@@ -815,11 +815,13 @@ impl TaskExecutionStorage for MemoryStorage {
                     && task
                         .lease_expires_at
                         .is_none_or(|expires_at| expires_at <= now))
-                    || (matches!(task.status, StorageTaskStatus::Queued | StorageTaskStatus::Waiting)
-                        && task
-                            .control
-                            .deadline()
-                            .is_some_and(|deadline| deadline <= now))
+                    || (matches!(
+                        task.status,
+                        StorageTaskStatus::Queued | StorageTaskStatus::Waiting
+                    ) && task
+                        .control
+                        .deadline()
+                        .is_some_and(|deadline| deadline <= now))
                     || (task.status == StorageTaskStatus::Queued
                         && task.receipt_admission.as_ref().is_some_and(|admission| {
                             admission.activated.is_none()

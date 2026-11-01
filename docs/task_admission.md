@@ -188,7 +188,7 @@ integer task ID does not restore its old token. Applications requiring a wait
 to survive logical replacement need a later durable provider-obligation contract;
 process restart alone preserves the currently stored wait.
 
-Migration `20261029000001` can be installed during a rolling upgrade while this
+Migration `20261101000001` can be installed during a rolling upgrade while this
 foundation is dormant. Before enabling any consumer, drain old workers and deploy
 matching API/worker binaries. Closed REST task-status enums
 must accept `waiting`; regenerate clients from OpenAPI. Administrator queue

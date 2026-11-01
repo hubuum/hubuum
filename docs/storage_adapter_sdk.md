@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.16`.
+Status: accepted; current experimental release train is `0.17`.
 
 ## Supported Crate Graph
 
@@ -684,6 +684,7 @@ retains lease-fenced cleanup with current holds pinned, preserving retry capacit
 Recheck holds and immutable task ownership even when its catalog row is
 absent, preserve producer grace, and acknowledge completion only after all
 physical obligations in the selected scope have been retired.
+
 ## Upgrading from 0.16 to 0.17
 
 Advance all ten SDK dependencies together. Every complete adapter implements

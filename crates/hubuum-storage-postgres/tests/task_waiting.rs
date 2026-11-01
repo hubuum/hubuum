@@ -237,7 +237,7 @@ async fn rollback_refuses_to_discard_a_durable_continuation() {
         diesel::sql_query("UPDATE tasks SET status='waiting',task_checkpoint=$2,wait_token=$3,lease_token=NULL,lease_expires_at=NULL WHERE id=$1")
             .bind::<Integer,_>(id).bind::<Text,_>(checkpoint.encoded()).bind::<SqlUuid,_>(Uuid::new_v4()).execute(connection).await?;
         connection.batch_execute("SAVEPOINT rejected_rollback").await?;
-        let rejected = connection.batch_execute(include_str!("../migrations/2026-10-29-000001_task_waiting/down.sql")).await;
+        let rejected = connection.batch_execute(include_str!("../migrations/2026-11-01-000001_task_waiting/down.sql")).await;
         assert!(rejected.unwrap_err().to_string().contains("Drain or cancel checkpointed tasks"));
         connection.batch_execute("ROLLBACK TO SAVEPOINT rejected_rollback").await?;
         assert!(accounting(connection, id).await?.checkpoint_present);

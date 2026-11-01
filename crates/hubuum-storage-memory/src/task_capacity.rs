@@ -518,7 +518,7 @@ impl MemoryState {
                 .owners
                 .get(&identity)
                 .ok_or_else(unknown_identity)?,
-            CapacityChange::Output,
+            CapacityChange::Resident,
         )
     }
 

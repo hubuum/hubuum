@@ -9,7 +9,8 @@ impl MemoryStorage {
         request: StorageTaskWaitRequest,
     ) -> Result<StorageTaskWait, StorageError> {
         let (lease, checkpoint) = request.into_parts();
-        let mut guard = self.state.write().await;
+        let mut guard = self.state.write().await?;
+        guard.ensure_task_lease_current(&lease)?;
         let task = guard
             .tasks
             .get(&lease.task_id().id())
@@ -67,7 +68,7 @@ impl MemoryStorage {
         &self,
         request: StorageTaskResumeRequest,
     ) -> Result<StorageTaskResumeOutcome, StorageError> {
-        let mut guard = self.state.write().await;
+        let mut guard = self.state.write().await?;
         let Some(task) = guard.tasks.get(&request.task_id().id()).filter(|task| {
             task.status == StorageTaskStatus::Waiting
                 && task
@@ -90,6 +91,7 @@ impl MemoryStorage {
                 "Task resumption is paused during maintenance",
             ));
         }
+        guard.ensure_task_execution_allowed()?;
         let mut state = guard.clone();
         let task = state
             .tasks
@@ -113,7 +115,8 @@ impl MemoryStorage {
 mod tests {
     use super::*;
     use hubuum_storage_core::{
-        TaskAdmissionPolicy, TaskByteLimit, TaskCapacityLimit, TaskScopeCapacity,
+        StorageTaskClaimRequest, TaskAdmissionPolicy, TaskByteLimit, TaskCapacityLimit,
+        TaskScopeCapacity, TaskWorkerId,
     };
     use rstest::rstest;
 
@@ -150,12 +153,15 @@ mod tests {
             .await
             .unwrap();
         let (_, lease) = storage
-            .claim_next_task(lease_duration())
+            .claim_next_task(StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                lease_duration(),
+            ))
             .await
             .unwrap()
             .unwrap()
             .into_parts();
-        let mut state = storage.state.write().await;
+        let mut state = storage.state.write_control().await;
         let task = state.tasks.get_mut(&lease.task_id().id()).unwrap();
         task.control.admit_deadline(Utc::now() + Duration::hours(1));
         task.progress = StorageTaskProgress::try_new(10, 3, 3, 0).unwrap();
@@ -175,7 +181,7 @@ mod tests {
     }
 
     async fn expire_deadline(storage: &MemoryStorage, id: TaskId) {
-        let mut state = storage.state.write().await;
+        let mut state = storage.state.write_control().await;
         let task = state.tasks.get_mut(&id.id()).unwrap();
         task.control = StorageTaskControl::try_new(
             task.kind,
@@ -252,7 +258,7 @@ mod tests {
                 .unwrap();
             let (original, lease) = claimed(&storage, StorageTaskKind::Export).await;
             let before = storage.task_capacity_snapshot().await.unwrap().ordinary();
-            let events = storage.state.read().await.task_events.clone();
+            let events = storage.state.read_control().await.task_events.clone();
             let error = storage
                 .wait_task(StorageTaskWaitRequest::new(lease.clone(), checkpoint()))
                 .await
@@ -261,7 +267,7 @@ mod tests {
                 error.task_capacity_rejection(),
                 Some(TaskCapacityRejection::ResidentBytes)
             );
-            let state = storage.state.read().await;
+            let state = storage.state.read_control().await;
             assert_eq!(
                 state.tasks[&original.id().id()].projection().unwrap(),
                 original
@@ -282,7 +288,7 @@ mod tests {
             let storage = MemoryStorage::new();
             let wait = waiting(&storage).await;
             let events_before =
-                storage.state.read().await.task_events[&wait.task().id().id()].len();
+                storage.state.read_control().await.task_events[&wait.task().id().id()].len();
             let first_storage = storage.clone();
             let first_request = resume(&wait);
             let first =
@@ -311,7 +317,7 @@ mod tests {
                 1
             );
             assert_eq!(
-                storage.state.read().await.task_events[&wait.task().id().id()].len(),
+                storage.state.read_control().await.task_events[&wait.task().id().id()].len(),
                 events_before + 1
             );
         });
@@ -329,7 +335,10 @@ mod tests {
             let before = storage.task_capacity_snapshot().await.unwrap().ordinary();
             storage.resume_task(resume(&wait)).await.unwrap();
             let (resumed, _) = storage
-                .claim_next_task(lease_duration())
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    lease_duration(),
+                ))
                 .await
                 .unwrap()
                 .unwrap()
@@ -360,7 +369,10 @@ mod tests {
             let first = waiting(&storage).await;
             storage.resume_task(resume(&first)).await.unwrap();
             let (_, lease) = storage
-                .claim_next_task(lease_duration())
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    lease_duration(),
+                ))
                 .await
                 .unwrap()
                 .unwrap()
@@ -374,7 +386,7 @@ mod tests {
                 StorageTaskResumeOutcome::Unchanged
             ));
             assert_eq!(
-                storage.state.read().await.tasks[&second.task().id().id()].status,
+                storage.state.read_control().await.tasks[&second.task().id().id()].status,
                 StorageTaskStatus::Waiting
             );
         });
@@ -407,7 +419,7 @@ mod tests {
                 "principal_disabled" => {
                     storage
                         .state
-                        .write()
+                        .write_control()
                         .await
                         .cancel_queued_tasks_for_principal(PrincipalId::new(1).unwrap())
                         .unwrap();
@@ -428,7 +440,7 @@ mod tests {
                 }
                 _ => unreachable!(),
             }
-            let task = storage.state.read().await.tasks[&wait.task().id().id()].clone();
+            let task = storage.state.read_control().await.tasks[&wait.task().id().id()].clone();
             assert_eq!(task.status, StorageTaskStatus::Cancelled);
             assert!(task.checkpoint.is_none() && task.wait_token.is_none());
             let usage = storage.task_capacity_snapshot().await.unwrap().ordinary();
@@ -461,13 +473,16 @@ mod tests {
             );
             assert!(
                 storage
-                    .claim_next_task(lease_duration())
+                    .claim_next_task(StorageTaskClaimRequest::new(
+                        TaskWorkerId::generate(),
+                        lease_duration()
+                    ))
                     .await
                     .unwrap()
                     .is_none()
             );
             assert_eq!(
-                storage.state.read().await.tasks[&wait.task().id().id()].status,
+                storage.state.read_control().await.tasks[&wait.task().id().id()].status,
                 StorageTaskStatus::Waiting
             );
         });
@@ -514,14 +529,17 @@ mod tests {
             let wait = waiting(&storage).await;
             storage.resume_task(resume(&wait)).await.unwrap();
             let (_, lease) = storage
-                .claim_next_task(lease_duration())
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    lease_duration(),
+                ))
                 .await
                 .unwrap()
                 .unwrap()
                 .into_parts();
             storage
                 .state
-                .write()
+                .write_control()
                 .await
                 .tasks
                 .get_mut(&lease.task_id().id())
@@ -533,7 +551,10 @@ mod tests {
             assert!(recovered[0].checkpoint().is_none());
             assert!(
                 storage
-                    .claim_next_task(lease_duration())
+                    .claim_next_task(StorageTaskClaimRequest::new(
+                        TaskWorkerId::generate(),
+                        lease_duration()
+                    ))
                     .await
                     .unwrap()
                     .is_none()
@@ -549,18 +570,26 @@ mod tests {
             storage.resume_task(resume(&wait)).await.unwrap();
             storage
                 .state
-                .write()
+                .write_control()
                 .await
                 .tasks
                 .get_mut(&wait.task().id().id())
                 .unwrap()
                 .attempt_count = i32::MAX;
             let before = storage.task_capacity_snapshot().await.unwrap().ordinary();
-            assert!(storage.claim_next_task(lease_duration()).await.is_err());
+            assert!(
+                storage
+                    .claim_next_task(StorageTaskClaimRequest::new(
+                        TaskWorkerId::generate(),
+                        lease_duration()
+                    ))
+                    .await
+                    .is_err()
+            );
             let after = storage.task_capacity_snapshot().await.unwrap().ordinary();
             assert_eq!(after, before);
             assert_eq!(
-                storage.state.read().await.tasks[&wait.task().id().id()].status,
+                storage.state.read_control().await.tasks[&wait.task().id().id()].status,
                 StorageTaskStatus::Queued
             );
         });
@@ -571,6 +600,8 @@ mod tests {
     #[case::cancelled("cancelled")]
     #[case::expired_deadline("expired_deadline")]
     #[case::expired_lease("expired_lease")]
+    #[case::missing_generation("missing_generation")]
+    #[case::superseded_generation("superseded_generation")]
     #[case::import("import")]
     #[case::remote_call("remote_call")]
     #[test]
@@ -582,9 +613,16 @@ mod tests {
                 "remote_call" => StorageTaskKind::RemoteCall,
                 _ => StorageTaskKind::Export,
             };
-            let (_, lease) = claimed(&storage, kind).await;
+            let (_, mut lease) = claimed(&storage, kind).await;
+            if invalid == "missing_generation" {
+                lease = StorageTaskLease::new(lease.task_id(), lease.token().clone());
+            }
+            if invalid == "superseded_generation" {
+                lease =
+                    lease.with_execution_fence(ApplicationFence::new(Uuid::new_v4(), 0).unwrap());
+            }
             {
-                let mut state = storage.state.write().await;
+                let mut state = storage.state.write_control().await;
                 let task = state.tasks.get_mut(&lease.task_id().id()).unwrap();
                 match invalid {
                     "unadmitted" => task.control = StorageTaskControl::new(kind),
@@ -600,7 +638,7 @@ mod tests {
             if invalid == "expired_deadline" {
                 expire_deadline(&storage, lease.task_id()).await;
             }
-            let original = storage.state.read().await.tasks[&lease.task_id().id()]
+            let original = storage.state.read_control().await.tasks[&lease.task_id().id()]
                 .projection()
                 .unwrap();
             assert!(
@@ -610,7 +648,7 @@ mod tests {
                     .is_err()
             );
             assert_eq!(
-                storage.state.read().await.tasks[&original.id().id()]
+                storage.state.read_control().await.tasks[&original.id().id()]
                     .projection()
                     .unwrap(),
                 original
@@ -623,7 +661,7 @@ mod tests {
         run(async {
             let storage = MemoryStorage::new();
             let (task, lease) = claimed(&storage, StorageTaskKind::Export).await;
-            storage.state.write().await.maintenance_state = MaintenanceState::Draining;
+            storage.state.write_control().await.maintenance_state = MaintenanceState::Draining;
             let wait = storage
                 .wait_task(StorageTaskWaitRequest::new(lease, checkpoint()))
                 .await
@@ -651,9 +689,12 @@ mod tests {
                 .unwrap()
                 .materialize()
                 .unwrap();
-            let capacity = storage.state.read().await.task_capacity.clone();
-            let replacement = crate::backup::restore(snapshot, capacity).unwrap();
-            *storage.state.write().await = replacement;
+            let (capacity, artifacts) = {
+                let state = storage.state.read_control().await;
+                (state.task_capacity.clone(), state.artifacts.clone())
+            };
+            let replacement = crate::backup::restore(snapshot, capacity, artifacts).unwrap();
+            *storage.state.write_control().await = replacement;
             let second = waiting(&storage).await;
             assert_eq!(first.task().id(), second.task().id());
             assert!(matches!(

@@ -4,10 +4,10 @@ use hubuum_storage_core::{
     ProtectedTaskAdmission, StorageBackupReplay, StorageSchemaProfileArtifact,
     StorageTaskCancellationOutcome, StorageTaskCancellationRequest, StorageTaskCapacitySnapshot,
     StorageTaskExecutionAdmission, StorageTaskExecutionObservation, StorageTaskPolicy,
-    StorageTaskPolicyUpdate, StorageTaskRemoteDispatch, StorageTaskSubmissionOutcome,
-    TaskActivationOutcome, TaskAdmissionPolicy, TaskCapacityStorage, TaskSubmissionLookup,
-    TaskSubmissionResolution,
-    StorageTaskResumeOutcome, StorageTaskResumeRequest, StorageTaskWait, StorageTaskWaitRequest,
+    StorageTaskPolicyUpdate, StorageTaskRemoteDispatch, StorageTaskResumeOutcome,
+    StorageTaskResumeRequest, StorageTaskSubmissionOutcome, StorageTaskWait,
+    StorageTaskWaitRequest, TaskActivationOutcome, TaskAdmissionPolicy, TaskCapacityStorage,
+    TaskSubmissionLookup, TaskSubmissionResolution,
 };
 
 #[async_trait]

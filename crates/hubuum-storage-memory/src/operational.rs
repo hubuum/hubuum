@@ -54,7 +54,7 @@ impl MetricsStorage for MemoryStorage {
     }
 
     async fn get_task_metrics_snapshot(&self) -> Result<StorageTaskGaugeSnapshot, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut counts = Vec::new();
         let mut ages = Vec::new();
         let mut last_terminal = Vec::new();
@@ -142,7 +142,7 @@ impl OperationalStateStorage for MemoryStorage {
     async fn get_task_queue_snapshot(
         &self,
     ) -> Result<StorageOperationalTaskQueueSnapshot, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let status_count = |status| {
             task_count(
                 state

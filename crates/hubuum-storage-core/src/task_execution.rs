@@ -13,8 +13,8 @@ use crate::{
     ApplicationFence, StorageError, StorageRemoteTargetHttpMethod, StorageRemoteTargetSubjectType,
     StorageTask, StorageTaskCancellationOutcome, StorageTaskCancellationRequest,
     StorageTaskDurations, StorageTaskExecutionAdmission, StorageTaskExecutionObservation,
-    StorageTaskKind, StorageTaskOutputLookup, StorageTaskRemoteDispatch, StorageTaskStatus,
-    StorageTaskResumeOutcome, StorageTaskResumeRequest, StorageTaskWait, StorageTaskWaitRequest,
+    StorageTaskKind, StorageTaskOutputLookup, StorageTaskRemoteDispatch, StorageTaskResumeOutcome,
+    StorageTaskResumeRequest, StorageTaskStatus, StorageTaskWait, StorageTaskWaitRequest,
     StorageValidationError,
 };
 

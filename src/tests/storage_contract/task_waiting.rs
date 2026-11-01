@@ -3,9 +3,9 @@ use hubuum_domain::{GroupId, ServiceAccountId};
 use hubuum_storage_conformance::verify_task_wait_resume;
 use hubuum_storage_core::{
     StorageTask, StorageTaskCancellationChange, StorageTaskCancellationRequest,
-    StorageTaskCheckpoint, StorageTaskExecutionAdmission, StorageTaskResumeOutcome,
-    StorageTaskResumeRequest, StorageTaskWait, StorageTaskWaitRequest, StorageTaskWaitToken,
-    TaskCapacityStorage,
+    StorageTaskCheckpoint, StorageTaskClaimRequest, StorageTaskExecutionAdmission,
+    StorageTaskResumeOutcome, StorageTaskResumeRequest, StorageTaskWait, StorageTaskWaitRequest,
+    StorageTaskWaitToken, TaskCapacityStorage, TaskWorkerId,
 };
 use hubuum_task_core::{TaskExecutionLimit, TaskStopReason};
 use rstest::rstest;
@@ -76,6 +76,7 @@ impl Fixture {
                 .unwrap(),
             )
             .await
+            .map(expect_legacy_task)
             .unwrap();
         Self {
             environment,
@@ -101,7 +102,10 @@ impl Fixture {
             }
             BackendTestEnvironment::Memory { .. } => self
                 .backend
-                .claim_next_task(duration)
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    duration,
+                ))
                 .await
                 .unwrap()
                 .unwrap(),
