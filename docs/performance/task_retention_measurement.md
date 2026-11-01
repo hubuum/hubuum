@@ -1,8 +1,17 @@
 # Task retention measurement
 
+P6 qualification is tracked in [#561](https://github.com/hubuum/hubuum/issues/561).
+On 2026-11-01, the maintainer approved completing the functional implementation
+in [#544](https://github.com/hubuum/hubuum/pull/544) with P6 explicitly deferred,
+after reviewing the final diagnostic's failed timing bounds and complete drain.
+The 60-second expiry target, 300-second recovery target, resource ceilings and
+repeated-run criteria remain unchanged. This guide records diagnostics, not a
+claim that P6 has passed; dependent lifecycle performance acceptance still needs
+qualified evidence.
+
 The task retention driver exercises production HTTP admission, authenticated
-checkpoint publication, real worker completion, and the administrator retention
-executor. It uses database timestamps without modifying them. The checked-in
+checkpoint publication, real worker completion and maintenance, and read-only
+administrator status. It uses database timestamps without modifying them. The checked-in
 driver supports an initial protected cohort, bounded steady refill, and cleanup,
 with a separate remote-effect recovery probe. Running it does not by itself
 establish that the P6 target in [lifecycle budgets](lifecycle_budgets.md) passed;
@@ -542,3 +551,46 @@ cleanup proof and all workload/resource bounds remain mandatory. The production
 runtime is unchanged by that driver correction. Fresh measurements are required.
 Raw reports and source/image metadata remain under
 `target/retention-544-20261031/shared-maintenance-retry-1`.
+
+## Independent-refill diagnostic
+
+Measurement source `143609fc51744feced7dde33bdf8d2b25139a1cd` uses the
+unchanged, verified `b470c944` production image. All 7,251 correctness tests,
+strict Clippy, formatting, OpenAPI consistency and Markdown lint passed before
+the isolated shared run. The native measurement executable was rebuilt, with
+all production inputs checked byte-for-byte against the verified image source.
+
+| Observation | Recorded value |
+| --- | --- |
+| Initial admission | 10,000 tasks in 75,752 ms |
+| Total admitted and fully drained | 21,603 tasks |
+| Eligible detail expirations / verified p95 upper bound | 19,505 / 142,130 ms; fails P6 |
+| Eligible receipt expirations / verified p95 upper bound | 15,333 / 110,452 ms; fails P6 |
+| Unknown deadlines / censored eligible observations | 0 / 0 |
+| Steady receipt observations | Minimum 5,706; median 10,000 |
+| Refill producers started during a busy status pass | 13 of 13 |
+| Total idle time between refill producers | 8,279 ms; largest gap 1,408 ms |
+| Administrator attempts / repository-busy refusals | 370 / 299 |
+| Largest application kernel RSS high-water mark | 241,528,832 bytes, below 512 MiB |
+| Maximum measured database RTT | 326,625 ns, below the shared 2 ms limit |
+
+The driver fully drained every admitted identity and retained complete eligible
+evidence, but correctly exited nonzero for the P6 timing failures. Resource
+monitoring was valid with no errors, and actual CPU/memory limits were verified.
+The population remained underfilled. Left-held interpolation averages 8,550.83
+receipts and is neither a proven lower bound nor an acceptance tolerance.
+
+Refills now proceed independently of status access. Repository-lock contention
+still delays independently verified completion observations. One separately
+recorded, read-only database spot check late in the drain found 18 eligible task
+rows with oldest lag 438.674 ms and five eligible receipts with oldest lag
+91.221 ms. That spot check is not a percentile, does not establish earlier
+physical cleanup latency and cannot replace the failing verified timing result.
+Future measurement must distinguish observation-lock delay from physical backlog
+while preserving the independent proof required for every cleanup success.
+
+Raw reports and source/image metadata remain under
+`target/retention-544-20261031/shared-refill-scheduling-1`; the additional spot
+check is recorded in `shared-refill-scheduling-1-physical-spotchecks.jsonl` beside
+that directory. This diagnostic establishes neither P6 acceptance nor the
+remaining repeated local/shared, real-hour output, or recovery qualification.
