@@ -69,6 +69,12 @@ API gracefully with one API/worker process and one execution slot. Shared uses
 two API processes, two workers with two slots each, and a 4 CPU/4 GiB database.
 `--steady-seconds 360` refills up to the initial receipt occupancy for three
 120-second windows, in batches of at most 256 actual submissions by default, then drains.
+One bounded refill producer runs concurrently with expiry observations; a second
+batch cannot start until the first producer has completed. This preserves the
+recipe's submission concurrency while observations continue during a refill.
+The observer joins the producer, including on failure, before the fixture
+can be removed. Its existing 120-second process timeout and 512 MiB resident
+limit still apply, and every admitted identity must appear in the final evidence.
 Use `--refill-max-batch 1000` when the smaller batch cannot replenish the target
 between cleanup observations. This bounds the number of arrivals per refill;
 the recipe's concurrency 32 and all application resource limits stay unchanged.
@@ -408,3 +414,31 @@ only while reservations keep joining, with a fixed overall bound. It does not
 establish that the subsequent gathering change passes qualification.
 Raw reports and source/image metadata remain under
 `target/retention-544-20261031/shared-captured-prefix-1`.
+
+## Growing-batch experiment
+
+Source `01a6e6b83c64de3525f9cb5b892b7dca9f1fdbde` tested extending the
+admission gathering interval while arrivals continued, with a fixed 50 ms bound.
+It passed 7,247 correctness tests and the production build. Its fresh shared run
+retained the same resource limits, 10,000-receipt target and 360-second steady phase.
+
+| Observation | Recorded value |
+| --- | --- |
+| Initial admission | 10,000 tasks in 75,922 ms |
+| Total admitted and fully drained | 24,188 tasks |
+| Eligible detail expirations / p95 lag | 18,977 / 35,686 ms |
+| Eligible receipt expirations / p95 lag | 14,842 / 20,188 ms |
+| Unknown deadlines / censored eligible observations | 0 / 0 |
+| Steady pre-refill receipt observations | Minimum 6,372; median 10,000 |
+
+Resources and expiry timing pass, but occupancy remains underfilled. Left-held
+pre-refill interpolation averages 8,568.94 receipts; it is neither a proven lower
+bound nor an acceptance tolerance. The extension showed no clear throughput
+benefit and was removed, restoring the fixed 10 ms gathering interval.
+Raw reports and source/image metadata remain under
+`target/retention-544-20261031/shared-growing-batches-1`.
+
+These diagnostics serialized each refill with the full cleanup observation pass.
+The subsequent concurrent producer removes that serialization without raising
+submission concurrency or changing expiry, population, or resource targets.
+Fresh measurements are required; the driver change alone establishes no P6 result.

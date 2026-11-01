@@ -1,7 +1,5 @@
-use std::task::Poll;
-
 use futures_util::poll;
-use tokio::time::{pause, resume, timeout};
+use tokio::time::timeout;
 
 use super::*;
 
@@ -47,69 +45,6 @@ async fn tickets(fixture: &Fixture, count: usize) -> Vec<TaskAdmissionTicket> {
         );
     }
     tickets
-}
-
-#[rstest::rstest]
-#[case::quiet_queue(1, false, 10)]
-#[case::full_queue(32, false, 0)]
-#[case::continual_arrivals(1, true, 50)]
-#[actix_web::test]
-async fn admission_gathering_has_a_short_idle_wait_and_a_fixed_growth_bound(
-    #[case] initial: usize,
-    #[case] growing: bool,
-    #[case] expected_ms: u64,
-) {
-    let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
-    let ticket = fixture.admit("gathering", StorageTaskKind::Import).await;
-    let configuration = fixture.service.configuration().unwrap();
-    let mut receivers = Vec::new();
-    for _ in 0..initial {
-        let (result, received) = oneshot::channel();
-        configuration
-            .admissions
-            .lock()
-            .await
-            .push_back(WaitingAdmission {
-                storage: fixture.storage.clone(),
-                ticket: ticket.clone(),
-                result,
-            });
-        receivers.push(received);
-    }
-    pause();
-    let started = Instant::now();
-    let mut gathering = Box::pin(gather_waiting_admissions(configuration));
-    for tick in 0..=5 {
-        if tick > 0 {
-            if growing {
-                let (result, received) = oneshot::channel();
-                configuration
-                    .admissions
-                    .lock()
-                    .await
-                    .push_back(WaitingAdmission {
-                        storage: fixture.storage.clone(),
-                        ticket: ticket.clone(),
-                        result,
-                    });
-                receivers.push(received);
-            }
-            sleep_until(started + Duration::from_millis(tick * 10)).await;
-        }
-        let progress = poll!(&mut gathering);
-        if tick * 10 < expected_ms {
-            assert!(progress.is_pending());
-        } else {
-            assert_eq!(progress, Poll::Ready(true));
-            break;
-        }
-    }
-    // Tokio's timer wheel rounds deadlines to millisecond boundaries.
-    assert!(
-        (Duration::from_millis(expected_ms)..=Duration::from_millis(expected_ms + 1))
-            .contains(&started.elapsed())
-    );
-    resume();
 }
 
 #[rstest::rstest]

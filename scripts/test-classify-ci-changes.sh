@@ -603,6 +603,7 @@ for lifecycle_input in \
   scale-benchmarks/lifecycle/task-retention-v1.json \
   crates/hubuum-scale-benchmark/src/task_retention.rs \
   crates/hubuum-scale-benchmark/src/task_retention_observe.rs \
+  crates/hubuum-scale-benchmark/src/task_retention_observe/refill.rs \
   crates/hubuum-scale-benchmark/src/task_retention_probes.rs \
   crates/hubuum-scale-benchmark/src/task_retention_safety.rs \
   crates/hubuum-scale-core/src/lifecycle.rs \

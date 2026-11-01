@@ -21,6 +21,10 @@ use sha2::{Digest, Sha256};
 use crate::lifecycle_process::{self, ProcessLimits};
 use crate::{Result, write_json};
 
+mod refill;
+
+use refill::PendingRefill;
+
 #[derive(Debug, Args)]
 pub struct ObserveArgs {
     #[arg(long)]
@@ -297,6 +301,21 @@ fn require_steady_expiry_targets(details: &Value, receipts: &Value) -> Result<()
     Ok(())
 }
 
+fn register_refill(
+    admitted: Vec<TaskIdentity>,
+    identities: &mut Vec<TaskIdentity>,
+    samples: &mut BTreeMap<TaskIdentity, Lifetime>,
+) -> Result<()> {
+    for identity in admitted {
+        if samples.contains_key(&identity) {
+            return Err("Refill unexpectedly reused an earlier task UUID".into());
+        }
+        samples.insert(identity, Lifetime::default());
+        identities.push(identity);
+    }
+    Ok(())
+}
+
 pub async fn run(options: ObserveArgs) -> Result<()> {
     if options.timeout_seconds == 0
         || options.timeout_seconds > 86400
@@ -353,7 +372,21 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
     let mut occupancy = Vec::new();
     let mut completed = false;
     let mut pass = 0;
+    let mut pending_refill: Option<PendingRefill> = None;
     loop {
+        if pending_refill
+            .as_ref()
+            .is_some_and(PendingRefill::is_finished)
+        {
+            register_refill(
+                pending_refill
+                    .take()
+                    .expect("finished refill exists")
+                    .finish()?,
+                &mut identities,
+                &mut samples,
+            )?;
+        }
         // Observe original clocks before cleanup can retire the receipt that carries them.
         for batch in identities.chunks(1000) {
             let query_started_ms = now_ms()?;
@@ -482,7 +515,9 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
             &samples,
         )?;
         passes.push(json!({"observed_at_ms":now_ms()?,"artifact":process_report}));
-        if started.elapsed() < Duration::from_secs(options.steady_seconds) {
+        if pending_refill.is_none()
+            && started.elapsed() < Duration::from_secs(options.steady_seconds)
+        {
             let refill = target_receipts
                 .saturating_sub(protected.receipts().len())
                 .min(options.refill_max_batch);
@@ -490,86 +525,12 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
                 if identities.len() + refill > 60000 {
                     return Err("Steady workload exhausted its declared 60k admission bound".into());
                 }
-                let mut recipe: Value = serde_json::from_slice(&fs::read(
-                    options
-                        .refill_workload
-                        .as_ref()
-                        .ok_or("Missing refill recipe")?,
-                )?)?;
-                recipe["count"] = json!(refill);
-                let recipe_path = options
-                    .artifact_directory
-                    .join(format!("refill-{pass}-recipe.json"));
-                let refill_path = options
-                    .artifact_directory
-                    .join(format!("refill-{pass}.json"));
-                write_json(&recipe_path, &recipe)?;
-                let mut command = Command::new(std::env::current_exe()?);
-                let metric_directory = options
-                    .artifact_directory
-                    .join(format!("refill-{pass}-metrics"));
-                fs::create_dir(&metric_directory)?;
-                command
-                    .args(["task-retention", "--origins"])
-                    .args(&options.refill_origins)
-                    .arg("--database-url")
-                    .arg(&options.database_url)
-                    .arg("--token-file")
-                    .arg(
-                        options
-                            .refill_token_file
-                            .as_ref()
-                            .ok_or("Missing refill credentials")?,
-                    )
-                    .arg("--workload-spec")
-                    .arg(&recipe_path)
-                    .arg("--cohort")
-                    .arg(format!("refill-{}-{pass}", std::process::id()))
-                    .arg("--output")
-                    .arg(&refill_path)
-                    .arg("--metric-directory")
-                    .arg(metric_directory);
-                let (result, resources) = lifecycle_process::run(
-                    &mut command,
-                    &options
-                        .artifact_directory
-                        .join(format!("refill-{pass}-process")),
-                    &limits,
-                );
-                write_json(
-                    &options
-                        .artifact_directory
-                        .join(format!("refill-{pass}-resources.json")),
-                    &json!({"process":resources,"result":result.as_ref().map(|output|json!({
-                        "status":output.status.to_string(),"stderr":String::from_utf8_lossy(&output.stderr)
-                    })).map_err(ToString::to_string)}),
-                )?;
-                if !result?.status.success() {
-                    return Err("Production steady refill failed; inspect refill artifacts".into());
-                }
-                let refill_report: Value = serde_json::from_slice(&fs::read(refill_path)?)?;
-                let rows = refill_report
-                    .get("admissions")
-                    .and_then(Value::as_array)
-                    .ok_or("Missing refill admissions")?;
-                if rows.len() != refill {
-                    return Err("Refill admission count differs from requested bounded work".into());
-                }
-                for row in rows {
-                    let identity = serde_json::from_value::<TaskIdentity>(
-                        row.get("task_identity")
-                            .cloned()
-                            .ok_or("Missing refill task UUID")?,
-                    )?;
-                    if samples.insert(identity, Lifetime::default()).is_some() {
-                        return Err("Refill unexpectedly reused an earlier task UUID".into());
-                    }
-                    identities.push(identity);
-                }
+                pending_refill = Some(PendingRefill::start(&options, pass, refill)?);
             }
         }
         pass += 1;
         if started.elapsed() >= Duration::from_secs(options.steady_seconds)
+            && pending_refill.is_none()
             && samples.values().all(|sample| {
                 if options.output_only {
                     sample.output_removal_observed_ms.is_some()
@@ -587,6 +548,11 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
             break;
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    // A timed-out observer still accounts for the admitted identities and joins
+    // its bounded producer before reporting incomplete evidence.
+    if let Some(refill) = pending_refill {
+        register_refill(refill.finish()?, &mut identities, &mut samples)?;
     }
     let mut receipt_lags = samples
         .values()
@@ -651,6 +617,7 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
         "full_drain_outcome":if completed {"complete"} else {"incomplete_timeout"},
         "full_drain_note":"A drain timeout is not itself an eligible-expiry percentile breach; inspect each denominator and p95_status",
         "observation_time_bounds":"source clocks and query starts round down to milliseconds; removal observations add a checked one-millisecond margin to query completion for an upper bound",
+        "refill_execution":"one bounded producer concurrent with expiry observations",
         "steady_seconds":options.steady_seconds,"steady_started_ms":steady_started_ms,"steady_until_ms":steady_until_ms,"occupancy":occupancy,
         "steady_receipt_expiry":steady_receipt_lags,"steady_detail_expiry":steady_detail_lags,
         "database_environment":database_environment,"database_round_trip_nanos":database_round_trip_nanos,
@@ -675,6 +642,23 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[rstest]
+    #[case::earlier_cohort(true)]
+    #[case::within_refill(false)]
+    fn concurrent_refill_cannot_reuse_an_observed_identity(#[case] previously_tracked: bool) {
+        let identity = TaskIdentity::generate();
+        let mut identities = Vec::new();
+        let mut samples = BTreeMap::new();
+        let admitted = if previously_tracked {
+            identities.push(identity);
+            samples.insert(identity, Lifetime::default());
+            vec![identity]
+        } else {
+            vec![identity, identity]
+        };
+        assert!(register_refill(admitted, &mut identities, &mut samples).is_err());
+    }
 
     #[rstest]
     #[case::within_target(59999, 59999, true)]

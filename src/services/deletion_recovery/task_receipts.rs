@@ -33,8 +33,7 @@ use crate::storage::{StorageContext, StorageHandle, storage_handle};
 
 const MAX_PENDING_ADMISSIONS_PER_PASS: u32 = 8;
 const MAX_WAITING_ADMISSIONS_PER_BATCH: usize = 32;
-const ADMISSION_COALESCING_INTERVAL: Duration = Duration::from_millis(10);
-const MAX_ADMISSION_COALESCING_WINDOW: Duration = Duration::from_millis(50);
+const ADMISSION_COALESCING_WINDOW: Duration = Duration::from_millis(10);
 const MAX_PURGE_BATCHES_PER_PASS: u32 = 8;
 const MAX_SELECTED_TASKS: u32 = 64;
 
@@ -433,34 +432,21 @@ impl TaskReceiptService {
     }
 }
 
-async fn gather_waiting_admissions(configuration: &Arc<Configuration>) -> bool {
-    let mut waiting = configuration.admissions.lock().await.len();
-    if waiting == 0 {
-        return false;
-    }
-    // Concurrent requests still finish their database reservations separately.
-    // Keep gathering only while that queue grows. Light traffic waits one short
-    // interval; sustained arrivals cannot extend the fixed overall deadline.
-    // The independent repository remains available throughout this wait.
-    let deadline = Instant::now() + MAX_ADMISSION_COALESCING_WINDOW;
-    while waiting < MAX_WAITING_ADMISSIONS_PER_BATCH {
-        sleep_until(deadline.min(Instant::now() + ADMISSION_COALESCING_INTERVAL)).await;
-        let current = configuration.admissions.lock().await.len();
-        if current <= waiting || Instant::now() >= deadline {
-            break;
-        }
-        waiting = current;
-    }
-    true
-}
-
 /// Share a freshly verified, exclusively held repository session, never a
 /// cached activation proof. Each ticket still crosses its own storage CAS with
 /// a current application fence. A bounded batch releases publication ownership
 /// between groups so retention and recovery can make progress.
 async fn protect_waiting_admissions(configuration: &Arc<Configuration>) {
-    if !gather_waiting_admissions(configuration).await {
+    let waiting = configuration.admissions.lock().await.len();
+    if waiting == 0 {
         return;
+    }
+    // Concurrent requests still finish their database reservations separately.
+    // Give those arrivals a bounded chance to join before taking the independent
+    // publication lock; otherwise a fast first request publishes a tiny group.
+    // The absolute ticket deadlines and the maximum group size remain unchanged.
+    if waiting < MAX_WAITING_ADMISSIONS_PER_BATCH {
+        sleep_until(Instant::now() + ADMISSION_COALESCING_WINDOW).await;
     }
     // Include requests that arrive while another process owns publication or
     // while this session verifies its checkpoint. Selecting first strands those
