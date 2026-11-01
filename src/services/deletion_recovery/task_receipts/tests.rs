@@ -453,7 +453,7 @@ async fn idle_protected_maintenance_rechecks_new_work_before_the_output_cleanup_
 }
 
 #[actix_web::test]
-async fn productive_background_pass_leaves_time_for_other_repository_publishers() {
+async fn background_maintenance_respects_another_repository_publisher() {
     let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
     for index in 0..=MAX_PENDING_ADMISSIONS_PER_PASS {
         fixture
@@ -463,6 +463,17 @@ async fn productive_background_pass_leaves_time_for_other_repository_publishers(
             )
             .await;
     }
+    // Complete exactly one bounded pass, then let an independent publisher own
+    // the repository while background maintenance still has admission debt.
+    fixture
+        .service
+        .sweep_task_retention(&fixture.storage)
+        .await
+        .unwrap();
+    let publication = try_open_session(fixture.service.configuration().unwrap())
+        .await
+        .unwrap()
+        .expect("a bounded pass must release publication ownership");
     let context = AppContext::new(
         fixture.storage.clone(),
         Arc::new(LocalPermissionBackend::new(
@@ -477,42 +488,84 @@ async fn productive_background_pass_leaves_time_for_other_repository_publishers(
         Duration::from_secs(30),
         shutdown.clone(),
     ));
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while fixture
-            .storage
-            .list_pending_task_admissions(64)
-            .await
-            .unwrap()
-            .len()
-            > 1
-        {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("the first bounded pass must activate its admissions");
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(250)).await;
     let remaining = fixture
         .storage
         .list_pending_task_admissions(64)
         .await
         .unwrap();
-    let publication = try_open_session(fixture.service.configuration().unwrap()).await;
     shutdown.request();
     tokio::time::timeout(Duration::from_secs(2), maintenance)
         .await
         .expect("shutdown must interrupt the maintenance pause")
         .unwrap();
-
+    drop(publication);
     assert_eq!(
         remaining.len(),
         1,
-        "a productive pass must pause before draining the next batch"
+        "another publisher's session must exclude maintenance mutations"
     );
-    assert!(
-        publication.unwrap().is_some(),
-        "another publisher must be able to acquire the repository during the pause"
-    );
+}
+
+#[rstest::rstest]
+#[case::productive(false)]
+#[case::temporarily_contended(true)]
+#[actix_web::test]
+async fn background_maintenance_drains_debt_without_the_idle_poll_delay(
+    #[case] initially_contended: bool,
+) {
+    let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
+    for index in 0..=MAX_PENDING_ADMISSIONS_PER_PASS {
+        fixture
+            .admit(
+                &format!("maintenance-debt-{index}"),
+                StorageTaskKind::Import,
+            )
+            .await;
+    }
+    let publication = if initially_contended {
+        Some(
+            open_session(fixture.service.configuration().unwrap())
+                .await
+                .unwrap(),
+        )
+    } else {
+        None
+    };
+    let context = AppContext::new(
+        fixture.storage.clone(),
+        Arc::new(LocalPermissionBackend::new(
+            fixture.storage.clone(),
+            "admin".to_owned(),
+        )),
+    )
+    .with_task_receipts(fixture.service.clone());
+    let shutdown = crate::lifecycle::ShutdownSignal::new();
+    let maintenance = actix_rt::spawn(crate::tasks::run_task_maintenance_for_test(
+        context,
+        Duration::from_secs(30),
+        shutdown.clone(),
+    ));
+    if initially_contended {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    drop(publication);
+    let drained = tokio::time::timeout(Duration::from_secs(5), async {
+        while !fixture
+            .storage
+            .list_pending_task_admissions(64)
+            .await
+            .unwrap()
+            .is_empty()
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    shutdown.request();
+    maintenance.await.unwrap();
+    drained
+        .expect("productive and contended maintenance must resume before the 30-second idle poll");
 }
 
 #[actix_web::test]

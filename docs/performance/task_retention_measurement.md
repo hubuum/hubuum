@@ -476,3 +476,34 @@ prove physical removal and independently protected retirement under the same
 deadlines; passing this diagnostic does not qualify that change or establish P6.
 Raw reports and source/image metadata remain under
 `target/retention-544-20261031/shared-concurrent-refill-1`.
+
+## Worker-only cleanup diagnostic
+
+Measurement source `f2f26876f10547af40d4d16a12d8770eae30d3f8` used the
+verified `861cb8cc` production runtime with concurrent refill and read-only
+status observations. All 7,249 correctness tests passed. The isolated shared run
+kept the same workload, resource ceilings and 360-second steady phase.
+
+| Observation | Recorded value |
+| --- | --- |
+| Initial admission | 10,000 tasks in 75,218 ms |
+| Total admitted and fully drained | 23,698 tasks |
+| Eligible detail expirations / p95 lag | 20,164 / 91,531 ms; fails P6 |
+| Eligible receipt expirations / p95 lag | 15,723 / 58,227 ms |
+| Unknown deadlines / censored eligible observations | 0 / 0 |
+| Steady receipt observations | Minimum 6,928; median 10,000 |
+
+Resource monitoring was valid and reported no errors. The real worker detail
+cleanup failed the 60-second p95 target; the earlier administrator-driven
+diagnostics had supplemented that maintenance. Occupancy also remained
+underfilled. Left-held interpolation averages 8,943.46 receipts and is neither
+a proven lower bound nor an acceptance tolerance.
+
+The maintenance loop discarded its productive-work result and always slept for
+the full poll interval. A repository-busy refusal also became an idle result.
+The subsequent scheduling change retries both after a bounded publisher pause,
+retaining normal cadence for idle, blocked-only and failed passes. Row, byte,
+manifest and resource bounds stay unchanged. Fresh worker-only measurements
+must establish whether that fix meets P6.
+Raw reports and source/image metadata remain under
+`target/retention-544-20261031/shared-worker-observation-1`.

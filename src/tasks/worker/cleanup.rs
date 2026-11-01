@@ -19,18 +19,26 @@ pub(super) async fn run(context: AppContext, poll_interval: Duration, shutdown: 
             break;
         }
         let work = Box::pin(iteration(&context, &tasks, &artifacts));
-        if let Err(error) =
-            with_storage_call_site(&context, StorageCallSite::TaskWorker, work).await
-        {
-            error!(message = "Task maintenance iteration failed", error = %error);
-        }
+        let retry_soon =
+            match with_storage_call_site(&context, StorageCallSite::TaskWorker, work).await {
+                Ok(retry_soon) => retry_soon,
+                Err(error) => {
+                    error!(message = "Task maintenance iteration failed", error = %error);
+                    false
+                }
+            };
         // Release the cross-process publication lock between bounded passes,
         // including productive ones. A runtime yield alone cannot give another
         // process an opportunity to publish a hold, admission, or checkpoint.
+        let pause = if retry_soon {
+            poll_interval.min(Duration::from_millis(100))
+        } else {
+            poll_interval
+        };
         tokio::select! {
             biased;
             _ = shutdown.requested() => break,
-            _ = sleep(poll_interval) => {}
+            _ = sleep(pause) => {}
         }
     }
 }

@@ -158,9 +158,11 @@ its configured task claimants. Cleanup retains its own application admission,
 maintenance/quarantine checks, execution scope and shutdown handling. Its local
 schedules avoid backend polling between cleanup intervals. A bounded pass can
 continue pending work without making a queue claimant wait for that pass;
-protected admission activation wakes the queue separately. Each bounded pass
-waits for the configured worker poll interval before reacquiring the repository,
-including when more work remains, so other publishers have time to acquire it.
+protected admission activation wakes the queue separately. Productive passes and
+repository-busy refusals retry after a 100 ms pause, or the configured worker poll
+interval if shorter. This gives other publishers time to acquire the repository
+without postponing known debt for an entire idle poll. Idle, blocked-only and
+failed passes retain the configured worker poll interval.
 Shutdown interrupts that wait. Artifact cleanup uses the same maintenance loop.
 Task visibility compares stable UUIDs directly against retained targets, and
 queue claims use an index matching their status, kind and creation order.
@@ -329,8 +331,9 @@ consulting the cache alone.
 Protected receipt and detail maintenance runs at the configured task-worker poll
 interval, including after an idle pass. It does not inherit the legacy output
 cleanup interval (300 seconds by default). Each pass still releases publication
-ownership and waits for the next poll; its row, byte and manifest bounds remain
-in effect. Legacy output and artifact cleanup retain their configured interval.
+ownership; productive or contended passes use the shorter publisher pause.
+Its row, byte and manifest bounds remain in effect. Legacy output and artifact
+cleanup retain their configured interval.
 
 Receipt activation and task visibility are checked while choosing each queue
 head, before scheduling counters or worker leases advance. A pending receipt,

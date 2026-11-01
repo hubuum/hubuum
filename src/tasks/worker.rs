@@ -736,15 +736,16 @@ async fn maybe_cleanup_expired_task_outputs(
         .try_sweep_task_retention(backend)
         .await?
     else {
-        // Keep cleanup due for a later maintenance iteration. An independent
-        // task claimant never waits for this repository publication session.
-        return Ok(false);
+        // Contention says nothing about remaining work. Retry after the bounded
+        // publisher pause instead of treating a busy repository as idle.
+        // Independent task claimants never await this maintenance loop.
+        return Ok(true);
     };
     match sweep {
         TaskRetentionSweep::Disabled => {}
         TaskRetentionSweep::Protected { more, .. } => {
-            // The worker poll interval bounds both productive and idle protected
-            // passes. The legacy output timer must not delay newly eligible work.
+            // Productive passes retry after a bounded publisher pause; idle and
+            // blocked-only passes retain the ordinary worker poll interval.
             if more {
                 // A maintenance pass can activate protected admissions. Queue
                 // claimants have their own wakeup and never await this loop.

@@ -56,6 +56,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   still checking current files, signing keys and supersession before collection.
   Protected maintenance checks for newly eligible work at the worker poll cadence
   after idle passes, avoiding the legacy output cleanup timer's five-minute delay.
+  Productive or temporarily contended protected passes retry after a bounded
+  100 ms publisher pause instead of waiting for the full idle poll interval.
 
 - `--reapply-control` verifies retained deletion decisions against the current
   application image, independently protects completion, and reopens access.
