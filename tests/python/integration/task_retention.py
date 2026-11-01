@@ -14,6 +14,7 @@ import secrets
 import subprocess
 import threading
 import time
+import urllib.request
 import uuid
 
 from integration.corpus import Api, Deployment, POSTGRES_IMAGE, wait_for
@@ -433,9 +434,61 @@ class RetentionDeployment(Deployment):
         self.containers.append(name)
         self.application_containers.append(name)
         self.docker("run", "--detach", "--name", name, "--network", self.name,
+                    "--publish", "127.0.0.1::8080",
                     *self.environment("source"), *self.application_command(name, f"worker-{index}"))
+        self.wait_for_startup(name, "/metrics")
         self.role = "api"
         return name
+
+    def wait_for_startup(self, name, path):
+        started = attempt_started = time.monotonic()
+        attempts = 1
+        refusals = []
+        completed = False
+
+        def ready():
+            nonlocal attempts, attempt_started
+            state = json.loads(self.docker("inspect", "--format", "{{json .State}}", name).stdout)
+            if state["Status"] == "exited":
+                logs = self.docker("logs", "--since", state["StartedAt"], name)
+                failures = []
+                for line in (logs.stdout + logs.stderr).splitlines():
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(record, dict) and "exit_code" in record:
+                        failures.append(record)
+                busy = "Recovery startup gate: Control repository is busy; retry without bypassing protection"
+                if state["ExitCode"] != 3 or not failures or failures[-1].get("message") != busy:
+                    raise RuntimeError(f"Measured application {name} exited during startup; inspect retained application logs")
+                now = time.monotonic()
+                refusals.append({"attempt": attempts, "elapsed_ms": (now - attempt_started) * 1000,
+                                 "outcome": "control_repository_busy"})
+                if now - started >= 30:
+                    raise RuntimeError("Application startup exhausted its control repository contention budget")
+                self.docker("start", name)
+                attempts += 1
+                attempt_started = time.monotonic()
+                return False
+            if not state["Running"]:
+                return False
+            try:
+                endpoint = "http://" + self.host_endpoint(name, 8080) + path
+                with urllib.request.urlopen(endpoint, timeout=1) as response:
+                    return response.status == 200
+            except OSError:
+                return False
+
+        try:
+            wait_for("application readiness", ready)
+            completed = True
+        finally:
+            write_json(self.root / f"startup-{name.removeprefix(self.name + '-')}.json", {
+                "attempts": attempts, "completed": completed,
+                "elapsed_ms": (time.monotonic() - started) * 1000,
+                "contention_retry_budget_seconds": 30, "refusals": refusals,
+            })
 
     def start_measured_api(self, index=0, role="api"):
         self.role = role
@@ -445,17 +498,8 @@ class RetentionDeployment(Deployment):
         self.docker("run", "--detach", "--name", name, "--network", self.name,
                     "--publish", "127.0.0.1::8080", *self.environment("source"),
                     *self.application_command(name, f"{role}-{index}"))
-        address = self.host_endpoint(name, 8080)
-        api = Api("http://" + address)
-
-        def ready():
-            try:
-                api.get("/readyz")
-                return True
-            except (OSError, ValueError):
-                return False
-
-        wait_for("application readiness", ready)
+        self.wait_for_startup(name, "/readyz")
+        api = Api("http://" + self.host_endpoint(name, 8080))
         self.role = "api"
         return api, name
 

@@ -84,6 +84,94 @@ class TaskRetentionMeasurementTests(unittest.TestCase):
                                       ]})
             self.assertNotIn("fixture-secret", report_path.read_text())
 
+    def test_worker_startup_waits_for_a_live_metrics_listener(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            deployment = RETENTION.RetentionDeployment.__new__(RETENTION.RetentionDeployment)
+            deployment.root, deployment.name = Path(temporary), "fixture"
+            deployment.host_endpoint = MagicMock(return_value="127.0.0.1:12345")
+            deployment.docker = MagicMock(return_value=SimpleNamespace(stdout=json.dumps({
+                "Status": "running", "Running": True,
+            })))
+            response = MagicMock()
+            response.__enter__.return_value.status = 200
+            with patch.object(RETENTION.urllib.request, "urlopen", side_effect=[ConnectionRefusedError(), response]) as request, \
+                    patch.object(RETENTION.time, "sleep"):
+                deployment.wait_for_startup("fixture-worker-0", "/metrics")
+            self.assertEqual(request.call_count, 2)
+            request.assert_called_with("http://127.0.0.1:12345/metrics", timeout=1)
+            self.assertTrue(json.loads((deployment.root / "startup-worker-0.json").read_text())["completed"])
+
+    def test_startup_retries_only_recorded_lock_refusal(self):
+        busy = "Recovery startup gate: Control repository is busy; retry without bypassing protection"
+        with tempfile.TemporaryDirectory() as temporary:
+            deployment = RETENTION.RetentionDeployment.__new__(RETENTION.RetentionDeployment)
+            deployment.root, deployment.name = Path(temporary), "fixture"
+            deployment.host_endpoint = MagicMock(return_value="127.0.0.1:12345")
+            deployment.docker = MagicMock(side_effect=[
+                SimpleNamespace(stdout=json.dumps({"Status": "exited", "Running": False,
+                                                   "ExitCode": 3, "StartedAt": "attempt-start"})),
+                SimpleNamespace(stdout="unrelated fixture-secret\n", stderr=json.dumps({"exit_code": 3, "message": busy})),
+                SimpleNamespace(stdout="fixture-worker-0"),
+                SimpleNamespace(stdout=json.dumps({"Status": "running", "Running": True})),
+            ])
+            response = MagicMock()
+            response.__enter__.return_value.status = 200
+            with patch.object(RETENTION.urllib.request, "urlopen", return_value=response), \
+                    patch.object(RETENTION.time, "sleep"):
+                deployment.wait_for_startup("fixture-worker-0", "/metrics")
+            deployment.docker.assert_any_call("logs", "--since", "attempt-start", "fixture-worker-0")
+            deployment.docker.assert_any_call("start", "fixture-worker-0")
+            report_path = deployment.root / "startup-worker-0.json"
+            report = json.loads(report_path.read_text())
+            self.assertTrue(report["completed"])
+            self.assertEqual(report["attempts"], 2)
+            self.assertEqual([row["outcome"] for row in report["refusals"]], ["control_repository_busy"])
+            self.assertNotIn("fixture-secret", report_path.read_text())
+
+    def test_startup_does_not_restart_other_failures(self):
+        busy = "Recovery startup gate: Control repository is busy; retry without bypassing protection"
+        fatal = json.dumps({"exit_code": 3, "message": "Recovery startup gate: Control key does not match"})
+        cases = ((3, fatal), (137, json.dumps({"exit_code": 137, "message": busy})),
+                 (3, busy), (3, json.dumps({"exit_code": 3, "message": busy}) + "\n" + fatal))
+        for exit_code, diagnostic in cases:
+            with self.subTest(exit_code=exit_code, diagnostic=diagnostic), tempfile.TemporaryDirectory() as temporary:
+                deployment = RETENTION.RetentionDeployment.__new__(RETENTION.RetentionDeployment)
+                deployment.root, deployment.name = Path(temporary), "fixture"
+                deployment.docker = MagicMock(side_effect=[
+                    SimpleNamespace(stdout=json.dumps({"Status": "exited", "ExitCode": exit_code, "StartedAt": "attempt-start"})),
+                    SimpleNamespace(stdout=diagnostic, stderr=""),
+                ])
+                with self.assertRaisesRegex(RuntimeError, "exited during startup"):
+                    deployment.wait_for_startup("fixture-worker-0", "/metrics")
+                self.assertEqual(deployment.docker.call_count, 2)
+                report = json.loads((deployment.root / "startup-worker-0.json").read_text())
+                self.assertFalse(report["completed"])
+                self.assertEqual(report["attempts"], 1)
+
+    def test_startup_contention_retry_budget_does_not_reset(self):
+        busy = "Recovery startup gate: Control repository is busy; retry without bypassing protection"
+        with tempfile.TemporaryDirectory() as temporary:
+            deployment = RETENTION.RetentionDeployment.__new__(RETENTION.RetentionDeployment)
+            deployment.root, deployment.name = Path(temporary), "fixture"
+            clock = [0.0]
+
+            def docker(*args):
+                if args[0] == "inspect":
+                    return SimpleNamespace(stdout=json.dumps({"Status": "exited", "ExitCode": 3, "StartedAt": "attempt-start"}))
+                if args[0] == "logs":
+                    clock[0] += 15
+                    return SimpleNamespace(stdout=json.dumps({"exit_code": 3, "message": busy}), stderr="")
+                return SimpleNamespace(stdout="fixture-worker-0")
+
+            deployment.docker = MagicMock(side_effect=docker)
+            with patch.object(RETENTION.time, "monotonic", side_effect=lambda: clock[0]), \
+                    patch.object(RETENTION.time, "sleep"), self.assertRaisesRegex(RuntimeError, "contention budget"):
+                deployment.wait_for_startup("fixture-worker-0", "/metrics")
+            report = json.loads((deployment.root / "startup-worker-0.json").read_text())
+            self.assertEqual(report["elapsed_ms"], 30000)
+            self.assertEqual(report["attempts"], 2)
+            self.assertFalse(report["completed"])
+
     def test_administrator_does_not_retry_recovery_required(self):
         failure = RuntimeError('Error: ServiceUnavailable("Recover independently acknowledged control before task administration")')
         with tempfile.TemporaryDirectory() as temporary:

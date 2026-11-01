@@ -103,6 +103,14 @@ original overall timeout/pass limit. Contention delays remain part of observed
 expiry lag; no source deadline or measurement window is renewed. Key mismatches,
 recovery-required outcomes and other failures still stop the run.
 
+Application startup also retries only an exited process whose exact fatal
+diagnostic identifies repository-lock contention, for at most 30 seconds from
+the original startup attempt. Every restart and total elapsed time is retained
+in `startup-*.json`. APIs must answer readiness and workers must serve their
+metrics listener before their process resource limits are verified. Other
+startup failures remain fatal; these retries never bypass the recovery gate or
+renew task deadlines.
+
 Some rootless engines expose a memory controller but no CPU quota controller.
 The driver refuses to treat requested `--cpus` flags as enforcement on those
 engines. Build a measurement-only image with `taskset`, then add `--cpu-affinity`
