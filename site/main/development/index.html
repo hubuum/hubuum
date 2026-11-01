@@ -5570,9 +5570,10 @@ move constraints, indexes, and the rationale for keeping its PostgreSQL
 mechanics adapter-local.</p>
 <h2 id="pull-request-ci-tiers">Pull request CI tiers<a class="headerlink" href="#pull-request-ci-tiers" title="Permanent link">&para;</a></h2>
 <p>Ordinary prose and documentation-site changes run Markdown and documentation
-checks without the application matrix or benchmark cache builds. <code>CHANGELOG.md</code>
-retains the OpenAPI and operational-contract checks because release notes are
-inputs to compatibility exceptions. Embedded documentation, generated contracts,
+checks without Python or monitoring jobs, the application matrix, or benchmark
+cache builds. <code>CHANGELOG.md</code> retains the OpenAPI and operational-contract checks
+in the final validation tier because release notes are inputs to compatibility
+exceptions. Embedded documentation, generated contracts,
 and architecture-test inputs retain their existing code checks; unknown files
 under <code>docs/</code> also receive conservative validation.</p>
 <p>Change selection compares pull requests against their merge base, includes both
@@ -5581,12 +5582,19 @@ sides of renames, and fails if Git cannot produce a reliable diff. The existing
 benchmark inputs change; manual benchmark dispatch still forces cache warming.</p>
 <p>Pull request validation is selected from the complete base-to-head diff:</p>
 <ul>
+<li>Open PRs as drafts and keep them in draft during implementation and review
+  iteration. Mark ready for review as the final validation step before merging;
+  no CI label is needed for normal final validation.</li>
 <li>Draft documentation-only pull requests run Markdown lint when Markdown files
-  changed.</li>
+  changed, plus the documentation-site checks when relevant.</li>
 <li>Draft Rust pull requests run Rust formatting and the complete default-feature
-  test suite on Linux with PostgreSQL. They do not run the other feature
-  combinations, cross-platform tests, production container build, release
-  build, or benchmarks.</li>
+  application test suite on Linux with PostgreSQL, relevant Python regressions,
+  dependency policy, and cheap Rust API classification. Package compatibility,
+  adapter-native and all-feature workspace package contracts, generated API and
+  operational contracts, monitoring integration, external authorization
+  conformance, and fuzzing wait for final validation. Other feature combinations,
+  cross-platform tests, production container and release builds, and automatic
+  benchmarks also wait for that tier.</li>
 <li>Ready-for-review Rust pull requests run the complete CI suite. The
   <code>ready_for_review</code> event starts that suite immediately, and later pushes keep
   running it.</li>
@@ -5596,8 +5604,8 @@ benchmark inputs change; manual benchmark dispatch still forces cache warming.</
   a binary. <code>docs/querying.md</code> is treated as a test input because the API test
   suite compiles and validates its documented operator lists.</li>
 </ul>
-<p>The OpenAPI contract check is blocking at every CI tier where API inputs
-change. It separately verifies exact generated-document drift and semantic
+<p>The OpenAPI contract check is blocking in the final validation tier where API
+inputs change. It separately verifies exact generated-document drift and semantic
 compatibility with the latest stable release, then uploads generated, baseline,
 diff, JSON, and Markdown evidence. The policy scripts, severity configuration,
 and breaking-change exception file are themselves classified as OpenAPI inputs.
@@ -5605,17 +5613,27 @@ See <a href="../releasing/#openapi-compatibility-gate">the release guide</a> for
 and intentional-break rules.</p>
 <p>The Rust API policy check classifies every Cargo package and prevents internal
 packages from becoming publishable accidentally. If a package is deliberately
-promoted to experimental or stable public status, the same job adds rustdoc,
-clean package, and semantic compatibility checks automatically. The change
+promoted to experimental or stable public status, the same job adds minimum-Rust
+tests, rustdoc, clean package, and semantic compatibility checks in final
+validation. The change
 classifier discovers each declared policy document so deleting or moving one
 still selects this job in an otherwise documentation-only change. Run the local
 fixtures with <code>python3 tests/python/run.py unit policies.test_rust_api</code> and
 <code>python3 tests/python/run.py unit policies.test_crates_io_baseline</code>.</p>
-<p>The <code>ci:full</code> pull request label forces the complete CI and benchmark suites,
-including on a draft or documentation-only pull request. The <code>ci:benchmarks</code>
-label forces all benchmark jobs without expanding the main CI tier. Adding or
-removing either label takes effect immediately; converting a pull request back
-to draft cancels superseded work unless a forcing label remains.</p>
+<p>Keep broad CI labels off routine drafts. For an exceptional early production
+check, <code>ci:validate</code> forces the full correctness tier without forcing benchmarks.
+Use <code>ci:full</code> only when all performance scopes are also needed; it forces full
+correctness and benchmarks even on drafts or documentation-only PRs. Record the
+reason for either exception in the PR description. <code>ci:benchmarks</code> requests every
+performance scope without expanding correctness CI.</p>
+<p>For performance investigations, use a narrow <code>ci:bench:scope:*</code> or
+<code>ci:bench:tag:*</code> selector with a profile, and remove the investigation labels
+after collecting evidence. A profile alone changes effort without enabling
+draft benchmarks. See <a href="../benchmark_ci/">benchmark controls</a>. Adding or removing
+selectors recalculates work immediately. Returning to draft cancels superseded
+main CI, benchmark, and fuzz work, but explicit forcing labels remain effective.
+Scale and scheduler measurements have separate opt-in controls and are not
+cancelled by returning to draft.</p>
 <p>The lightweight change classifier is implemented by
 <code>scripts/classify-ci-changes.sh</code>. Unknown file types are classified
 conservatively as code, container, artifact, and benchmark inputs. Keep its
@@ -5753,9 +5771,10 @@ keeps pool-use regressions visible without attributing a connection-health
 query nondeterministically to the next operation.</p>
 <h3 id="ci-behavior">CI behavior<a class="headerlink" href="#ci-behavior" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Draft pull requests skip benchmarks unless <code>ci:full</code> or <code>ci:benchmarks</code> is
-  present. Ready pull requests run only the benchmark jobs affected by their
-  base-to-head diff.</li>
+<li>Draft pull requests skip benchmarks unless a scope/tag selector, <code>ci:full</code>, or
+  <code>ci:benchmarks</code> requests them. Profile labels only set measurement effort.
+  Ready pull requests run the affected work unless an explicit selector changes
+  the scope.</li>
 <li>Change classification happens before PostgreSQL services or benchmark
   runners are allocated. Superseded benchmark workflow runs are cancelled.</li>
 <li>Discovery uses the pinned action and preserves moved-target base mappings.

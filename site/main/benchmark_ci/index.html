@@ -5068,7 +5068,9 @@
 <p>Correctness validation, performance scope, target tags, and measurement effort are
 independent controls. Ordinary ready PRs run affected performance work with the
 <code>standard</code> profile. Drafts retain their lightweight correctness tier and skip
-automatic performance work unless a performance selector is present.</p>
+automatic performance work unless a scope/tag selector or broad performance
+label is present. Open PRs as drafts without broad CI labels, then mark ready as
+the final validation step before merging; no label is needed for that transition.</p>
 <h2 id="validation-and-compatibility-labels">Validation and compatibility labels<a class="headerlink" href="#validation-and-compatibility-labels" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -5096,6 +5098,11 @@ automatic performance work unless a performance selector is present.</p>
 </tr>
 </tbody>
 </table>
+<p>Reserve <code>ci:validate</code> for exceptional early correctness/production validation.
+Reserve <code>ci:full</code> for cases that also need every performance scope. Record the
+reason for either exception in the PR description. For investigations, prefer
+narrow scope/tag selectors with a profile, then remove the labels once evidence
+has been collected so later pushes do not repeat the work.</p>
 <p>Production container checks and the required CI gate remain independent of optional
 performance selection. Existing <code>ci:scale-large</code> and <code>ci:scale-huge</code> controls and
 scale schedules remain separate; generic force-all labels do not enable scale runs.</p>
@@ -5150,7 +5157,8 @@ query targets at thorough effort; it does not request PostgreSQL or resource wor
 Adding <code>ci:bench:scope:postgres</code> also requests the complete PostgreSQL suite.</p>
 <p><code>ci:full</code> and <code>ci:benchmarks</code> override narrowing and select every scope. The
 strongest profile wins, and those labels enforce at least <code>standard</code>. A profile
-label alone requests affected work, including on a draft. Unknown selectors fail
+label alone adjusts affected work on a ready PR; on a draft it does not request
+work without a scope/tag selector or broad performance label. Unknown selectors fail
 with an actionable error. Removing a selector or changing draft status recalculates
 selection; unrelated labels do not cancel active CI or benchmark jobs.</p>
 <p>The workflow can also be dispatched with <code>scopes</code> (<code>auto</code>, <code>all</code>, or a comma-separated

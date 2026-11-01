@@ -5238,10 +5238,14 @@ reduce instrumented build cost; sanitizers, overflow checks, and the real
 compiler implementations remain enabled.</p>
 <h2 id="ci-replay-and-minimization">CI, replay, and minimization<a class="headerlink" href="#ci-replay-and-minimization" title="Permanent link">&para;</a></h2>
 <p>The <code>Portable regex fuzzing</code> workflow runs both targets for 45 seconds each on
-affected pull requests and <code>main</code> pushes, and for 600 seconds each daily and on
+affected ready pull requests and <code>main</code> pushes, and for 600 seconds each daily and on
 manual dispatch. The classifier includes the fuzz harness, dictionary, seed and
-regression inputs, workspace dependency changes, and its own workflow. Unknown
-paths remain conservative.</p>
+regression inputs, the portable regex crate and adapter regex compilers, shared
+dependency/build inputs, and its own workflow. Unrelated crate source changes
+do not select fuzzing; unknown paths remain conservative. Drafts defer fuzzing
+until marked ready, and returning to draft cancels superseded fuzz work. Use
+manual dispatch for an exceptional early fuzz investigation. Full correctness
+labels do not override the draft fuzz policy.</p>
 <p>The standalone lockfile is audited with the root dependency/license policy via
 <code>scripts/run-cargo-deny.sh REPORT fuzz/Cargo.toml</code>. NCSA covers the bundled
 libFuzzer engine; the fuzz dependencies remain outside production artifacts.</p>
