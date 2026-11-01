@@ -2,6 +2,7 @@ name: Portable regex fuzzing
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   push:
     branches: [main]
   schedule:
@@ -50,7 +51,9 @@ jobs:
   fuzz:
     name: Portable regex parser and native matching
     needs: changes
-    if: needs.changes.outputs.regex_fuzz == 'true'
+    if: >-
+      needs.changes.outputs.regex_fuzz == 'true' &&
+      (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:

@@ -144,6 +144,24 @@
 
 ## Pull Requests And Merges
 
+- Open pull requests as drafts and keep them in draft during implementation and
+  review iteration. Mark them ready for review as the final validation step before
+  merging; this automatically starts the larger affected-path CI tier.
+- Leave broad CI labels off routine drafts. Use `ci:validate` only when early full
+  correctness/production validation is needed, and `ci:full` only when every
+  performance scope is also needed. Record the reason in the PR description.
+- For performance investigations, prefer a narrow `ci:bench:scope:*` or
+  `ci:bench:tag:*` selector with the desired profile. Remove investigation labels
+  after collecting evidence so later pushes do not repeat that work. A profile
+  label alone does not start draft benchmarks. Scale and scheduler acceptance
+  remain explicit exceptions.
+- Treat CI override and benchmark investigation labels as temporary. Add the
+  narrowest label needed to answer a concrete validation question. Once sufficient
+  evidence is collected, record the tested commit and results in the PR description
+  and remove labels whose purpose is complete before further pushes. Reapply them
+  if subsequent changes could invalidate that evidence, including changes to shared
+  code, dependencies, or build configuration. Let ready-for-review CI provide the
+  final affected-path validation.
 - Treat the changelog review as required for every pull request. Before merge, add relevant user-facing additions, changes, fixes, and security notes to the `[Unreleased]` section of `CHANGELOG.md`. If a pull request has no changelog-worthy impact, state that explicitly in its description; do not add empty or internal-only changelog entries.
 - Call out every breaking change explicitly in both the pull request description and its `[Unreleased]` changelog entry, including the upgrade or migration action users must take.
 - When squash-merging a pull request, use its detailed PR description as the squash commit body. Preserve the substantive summary, rationale, behavior notes, and issue references, but remove verification-only sections such as test commands, checklists, and `## Verification` before merging.
