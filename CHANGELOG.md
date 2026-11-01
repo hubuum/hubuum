@@ -43,6 +43,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   bounded metadata batch instead of inheriting the physical task-manifest limit.
   Concurrent protected admissions share bounded repository verification work
   while retaining each submission's exact generation and recovery checks.
+  A small admission group allows up to 10 ms for concurrent reservations to join
+  before acquiring the publication lock, reducing tiny checkpoint publications.
   Exact-ticket activations overlap under shared authority locks; retention changes
   and recovery remain excluded until those activations finish.
   Admission briefly waits for a contended cross-replica publication lock before

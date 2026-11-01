@@ -295,3 +295,30 @@ candidate selection. The retained SDK 0.15 scheduler qualification predates thos
 checks. Rerun the opt-in P3/P4 scheduler matrix on the final retention source as
 well as the P6 profiles before accepting its performance; passing correctness
 regressions does not establish the added checks' latency or utilization cost.
+
+### Shared integration diagnostic on 2026-11-01
+
+Source `f4a00fd18645245412ddad6a2aba24e8d53786c6` completed a fresh shared-profile
+run with 10,000 initial receipts and the unchanged 360-second refill window.
+The production image and measurement binaries came from that same source. CPU
+and memory enforcement passed, with no monitor errors and database RTT below
+2 ms. Other builds and correctness tests were stopped during the measurement.
+
+| Observation | Recorded value |
+| --- | --- |
+| Initial admission | 10,000 tasks in 153,629 ms |
+| Total admitted and fully drained | 18,493 tasks |
+| Eligible detail expirations / p95 lag | 17,341 / 56,365 ms |
+| Eligible receipt expirations / p95 lag | 13,944 / 84,693 ms |
+| Unknown deadlines / censored eligible observations | 0 / 0 |
+| Steady pre-refill receipt observations | Minimum 5,235; median 10,000 |
+
+This run does **not** qualify: receipt expiry exceeds 60 seconds and the receipt
+population is not sustained near 10,000. Left-held interpolation of the pre-refill
+observations averages 8,106.52 receipts; this is an interpolation, not a proven
+lower bound or an acceptance tolerance. Recorded 1,000-task refills took
+21.7–27.4 seconds and required 118–139 complete checkpoint publications. These
+counters motivate a bounded coalescing window before publication, while retaining
+the per-ticket activation checks. That subsequent change requires fresh runs.
+Raw reports and their source/image metadata are retained under
+`target/retention-544-20261031/shared-json-capture-1`.

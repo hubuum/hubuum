@@ -33,6 +33,7 @@ use crate::storage::{StorageContext, StorageHandle, storage_handle};
 
 const MAX_PENDING_ADMISSIONS_PER_PASS: u32 = 8;
 const MAX_WAITING_ADMISSIONS_PER_BATCH: usize = 32;
+const ADMISSION_COALESCING_WINDOW: Duration = Duration::from_millis(10);
 const MAX_PURGE_BATCHES_PER_PASS: u32 = 8;
 const MAX_SELECTED_TASKS: u32 = 64;
 
@@ -436,8 +437,16 @@ impl TaskReceiptService {
 /// a current application fence. A bounded batch releases publication ownership
 /// between groups so retention and recovery can make progress.
 async fn protect_waiting_admissions(configuration: &Arc<Configuration>) {
-    if configuration.admissions.lock().await.is_empty() {
+    let waiting = configuration.admissions.lock().await.len();
+    if waiting == 0 {
         return;
+    }
+    // Concurrent requests still finish their database reservations separately.
+    // Give those arrivals a bounded chance to join before taking the independent
+    // publication lock; otherwise a fast first request publishes a tiny group.
+    // The absolute ticket deadlines and the maximum group size remain unchanged.
+    if waiting < MAX_WAITING_ADMISSIONS_PER_BATCH {
+        sleep_until(Instant::now() + ADMISSION_COALESCING_WINDOW).await;
     }
     // Include requests that arrive while another process owns publication or
     // while this session verifies its checkpoint. Selecting first strands those

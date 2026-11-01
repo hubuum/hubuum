@@ -1,3 +1,4 @@
+use futures_util::poll;
 use tokio::time::timeout;
 
 use super::*;
@@ -44,6 +45,54 @@ async fn tickets(fixture: &Fixture, count: usize) -> Vec<TaskAdmissionTicket> {
         );
     }
     tickets
+}
+
+#[actix_web::test]
+async fn coalescing_admissions_leave_the_repository_available_for_other_publishers() {
+    let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
+    let first_ticket = fixture
+        .admit("first-arrival", StorageTaskKind::Import)
+        .await;
+    let configuration = fixture.service.configuration().unwrap();
+    let (first, mut first_result) = oneshot::channel();
+    configuration
+        .admissions
+        .lock()
+        .await
+        .push_back(WaitingAdmission {
+            storage: fixture.storage.clone(),
+            ticket: first_ticket,
+            result: first,
+        });
+    let mut publisher = Box::pin(protect_waiting_admissions(configuration));
+    assert!(poll!(&mut publisher).is_pending());
+
+    // The publisher has yielded for arrivals without acquiring a file lock.
+    // Keep its future unpolled while another publisher and a new reservation
+    // make progress; this does not depend on wall-clock scheduling precision.
+    let other_publisher = open_session(configuration).await.unwrap();
+    let second_ticket = fixture
+        .admit("later-arrival", StorageTaskKind::Import)
+        .await;
+    let (second, mut second_result) = oneshot::channel();
+    configuration
+        .admissions
+        .lock()
+        .await
+        .push_back(WaitingAdmission {
+            storage: fixture.storage.clone(),
+            ticket: second_ticket,
+            result: second,
+        });
+    drop(other_publisher);
+    timeout(Duration::from_secs(3), publisher).await.unwrap();
+
+    for result in [&mut first_result, &mut second_result] {
+        assert!(matches!(
+            result.try_recv().unwrap().unwrap(),
+            TaskActivationOutcome::Activated(_)
+        ));
+    }
 }
 
 #[actix_web::test]

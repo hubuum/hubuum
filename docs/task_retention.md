@@ -295,7 +295,11 @@ that separate erasure capability.
 ## Scheduler integration
 
 Concurrent protected admissions share one verified publication session for at
-most 32 requests from the same storage handle. Their exact-ticket activations may
+most 32 requests from the same storage handle. A smaller waiting group has a
+10 ms coalescing window before acquiring the independent publication lock, giving
+concurrent database reservations time to join. Full waiting groups proceed
+immediately. Light traffic can therefore incur up to 10 ms of deliberate batching
+delay; no protection deadline is renewed. Their exact-ticket activations may
 overlap while that session stays locked. PostgreSQL activation holds shared
 deletion and retention authority locks through its transaction, plus the exact
 task row lock. Receipt changes, retention policy/hold changes and recovery retain
