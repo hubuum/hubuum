@@ -193,7 +193,7 @@ fn set_field(row: &mut StorageBackupRow, field: &str, value: Value) {
 }
 
 pub(super) async fn queued_task(storage: &MemoryStorage) -> TaskId {
-    storage
+    let outcome = storage
         .create_task(
             StorageTaskCreateRequest::builder(
                 StorageTaskKind::Export,
@@ -205,8 +205,11 @@ pub(super) async fn queued_task(storage: &MemoryStorage) -> TaskId {
             .unwrap(),
         )
         .await
-        .unwrap()
-        .id()
+        .unwrap();
+    let StorageTaskSubmissionOutcome::CreatedReady(task) = outcome else {
+        panic!("fresh unkeyed task")
+    };
+    task.id()
 }
 
 async fn completed_task(storage: &MemoryStorage) -> TaskId {

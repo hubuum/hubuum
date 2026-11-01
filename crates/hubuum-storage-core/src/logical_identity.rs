@@ -271,6 +271,13 @@ impl TryFrom<IdentityEvidenceInput> for StorageIdentityEvidence {
 }
 
 impl StorageIdentityEvidence {
+    /// Resolve only a captured, immutable task correspondence.
+    pub fn task_reference(&self, path: &str) -> Option<TaskIdentity> {
+        match self.references.get(path) {
+            Some(StorageCapturedIdentity::Task { reference }) => reference.known_identity(),
+            _ => None,
+        }
+    }
     /// Return only proven correspondence. An unresolved legacy id is never a lookup key.
     #[must_use]
     pub fn principal_reference(&self, path: &str) -> Option<PrincipalIdentity> {
@@ -345,6 +352,26 @@ impl StorageIdentityEvidence {
             || matches!(self.subject,
                 Some(StorageIdentitySubject::Resource { version, .. })
                     if derived_version(version) && self.restore_source_versions.versions.is_empty())
+    }
+
+    /// Legacy restore synthesis can assign a new task UUID without proving its
+    /// correspondence to earlier task deletion decisions.
+    #[must_use]
+    pub fn has_unknown_task_restore_source(&self) -> bool {
+        matches!(self.subject,
+            Some(StorageIdentitySubject::Task {
+                identity: IdentityReference::Known { identity },
+            }) if identity.as_bytes()[6] >> 4 == 8)
+    }
+
+    /// A legacy derived principal has no proven correspondence to retained
+    /// receipt ownership from another restore cohort.
+    #[must_use]
+    pub fn has_unknown_principal_restore_source(&self) -> bool {
+        matches!(self.subject,
+            Some(StorageIdentitySubject::Principal {
+                identity: IdentityReference::Known { identity },
+            }) if identity.as_bytes()[6] >> 4 == 8)
     }
 
     /// Preserve proven ancestry while refreshing references for the same version.
@@ -446,6 +473,45 @@ mod tests {
         let mut bytes = *VersionIdentity::generate().as_bytes();
         bytes[6] = (bytes[6] & 0x0f) | 0x80;
         VersionIdentity::from_bytes(bytes).unwrap()
+    }
+
+    #[rstest]
+    #[case::ordinary_task(false, false)]
+    #[case::legacy_derived_task(true, false)]
+    #[case::ordinary_principal(false, true)]
+    #[case::legacy_derived_principal(true, true)]
+    fn task_and_principal_restore_uncertainty_survives_serialization(
+        #[case] derived: bool,
+        #[case] principal: bool,
+    ) {
+        let mut bytes = *TaskIdentity::generate().as_bytes();
+        if derived {
+            bytes[6] = (bytes[6] & 0x0f) | 0x80;
+        }
+        let subject = if principal {
+            StorageIdentitySubject::Principal {
+                identity: IdentityReference::Known {
+                    identity: PrincipalIdentity::from_bytes(bytes).unwrap(),
+                },
+            }
+        } else {
+            StorageIdentitySubject::Task {
+                identity: IdentityReference::Known {
+                    identity: TaskIdentity::from_bytes(bytes).unwrap(),
+                },
+            }
+        };
+        let evidence = StorageIdentityEvidence::try_new(Some(subject), BTreeMap::new()).unwrap();
+        let decoded: StorageIdentityEvidence =
+            serde_json::from_slice(&serde_json::to_vec(&evidence).unwrap()).unwrap();
+        assert_eq!(
+            decoded.has_unknown_task_restore_source(),
+            derived && !principal
+        );
+        assert_eq!(
+            decoded.has_unknown_principal_restore_source(),
+            derived && principal
+        );
     }
 
     #[rstest]

@@ -158,9 +158,13 @@ fn preflight_failure_kind(error: &ApiError) -> FailureKind {
             FailureKind::Permission
         }
         ApiError::Conflict(_)
+        | ApiError::IdempotencyConflict
+        | ApiError::LegacyTaskRequestUnverifiable
         | ApiError::PreconditionFailed(_, _)
         | ApiError::RevisionConflict(_, _) => FailureKind::Collision,
-        ApiError::NotFound(_) | ApiError::Gone(_) => FailureKind::Resolution,
+        ApiError::NotFound(_) | ApiError::Gone(_) | ApiError::TaskDetailsExpired(_) => {
+            FailureKind::Resolution
+        }
         ApiError::BadRequest(_)
         | ApiError::ValidationError(_)
         | ApiError::NotAcceptable(_)

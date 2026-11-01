@@ -316,6 +316,15 @@ main CI, benchmark, and fuzz work, but explicit forcing labels remain effective.
 Scale and scheduler measurements have separate opt-in controls and are not
 cancelled by returning to draft.
 
+The `ci:tasks` label selects the dedicated task-system job on any pull request,
+including drafts and documentation changes, and requests its production image.
+This job also runs under `ci:full`; ordinary unlabelled CI skips it. It runs the
+memory adapter contracts, native retention contracts and 10,000-target query
+budgets, then a 100-task
+packaged admission, cleanup, hold, crash and restore drill. It reuses the verified
+production image and retains reports. It does not run the ten-load-run lifecycle
+performance qualification or the real one-hour output-expiry probe.
+
 The lightweight change classifier is implemented by
 `scripts/classify-ci-changes.sh`. Unknown file types are classified
 conservatively as code, container, artifact, and benchmark inputs. Keep its

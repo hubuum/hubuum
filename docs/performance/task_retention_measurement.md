@@ -1,0 +1,596 @@
+# Task retention measurement
+
+P6 qualification is tracked in [#561](https://github.com/hubuum/hubuum/issues/561).
+On 2026-11-01, the maintainer approved completing the functional implementation
+in [#544](https://github.com/hubuum/hubuum/pull/544) with P6 explicitly deferred,
+after reviewing the final diagnostic's failed timing bounds and complete drain.
+The 60-second expiry target, 300-second recovery target, resource ceilings and
+repeated-run criteria remain unchanged. This guide records diagnostics, not a
+claim that P6 has passed; dependent lifecycle performance acceptance still needs
+qualified evidence.
+
+The task retention driver exercises production HTTP admission, authenticated
+checkpoint publication, real worker completion and maintenance, and read-only
+administrator status. It uses database timestamps without modifying them. The checked-in
+driver supports an initial protected cohort, bounded steady refill, and cleanup,
+with a separate remote-effect recovery probe. Running it does not by itself
+establish that the P6 target in [lifecycle budgets](lifecycle_budgets.md) passed;
+the raw denominators, occupancy, resource ceilings and recovery results matter.
+
+## Reproduce the diagnostic
+
+Use Python 3.11 or newer, Docker, Linux `/proc`, and binaries built from the same
+revision as the application image. The output directory must not exist. The
+driver creates a fresh disposable database and destroys its containers and
+network on completion or failure. It retains an owner-only checkpoint directory
+and synthetic measurement artifacts. Never point this driver at production.
+Fixture containers use the inspected address of their own PostgreSQL container
+instead of depending on rootless bridge DNS. Owned control/key mounts receive
+shared SELinux labels so multiple replicas can access the same protected files;
+their 0700/0600 modes remain enforced.
+
+When the driver runs inside the container engine's Linux host (for example, a
+Linux helper on Docker Desktop), use `--direct-container-network` if published
+loopback ports are reachable only from the desktop host. This explicitly selects
+the inspected addresses on the disposable fixture's own network for API and
+native database connections, including after a recovery restart. It does not
+select an existing database. Remote-effect probes reach the helper through that
+same network's inspected gateway. Reports record the connection mode; database RTT
+must still satisfy the selected profile. The default uses published ports for
+ordinary Linux and rootless deployments.
+
+```bash
+source .env
+cargo build --locked --release -p hubuum-scale-benchmark
+cargo build --locked --release --features embedded-migrations --bin hubuum-admin
+docker build \
+  --build-arg 'CARGO_BUILD_FLAGS=-F tls-rustls -F tls-openssl --locked --release' \
+  --tag hubuum-server:retention-measure .
+python3 -I -S tests/python/run.py integration task-retention \
+  --image hubuum-server:retention-measure \
+  --scale-binary target/release/hubuum-scale-benchmark \
+  --admin-binary target/release/hubuum-admin \
+  --output-directory /tmp/hubuum-retention-diagnostic \
+  --runs 1
+```
+
+Use `--count 100` for a smoke run, or `--admission-only` to isolate the initial
+protected admission phase. These options are recorded through the exact workload
+JSON and its SHA-256 digest. The default
+[versioned workload](../../scale-benchmarks/lifecycle/task-retention-v1.json)
+admits 10,000 distinct keyed dry-run import tasks at concurrency 32, with identical
+and conflicting retries every 100 submissions. These requests exercise real
+task creation and import results without persistent graph changes.
+
+The fixture explicitly configures a 120-second terminal-anchored receipt window,
+30-second task detail age, and capacity for 20,000 outstanding tasks. It starts
+the API before the worker so that the initial receipt cohort exists before
+terminal clocks begin. Both application containers receive 2 CPUs and a 512 MiB
+memory limit, with pool size 8; PostgreSQL receives 2 CPUs and 2 GiB. PostgreSQL
+uses the pinned image shared with the corpus driver and quiet disposable-fixture
+logging. This topology is named `task-retention-diagnostic-v1`; it is not the
+local or shared acceptance profile.
+
+For the declared local or shared topology, select `--profile local` or
+`--profile shared`. Both provision 32 distinct authenticated principals and use
+80% traffic skew toward the first principal. Local replaces its admission-only
+API gracefully with one API/worker process and one execution slot. Shared uses
+two API processes, two workers with two slots each, and a 4 CPU/4 GiB database.
+`--steady-seconds 360` refills up to the initial receipt occupancy for three
+120-second windows, in batches of at most 256 actual submissions by default, then drains.
+One bounded refill producer runs concurrently with expiry observations; a second
+batch cannot start until the first producer has completed. This preserves the
+recipe's submission concurrency while observations continue during a refill.
+The observer joins the producer, including on failure, before the fixture
+can be removed. Its existing 120-second process timeout and 512 MiB resident
+limit still apply, and every admitted identity must appear in the final evidence.
+Between producers, physical receipt observations over the complete registered
+cohort determine the next bounded refill. Receipt presence can only decrease
+during that scan, so the count conservatively bounds occupancy when selecting
+arrivals. Refill scheduling does not wait for administrator status-lock access;
+every decision records its observed count, requested arrivals and original time.
+These counts schedule load only. Cleanup success still requires both physical
+removal and independently verified checkpoint evidence.
+Cleanup is performed by the running production workers. The observer invokes
+read-only administrator `status`, verifies the returned checkpoint identity and
+checks physical database removal. It does not invoke extra cleanup sweeps.
+A busy publication lock is retried at the observer's normal one-second cadence.
+Standalone observer use therefore requires active production workers as well.
+Use `--refill-max-batch 1000` when the smaller batch cannot replenish the target
+between cleanup observations. This bounds the number of arrivals per refill;
+the recipe's concurrency 32 and all application resource limits stay unchanged.
+Reports retain the selected bound. Refill and observation take real time, so
+neither setting establishes sustained occupancy without reviewing the raw samples.
+Every occupancy observation and eligible deadline remains in the report.
+Occupancy separates executable, terminal and recovery-unknown receipt outcomes,
+unexpired terminal receipts and eligible receipts. An executable receipt can
+still await terminal settlement; it does not identify queued versus running
+work. Required refill follows observed receipt retirement, since the reuse
+window starts at completion and does not age queued work.
+
+```bash
+python3 -I -S tests/python/run.py integration task-retention \
+  --image hubuum-server:retention-measure \
+  --scale-binary target/release/hubuum-scale-benchmark \
+  --admin-binary target/release/hubuum-admin \
+  --output-directory /tmp/hubuum-retention-local-five \
+  --profile local --steady-seconds 360 --refill-max-batch 1000 --runs 5
+```
+
+Repeat with `--profile shared` and a fresh output directory. These commands still
+need actual execution and acceptance review. The fixture records its readiness
+and authentication warm-up; it does not fabricate completed warm-up tasks.
+Only HTTP 503 receives a bounded same-key retry. Actual unavailable attempts and
+total elapsed time remain visible, including repository lock contention.
+
+Administrator setup retries only the exact repository-lock refusal for a bounded
+30-second retry budget, retaining attempt counts and total elapsed time. Native
+cleanup observers retain every refused process attempt and retry within their
+original overall timeout/pass limit. Contention delays remain part of observed
+expiry lag; no source deadline or measurement window is renewed. Key mismatches,
+recovery-required outcomes and other failures still stop the run.
+
+Application startup also retries only an exited process whose exact fatal
+diagnostic identifies repository-lock contention, for at most 30 seconds from
+the original startup attempt. Every restart and total elapsed time is retained
+in `startup-*.json`. APIs must answer readiness and workers must serve their
+metrics listener before their process resource limits are verified. Other
+startup failures remain fatal; these retries never bypass the recovery gate or
+renew task deadlines.
+
+Some rootless engines expose a memory controller but no CPU quota controller.
+The driver refuses to treat requested `--cpus` flags as enforcement on those
+engines. Build a measurement-only image with `taskset`, then add `--cpu-affinity`
+to the driver command:
+
+```bash
+docker build -f scale-benchmarks/lifecycle/affinity.Dockerfile \
+  --build-arg HUBUUM_IMAGE=hubuum-server:retention-measure \
+  --tag hubuum-server:retention-affinity .
+```
+
+Use that derivative as `--image`. Production binaries and the production
+entrypoint are unchanged. Affinity assigns disjoint fixed logical CPU sets to
+the database, each application process, and native administrator/load-generator
+children. Two fixed logical CPUs impose a maximum concurrency of two; unlike a
+two-CPU quota, they do not permit short bursts across more CPUs. Record this
+stricter concurrency limit as the profile equivalence, together with actual
+hardware and storage. The driver verifies all observed threads and descendants,
+reads actual cgroup `memory.max`, and records `memory.peak`; native bounded child
+runners verify inherited affinity too. No affinity result is accepted solely
+because the launch command requested a mask. Formal runs require other builds
+and measurements to be stopped.
+
+For a separately identified recovery run, `--recovery-probes` provisions a
+verified HTTPS counter and invokes it through
+the real remote task worker. Rust checks concurrent duplicate recognition,
+changed-body conflicts, and exactly one effect before and after detail purge.
+The fixture holds that task while taking a real history-enabled backup, releases
+the hold through a protected checkpoint, and later stops runtimes, restores the
+older backup, and restarts a worker. The restored retry must report the same
+expired task identity with the effect count unchanged. Its receipt uses a
+separate prospective 7,200-second window so the recovery assertion remains
+within the original protection period.
+
+`--physical-recovery-probes` additionally captures and restores a real PostgreSQL
+physical base backup of the disposable primary, including protected database
+tables, while preserving the independent checkpoint directory and HTTPS effect
+counter. It restores only the fixture's validated managed PostgreSQL volume
+while PostgreSQL is stopped, preserving its data ownership and system identity.
+The helper restarts PostgreSQL after restoring the stopped data directory,
+recovers the latest independent authority under the repository lifetime lock,
+interrupts actual protected reapplication under a controlled row
+lock, and retries cleanup before restarting a runtime. The separate report must
+identify the interruption and observed physical state; the remote effect count
+and expired receipt identity are checked again afterward.
+
+Add `--output-probe` to one separately identified run to create a real export
+whose task detail retention is disabled and whose output expires after one hour.
+The observer retains the database's original output deadline, waits for actual
+expiry, then requires both physical output absence and the protected
+`ExpiredOutputs` removal decision while the task row survives. This additional
+probe can age while the steady workload runs; it need not be repeated in each
+of the five receipt/detail timing runs. Its wall-clock delay is intentional.
+
+`--safety-probes` adds a separate retention and interrupted-effect drill. It
+creates two real dry-run imports with 1,201 results each, protects their holds,
+and creates a retained schema repair report through the API. A gated HTTPS
+response keeps an unrelated remote task running after the fixture has counted
+its effect. Rust then observes bounded cleanup of the released import while the
+held import and report dependency survive past their original deadlines. The
+fixture kills its producing runtimes, performs protected recovery and
+reapplication, and requires the interrupted task's retry to preserve one effect.
+The drill explicitly raises remote transport and task timeouts to 900 seconds;
+fixture shutdown releases all response gates. It does not modify stored clocks.
+Source support alone is not evidence that this drill passed.
+
+## Evidence and interpretation
+
+| Artifact | Meaning |
+| --- | --- |
+| `workload.json`, `capacity-policy.json`, `activation.json` | Exact recipe, admission limits, and protected activation result. |
+| `admission.json` | Every HTTP timing and original task UUID; duplicate responses must identify the same task and changed requests must conflict. |
+| `metrics/*.prom` | Production publisher counters before and after admission. |
+| `resources.json` | Sampled RSS, Linux process high-water marks, sampled repository occupancy, effective limits, and measurement errors. |
+| `cleanup.json` | Original database anchors, verified physical removal observations, raw task lifetimes, censored work, and lag distributions. |
+| `cleanup-processes/pass-*.json` | Actual administrator exit status, bounded output, process resource measurements, and publisher counters. |
+| `cleanup-processes/latest-lifetimes.json` | Most recent original anchors and observations, retained even if a later cleanup invocation fails. |
+| `cleanup-processes/refill-*.json` | Actual bounded refill admissions and their child-process resource reports. |
+| `probe-*.json`, `logical-recovery.json` | Rust-verified external effect counts, retry results, and actual logical restore duration. |
+| `safety-*.json` | Held and dependent detail observations, large-child cleanup, and interrupted-effect retry evidence from the separate safety drill. |
+
+Application RSS and repository occupancy are sampled every 20 ms. Kernel
+`VmHWM` is reported separately from sampled RSS. The administrator process tree
+uses the existing bounded process runner, now with 20 ms sampling and Linux
+`wait4` RSS high-water accounting. Kernel and sampled values are separate;
+neither is an allocator-specific measurement. A failed sampler makes the
+resource report invalid; a failed workload remains a failed run even when
+diagnostic artifacts were retained.
+
+The database resource report retains database allocation and WAL observations.
+Its generic host-wide PostgreSQL CPU/RSS fields are unset; container process and
+cgroup measurements identify the disposable database being measured. The
+separate relation inventory includes TOAST and protected control allocation.
+The observer also records the actual PostgreSQL version/settings and ten
+`SELECT 1` round trips on one acquired connection after an excluded warm-up.
+Those timings include transport and server execution; they exclude pool
+acquisition and are not a claim of network-only latency.
+
+Publisher `read_bytes` and `write_bytes` count successful file read/write return
+values, including reads served from the page cache. They do not measure block
+device traffic. Operation counters include encoding/signing, verification,
+file and directory fsync, publication, garbage collection, and asynchronous
+coalescing wait. File lock durations measure nonblocking `flock` attempts;
+contention counts do not represent mutex wait. End-to-end HTTP and administrator
+timings include publication waits. Sampled directory size measures resident
+occupancy, not cumulative I/O. Runtime-isolation nonce-file I/O is outside the
+publisher counters.
+
+Cleanup requires both exact-UUID physical absence and the independently verified
+checkpoint's matching removal decision. Receipt retirement requires primary and
+checkpoint absence plus a protected expiry floor covering the original deadline.
+The observation interval and administrator publication delay remain in the
+reported lag; samples are conservative upper bounds. A timeout retains eligible
+unfinished items instead of dropping them from the denominator.
+Database deadlines round down to milliseconds, and removal observations use the
+query completion time with an upper rounding margin. Nonterminal evidence uses
+the query start time and an explicit active status, so a read crossing the steady
+window boundary cannot extend that evidence to its later completion. Lags end
+at the first verified removal observation.
+The report distinguishes freshly observed nonterminal work from missing deadline
+evidence. Censored samples contribute lower bounds and an explicit incomplete
+or breached percentile status. Full cohort drain has its own outcome: a drain
+timeout does not by itself establish an eligible-expiry percentile breach.
+
+## Encoding proofs and remaining acceptance work
+
+The Rust tests
+`ten_thousand_receipts_and_157_manifests_fit_the_declared_encoding_budgets` and
+`production_composite_publisher_round_trips_ten_thousand_receipts_and_bounds_live_files`
+construct validated bounded records, serialize them, and exercise the actual
+signed publisher. They test 10,000 receipts, 157 task manifests, receipt and
+retention byte caps, authenticated readback, and retained repository files.
+Their synthetic timestamps are suitable for encoding tests only. Run with
+`--nocapture` to retain actual byte counts; successful test results are distinct
+from runtime throughput or expiry measurements.
+
+The first constrained local attempt on 2026-10-29 did not complete admission.
+It used production revision `95afd176`, measurement client `1ec1cb80`, the local
+CPU-affinity profile, and a 10,000-task target. The 1,200-second admission timeout
+left 8,741 receipts in the independently protected checkpoint. This count does
+not prove that every receipt's task activated. Workers and expiry observation
+had not started, so the attempt provides no expiry or recovery timing result.
+
+| Observation | Recorded value |
+| --- | --- |
+| Resource samples / monitor errors | 52,028 / 0 |
+| API sampled RSS and kernel high-water | 229,249,024 bytes (218.63 MiB) |
+| Sampled repository peak | 18,043,280 bytes / 7 files |
+| Diagnostic checkpoint reads / writes | 26,539,271,742 / 738,003,752 bytes |
+| Diagnostic verification / publication time | 760.467 / 104.942 seconds |
+| Diagnostic publication count | 260 |
+
+The diagnostic counters are deltas from the initial metrics snapshot to one
+separately identified scrape before the timeout; they are not final totals.
+Verification includes typed decoding, validation and canonical reserialization.
+Publication includes nested operations, so these times must not be added.
+Writes already coalesced roughly 32 protected records per publication, while
+each admission reread and verified the growing checkpoint. This evidence motivates
+bounded reuse of authenticated immutable contents with fresh independent file,
+digest, reference, key and durability checks. It does not establish acceptance.
+The host exposes a MegaRAID controller with rotational-device metadata. The
+operator confirmed on 2026-10-30 that its backing drives are SSDs; this is
+operator evidence rather than direct media identification by the operating
+system. Resource enforcement and the remaining profile equivalence still need
+to be recorded with each acceptance run.
+
+P6 acceptance still requires five fresh runs with declared warm-up, demonstrated steady occupancy
+near 10,000 receipts and continuous capacity release/refill for at least three windows.
+The acceptance topology and workload must include the declared principal skew,
+concurrent replicas, output expiry, held and dependent tasks, large child sets,
+maximum chunk budgets, and an unrelated long-running task. The logical restore
+and whole-primary rollback helpers require successful real executions; adding
+their source does not establish recovery performance. Report outages, holds, recovery drain,
+oldest remaining obligations, database allocation/WAL, and repository storage
+properties separately. Production output retention currently has a minimum of
+one hour; an honest output-expiry run must allow that real deadline to elapse.
+Neither a diagnostic cohort drain nor unexecuted sustained-run support
+establishes the 60-second expiry p95 or 300-second recovery cleanup target.
+
+The SDK 0.16 integration adds receipt eligibility to the durable scheduler's
+candidate selection. The retained SDK 0.15 scheduler qualification predates those
+checks. Rerun the opt-in P3/P4 scheduler matrix on the final retention source as
+well as the P6 profiles before accepting its performance; passing correctness
+regressions does not establish the added checks' latency or utilization cost.
+
+### Shared integration diagnostic on 2026-11-01
+
+Source `f4a00fd18645245412ddad6a2aba24e8d53786c6` completed a fresh shared-profile
+run with 10,000 initial receipts and the unchanged 360-second refill window.
+The production image and measurement binaries came from that same source. CPU
+and memory enforcement passed, with no monitor errors and database RTT below
+2 ms. Other builds and correctness tests were stopped during the measurement.
+
+| Observation | Recorded value |
+| --- | --- |
+| Initial admission | 10,000 tasks in 153,629 ms |
+| Total admitted and fully drained | 18,493 tasks |
+| Eligible detail expirations / p95 lag | 17,341 / 56,365 ms |
+| Eligible receipt expirations / p95 lag | 13,944 / 84,693 ms |
+| Unknown deadlines / censored eligible observations | 0 / 0 |
+| Steady pre-refill receipt observations | Minimum 5,235; median 10,000 |
+
+This run does **not** qualify: receipt expiry exceeds 60 seconds and the receipt
+population is not sustained near 10,000. Left-held interpolation of the pre-refill
+observations averages 8,106.52 receipts; this is an interpolation, not a proven
+lower bound or an acceptance tolerance. Recorded 1,000-task refills took
+21.7–27.4 seconds and required 118–139 complete checkpoint publications. These
+counters motivate a bounded coalescing window before publication, while retaining
+the per-ticket activation checks. That subsequent change requires fresh runs.
+Raw reports and their source/image metadata are retained under
+`target/retention-544-20261031/shared-json-capture-1`.
+
+## Bounded admission coalescing diagnostic
+
+Source `e8147393d1f84b5d23f486547904c338678910fd` completed a fresh shared
+profile with the same initial 10,000 receipts, concurrency 32, resource limits,
+and 360-second refill window. The production runtime and administrator came
+from that source; the native load generator's 661 build inputs were byte-identical
+to its recorded `f4a00fd1` source. No other builds or tests ran concurrently.
+
+| Observation | Recorded value |
+| --- | --- |
+| Initial admission | 10,000 tasks in 89,757 ms |
+| Total admitted and fully drained | 22,750 tasks |
+| Eligible detail expirations / p95 lag | 20,592 / 35,920 ms |
+| Eligible receipt expirations / p95 lag | 15,937 / 23,759 ms |
+| Unknown deadlines / censored eligible observations | 0 / 0 |
+| Steady pre-refill receipt observations | Minimum 5,797; median 10,000 |
+
+Expiry timing and enforced resources pass, but this run does **not** qualify:
+receipt occupancy is not sustained near 10,000. Left-held interpolation of the
+pre-refill observations averages 8,026.98 receipts; this is an interpolation,
+not a proven lower bound or an acceptance tolerance. The first full refills take
+about 15–16 seconds and approximately 60 checkpoint publications per 1,000 tasks.
+Snapshot collection accounts for about three seconds of those refills. The next
+candidate reuses a bounded history of authenticated decodings for collection,
+with fresh file and key checks. That candidate requires fresh measurements.
+Raw reports and source/image metadata are retained under
+`target/retention-544-20261031/shared-coalescing-window-1`.
+
+## Authenticated collection reuse diagnostic
+
+Source `9878195356775b1a1fdcd58eb74a90b09731791e` completed another fresh shared
+profile with unchanged limits and workload. The production image and administrator
+match this source, and the native load generator retains its verified, unchanged
+661-input build tree. Full correctness verification passed before the run; no
+other builds or tests ran during measurement.
+
+| Observation | Recorded value |
+| --- | --- |
+| Initial admission | 10,000 tasks in 80,803 ms |
+| Total admitted and fully drained | 23,824 tasks |
+| Eligible detail expirations / p95 lag | 20,315 / 43,746 ms |
+| Eligible receipt expirations / p95 lag | 16,029 / 18,267 ms |
+| Unknown deadlines / censored eligible observations | 0 / 0 |
+| Steady pre-refill receipt observations | Minimum 6,270; median 10,000 |
+| Largest application high-water RSS | 278,196,224 bytes |
+
+Expiry timing and resource enforcement pass, but occupancy again does **not**
+qualify. Left-held pre-refill interpolation averages 8,373.45 receipts, without
+establishing a lower bound or acceptance tolerance. The first 1,000-task refill
+takes 12,989 ms with 57 publications and 651 ms of collection work. The last takes
+14,406 ms with 64 publications and 771 ms of collection work. These nested metric
+durations must not be summed. Reusing authenticated collection decodings reduces
+that cost, but frequent full publication still limits replenishment. A subsequent
+candidate finishes an already captured queue prefix before publishing for newer
+uncaptured requests, preserving queue order and exact-ticket activation checks.
+That change requires fresh qualification. Raw reports and source/image metadata
+are retained under `target/retention-544-20261031/shared-collection-cache-1`.
+
+## Captured queue-prefix diagnostic
+
+Source `861cb8cc03c562733810eb0c2fbe5a7017dba75b` passed the full correctness
+suite and production build, then completed a fresh shared run with the unchanged
+10,000-receipt target, concurrency, resource limits and 360-second steady phase.
+The load generator's unchanged build inputs remain pinned to `f4a00fd1`.
+
+| Observation | Recorded value |
+| --- | --- |
+| Initial admission | 10,000 tasks in 75,887 ms |
+| Total admitted and fully drained | 24,813 tasks |
+| Eligible detail expirations / p95 lag | 20,212 / 24,075 ms |
+| Eligible receipt expirations / p95 lag | 15,928 / 19,583 ms |
+| Unknown deadlines / censored eligible observations | 0 / 0 |
+| Steady pre-refill receipt observations | Minimum 6,567; median 10,000 |
+
+Resources and expiry timing pass, but occupancy remains underfilled. Left-held
+pre-refill interpolation averages 8,581.56 receipts; it is neither a proven lower
+bound nor an acceptance tolerance. The first full refill takes 12,408 ms and
+48 publications; the last takes 13,694 ms and 47 publications. Initial admission
+records 10,000 `create_task` calls with 347.44 cumulative operation seconds, a
+34.74 ms mean including waits. Concurrent operation durations overlap and cannot
+be summed as elapsed runtime. This motivates gathering for another short interval
+only while reservations keep joining, with a fixed overall bound. It does not
+establish that the subsequent gathering change passes qualification.
+Raw reports and source/image metadata remain under
+`target/retention-544-20261031/shared-captured-prefix-1`.
+
+## Growing-batch experiment
+
+Source `01a6e6b83c64de3525f9cb5b892b7dca9f1fdbde` tested extending the
+admission gathering interval while arrivals continued, with a fixed 50 ms bound.
+It passed 7,247 correctness tests and the production build. Its fresh shared run
+retained the same resource limits, 10,000-receipt target and 360-second steady phase.
+
+| Observation | Recorded value |
+| --- | --- |
+| Initial admission | 10,000 tasks in 75,922 ms |
+| Total admitted and fully drained | 24,188 tasks |
+| Eligible detail expirations / p95 lag | 18,977 / 35,686 ms |
+| Eligible receipt expirations / p95 lag | 14,842 / 20,188 ms |
+| Unknown deadlines / censored eligible observations | 0 / 0 |
+| Steady pre-refill receipt observations | Minimum 6,372; median 10,000 |
+
+Resources and expiry timing pass, but occupancy remains underfilled. Left-held
+pre-refill interpolation averages 8,568.94 receipts; it is neither a proven lower
+bound nor an acceptance tolerance. The extension showed no clear throughput
+benefit and was removed, restoring the fixed 10 ms gathering interval.
+Raw reports and source/image metadata remain under
+`target/retention-544-20261031/shared-growing-batches-1`.
+
+These diagnostics serialized each refill with the full cleanup observation pass.
+The subsequent concurrent producer removes that serialization without raising
+submission concurrency or changing expiry, population, or resource targets.
+Fresh measurements are required; the driver change alone establishes no P6 result.
+
+## Concurrent-refill diagnostic
+
+Measurement source `b68e16829762b711f322d9b07b23504832616822` used the
+byte-identical, verified `861cb8cc` production runtime with concurrent refill and
+the earlier administrator-driven cleanup observations. The full suite passed
+7,249 tests before the isolated shared run. Resource limits, principal skew,
+concurrency, the 10,000-receipt target and 360-second steady phase were unchanged.
+
+| Observation | Recorded value |
+| --- | --- |
+| Initial admission | 10,000 tasks in 74,874 ms |
+| Total admitted and fully drained | 23,993 tasks |
+| Eligible detail expirations / p95 lag | 20,554 / 11,426 ms |
+| Eligible receipt expirations / p95 lag | 15,847 / 11,609 ms |
+| Unknown deadlines / censored eligible observations | 0 / 0 |
+| Steady receipt observations | Minimum 6,040; median 10,000 |
+| Administrator attempts / repository-busy refusals | 577 / 429 |
+
+Resources and expiry timing pass, but occupancy remains underfilled. Left-held
+interpolation of the receipt observations averages 8,246.32; it is neither a
+proven lower bound nor an acceptance tolerance. Concurrent observations improve
+the recorded removal time bounds, but extra cleanup invocations compete with
+admission for publication ownership. The subsequent observer reads status at
+its normal cadence and leaves cleanup to production workers. It must still
+prove physical removal and independently protected retirement under the same
+deadlines; passing this diagnostic does not qualify that change or establish P6.
+Raw reports and source/image metadata remain under
+`target/retention-544-20261031/shared-concurrent-refill-1`.
+
+## Worker-only cleanup diagnostic
+
+Measurement source `f2f26876f10547af40d4d16a12d8770eae30d3f8` used the
+verified `861cb8cc` production runtime with concurrent refill and read-only
+status observations. All 7,249 correctness tests passed. The isolated shared run
+kept the same workload, resource ceilings and 360-second steady phase.
+
+| Observation | Recorded value |
+| --- | --- |
+| Initial admission | 10,000 tasks in 75,218 ms |
+| Total admitted and fully drained | 23,698 tasks |
+| Eligible detail expirations / p95 lag | 20,164 / 91,531 ms; fails P6 |
+| Eligible receipt expirations / p95 lag | 15,723 / 58,227 ms |
+| Unknown deadlines / censored eligible observations | 0 / 0 |
+| Steady receipt observations | Minimum 6,928; median 10,000 |
+
+Resource monitoring was valid and reported no errors. The real worker detail
+cleanup failed the 60-second p95 target; the earlier administrator-driven
+diagnostics had supplemented that maintenance. Occupancy also remained
+underfilled. Left-held interpolation averages 8,943.46 receipts and is neither
+a proven lower bound nor an acceptance tolerance.
+
+The maintenance loop discarded its productive-work result and always slept for
+the full poll interval. A repository-busy refusal also became an idle result.
+The subsequent scheduling change retries both after a bounded publisher pause,
+retaining normal cadence for idle, blocked-only and failed passes. Row, byte,
+manifest and resource bounds stay unchanged. Fresh worker-only measurements
+must establish whether that fix meets P6.
+Raw reports and source/image metadata remain under
+`target/retention-544-20261031/shared-worker-observation-1`.
+
+## Prompt-maintenance diagnostic
+
+Source `b470c94411f6dae6c98bc36d3646b73d33e28067` retains the same bounded
+passes and retries productive or repository-busy maintenance after at most
+100 ms. All 7,251 correctness tests and the real both-TLS production build passed
+before the isolated shared run.
+
+| Observation | Recorded value |
+| --- | --- |
+| Initial admission | 10,000 tasks in 76,572 ms |
+| Total admitted and fully drained | 18,602 tasks |
+| Eligible detail expirations / p95 lag | 17,401 / 35,216 ms |
+| Eligible receipt expirations / p95 lag | 13,602 / 39,854 ms |
+| Unknown deadlines / censored eligible observations | 0 / 0 |
+| Steady receipt observations | Minimum 3,639; median 10,000 |
+
+Resource monitoring was valid and reported no errors. Expiry timing passes,
+but population is substantially underfilled, so this run does not qualify P6.
+Left-held interpolation averages 7,103.08 receipts and is neither a proven lower
+bound nor an acceptance tolerance. New refill batches still waited for a
+successful administrator status acquisition, coupling load generation to the
+same publication lock under measurement. The subsequent driver schedules
+refills from physical receipt observations before attempting status; protected
+cleanup proof and all workload/resource bounds remain mandatory. The production
+runtime is unchanged by that driver correction. Fresh measurements are required.
+Raw reports and source/image metadata remain under
+`target/retention-544-20261031/shared-maintenance-retry-1`.
+
+## Independent-refill diagnostic
+
+Measurement source `143609fc51744feced7dde33bdf8d2b25139a1cd` uses the
+unchanged, verified `b470c944` production image. All 7,251 correctness tests,
+strict Clippy, formatting, OpenAPI consistency and Markdown lint passed before
+the isolated shared run. The native measurement executable was rebuilt, with
+all production inputs checked byte-for-byte against the verified image source.
+
+| Observation | Recorded value |
+| --- | --- |
+| Initial admission | 10,000 tasks in 75,752 ms |
+| Total admitted and fully drained | 21,603 tasks |
+| Eligible detail expirations / verified p95 upper bound | 19,505 / 142,130 ms; fails P6 |
+| Eligible receipt expirations / verified p95 upper bound | 15,333 / 110,452 ms; fails P6 |
+| Unknown deadlines / censored eligible observations | 0 / 0 |
+| Steady receipt observations | Minimum 5,706; median 10,000 |
+| Refill producers started during a busy status pass | 13 of 13 |
+| Total idle time between refill producers | 8,279 ms; largest gap 1,408 ms |
+| Administrator attempts / repository-busy refusals | 370 / 299 |
+| Largest application kernel RSS high-water mark | 241,528,832 bytes, below 512 MiB |
+| Maximum measured database RTT | 326,625 ns, below the shared 2 ms limit |
+
+The driver fully drained every admitted identity and retained complete eligible
+evidence, but correctly exited nonzero for the P6 timing failures. Resource
+monitoring was valid with no errors, and actual CPU/memory limits were verified.
+The population remained underfilled. Left-held interpolation averages 8,550.83
+receipts and is neither a proven lower bound nor an acceptance tolerance.
+
+Refills now proceed independently of status access. Repository-lock contention
+still delays independently verified completion observations. One separately
+recorded, read-only database spot check late in the drain found 18 eligible task
+rows with oldest lag 438.674 ms and five eligible receipts with oldest lag
+91.221 ms. That spot check is not a percentile, does not establish earlier
+physical cleanup latency and cannot replace the failing verified timing result.
+Future measurement must distinguish observation-lock delay from physical backlog
+while preserving the independent proof required for every cleanup success.
+
+Raw reports and source/image metadata remain under
+`target/retention-544-20261031/shared-refill-scheduling-1`; the additional spot
+check is recorded in `shared-refill-scheduling-1-physical-spotchecks.jsonl` beside
+that directory. This diagnostic establishes neither P6 acceptance nor the
+remaining repeated local/shared, real-hour output, or recovery qualification.

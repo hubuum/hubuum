@@ -1,4 +1,5 @@
 use chrono::{Duration, NaiveDateTime};
+use hubuum_storage_core::StorageOutputAvailability;
 
 pub(crate) const MAX_FUTURE_RETENTION_HOURS: i64 = Duration::MAX.num_hours();
 pub(crate) const MAX_FUTURE_RETENTION_MINUTES: i64 = Duration::MAX.num_minutes();
@@ -56,6 +57,11 @@ impl FutureRetention {
                 self.field
             )
         })
+    }
+
+    pub(crate) fn output_availability(self) -> Result<StorageOutputAvailability, String> {
+        StorageOutputAvailability::after_ready_seconds(self.duration.num_seconds() as u64)
+            .map_err(|error| format!("{}: {error}", self.field))
     }
 
     pub(crate) fn hours(self) -> i64 {

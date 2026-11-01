@@ -1,12 +1,19 @@
 use std::fs::{self, File, OpenOptions};
+#[cfg(unix)]
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Instant;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use hmac::{Hmac, KeyInit, Mac};
+#[cfg(test)]
+use hubuum_storage_core::DeletionControlCapture;
 use hubuum_storage_core::{
-    ApplicationReapplication, DELETION_CONTROL_MAX_BYTES, DeletionControlCapture,
-    DeletionControlState, DeletionRecoveryPosition,
+    ApplicationReapplication, ControlCheckpointCapture, DELETION_CONTROL_MAX_BYTES,
+    DeletionControlState, DeletionRecoveryPosition, TASK_CONTROL_MAX_RECEIPTS_BYTES,
+    TASK_CONTROL_MAX_RETENTION_BYTES, TaskControlReapplication, TaskControlRevision,
+    TaskControlState, TaskReceiptActivation,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -14,11 +21,28 @@ use uuid::Uuid;
 
 use super::unavailable;
 use crate::errors::ApiError;
+use crate::observability::metrics::{
+    CheckpointLockOutcome, CheckpointOperation, CheckpointTimer, checkpoint_lock_finished,
+};
+pub(super) use crate::observability::metrics::{CheckpointMeasurement, checkpoint_measurement};
 
+mod measured_io;
+mod payload_cache;
+pub(super) use payload_cache::AuthenticatedPayloadCache;
+
+#[cfg(all(test, unix))]
+mod publication_tests;
+mod retention;
 mod runtime;
+#[cfg(all(test, unix))]
+mod size_tests;
 pub(crate) use runtime::RuntimeIsolationGuard;
 
-const MAX_FILE_BYTES: u64 = (DELETION_CONTROL_MAX_BYTES + 65536) as u64;
+const MAX_FILE_BYTES: u64 = (DELETION_CONTROL_MAX_BYTES
+    + TASK_CONTROL_MAX_RECEIPTS_BYTES
+    + TASK_CONTROL_MAX_RETENTION_BYTES
+    + 128 * 1024) as u64;
+const HEAD_ALLOWANCE_BYTES: u64 = 64 * 1024;
 const MAC_DOMAIN: &[u8] = b"hubuum.deletion-checkpoint.v1\0";
 
 /// The directory, signing key and latest reference must remain outside every
@@ -28,6 +52,7 @@ pub(super) struct CheckpointRepository {
     root: PathBuf,
     directory: File,
     key: Vec<u8>,
+    payload_cache: Option<Arc<AuthenticatedPayloadCache>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -37,6 +62,10 @@ struct Payload {
     position: DeletionRecoveryPosition,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     reapplication: Option<ApplicationReapplication>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    task_control: Option<TaskControlState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    task_reapplication: Option<TaskControlReapplication>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -47,6 +76,10 @@ struct Head {
     epoch: Uuid,
     revision: i64,
     sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    task_revision: Option<TaskControlRevision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    previous_sha256: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -58,8 +91,9 @@ struct Signed<T> {
 
 /// Only independent authenticated read-back can construct this proof.
 pub(super) struct DurableCheckpoint {
-    payload: Payload,
+    payload: Arc<Payload>,
     sha256: String,
+    previous_sha256: Option<String>,
 }
 
 /// An owned publication session keeps cleanup and its completion checkpoint
@@ -71,12 +105,25 @@ pub(super) struct CheckpointSession {
 }
 
 impl CheckpointSession {
+    pub(super) fn into_checkpoint(self) -> DurableCheckpoint {
+        self.checkpoint
+    }
+
     pub(super) fn checkpoint(&self) -> &DurableCheckpoint {
         &self.checkpoint
     }
 
+    #[cfg(test)]
     pub(super) fn publish(&mut self, capture: &DeletionControlCapture) -> Result<(), ApiError> {
         self.checkpoint = self.repository.publish_locked(capture, false)?;
+        Ok(())
+    }
+
+    pub(super) fn publish_control(
+        &mut self,
+        capture: &ControlCheckpointCapture,
+    ) -> Result<(), ApiError> {
+        self.checkpoint = self.repository.publish_control_locked(capture, false)?;
         Ok(())
     }
 }
@@ -109,6 +156,14 @@ impl DurableCheckpoint {
 
     pub(super) fn identity(&self) -> &str {
         &self.sha256
+    }
+
+    pub(super) fn task_control(&self) -> Option<&TaskControlState> {
+        self.payload.task_control.as_ref()
+    }
+
+    pub(super) fn task_reapplication(&self) -> Option<&TaskControlReapplication> {
+        self.payload.task_reapplication.as_ref()
     }
 }
 
@@ -146,11 +201,8 @@ fn checked_file(_path: &Path, _create: bool) -> Result<File, ApiError> {
     ))
 }
 
-fn read_bounded(mut file: File) -> Result<Vec<u8>, ApiError> {
-    let mut bytes = Vec::new();
-    (&mut file)
-        .take(MAX_FILE_BYTES + 1)
-        .read_to_end(&mut bytes)
+fn read_bounded(file: File) -> Result<Vec<u8>, ApiError> {
+    let bytes = measured_io::read(file, MAX_FILE_BYTES + 1)
         .map_err(|_| unavailable("Cannot read recovery evidence"))?;
     if bytes.len() as u64 > MAX_FILE_BYTES {
         return Err(unavailable("Recovery evidence exceeds its byte limit"));
@@ -159,6 +211,15 @@ fn read_bounded(mut file: File) -> Result<Vec<u8>, ApiError> {
 }
 
 impl CheckpointRepository {
+    pub(super) fn task_receipt_key(&self) -> Result<super::task_key::TaskReceiptKey, ApiError> {
+        let bytes = self
+            .key
+            .as_slice()
+            .try_into()
+            .map_err(|_| unavailable("Invalid task-control authentication key"))?;
+        Ok(super::task_key::TaskReceiptKey::new(bytes))
+    }
+
     pub(super) fn open(root: &Path, key_file: &Path) -> Result<Self, ApiError> {
         let metadata = fs::symlink_metadata(root)
             .map_err(|_| unavailable("Control repository directory is unavailable"))?;
@@ -191,24 +252,34 @@ impl CheckpointRepository {
             root,
             directory,
             key,
+            payload_cache: None,
         })
     }
 
+    pub(super) fn with_payload_cache(mut self, cache: Arc<AuthenticatedPayloadCache>) -> Self {
+        self.payload_cache = Some(cache);
+        self
+    }
+
     fn signed<T: Serialize>(&self, payload: T) -> Result<Vec<u8>, ApiError> {
+        let timer = CheckpointTimer::start(CheckpointOperation::EncodeSign);
         let bytes = serde_json::to_vec(&payload)
             .map_err(|_| unavailable("Cannot encode recovery evidence"))?;
         let mut mac = Hmac::<Sha256>::new_from_slice(&self.key)
             .map_err(|_| unavailable("Invalid control key"))?;
         mac.update(MAC_DOMAIN);
         mac.update(&bytes);
-        serde_json::to_vec(&Signed {
+        let result = serde_json::to_vec(&Signed {
             payload,
             mac: STANDARD.encode(mac.finalize().into_bytes()),
         })
-        .map_err(|_| unavailable("Cannot encode authenticated recovery evidence"))
+        .map_err(|_| unavailable("Cannot encode authenticated recovery evidence"));
+        timer.finish(result.is_ok());
+        result
     }
 
     fn verified<T: Serialize + DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, ApiError> {
+        let timer = CheckpointTimer::start(CheckpointOperation::Verify);
         let signed: Signed<T> =
             serde_json::from_slice(bytes).map_err(|_| unavailable("Invalid recovery evidence"))?;
         let bytes = serde_json::to_vec(&signed.payload)
@@ -222,6 +293,7 @@ impl CheckpointRepository {
         mac.update(&bytes);
         mac.verify_slice(&tag)
             .map_err(|_| unavailable("Recovery evidence authentication failed"))?;
+        timer.finish(true);
         Ok(signed.payload)
     }
 
@@ -240,13 +312,21 @@ impl CheckpointRepository {
     }
 
     pub(super) fn into_session(self) -> Result<CheckpointSession, ApiError> {
-        let lock = self.lock()?;
+        self.try_into_session()?.ok_or_else(repository_busy)
+    }
+
+    /// Contention is the only deferred outcome. Authentication and filesystem
+    /// failures remain errors, and an acquired session still verifies HEAD.
+    pub(super) fn try_into_session(self) -> Result<Option<CheckpointSession>, ApiError> {
+        let Some(lock) = self.try_lock()? else {
+            return Ok(None);
+        };
         let checkpoint = self.latest_locked()?;
-        Ok(CheckpointSession {
+        Ok(Some(CheckpointSession {
             repository: self,
             checkpoint,
             _lock: lock,
-        })
+        }))
     }
 
     fn latest_locked(&self) -> Result<DurableCheckpoint, ApiError> {
@@ -254,7 +334,7 @@ impl CheckpointRepository {
             &self.root.join("HEAD"),
             false,
         )?)?)?;
-        if head.format != 1
+        if !matches!(head.format, 1 | 2)
             || head.sha256.len() != 64
             || !head
                 .sha256
@@ -270,7 +350,20 @@ impl CheckpointRepository {
         if digest(&bytes) != head.sha256 {
             return Err(unavailable("Checkpoint recovery material digest mismatch"));
         }
-        let payload: Payload = self.verified(&bytes)?;
+        // A hit reuses only the immutable decoding of these exact independently
+        // read and authenticated bytes. HEAD, file checks, digest, correspondence
+        // and durability are established afresh for every returned proof.
+        let key_fingerprint = self.task_receipt_key()?.fingerprint()?;
+        let cached = self
+            .payload_cache
+            .as_ref()
+            .map(|cache| cache.get(&head.sha256, &key_fingerprint))
+            .transpose()?
+            .flatten();
+        let payload = match cached {
+            Some(payload) => payload,
+            None => Arc::new(self.verified::<Payload>(&bytes)?),
+        };
         if payload.state.lineage() != head.lineage
             || payload.state.epoch() != head.epoch
             || payload.state.revision() != head.revision
@@ -278,24 +371,56 @@ impl CheckpointRepository {
                 .reapplication
                 .as_ref()
                 .is_some_and(|receipt| receipt.revision() != head.revision)
+            || head.task_revision
+                != payload
+                    .task_control
+                    .as_ref()
+                    .map(TaskControlState::revision)
+            || (head.format == 2) != payload.task_control.is_some()
+            || payload
+                .task_control
+                .as_ref()
+                .is_some_and(|tasks| tasks.lineage() != head.lineage || tasks.epoch() != head.epoch)
+            || payload.task_reapplication.as_ref().is_some_and(|proof| {
+                payload
+                    .task_control
+                    .as_ref()
+                    .is_none_or(|tasks| proof.task_revision() > tasks.revision())
+                    || payload
+                        .reapplication
+                        .as_ref()
+                        .is_some_and(|deletion| deletion.incarnation() != proof.incarnation())
+            })
+            || head.previous_sha256.as_ref().is_some_and(|previous| {
+                previous == &head.sha256
+                    || previous.len() != 64
+                    || !previous
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
         {
             return Err(unavailable(
                 "Checkpoint identity differs from latest reference",
             ));
         }
+        self.validate_task_key(&payload)?;
         // A prior publisher may have lost acknowledgement after rename but
         // before directory synchronization. A visible HEAD alone is not proof
         // that its name survives power loss; finish the durability boundary on
         // read/retry before returning a durable proof.
-        self.directory
-            .sync_all()
+        measured_io::sync_directory(&self.directory)
             .map_err(|_| unavailable("Cannot establish latest checkpoint durability"))?;
+        if let Some(cache) = &self.payload_cache {
+            cache.remember(head.sha256.clone(), key_fingerprint, Arc::clone(&payload))?;
+        }
         Ok(DurableCheckpoint {
             payload,
             sha256: head.sha256,
+            previous_sha256: head.previous_sha256,
         })
     }
 
+    #[cfg(test)]
     pub(super) fn publish(
         &self,
         capture: &DeletionControlCapture,
@@ -305,15 +430,81 @@ impl CheckpointRepository {
         self.publish_locked(capture, initialize)
     }
 
+    #[cfg(test)]
     fn publish_locked(
         &self,
         capture: &DeletionControlCapture,
         initialize: bool,
     ) -> Result<DurableCheckpoint, ApiError> {
-        if initialize {
+        self.publish_payload_locked(
+            Payload {
+                state: capture.state().clone(),
+                position: capture.position().clone(),
+                reapplication: capture.reapplication().cloned(),
+                task_control: None,
+                task_reapplication: None,
+            },
+            initialize,
+        )
+    }
+
+    pub(super) fn publish_control(
+        &self,
+        capture: &ControlCheckpointCapture,
+        initialize: bool,
+    ) -> Result<DurableCheckpoint, ApiError> {
+        let _lock = self.lock()?;
+        self.publish_control_locked(capture, initialize)
+    }
+
+    fn publish_control_locked(
+        &self,
+        capture: &ControlCheckpointCapture,
+        initialize: bool,
+    ) -> Result<DurableCheckpoint, ApiError> {
+        self.publish_payload_locked(
+            Payload {
+                state: capture.deletion().state().clone(),
+                position: capture.deletion().position().clone(),
+                reapplication: capture.deletion().reapplication().cloned(),
+                task_control: Some(capture.task_control().clone()),
+                task_reapplication: capture.task_reapplication().cloned(),
+            },
+            initialize,
+        )
+    }
+
+    fn publish_payload_locked(
+        &self,
+        payload: Payload,
+        initialize: bool,
+    ) -> Result<DurableCheckpoint, ApiError> {
+        let timer = CheckpointTimer::start(CheckpointOperation::Publish);
+        let result = self.publish_payload(payload, initialize);
+        timer.finish(result.is_ok());
+        result
+    }
+
+    fn publish_payload(
+        &self,
+        payload: Payload,
+        initialize: bool,
+    ) -> Result<DurableCheckpoint, ApiError> {
+        self.validate_task_key(&payload)?;
+        let previous = if initialize {
             // Bootstrap is explicit and restricted to a fresh, empty authority
             // and repository. Missing HEAD is never interpreted as an empty ledger.
-            if capture.state().revision() != 0 || !capture.state().intents().is_empty() {
+            if payload.state.revision() != 0
+                || !payload.state.intents().is_empty()
+                || payload.task_control.as_ref().is_some_and(|tasks| {
+                    tasks.revision().value() != 0
+                        || !matches!(tasks.activation(), TaskReceiptActivation::Disabled)
+                        || !tasks.receipts().is_empty()
+                        || !tasks.purge_batches().is_empty()
+                        || !tasks.holds().is_empty()
+                        || tasks.policies().len() != 1
+                })
+            {
                 return Err(unavailable(
                     "Only empty deletion authority can initialize a repository",
                 ));
@@ -331,27 +522,50 @@ impl CheckpointRepository {
                     ));
                 }
             }
+            None
         } else {
-            let previous = self.latest_locked()?;
-            if !capture.state().covers(previous.state()) {
+            let current = self.latest_locked()?;
+            if !payload.state.covers(current.state()) {
                 return Err(unavailable(
                     "Checkpoint would discard or roll back acknowledged deletion authority",
                 ));
             }
-            if capture.state().revision() == previous.state().revision() {
-                if capture.state() != previous.state()
-                    || capture.reapplication() != previous.reapplication()
-                {
-                    return Err(unavailable("Conflicting checkpoint at the same revision"));
+            match (&payload.task_control, current.task_control()) {
+                (None, Some(_)) => {
+                    return Err(unavailable(
+                        "Checkpoint cannot discard protected task authority",
+                    ));
                 }
-                return Ok(previous);
+                (Some(tasks), Some(old)) if !tasks.covers(old) => {
+                    return Err(unavailable(
+                        "Checkpoint would discard protected task receipts or retention decisions",
+                    ));
+                }
+                _ => {}
             }
-        }
-        let bytes = self.signed(Payload {
-            state: capture.state().clone(),
-            position: capture.position().clone(),
-            reapplication: capture.reapplication().cloned(),
-        })?;
+            if payload.state.revision() == current.state().revision()
+                && payload
+                    .task_control
+                    .as_ref()
+                    .map(TaskControlState::revision)
+                    == current.task_control().map(TaskControlState::revision)
+            {
+                if &payload.state != current.state()
+                    || payload.reapplication.as_ref() != current.reapplication()
+                    || payload.task_control.as_ref() != current.task_control()
+                    || payload.task_reapplication.as_ref() != current.task_reapplication()
+                {
+                    return Err(unavailable(
+                        "Conflicting checkpoint at the same revision vector",
+                    ));
+                }
+                self.collect_superseded(&current)?;
+                return Ok(current);
+            }
+            self.collect_superseded(&current)?;
+            Some(current)
+        };
+        let bytes = self.signed(&payload)?;
         if bytes.len() as u64 > MAX_FILE_BYTES {
             return Err(unavailable("Checkpoint exceeds its byte limit"));
         }
@@ -361,37 +575,90 @@ impl CheckpointRepository {
             .try_exists()
             .map_err(|_| unavailable("Cannot inspect staged checkpoint"))?
         {
-            if read_bounded(checked_file(&path, false)?)? != bytes {
+            let mut file = checked_file(&path, true)?;
+            let existing = read_bounded(
+                file.try_clone()
+                    .map_err(|_| unavailable("Cannot inspect staged checkpoint"))?,
+            )?;
+            if !bytes.starts_with(&existing) {
                 return Err(unavailable("Conflicting staged checkpoint"));
             }
-            checked_file(&path, false)?
-                .sync_all()
+            let missing = bytes.len() - existing.len();
+            if missing != 0
+                && previous.as_ref().is_some_and(|current| {
+                    current.sha256 == sha256 || current.previous_sha256.as_ref() == Some(&sha256)
+                })
+            {
+                return Err(unavailable(
+                    "Published checkpoint material cannot be repaired in place",
+                ));
+            }
+            self.reserve_publication_space(missing as u64 + HEAD_ALLOWANCE_BYTES)?;
+            // The cloned descriptor shares the original cursor. Complete only
+            // the exact known prefix, through that same checked open file.
+            measured_io::write(&mut file, &bytes[existing.len()..])
+                .and_then(|()| measured_io::sync_file(&file))
                 .map_err(|_| unavailable("Cannot sync existing staged checkpoint"))?;
         } else {
+            self.reserve_publication_space(bytes.len() as u64 + HEAD_ALLOWANCE_BYTES)?;
             self.write_new(&path, &bytes)?;
         }
-        self.directory
-            .sync_all()
+        measured_io::sync_directory(&self.directory)
             .map_err(|_| unavailable("Cannot sync recovery material directory"))?;
         // Read back before the monotonic publication point.
         if read_bounded(checked_file(&path, false)?)? != bytes {
             return Err(unavailable("Recovery material read-back failed"));
         }
         let head = self.signed(Head {
-            format: 1,
-            lineage: capture.state().lineage(),
-            epoch: capture.state().epoch(),
-            revision: capture.state().revision(),
-            sha256,
+            format: if payload.task_control.is_some() { 2 } else { 1 },
+            lineage: payload.state.lineage(),
+            epoch: payload.state.epoch(),
+            revision: payload.state.revision(),
+            sha256: sha256.clone(),
+            task_revision: payload
+                .task_control
+                .as_ref()
+                .map(TaskControlState::revision),
+            previous_sha256: previous
+                .as_ref()
+                .map(|checkpoint| checkpoint.sha256.clone()),
         })?;
+        if head.len() as u64 > HEAD_ALLOWANCE_BYTES {
+            return Err(unavailable("Checkpoint reference exceeds its byte limit"));
+        }
         let temporary = self.root.join(format!("HEAD-{}", Uuid::new_v4()));
         self.write_new(&temporary, &head)?;
         fs::rename(&temporary, self.root.join("HEAD"))
             .map_err(|_| unavailable("Cannot publish latest checkpoint"))?;
-        self.directory
-            .sync_all()
+        measured_io::sync_directory(&self.directory)
             .map_err(|_| unavailable("Cannot durably publish latest checkpoint"))?;
-        self.latest_locked()
+        if let Some(cache) = &self.payload_cache {
+            // This exact immutable payload was validated, signed, written and
+            // read back above. Reuse its decoding, while latest_locked still
+            // authenticates HEAD and checks the file, digest and durability.
+            cache.remember(
+                sha256,
+                self.task_receipt_key()?.fingerprint()?,
+                Arc::new(payload),
+            )?;
+        }
+        let current = self.latest_locked()?;
+        self.collect_superseded(&current)?;
+        Ok(current)
+    }
+
+    fn validate_task_key(&self, payload: &Payload) -> Result<(), ApiError> {
+        if let Some(fingerprint) = payload
+            .task_control
+            .as_ref()
+            .and_then(|tasks| tasks.activation().key_fingerprint())
+            && fingerprint != &self.task_receipt_key()?.fingerprint()?
+        {
+            return Err(unavailable(
+                "Task control key does not match the independent repository",
+            ));
+        }
+        Ok(())
     }
 
     fn write_new(&self, path: &Path, bytes: &[u8]) -> Result<(), ApiError> {
@@ -405,26 +672,47 @@ impl CheckpointRepository {
         let mut file = options
             .open(path)
             .map_err(|_| unavailable("Cannot stage recovery evidence"))?;
-        file.write_all(bytes)
-            .and_then(|()| file.sync_all())
+        measured_io::write(&mut file, bytes)
+            .and_then(|()| measured_io::sync_file(&file))
             .map_err(|_| unavailable("Cannot sync recovery evidence"))
     }
 
     fn lock(&self) -> Result<File, ApiError> {
-        let file = checked_file(&self.root.join("LOCK"), true)?;
+        self.try_lock()?.ok_or_else(repository_busy)
+    }
+
+    fn try_lock(&self) -> Result<Option<File>, ApiError> {
+        let started = Instant::now();
+        let file = match checked_file(&self.root.join("LOCK"), true) {
+            Ok(file) => file,
+            Err(error) => {
+                checkpoint_lock_finished(CheckpointLockOutcome::Failure, started.elapsed());
+                return Err(error);
+            }
+        };
         #[cfg(unix)]
         {
             use std::os::fd::AsRawFd;
             // SAFETY: file owns this live descriptor. Closing it releases the
             // advisory lock, including when a publisher crashes.
             if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+                if std::io::Error::last_os_error().kind() == std::io::ErrorKind::WouldBlock {
+                    checkpoint_lock_finished(CheckpointLockOutcome::Contended, started.elapsed());
+                    return Ok(None);
+                }
+                checkpoint_lock_finished(CheckpointLockOutcome::Failure, started.elapsed());
                 return Err(unavailable(
-                    "Control repository is busy; retry without bypassing protection",
+                    "Cannot acquire control repository publication lock",
                 ));
             }
         }
-        Ok(file)
+        checkpoint_lock_finished(CheckpointLockOutcome::Acquired, started.elapsed());
+        Ok(Some(file))
     }
+}
+
+pub(super) fn repository_busy() -> ApiError {
+    unavailable("Control repository is busy; retry without bypassing protection")
 }
 
 fn digest(bytes: &[u8]) -> String {
@@ -473,7 +761,7 @@ mod tests {
             }
         }
 
-        fn next(&self) -> DeletionControlCapture {
+        pub(super) fn next(&self) -> DeletionControlCapture {
             let target = DeletionSubject::Version {
                 identity: serde_json::from_value(serde_json::json!(Uuid::new_v4())).unwrap(),
             };
@@ -569,6 +857,8 @@ mod tests {
                 epoch: control.epoch(),
                 revision: control.revision(),
                 sha256,
+                task_revision: None,
+                previous_sha256: None,
             })
             .unwrap();
         fixture
@@ -838,6 +1128,8 @@ mod tests {
                 state: next.state().clone(),
                 position: next.position().clone(),
                 reapplication: None,
+                task_control: None,
+                task_reapplication: None,
             })
             .unwrap();
         let path = fixture

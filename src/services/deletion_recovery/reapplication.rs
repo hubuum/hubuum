@@ -1,22 +1,24 @@
 use std::path::Path;
 
 use hubuum_storage_core::{
-    DeletionAuditProtection, DeletionCheckpointIdentity, DeletionControlCapture,
-    DeletionControlStorage,
+    ApplicationExposureProof, ControlCheckpointCapture, DeletionAuditProtection,
+    DeletionCheckpointIdentity, DeletionControlStorage, ProtectedTaskReapplication,
+    TaskControlCheckpoint, TaskControlReapplication, TaskReapplicationProgress,
+    TaskReceiptActivation, TaskRetentionStorage,
 };
 
 use super::cleanup::protect_audit;
 use super::repository::{CheckpointRepository, CheckpointSession};
-use super::{ControlRecoveryReport, report, unavailable};
+use super::{ControlRecoveryReport, covers_checkpoint, invalid_control, report, unavailable};
 use crate::errors::ApiError;
 use crate::storage::{StorageContext, storage_handle};
 
 async fn publish(
     mut session: CheckpointSession,
-    capture: DeletionControlCapture,
+    capture: ControlCheckpointCapture,
 ) -> Result<CheckpointSession, ApiError> {
     tokio::task::spawn_blocking(move || {
-        session.publish(&capture)?;
+        session.publish_control(&capture)?;
         Ok(session)
     })
     .await
@@ -44,15 +46,20 @@ pub(crate) async fn reapply(
     .await
     .map_err(|_| unavailable("Reapplication repository worker failed"))??;
     let storage = storage_handle(context);
-    let capture = storage.capture_deletion_control().await?;
-    if !capture.state().covers(session.checkpoint().state()) {
+    let capture = storage.capture_control_checkpoint().await?;
+    if !covers_checkpoint(&capture, session.checkpoint()) {
         return Err(unavailable(
             "Primary authority is behind independent recovery evidence; run --recover-control before reapplication",
         ));
     }
     // Protect every retained decision before touching its recovered copy.
-    let expected = capture.state().clone();
-    let session = if session.checkpoint().state() == &expected {
+    let expected = capture.deletion().state().clone();
+    // Rotation clears completion proofs without changing retained authority.
+    // Reuse its existing durable evidence until replay advances the revision;
+    // publishing cleared proofs at the old vector would correctly be rejected.
+    let session = if session.checkpoint().state() == &expected
+        && session.checkpoint().task_control() == Some(capture.task_control())
+    {
         session
     } else {
         publish(session, capture).await?
@@ -63,13 +70,14 @@ pub(crate) async fn reapply(
     let mut receipt = storage
         .reapply_deletion_decisions(expected, application.fence(), identity(&session)?)
         .await?;
-    let capture = storage.capture_deletion_control().await?;
-    if capture.reapplication() != Some(&receipt) {
+    let capture = storage.capture_control_checkpoint().await?;
+    if capture.deletion().reapplication() != Some(&receipt) {
         return Err(unavailable(
             "Application changed before reapplication read-back; keep the deployment quarantined",
         ));
     }
     let session = publish(session, capture).await?;
+    let (session, task_receipt) = reapply_tasks(context, session).await?;
     if session.checkpoint().reapplication() != Some(&receipt) {
         return Err(unavailable(
             "Independent checkpoint does not protect this application reapplication",
@@ -92,7 +100,10 @@ pub(crate) async fn reapply(
     }
     // The session owns publication exclusion across this exact release CAS.
     storage
-        .release_application_exposure(receipt, identity(&session)?)
+        .release_application_exposure(
+            ApplicationExposureProof::new(receipt, task_receipt).map_err(invalid_control)?,
+            identity(&session)?,
+        )
         .await?;
     let current = storage.read_deletion_control().await?;
     let application = storage.read_application_control().await?;
@@ -104,4 +115,65 @@ pub(crate) async fn reapply(
         ));
     }
     Ok(result)
+}
+
+async fn reapply_tasks(
+    context: &impl StorageContext,
+    mut session: CheckpointSession,
+) -> Result<(CheckpointSession, Option<TaskControlReapplication>), ApiError> {
+    let storage = storage_handle(context);
+    loop {
+        let tasks = session.checkpoint().task_control().ok_or_else(|| {
+            unavailable("Task reapplication requires composite recovery evidence")
+        })?;
+        if matches!(tasks.activation(), TaskReceiptActivation::Disabled) {
+            return Ok((session, None));
+        }
+        let checkpoint = TaskControlCheckpoint::new(
+            tasks.lineage(),
+            tasks.epoch(),
+            tasks.revision(),
+            identity(&session)?,
+        )
+        .map_err(invalid_control)?;
+        let fence = storage.read_application_control().await?.fence();
+        let budget = tasks.policy().cleanup_budget();
+        let request = ProtectedTaskReapplication::new(tasks.clone(), fence, checkpoint)
+            .map_err(invalid_control)?;
+        let progress = storage.reapply_task_retention(request, budget).await?;
+        match progress {
+            TaskReapplicationProgress::Blocked(reason) => {
+                return Err(unavailable(&format!(
+                    "Task retention reapplication is blocked ({reason:?}); keep the deployment quarantined",
+                )));
+            }
+            TaskReapplicationProgress::More {
+                rows,
+                bytes,
+                revision,
+            } => {
+                if rows == 0 && bytes == 0 && revision == tasks.revision() {
+                    return Err(unavailable(
+                        "Task retention reapplication made no bounded progress; keep the deployment quarantined",
+                    ));
+                }
+                session = publish(session, storage.capture_control_checkpoint().await?).await?;
+            }
+            TaskReapplicationProgress::Complete(proof) => {
+                let capture = storage.capture_control_checkpoint().await?;
+                if capture.task_reapplication() != Some(&proof) {
+                    return Err(unavailable(
+                        "Task reapplication changed before completion read-back",
+                    ));
+                }
+                session = publish(session, capture).await?;
+                if session.checkpoint().task_reapplication() != Some(&proof) {
+                    return Err(unavailable(
+                        "Independent evidence does not protect task reapplication",
+                    ));
+                }
+                return Ok((session, Some(proof)));
+            }
+        }
+    }
 }

@@ -6,10 +6,10 @@ use hubuum_domain::{ClassId, CollectionId, ObjectId, ResourceId, VersionIdentity
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 use hubuum_storage_core::{
-    DeletionCopyState, DeletionSubject, HistoryStorage, LogicalIdentityStorage, StorageClassCreate,
-    StorageClassSelector, StorageHistoryCollectionScope, StorageIdentityResourceKind,
-    StorageIdentityTarget, StorageObjectCreate, StorageObjectHistoryListQuery,
-    StorageObjectSelector, StorageObjectUpdate,
+    DeletionControlCapture, DeletionCopyState, DeletionSubject, HistoryStorage,
+    LogicalIdentityStorage, StorageClassCreate, StorageClassSelector,
+    StorageHistoryCollectionScope, StorageIdentityResourceKind, StorageIdentityTarget,
+    StorageObjectCreate, StorageObjectHistoryListQuery, StorageObjectSelector, StorageObjectUpdate,
 };
 use rstest::rstest;
 
@@ -166,7 +166,7 @@ impl Fixture {
 
     async fn protect(&self, request: HotObjectHistoryDeletion) -> ProtectedHotCopy {
         let session = self.repository().into_session().unwrap();
-        let capture = self.storage.capture_deletion_control().await.unwrap();
+        let capture = self.storage.capture_control_checkpoint().await.unwrap();
         let session = publish(session, capture).await.unwrap();
         let (session, expected) =
             protect_audit(&self.storage, session, DeletionAuditProtection::Intent)
@@ -281,8 +281,9 @@ async fn invalid_independent_evidence_cannot_commit_an_intent_or_remove_a_copy(
             .unwrap();
         }
         InvalidEvidence::PrimaryBehindCheckpoint => {
-            let capture = fixture.storage.capture_deletion_control().await.unwrap();
+            let capture = fixture.storage.capture_control_checkpoint().await.unwrap();
             let newer = capture
+                .deletion()
                 .state()
                 .record_intent(
                     Uuid::new_v4(),
@@ -294,8 +295,15 @@ async fn invalid_independent_evidence_cannot_commit_an_intent_or_remove_a_copy(
                 .unwrap();
             fixture
                 .repository()
-                .publish(
-                    &DeletionControlCapture::new(newer.next().clone(), capture.position().clone()),
+                .publish_control(
+                    &ControlCheckpointCapture::new(
+                        DeletionControlCapture::new(
+                            newer.next().clone(),
+                            capture.deletion().position().clone(),
+                        ),
+                        capture.task_control().clone(),
+                    )
+                    .unwrap(),
                     false,
                 )
                 .unwrap();
@@ -547,9 +555,102 @@ async fn deletion_status_excludes_copy_locations_and_erased_payloads() {
     }
 }
 
+#[rstest]
+#[case::runtime(false)]
+#[case::status(true)]
 #[tokio::test]
-async fn physical_recovery_requires_fresh_reapplication_even_at_the_same_authority_revision() {
+async fn task_only_publication_preserves_the_verified_application_release(
+    #[case] inspect_status: bool,
+) {
+    use hubuum_storage_core::{TaskRetentionPolicy, TaskRetentionPolicyChange};
+    use std::time::Duration;
+
     let fixture = Fixture::new(true).await;
+    fixture.run().await.unwrap();
+    super::super::reapply(&fixture.storage, &fixture.directory, &fixture.key)
+        .await
+        .unwrap();
+    let before = fixture.storage.read_application_control().await.unwrap();
+    let tasks = fixture.storage.read_task_control().await.unwrap();
+    let policy = TaskRetentionPolicy::new(
+        tasks.policy().revision().next().unwrap(),
+        Duration::from_secs(120),
+        None,
+    )
+    .unwrap();
+    fixture
+        .storage
+        .replace_task_retention_policy(TaskRetentionPolicyChange::new(
+            tasks.policy().revision(),
+            policy,
+        ))
+        .await
+        .unwrap();
+    super::super::checkpoint(&fixture.storage, &fixture.directory, &fixture.key, false)
+        .await
+        .unwrap();
+    let checkpoint = fixture.repository().latest().unwrap();
+    assert_ne!(before.checkpoint().unwrap().as_str(), checkpoint.identity());
+    let options = serde_json::from_value(
+        serde_json::json!({"directory":fixture.directory,"key":fixture.key}),
+    )
+    .unwrap();
+    if inspect_status {
+        let report = super::super::status(&fixture.storage, &fixture.directory, &fixture.key)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(report).unwrap()["intents"][0]["confirmed_managed_scope_completion"],
+            true
+        );
+    } else {
+        super::super::require_runtime_permit(&fixture.storage, &options)
+            .await
+            .unwrap();
+    }
+}
+
+#[rstest]
+#[case(false)]
+#[case(true)]
+#[tokio::test]
+async fn physical_recovery_requires_fresh_reapplication_even_at_the_same_authority_revision(
+    #[case] protected_tasks: bool,
+) {
+    let fixture = Fixture::new(true).await;
+    if protected_tasks {
+        use hubuum_storage_core::{TaskControlChange, TaskReceiptActivation};
+        let key = fixture
+            .repository()
+            .task_receipt_key()
+            .unwrap()
+            .fingerprint()
+            .unwrap();
+        let state = fixture.storage.read_task_control().await.unwrap();
+        let next = state
+            .with_activation(TaskReceiptActivation::Backfilling {
+                key_fingerprint: key.clone(),
+            })
+            .unwrap();
+        let state = fixture
+            .storage
+            .commit_task_control(TaskControlChange::new(state, next).unwrap())
+            .await
+            .unwrap();
+        let next = state
+            .with_activation(TaskReceiptActivation::Protected {
+                key_fingerprint: key,
+            })
+            .unwrap();
+        fixture
+            .storage
+            .commit_task_control(TaskControlChange::new(state, next).unwrap())
+            .await
+            .unwrap();
+        super::super::checkpoint(&fixture.storage, &fixture.directory, &fixture.key, false)
+            .await
+            .unwrap();
+    }
     fixture.run().await.unwrap();
     super::super::reapply(&fixture.storage, &fixture.directory, &fixture.key)
         .await

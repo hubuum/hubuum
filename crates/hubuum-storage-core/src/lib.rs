@@ -78,6 +78,8 @@ pub use task_capacity::{
 mod task_execution;
 mod task_metadata;
 mod task_queue;
+mod task_retention;
+pub use task_retention::*;
 mod task_search;
 mod telemetry;
 mod token_credentials;
@@ -328,7 +330,7 @@ pub use restore::{
 pub use task_execution::{
     StorageBackupTaskArtifact, StorageBackupTaskContent, StorageExportTaskArtifact,
     StorageExportTaskArtifactBuilder, StorageExportTaskArtifactContent,
-    StorageExportTaskArtifactIdentity, StorageExportTaskArtifactReport,
+    StorageExportTaskArtifactIdentity, StorageExportTaskArtifactReport, StorageOutputAvailability,
     StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
     StorageRemoteCallArtifactTarget, StorageRemoteCallArtifactTargetParts,
     StorageRemoteCallTaskArtifact, StorageSchemaProfileArtifact, StorageTaskActiveStatus,
@@ -343,8 +345,8 @@ pub use task_queue::{
     StorageImportTaskResultBuilder, StorageTask, StorageTaskAccess, StorageTaskBuilder,
     StorageTaskChildListQuery, StorageTaskCreateRequest, StorageTaskCreateRequestBuilder,
     StorageTaskDurations, StorageTaskEvent, StorageTaskEventBuilder, StorageTaskKind,
-    StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskProgress, StorageTaskScopeSnapshot,
-    StorageTaskStatus, TaskQueueStorage,
+    StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskProgress,
+    StorageTaskRemoteInvocation, StorageTaskScopeSnapshot, StorageTaskStatus, TaskQueueStorage,
 };
 pub use task_search::{StorageTaskSearch, TaskTimeRange};
 pub use telemetry::{StorageCapability, StorageObservation, StorageObserver};
@@ -388,6 +390,8 @@ pub enum StorageErrorKind {
     InvalidInput,
     /// The requested state conflicts with an existing durable state.
     Conflict,
+    /// A retained idempotency key identifies a different request or task kind.
+    IdempotencyConflict,
     /// The adapter's persistence service or driver failed.
     Backend,
     /// The authenticated caller lacks the required permission.
@@ -414,12 +418,13 @@ pub enum StorageErrorKind {
 }
 
 impl StorageErrorKind {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::TaskCancelled,
         Self::TaskDeadlineExceeded,
         Self::AuthorizationUnavailable,
         Self::InvalidInput,
         Self::Conflict,
+        Self::IdempotencyConflict,
         Self::Backend,
         Self::PermissionDenied,
         Self::Internal,
@@ -442,6 +447,7 @@ impl StorageErrorKind {
             Self::AuthorizationUnavailable => "authorization_unavailable",
             Self::InvalidInput => "invalid_input",
             Self::Conflict => "conflict",
+            Self::IdempotencyConflict => "idempotency_key_conflict",
             Self::Backend => "backend",
             Self::PermissionDenied => "permission_denied",
             Self::Internal => "internal",
@@ -517,6 +523,11 @@ impl StorageError {
     #[must_use]
     pub fn conflict(message: impl Into<String>) -> Self {
         Self::new(StorageErrorKind::Conflict, message, None)
+    }
+
+    #[must_use]
+    pub fn idempotency_conflict(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::IdempotencyConflict, message, None)
     }
 
     #[must_use]

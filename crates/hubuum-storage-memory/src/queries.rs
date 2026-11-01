@@ -505,6 +505,11 @@ impl ComputedFieldStorage for MemoryStorage {
             trace_link: None,
             claim_token: None,
             execution_fence: None,
+            receipt_admission: None,
+            retention_policy: None,
+            details_expires_at: None,
+            recovery_unavailable: false,
+            invocation: None,
         };
         let task = record.projection()?;
         state.store_task(task_id.id(), record)?;

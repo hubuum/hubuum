@@ -109,6 +109,20 @@ revised with evidence, and cannot waive H1–H5.
 | P7 | Artifact slow; #508 | At least 0.8 MiB/s upload throughput per 1 MiB/s stream | Report producer/upload/verification/publication separately, count upload and full read-back, preserve H1/H2. Publication still requires completed verification. |
 | P8 | Archive exact; #518 | At most 128 MiB source-plus-destination bytes per touched 64 MiB segment, plus reported verification traffic | Erase 1% of records; report all touched segments instead of extrapolating one segment's cost to the dataset. |
 
+The task-retention observer writes its raw report before returning failure when
+steady detail or receipt expiry misses P6, or lacks complete eligible evidence.
+This stops later output-expiry and recovery probes from running after a known
+latency failure. A bounded smoke drill without a steady phase remains a
+correctness check and cannot establish P6 acceptance.
+
+On 2026-11-01, the maintainer approved completing the functional task-retention
+implementation in [#544](https://github.com/hubuum/hubuum/pull/544) while deferring
+P6 qualification to [#561](https://github.com/hubuum/hubuum/issues/561), after
+reviewing the failed diagnostic bounds and successful full drain/resource checks.
+This changes that PR's delivery scope, not P6's targets or any resource ceiling.
+Dependent lifecycle performance acceptance still requires qualifying P6 evidence;
+the [measurement guide](task_retention_measurement.md) retains the failures.
+
 P4 proposes an eight-claim promotion interval for evaluation, not shipped defaults.
 Catalog/segment limits reflect bounded block reads and an initial 5% online
 metadata envelope. Memory/spool ceilings support four concurrent streams without

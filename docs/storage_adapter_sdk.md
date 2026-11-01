@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.15`.
+Status: accepted; current experimental release train is `0.16`.
 
 ## Supported Crate Graph
 
@@ -625,3 +625,62 @@ and fence/reset worker leases during restore while preserving service history.
 Execution caps and small-pool reservation fallback are part of the complete
 contract; see [shared scheduling](task_scheduling.md). Rerun conformance and
 production-adapter transaction/concurrency tests before deployment.
+
+## Upgrading from 0.15 to 0.16
+
+Upgrade all ten SDK crates together to 0.16.0. This is a breaking adapter change.
+Implement the complete `TaskRetentionStorage` contract, protected submission
+lookup and activation, and the typed `StorageTaskSubmissionOutcome` creation
+result. Preserve stable principal/task identities, original request fingerprints,
+terminal-anchored windows and exact admission tickets across adapter boundaries.
+
+Preserve `StorageErrorKind::IdempotencyConflict` across adapter error conversion
+for changed protected request fingerprints and task kinds. The application maps
+it to HTTP 409 with a bounded reason; do not collapse it into a generic conflict
+whose meaning a consumer would have to recover from prose.
+
+`TaskRetentionPolicyChange` compares a `TaskRetentionPolicyRevision`, independently
+of the task-control revision. Under the adapter's control lock, reject a competing
+policy revision and apply the replacement to the latest authority state, preserving
+concurrent receipt changes. Receipt settlement alone must not invalidate the edit.
+
+Receipt retirement uses `ReceiptExpirySelection::MAX_RECEIPTS` (1,000 bounded
+metadata references), independently of the 64-task physical purge manifest.
+Both the selector and `ReceiptExpiryBatch` enforce this limit. Preserve exact
+terminal-anchor protection and the published expiry floor for the whole batch.
+
+Construct `TaskHoldChange` from the captured `TaskControlState` and desired hold.
+It retains the prior decision for that hold ID, not a global task revision.
+Compare that exact record under the control lock before applying to fresh state;
+receipt activity and other holds cannot invalidate it. Conflicting decisions for
+the same hold still fail, and release still advances the protected purge fence.
+Generic `commit_task_control` must reject hold changes in every adapter.
+
+Export and backup artifact `into_parts` now accepts an adapter-owned readiness
+clock and returns a fallible result. `StorageOutputAvailability` preserves either
+an existing fixed deadline or a validated post-ready lifetime. Resolve it inside
+atomic completion and update physical artifact ownership to the same resulting
+deadline. Restore keeps its recorded deadline and must not start a new lifetime.
+
+Checkpoint capture now combines independent deletion and task authority through
+`ControlCheckpointCapture`. Exposure release takes `ApplicationExposureProof`;
+protected task authority requires an exact current-incarnation task reapplication
+proof. Retain historical reconciliation proofs during ordinary task revision
+changes, but require exact current revisions at exposure-release CAS.
+
+Implement both task-detail and expired-output purge scopes, aggregate row/byte
+budgets, child-write fencing, output/hold/dependency blockers, terminal expiry
+protection and recovery of retained decisions. Preserve audit provenance after
+parent deletion and grandfather legacy detail-retention anchors. No empty or
+unsupported fallback satisfies these required methods. Run the shared protected
+admission verifier and adapter-native transaction, locking, migration, recovery
+and bounded-purge tests. See [task retention](task_retention.md) for operational
+activation and client-visible retry behavior.
+
+Published task-owned artifact chunks, manifests and reservations are part of the
+bounded purge contract. Their verification proof fences ordinary physical
+cleanup, including while already marked deleting. Abandoned unpublished staging
+retains lease-fenced cleanup with current holds pinned, preserving retry capacity.
+Recheck holds and immutable task ownership even when its catalog row is
+absent, preserve producer grace, and acknowledge completion only after all
+physical obligations in the selected scope have been retired.

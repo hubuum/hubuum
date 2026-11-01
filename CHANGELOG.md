@@ -24,6 +24,41 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Templates replay indexed temporary files; backup capture reuses its row spool.
   Configure spool and worker resident limits with
   `HUBUUM_ARTIFACT_MAX_SPOOL_BYTES` and `HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES`.
+- Protected idempotency receipts preserve retry behavior after task details expire.
+  Authorized matching retries receive a minimal HTTP 410 response using the
+  standard error/message envelope; changed requests conflict during their fixed
+  deduplication window. Task/output cleanup
+  uses protected bounded batches, honors holds and available outputs, and
+  preserves retained decisions across backup recovery. Administrators can preview
+  and enable receipt protection, set prospective policy, manage holds and run
+  maintenance; see [task retention](docs/task_retention.md).
+  Protected output cleanup includes physical artifact chunks, manifests and
+  reservations; holds and producer grace cannot be bypassed by ordinary cleanup.
+  Export and backup result availability starts at successful publication, so
+  preparation time does not shorten the configured post-ready window.
+  Concurrent receipt settlement does not prevent retention policy or hold
+  updates; competing edits to the same decision still conflict.
+  Cleanup shares its fixed row/byte budget across multiple protected manifests
+  and coalesces their completion checkpoints; receipt retirement has a separate
+  bounded metadata batch instead of inheriting the physical task-manifest limit.
+  Concurrent protected admissions share bounded repository verification work
+  while retaining each submission's exact generation and recovery checks.
+  A small admission group allows up to 10 ms for concurrent reservations to join
+  before acquiring the publication lock, reducing tiny checkpoint publications.
+  Exact-ticket activations overlap under shared authority locks; retention changes
+  and recovery remain excluded until those activations finish.
+  Admission briefly waits for a contended cross-replica publication lock before
+  returning HTTP 503 and groups requests that arrive during that wait, avoiding
+  repeated full requests and checkpoint work during ordinary contention.
+  Already protected requests at the head of an admission queue complete without
+  republishing for newer requests; uncaptured requests retain their queue order.
+  Checkpoint cleanup reuses at most three authenticated snapshot decodings while
+  still checking current files, signing keys and supersession before collection.
+  Protected maintenance checks for newly eligible work at the worker poll cadence
+  after idle passes, avoiding the legacy output cleanup timer's five-minute delay.
+  Productive or temporarily contended protected passes retry after a bounded
+  100 ms publisher pause instead of waiting for the full idle poll interval.
+
 - `--reapply-control` verifies retained deletion decisions against the current
   application image, independently protects completion, and reopens access.
   Logical restore reapplies later supported decisions before exposing data;
@@ -88,6 +123,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Reconcile task-owned artifacts before downgrading. New export replay rows and
   backup source rows are capped at 4 MiB; related template input is capped at
   8 MiB per batch and hydrated output at 4 MiB per row. Narrow oversized queries.
+- **Breaking operational change:** stop older producers, apply migration
+  `2026-10-31-000008_task_retention`, reconcile grants and deploy matching binaries.
+  Explicitly preview and enable finite legacy deduplication with the independent
+  repository configured on every producer. Original terminal timestamps remain
+  authoritative; old receipts may expire immediately. Existing task details
+  remain grandfathered out of new expiry policy.
+  Legacy backups with reminted task or principal identities remain quarantined
+  when correspondence to retained purges or receipt owners cannot be proven;
+  restore from a backup with matching stable identity evidence.
+- **Breaking Rust SDK change:** upgrade all ten SDK crates to 0.16.0 and implement
+  protected task admission, receipt/retention capabilities, composite checkpoints
+  and combined exposure proofs. Policy replacement compares the policy revision;
+  hold updates compare the captured hold decision, preserving concurrent receipts. See the
+  [0.16 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-015-to-016).
+
 - **Breaking operational change:** stop every older API, worker and administrator
   process, apply the application-reapplication migration and reconcile grants,
   then start matching binaries. Configure the independent repository on all
@@ -173,6 +223,22 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Task cleanup reports retain their exact verified checkpoint instead of
+  reacquiring a contended repository or mixing it with newer database state.
+  Receipt expiry reuses existing protection only when it covers the selected
+  revision and every fixed terminal anchor.
+
+- Task claim and retention lookups use indexed UUID comparisons and queue order,
+  avoiding repeated scans as retained removal decisions and queued tasks grow.
+
+- Background task cleanup defers a contended checkpoint publication without
+  aborting the worker's next task claim. Explicit cleanup commands retain their
+  retryable refusal, and authentication or filesystem failures remain fatal.
+- Task maintenance runs independently of queue claimants, so bounded cleanup
+  and artifact work can finish without pausing the next task execution. Each
+  maintenance pass retains its application admission and recovery checks and
+  pauses for the configured worker poll interval before reacquiring the
+  repository, allowing other publishers to make progress.
 - Startup readiness requires the latest migration packaged with the adapter,
   preventing an incomplete schema from passing after parallel migrations are
   integrated.

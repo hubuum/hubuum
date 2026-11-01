@@ -98,6 +98,11 @@ impl PostgresStorageError {
     }
 
     #[must_use]
+    pub fn idempotency_conflict(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::IdempotencyConflict, message, None)
+    }
+
+    #[must_use]
     pub fn reauthentication_required() -> Self {
         Self::new(
             StorageErrorKind::ReauthenticationRequired,
@@ -249,6 +254,7 @@ impl From<StorageError> for PostgresStorageError {
             StorageErrorKind::AuthorizationUnavailable => Self::authorization_unavailable(message),
             StorageErrorKind::InvalidInput => Self::invalid_input(message),
             StorageErrorKind::Conflict => Self::conflict(message),
+            StorageErrorKind::IdempotencyConflict => Self::idempotency_conflict(message),
             StorageErrorKind::Backend => Self::database(message),
             StorageErrorKind::ReauthenticationRequired => Self::reauthentication_required(),
             StorageErrorKind::PermissionDenied => Self::permission_denied(message),
@@ -283,8 +289,45 @@ impl From<PoolError> for PostgresStorageError {
     }
 }
 
+// Only fixed, non-secret operation messages cross this boundary. Unrecognized
+// database failures retain the existing opaque backend error surface.
+fn task_retention_error(message: &str) -> Option<PostgresStorageError> {
+    match message {
+        "Task receipt capacity is exhausted"
+        | "Task retention obligation capacity is exhausted"
+        | "Task retention is not activated"
+        | "Task retention authority is unavailable" => {
+            Some(PostgresStorageError::unavailable(message))
+        }
+        "Task detail retention prevents new references"
+        | "Task receipt authority changed or is unavailable"
+        | "Task receipt authority changed"
+        | "Task receipt does not match the exact pending task admission"
+        | "Task receipt settlement does not match the immutable terminal outcome"
+        | "Task admission generation is no longer activatable"
+        | "Task admission already settled without activation"
+        | "Task admission protection deadline expired"
+        | "Receipt expiry protection does not cover the selected authority"
+        | "Receipt expiry generation changed"
+        | "Receipt expiry requires the exact fixed terminal anchor"
+        | "Protected task purge coverage changed"
+        | "Task purge requires READ COMMITTED" => Some(PostgresStorageError::conflict(message)),
+        "Invalid receipt expiry batch bound"
+        | "Invalid pending admission batch bound"
+        | "Invalid bounded task purge request"
+        | "Invalid task purge list bound"
+        | "Invalid task purge budget" => Some(PostgresStorageError::invalid_input(message)),
+        _ => None,
+    }
+}
+
 impl From<DieselError> for PostgresStorageError {
     fn from(error: DieselError) -> Self {
+        if let DieselError::DatabaseError(_, ref info) = error
+            && let Some(retention) = task_retention_error(info.message())
+        {
+            return retention;
+        }
         match error {
             DieselError::NotFound => {
                 debug!(
@@ -387,6 +430,7 @@ impl From<PostgresStorageError> for StorageError {
             }
             StorageErrorKind::InvalidInput => Self::invalid_input(error.message),
             StorageErrorKind::Conflict => Self::conflict(error.message),
+            StorageErrorKind::IdempotencyConflict => Self::idempotency_conflict(error.message),
             StorageErrorKind::Backend => Self::backend_failure(error.message),
             StorageErrorKind::ReauthenticationRequired => Self::reauthentication_required(),
             StorageErrorKind::PermissionDenied => Self::permission_denied(error.message),

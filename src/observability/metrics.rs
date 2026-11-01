@@ -1,4 +1,5 @@
 mod cache;
+mod checkpoint;
 mod computed_field;
 mod db;
 mod event;
@@ -35,6 +36,11 @@ use crate::operational_contracts::{MetricDefinition, metric_label_value_is_allow
 use self::cache::ScrapeCache;
 use self::process::ProcessMetrics;
 
+pub(crate) use self::checkpoint::{
+    CheckpointLockOutcome, CheckpointMeasurement, CheckpointOperation, CheckpointTimer,
+    checkpoint_gc_removed, checkpoint_lock_finished, checkpoint_measurement, checkpoint_read_bytes,
+    checkpoint_write_bytes,
+};
 pub(crate) use self::computed_field::computed_evaluation_summary;
 pub use self::computed_field::{
     computed_evaluation, computed_live_fallback, computed_read_repair, computed_rebuild_batch,
@@ -203,6 +209,13 @@ struct Metrics {
     secret_source_info: CheckedU64Gauge,
     secret_resolution_duration: CheckedHistogram,
     secret_resolutions: CheckedCounter,
+    checkpoint_io_bytes: CheckedCounter,
+    checkpoint_operations: CheckedCounter,
+    checkpoint_duration: CheckedHistogram,
+    checkpoint_lock_attempts: CheckedCounter,
+    checkpoint_lock_duration: CheckedHistogram,
+    checkpoint_gc_files: CheckedCounter,
+    checkpoint_gc_bytes: CheckedCounter,
     token_hash_key_info: CheckedU64Gauge,
     token_hash_keys: CheckedU64Gauge,
     token_authentications: CheckedCounter,

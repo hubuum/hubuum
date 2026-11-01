@@ -103,6 +103,17 @@
         "hubuum_task_capacity_snapshot": "hubuum_task_capacity_snapshot_without_scheduling",
         "hubuum_reconcile_task_capacity": "hubuum_reconcile_task_capacity_without_scheduling"
       }
+    },
+    {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-10-31-000008_task_retention/up.sql",
+      "sha256": "ef180f06c4680e202f42c72f58933c6ab8abde85289e189ba6a3705beafed937",
+      "reason": "Protected stable-principal task receipts replace task-row lifetime uniqueness. Every producer must reserve and protect an exact generation before execution; older writers cannot preserve receipt windows, scoped purge fences or restored deduplication authority. The legacy-only partial index keeps uniqueness while receipt protection is disabled or legacy rows await backfill. Activation holds shared authority locks while retention mutations and recovery retain exclusive locks; each exact task generation remains fenced through its transaction. Complete snapshot readers return JSON for direct typed decoding; protected records remain JSONB and the single-statement snapshot, ordering and authority checks are unchanged.",
+      "upgrade_action": "Stop all older API, worker, restore executor and administrator producers; apply this migration and reconcile runtime grants; deploy matching binaries with the independent repository configured. Preview and explicitly enable finite legacy deduplication, repeat bounded backfill to completion, and verify the activation checkpoint before starting protected producers. Preserve original terminal clocks and grandfather old task details. See docs/task_retention.md#upgrade-and-activation.",
+      "drop_constraints": {
+        "public.tasks": [
+          "tasks_submitted_by_idempotency_key_key"
+        ]
+      }
     }
   ]
 }

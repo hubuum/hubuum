@@ -1,4 +1,6 @@
 use crate::extractors::AccessEventContext;
+use crate::models::TaskDetailsExpiredResponse;
+use crate::services::tasks::TaskSubmissionOperation;
 use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
 
 use crate::api::locations as api_locations;
@@ -13,11 +15,10 @@ use crate::models::{
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
 use crate::services::tasks::{
-    TaskSubmission, list_import_results, load_authorized_import, submit_task, task_scope_snapshot,
+    TaskSubmission, TaskSubmissionAttempt, list_import_results, load_authorized_import,
+    task_scope_snapshot,
 };
-use crate::tasks::{
-    ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
-};
+use crate::tasks::{ensure_task_worker_running, idempotency_key_from_headers, request_hash};
 
 #[utoipa::path(
     post,
@@ -29,7 +30,8 @@ use crate::tasks::{
     responses(
         (status = 202, description = "Import task accepted", body = TaskResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
-        (status = 409, description = "Conflict", body = ApiErrorResponse),
+        (status = 410, description = "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.", body = TaskDetailsExpiredResponse, headers(("Cache-Control" = String, description = "no-store; no automatic retry is implied"))),
+        (status = 409, description = "Conflict; reason idempotency_key_conflict identifies a changed protected request", body = ApiErrorResponse, headers(("Cache-Control" = String, description = "no-store for protected request conflicts; no Retry-After"))),
         (status = 429, description = "Shared task admission or byte capacity exhausted", body = ApiErrorResponse),
         (status = 503, description = "Task identity or control reconciliation unavailable", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
@@ -43,53 +45,65 @@ pub async fn create_import(
     req: HttpRequest,
     import_request: web::Json<ImportRequest>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(context.clone());
-
     let import_request = import_request.into_inner();
-    import_request.validate().await?;
-    let (import_request, approval) = if import_request.contains_credentials() {
-        let approved = super::credential_approvals::approve_request(
-            &context,
-            &requestor,
-            &req,
-            crate::models::credential_approval::CredentialOperation::ImportCredentials {
-                import: Box::new(import_request),
-            },
-        )
-        .await?;
-        let (import_request, approval) = crate::services::credential_approvals::approved_import(
-            approved,
-            &requestor.event_context(&req),
-        )?;
-        (import_request, Some(approval))
-    } else {
-        (import_request, None)
-    };
     let payload = serde_json::to_value(&import_request)?;
     let hash = request_hash(&payload)?;
-    let idempotency_key = idempotency_key_from_headers(req.headers())?;
-    let snapshot = task_scope_snapshot(
-        Some(TokenID::new(requestor.token_meta.id().id())?),
-        requestor.scopes(),
-    );
-
-    let task = submit_task(
+    let attempt = TaskSubmissionAttempt::prepare(
         &context,
-        TaskSubmission::new(
-            TaskKind::Import,
-            PrincipalID::new(requestor.principal.id().id())?,
-            payload,
-            import_request.total_items(),
-        )
-        .idempotency_key(idempotency_key)
-        .request_hash(Some(hash))
-        .scope_snapshot(snapshot)
-        .approval(approval),
+        &requestor.principal,
+        idempotency_key_from_headers(req.headers())?,
+        TaskSubmissionOperation::Import,
+        &import_request,
+        Some(&hash),
     )
     .await?;
+    let task = if let Some(task) = attempt.lookup(&context, &requestor.principal).await? {
+        task
+    } else {
+        import_request.validate().await?;
+        let (import_request, approval) = if import_request.contains_credentials() {
+            let approved = super::credential_approvals::approve_request(
+                &context,
+                &requestor,
+                &req,
+                crate::models::credential_approval::CredentialOperation::ImportCredentials {
+                    import: Box::new(import_request),
+                },
+            )
+            .await?;
+            let (import_request, approval) =
+                crate::services::credential_approvals::approved_import(
+                    approved,
+                    &requestor.event_context(&req),
+                )?;
+            (import_request, Some(approval))
+        } else {
+            (import_request, None)
+        };
+
+        let snapshot = task_scope_snapshot(
+            Some(TokenID::new(requestor.token_meta.id().id())?),
+            requestor.scopes(),
+        );
+
+        attempt
+            .submit(
+                &context,
+                &requestor.principal,
+                TaskSubmission::new(
+                    TaskKind::Import,
+                    PrincipalID::new(requestor.principal.id().id())?,
+                    payload,
+                    import_request.total_items(),
+                )
+                .request_hash(Some(hash))
+                .scope_snapshot(snapshot)
+                .approval(approval),
+            )
+            .await?
+    };
 
     let response = task.to_response()?;
-    kick_task_worker(context.clone());
 
     Ok(ApiResponse::accepted_at(
         response,

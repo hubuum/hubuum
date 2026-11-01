@@ -865,6 +865,7 @@ pub async fn cancel_schema_work(
     runtime
         .with_transaction(async move |connection| {
             let work = work_on(connection, task_id).await?;
+            super::task_retention::lock_on(connection).await?;
             let class = lock_class(connection, work.target().class_id()).await?;
             check_collection(&class, authorized_collection)?;
             use crate::schema::tasks::dsl as tasks;

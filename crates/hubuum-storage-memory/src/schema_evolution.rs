@@ -650,6 +650,11 @@ impl MemoryState {
             trace_link: request.context().trace_link().cloned(),
             claim_token: None,
             execution_fence: None,
+            receipt_admission: None,
+            retention_policy: None,
+            details_expires_at: None,
+            recovery_unavailable: false,
+            invocation: None,
         };
         self.store_task(task_id.id(), task)?;
         self.schema_work.insert(task_id.id(), work.clone());
@@ -1031,9 +1036,9 @@ impl SchemaEvolutionStorage for MemoryStorage {
     }
 
     async fn get_schema_work(&self, task_id: TaskId) -> Result<StorageSchemaWork, StorageError> {
-        self.state
-            .read()
-            .await?
+        let state = self.state.read().await?;
+        state.require_task_details(task_id)?;
+        state
             .schema_work
             .get(&task_id.id())
             .cloned()
@@ -1046,6 +1051,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
         budget: StorageSchemaReportBudget,
     ) -> Result<StorageSchemaWorkReport, StorageError> {
         let state = self.state.read().await?;
+        state.require_task_details(task_id)?;
         let work = state
             .schema_work
             .get(&task_id.id())
@@ -1070,6 +1076,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
         guard.ensure_task_execution_allowed()?;
         let mut state = guard.clone();
         let report = request.report();
+        state.require_task_details(report.task_id())?;
         state
             .check_schema_collection(report.target().class_id(), request.authorized_collection())?;
         let work = state
@@ -1097,9 +1104,9 @@ impl SchemaEvolutionStorage for MemoryStorage {
         &self,
         task_id: TaskId,
     ) -> Result<StorageSchemaRepairReport, StorageError> {
-        self.state
-            .read()
-            .await?
+        let state = self.state.read().await?;
+        state.require_task_details(task_id)?;
+        state
             .schema_repair_reports
             .get(&task_id.id())
             .cloned()
