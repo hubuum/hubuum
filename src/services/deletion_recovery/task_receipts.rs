@@ -454,6 +454,11 @@ async fn protect_waiting_admissions(configuration: &Arc<Configuration>) {
     let session = wait_for_admission_session(configuration).await;
     let mut batch: Vec<WaitingAdmission> = Vec::new();
     {
+        let captured = |ticket: &TaskAdmissionTicket| {
+            session
+                .as_ref()
+                .is_ok_and(|session| admission_is_captured(session, ticket))
+        };
         let mut waiting = configuration.admissions.lock().await;
         while let Some(next) = waiting.front() {
             if next.result.is_closed() {
@@ -467,6 +472,14 @@ async fn protect_waiting_admissions(configuration: &Arc<Configuration>) {
             {
                 break;
             }
+            // Another publisher may already have protected the oldest requests.
+            // Finish that prefix without forcing a new publication for arrivals
+            // behind it. Leave the first uncaptured request at the queue head so
+            // later protected requests cannot continually overtake it.
+            if batch.first().is_some_and(|first| captured(&first.ticket)) && !captured(&next.ticket)
+            {
+                break;
+            }
             batch.push(waiting.pop_front().expect("nonempty admission queue"));
         }
     }
@@ -475,13 +488,9 @@ async fn protect_waiting_admissions(configuration: &Arc<Configuration>) {
     };
     let session = async {
         let session = session?;
-        let captured = session.checkpoint().task_control().is_some_and(|control| {
-            batch.iter().all(|admission| {
-                control
-                    .receipt(admission.ticket.receipt().submission())
-                    .is_some_and(|receipt| receipt.ticket() == &admission.ticket)
-            })
-        });
+        let captured = batch
+            .iter()
+            .all(|admission| admission_is_captured(&session, &admission.ticket));
         if captured {
             Ok(session)
         } else {
@@ -512,6 +521,14 @@ async fn protect_waiting_admissions(configuration: &Arc<Configuration>) {
     }
     // Cancellation drops these senders and the owned session. Waiters fail
     // closed; their durable pending receipts remain recoverable by maintenance.
+}
+
+fn admission_is_captured(session: &CheckpointSession, ticket: &TaskAdmissionTicket) -> bool {
+    session
+        .checkpoint()
+        .task_control()
+        .and_then(|control| control.receipt(ticket.receipt().submission()))
+        .is_some_and(|receipt| receipt.ticket() == ticket)
 }
 
 async fn activate_captured(

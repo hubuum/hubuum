@@ -310,7 +310,11 @@ the repository and checks its key; an acquired session verifies current recovery
 evidence. Authentication and recovery failures still fail immediately. Waiting
 does not renew a task deadline or authorize execution without its exact proof.
 The bounded group is selected after session acquisition, so requests arriving
-during lock contention or verification can share that session. PostgreSQL builds
+during lock contention or verification can share that session. When the oldest
+waiting requests are already captured, their contiguous queue prefix activates
+without republishing for newer uncaptured requests. The first uncaptured request
+keeps its queue position; later protected requests cannot overtake it indefinitely.
+PostgreSQL builds
 complete snapshots as JSON text for direct decoding into validated domain types;
 stored receipt and authority records remain JSONB. The publisher can reuse the exact
 immutable payload it just signed and read back; every session still checks the

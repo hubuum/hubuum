@@ -50,6 +50,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Admission briefly waits for a contended cross-replica publication lock before
   returning HTTP 503 and groups requests that arrive during that wait, avoiding
   repeated full requests and checkpoint work during ordinary contention.
+  Already protected requests at the head of an admission queue complete without
+  republishing for newer requests; uncaptured requests retain their queue order.
   Checkpoint cleanup reuses at most three authenticated snapshot decodings while
   still checking current files, signing keys and supersession before collection.
   Protected maintenance checks for newly eligible work at the worker poll cadence

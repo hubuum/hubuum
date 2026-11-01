@@ -47,6 +47,60 @@ async fn tickets(fixture: &Fixture, count: usize) -> Vec<TaskAdmissionTicket> {
     tickets
 }
 
+#[rstest::rstest]
+#[case::captured_prefix(true)]
+#[case::uncaptured_head(false)]
+#[actix_web::test]
+async fn mixed_batches_reuse_only_the_captured_queue_prefix(#[case] captured_first: bool) {
+    let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
+    let captured = fixture.admit("captured", StorageTaskKind::Import).await;
+    let configuration = fixture.service.configuration().unwrap();
+    let session = open_session(configuration).await.unwrap();
+    let session = publish_current(&fixture.storage, session).await.unwrap();
+    let original = session.checkpoint().identity().to_owned();
+    drop(session);
+    let uncaptured = fixture.admit("uncaptured", StorageTaskKind::Import).await;
+    let tickets = if captured_first {
+        [captured, uncaptured]
+    } else {
+        [uncaptured, captured]
+    };
+    let mut results = Vec::new();
+    for ticket in tickets {
+        let (result, received) = oneshot::channel();
+        configuration
+            .admissions
+            .lock()
+            .await
+            .push_back(WaitingAdmission {
+                storage: fixture.storage.clone(),
+                ticket,
+                result,
+            });
+        results.push(received);
+    }
+
+    protect_waiting_admissions(configuration).await;
+
+    assert!(matches!(
+        results[0].try_recv().unwrap().unwrap(),
+        TaskActivationOutcome::Activated(_)
+    ));
+    if captured_first {
+        assert!(matches!(
+            results[1].try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+        assert_eq!(fixture.checkpoint().identity(), original);
+    } else {
+        assert!(matches!(
+            results[1].try_recv().unwrap().unwrap(),
+            TaskActivationOutcome::Activated(_)
+        ));
+        assert_ne!(fixture.checkpoint().identity(), original);
+    }
+}
+
 #[actix_web::test]
 async fn coalescing_admissions_leave_the_repository_available_for_other_publishers() {
     let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;

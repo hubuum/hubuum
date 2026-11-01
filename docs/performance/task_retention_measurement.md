@@ -350,3 +350,33 @@ candidate reuses a bounded history of authenticated decodings for collection,
 with fresh file and key checks. That candidate requires fresh measurements.
 Raw reports and source/image metadata are retained under
 `target/retention-544-20261031/shared-coalescing-window-1`.
+
+## Authenticated collection reuse diagnostic
+
+Source `9878195356775b1a1fdcd58eb74a90b09731791e` completed another fresh shared
+profile with unchanged limits and workload. The production image and administrator
+match this source, and the native load generator retains its verified, unchanged
+661-input build tree. Full correctness verification passed before the run; no
+other builds or tests ran during measurement.
+
+| Observation | Recorded value |
+| --- | --- |
+| Initial admission | 10,000 tasks in 80,803 ms |
+| Total admitted and fully drained | 23,824 tasks |
+| Eligible detail expirations / p95 lag | 20,315 / 43,746 ms |
+| Eligible receipt expirations / p95 lag | 16,029 / 18,267 ms |
+| Unknown deadlines / censored eligible observations | 0 / 0 |
+| Steady pre-refill receipt observations | Minimum 6,270; median 10,000 |
+| Largest application high-water RSS | 278,196,224 bytes |
+
+Expiry timing and resource enforcement pass, but occupancy again does **not**
+qualify. Left-held pre-refill interpolation averages 8,373.45 receipts, without
+establishing a lower bound or acceptance tolerance. The first 1,000-task refill
+takes 12,989 ms with 57 publications and 651 ms of collection work. The last takes
+14,406 ms with 64 publications and 771 ms of collection work. These nested metric
+durations must not be summed. Reusing authenticated collection decodings reduces
+that cost, but frequent full publication still limits replenishment. A subsequent
+candidate finishes an already captured queue prefix before publishing for newer
+uncaptured requests, preserving queue order and exact-ticket activation checks.
+That change requires fresh qualification. Raw reports and source/image metadata
+are retained under `target/retention-544-20261031/shared-collection-cache-1`.
