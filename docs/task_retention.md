@@ -296,9 +296,10 @@ that separate erasure capability.
 
 Concurrent protected admissions share one verified publication session for at
 most 32 requests from the same storage handle. A smaller waiting group has a
-10 ms coalescing window before acquiring the independent publication lock, giving
-concurrent database reservations time to join. Full waiting groups proceed
-immediately. Light traffic can therefore incur up to 10 ms of deliberate batching
+10 ms gathering interval before acquiring the independent publication lock.
+If concurrent database reservations continue joining, gathering repeats while
+the queue grows, with a fixed 50 ms maximum. Groups that are already full proceed
+immediately. Light traffic incurs only the initial 10 ms deliberate batching
 delay; no protection deadline is renewed. Their exact-ticket activations may
 overlap while that session stays locked. PostgreSQL activation holds shared
 deletion and retention authority locks through its transaction, plus the exact

@@ -380,3 +380,31 @@ candidate finishes an already captured queue prefix before publishing for newer
 uncaptured requests, preserving queue order and exact-ticket activation checks.
 That change requires fresh qualification. Raw reports and source/image metadata
 are retained under `target/retention-544-20261031/shared-collection-cache-1`.
+
+## Captured queue-prefix diagnostic
+
+Source `861cb8cc03c562733810eb0c2fbe5a7017dba75b` passed the full correctness
+suite and production build, then completed a fresh shared run with the unchanged
+10,000-receipt target, concurrency, resource limits and 360-second steady phase.
+The load generator's unchanged build inputs remain pinned to `f4a00fd1`.
+
+| Observation | Recorded value |
+| --- | --- |
+| Initial admission | 10,000 tasks in 75,887 ms |
+| Total admitted and fully drained | 24,813 tasks |
+| Eligible detail expirations / p95 lag | 20,212 / 24,075 ms |
+| Eligible receipt expirations / p95 lag | 15,928 / 19,583 ms |
+| Unknown deadlines / censored eligible observations | 0 / 0 |
+| Steady pre-refill receipt observations | Minimum 6,567; median 10,000 |
+
+Resources and expiry timing pass, but occupancy remains underfilled. Left-held
+pre-refill interpolation averages 8,581.56 receipts; it is neither a proven lower
+bound nor an acceptance tolerance. The first full refill takes 12,408 ms and
+48 publications; the last takes 13,694 ms and 47 publications. Initial admission
+records 10,000 `create_task` calls with 347.44 cumulative operation seconds, a
+34.74 ms mean including waits. Concurrent operation durations overlap and cannot
+be summed as elapsed runtime. This motivates gathering for another short interval
+only while reservations keep joining, with a fixed overall bound. It does not
+establish that the subsequent gathering change passes qualification.
+Raw reports and source/image metadata remain under
+`target/retention-544-20261031/shared-captured-prefix-1`.
