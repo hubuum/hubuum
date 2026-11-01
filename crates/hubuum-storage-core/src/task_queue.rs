@@ -12,7 +12,10 @@ use hubuum_task_core::IdempotencyKey;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::{StorageError, StoragePage, StorageTaskControl, StorageValidationError};
+use crate::{
+    StorageError, StoragePage, StorageTaskCheckpoint, StorageTaskControl,
+    StorageTaskExecutionPhase, StorageValidationError,
+};
 
 pub use hubuum_domain::TaskKind as StorageTaskKind;
 
@@ -78,6 +81,7 @@ pub enum StorageTaskStatus {
     Queued,
     Validating,
     Running,
+    Waiting,
     Succeeded,
     Failed,
     PartiallySucceeded,
@@ -85,10 +89,11 @@ pub enum StorageTaskStatus {
 }
 
 impl StorageTaskStatus {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Queued,
         Self::Validating,
         Self::Running,
+        Self::Waiting,
         Self::Succeeded,
         Self::Failed,
         Self::PartiallySucceeded,
@@ -108,6 +113,7 @@ impl StorageTaskStatus {
             Self::Queued => "queued",
             Self::Validating => "validating",
             Self::Running => "running",
+            Self::Waiting => "waiting",
             Self::Succeeded => "succeeded",
             Self::Failed => "failed",
             Self::PartiallySucceeded => "partially_succeeded",
@@ -121,6 +127,7 @@ impl StorageTaskStatus {
             "queued" => Some(Self::Queued),
             "validating" => Some(Self::Validating),
             "running" => Some(Self::Running),
+            "waiting" => Some(Self::Waiting),
             "succeeded" => Some(Self::Succeeded),
             "failed" => Some(Self::Failed),
             "partially_succeeded" => Some(Self::PartiallySucceeded),
@@ -487,6 +494,7 @@ pub struct StorageTask {
     idempotency_key: Option<String>,
     request_hash: Option<String>,
     request_payload: Option<Value>,
+    checkpoint: Option<StorageTaskCheckpoint>,
     metadata: Option<crate::StorageTaskMetadata>,
     discovery_state: crate::StorageTaskDiscoveryState,
     summary: Option<String>,
@@ -537,6 +545,7 @@ impl StorageTask {
                 idempotency_key: None,
                 request_hash: None,
                 request_payload: None,
+                checkpoint: None,
                 metadata: None,
                 discovery_state: crate::StorageTaskDiscoveryState::default(),
                 summary: None,
@@ -629,6 +638,11 @@ impl StorageTask {
     }
 
     #[must_use]
+    pub const fn checkpoint(&self) -> Option<&StorageTaskCheckpoint> {
+        self.checkpoint.as_ref()
+    }
+
+    #[must_use]
     pub const fn scope_snapshot(&self) -> &StorageTaskScopeSnapshot {
         &self.scope_snapshot
     }
@@ -684,6 +698,7 @@ impl fmt::Debug for StorageTask {
             .field("has_submitter", &self.submitted_by.is_some())
             .field("has_summary", &self.summary.is_some())
             .field("has_request_payload", &self.request_payload.is_some())
+            .field("has_checkpoint", &self.checkpoint.is_some())
             .field("has_lease", &self.has_lease())
             .field("has_trace_link", &self.trace_link.is_some())
             .field("identity_and_payload", &"[redacted]")
@@ -729,6 +744,12 @@ impl StorageTaskBuilder {
     #[must_use]
     pub fn request_payload(mut self, request_payload: Option<Value>) -> Self {
         self.task.request_payload = request_payload;
+        self
+    }
+
+    #[must_use]
+    pub fn checkpoint(mut self, checkpoint: Option<StorageTaskCheckpoint>) -> Self {
+        self.task.checkpoint = checkpoint;
         self
     }
 
@@ -836,6 +857,20 @@ impl StorageTaskBuilder {
                 "Task attempt count must not be negative",
             ));
         }
+        if self.task.checkpoint.is_some()
+            && (!matches!(
+                self.task.kind,
+                StorageTaskKind::Export | StorageTaskKind::Backup
+            ) || self.task.status.is_terminal()
+                || self.task.started_at.is_none()
+                || self.task.attempt_count == 0
+                || self.task.control.deadline().is_none()
+                || self.task.control.phase() != StorageTaskExecutionPhase::Uncommitted)
+        {
+            return Err(StorageValidationError::invalid(
+                "A checkpoint requires a started, uncommitted export or backup task with its original deadline",
+            ));
+        }
         if self.task.updated_at < self.task.created_at {
             return Err(StorageValidationError::invalid(
                 "Task update timestamp must not precede its creation timestamp",
@@ -893,7 +928,14 @@ impl StorageTaskBuilder {
                     || (matches!(
                         self.task.kind,
                         StorageTaskKind::SchemaValidation | StorageTaskKind::Reindex
-                    ) && self.task.attempt_count > 0))
+                    ) && self.task.attempt_count > 0)
+                    || self.task.checkpoint.is_some())
+                    && self.task.finished_at.is_none()
+                    && self.task.lease_expires_at.is_none()
+            }
+            StorageTaskStatus::Waiting => {
+                self.task.checkpoint.is_some()
+                    && self.task.started_at.is_some()
                     && self.task.finished_at.is_none()
                     && self.task.lease_expires_at.is_none()
             }

@@ -96,6 +96,8 @@ pub(super) fn restore(
         let r = Row(row);
         let id = TaskId::new(r.integer("id")?).map_err(|_| invalid("id"))?;
         let task = MemoryTaskRecord {
+            checkpoint: None,
+            wait_token: None,
             control: StorageTaskControl::from_snapshot(
                 StorageTaskKind::from_persisted(r.text("kind")?).ok_or_else(|| invalid("kind"))?,
                 row,

@@ -340,6 +340,7 @@ impl StorageTaskCancellationRequest {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StorageTaskCancellationChange {
     CancelledQueued,
+    CancelledWaiting,
     Requested,
     Unchanged,
 }

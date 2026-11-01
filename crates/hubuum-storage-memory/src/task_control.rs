@@ -40,13 +40,18 @@ impl MemoryStorage {
         task.updated_at = now;
         let task = task.clone();
         state.logical_identities.capture(&task);
-        if task.status == StorageTaskStatus::Queued {
+        if matches!(
+            task.status,
+            StorageTaskStatus::Queued | StorageTaskStatus::Waiting
+        ) {
+            let change = if task.status == StorageTaskStatus::Waiting {
+                StorageTaskCancellationChange::CancelledWaiting
+            } else {
+                StorageTaskCancellationChange::CancelledQueued
+            };
             let task =
                 state.finish_stopped_task(request.task_id(), now, Some(request.event_context()))?;
-            return Ok(StorageTaskCancellationOutcome::new(
-                task,
-                StorageTaskCancellationChange::CancelledQueued,
-            ));
+            return Ok(StorageTaskCancellationOutcome::new(task, change));
         }
         let projection = task.projection()?;
         state.append_task_event_record_with_context(request.task_id(),
@@ -383,6 +388,8 @@ impl MemoryState {
         task.request_payload = None;
         task.request_redacted_at = Some(now);
         task.claim_token = None;
+        task.checkpoint = None;
+        task.wait_token = None;
         task.lease_expires_at = None;
         let projection = task.projection()?;
         self.append_task_event_record_with_context(id, StorageTaskEventInput::new(status.as_str(), summary).with_data(Some(serde_json::json!({

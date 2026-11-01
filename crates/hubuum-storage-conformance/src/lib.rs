@@ -10,6 +10,7 @@ use std::collections::HashSet;
 mod backup_restore;
 mod logical_identity;
 mod task_retention;
+mod task_waiting;
 pub use backup_restore::{
     BackupRestoreFixture, verify_backup_budget_rejected, verify_backup_restore_contract,
     verify_failed_restore_preserves_snapshot,
@@ -19,6 +20,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Mutex;
 pub use task_retention::verify_protected_task_admission;
+pub use task_waiting::verify_task_wait_resume;
 
 use async_trait::async_trait;
 use hubuum_domain::ResourceRevision;

@@ -130,9 +130,76 @@ transaction. Required recreated repairs are registered even above a lowered
 internal limit; new admission waits for that scope to drain. Original UUID
 owners and cumulative charges remain detached when a task is absent.
 
+## Durable waiting foundation
+
+The first slice of [#516](https://github.com/hubuum/hubuum/issues/516) adds
+`wait_task` and `resume_task` to the complete task execution storage contract.
+PostgreSQL and memory implement the same transitions. Existing built-in export
+and backup producers do not call them. No provider SDK, notification endpoint,
+polling loop, or shared retrieval service is enabled by this foundation.
+
+A live, uncommitted export or backup claim can enter `waiting` after execution
+has admitted its absolute deadline. The transition persists a validated private
+checkpoint and a fresh opaque wait token while clearing the execution lease.
+Cancellation, an expired deadline, committed effects, and unsupported task kinds
+cannot create a wait. In particular, remote-call dispatch never becomes safely
+replayable through this API.
+
+Checkpoints contain a format name, a positive format version, and an object
+payload. The complete UTF-8 encoding is limited to 64 KiB; format names contain
+at most 64 lowercase ASCII letters, digits, dots, underscores, or hyphens and
+start with a letter or digit. Constructors validate this representation once.
+Checkpoint payload data and wait tokens remain outside public responses, event
+payloads, and diagnostic logs. Wait events include only bounded checkpoint
+metadata: format, version, and encoded byte count.
+
+Waiting retains logical admission and request/output storage charges. Checkpoint
+bytes join resident input accounting, while execution occupancy is released.
+Publishing a checkpoint does not invent cumulative execution work. A later
+fresh claim charges the retained request and checkpoint bytes together; retries
+preserve earlier charges. The original deadline, start time, and progress remain
+unchanged across wait and resume.
+
+A notification supplies the task ID and matching opaque token. The first
+matching notification makes the task `queued` and consumes that token. It does
+not acquire execution capacity: normal queue claiming grants a fresh lease.
+Missing, stale, and already-consumed tokens produce `Unchanged` without an event.
+This also fences notifications from an earlier wait of the same task. Old lease
+tokens cannot renew, update, or finalize the resumed task.
+
+Cancellation and disabling the submitting service account finalize waiting work
+without acquiring execution. The bounded recovery sweep settles expired waits;
+an unexpired wait is not a lost lease. A matching notification also settles an
+expired or stopped task before considering maintenance. Otherwise, maintenance
+blocks a matching resume; entering wait under an existing live lease can release
+execution while the deployment drains. Terminal transitions remove the private
+checkpoint and release its resident bytes atomically.
+
+Current built-in executors reject any stored checkpoint before ordinary
+execution. A consumer must implement its exact checkpoint format before it can
+use resumption. Provider reservations, independently owned physical storage,
+polling limits, shared-consumer authorization, and cleanup obligations that
+outlive a task remain later #516 work. The foundation does not certify those
+resource or recovery guarantees.
+
+Logical backups retain terminal task history only. Pending waits and their
+checkpoint tokens are not exported or restarted by logical restore. Reusing an
+integer task ID does not restore its old token. Applications requiring a wait
+to survive logical replacement need a later durable provider-obligation contract;
+process restart alone preserves the currently stored wait.
+
+Migration `20261101000001` can be installed during a rolling upgrade while this
+foundation is dormant. Before enabling any consumer, drain old workers and deploy
+matching API/worker binaries. Closed REST task-status enums
+must accept `waiting`; regenerate clients from OpenAPI. Administrator queue
+diagnostics expose `waiting_tasks` separately, leaving `active_tasks` limited to
+occupied validating/running work. Before downgrading, finish or cancel all tasks
+with checkpoints. The reverse migration refuses to discard a remaining wait or
+checkpoint into an older worker's ordinary execution path.
+
 ## Upgrade and recovery
 
-This migration requires stopped API and worker replicas. Take a database backup
+The task-capacity migration requires stopped API and worker replicas. Take a database backup
 and, for split roles, reapply generated role setup/grants SQL as the database
 administrator so the owner can create the protected control schema. Run
 `hubuum-admin --migrate` to complete the resumable identity and capacity

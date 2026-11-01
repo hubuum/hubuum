@@ -89,6 +89,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Ordinary claims stop reading queue heads once service ordering determines the
   winner, reducing database work while preserving promotion and locking rules.
   The queue-head optimization also applies on PostgreSQL 16.
+- Administrator task queue diagnostics expose `waiting_tasks` separately from
+  queued work and occupied execution. The durable-wait storage foundation is
+  dormant; current built-in producers do not create waiting tasks.
 
 - Shared task admission and execution limits across API/worker replicas, with
   separate resident-byte and cumulative-work accounting, internal repair
@@ -190,6 +193,24 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   adapters must implement durable scheduling and availability diagnostics. See
   the [0.15 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-014-to-015).
 
+- **Breaking (REST clients with closed task-status enums):** task responses and
+  cancellation requests support `waiting`. Regenerate clients from OpenAPI or
+  extend task-status enums before enabling a wait-capable consumer. Waiting
+  cancellation completes without an execution lease; private checkpoints and
+  wake tokens are never exposed through the task API.
+- **Breaking (supported Rust crates / storage SDK):** advance all ten SDK
+  dependencies together to `0.17.0`. Adapters must implement
+  `wait_task` and `resume_task`, preserve bounded typed checkpoints and original
+  deadlines, and handle nonterminal `StorageTaskStatus::Waiting` without counting
+  it as occupied execution. See the
+  [0.17 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-016-to-017).
+- **Breaking operational change:** install durable-wait migration `20261101000001` during a
+  rolling upgrade while waiting remains dormant. Drain old workers and deploy
+  matching API/worker binaries before enabling consumers. Current executors
+  reject stored checkpoints they cannot interpret. Finish or
+  cancel all checkpointed tasks before downgrade; migration rollback refuses to
+  discard them. Logical backups retain terminal tasks only and do not resume
+  pending waits after replacement.
 - **Breaking operational change:** task capacity requires an offline upgrade.
   Stop API/worker replicas, back up the database, run `hubuum-admin --migrate`
   through capacity backfill and role grants, then start matching binaries.

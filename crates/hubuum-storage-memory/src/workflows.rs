@@ -333,6 +333,8 @@ impl TaskQueueStorage for MemoryStorage {
         state.next_task_id += 1;
         let now = Utc::now();
         let record = MemoryTaskRecord {
+            checkpoint: None,
+            wait_token: None,
             control: StorageTaskControl::new(request.kind()),
             id,
             kind: request.kind(),
@@ -698,6 +700,20 @@ impl TaskExecutionStorage for MemoryStorage {
         self.begin_dispatch(request).await
     }
 
+    async fn wait_task(
+        &self,
+        request: StorageTaskWaitRequest,
+    ) -> Result<StorageTaskWait, StorageError> {
+        self.enter_wait(request).await
+    }
+
+    async fn resume_task(
+        &self,
+        request: StorageTaskResumeRequest,
+    ) -> Result<StorageTaskResumeOutcome, StorageError> {
+        self.resume_wait(request).await
+    }
+
     async fn claim_next_task(
         &self,
         request: hubuum_storage_core::StorageTaskClaimRequest,
@@ -721,6 +737,10 @@ impl TaskExecutionStorage for MemoryStorage {
                 request.lease_duration().milliseconds(),
             ))
             .ok_or_else(|| StorageError::invalid_input("Task lease duration is too large"))?;
+        let attempt_count = state.tasks[&task_id.id()]
+            .attempt_count
+            .checked_add(1)
+            .ok_or_else(|| StorageError::internal("Task attempt count exhausted"))?;
         state.charge_task_claim(task_id)?;
         let claim_token = Uuid::new_v4().to_string();
         let fence = state.application_control.fence();
@@ -732,7 +752,7 @@ impl TaskExecutionStorage for MemoryStorage {
         task.started_at.get_or_insert(now);
         task.updated_at = now;
         task.lease_expires_at = Some(expires_at);
-        task.attempt_count += 1;
+        task.attempt_count = attempt_count;
         task.claim_token = Some(claim_token.clone());
         task.execution_fence = Some(fence);
         let projection = task.projection()?;
@@ -795,11 +815,13 @@ impl TaskExecutionStorage for MemoryStorage {
                     && task
                         .lease_expires_at
                         .is_none_or(|expires_at| expires_at <= now))
-                    || (task.status == StorageTaskStatus::Queued
-                        && task
-                            .control
-                            .deadline()
-                            .is_some_and(|deadline| deadline <= now))
+                    || (matches!(
+                        task.status,
+                        StorageTaskStatus::Queued | StorageTaskStatus::Waiting
+                    ) && task
+                        .control
+                        .deadline()
+                        .is_some_and(|deadline| deadline <= now))
                     || (task.status == StorageTaskStatus::Queued
                         && task.receipt_admission.as_ref().is_some_and(|admission| {
                             admission.activated.is_none()
@@ -883,6 +905,8 @@ impl TaskExecutionStorage for MemoryStorage {
             task.request_redacted_at = Some(now);
             task.lease_expires_at = None;
             task.claim_token = None;
+            task.checkpoint = None;
+            task.wait_token = None;
             task.updated_at = now;
             recovered.push(task.projection()?);
             state.append_task_event_record(
@@ -1160,6 +1184,8 @@ impl TaskExecutionStorage for MemoryStorage {
         task.request_redacted_at = Some(now);
         task.lease_expires_at = None;
         task.claim_token = None;
+        task.checkpoint = None;
+        task.wait_token = None;
         task.updated_at = now;
         let projection = task.projection()?;
         state.task_capacity = state.task_accounting_snapshot()?;
@@ -1195,6 +1221,8 @@ impl TaskExecutionStorage for MemoryStorage {
         task.request_redacted_at = Some(now);
         task.lease_expires_at = None;
         task.claim_token = None;
+        task.checkpoint = None;
+        task.wait_token = None;
         task.updated_at = now;
         let projection = task.projection()?;
         if let Some(work) = state.schema_work.get(&lease.task_id().id()) {

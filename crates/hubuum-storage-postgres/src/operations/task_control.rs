@@ -1,7 +1,8 @@
 //! Durable cancellation, execution admission and stop acknowledgement.
 
+use diesel::dsl::sql;
 use diesel::prelude::*;
-use diesel::sql_types::{Integer, Text};
+use diesel::sql_types::{Integer, Nullable, Text, Timestamp};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::TaskId;
 use hubuum_events_core::MutationProvenance;
@@ -9,7 +10,8 @@ use hubuum_storage_core::{
     StorageTask, StorageTaskCancellationChange, StorageTaskCancellationOutcome,
     StorageTaskCancellationRequest, StorageTaskEventInput, StorageTaskExecutionAdmission,
     StorageTaskExecutionObservation, StorageTaskKind, StorageTaskLease, StorageTaskRemoteDispatch,
-    StorageTaskResultCounts, StorageTaskStatus,
+    StorageTaskResultCounts, StorageTaskResumeOutcome, StorageTaskResumeRequest, StorageTaskStatus,
+    StorageTaskWait, StorageTaskWaitRequest, StorageTaskWaitToken,
 };
 use hubuum_task_core::TaskStopReason;
 use serde_json::json;
@@ -17,10 +19,201 @@ use serde_json::json;
 use super::task_execution::require_claimed_execution;
 use super::task_execution::{
     append_task_lifecycle_event, claimed_task, database_now, import_result_counts_connection,
-    live_claimed_task, stored_task_kind, system_provenance,
+    live_claimed_task, maintenance_is_normal, runnable_claimed_task, stored_task_kind,
+    system_provenance, worker_provenance,
 };
 use super::task_rows::TaskRow;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
+
+pub async fn wait_task(
+    runtime: &PostgresRuntime,
+    request: StorageTaskWaitRequest,
+) -> Result<StorageTaskWait, PostgresStorageError> {
+    let (lease, checkpoint) = request.into_parts();
+    let claimed = claimed_task(&lease)?;
+    let token = uuid::Uuid::new_v4();
+    let row = runtime
+        .with_transaction(async move |connection| {
+            // Checkpoint growth acquires resident capacity. Follow the same
+            // policy-before-task lock order as claim and admission.
+            diesel::sql_query("SELECT public.hubuum_task_capacity_lock()")
+                .execute(connection)
+                .await?;
+            // Existing progress/completion writers take the task row before
+            // accounting's policy lock. Never wait for their row while holding
+            // that policy lock: let the caller retry after the writer commits.
+            use crate::schema::tasks::dsl as tasks;
+            let locked = tasks::tasks
+                .filter(tasks::id.eq(claimed.id))
+                .for_update()
+                .skip_locked()
+                .select(tasks::id)
+                .first::<i32>(connection)
+                .await
+                .optional()?;
+            if locked.is_none() {
+                let exists = diesel::select(diesel::dsl::exists(
+                    tasks::tasks.filter(tasks::id.eq(claimed.id)),
+                ))
+                .get_result::<bool>(connection)
+                .await?;
+                return Err(if exists {
+                    PostgresStorageError::conflict("Task is busy; retry checkpointing")
+                } else {
+                    PostgresStorageError::not_found("Task was not found")
+                });
+            }
+            require_claimed_execution(connection, claimed).await?;
+            let row = live_claimed_task(connection, claimed).await?;
+            if !matches!(
+                stored_task_kind(&row)?,
+                StorageTaskKind::Export | StorageTaskKind::Backup
+            ) || row.import_effects_committed_at.is_some()
+                || row.remote_dispatched_at.is_some()
+            {
+                return Err(PostgresStorageError::invalid_input(
+                    "Only uncommitted export and backup tasks may wait",
+                ));
+            }
+            runnable_claimed_task(connection, claimed).await?;
+            if row.execution_deadline_at.is_none() {
+                return Err(PostgresStorageError::conflict(
+                    "Task execution requires a pinned deadline before waiting",
+                ));
+            }
+            append_task_lifecycle_event(
+                connection,
+                &row,
+                StorageTaskEventInput::new(
+                    "waiting",
+                    "Task checkpointed while awaiting external work",
+                )
+                .with_data(Some(json!({
+                    "checkpoint_format": checkpoint.format(),
+                    "checkpoint_version": checkpoint.version(),
+                    "checkpoint_bytes": checkpoint.byte_size(),
+                }))),
+                &worker_provenance(&row)?,
+            )
+            .await?;
+            // Recheck the lease and stop fence after event writes/locks too.
+            runnable_claimed_task(connection, claimed).await?;
+            let now = database_now(connection).await?;
+            diesel::update(
+                tasks::tasks
+                    .filter(tasks::id.eq(row.id))
+                    .filter(tasks::lease_token.eq(Some(claimed.token)))
+                    .filter(tasks::lease_expires_at.gt(sql::<Nullable<Timestamp>>(
+                        "clock_timestamp() AT TIME ZONE 'UTC'",
+                    )))
+                    .filter(tasks::execution_deadline_at.gt(sql::<Nullable<Timestamp>>(
+                        "clock_timestamp() AT TIME ZONE 'UTC'",
+                    )))
+                    .filter(tasks::cancel_requested_at.is_null()),
+            )
+            .set((
+                tasks::status.eq("waiting"),
+                tasks::task_checkpoint.eq(Some(checkpoint.encoded())),
+                tasks::wait_token.eq(Some(token)),
+                tasks::lease_token.eq::<Option<uuid::Uuid>>(None),
+                tasks::lease_expires_at.eq::<Option<chrono::NaiveDateTime>>(None),
+                tasks::updated_at.eq(now),
+            ))
+            .returning(TaskRow::as_returning())
+            .get_result::<TaskRow>(connection)
+            .await
+            .map_err(PostgresStorageError::from)
+        })
+        .await?;
+    let token = StorageTaskWaitToken::try_new(token.to_string())
+        .map_err(|error| PostgresStorageError::invalid_persisted_value("task wait token", error))?;
+    crate::validate_persisted(
+        "task wait",
+        StorageTaskWait::try_new(row.into_storage()?, token),
+    )
+}
+
+pub async fn resume_task(
+    runtime: &PostgresRuntime,
+    request: StorageTaskResumeRequest,
+) -> Result<StorageTaskResumeOutcome, PostgresStorageError> {
+    let token = uuid::Uuid::parse_str(request.token().adapter_value()).map_err(|_| {
+        PostgresStorageError::invalid_input("Task wait token is not valid for this backend")
+    })?;
+    runtime
+        .with_transaction(async move |connection| {
+            use crate::schema::tasks::dsl as tasks;
+            // Even though wake retains its reservation, keep this acquisition
+            // ordered before the row lock for the accounting trigger.
+            diesel::sql_query("SELECT public.hubuum_task_capacity_lock()")
+                .execute(connection)
+                .await?;
+            let Some(row) = tasks::tasks
+                .filter(tasks::id.eq(request.task_id().id()))
+                .filter(tasks::status.eq("waiting"))
+                .filter(tasks::wait_token.eq(Some(token)))
+                .filter(tasks::deleted_at.is_null())
+                .for_update()
+                .skip_locked()
+                .select(TaskRow::as_select())
+                .first::<TaskRow>(connection)
+                .await
+                .optional()?
+            else {
+                // A locked matching wait is retryable, not a consumed token.
+                // Plain reads do not block the task-first writer that may be
+                // waiting for our policy lock.
+                let exists = diesel::select(diesel::dsl::exists(
+                    tasks::tasks
+                        .filter(tasks::id.eq(request.task_id().id()))
+                        .filter(tasks::status.eq("waiting"))
+                        .filter(tasks::wait_token.eq(Some(token)))
+                        .filter(tasks::deleted_at.is_null()),
+                ))
+                .get_result::<bool>(connection)
+                .await?;
+                if exists {
+                    return Err(PostgresStorageError::conflict(
+                        "Task is busy; retry resuming",
+                    ));
+                }
+                return Ok(StorageTaskResumeOutcome::Unchanged);
+            };
+            let now = database_now(connection).await?;
+            if let Some(reason) = row
+                .control(stored_task_kind(&row)?)?
+                .stop_reason(now.and_utc())
+            {
+                let provenance = system_provenance(&row)?;
+                let stopped = finish_stopped_on(connection, row, reason, &provenance).await?;
+                return Ok(StorageTaskResumeOutcome::Stopped(stopped.into_storage()?));
+            }
+            if !maintenance_is_normal(connection).await? {
+                return Err(PostgresStorageError::unavailable(
+                    "Task resumption is paused during maintenance",
+                ));
+            }
+            append_task_lifecycle_event(
+                connection,
+                &row,
+                StorageTaskEventInput::new("queued", "Task resumed from durable checkpoint"),
+                &system_provenance(&row)?,
+            )
+            .await?;
+            let resumed = diesel::update(tasks::tasks.filter(tasks::id.eq(row.id)))
+                .set((
+                    tasks::status.eq("queued"),
+                    tasks::wait_token.eq::<Option<uuid::Uuid>>(None),
+                    tasks::updated_at.eq(now),
+                ))
+                .returning(TaskRow::as_returning())
+                .get_result::<TaskRow>(connection)
+                .await?;
+            crate::worker_notifications::notify_task_queue(connection, row.id).await?;
+            Ok(StorageTaskResumeOutcome::Queued(resumed.into_storage()?))
+        })
+        .await
+}
 
 /// Take computed-class locks before task/state locks, matching definition
 /// changes. A task whose active class link has disappeared needs no cleanup lock.
@@ -116,10 +309,15 @@ pub async fn request_task_cancellation(
                 tasks::updated_at.eq(now)))
             .returning(TaskRow::as_returning()).get_result::<TaskRow>(connection).await?;
         let provenance = request.event_context().mutation_provenance();
-        if projected.status() == StorageTaskStatus::Queued {
+        if matches!(projected.status(), StorageTaskStatus::Queued | StorageTaskStatus::Waiting) {
             let reason = row.control(request.kind())?.stop_reason(now.and_utc()).expect("persisted cancellation has a cause");
             let stopped = finish_stopped_on(connection, row, reason, provenance).await?;
-            return Ok(StorageTaskCancellationOutcome::new(stopped.into_storage()?, StorageTaskCancellationChange::CancelledQueued));
+            let change = if projected.status() == StorageTaskStatus::Waiting {
+                StorageTaskCancellationChange::CancelledWaiting
+            } else {
+                StorageTaskCancellationChange::CancelledQueued
+            };
+            return Ok(StorageTaskCancellationOutcome::new(stopped.into_storage()?, change));
         }
         append_task_lifecycle_event(connection, &row,
             StorageTaskEventInput::new("cancel_requested", "Task cancellation requested")

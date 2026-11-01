@@ -393,7 +393,9 @@ in persisted rows as `Backend` corruption. Queued projections have no start,
 finish, or lease; validating and running projections have a start and lease but
 no finish; terminal projections have a finish and no lease. Cancellation may
 happen before a task is claimed, so a cancelled projection need not have a
-start. Retained export outputs contain
+start. A waiting projection has a start, pinned deadline, bounded checkpoint,
+and no execution lease or finish. Resumed queued export/backup tasks retain
+their original start, checkpoint, and deadline. Retained export outputs contain
 exactly one JSON or text representation and a nonnegative warning count.
 Retained backup outputs carry a canonical lowercase SHA-256 digest, and full
 outputs require their stored size and digest to match the document.
@@ -425,6 +427,15 @@ Owns claims, lease renewal and recovery, claim-checked events and state
 changes, atomic completion artifacts, failure accounting, and output
 retention. Claims are opaque tokens that callers can only return to the
 backend.
+
+`wait_task` atomically checkpoints an uncommitted export/backup claim and releases
+execution while preserving logical admission and resident bytes. `resume_task`
+consumes the matching opaque wait token once and queues the same task for an
+ordinary fresh claim. Waiting is distinct from an expired lease. Cancellation,
+principal disablement, and original-deadline recovery settle a wait without
+reacquiring execution; stale notifications cannot mutate it. The application
+observes both operations through the task-execution capability. See the
+[durable-wait contract](../task_admission.md#durable-waiting-foundation).
 
 A claim is valid only when its task projection is active (`validating` or
 `running`), carries a lease expiry, and has the same task ID as its opaque
