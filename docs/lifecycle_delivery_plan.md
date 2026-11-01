@@ -29,7 +29,7 @@ sink contracts remain coordinated separately in #550.
 | 8 | #512, #513 | Receipts and hot-only expiry after #511; #513 also requires #504. Consolidate only if both use the same bounded cleanup executor. |
 | 9 | #514 | Exact/as-of archive prototype after #504/#505/#508. Measure with hot copies retained. |
 | 10 | #515 | Connect #513/#514/#509 into movement and verified source retirement. |
-| 11 | #516 | Durable waiting after #506; independently deliverable before step 10. |
+| 11 | #516 | Dormant checkpoint/wake-token foundation after #506; independently deliverable before step 10. Built-in producers remain disabled; see [durable waiting](task_admission.md#durable-waiting-foundation) for the remaining provider and activation gates. |
 | 12 | #517 | Cold provider after #509/#515/#516, including actual provider evidence. |
 | 13 | #518 | Targeted erasure after #511/#513/#515, covering all enabled adapters. |
 | 14 | #519 | Bounded timeline/predicate tasks after #514/#516. |
@@ -90,6 +90,4 @@ changelog entry and must say so in its PR description.
   See [scheduler measurements](task_scheduling.md#measurement).
 - #508: dormant artifact staging in draft #523, with dependent backup producer
   staging in draft #528. Production activation and pipeline evidence remain open.
-- #516: dormant durable-wait foundation adds checkpoints and fenced wake tokens.
-  Built-in producers remain disabled; see [durable waiting](task_admission.md#durable-waiting-foundation).
-- Other #509–#521 milestones retain their issue-specific acceptance gates.
+- #509–#521: pending; no completion or destructive-feature enablement is implied.
