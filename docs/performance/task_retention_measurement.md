@@ -75,6 +75,13 @@ recipe's submission concurrency while observations continue during a refill.
 The observer joins the producer, including on failure, before the fixture
 can be removed. Its existing 120-second process timeout and 512 MiB resident
 limit still apply, and every admitted identity must appear in the final evidence.
+Between producers, physical receipt observations over the complete registered
+cohort determine the next bounded refill. Receipt presence can only decrease
+during that scan, so the count conservatively bounds occupancy when selecting
+arrivals. Refill scheduling does not wait for administrator status-lock access;
+every decision records its observed count, requested arrivals and original time.
+These counts schedule load only. Cleanup success still requires both physical
+removal and independently verified checkpoint evidence.
 Cleanup is performed by the running production workers. The observer invokes
 read-only administrator `status`, verifies the returned checkpoint identity and
 checks physical database removal. It does not invoke extra cleanup sweeps.
@@ -507,3 +514,31 @@ manifest and resource bounds stay unchanged. Fresh worker-only measurements
 must establish whether that fix meets P6.
 Raw reports and source/image metadata remain under
 `target/retention-544-20261031/shared-worker-observation-1`.
+
+## Prompt-maintenance diagnostic
+
+Source `b470c94411f6dae6c98bc36d3646b73d33e28067` retains the same bounded
+passes and retries productive or repository-busy maintenance after at most
+100 ms. All 7,251 correctness tests and the real both-TLS production build passed
+before the isolated shared run.
+
+| Observation | Recorded value |
+| --- | --- |
+| Initial admission | 10,000 tasks in 76,572 ms |
+| Total admitted and fully drained | 18,602 tasks |
+| Eligible detail expirations / p95 lag | 17,401 / 35,216 ms |
+| Eligible receipt expirations / p95 lag | 13,602 / 39,854 ms |
+| Unknown deadlines / censored eligible observations | 0 / 0 |
+| Steady receipt observations | Minimum 3,639; median 10,000 |
+
+Resource monitoring was valid and reported no errors. Expiry timing passes,
+but population is substantially underfilled, so this run does not qualify P6.
+Left-held interpolation averages 7,103.08 receipts and is neither a proven lower
+bound nor an acceptance tolerance. New refill batches still waited for a
+successful administrator status acquisition, coupling load generation to the
+same publication lock under measurement. The subsequent driver schedules
+refills from physical receipt observations before attempting status; protected
+cleanup proof and all workload/resource bounds remain mandatory. The production
+runtime is unchanged by that driver correction. Fresh measurements are required.
+Raw reports and source/image metadata remain under
+`target/retention-544-20261031/shared-maintenance-retry-1`.

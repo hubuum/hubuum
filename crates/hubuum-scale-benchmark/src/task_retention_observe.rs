@@ -371,6 +371,7 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
     let steady_until_ms = steady_started_ms + i64::try_from(options.steady_seconds * 1000)?;
     let mut passes = Vec::new();
     let mut occupancy = Vec::new();
+    let mut refill_decisions = Vec::new();
     let mut completed = false;
     let mut pass = 0;
     let mut pending_refill: Option<PendingRefill> = None;
@@ -389,11 +390,13 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
             )?;
         }
         // Observe original clocks before cleanup can retire the receipt that carries them.
+        let mut observed_receipts = 0;
         for batch in identities.chunks(1000) {
             let query_started_ms = now_ms()?;
             let observations = backend.observe_task_retention(batch).await?;
             let times = ObservationTimes::new(query_started_ms, now_ms()?)?;
             for observed in observations {
+                observed_receipts += usize::from(observed.receipt_present());
                 let sample = samples
                     .get_mut(&observed.identity())
                     .ok_or("Unexpected observed task identity")?;
@@ -414,6 +417,27 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
             &options.artifact_directory.join("latest-lifetimes.json"),
             &samples,
         )?;
+        if pending_refill.is_none()
+            && started.elapsed() < Duration::from_secs(options.steady_seconds)
+        {
+            // With no producer running, every admitted identity is registered
+            // and receipt presence can only decrease during this scan. Its sum
+            // therefore conservatively bounds occupancy at refill selection.
+            // Status-lock contention must not stop the workload producer; these
+            // counts schedule arrivals, never prove protected cleanup success.
+            let refill = target_receipts
+                .saturating_sub(observed_receipts)
+                .min(options.refill_max_batch);
+            if refill > 0 {
+                if identities.len() + refill > 60000 {
+                    return Err("Steady workload exhausted its declared 60k admission bound".into());
+                }
+                refill_decisions.push(json!({"pass":pass,"at_ms":now_ms()?,
+                    "registered_tasks":identities.len(),"observed_receipts":observed_receipts,
+                    "requested":refill,"target":target_receipts}));
+                pending_refill = Some(PendingRefill::start(&options, pass, refill)?);
+            }
+        }
         let mut command = Command::new(&options.admin_binary);
         command
             .env("HUBUUM_DATABASE_URL", &options.database_url)
@@ -516,19 +540,6 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
             &samples,
         )?;
         passes.push(json!({"observed_at_ms":now_ms()?,"artifact":process_report}));
-        if pending_refill.is_none()
-            && started.elapsed() < Duration::from_secs(options.steady_seconds)
-        {
-            let refill = target_receipts
-                .saturating_sub(protected.receipts().len())
-                .min(options.refill_max_batch);
-            if refill > 0 {
-                if identities.len() + refill > 60000 {
-                    return Err("Steady workload exhausted its declared 60k admission bound".into());
-                }
-                pending_refill = Some(PendingRefill::start(&options, pass, refill)?);
-            }
-        }
         pass += 1;
         if started.elapsed() >= Duration::from_secs(options.steady_seconds)
             && pending_refill.is_none()
@@ -619,6 +630,8 @@ pub async fn run(options: ObserveArgs) -> Result<()> {
         "full_drain_note":"A drain timeout is not itself an eligible-expiry percentile breach; inspect each denominator and p95_status",
         "observation_time_bounds":"source clocks and query starts round down to milliseconds; removal observations add a checked one-millisecond margin to query completion for an upper bound",
         "refill_execution":"one bounded producer concurrent with expiry observations",
+        "refill_decisions":refill_decisions,
+        "refill_source":"physical receipt presence across the complete registered cohort with no producer running; independent of administrator status-lock availability",
         "cleanup_execution":"production workers; observer invokes read-only administrator status",
         "steady_seconds":options.steady_seconds,"steady_started_ms":steady_started_ms,"steady_until_ms":steady_until_ms,"occupancy":occupancy,
         "steady_receipt_expiry":steady_receipt_lags,"steady_detail_expiry":steady_detail_lags,
