@@ -86,6 +86,42 @@ async fn concurrent_admissions_complete_across_bounded_batches(#[case] count: us
 }
 
 #[actix_web::test]
+async fn duplicate_batch_waiters_activate_one_exact_generation_once() {
+    let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
+    let ticket = fixture
+        .admit("same-generation", StorageTaskKind::Import)
+        .await;
+    let publication = fixture
+        .service
+        .configuration()
+        .unwrap()
+        .publication
+        .lock()
+        .await;
+    let requests = enqueue(&fixture, &[ticket.clone(), ticket]).await;
+    drop(publication);
+    let outcomes = join_all(requests)
+        .await
+        .into_iter()
+        .map(|result| result.unwrap().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, TaskActivationOutcome::Activated(_)))
+            .count(),
+        1
+    );
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, TaskActivationOutcome::AlreadyActive(_)))
+            .count(),
+        1
+    );
+}
+
+#[actix_web::test]
 async fn cancelled_waiter_leaves_a_recoverable_pending_admission() {
     let fixture = Fixture::new(None, TaskPurgeBudget::default()).await;
     let tickets = tickets(&fixture, 2).await;

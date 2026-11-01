@@ -37,6 +37,7 @@ END $$;
 DROP TRIGGER task_retention_policy ON public.tasks;
 DROP FUNCTION public.hubuum_pin_task_retention_policy();
 DROP FUNCTION public.hubuum_task_receipt_activate(INTEGER, UUID, UUID, BIGINT, BIGINT, UUID, UUID, TEXT);
+DROP FUNCTION public.hubuum_task_admission_lock();
 DROP FUNCTION public.hubuum_task_receipt_settle(INTEGER, BIGINT, TEXT);
 DROP FUNCTION public.hubuum_task_receipt_admit(INTEGER, BIGINT, TEXT, TEXT);
 DROP TRIGGER task_retention_guard ON public.class_computation_state;

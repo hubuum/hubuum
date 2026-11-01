@@ -43,6 +43,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   bounded metadata batch instead of inheriting the physical task-manifest limit.
   Concurrent protected admissions share bounded repository verification work
   while retaining each submission's exact generation and recovery checks.
+  Exact-ticket activations overlap under shared authority locks; retention changes
+  and recovery remain excluded until those activations finish.
   Protected maintenance checks for newly eligible work at the worker poll cadence
   after idle passes, avoiding the legacy output cleanup timer's five-minute delay.
 

@@ -866,6 +866,94 @@ async fn native_adapter_satisfies_shared_protected_admission_contract() {
     result.unwrap();
 }
 
+#[tokio::test]
+async fn protected_activation_proceeds_while_another_activation_holds_control_stable() {
+    use std::time::Duration;
+
+    use hubuum_storage_core::{
+        DeletionCheckpointIdentity, DeletionControlStorage, ProtectedTaskAdmission,
+        StorageTaskSubmissionOutcome, TaskActivationOutcome, TaskControlCheckpoint,
+        TaskQueueStorage, TaskRetentionStorage,
+    };
+
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let fixture = AdmissionFixture::new().await;
+    let storage = fixture.runtime();
+    let StorageTaskSubmissionOutcome::PendingProtection(ticket) =
+        storage.create_task(fixture.request()).await.unwrap()
+    else {
+        panic!("pending admission")
+    };
+    let state = storage.read_task_control().await.unwrap();
+    let checkpoint = TaskControlCheckpoint::new(
+        state.lineage(),
+        state.epoch(),
+        state.revision(),
+        DeletionCheckpointIdentity::new("b".repeat(64)).unwrap(),
+    )
+    .unwrap();
+    let fence = storage.read_application_control().await.unwrap().fence();
+    let protected = ProtectedTaskAdmission::new(ticket, checkpoint, fence).unwrap();
+    let holder = integration_test_pool(1);
+    let result = with_transaction(&holder, async |connection| {
+        sql_query("SELECT public.hubuum_task_admission_lock()")
+            .execute(connection)
+            .await?;
+        Ok::<_, PostgresStorageError>(
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                storage.activate_task_submission(protected),
+            )
+            .await,
+        )
+    })
+    .await
+    .unwrap();
+    fixture.finish().await;
+    assert!(matches!(
+        result
+            .expect("independent activation must not wait for the other reader")
+            .unwrap(),
+        TaskActivationOutcome::Activated(_)
+    ));
+}
+
+#[rstest]
+#[case::retention_mutation("SELECT public.hubuum_task_retention_lock()")]
+#[case::recovery("SELECT public.hubuum_rotate_application_for_restore()")]
+#[tokio::test]
+async fn activation_control_lock_still_excludes_authority_mutation(#[case] mutation: &str) {
+    use diesel::result::Error as DieselError;
+
+    let _guard = CONTROL_TEST_LOCK.lock().await;
+    let fixture = AdmissionFixture::new().await;
+    let holder = integration_test_pool(1);
+    let write = with_transaction(&holder, async |connection| {
+        sql_query("SELECT public.hubuum_task_admission_lock()")
+            .execute(connection)
+            .await?;
+        with_transaction(&fixture.pool, async |other| {
+            assume_owner(other).await?;
+            other
+                .batch_execute("SET LOCAL lock_timeout='150ms'; SAVEPOINT blocked_writer")
+                .await?;
+            let write = sql_query(mutation).execute(other).await;
+            other
+                .batch_execute("ROLLBACK TO SAVEPOINT blocked_writer")
+                .await?;
+            Ok::<_, PostgresStorageError>(write)
+        })
+        .await
+    })
+    .await
+    .unwrap();
+    fixture.finish().await;
+    assert!(
+        matches!(write, Err(DieselError::DatabaseError(_, ref info)) if info.message().contains("lock timeout")),
+        "authority mutation must wait for the activation transaction: {write:?}"
+    );
+}
+
 #[rstest]
 #[case::queued("queued")]
 #[case::omitted_from_restore("missing")]

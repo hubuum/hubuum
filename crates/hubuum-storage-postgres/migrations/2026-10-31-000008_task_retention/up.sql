@@ -127,6 +127,20 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.hubuum_task_retention_lock() FROM PUBLIC;
 
+-- Activation changes only its exact task row. Shared control locks keep the
+-- generation, policy and recovery authority stable without serializing unrelated
+-- activations. Receipt/retention mutations retain the exclusive control lock.
+CREATE FUNCTION public.hubuum_task_admission_lock() RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    PERFORM 1 FROM hubuum_control.deletion_authority WHERE id=1 FOR SHARE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Deletion authority is unavailable'; END IF;
+    PERFORM 1 FROM hubuum_control.task_retention_control WHERE id=1 FOR SHARE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Task retention authority is unavailable'; END IF;
+    RETURN public.hubuum_task_retention_read();
+END $$;
+REVOKE ALL ON FUNCTION public.hubuum_task_admission_lock() FROM PUBLIC;
+
 -- Called under the retention lock before ordinary artifact locks. Published
 -- task results require protected purge; abandoned staging retains its existing
 -- lease-fenced cleanup path without bypassing a newly committed hold.
@@ -348,7 +362,7 @@ CREATE FUNCTION public.hubuum_task_receipt_activate(task INTEGER, generation UUI
 RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE c hubuum_control.task_retention_control; t public.tasks; authority JSONB; receipt JSONB;
 BEGIN
-    PERFORM public.hubuum_task_retention_lock();
+    PERFORM public.hubuum_task_admission_lock();
     SELECT * INTO STRICT c FROM hubuum_control.task_retention_control WHERE id=1;
     SELECT material INTO STRICT authority FROM hubuum_control.deletion_authority WHERE id=1;
     SELECT * INTO STRICT t FROM public.tasks WHERE id=task FOR UPDATE;

@@ -294,6 +294,13 @@ that separate erasure capability.
 
 ## Scheduler integration
 
+Concurrent protected admissions share one verified publication session for at
+most 32 requests from the same storage handle. Their exact-ticket activations may
+overlap while that session stays locked. PostgreSQL activation holds shared
+deletion and retention authority locks through its transaction, plus the exact
+task row lock. Receipt changes, retention policy/hold changes and recovery retain
+exclusive authority locks, so concurrency does not weaken the generation fence.
+
 Protected receipt and detail maintenance runs at the configured task-worker poll
 interval, including after an idle pass. It does not inherit the legacy output
 cleanup interval (300 seconds by default). Each pass still releases publication

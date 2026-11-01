@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use futures_util::future::join_all;
 use hubuum_domain::PrincipalIdentity;
 use hubuum_storage_core::{
     ControlKeyFingerprint, DeletionCheckpointIdentity, DeletionControlStorage,
@@ -472,11 +473,18 @@ async fn protect_waiting_admissions(configuration: &Arc<Configuration>) {
     .await;
     match session {
         Ok(session) => {
-            for admission in batch {
-                let result =
-                    activate_captured(&admission.storage, &session, admission.ticket).await;
-                let _ = admission.result.send(result);
-            }
+            // The bounded group shares publication ownership, not a database
+            // transaction. Independent exact-ticket CAS operations can overlap;
+            // the session remains locked until every activation finishes.
+            join_all(batch.into_iter().map(|admission| {
+                let session = &session;
+                async move {
+                    let result =
+                        activate_captured(&admission.storage, session, admission.ticket).await;
+                    let _ = admission.result.send(result);
+                }
+            }))
+            .await;
         }
         Err(error) => {
             for admission in batch {

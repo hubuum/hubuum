@@ -40,6 +40,7 @@
     "hubuum_task_retention_read",
     "hubuum_task_artifact_cleanup_allowed",
     "hubuum_task_retention_lock",
+    "hubuum_task_admission_lock",
     "hubuum_task_receipt_read",
     "hubuum_task_receipt_for_task",
     "hubuum_task_details_visible",

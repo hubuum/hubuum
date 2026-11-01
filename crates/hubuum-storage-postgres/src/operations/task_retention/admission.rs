@@ -121,7 +121,10 @@ pub async fn activate_task_submission(
     request: ProtectedTaskAdmission,
 ) -> Result<TaskActivationOutcome, PostgresStorageError> {
     runtime.with_transaction(async move |connection| {
-        let header=lock_on(connection).await?;
+        let header: ControlHeader = decode(
+            diesel::sql_query("SELECT public.hubuum_task_admission_lock() AS material")
+                .get_result::<MaterialRow>(connection).await?.material,
+        )?;
         let ticket=request.ticket();
         let receipt=receipt_on(connection,ticket.receipt().submission()).await?
             .ok_or_else(||PostgresStorageError::conflict("Task admission generation no longer exists"))?;
