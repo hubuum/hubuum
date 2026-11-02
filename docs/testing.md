@@ -62,6 +62,11 @@ tests as passed even though their assertions were skipped. The runner announces
 this reduced coverage. Full split-role verification remains required in CI.
 Only `true` and `false` are accepted; an unset flag defaults to `true`.
 
+CI's direct Cargo jobs use `python3 tests/python/run.py integration rust-tests --`
+before the Cargo command to provision equivalent isolated restore authority on
+Linux, macOS and Windows. The driver preserves the application database settings
+and test exit status and removes its temporary database and roles on failure.
+
 Use Rust's shared fixtures and scoped names for application data. Never replace
 database concurrency or migration coverage with a Python mock.
 

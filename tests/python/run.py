@@ -27,6 +27,7 @@ INTEGRATION = {
     "event-transports": "integration.event_transports",
     "corpus": "integration.corpus",
     "atlas": "integration.atlas",
+    "rust-tests": "integration.rust_tests",
     "schema-budget": "integration.schema_budget",
     "class-field-discovery": "integration.class_field_discovery",
     "treetop-server": "support.treetop_server",

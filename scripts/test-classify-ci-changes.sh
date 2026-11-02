@@ -951,3 +951,7 @@ for discovery_path in tests/python/integration/class_field_discovery.py tests/py
   discovery_output="$(bash "$classifier" "$discovery_path")"
   assert_flag "$discovery_output" code true
 done
+
+restore_fixture_output="$(bash "$classifier" tests/python/integration/rust_tests.py)"
+assert_flag "$restore_fixture_output" code true
+assert_flag "$restore_fixture_output" rust true
