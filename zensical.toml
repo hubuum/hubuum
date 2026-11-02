@@ -168,6 +168,7 @@ nav = [
       { "History segment prototype" = "performance/history_segment_prototype.md" },
       { "Artifact pipeline measurements" = "performance/artifact_pipeline.md" },
       { "Task retention measurements" = "performance/task_retention_measurement.md" },
+      { "API admission measurements" = "performance/api_admission.md" },
       { "Release profiles" = "performance/release_profiles.md" },
       { "Runtime measurements" = "performance/runtime_hardening.md" },
       { "Computed enrichment" = "performance/computed_enrichment.md" },
