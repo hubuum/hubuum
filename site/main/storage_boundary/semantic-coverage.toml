@@ -27,22 +27,11 @@ bootstrap_and_provider_reconciliation = [
     "ExternalIdentityStorage::sync_external_user",
 ]
 workflow_state_machine = [
-    "ArtifactStore::register_destination",
-    "ArtifactStore::stage",
-    "ArtifactStore::append",
-    "ArtifactStore::seal",
-    "ArtifactStore::publish",
-    "ArtifactStore::abort",
-    "ArtifactStore::cleanup",
-    "TaskArtifactStore::bind_task",
     "SchemaEvolutionStorage::process_schema_work",
     "SchemaEvolutionStorage::save_schema_repair_report",
     "ComputedFieldStorage::request_computed_field_rebuild",
     "ComputedFieldStorage::execute_computed_field_rebuild",
     "TaskQueueStorage::create_task",
-    "TaskQueueStorage::activate_task_submission",
-    "TaskExecutionStorage::wait_task",
-    "TaskExecutionStorage::resume_task",
     "TaskExecutionStorage::request_task_cancellation",
     "TaskExecutionStorage::admit_task_execution",
     "TaskExecutionStorage::acknowledge_task_stop",
@@ -72,33 +61,6 @@ event_coordination = [
 ]
 retention = ["TokenRetentionStorage::purge_expired_tokens", "AuthenticationStorage::purge_credential_sources", "AuthenticationStorage::purge_auth_sessions"]
 maintenance = [
-    "TaskRetentionStorage::prepare_expired_task_outputs",
-    "TaskRetentionStorage::commit_task_control",
-    "TaskRetentionStorage::recover_task_control",
-    "TaskRetentionStorage::replace_task_retention_policy",
-    "TaskRetentionStorage::change_task_hold",
-    "TaskRetentionStorage::expire_task_receipts",
-    "TaskRetentionStorage::prepare_task_details_purge",
-    "TaskRetentionStorage::purge_task_details_batch",
-    "TaskRetentionStorage::reapply_task_retention",
-    "TaskRetentionStorage::backfill_task_receipts",
-
-    "DeletionControlStorage::commit_deletion_control",
-    "DeletionControlStorage::observe_deletion_checkpoint",
-    "DeletionControlStorage::register_runtime",
-    "DeletionControlStorage::register_runtime_isolated",
-    "DeletionControlStorage::capture_application_execution",
-    "DeletionControlStorage::capture_application_execution_with_maintenance",
-    "DeletionControlStorage::acknowledge_runtime_drain",
-    "DeletionControlStorage::reapply_deletion_decisions",
-    "DeletionControlStorage::release_application_exposure",
-    "DeletionControlStorage::recover_application_control",
-
-    "DeletionControlStorage::unregister_runtime",
-    "DeletionControlStorage::prepare_hot_object_history_deletion",
-    "DeletionControlStorage::cleanup_hot_object_history",
-    "TaskCapacityStorage::initialize_task_policy",
-    "TaskCapacityStorage::replace_task_policy",
     "QueryUsageStorage::set_query_observation_control",
     "RestoreStorage::stage_restore_artifact",
     "RestoreStorage::expire_restore_stage",
@@ -310,67 +272,6 @@ methods = ["get_readiness_snapshot", "get_maintenance_state", "get_task_queue_sn
 effects = { point_read = ["get_readiness_snapshot", "get_maintenance_state", "get_task_queue_snapshot"], complete_read = ["load_export_template_health", "load_export_templates_for_audit"] }
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_operational_state"]
 
-[traits.DeletionControlStorage]
-source = "crates/hubuum-storage-core/src/deletion_control.rs"
-methods = ["read_application_control", "register_runtime_isolated", "capture_application_execution", "capture_application_execution_with_maintenance", "acknowledge_runtime_drain", "reapply_deletion_decisions", "release_application_exposure", "recover_application_control", "read_deletion_control", "capture_deletion_control", "register_runtime", "unregister_runtime", "prepare_hot_object_history_deletion", "cleanup_hot_object_history", "commit_deletion_control", "observe_deletion_checkpoint"]
-effects = { point_read = ["read_application_control", "read_deletion_control", "capture_deletion_control"], workflow_mutation = ["register_runtime_isolated", "capture_application_execution", "capture_application_execution_with_maintenance", "acknowledge_runtime_drain", "reapply_deletion_decisions", "release_application_exposure", "recover_application_control", "register_runtime", "unregister_runtime", "prepare_hot_object_history_deletion", "cleanup_hot_object_history", "commit_deletion_control", "observe_deletion_checkpoint"] }
-shared_scenarios = [
-    "crates/hubuum-storage-core/src/deletion_control/audit_tests.rs::recovered_canonical_projection_keeps_original_identity_and_time",
-    "crates/hubuum-storage-core/src/deletion_control/audit_tests.rs::completion_evidence_preserves_the_existing_physical_reapplication_proof",
-    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::unavailable_required_audit_rolls_back_intent_and_canonical_events",
-    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::ordinary_event_purge_preserves_protected_original_audit_facts",
-    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::control_recovery_rehydrates_original_facts_without_duplicate_success",
-    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::application_release_requires_the_required_completion_audit",
-    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::worker_admission_observes_maintenance_and_preserves_its_permit",
-    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::worker_admission_rejects_a_foreign_inherited_permit",
-    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::worker_admission_cannot_refresh_an_old_permit_after_release",
-    "crates/hubuum-storage-postgres/tests/deletion_control.rs::worker_admission_and_maintenance_share_one_acquisition",
-    "crates/hubuum-storage-postgres/tests/deletion_control.rs::coordinator_observes_and_acknowledges_drain_in_one_acquisition",
-    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::released_application_rejects_runtime_drain_acknowledgement",
-    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::reapplication_deletes_current_copy_and_requires_published_release",
-    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::repeated_reapplication_preserves_exact_receipt",
-    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::unknown_obligation_rejects_entire_reapplication_before_removal",
-    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::reapplication_rejects_restored_live_target",
-    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::bound_adapter_requires_its_owner_permit",
-    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::old_scope_cannot_refresh_itself_after_release",
-    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::capturing_work_revokes_previous_drain_acknowledgement",
-    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::isolated_recovery_only_retires_matching_known_domain",
-    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::a_new_permit_cannot_publish_an_old_task_claim",
-    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::unresolved_identity_cannot_be_used_as_absence_evidence",
-    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::ordinary_writes_cannot_bypass_stale_application_scope",
-    "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::logical_restore_reapplies_retained_decisions_before_resuming",
-
-    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::competing_control_changes_cannot_both_commit",
-    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::preparation_rejects_invalid_history_copy",
-    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::cleanup_commits_exact_removal_and_receipt_together",
-    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::cleanup_retry_rechecks_removed_history_after_recovery",
-    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::cleanup_does_not_confuse_reused_integer_ids",
-    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::registered_runtime_blocks_cleanup_until_exact_drain",
-    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::runtime_registration_capacity_never_evicts_an_owner",
-    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::runtime_unregister_requires_ownership",
-    "crates/hubuum-storage-memory/src/deletion_control/tests.rs::logical_restore_preserves_runtime_registration",
-]
-native_scenarios = [
-    "crates/hubuum-storage-postgres/tests/deletion_control.rs::required_audit_failure_rolls_back_the_exact_transition",
-    "crates/hubuum-storage-postgres/tests/deletion_control.rs::repeatable_read_before_gate_cannot_reuse_revoked_admission",
-    "crates/hubuum-storage-postgres/tests/deletion_control.rs::runtime_drain_and_exact_checkpoint_release_fence_old_work",
-    "crates/hubuum-storage-postgres/tests/deletion_control.rs::unknown_unrelated_history_prevents_removed_copy_reapplication",
-    "crates/hubuum-storage-postgres/tests/deletion_control.rs::restored_removed_history_is_reapplied_before_new_incarnation_release",
-    "crates/hubuum-storage-postgres/tests/deletion_control.rs::recovery_revokes_only_runtimes_from_the_excluded_isolation_domain",
-
-    "crates/hubuum-storage-postgres/tests/deletion_control.rs::connection_loss_during_control_recovery_rolls_back_import",
-    "crates/hubuum-storage-postgres/tests/deletion_control.rs::runtime_can_read_authority_without_control_table_write_access",
-    "crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_restore_gate_rejects_retained_decisions",
-    "crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_authority_has_no_cascading_application_references",
-    "crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_authority_compare_and_swap_rejects_old_snapshot",
-    "crates/hubuum-storage-postgres/tests/deletion_control.rs::cleanup_matches_alternate_uuid_spelling_by_identity",
-    "crates/hubuum-storage-postgres/tests/deletion_control.rs::cleanup_connection_loss_rolls_back_copy_and_receipt_together",
-    "crates/hubuum-storage-postgres/tests/deletion_control.rs::invalid_authority_rolls_back_runtime_registration",
-    "crates/hubuum-storage-postgres/tests/deletion_control.rs::runtime_ownership_prevents_unrelated_unregister",
-    "crates/hubuum-storage-postgres/tests/deletion_control.rs::registered_runtime_wins_race_but_intent_starts_a_drain",
-    "crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_intent_wins_race_and_prevents_runtime_startup",
-]
-
 [traits.TokenRetentionStorage]
 source = "crates/hubuum-storage-core/src/operational.rs"
 methods = ["purge_expired_tokens"]
@@ -407,25 +308,18 @@ methods = ["get_remote_target", "list_remote_targets", "create_remote_target", "
 effects = { point_read = ["get_remote_target"], page_read = ["list_remote_targets"], audited_mutation = ["create_remote_target", "update_remote_target", "delete_remote_target", "record_remote_target_invocation"] }
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_remote_target_lifecycle"]
 
-[traits.TaskCapacityStorage]
-source = "crates/hubuum-storage-core/src/task_capacity.rs"
-methods = ["initialize_task_policy", "task_policy", "task_capacity_snapshot", "replace_task_policy"]
-effects = { point_read = ["task_policy", "task_capacity_snapshot"], workflow_mutation = ["initialize_task_policy", "replace_task_policy"] }
-shared_scenarios = ["tests/restore_contract/task_capacity.rs::replicas_atomically_enforce_each_admission_boundary", "tests/restore_contract/task_capacity.rs::stale_policy_revision_cannot_replace_a_committed_change", "tests/restore_contract/task_capacity.rs::older_restore_preserves_policy_and_work_for_absent_owners"]
-native_scenarios = ["tests/restore_contract/task_capacity.rs::runtime_role_cannot_read_protected_capacity_owners", "tests/restore_contract/task_capacity.rs::missing_capacity_backfill_blocks_initialization_until_reconciled_once"]
-
 [traits.TaskQueueStorage]
 source = "crates/hubuum-storage-core/src/task_queue.rs"
-methods = ["lookup_task_submission", "activate_task_submission", "create_task", "get_task_access", "list_tasks", "list_task_events", "list_import_task_results", "list_export_output_summaries", "list_backup_output_summaries", "get_export_output_summary", "get_backup_output_summary", "get_export_output", "get_backup_output"]
-effects = { point_read = ["lookup_task_submission", "get_task_access", "get_export_output_summary", "get_backup_output_summary", "get_export_output", "get_backup_output"], page_read = ["list_tasks", "list_task_events", "list_import_task_results"], batch_read = ["list_export_output_summaries", "list_backup_output_summaries"], workflow_mutation = ["create_task", "activate_task_submission"] }
-shared_scenarios = ["crates/hubuum-storage-conformance/src/task_retention.rs::verify_protected_task_admission", "crates/hubuum-storage-memory/src/task_retention/tests.rs::pending_generation_reserves_once_and_is_unclaimable_until_protected_activation", "crates/hubuum-storage-memory/src/task_retention/tests.rs::task_purge_is_bounded_restricts_reads_and_preserves_receipt_and_global_audit", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_queue", "src/tests/storage_contract/schema_evolution.rs::generic_schema_tasks_require_administrator_report_access"]
+methods = ["create_task", "get_task_access", "list_tasks", "list_task_events", "list_import_task_results", "list_export_output_summaries", "list_backup_output_summaries", "get_export_output_summary", "get_backup_output_summary", "get_export_output", "get_backup_output"]
+effects = { point_read = ["get_task_access", "get_export_output_summary", "get_backup_output_summary", "get_export_output", "get_backup_output"], page_read = ["list_tasks", "list_task_events", "list_import_task_results"], batch_read = ["list_export_output_summaries", "list_backup_output_summaries"], workflow_mutation = ["create_task"] }
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_queue", "src/tests/storage_contract/schema_evolution.rs::generic_schema_tasks_require_administrator_report_access"]
 
 [traits.TaskExecutionStorage]
 source = "crates/hubuum-storage-core/src/task_execution.rs"
-methods = ["wait_task", "resume_task", "get_schema_profile_output", "purge_expired_schema_profile_outputs", "poll_task_execution", "request_task_cancellation", "admit_task_execution", "acknowledge_task_stop", "begin_remote_dispatch", "claim_next_task", "renew_task_lease", "recover_expired_task_leases", "append_task_event", "update_task_state", "complete_task", "fail_task", "purge_expired_export_outputs", "purge_expired_backup_outputs"]
-effects = { point_read = ["poll_task_execution", "get_schema_profile_output"], workflow_mutation = ["wait_task", "resume_task", "purge_expired_schema_profile_outputs", "request_task_cancellation", "admit_task_execution", "acknowledge_task_stop", "begin_remote_dispatch", "claim_next_task", "renew_task_lease", "recover_expired_task_leases", "append_task_event", "update_task_state", "complete_task", "fail_task", "purge_expired_export_outputs", "purge_expired_backup_outputs"] }
-shared_scenarios = ["src/tests/storage_contract/task_waiting.rs::every_backend_satisfies_the_packaged_wait_resume_contract", "src/tests/storage_contract/task_waiting.rs::waiting_retains_work_without_an_execution_lease", "src/tests/storage_contract/task_waiting.rs::waiting_events_expose_only_bounded_checkpoint_metadata", "src/tests/storage_contract/task_waiting.rs::concurrent_notifications_resume_a_wait_exactly_once", "src/tests/storage_contract/task_waiting.rs::resumed_work_keeps_its_checkpoint_and_original_deadline", "src/tests/storage_contract/task_waiting.rs::entering_wait_fences_the_old_lease", "src/tests/storage_contract/task_waiting.rs::obsolete_wait_notifications_have_no_effect", "src/tests/storage_contract/task_waiting.rs::cancellation_settles_waiting_work_without_reacquiring_execution", "src/tests/storage_contract/task_waiting.rs::disabling_the_submitting_service_account_cancels_waiting_work", "src/tests/storage_contract/task_waiting.rs::waiting_deadlines_settle_without_reexecuting", "src/tests/storage_contract/task_control.rs::profiling_output_is_published_only_with_successful_fenced_completion", "src/tests/storage_contract/task_control.rs::profiling_output_expires_and_retains_discovery_evidence_after_cleanup", "src/tests/storage_contract/task_control.rs::active_stop_is_durable_and_retains_lease_until_acknowledgement", "src/tests/storage_contract/task_control.rs::execution_deadline_is_pinned_independently_of_renewed_leases", "src/tests/storage_contract/task_control.rs::remote_stop_preserves_dispatch_knowledge_and_forbids_replay", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine", "src/tests/storage_contract/schema_evolution.rs::failed_schema_workers_publish_terminal_checkpoints"]
-native_scenarios = ["crates/hubuum-storage-postgres/tests/task_waiting.rs::checkpoint_accounting_retains_admission_and_charges_each_claim", "crates/hubuum-storage-postgres/tests/task_waiting.rs::rejected_checkpoint_growth_preserves_the_live_reservation", "crates/hubuum-storage-postgres/tests/task_waiting.rs::rollback_refuses_to_discard_a_durable_continuation", "crates/hubuum-storage-postgres/tests/task_waiting.rs::database_rejects_invalid_wait_states", "crates/hubuum-storage-postgres/tests/task_waiting.rs::wait_operations_do_not_block_task_first_writers", "src/tests/storage_contract.rs::postgres_rolls_back_task_finalization_at_an_injected_failure", "src/tests/storage_contract.rs::postgres_task_page_count_and_rows_share_one_snapshot", "src/tests/storage_contract.rs::postgres_lease_renewal_loss_expires_and_finalizes_without_replay"]
+methods = ["get_schema_profile_output", "purge_expired_schema_profile_outputs", "poll_task_execution", "request_task_cancellation", "admit_task_execution", "acknowledge_task_stop", "begin_remote_dispatch", "claim_next_task", "renew_task_lease", "recover_expired_task_leases", "append_task_event", "update_task_state", "complete_task", "fail_task", "purge_expired_export_outputs", "purge_expired_backup_outputs"]
+effects = { point_read = ["poll_task_execution", "get_schema_profile_output"], workflow_mutation = ["purge_expired_schema_profile_outputs", "request_task_cancellation", "admit_task_execution", "acknowledge_task_stop", "begin_remote_dispatch", "claim_next_task", "renew_task_lease", "recover_expired_task_leases", "append_task_event", "update_task_state", "complete_task", "fail_task", "purge_expired_export_outputs", "purge_expired_backup_outputs"] }
+shared_scenarios = ["src/tests/storage_contract/task_control.rs::profiling_output_is_published_only_with_successful_fenced_completion", "src/tests/storage_contract/task_control.rs::profiling_output_expires_and_retains_discovery_evidence_after_cleanup", "src/tests/storage_contract/task_control.rs::active_stop_is_durable_and_retains_lease_until_acknowledgement", "src/tests/storage_contract/task_control.rs::execution_deadline_is_pinned_independently_of_renewed_leases", "src/tests/storage_contract/task_control.rs::remote_stop_preserves_dispatch_knowledge_and_forbids_replay", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine", "src/tests/storage_contract/schema_evolution.rs::failed_schema_workers_publish_terminal_checkpoints"]
+native_scenarios = ["src/tests/storage_contract.rs::postgres_rolls_back_task_finalization_at_an_injected_failure", "src/tests/storage_contract.rs::postgres_task_page_count_and_rows_share_one_snapshot", "src/tests/storage_contract.rs::postgres_lease_renewal_loss_expires_and_finalizes_without_replay"]
 
 [traits.BackupSnapshotStorage]
 source = "crates/hubuum-storage-core/src/backup_snapshot.rs"
@@ -454,9 +348,9 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.ExecutionStorage]
 source = "crates/hubuum-storage-core/src/execution.rs"
-methods = ["current_execution_scope", "run_in_scope_sync", "run_in_scope", "run_in_scope_send"]
-effects = { execution_scope = ["current_execution_scope", "run_in_scope_sync", "run_in_scope", "run_in_scope_send"] }
-shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_restores_scope_after_synchronous_polling", "crates/hubuum-storage-memory/src/deletion_control/reapplication_tests.rs::old_scope_cannot_refresh_itself_after_release", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_execution_context", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_export_query_scope"]
+methods = ["run_in_scope", "run_in_scope_send"]
+effects = { execution_scope = ["run_in_scope", "run_in_scope_send"] }
+shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_execution_context", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_export_query_scope"]
 
 [traits.TransactionStorage]
 source = "crates/hubuum-storage-core/src/transaction.rs"
@@ -544,13 +438,8 @@ scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_sup
 
 [enums.StorageTaskStatus]
 source = "crates/hubuum-storage-core/src/task_queue.rs"
-variants = ["Queued", "Validating", "Running", "Waiting", "Succeeded", "Failed", "PartiallySucceeded", "Cancelled"]
-scenarios = ["src/tests/storage_contract/task_waiting.rs::waiting_retains_work_without_an_execution_lease", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine"]
-
-[enums.StorageTaskResumeOutcome]
-source = "crates/hubuum-storage-core/src/task_waiting.rs"
-variants = ["Queued", "Stopped", "Unchanged"]
-scenarios = ["src/tests/storage_contract/task_waiting.rs::concurrent_notifications_resume_a_wait_exactly_once", "src/tests/storage_contract/task_waiting.rs::obsolete_wait_notifications_have_no_effect", "src/tests/storage_contract/task_waiting.rs::waiting_deadlines_settle_without_reexecuting"]
+variants = ["Queued", "Validating", "Running", "Succeeded", "Failed", "PartiallySucceeded", "Cancelled"]
+scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine"]
 
 [traits.SchemaEvolutionStorage]
 source = "crates/hubuum-storage-core/src/schema_evolution.rs"
@@ -590,28 +479,3 @@ scenarios = ["src/tests/storage_contract/history_relations.rs::every_backend_rel
 source = "crates/hubuum-storage-core/src/history/relations.rs"
 variants = ["Changes", "At"]
 scenarios = ["src/tests/storage_contract/history_relations.rs::every_backend_relation_validity_is_half_open", "src/tests/storage_contract/history_relations.rs::relationship_deleted_history_requires_unscoped_administrator"]
-
-[traits.LogicalIdentityStorage]
-source = "crates/hubuum-storage-core/src/logical_identity.rs"
-methods = ["resolve_logical_identity"]
-effects = { point_read = ["resolve_logical_identity"] }
-shared_scenarios = ["src/tests/storage_contract/logical_identity.rs::every_backend_preserves_identity_when_closing_history", "crates/hubuum-storage-conformance/src/logical_identity.rs::verify_collection_version_identity"]
-
-[traits.ArtifactStore]
-source = "crates/hubuum-storage-core/src/artifacts/mod.rs"
-methods = ["register_destination", "stage", "append", "seal", "manifest", "published_manifest", "block", "publish", "abort", "cleanup"]
-effects = { point_read = ["manifest", "published_manifest", "block"], workflow_mutation = ["register_destination", "stage", "append", "seal", "publish", "abort", "cleanup"] }
-shared_scenarios = ["src/tests/storage_contract/artifacts.rs::published_bytes_are_immutable_and_repeatedly_verifiable", "src/tests/storage_contract/artifacts.rs::admitted_artifact_cannot_be_rebound_to_another_task", "src/tests/storage_contract/artifacts.rs::replica_can_verify_and_atomically_publish_without_the_producer_spool", "src/tests/storage_contract/artifacts.rs::cancellation_fences_each_publication_boundary", "tests/restore_contract/artifacts.rs::portable_export_restore_uses_fresh_identity_and_preserves_cleanup"]
-native_scenarios = ["src/tests/storage_contract/artifacts.rs::artifact_publication_rolls_back_with_task_finalization"]
-
-[traits.TaskArtifactStore]
-source = "crates/hubuum-storage-core/src/artifacts/mod.rs"
-methods = ["bind_task"]
-effects = { workflow_mutation = ["bind_task"] }
-shared_scenarios = ["src/tests/storage_contract/artifacts.rs::published_bytes_are_immutable_and_repeatedly_verifiable", "src/tests/storage_contract/artifacts.rs::admitted_artifact_cannot_be_rebound_to_another_task", "src/tests/storage_contract/artifacts.rs::replica_can_verify_and_atomically_publish_without_the_producer_spool", "src/tests/storage_contract/artifacts.rs::lost_worker_fails_without_replaying_and_reconciles_its_bytes"]
-[traits.TaskRetentionStorage]
-source = "crates/hubuum-storage-core/src/task_retention/capability.rs"
-methods = ["prepare_expired_task_outputs", "read_task_receipt_activation", "list_pending_task_admissions", "read_task_control", "capture_control_checkpoint", "commit_task_control", "recover_task_control", "read_task_retention_policy", "replace_task_retention_policy", "change_task_hold", "select_expired_task_receipts", "expire_task_receipts", "prepare_task_details_purge", "purge_task_details_batch", "list_pending_task_purges", "reapply_task_retention", "list_legacy_task_receipts", "backfill_task_receipts"]
-effects = { point_read = ["read_task_receipt_activation", "read_task_control", "capture_control_checkpoint", "read_task_retention_policy"], batch_read = ["list_pending_task_admissions", "select_expired_task_receipts", "list_pending_task_purges", "list_legacy_task_receipts"], workflow_mutation = ["prepare_expired_task_outputs", "commit_task_control", "recover_task_control", "replace_task_retention_policy", "change_task_hold", "expire_task_receipts", "prepare_task_details_purge", "purge_task_details_batch", "reapply_task_retention", "backfill_task_receipts"] }
-shared_scenarios = ["src/services/deletion_recovery/task_receipts/tests.rs::interrupted_expiry_acknowledgement_is_repaired_before_key_reuse", "src/services/deletion_recovery/task_receipts/tests.rs::recovery_of_older_admission_preserves_the_published_terminal_anchor", "src/services/deletion_recovery/task_receipts/tests.rs::output_only_cleanup_is_checkpointed_when_detail_retention_is_disabled", "src/services/deletion_recovery/task_receipts/tests.rs::held_old_manifest_does_not_prevent_new_unheld_cleanup", "crates/hubuum-storage-memory/src/task_retention/tests.rs::bounded_legacy_backfill_preserves_original_owner_key_and_terminal_anchor", "crates/hubuum-storage-memory/src/task_retention/tests.rs::configure", "crates/hubuum-storage-memory/src/task_retention/tests.rs::reapply", "crates/hubuum-storage-memory/src/task_retention/tests.rs::pending_generation_reserves_once_and_is_unclaimable_until_protected_activation", "crates/hubuum-storage-memory/src/task_retention/tests.rs::task_purge_is_bounded_restricts_reads_and_preserves_receipt_and_global_audit", "crates/hubuum-storage-memory/src/task_retention/tests.rs::removed_batch_reapplies_to_resurrected_exact_task_identity", "crates/hubuum-storage-memory/src/task_retention/tests.rs::hold_release_requires_a_checkpoint_newer_than_the_original_purge_intent", "crates/hubuum-storage-memory/src/task_retention/tests.rs::output_only_retention_works_when_task_details_retention_is_disabled", "crates/hubuum-storage-memory/src/task_retention/tests.rs::late_hold_does_not_starve_other_members_of_the_same_manifest", "src/services/deletion_recovery/task_admin/tests.rs::changing_policy_invalidates_an_unused_activation_preview", "src/services/deletion_recovery/task_receipts/tests.rs::abandoned_pending_admissions_activate_in_bounded_passes"]
-native_scenarios = ["crates/hubuum-storage-postgres/tests/task_retention.rs::parent_removal_never_cascades_past_the_child_row_budget", "crates/hubuum-storage-postgres/tests/task_retention.rs::runtime_has_only_operation_shaped_access_to_protected_receipts", "crates/hubuum-storage-postgres/tests/task_retention.rs::recovered_nonterminal_admission_is_settled_without_replay_before_new_proof"]

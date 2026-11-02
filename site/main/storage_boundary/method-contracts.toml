@@ -799,8 +799,8 @@ profile = "event_delivery"
 
 [methods."HistoryStorage::resolve_history_principal_names"]
 effect = "batch_read"
-carrier = "Vec<PrincipalIdentity>"
-profile = "captured_principal_names"
+carrier = "Vec<PrincipalId>"
+profile = "sparse_id_names"
 
 [methods."HistoryStorage::list_collection_history"]
 effect = "page_read"
@@ -1100,49 +1100,3 @@ unsupported_error = "InvalidInput"
 effect = "page_read"
 carrier = "StorageActivityQuery"
 profile = "credential_activity"
-
-[collection_profiles.captured_principal_names]
-shape = "batch"
-ordering = "principal UUID ascending"
-duplicate_inputs = "coalesced"
-missing_inputs = "absent principal UUIDs are omitted; integers are never fallback keys"
-multiplicity = "at most one pair per unique input UUID"
-completeness = "all existing unique principal UUIDs"
-bounds = "bounded by the input vector"
-visibility = "internal identity projection; no additional authorization filtering"
-snapshot = "one native read"
-invalid_error = "InvalidInput"
-unsupported_error = "InvalidInput"
-
-[collection_profiles.task_retention_candidates]
-shape = "batch"
-ordering = "adapter-owned bounded progress order; receipt generations sorted by stable submission identity"
-duplicate_inputs = "selection carries a limit/budget, not caller-provided target duplicates"
-missing_inputs = "ineligible or absent candidates are omitted"
-multiplicity = "one exact ticket or candidate per selected generation"
-completeness = "bounded eligible prefix; repeat after progress, never assume an empty stale snapshot proves completion"
-bounds = "at most 64 generations or manifests; legacy payloads also obey TaskPurgeBudget row/byte bounds"
-visibility = "internal authorized lifecycle coordinator; receipt records exclude raw request bodies"
-snapshot = "one consistent selection snapshot; later mutations recheck exact targets"
-invalid_error = "InvalidInput"
-unsupported_error = "InvalidInput"
-
-[methods."TaskRetentionStorage::list_pending_task_admissions"]
-effect = "batch_read"
-carrier = "u32"
-profile = "task_retention_candidates"
-
-[methods."TaskRetentionStorage::select_expired_task_receipts"]
-effect = "batch_read"
-carrier = "ReceiptExpirySelection"
-profile = "task_retention_candidates"
-
-[methods."TaskRetentionStorage::list_pending_task_purges"]
-effect = "batch_read"
-carrier = "u32"
-profile = "task_retention_candidates"
-
-[methods."TaskRetentionStorage::list_legacy_task_receipts"]
-effect = "batch_read"
-carrier = "TaskPurgeBudget"
-profile = "task_retention_candidates"
