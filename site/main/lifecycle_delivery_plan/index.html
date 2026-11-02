@@ -4802,6 +4802,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../performance/api_admission/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API admission measurements
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../performance/release_profiles/" class="md-nav__link">
         
   
@@ -5305,11 +5332,12 @@ changes additionally require Docker parity and production image builds. Review
 the changelog in every PR; explicitly document supported API/backup/configuration
 breaks and upgrade actions. Internal benchmark-only work has no user-facing
 changelog entry and must say so in its PR description.</p>
+<p>Progress snapshot, 2026-11-01; GitHub issues and pull requests retain the live
+status and acceptance evidence:</p>
 <ul>
 <li>
 <h1 id="504-merged-in-522-with-a-reproducible-synthetic-baseline-initial-targets">504: merged in #522 with a reproducible synthetic baseline, initial targets<a class="headerlink" href="#504-merged-in-522-with-a-reproducible-synthetic-baseline-initial-targets" title="Permanent link">&para;</a></h1>
-  and acceptance gates. See
-  <a href="../performance/lifecycle_budgets/">lifecycle budgets</a>.</li>
+  and acceptance gates. See <a href="../performance/lifecycle_budgets/">lifecycle budgets</a>.</li>
 <li>
 <h1 id="505-durable-logical-identities-and-compatible-backuprestore-merged-in-524">505: durable logical identities and compatible backup/restore merged in #524.<a class="headerlink" href="#505-durable-logical-identities-and-compatible-backuprestore-merged-in-524" title="Permanent link">&para;</a></h1>
 </li>
@@ -5317,14 +5345,33 @@ changelog entry and must say so in its PR description.</p>
 <h1 id="506-shared-admission-and-restore-isolated-capacity-accounting-merged-in-525">506: shared admission and restore-isolated capacity accounting merged in #525.<a class="headerlink" href="#506-shared-admission-and-restore-isolated-capacity-accounting-merged-in-525" title="Permanent link">&para;</a></h1>
 </li>
 <li>
-<h1 id="507-implemented-in-draft-527-p3p4-performance-acceptance-remains-open">507: implemented in draft #527; P3/P4 performance acceptance remains open.<a class="headerlink" href="#507-implemented-in-draft-527-p3p4-performance-acceptance-remains-open" title="Permanent link">&para;</a></h1>
-  See <a href="../task_scheduling/#measurement">scheduler measurements</a>.</li>
+<h1 id="507-shared-scheduling-merged-in-527-with-constrained-profile-qualification">507: shared scheduling merged in #527, with constrained-profile qualification<a class="headerlink" href="#507-shared-scheduling-merged-in-527-with-constrained-profile-qualification" title="Permanent link">&para;</a></h1>
+  in #556. See <a href="../task_scheduling/#measurement">scheduler measurements</a> for
+  the measured profiles and remaining acceptance limits.</li>
 <li>
-<h1 id="508-dormant-artifact-staging-in-draft-523-with-dependent-backup-producer">508: dormant artifact staging in draft #523, with dependent backup producer<a class="headerlink" href="#508-dormant-artifact-staging-in-draft-523-with-dependent-backup-producer" title="Permanent link">&para;</a></h1>
-  staging in draft #528. Production activation and pipeline evidence remain open.</li>
+<h1 id="508-artifact-staging-backup-producers-and-bounded-outputs-merged-in-523">508: artifact staging, backup producers and bounded outputs merged in #523,<a class="headerlink" href="#508-artifact-staging-backup-producers-and-bounded-outputs-merged-in-523" title="Permanent link">&para;</a></h1>
+  #528 and #539. See <a href="../performance/artifact_pipeline/">artifact measurements</a>
+  for the delivery boundary and remaining production acceptance work.</li>
 <li>
-<h1 id="509521-pending-no-completion-or-destructive-feature-enablement-is-implied">509–#521: pending; no completion or destructive-feature enablement is implied.<a class="headerlink" href="#509521-pending-no-completion-or-destructive-feature-enablement-is-implied" title="Permanent link">&para;</a></h1>
-</li>
+<h1 id="511-deletion-authority-recovery-cleanup-and-audit-protection-have-landed">511: deletion authority, recovery, cleanup and audit protection have landed.<a class="headerlink" href="#511-deletion-authority-recovery-cleanup-and-audit-protection-have-landed" title="Permanent link">&para;</a></h1>
+  See <a href="../deletion_recovery/">deletion recovery</a> for activation and recovery rules.</li>
+<li>
+<h1 id="512-task-retention-is-implemented-see-task-retention">512: task retention is implemented; see <a href="../task_retention/">task retention</a><a class="headerlink" href="#512-task-retention-is-implemented-see-task-retention" title="Permanent link">&para;</a></h1>
+  and its <a href="../performance/task_retention_measurement/">measurements</a>.</li>
+<li>
+<h1 id="514-an-opt-in-history-segment-prototype">514: an opt-in <a href="../performance/history_segment_prototype/">history segment prototype</a><a class="headerlink" href="#514-an-opt-in-history-segment-prototype" title="Permanent link">&para;</a></h1>
+  provides experimental evidence; it does not enable production segmentation.</li>
+<li>
+<h1 id="516-538-provides-the-dormant-durable-waiting-foundation-provider">516: #538 provides the dormant durable-waiting foundation. Provider<a class="headerlink" href="#516-538-provides-the-dormant-durable-waiting-foundation-provider" title="Permanent link">&para;</a></h1>
+  integration and production activation remain pending.</li>
+<li>
+<h1 id="521-measurement-and-acceptance-work-is">521: <a href="../performance/api_admission/">measurement and acceptance work</a> is<a class="headerlink" href="#521-measurement-and-acceptance-work-is" title="Permanent link">&para;</a></h1>
+  available independently of those branches. Shared synchronous-request
+  reservations and their recovery guarantees remain to be implemented.</li>
+<li>
+<h1 id="509-510-513-515-and-517520-consult-the-delivery-order-table-and">509, #510, #513, #515 and #517–#520: consult the delivery-order table and<a class="headerlink" href="#509-510-513-515-and-517520-consult-the-delivery-order-table-and" title="Permanent link">&para;</a></h1>
+  linked issues for prerequisites and remaining work. A landed foundation or
+  measurement slice does not establish completion of its full issue.</li>
 </ul>
 
 
