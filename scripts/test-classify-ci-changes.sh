@@ -55,6 +55,11 @@ for filesystem_path in crates/hubuum-artifacts/src/filesystem.rs \
   assert_flag "$filesystem_output" artifacts true
 done
 
+filesystem_benchmark="$(bash "$classifier" crates/hubuum-artifacts/benches/filesystem_artifact_storage_criterion.rs)"
+assert_flag "$filesystem_benchmark" code true
+assert_flag "$filesystem_benchmark" rust true
+assert_flag "$filesystem_benchmark" benchmarks true
+
 for operator_path in observability/prometheus/alerts.json observability/prometheus/tests.json \
   observability/dashboards/overview.json scripts/observability.py; do
   operator_output="$(bash "$classifier" "$operator_path")"

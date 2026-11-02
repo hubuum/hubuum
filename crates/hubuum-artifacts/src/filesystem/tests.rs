@@ -612,3 +612,186 @@ async fn pinned_root_is_not_redirected_by_path_replacement() {
     std::fs::remove_dir_all(moved).unwrap();
     assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
 }
+
+#[tokio::test]
+async fn discarded_attempt_id_cannot_be_reused_by_another_artifact_after_reopen() {
+    let fixture = Fixture::new().await;
+    let original = fixture.identity();
+    fixture.store.stage(&original, limits()).await.unwrap();
+    fixture.store.abort(&original).await.unwrap();
+    fixture.store.cleanup().await.unwrap();
+    let replacement = ArtifactIdentity::from_parts(
+        crate::ArtifactId::generate(),
+        original.attempt(),
+        original.destination(),
+        crate::ObjectVersion::generate(),
+    );
+    assert!(
+        fixture
+            .reopen()
+            .await
+            .stage(&replacement, limits())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn discarded_object_version_cannot_be_reused_by_another_artifact_after_reopen() {
+    let fixture = Fixture::new().await;
+    let original = fixture.identity();
+    fixture.store.stage(&original, limits()).await.unwrap();
+    fixture.store.abort(&original).await.unwrap();
+    fixture.store.cleanup().await.unwrap();
+    let replacement = ArtifactIdentity::from_parts(
+        crate::ArtifactId::generate(),
+        crate::AttemptId::generate(),
+        original.destination(),
+        original.version(),
+    );
+    assert!(
+        fixture
+            .reopen()
+            .await
+            .stage(&replacement, limits())
+            .await
+            .is_err()
+    );
+}
+
+#[rstest]
+#[case(0)]
+#[case(1)]
+#[case(2)]
+#[case(3)]
+#[case(4)]
+#[case(5)]
+#[case(6)]
+#[tokio::test]
+async fn interrupted_identity_claims_resume_only_for_the_same_owner(#[case] after: isize) {
+    let fixture = Fixture::new().await;
+    let identity = fixture.identity();
+    fixture.store.fail_sync.store(after, Ordering::SeqCst);
+    assert!(fixture.store.stage(&identity, limits()).await.is_err());
+    let other = fixture.reopen().await;
+    other.stage(&identity, limits()).await.unwrap();
+    let replacement = ArtifactIdentity::from_parts(
+        crate::ArtifactId::generate(),
+        identity.attempt(),
+        identity.destination(),
+        crate::ObjectVersion::generate(),
+    );
+    assert!(other.stage(&replacement, limits()).await.is_err());
+}
+
+#[tokio::test]
+async fn sealing_does_not_substitute_for_independent_content_verification() {
+    let fixture = Fixture::new().await;
+    let identity = fixture.identity();
+    fixture.store.stage(&identity, limits()).await.unwrap();
+    fixture.store.append(&identity, 0, b"abcd").await.unwrap();
+    let mut builder = ManifestBuilder::new(identity.clone(), limits());
+    builder.push(b"abcd").unwrap();
+    let manifest = builder.finish().unwrap();
+    std::fs::write(fixture.directory(&identity).join(block_key(0)), b"efgh").unwrap();
+    fixture.store.seal(&manifest).await.unwrap();
+    assert!(verify_and_publish(&fixture.store, &manifest).await.is_err());
+}
+
+#[derive(Clone, Copy)]
+enum InvalidBlockLayout {
+    Missing,
+    Short,
+    Extra,
+}
+
+#[rstest]
+#[case(InvalidBlockLayout::Missing)]
+#[case(InvalidBlockLayout::Short)]
+#[case(InvalidBlockLayout::Extra)]
+#[tokio::test]
+async fn sealing_rejects_inconsistent_persisted_block_lengths(#[case] damage: InvalidBlockLayout) {
+    let fixture = Fixture::new().await;
+    let identity = fixture.identity();
+    fixture.store.stage(&identity, limits()).await.unwrap();
+    fixture.store.append(&identity, 0, b"abcd").await.unwrap();
+    let mut builder = ManifestBuilder::new(identity.clone(), limits());
+    builder.push(b"abcd").unwrap();
+    let manifest = builder.finish().unwrap();
+    let directory = fixture.directory(&identity);
+    match damage {
+        InvalidBlockLayout::Missing => std::fs::remove_file(directory.join(block_key(0))).unwrap(),
+        InvalidBlockLayout::Short => std::fs::write(directory.join(block_key(0)), b"ab").unwrap(),
+        InvalidBlockLayout::Extra => {
+            let path = directory.join(block_key(1));
+            std::fs::write(&path, b"efgh").unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+    }
+    assert!(fixture.store.seal(&manifest).await.is_err());
+}
+
+#[tokio::test]
+async fn missing_layout_marker_cannot_reinitialize_a_populated_root() {
+    let fixture = Fixture::new().await;
+    fixture
+        .store
+        .stage(&fixture.identity(), limits())
+        .await
+        .unwrap();
+    std::fs::remove_file(fixture.root.path().join("format")).unwrap();
+    assert!(
+        FilesystemArtifactStore::open(fixture.root.path().canonicalize().unwrap())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn unsupported_root_format_is_rejected() {
+    let fixture = Fixture::new().await;
+    std::fs::write(fixture.root.path().join("format"), b"HUBF\x02").unwrap();
+    assert!(
+        FilesystemArtifactStore::open(fixture.root.path().canonicalize().unwrap())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn initializing_a_root_preserves_unrecognized_files() {
+    let root = tempfile::Builder::new()
+        .permissions(std::fs::Permissions::from_mode(0o700))
+        .tempdir()
+        .unwrap();
+    std::fs::write(root.path().join("unrelated"), b"sentinel").unwrap();
+    assert!(
+        FilesystemArtifactStore::open(root.path().canonicalize().unwrap())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read(root.path().join("unrelated")).unwrap(),
+        b"sentinel"
+    );
+}
+
+#[tokio::test]
+async fn stage_retry_rejects_an_unsupported_state_version() {
+    let fixture = Fixture::new().await;
+    let identity = fixture.identity();
+    fixture.store.stage(&identity, limits()).await.unwrap();
+    let path = fixture.directory(&identity).join("state");
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    value["format"] = serde_json::json!(2);
+    std::fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(
+        fixture
+            .reopen()
+            .await
+            .stage(&identity, limits())
+            .await
+            .is_err()
+    );
+}

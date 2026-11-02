@@ -228,6 +228,115 @@ must not rebind existing references. There is no automatic copying or migration
 between roots, and no provider locator or filesystem path appears in a public
 artifact reference. Adapter error projections omit filesystem paths.
 
+### On-disk format version 1
+
+This is an internal, versioned storage layout, documented for operators and
+compatibility review. It is not a user-editable interchange format. Initialize a
+dedicated empty root; roots from earlier unmerged prototypes without the format
+marker are not adopted if they contain data. Unknown markers, incomplete layouts
+and unrecognized files during initialization fail closed without deleting them.
+
+```text
+root/                                  owner directory: 0700
+  format                               binary: 48 55 42 46 01 (HUBF + version 1)
+  lock                                 advisory process lock; contents unused
+  destinations                         JSON array of [destination UUID, name] pairs
+  pending                              optional uncommitted root metadata write
+  attempts/
+    <attempt UUID as 32 lowercase hex>  immutable JSON identity ownership record
+    pending                            optional uncommitted ownership write
+  versions/
+    <version UUID as 32 lowercase hex>  immutable JSON identity ownership record
+    pending                            optional uncommitted ownership write
+  artifacts/
+    <artifact UUID as 32 lowercase hex>/
+      state                            JSON lifecycle record
+      00000000.block                   raw payload bytes for ordinal 0
+      00000001.block                   raw payload bytes for ordinal 1, if present
+      manifest                         canonical binary HUBA version-1 manifest
+      pending                          optional uncommitted block/manifest/state
+```
+
+All regular files use mode `0600`; all subdirectories use `0700`. UUID keys use
+their sixteen bytes as lowercase hexadecimal without hyphens. Block ordinals
+are eight lowercase hexadecimal digits followed by `.block`. Destination names
+never become paths. Root layout and state versions are separate from the
+canonical artifact manifest's format version.
+
+`destinations` contains at most 1,024 immutable ID/name pairs, bounded to 256 KiB
+on read. Each ownership file contains the complete identity object below, bounded
+to 4 KiB. Attempt and object-version IDs each have one owner across **all**
+artifacts and destinations in the root. Both keys are checked under the root
+lock before either is claimed. Claims are synchronized before a stage is
+acknowledged; a crash between claims may conservatively reserve an ID. Exact
+retries may resume it, but another artifact cannot take it. Cleanup retains both
+ownership records, including for discarded attempts and incomplete stages.
+
+A newly staged `state` is UTF-8 JSON with these fields (example IDs and timestamp):
+
+```json
+{
+  "format": 1,
+  "identity": {
+    "artifact": "11111111-1111-4111-8111-111111111111",
+    "attempt": "22222222-2222-4222-8222-222222222222",
+    "destination": "33333333-3333-4333-8333-333333333333",
+    "version": "44444444-4444-4444-8444-444444444444"
+  },
+  "limits": {
+    "block": 1048576,
+    "bytes": 1073741824,
+    "blocks": 1024,
+    "manifest": 262144
+  },
+  "expires": 1793645776,
+  "phase": "Staging",
+  "blocks": 0,
+  "bytes": 0,
+  "cleanup_next": 0
+}
+```
+
+State is bounded to 4 KiB and rejects unknown fields. The identity is four
+non-nil UUIDs, written as canonical hyphenated strings. The `limits` values are
+maximum block bytes, payload bytes, block count and manifest bytes, respectively;
+validation applies the retained version-1 format ceilings. `expires` is the fixed
+one-hour staging deadline in absolute Unix seconds, not a sliding access clock.
+Case-sensitive phases are `Staging`, `Sealed`, `Published`, `Deleting` and
+`Discarded`. `blocks` and `bytes` count accepted payload; `cleanup_next` is the
+next accepted block ordinal to remove. Discarded tombstones retain the original
+counts and identity, rather than measuring current physical usage.
+
+Blocks contain raw, uncompressed portions of the producer's encoded payload,
+without a per-file header. Every block except the final block has the manifest's
+block size. The binary [canonical manifest](#integrity-and-downloads) binds all
+four identities, ordered lengths, per-block SHA-256 and full-stream SHA-256.
+Its digest must also come from the caller's independently trusted catalog
+reference; filesystem metadata is not a substitute for that reference.
+
+Recovery ordering is part of the format contract:
+
+1. Append synchronizes and renames the block before advancing `state`. A crash
+   can leave one unaccounted block at ordinal `blocks`; an identical append
+   reconciles it, while different bytes conflict.
+2. Seal checks persisted lengths/counts, writes the manifest, then records
+   `Sealed`. It does not hash the entire payload while holding the root lock.
+   Independent verification reads bounded blocks and checks the complete stream
+   before its proof can publish `Published`.
+3. Abort/expiry durably records `Deleting` before removal. Cleanup synchronizes
+   each batch before advancing `cleanup_next`; missing already-removed blocks
+   are retryable. It also collects the unaccounted final block, if any.
+4. Manifest and pending attempt data are removed before recording `Discarded`.
+   A zero cleanup count may represent metadata-only progress; only actual block
+   removals contribute to its return value.
+
+Never remove the lock, ownership indexes, state records or tombstones while
+using a root, and never copy only its payload directories for recovery. Preserve
+its complete layout and metadata. Restoring an older filesystem snapshot can
+roll back ownership/cancellation fences; this byte-store does not supply the
+independent deletion authority needed for production task recovery. Do not use
+filesystem rollback to bypass later deletion decisions.
+
 ### Durability and recovery
 
 One advisory root lock serializes each operation across clones and processes.
@@ -304,3 +413,51 @@ routing is implemented; local protocol tests make no throughput or RSS claim.
 This internal adapter introduces no database migration, supported public SDK
 change, server configuration flag or deployment upgrade action. It does not
 change the stable release's supported storage choices.
+
+### Filesystem benchmarks
+
+The opt-in Criterion target exercises the real filesystem implementation without
+a server, database or global `CONFIG`:
+
+```bash
+cargo bench -p hubuum-artifacts --bench filesystem_artifact_storage_criterion -- --noplot
+```
+
+Six cases cover deterministic 64 KiB, 1 MiB and 8 MiB payloads with the default
+1 MiB block size:
+
+- `write_verify_publish` measures staging, block transfer/synchronization,
+  sealing, independent content verification and publication. Private root and
+  destination initialization, payload generation and temporary-root deletion
+  are outside the timed region. Each iteration owns one temporary root; cleanup
+  cannot accumulate retained published artifacts across samples.
+- `verified_read_warm` measures opening a published reference and consuming the
+  complete verified stream. Setup's publication/read-back deliberately warms
+  the OS cache. It does not claim cold-device or cold-provider throughput.
+
+Reported throughput counts logical payload bytes per operation. Write/publication
+also reads the payload independently; filesystem metadata, journaling and cache
+traffic are not physical-byte measurements. The benchmark uses a single flow
+and Tokio current-thread runtime, not production task scheduling or contention.
+Temporary-root destruction is fixture teardown, not a supported artifact-delete
+API or evidence of protected erasure.
+
+Use an otherwise idle host and record source, filesystem/mount options, storage
+device, CPU/memory settings and Criterion arguments for comparisons. Standard
+`TMPDIR` selects the parent scratch filesystem; the benchmark always creates its
+own private child directories. Never point it at an active artifact root. A
+short diagnostic profile can be run with:
+
+```bash
+cargo bench -p hubuum-artifacts --bench filesystem_artifact_storage_criterion -- \
+  --noplot --sample-size 10 --warm-up-time 0.5 --measurement-time 1 --nresamples 1000
+```
+
+The `storage` benchmark tag includes this target. For **only** this benchmark,
+manual benchmark workflow dispatch accepts target
+`criterion:crates/hubuum-artifacts/Cargo.toml:filesystem_artifact_storage_criterion`
+and an explicit base SHA/profile. No new performance label is needed merely to
+provide the target. Ready-for-review uses the normal affected-path policy; a new
+target establishes its initial baseline rather than a fabricated base comparison.
+These diagnostics do not qualify task-output routing, multi-host filesystems,
+P6, producer RSS, or a universal performance SLA.

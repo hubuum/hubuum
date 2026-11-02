@@ -1,6 +1,6 @@
-//! Application transfer orchestration for the backend-neutral artifact contract.
+//! Transfer orchestration and local Unix storage for the neutral artifact contract.
 //! The storage SDK owns identities, verification proofs and bounded readers;
-//! this internal crate owns the runtime-dependent producer bridge.
+//! this internal crate owns the producer bridge and filesystem byte-store adapter.
 #[cfg(unix)]
 mod filesystem;
 mod producer;

@@ -20,6 +20,8 @@ type Result<T> = std::result::Result<T, FilesystemError>;
 const STATE_LIMIT: usize = 4096;
 const DESTINATION_LIMIT: usize = 1024;
 const STAGING_SECONDS: u64 = 3600;
+const ROOT_FORMAT: &[u8] = b"HUBF\x01";
+const DIRECTORIES: [&str; 3] = ["artifacts", "attempts", "versions"];
 
 /// Adapter-owned failures. Paths and operating-system messages are excluded
 /// from the protocol error projection.
@@ -145,6 +147,19 @@ impl Limits {
     }
 }
 impl State {
+    fn decode(bytes: &[u8]) -> Result<Self> {
+        let state: Self = decode(bytes)?;
+        state.limits.validated()?;
+        if state.format != 1
+            || state.blocks > state.limits.blocks
+            || state.bytes > state.limits.bytes
+            || state.bytes.div_ceil(u64::from(state.limits.block)) != u64::from(state.blocks)
+            || state.cleanup_next > state.blocks
+        {
+            return Err(invalid());
+        }
+        Ok(state)
+    }
     fn live(&self) -> Result<()> {
         if self.expires <= now()? {
             return Err(conflict());
@@ -188,11 +203,7 @@ impl FilesystemArtifactStore {
                 #[cfg(test)]
                 fail_sync: Arc::new(std::sync::atomic::AtomicIsize::new(-1)),
             };
-            store.locked(|store| {
-                store.directory("artifacts")?;
-                store.sync(&store.root)?;
-                Ok(())
-            })?;
+            store.locked(|store| store.initialize_layout())?;
             Ok(store)
         })
         .await
@@ -240,6 +251,80 @@ impl FilesystemArtifactStore {
         private(&directory, true)?;
         Ok(directory)
     }
+    fn initialize_layout(&self) -> Result<()> {
+        match read(&self.root, "format", ROOT_FORMAT.len()) {
+            Ok(bytes) => {
+                if bytes != ROOT_FORMAT {
+                    return Err(invalid());
+                }
+                for name in DIRECTORIES {
+                    private(&open_dir(&self.root, name)?, true)?;
+                }
+                return self.sync(&self.root);
+            }
+            Err(FilesystemError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        // Only empty roots and interrupted initialization are adoptable. Never
+        // reinterpret existing data after losing the layout/ownership metadata.
+        for entry in Dir::read_from(&*self.root)? {
+            let entry = entry?;
+            let name = entry.file_name().to_bytes();
+            if matches!(name, b"." | b".." | b"lock" | b"pending") {
+                continue;
+            }
+            if !DIRECTORIES
+                .iter()
+                .any(|directory| directory.as_bytes() == name)
+            {
+                return Err(invalid());
+            }
+            let directory = open_dir(&self.root, entry.file_name())?;
+            private(&directory, true)?;
+            for child in Dir::read_from(&directory)? {
+                if !matches!(child?.file_name().to_bytes(), b"." | b"..") {
+                    return Err(invalid());
+                }
+            }
+        }
+        for name in DIRECTORIES {
+            self.directory(name)?;
+        }
+        self.atomic(&self.root, "format", ROOT_FORMAT)
+    }
+    fn claim_identities(&self, identity: &ArtifactIdentity) -> Result<()> {
+        let claims = [
+            ("attempts", key(identity.attempt().as_bytes())),
+            ("versions", key(identity.version().as_bytes())),
+        ];
+        // Preflight both keys before writing either. A crash between claims
+        // may conservatively reserve an ID, but can never transfer ownership.
+        for (directory, name) in &claims {
+            let directory = open_dir(&self.root, *directory)?;
+            private(&directory, true)?;
+            match read(&directory, name, STATE_LIMIT) {
+                Ok(bytes) => {
+                    let owner: ArtifactIdentity = decode(&bytes)?;
+                    if &owner != identity {
+                        return Err(conflict());
+                    }
+                }
+                Err(FilesystemError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        for (directory, name) in claims {
+            let directory = open_dir(&self.root, directory)?;
+            match read(&directory, &name, STATE_LIMIT) {
+                Ok(_) => self.sync(&directory)?,
+                Err(FilesystemError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+                    self.atomic(&directory, &name, &encode(identity)?)?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
     fn atomic(&self, directory: &File, name: &str, bytes: &[u8]) -> Result<()> {
         // One temporary name per directory is safe under the root lock. A crash
         // leaves it uncommitted; retries truncate and replace it without following links.
@@ -255,15 +340,7 @@ impl FilesystemArtifactStore {
         private(&artifacts, true)?;
         let directory = open_dir(&artifacts, key(identity.artifact().as_bytes()))?;
         private(&directory, true)?;
-        let state: State = decode(&read(&directory, "state", STATE_LIMIT)?)?;
-        state.limits.validated()?;
-        if state.format != 1
-            || state.blocks > state.limits.blocks
-            || state.bytes > state.limits.bytes
-            || state.cleanup_next > state.blocks
-        {
-            return Err(invalid());
-        }
+        let state = State::decode(&read(&directory, "state", STATE_LIMIT)?)?;
         if &state.identity != identity {
             return Err(conflict());
         }
@@ -400,15 +477,17 @@ impl ArtifactStore for FilesystemArtifactStore {
             private(&directory, true)?;
             match read(&directory, "state", STATE_LIMIT) {
                 Ok(bytes) => {
-                    let state: State = decode(&bytes)?;
+                    let state = State::decode(&bytes)?;
                     if state.identity != identity || state.limits.validated()? != limits {
                         return Err(conflict());
                     }
                     state.writable()?;
+                    store.claim_identities(&identity)?;
                     store.sync(&directory)
                 }
-                Err(FilesystemError::Io(error)) if error.kind() == io::ErrorKind::NotFound => store
-                    .save(
+                Err(FilesystemError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+                    store.claim_identities(&identity)?;
+                    store.save(
                         &directory,
                         &State {
                             format: 1,
@@ -420,7 +499,8 @@ impl ArtifactStore for FilesystemArtifactStore {
                             bytes: 0,
                             cleanup_next: 0,
                         },
-                    ),
+                    )
+                }
                 Err(error) => Err(error),
             }
         })
@@ -494,8 +574,17 @@ impl ArtifactStore for FilesystemArtifactStore {
                 return Err(conflict());
             }
             for ordinal in 0..state.blocks {
-                let block = read(&directory, &block_key(ordinal), state.limits.block as usize)?;
-                manifest.verify_block(ordinal, &block)?;
+                let block = open_file(&directory, &block_key(ordinal), OFlags::RDONLY)?;
+                let expected = (state.bytes - u64::from(ordinal) * u64::from(state.limits.block))
+                    .min(u64::from(state.limits.block));
+                if block.metadata()?.len() != expected {
+                    return Err(conflict());
+                }
+            }
+            match open_file(&directory, &block_key(state.blocks), OFlags::RDONLY) {
+                Ok(_) => return Err(conflict()),
+                Err(FilesystemError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
             }
             store.atomic(&directory, "manifest", &bytes)?;
             state.phase = Phase::Sealed;
@@ -605,7 +694,7 @@ impl ArtifactStore for FilesystemArtifactStore {
                 let directory = open_dir(&artifacts, entry.file_name())?;
                 private(&directory, true)?;
                 let mut state: State = match read(&directory, "state", STATE_LIMIT) {
-                    Ok(bytes) => decode(&bytes)?,
+                    Ok(bytes) => State::decode(&bytes)?,
                     // Interrupted initial stage has no acknowledged attempt or blocks.
                     Err(FilesystemError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
                         remove(&directory, "pending")?;
@@ -616,11 +705,10 @@ impl ArtifactStore for FilesystemArtifactStore {
                     }
                     Err(error) => return Err(error),
                 };
-                // Reuse full validation, including the directory/identity binding.
+                // Bind the validated record to its directory before cleanup.
                 if key(state.identity.artifact().as_bytes()).as_bytes() != name {
                     return Err(invalid());
                 }
-                store.state(&state.identity)?;
                 if state.phase == Phase::Discarded || state.phase == Phase::Published {
                     continue;
                 }

@@ -2139,6 +2139,7 @@ name = "hubuum-artifacts"
 version = "0.0.1"
 dependencies = [
  "async-trait",
+ "criterion",
  "hubuum-budget",
  "hubuum-storage-core",
  "rstest",
