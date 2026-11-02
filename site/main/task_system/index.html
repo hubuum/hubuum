@@ -6147,6 +6147,7 @@ shape does not match an existing table.</p>
 <li><code>queued</code></li>
 <li><code>validating</code></li>
 <li><code>running</code></li>
+<li><code>waiting</code></li>
 <li><code>succeeded</code></li>
 <li><code>failed</code></li>
 <li><code>partially_succeeded</code></li>
@@ -6166,6 +6167,11 @@ shape does not match an existing table.</p>
 <li><code>running</code> means planning is complete and execution is underway, or a dry-run is materializing results</li>
 <li>terminal states are set after results are written and summary counters are finalized</li>
 </ul>
+<p>The storage contract also supports durable <code>waiting</code> for checkpointed export and
+backup tasks. Waiting retains admission and the original deadline while releasing
+execution occupancy. Current built-in executors reject stored checkpoints they
+cannot interpret; this foundation does not activate a provider integration.
+See <a href="../task_admission/#durable-waiting-foundation">the waiting protocol and compatibility limits</a>.</p>
 <h2 id="how-tasks-enter-the-system">How tasks enter the system<a class="headerlink" href="#how-tasks-enter-the-system" title="Permanent link">&para;</a></h2>
 <p>Imports are created through:</p>
 <ul>
@@ -6477,6 +6483,7 @@ integration records, remains restricted to unscoped runtime administrators.</p>
 <li>configured worker counts</li>
 <li>poll interval</li>
 <li>task counts by status</li>
+<li>waiting tasks separately from queued work and occupied execution</li>
 <li>task counts by kind</li>
 <li>total task events</li>
 <li>total import result rows</li>

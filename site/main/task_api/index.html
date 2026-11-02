@@ -5547,11 +5547,18 @@ class rebuild endpoint.</p>
 <li><code>queued</code></li>
 <li><code>validating</code></li>
 <li><code>running</code></li>
+<li><code>waiting</code></li>
 <li><code>succeeded</code></li>
 <li><code>failed</code></li>
 <li><code>partially_succeeded</code></li>
 <li><code>cancelled</code></li>
 </ul>
+<p><code>waiting</code> is a durable, nonterminal state with no execution lease. Its original
+execution deadline continues to apply. The initial storage foundation supports
+private checkpoints for export and backup work; current built-in producers do
+not enter this state, and there is no public wait/resume endpoint or provider
+integration. Checkpoint contents and wake tokens are never part of task responses.
+See <a href="../task_admission/#durable-waiting-foundation">durable waiting</a>.</p>
 <p>Terminal statuses:</p>
 <ul>
 <li><code>succeeded</code></li>
@@ -5570,7 +5577,7 @@ class rebuild endpoint.</p>
 A reason must be a nonempty single line of at most 512 UTF-8 bytes. Unknown
 request fields are rejected. <code>expected_status</code> returns <code>409 Conflict</code> if a
 previously uncancelled, nonterminal task has moved to another status.</p>
-<p>A queued task becomes terminal atomically and returns <code>200 OK</code>. An active task
+<p>A queued or waiting task becomes terminal atomically and returns <code>200 OK</code>. An active task
 retains its status and lease while its durable cancellation request returns
 <code>202 Accepted</code>. Poll the task until cleanup is acknowledged with a terminal
 status. Repeating a request returns the existing state without replacing the

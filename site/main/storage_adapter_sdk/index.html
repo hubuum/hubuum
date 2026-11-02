@@ -4233,6 +4233,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#upgrading-from-016-to-017" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.16 to 0.17
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5570,6 +5581,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#upgrading-from-016-to-017" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading from 0.16 to 0.17
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5651,7 +5673,7 @@
 
 
 <h1 id="storage-adapter-sdk-compatibility">Storage Adapter SDK Compatibility<a class="headerlink" href="#storage-adapter-sdk-compatibility" title="Permanent link">&para;</a></h1>
-<p>Status: accepted; current experimental release train is <code>0.16</code>.</p>
+<p>Status: accepted; current experimental release train is <code>0.17</code>.</p>
 <h2 id="supported-crate-graph">Supported Crate Graph<a class="headerlink" href="#supported-crate-graph" title="Permanent link">&para;</a></h2>
 <p>The statically linked storage adapter SDK consists of these crates:</p>
 <table>
@@ -6273,6 +6295,43 @@ retains lease-fenced cleanup with current holds pinned, preserving retry capacit
 Recheck holds and immutable task ownership even when its catalog row is
 absent, preserve producer grace, and acknowledge completion only after all
 physical obligations in the selected scope have been retired.</p>
+<h2 id="upgrading-from-016-to-017">Upgrading from 0.16 to 0.17<a class="headerlink" href="#upgrading-from-016-to-017" title="Permanent link">&para;</a></h2>
+<p>Advance all ten SDK dependencies together. Every complete adapter implements
+<code>TaskExecutionStorage::wait_task</code> and <code>resume_task</code>; there is no unsupported
+default. Handle the new closed variants <code>StorageTaskStatus::Waiting</code>,
+<code>StorageTaskCancellationChange::CancelledWaiting</code>, and <code>Action::Waiting</code>.
+<code>StorageTaskResumeOutcome</code> distinguishes newly queued work, stopped work, and an
+unchanged notification. Nonterminal operational counts now include a fourth
+<code>waiting</code> argument after <code>running</code> in <code>StorageOperationalTaskActiveCounts::try_new</code>.</p>
+<p>Carry <code>StorageTaskCheckpoint</code> intact through task projections and claims. Its
+validated format/version/object representation is bounded to 64 KiB. Persist a
+fresh opaque <code>StorageTaskWaitToken</code> atomically with the checkpoint and removal
+of the execution lease. Accept waiting only for uncommitted export/backup work
+with a pinned deadline. Preserve request bytes, original deadline, start time,
+progress, outstanding admission, and cumulative charges. Account for checkpoint
+bytes as resident input and charge them with the request on a subsequent claim.</p>
+<p>Compare a resume token atomically with the current waiting task. The winner
+queues the same logical task and consumes the token; ordinary queue claiming
+grants the next execution lease. Missing, stale, or repeated notifications
+return <code>Unchanged</code> without mutation or an event. Settle stop/deadline evidence
+before maintenance blocks an otherwise valid resume. Cancellation, principal
+disablement, and bounded deadline recovery must finalize waiting work without
+an execution lease, clear the checkpoint, and release its resident bytes.</p>
+<p>Waiting is nonterminal but not active execution. It must not be treated as an
+expired execution lease. Retain waiting tasks during ordinary draining; logical
+backups still export terminal tasks only, so restore must not recreate a wait
+token or allow it to target a reused integer ID. Preserve earlier cumulative
+charges through restore reconciliation as required by 0.8.</p>
+<p>This release provides a dormant foundation. Current built-in producers do not
+enter waiting, and existing executors reject checkpointed work before ordinary
+execution. Provider obligations, bounded polling, shared physical retrieval
+accounting, and activation remain subsequent work under #516. See the complete
+<a href="../task_admission/#durable-waiting-foundation">waiting and downgrade contract</a>
+and run <code>hubuum_storage_conformance::verify_task_wait_resume</code> against isolated,
+admitted export and backup fixtures for each adapter. The shared <code>task_waiting</code>
+scenarios add cancellation, deadlines, concurrency, private projections, and
+capacity evidence; backend-native tests retain transactional accounting and
+rollback coverage.</p>
 
 
 
