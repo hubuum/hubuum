@@ -2142,7 +2142,11 @@ dependencies = [
  "hubuum-budget",
  "hubuum-storage-core",
  "rstest",
+ "rustix",
+ "serde",
+ "serde_json",
  "sha2 0.11.1",
+ "tempfile",
  "tokio",
 ]
 

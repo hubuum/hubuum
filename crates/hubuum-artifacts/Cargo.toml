@@ -15,9 +15,15 @@ rust-api = "workspace-internal"
 hubuum-storage-core = { path = "../hubuum-storage-core" }
 hubuum-budget = { path = "../hubuum-budget" }
 tokio = { version = "1", features = ["rt", "sync"] }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs", "process"] }
 
 [dev-dependencies]
-async-trait = "0.1"
+tempfile = "3"
 sha2 = "0.11"
 rstest = "0.28"
 tokio = { version = "1", features = ["macros", "rt", "time"] }

@@ -189,3 +189,118 @@ and measured sample, RSS including renderer children, shared reservations, and
 producer/upload/verification/publication/download timings. Resource results and
 any revised acceptance profile must be recorded with the lifecycle budget ledger;
 passing protocol tests alone is not resource acceptance.
+
+## Filesystem byte-store adapter
+
+`hubuum_artifacts::FilesystemArtifactStore` implements the immutable
+`ArtifactStore` contract on local Unix filesystems. Configure it explicitly with
+`FilesystemArtifactStore::open(root).await`, then register a stable
+`Destination` before staging. The existing `ArtifactWriter`, `stage_producer`,
+verifier and `ArtifactReader` use the adapter without a separate transfer
+protocol. The implementation is internal and Unix-only; Windows builds retain
+the existing PostgreSQL path.
+
+This is a byte-store capability, **not a production task-output selector**.
+Exports, backups, task completion, authorization, restore and protected task
+retention continue using PostgreSQL's `TaskArtifactStore` and its atomic
+primary-store publication. This adapter does not implement task binding, shared
+admission reservations, deletion authority, task-result expiry or external
+publication reconciliation. Switching production task outputs requires those
+coordinated guarantees; configuring this root alone cannot switch them.
+
+### Root and destination ownership
+
+Pre-create an absolute root directory owned by the effective server user with
+mode `0700`. Use the real path: root opening rejects symlinks in every component
+and rejects parent traversal. Do not canonicalize untrusted paths to bypass
+these checks. On macOS, for example, use `/private/tmp` rather than `/tmp`.
+Keep ancestors under trusted administrative control, and keep the root private
+from other services running under the same Unix identity. The adapter rejects
+files with multiple hard links, non-regular files and group/world permissions;
+files are created with mode `0600` and subdirectories with mode `0700`.
+All runtime lookups use pinned directory descriptors, generated UUID keys and
+`NOFOLLOW`, rather than user-controlled names or check-then-open paths.
+
+Keep the root and its complete metadata together across process restarts. Each
+root supports at most 1,024 immutable destination ID/name bindings. Provision a
+new destination ID when changing physical roots; changing a default or credentials
+must not rebind existing references. There is no automatic copying or migration
+between roots, and no provider locator or filesystem path appears in a public
+artifact reference. Adapter error projections omit filesystem paths.
+
+### Durability and recovery
+
+One advisory root lock serializes each operation across clones and processes.
+All filesystem I/O runs on Tokio blocking workers. Cancelling an async call does
+not cancel an already running filesystem operation; its durable outcome remains
+inspectable and identical retries are safe. Independent read-back still creates
+the verification proof; successful file writes alone do not permit publication.
+
+Blocks, manifests and lifecycle metadata are written through an owner-only
+pending file, synchronized, atomically renamed within the same directory, then
+followed by directory synchronization. macOS additionally uses `F_FULLFSYNC`
+for regular files. Synchronization errors prevent a successful acknowledgement;
+an error after rename can leave a committed operation that an identical retry
+reconciles. Filesystems must support directory synchronization, atomic rename
+and process-wide advisory locking with the documented durability semantics.
+Hardware and mount settings must honor synchronization; process-exit tests do
+not establish power-loss behavior for every storage device.
+
+Staging has a fixed one-hour wall-clock deadline; retries preserve it. Sealed
+attempts can be verified and published after reopening the root. Abort and expiry
+fence later publication before cleanup begins. Cleanup removes at most 16 blocks
+per call and synchronizes removals before recording progress. It reconciles
+interrupted pending files, block renames and deletions. Discarded attempts retain
+small tombstones permanently so delayed retries cannot recreate them. Published
+independent artifacts remain retained; this contract has no public operation for
+deleting them or expiring task-owned results.
+
+Cleanup streams the catalog with bounded memory, but scan time grows with the
+number of retained attempts and tombstones. The root lock also serializes reads
+and writes; partition independent workloads into distinct roots if contention
+becomes significant. Do not remove tombstones to regain capacity while delayed
+retries remain possible.
+
+### Deployment limitations and verification
+
+The supported deployment is a single owner on a local Unix filesystem. Multiple
+processes on the same host may use the same physical root and Unix identity.
+Cross-host replicas require the *same* files and proven cross-host locking,
+rename, cache coherence and file/directory synchronization semantics; NFS, SMB,
+FUSE and distributed filesystems are not qualified by local temporary-directory
+tests. A replica with its own local path does not share artifacts. Do not enable
+multi-host operation on the strength of this adapter's local tests.
+
+The native filesystem suite exercises the shared writer, producer, verifier and
+reader against temporary roots, including restart handoff, publication/abort
+races, bounded cleanup, expiry, path and link attacks, permission failures,
+corruption and injected synchronization failures. A child exits without running
+destructors after a block rename while holding the root lock; a fresh instance
+recovers the append and completes independent verification. Run it with:
+
+```bash
+cargo test -p hubuum-artifacts --locked
+```
+
+For an adapter-only PR, keep drafts free of broad CI labels. `ci:validate` requests
+early full correctness and production/container checks without forcing all
+benchmarks; `ci:full` also forces every performance scope. Narrow
+`ci:bench:scope:*` or `ci:bench:tag:*` labels select an investigation, with effort
+set by `ci:bench:profile:*`; a profile alone does not start draft benchmarks.
+Remove temporary selectors after recording their tested source and results.
+Ready-for-review triggers normal full affected-path validation.
+
+The adapter requires filesystem durability/security/recovery tests, the full
+repository runner, Clippy, formatting, documentation lint and CI-classification
+checks. Manifest/lockfile changes also require workspace-manifest parity and a
+real both-TLS production image. Existing conservative benchmark selection may
+expand for these shared build inputs; retain that final validation. Scheduler
+P3/P4 (`ci:scheduler`), task-retention P6, large-scale lifecycle runs, S3/cold-provider
+qualification and unrelated schema/template resource investigations are not
+acceptance evidence for this local byte-store change. Production producer RSS
+and end-to-end filesystem task-output performance must be qualified when that
+routing is implemented; local protocol tests make no throughput or RSS claim.
+
+This internal adapter introduces no database migration, supported public SDK
+change, server configuration flag or deployment upgrade action. It does not
+change the stable release's supported storage choices.

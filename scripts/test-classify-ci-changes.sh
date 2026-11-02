@@ -44,6 +44,17 @@ assert_literal_include_is_code() {
   assert_flag "$output" rust true
 }
 
+# Filesystem adapter implementation and native fault tests remain production
+# inputs even though selecting it for task outputs is a separate activation.
+for filesystem_path in crates/hubuum-artifacts/src/filesystem.rs \
+  crates/hubuum-artifacts/src/filesystem/tests.rs crates/hubuum-artifacts/Cargo.toml; do
+  filesystem_output="$(bash "$classifier" "$filesystem_path")"
+  assert_flag "$filesystem_output" code true
+  assert_flag "$filesystem_output" rust true
+  assert_flag "$filesystem_output" container true
+  assert_flag "$filesystem_output" artifacts true
+done
+
 for operator_path in observability/prometheus/alerts.json observability/prometheus/tests.json \
   observability/dashboards/overview.json scripts/observability.py; do
   operator_output="$(bash "$classifier" "$operator_path")"
