@@ -1,16 +1,14 @@
 #[cfg(test)]
 mod tests {
     use actix_web::{http::StatusCode, test};
-    use hubuum_domain::{ClassId, TaskId};
-    use hubuum_storage_postgres::test_support::delete_tasks;
+    use hubuum_domain::ClassId;
     use rstest::rstest;
 
     use crate::models::{TaskKind, TaskResponse, TaskStatus};
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::get_request;
     use crate::tests::asserts::{
-        assert_paginated_collection_total_count, assert_response_status, expect_legacy_task,
-        header_value,
+        assert_paginated_collection_total_count, assert_response_status, header_value,
     };
     use crate::tests::{TestContext, create_test_user, test_context};
 
@@ -143,7 +141,7 @@ mod tests {
             "tasks_filter_expected",
         )
         .await;
-        let wrong_status = create_synthetic_task(
+        let _ = create_synthetic_task(
             &context,
             other_user.id,
             TaskKind::Import,
@@ -151,7 +149,7 @@ mod tests {
             "tasks_filter_wrong_status",
         )
         .await;
-        let wrong_kind = create_synthetic_task(
+        let _ = create_synthetic_task(
             &context,
             other_user.id,
             TaskKind::Export,
@@ -159,7 +157,7 @@ mod tests {
             "tasks_filter_wrong_kind",
         )
         .await;
-        let wrong_submitter = create_synthetic_task(
+        let _ = create_synthetic_task(
             &context,
             context.normal_user.id,
             TaskKind::Import,
@@ -185,14 +183,6 @@ mod tests {
                 .iter()
                 .all(|task| task.submitted_by == Some(other_user.id))
         );
-
-        delete_tasks(
-            &context.pool,
-            &[expected, wrong_status, wrong_kind, wrong_submitter]
-                .map(|id| TaskId::new(id).unwrap()),
-        )
-        .await
-        .unwrap();
     }
 
     #[rstest]
@@ -817,11 +807,10 @@ mod tests {
                     1,
                 )
                 .metadata(Some(metadata))
-                .try_build()
+                .try_build(100)
                 .unwrap(),
             )
             .await
-            .map(expect_legacy_task)
             .unwrap();
         let url = if cancel {
             format!("/api/v1/tasks/{}/cancel", task.id().id())
@@ -1081,11 +1070,10 @@ mod tests {
                         )
                         .metadata(Some(metadata))
                         .trace_link(Some(trace.clone()))
-                        .try_build()
+                        .try_build(100)
                         .unwrap(),
                     )
                     .await
-                    .map(expect_legacy_task)
                     .unwrap();
                 task_ids.push(task.id());
             }

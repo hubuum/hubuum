@@ -5,19 +5,17 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 
-use hubuum_domain::{IdentityReference, JsonSchemaLimits, LegacyIdentityCohort};
+use hubuum_domain::JsonSchemaLimits;
 use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Serialize, Serializer};
 use serde_json::Value;
 
-use super::identities::{self, IdentityValidation, StorageIdentityReplay, StorageIdentityUpgrade};
 use super::view::{BackupView, ReadError, Rows};
 use super::{
     StorageBackupBudget, StorageBackupCaptureProgress, StorageBackupHistorySection as History,
     StorageBackupRow, StorageBackupSnapshot, StorageBackupStateSection as State,
 };
 use crate::StorageError;
-use crate::{StorageIdentityEvidence, StorageIdentitySubject};
 
 fn io_error(error: impl std::fmt::Display) -> StorageError {
     StorageError::internal(format!("Backup spool I/O failed: {error}"))
@@ -224,200 +222,6 @@ impl Iterator for StorageBackupReplayRows {
     }
 }
 impl StorageBackupReplay {
-    pub(super) fn identity_restore_boundary(
-        &self,
-        cohort: LegacyIdentityCohort,
-        at: chrono::DateTime<chrono::Utc>,
-    ) -> Result<StorageIdentityReplay, StorageError> {
-        let prepared = self.at_restore_boundary(at)?;
-        let identities = super::identity_baseline::BaselineIdentities::new(self, cohort)?;
-        let mut builder = StorageBackupReplayBuilder::new(prepared.budget, prepared.limits, true)?;
-        for &section in State::ALL {
-            builder.begin_state(section)?;
-            for row in prepared.state_rows(section) {
-                let mut row = row?;
-                if !self.includes_history()
-                    && super::revisions::REVISION_HISTORY_SECTIONS
-                        .iter()
-                        .any(|(_, state)| *state == section)
-                {
-                    identities.resource(&mut row)?;
-                }
-                builder.push(row)?;
-            }
-        }
-        for &section in History::ALL {
-            builder.begin_history(section)?;
-            for (index, row) in prepared.history_rows(section).enumerate() {
-                let mut row = row?;
-                if index >= self.history_count(section) {
-                    identities.history(section, &mut row)?;
-                }
-                builder.push(row)?;
-            }
-        }
-        builder
-            .finish()?
-            .upgrade_logical_identities(StorageIdentityUpgrade::Native)
-    }
-    /// Validate or upgrade identity evidence while data remains quarantined in
-    /// a bounded replay spool. Repeated legacy attempts with the same persisted
-    /// cohort produce the same assignments, including history-only resources.
-    pub fn upgrade_logical_identities(
-        &self,
-        upgrade: StorageIdentityUpgrade,
-    ) -> Result<StorageIdentityReplay, StorageError> {
-        let cohort = match upgrade {
-            StorageIdentityUpgrade::Native => None,
-            StorageIdentityUpgrade::Legacy(cohort) => Some(cohort),
-        };
-        let mut open_versions = BTreeMap::new();
-        let mut legacy_principals = BTreeMap::new();
-        if let Some(cohort) = cohort {
-            for row in self.state_rows(State::Principals) {
-                let row = row?;
-                let subject = identities::legacy_subject(
-                    identities::IdentityFamily::Principal,
-                    State::Principals.as_str(),
-                    &row,
-                    cohort,
-                )?;
-                legacy_principals.insert(row.get("id").and_then(Value::as_i64), subject);
-            }
-            for &(history, state) in super::revisions::REVISION_HISTORY_SECTIONS {
-                for row in self.history_rows(history) {
-                    let row = row?;
-                    if row.get("valid_to").is_none_or(|value| !value.is_null()) {
-                        continue;
-                    }
-                    if let Some(StorageIdentitySubject::Resource {
-                        identity: IdentityReference::Known { identity },
-                        version,
-                    }) = identities::legacy_subject(
-                        identities::history_family(history).expect("resource history has identity"),
-                        history.as_str(),
-                        &row,
-                        cohort,
-                    )? && open_versions.insert((state, identity), version).is_some()
-                    {
-                        return Err(invalid(
-                            "Legacy backup contains multiple open versions for one resource incarnation",
-                        ));
-                    }
-                }
-            }
-        }
-        let budget = StorageBackupBudget::new(
-            self.budget.max_bytes().saturating_mul(4),
-            self.budget.max_rows(),
-        )
-        .map_err(|error| error.into_request_error())?;
-        // Native evidence validation changes no row. Retain the existing
-        // structural proof and spool instead of serializing and normalizing
-        // every payload again merely to attach an identity proof.
-        let mut builder = cohort
-            .map(|_| StorageBackupReplayBuilder::new(budget, self.limits, self.includes_history()))
-            .transpose()?;
-        let mut validation = IdentityValidation::default();
-        let mut unresolved_references = 0;
-        let mut prepare = |family,
-                           section: &str,
-                           mut row: StorageBackupRow,
-                           state: Option<State>|
-         -> Result<StorageBackupRow, StorageError> {
-            if let Some(cohort) = cohort {
-                identities::upgrade_schema_snapshot(&mut row, cohort)?;
-                let mut subject = identities::legacy_subject(family, section, &row, cohort)?;
-                if family == identities::IdentityFamily::PrincipalExtension {
-                    subject = legacy_principals
-                        .get(&row.get("id").and_then(Value::as_i64))
-                        .copied()
-                        .ok_or_else(|| invalid("Principal extension has no owning principal"))?;
-                }
-                if let (
-                    Some(state),
-                    Some(StorageIdentitySubject::Resource {
-                        identity: IdentityReference::Known { identity },
-                        version,
-                    }),
-                ) = (state, &mut subject)
-                    && let Some(open_version) = open_versions.get(&(state, *identity))
-                {
-                    *version = *open_version;
-                }
-                let references = identities::legacy_references(&row, cohort)?;
-                let evidence = StorageIdentityEvidence::try_new(subject, references)
-                    .map_err(|error| error.into_request_error())?;
-                row.0.insert(
-                    "logical_identity".into(),
-                    serde_json::to_value(evidence).map_err(io_error)?,
-                );
-            }
-            let evidence = validation.row(family, &row, state.is_none())?;
-            unresolved_references += evidence
-                .references()
-                .values()
-                .filter(|reference| !reference.is_resolved())
-                .count();
-            if evidence.subject().is_some_and(|subject| {
-                matches!(
-                    subject,
-                    StorageIdentitySubject::Resource {
-                        identity: IdentityReference::Unresolved { .. },
-                        ..
-                    } | StorageIdentitySubject::Principal {
-                        identity: IdentityReference::Unresolved { .. }
-                    } | StorageIdentitySubject::Task {
-                        identity: IdentityReference::Unresolved { .. }
-                    }
-                )
-            }) {
-                unresolved_references += 1;
-            }
-            Ok(row)
-        };
-        for &section in State::ALL {
-            if let Some(builder) = &mut builder {
-                builder.begin_state(section)?;
-            }
-            for row in self.state_rows(section) {
-                let row = row?;
-                let row = match identities::state_family(section) {
-                    Some(family) => prepare(family, section.as_str(), row, Some(section))?,
-                    None => row,
-                };
-                if let Some(builder) = &mut builder {
-                    builder.push(row)?;
-                }
-            }
-        }
-        if self.includes_history() {
-            for &section in History::ALL {
-                if let Some(builder) = &mut builder {
-                    builder.begin_history(section)?;
-                }
-                for row in self.history_rows(section) {
-                    let row = match identities::history_family(section) {
-                        Some(family) => prepare(family, section.as_str(), row?, None)?,
-                        None => row?,
-                    };
-                    if let Some(builder) = &mut builder {
-                        builder.push(row)?;
-                    }
-                }
-            }
-        }
-        validation.finish()?;
-        Ok(StorageIdentityReplay {
-            replay: match builder {
-                Some(builder) => builder.finish()?,
-                None => self.clone(),
-            },
-            legacy_cohort: cohort,
-            unresolved_references,
-        })
-    }
-
     fn rows(&self, extent: Extent) -> StorageBackupReplayRows {
         StorageBackupReplayRows {
             reader: BufReader::new(PositionedReader {
@@ -633,12 +437,7 @@ impl StorageBackupReplay {
         }
         if let Some(history) = &self.history {
             for &section in History::ALL {
-                if !history.contains_key(&section)
-                    && !matches!(
-                        section,
-                        History::ComputedFieldHistory | History::ExportArtifacts
-                    )
-                {
+                if !history.contains_key(&section) && section != History::ComputedFieldHistory {
                     return Err(invalid(format!(
                         "Backup snapshot is missing required history section '{section}'"
                     )));
@@ -757,7 +556,6 @@ impl StorageBackupReplay {
         }
         let normalized = builder.seal()?;
         normalized.validate(version.is_some())?;
-        normalized.validate_artifacts()?;
         Ok(normalized)
     }
 }
@@ -861,46 +659,6 @@ mod tests {
             StorageBackupBudget::new(100_000, 100).unwrap(),
         )
         .unwrap()
-    }
-    #[test]
-    fn legacy_history_without_artifacts_is_normalized_before_validation() {
-        let mut builder = StorageBackupReplayBuilder::new(
-            StorageBackupBudget::new(100_000, 100).unwrap(),
-            JsonSchemaLimits::default(),
-            true,
-        )
-        .unwrap();
-        for &section in State::ALL {
-            builder.begin_state(section).unwrap();
-        }
-        for &section in History::ALL {
-            if section != History::ExportArtifacts {
-                builder.begin_history(section).unwrap();
-            }
-        }
-        let replay = builder.finish().unwrap();
-        assert_eq!(replay.history_rows(History::ExportArtifacts).count(), 0);
-    }
-    #[test]
-    fn missing_required_export_history_returns_validation_error() {
-        let mut builder = StorageBackupReplayBuilder::new(
-            StorageBackupBudget::new(100_000, 100).unwrap(),
-            JsonSchemaLimits::default(),
-            true,
-        )
-        .unwrap();
-        for &section in State::ALL {
-            builder.begin_state(section).unwrap();
-        }
-        for &section in History::ALL {
-            if section != History::ExportOutputs {
-                builder.begin_history(section).unwrap();
-            }
-        }
-        assert_eq!(
-            builder.finish_for_restore(11).unwrap_err().kind(),
-            StorageErrorKind::InvalidInput
-        );
     }
     #[test]
     fn independent_replay_cursors_do_not_share_offsets() {

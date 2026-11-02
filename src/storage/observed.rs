@@ -19,7 +19,6 @@ use super::{
     StorageResolvedObjectRelation,
 };
 use crate::events::EventContext;
-use crate::storage::context::ApplicationAdmission;
 
 #[cfg(test)]
 mod tests {
@@ -94,7 +93,6 @@ mod tests {
 /// adapter can implement one storage family and is observed only for that
 /// family; complete backend selection is enforced separately at composition.
 pub(crate) struct ObservedStorage<S> {
-    admission: Option<ApplicationAdmission>,
     backend: &'static str,
     inner: Arc<S>,
     observer: Arc<dyn StorageObserver>,
@@ -122,73 +120,36 @@ impl<S> ObservedStorage<S> {
         observer: Arc<dyn StorageObserver>,
     ) -> Self {
         Self {
-            admission: None,
             backend,
             inner: Arc::new(storage),
             observer,
         }
     }
 
-    pub(crate) fn with_admission(mut self, admission: Option<ApplicationAdmission>) -> Self {
-        self.admission = admission;
-        self
-    }
-
-    async fn call<T: Send>(
+    async fn call<T>(
         &self,
         capability: StorageCapability,
         operation: &'static str,
-        future: impl Future<Output = Result<T, StorageError>> + Send,
+        future: impl Future<Output = Result<T, StorageError>>,
     ) -> Result<T, StorageError> {
-        let observed = observe_storage_call_with(
+        observe_storage_call_with(
             self.observer.as_ref(),
             self.backend,
             capability,
             operation,
             future,
-        );
-        match &self.admission {
-            Some(admission) => admission.run(observed).await,
-            None => observed.await,
-        }
+        )
+        .await
     }
 }
 
-pub(super) trait ObservationError: std::fmt::Display + Send {
-    fn admission_error(error: StorageError) -> Self;
-    fn diagnostic_kind(&self) -> hubuum_storage_core::StorageErrorKind;
-}
-impl ObservationError for StorageError {
-    fn admission_error(error: StorageError) -> Self {
-        error
-    }
-    fn diagnostic_kind(&self) -> hubuum_storage_core::StorageErrorKind {
-        self.kind()
-    }
-}
-impl ObservationError for hubuum_storage_core::artifacts::ArtifactError {
-    fn admission_error(error: StorageError) -> Self {
-        Self::Backend(error.to_string())
-    }
-    fn diagnostic_kind(&self) -> hubuum_storage_core::StorageErrorKind {
-        use hubuum_storage_core::{StorageErrorKind, artifacts::ArtifactError};
-        match self {
-            ArtifactError::Invalid(_) => StorageErrorKind::InvalidInput,
-            ArtifactError::Limit(_) => StorageErrorKind::InputTooLarge,
-            ArtifactError::Conflict(_) => StorageErrorKind::Conflict,
-            ArtifactError::NotFound => StorageErrorKind::NotFound,
-            ArtifactError::Corrupt(_) | ArtifactError::Backend(_) => StorageErrorKind::Backend,
-        }
-    }
-}
-
-pub(super) async fn observe_storage_call_with<T, E: ObservationError>(
+pub(super) async fn observe_storage_call_with<T>(
     observer: &dyn StorageObserver,
     backend: &'static str,
     capability: StorageCapability,
     operation: &'static str,
-    future: impl Future<Output = Result<T, E>>,
-) -> Result<T, E> {
+    future: impl Future<Output = Result<T, StorageError>>,
+) -> Result<T, StorageError> {
     let span = debug_span!(
         "storage_operation",
         backend,
@@ -206,7 +167,7 @@ pub(super) async fn observe_storage_call_with<T, E: ObservationError>(
         let result_kind = result
             .as_ref()
             .map(|_| "ok")
-            .unwrap_or_else(|error| error.diagnostic_kind().as_str());
+            .unwrap_or_else(|error| error.kind().as_str());
         let span = Span::current();
         span.record("storage.result", result_kind);
         span.record(
@@ -230,15 +191,15 @@ pub(super) async fn observe_storage_call_with<T, E: ObservationError>(
                 message = "storage operation complete",
                 elapsed_ms = duration.as_millis(),
             ),
-            Err(error) if error.diagnostic_kind().is_backend_failure() => warn!(
+            Err(error) if error.kind().is_backend_failure() => warn!(
                 message = "storage operation failed",
-                error_kind = error.diagnostic_kind().as_str(),
+                error_kind = error.kind().as_str(),
                 elapsed_ms = duration.as_millis(),
                 error = %error,
             ),
             Err(error) => debug!(
                 message = "storage operation rejected",
-                error_kind = error.diagnostic_kind().as_str(),
+                error_kind = error.kind().as_str(),
                 elapsed_ms = duration.as_millis(),
                 error = %error,
             ),

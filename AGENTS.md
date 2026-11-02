@@ -166,6 +166,19 @@
 - Call out every breaking change explicitly in both the pull request description and its `[Unreleased]` changelog entry, including the upgrade or migration action users must take.
 - When squash-merging a pull request, use its detailed PR description as the squash commit body. Preserve the substantive summary, rationale, behavior notes, and issue references, but remove verification-only sections such as test commands, checklists, and `## Verification` before merging.
 
+### Dedicated project branches
+
+- Every GitHub project must declare a dedicated integration branch in each
+  participating repository and record that branch in the project's README.
+- Target project implementation and supporting project-only PRs at that branch,
+  not `main`. Check the project's declared target before starting work or opening
+  a PR. Unrelated changes continue to target `main`.
+- Keep the integration branch current by merging `main` into it. Promote project
+  work to `main` only through an explicitly reviewed integration PR for an
+  agreed release milestone. Enable correctness and container CI on project
+  branches without publishing them as stable or `main` artifacts.
+- Project #3 in this repository targets `project/workload-lifecycle`.
+
 ### Stacked Pull Requests
 
 - Use GitHub stacked pull requests when two or more changes in this repository form a strict linear dependency and each layer remains a focused, independently reviewable change. Keep foundational schema, types, and shared interfaces lower in the stack, with dependent behavior above them.

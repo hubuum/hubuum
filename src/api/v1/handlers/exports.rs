@@ -1,6 +1,3 @@
-use crate::models::TaskDetailsExpiredResponse;
-use crate::services::tasks::TaskSubmissionAttempt;
-use crate::services::tasks::TaskSubmissionOperation;
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, post, web};
 
 use crate::api::locations as api_locations;
@@ -15,7 +12,7 @@ use crate::models::{
 use crate::permissions::AppContext;
 use crate::services::exports::{ExportTaskSubmission, submit_export_task};
 use crate::services::tasks::{export_output, export_output_summary, load_authorized_export};
-use crate::tasks::{ensure_task_worker_running, idempotency_key_from_headers};
+use crate::tasks::{ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker};
 
 const EXPORT_WARNINGS_HEADER: &str = "X-Hubuum-Export-Warnings";
 const EXPORT_TRUNCATED_HEADER: &str = "X-Hubuum-Export-Truncated";
@@ -58,10 +55,8 @@ fn render_export_task_output(output: ExportTaskOutput) -> Result<HttpResponse, A
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
-        (status = 410, description = "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.", body = TaskDetailsExpiredResponse, headers(("Cache-Control" = String, description = "no-store; no automatic retry is implied"))),
-        (status = 409, description = "Conflict; reason idempotency_key_conflict identifies a changed protected request", body = ApiErrorResponse, headers(("Cache-Control" = String, description = "no-store for protected request conflicts; no Retry-After"))),
-        (status = 429, description = "Shared task admission or byte capacity exhausted", body = ApiErrorResponse),
-        (status = 503, description = "Task identity or control reconciliation unavailable", body = ApiErrorResponse)
+        (status = 409, description = "Conflict", body = ApiErrorResponse),
+        (status = 429, description = "Too many active export tasks", body = ApiErrorResponse)
     )
 )]
 #[post("")]
@@ -72,28 +67,13 @@ pub async fn run_export(
     export: web::Json<ExportRequest>,
 ) -> Result<impl Responder, ApiError> {
     let export = export.into_inner();
-    let hash =
-        crate::tasks::request_hash(&serde_json::json!({ "export": &export, "template_id": null }))?;
-    let attempt = TaskSubmissionAttempt::prepare(
-        &context,
-        &requestor.principal,
-        idempotency_key_from_headers(req.headers())?,
-        TaskSubmissionOperation::Export,
-        &export,
-        Some(&hash),
+    let submission = ExportTaskSubmission::for_token(
+        export,
+        TokenID::new(requestor.token_meta.id().id())?,
+        requestor.scopes(),
     )
-    .await?;
-    let mut task = if let Some(task) = attempt.lookup(&context, &requestor.principal).await? {
-        task
-    } else {
-        let submission = ExportTaskSubmission::for_token(
-            export,
-            TokenID::new(requestor.token_meta.id().id())?,
-            requestor.scopes(),
-            attempt,
-        );
-        submit_export_task(&context, &requestor.principal, submission).await?
-    };
+    .idempotency_key(idempotency_key_from_headers(req.headers())?);
+    let mut task = submit_export_task(&context, &requestor.principal, submission).await?;
     super::tasks::discovery::redact(&context, &requestor, std::slice::from_mut(&mut task)).await?;
 
     let output = crate::services::tasks::export_output_summary(
@@ -102,6 +82,7 @@ pub async fn run_export(
     )
     .await?;
     let response = task.to_response_with_export_output(output.as_ref())?;
+    kick_task_worker(context.clone());
 
     Ok(ApiResponse::accepted_at(
         response,
@@ -179,24 +160,7 @@ pub async fn get_export_output(
         return Err(ApiError::NotFound("Export output not found".into()));
     }
     match export_output(&context, &task, requestor.scopes()).await? {
-        ExportOutputLookup::Available(output) => {
-            if let Some(reference) = output.artifact_reference {
-                let stream = crate::services::artifacts::download(&context, reference);
-                Ok(HttpResponse::Ok()
-                    .content_type(output.content_type)
-                    .insert_header((
-                        EXPORT_WARNINGS_HEADER,
-                        serde_json::from_value::<Vec<ExportWarning>>(output.warnings_json)?
-                            .len()
-                            .to_string(),
-                    ))
-                    .insert_header((EXPORT_TRUNCATED_HEADER, output.truncated.to_string()))
-                    .insert_header(("Cache-Control", "no-store"))
-                    .streaming(stream))
-            } else {
-                render_export_task_output(output)
-            }
-        }
+        ExportOutputLookup::Available(output) => render_export_task_output(output),
         ExportOutputLookup::Expired { expires_at } => Err(ApiError::Gone(format!(
             "Export output expired at {expires_at} UTC"
         ))),
@@ -213,7 +177,6 @@ mod tests {
 
     fn text_export_output(meta_truncated: bool, output_truncated: bool) -> ExportTaskOutput {
         ExportTaskOutput {
-            artifact_reference: None,
             content_type: ExportContentType::TextPlain.as_mime().to_string(),
             json_output: None,
             text_output: Some("ok".to_string()),

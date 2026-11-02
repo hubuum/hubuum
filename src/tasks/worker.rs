@@ -1,8 +1,5 @@
 use crate::models::task::task_kind_from_db;
-use hubuum_storage_core::{
-    StorageBackupBudget, StorageTaskClaimRequest, StorageTaskLeaseDuration, TaskExecutionStorage,
-    TaskWorkerId,
-};
+use hubuum_storage_core::{StorageBackupBudget, TaskExecutionStorage};
 use std::future::Future;
 use std::sync::{LazyLock, Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
@@ -14,9 +11,10 @@ use tracing::{Instrument, error, field, info, info_span, warn};
 
 use crate::backups::{BackupSettings, execute_backup_task};
 use crate::config::{
-    DEFAULT_BACKUP_MAX_CAPTURE_ROWS, DEFAULT_BACKUP_MAX_OUTPUT_BYTES,
-    DEFAULT_BACKUP_OUTPUT_RETENTION_HOURS, DEFAULT_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS,
-    DEFAULT_TASK_HEARTBEAT_SECONDS, DEFAULT_TASK_LEASE_SECONDS, DEFAULT_TASK_POLL_INTERVAL_MS,
+    DEFAULT_BACKUP_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_BACKUP_MAX_CAPTURE_ROWS,
+    DEFAULT_BACKUP_MAX_OUTPUT_BYTES, DEFAULT_BACKUP_OUTPUT_RETENTION_HOURS,
+    DEFAULT_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS, DEFAULT_TASK_HEARTBEAT_SECONDS,
+    DEFAULT_TASK_LEASE_SECONDS, DEFAULT_TASK_POLL_INTERVAL_MS,
     DEFAULT_TASK_RECOVERY_INTERVAL_SECONDS, get_config,
 };
 use crate::errors::ApiError;
@@ -26,18 +24,16 @@ use crate::observability::{metrics, tracing as telemetry};
 #[cfg(test)]
 use crate::permissions::LocalPermissionBackend;
 use crate::permissions::{AppContext, require_unscoped_runtime_admin};
-use crate::restores::{MaintenanceActivityGuard, track_application_completion};
+use crate::restores::{MaintenanceActivityGuard, current_maintenance_state};
 use crate::services::authentication::ExecutionPrincipal;
-use crate::services::deletion_recovery::TaskRetentionSweep;
 use crate::services::exports::execute_export_task;
 use crate::services::tasks::{
     ClaimedTask, claim_next_task, fail_task, purge_expired_backup_outputs,
     purge_expired_export_outputs, recover_expired_task_leases, renew_task_lease,
 };
 use crate::storage::{
-    ExecutionStorage, StorageCallSite, StorageNotification, spawn_storage_notification_listener,
-    storage_handle, with_mutation_provenance, with_storage_call_site, with_storage_call_site_send,
-    with_storage_execution_scope_send,
+    StorageCallSite, StorageNotification, spawn_storage_notification_listener, storage_handle,
+    with_mutation_provenance, with_storage_call_site, with_storage_call_site_send,
 };
 
 use super::TaskWorkerSettings;
@@ -46,11 +42,10 @@ use super::helpers::sanitize_error_for_storage;
 use super::remote_call::execute_remote_call_task;
 use super::types::WorkerLoopAction;
 
-mod cleanup;
-
 static TASK_WORKER: Once = Once::new();
 static TASK_WORKER_LISTENER: Once = Once::new();
 static TASK_WORKER_NOTIFY: OnceLock<Notify> = OnceLock::new();
+static TASK_OUTPUT_CLEANUP_STATE: OnceLock<Mutex<CleanupSchedule>> = OnceLock::new();
 static TASK_RECOVERY_STATE: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 static TASK_WORKER_SETTINGS: OnceLock<TaskWorkerSettings> = OnceLock::new();
 static TASK_LEASE_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
@@ -80,6 +75,10 @@ fn get_task_worker_notify() -> &'static Notify {
 
 fn wake_task_worker_from_storage() {
     get_task_worker_notify().notify_one();
+}
+
+fn cleanup_state() -> &'static Mutex<CleanupSchedule> {
+    TASK_OUTPUT_CLEANUP_STATE.get_or_init(|| Mutex::new(CleanupSchedule::default()))
 }
 
 fn recovery_state() -> &'static Mutex<Option<Instant>> {
@@ -136,7 +135,6 @@ async fn task_worker_loop(
     backup_settings: BackupSettings,
     shutdown: ShutdownSignal,
 ) {
-    let worker = TaskWorkerId::generate();
     loop {
         if shutdown.is_requested() {
             break;
@@ -146,7 +144,6 @@ async fn task_worker_loop(
         // does not push the worker thread's stack frame over its default size.
         let iteration = Box::pin(process_one_task_with_settings(
             &context,
-            worker,
             Some(&shutdown),
             &backup_settings,
         ));
@@ -209,6 +206,10 @@ fn configured_backup_settings() -> BackupSettings {
             .unwrap_or(DEFAULT_BACKUP_OUTPUT_RETENTION_HOURS),
         config
             .as_ref()
+            .map(|value| value.backup_max_active_tasks_per_user)
+            .unwrap_or(DEFAULT_BACKUP_MAX_ACTIVE_TASKS_PER_USER),
+        config
+            .as_ref()
             .map(|value| value.backup_budget().expect("validated configuration"))
             .unwrap_or_else(|| {
                 StorageBackupBudget::new(
@@ -244,7 +245,6 @@ pub fn ensure_task_worker_running_with_settings(
             worker_count = worker_count,
             poll_interval = ?poll_interval
         );
-        cleanup::spawn(context.clone(), poll_interval);
         for worker_index in 0..worker_count {
             spawn_task_worker_loop(
                 context.clone(),
@@ -288,52 +288,28 @@ pub(super) async fn process_claimed_task_for_test(
 
 async fn process_one_task_with_settings(
     context: &AppContext,
-    worker: TaskWorkerId,
     shutdown: Option<&ShutdownSignal>,
     backup_settings: &BackupSettings,
 ) -> Result<bool, ApiError> {
-    let storage = context.backend();
     let _activity = MaintenanceActivityGuard::begin();
-    let (permit, maintenance) = storage
-        .admit_application_work_with_maintenance()
+    if !current_maintenance_state(context.backend())
         .await?
-        .into_parts();
-    if !maintenance.is_normal() {
+        .is_normal()
+    {
         metrics::task_worker_iteration("idle");
         return Ok(false);
     }
-    let scope = storage
-        .current_execution_scope()
-        .with_application_access(permit);
-    // Keep dispatch boxed before completion/scope wrappers: its full future
-    // exceeds a normal worker stack even when the queue is empty.
-    let work = Box::pin(process_admitted_task(
-        context,
-        worker,
-        shutdown,
-        backup_settings,
-    ));
-    storage
-        .run_in_scope(scope, track_application_completion(work))
-        .await
-}
 
-async fn process_admitted_task(
-    context: &AppContext,
-    worker: TaskWorkerId,
-    shutdown: Option<&ShutdownSignal>,
-    backup_settings: &BackupSettings,
-) -> Result<bool, ApiError> {
     maybe_recover_expired_task_leases(context).await?;
+
+    if let Err(error) = maybe_cleanup_expired_task_outputs(context).await {
+        metrics::task_worker_iteration("error");
+        return Err(error);
+    }
 
     let settings = task_worker_settings();
     let claim_started_at = TokioInstant::now();
-    let request = StorageTaskClaimRequest::new(
-        worker,
-        StorageTaskLeaseDuration::from_milliseconds(settings.lease_duration().as_millis() as i64)
-            .expect("validated worker lease"),
-    );
-    let task = match claim_next_task(context, request).await {
+    let task = match claim_next_task(context, settings.lease_duration()).await {
         Ok(task) => task,
         Err(error) => {
             metrics::task_worker_iteration("error");
@@ -382,10 +358,10 @@ async fn process_admitted_task(
                         _ = shutdown.requested() => Err(ApiError::ServiceUnavailable(
                             "Task interrupted by graceful server shutdown".to_string(),
                         )),
-                        result = execute_with_control(context, &task, backup_settings, settings) => result,
+                        result = super::control::execute(context, &task, settings.execution_limit(task_kind_from_db(&task.kind)?), process_claimed_task(context, &task, backup_settings)) => result,
                     }
                 }
-                None => execute_with_control(context, &task, backup_settings, settings).await,
+                None => super::control::execute(context, &task, settings.execution_limit(task_kind_from_db(&task.kind)?), process_claimed_task(context, &task, backup_settings)).await,
             }
         };
         let mut ownership_lost = false;
@@ -446,15 +422,6 @@ struct CleanupSchedule {
     in_progress: bool,
 }
 
-impl CleanupSchedule {
-    fn is_due(&self, interval: Duration) -> bool {
-        !self.in_progress
-            && self
-                .last_completed_at
-                .is_none_or(|last_run| last_run.elapsed() >= interval)
-    }
-}
-
 struct CleanupReservation<'a> {
     state: &'a Mutex<CleanupSchedule>,
     finished: bool,
@@ -468,7 +435,11 @@ impl<'a> CleanupReservation<'a> {
         let mut schedule = state.lock().map_err(|_| {
             ApiError::InternalServerError("Cleanup state lock poisoned".to_string())
         })?;
-        if !schedule.is_due(interval) {
+        if schedule.in_progress
+            || schedule
+                .last_completed_at
+                .is_some_and(|last_run| last_run.elapsed() < interval)
+        {
             return Ok(None);
         }
         schedule.in_progress = true;
@@ -478,11 +449,11 @@ impl<'a> CleanupReservation<'a> {
         }))
     }
 
-    fn commit(mut self, more: bool) -> Result<(), ApiError> {
+    fn commit(mut self) -> Result<(), ApiError> {
         let mut schedule = self.state.lock().map_err(|_| {
             ApiError::InternalServerError("Cleanup state lock poisoned".to_string())
         })?;
-        schedule.last_completed_at = (!more).then(Instant::now);
+        schedule.last_completed_at = Some(Instant::now());
         schedule.in_progress = false;
         self.finished = true;
         Ok(())
@@ -522,9 +493,6 @@ fn start_task_lease_heartbeat(
     let settings = task_worker_settings();
     let task_id = task.id;
     let lease = task.lease().clone();
-    // The heartbeat runs on a separate runtime, whose task locals do not inherit
-    // the claim's captured authority and application incarnation.
-    let execution_scope = storage.current_execution_scope();
     Some(spawn_task_lease_monitor(
         task_id,
         settings,
@@ -532,16 +500,11 @@ fn start_task_lease_heartbeat(
         move || {
             let storage = storage.clone();
             let lease = lease.clone();
-            let execution_scope = execution_scope.clone();
             async move {
-                with_storage_execution_scope_send(
+                with_storage_call_site_send(
                     &storage,
-                    execution_scope,
-                    with_storage_call_site_send(
-                        &storage,
-                        StorageCallSite::TaskLease,
-                        renew_task_lease(&storage, lease, settings.lease_duration()),
-                    ),
+                    StorageCallSite::TaskLease,
+                    renew_task_lease(&storage, lease, settings.lease_duration()),
                 )
                 .await
             }
@@ -718,45 +681,11 @@ async fn maybe_recover_expired_task_leases(
 }
 
 async fn maybe_cleanup_expired_task_outputs(
-    backend: &AppContext,
-    schedule: &Mutex<CleanupSchedule>,
-    artifacts: &Mutex<CleanupSchedule>,
-) -> Result<bool, ApiError> {
+    backend: &impl crate::storage::StorageContext,
+) -> Result<(), ApiError> {
     let cleanup_interval = task_worker_settings().export_output_cleanup_interval();
-    cleanup_artifacts_when_due(artifacts, cleanup_interval, async {
-        storage_handle(backend)
-            .artifact_store()
-            .cleanup()
-            .await
-            .map_err(crate::services::artifacts::error)
-    })
-    .await?;
-    let Some(sweep) = backend
-        .task_receipts()
-        .try_sweep_task_retention(backend)
-        .await?
-    else {
-        // Contention says nothing about remaining work. Retry after the bounded
-        // publisher pause instead of treating a busy repository as idle.
-        // Independent task claimants never await this maintenance loop.
-        return Ok(true);
-    };
-    match sweep {
-        TaskRetentionSweep::Disabled => {}
-        TaskRetentionSweep::Protected { more, .. } => {
-            // Productive passes retry after a bounded publisher pause; idle and
-            // blocked-only passes retain the ordinary worker poll interval.
-            if more {
-                // A maintenance pass can activate protected admissions. Queue
-                // claimants have their own wakeup and never await this loop.
-                get_task_worker_notify().notify_one();
-            }
-            return Ok(more);
-        }
-    }
-
-    let Some(reservation) = CleanupReservation::reserve(schedule, cleanup_interval)? else {
-        return Ok(false);
+    let Some(reservation) = CleanupReservation::reserve(cleanup_state(), cleanup_interval)? else {
+        return Ok(());
     };
 
     metrics::task_output_cleanup_run(metrics::TaskOutputKind::Export);
@@ -791,41 +720,8 @@ async fn maybe_cleanup_expired_task_outputs(
             return Err(error.into());
         }
     }
-    reservation.commit(false)?;
+    reservation.commit()?;
 
-    Ok(false)
-}
-
-async fn cleanup_artifacts_when_due(
-    state: &Mutex<CleanupSchedule>,
-    interval: Duration,
-    cleanup: impl Future<Output = Result<u32, ApiError>>,
-) -> Result<(), ApiError> {
-    let Some(reservation) = CleanupReservation::reserve(state, interval)? else {
-        return Ok(());
-    };
-    // Drain one bounded batch per worker tick. Once empty, avoid a database
-    // acquisition on every idle poll; failures remain eligible for retry.
-    if cleanup.await? == 0 {
-        reservation.commit(false)?;
-    }
-    Ok(())
-}
-
-#[cfg(all(test, unix))]
-pub(crate) async fn run_task_maintenance_for_test(
-    context: AppContext,
-    poll_interval: Duration,
-    shutdown: ShutdownSignal,
-) {
-    cleanup::run(context, poll_interval, shutdown).await;
-}
-
-#[cfg(all(test, unix))]
-pub(crate) async fn cleanup_task_outputs_for_test(backend: &AppContext) -> Result<(), ApiError> {
-    let schedule = Mutex::new(CleanupSchedule::default());
-    let artifacts = Mutex::new(CleanupSchedule::default());
-    maybe_cleanup_expired_task_outputs(backend, &schedule, &artifacts).await?;
     Ok(())
 }
 
@@ -837,33 +733,11 @@ fn duration_since(timestamp: chrono::NaiveDateTime) -> Option<Duration> {
     (elapsed >= 0).then(|| Duration::from_millis(elapsed as u64))
 }
 
-async fn execute_with_control(
-    context: &AppContext,
-    task: &ClaimedTask,
-    backup_settings: &BackupSettings,
-    settings: TaskWorkerSettings,
-) -> Result<TaskStatus, ApiError> {
-    super::control::execute(
-        context,
-        task,
-        settings.execution_limit(task_kind_from_db(&task.kind)?),
-        // Keep the dispatch state on the heap before control adds its own
-        // admission, cancellation tracking and task-local scope wrappers.
-        Box::pin(process_claimed_task(context, task, backup_settings)),
-    )
-    .await
-}
-
 async fn process_claimed_task(
     context: &AppContext,
     task: &ClaimedTask,
     backup_settings: &BackupSettings,
 ) -> Result<TaskStatus, ApiError> {
-    if task.checkpoint.is_some() {
-        return Err(ApiError::BadRequest(
-            "This worker does not support the task's stored checkpoint".to_string(),
-        ));
-    }
     let task_kind = task_kind_from_db(&task.kind)?;
     if task_kind == TaskKind::SchemaValidation {
         return crate::services::tasks::execute_schema_validation(context, task).await;
@@ -926,65 +800,6 @@ fn task_span_outcome(terminal_status: Option<TaskStatus>) -> &'static str {
 }
 
 #[cfg(test)]
-mod worker_future_tests {
-    use std::mem::size_of;
-    use std::sync::Arc;
-
-    use crate::storage::StorageHandle;
-
-    use super::*;
-
-    fn future_size<F: Future>(_: impl FnOnce() -> F) -> usize {
-        size_of::<F>()
-    }
-
-    fn execution_future_size<'a, F: Future>(_: impl FnOnce(&'a ClaimedTask) -> F) -> usize {
-        size_of::<F>()
-    }
-
-    #[test]
-    fn idle_iteration_runs_on_a_standard_worker_stack() {
-        let storage = StorageHandle::memory();
-        let context = AppContext::new(
-            storage.clone(),
-            Arc::new(LocalPermissionBackend::new(storage, "admin".into())),
-        );
-        let settings =
-            BackupSettings::new(1, StorageBackupBudget::new(1024 * 1024, 100).unwrap()).unwrap();
-        let iteration = future_size(|| {
-            process_one_task_with_settings(&context, TaskWorkerId::generate(), None, &settings)
-        });
-        assert!(
-            iteration < 16 * 1024,
-            "worker iteration exceeds its future-size budget: {iteration} bytes"
-        );
-        let execution = execution_future_size(|task| {
-            execute_with_control(&context, task, &settings, task_worker_settings())
-        });
-        assert!(
-            execution < 16 * 1024,
-            "controlled execution exceeds its future-size budget: {execution} bytes"
-        );
-        let claimed = std::thread::Builder::new()
-            .name("task-worker-stack-regression".into())
-            .stack_size(2 * 1024 * 1024)
-            .spawn(move || {
-                actix_rt::System::new().block_on(process_one_task_with_settings(
-                    &context,
-                    TaskWorkerId::generate(),
-                    None,
-                    &settings,
-                ))
-            })
-            .unwrap()
-            .join()
-            .unwrap()
-            .unwrap();
-        assert!(!claimed, "the isolated queue is empty");
-    }
-}
-
-#[cfg(test)]
 mod task_span_outcome_tests {
     use rstest::rstest;
 
@@ -1033,109 +848,19 @@ pub(super) async fn mark_claimed_task_failed(
 }
 
 #[cfg(test)]
-mod checkpoint_tests {
-    use std::sync::Arc;
-
-    use hubuum_domain::TaskId;
-    use hubuum_storage_core::{
-        StorageTask, StorageTaskCheckpoint, StorageTaskClaim, StorageTaskClaimToken,
-        StorageTaskControl, StorageTaskKind, StorageTaskLease, StorageTaskStatus,
-    };
-    use hubuum_storage_memory::MemoryStorage;
-    use rstest::rstest;
-
-    use super::*;
-    use crate::storage::StorageHandle;
-
-    #[rstest]
-    #[case::export(StorageTaskKind::Export)]
-    #[case::backup(StorageTaskKind::Backup)]
-    #[actix_web::test]
-    async fn unsupported_checkpoint_is_rejected_before_normal_execution(
-        #[case] kind: StorageTaskKind,
-    ) {
-        let now = Utc::now();
-        let deadline = now + chrono::Duration::minutes(1);
-        let id = TaskId::new(1).unwrap();
-        let mut control = StorageTaskControl::new(kind);
-        control.admit_deadline(deadline);
-        let task = StorageTask::builder(id, kind, StorageTaskStatus::Validating, now, now)
-            .control(control)
-            .checkpoint(Some(
-                StorageTaskCheckpoint::try_new(
-                    "future.provider",
-                    1,
-                    serde_json::json!({"secret": "provider checkpoint"}),
-                )
-                .unwrap(),
-            ))
-            .started_at(Some(now))
-            .lease_expires_at(Some(deadline))
-            .attempt_count(2)
-            .try_build()
-            .unwrap();
-        let lease = StorageTaskLease::new(id, StorageTaskClaimToken::new("opaque lease"));
-        let task =
-            ClaimedTask::from_storage(StorageTaskClaim::try_new(task, lease).unwrap()).unwrap();
-        let storage = StorageHandle::from_registered_backend(MemoryStorage::new());
-        let permissions = Arc::new(LocalPermissionBackend::new(storage.clone(), "admin".into()));
-        let context = AppContext::new(storage, permissions);
-        let error = process_claimed_task(&context, &task, &configured_backup_settings())
-            .await
-            .unwrap_err();
-        assert!(
-            matches!(error, ApiError::BadRequest(message) if message == "This worker does not support the task's stored checkpoint")
-        );
-    }
-}
-
-#[cfg(test)]
 mod cleanup_tests {
-    use std::cell::Cell;
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
 
     use rstest::rstest;
 
-    use super::{CleanupReservation, CleanupSchedule, cleanup_artifacts_when_due};
-    use crate::errors::ApiError;
+    use super::{CleanupReservation, CleanupSchedule};
 
     #[rstest]
-    #[case::drained(Some(0), 1)]
-    #[case::more_work(Some(16), 2)]
-    #[case::failure(None, 2)]
-    #[actix_web::test]
-    async fn artifact_cleanup_backs_off_only_after_an_empty_batch(
-        #[case] first_batch: Option<u32>,
-        #[case] expected_calls: u32,
-    ) {
-        let state = Mutex::new(CleanupSchedule::default());
-        let calls = Cell::new(0);
-        let interval = Duration::from_secs(300);
-        let first = cleanup_artifacts_when_due(&state, interval, async {
-            calls.set(calls.get() + 1);
-            first_batch.ok_or_else(|| ApiError::InternalServerError("cleanup failed".into()))
-        })
-        .await;
-        assert_eq!(first.is_ok(), first_batch.is_some());
-
-        cleanup_artifacts_when_due(&state, interval, async {
-            calls.set(calls.get() + 1);
-            Ok(0)
-        })
-        .await
-        .unwrap();
-
-        assert_eq!(calls.get(), expected_calls);
-    }
-
-    #[rstest]
-    #[case::failure(false, false, false)]
-    #[case::success(true, false, true)]
-    #[case::continuation(true, true, false)]
+    #[case::failure(false, false)]
+    #[case::success(true, true)]
     fn cleanup_reservation_updates_schedule_only_after_commit(
         #[case] commit: bool,
-        #[case] more: bool,
         #[case] expected_scheduled: bool,
     ) {
         let state = Mutex::new(CleanupSchedule::default());
@@ -1143,9 +868,7 @@ mod cleanup_tests {
             .expect("cleanup reservation")
             .expect("cleanup is due");
         if commit {
-            reservation
-                .commit(more)
-                .expect("commit cleanup reservation");
+            reservation.commit().expect("commit cleanup reservation");
         } else {
             drop(reservation);
         }

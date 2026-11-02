@@ -54,7 +54,6 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     .unwrap();
     let user =
         StorageUser::try_new(UserId::new(1).unwrap(), None, None, None, now, now, None).unwrap();
-    let _ = ApplicationWorkAdmission::new;
     let _ = StorageAuthenticatedToken::builder;
     let _ = StorageAuthenticationIdentity::try_new;
     let _ = StorageAuthenticationTokenScope::new;
@@ -117,8 +116,7 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let _ = StorageHistoryEntry::Object;
     let _ = StorageExportTemplateHistoryRecord::try_new;
     let _ = StorageHistoryMetadata::try_new;
-    let _ =
-        StorageHistoryPrincipalName::new(hubuum_domain::PrincipalIdentity::generate(), "principal");
+    let _ = StorageHistoryPrincipalName::new(PrincipalId::new(1).unwrap(), "principal");
     let _ = StorageInventoryGaugeSnapshot::try_new;
     let _ = MaintenanceState::Normal;
     let _ = StorageMutationOutcome::<()>::unchanged;

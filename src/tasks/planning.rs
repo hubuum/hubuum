@@ -158,13 +158,9 @@ fn preflight_failure_kind(error: &ApiError) -> FailureKind {
             FailureKind::Permission
         }
         ApiError::Conflict(_)
-        | ApiError::IdempotencyConflict
-        | ApiError::LegacyTaskRequestUnverifiable
         | ApiError::PreconditionFailed(_, _)
         | ApiError::RevisionConflict(_, _) => FailureKind::Collision,
-        ApiError::NotFound(_) | ApiError::Gone(_) | ApiError::TaskDetailsExpired(_) => {
-            FailureKind::Resolution
-        }
+        ApiError::NotFound(_) | ApiError::Gone(_) => FailureKind::Resolution,
         ApiError::BadRequest(_)
         | ApiError::ValidationError(_)
         | ApiError::NotAcceptable(_)
@@ -172,8 +168,7 @@ fn preflight_failure_kind(error: &ApiError) -> FailureKind {
         | ApiError::PayloadTooLarge(_)
         | ApiError::OperatorMismatch(_)
         | ApiError::InvalidIntegerRange(_) => FailureKind::Validation,
-        ApiError::TaskCapacity(_)
-        | ApiError::TaskStopped(_)
+        ApiError::TaskStopped(_)
         | ApiError::InternalServerError(_)
         | ApiError::DatabaseError(_)
         | ApiError::NotImplemented(_)

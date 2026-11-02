@@ -93,11 +93,11 @@ while IFS= read -r file; do
 
     if [[ "$upper_statement" =~ DROP[[:space:]]+(TABLE|COLUMN|CONSTRAINT|INDEX) ]]; then
       reviewed_enum_drop='^ALTER TABLE (PUBLIC\.)?([A-Z_][A-Z_0-9]*) DROP CONSTRAINT ([A-Z_][A-Z_0-9]*);[[:space:]]+-- HUBUUM-COMPAT: WIDEN-ENUM-CHECK[[:space:]]*$'
-      reviewed_offline_drop='^ALTER TABLE ((PUBLIC\.|HUBUUM_CONTROL\.)?[A-Z_][A-Z_0-9]*) DROP CONSTRAINT ([A-Z_][A-Z_0-9]*);[[:space:]]+-- HUBUUM-COMPAT: REVIEWED-OFFLINE-DROP[[:space:]]*$'
+      reviewed_offline_drop='^ALTER TABLE (PUBLIC\.)?([A-Z_][A-Z_0-9]*) DROP CONSTRAINT ([A-Z_][A-Z_0-9]*);[[:space:]]+-- HUBUUM-COMPAT: REVIEWED-OFFLINE-DROP[[:space:]]*$'
       if [[ "$upper_statement" =~ $reviewed_offline_drop ]] \
         && [[ "$transactional" == true && "$lock_timeout_is_bounded" == true \
           && "$statement_timeout_is_bounded" == true ]] \
-        && [[ $'\n'"$widened_checks"$'\n' == *$'\n'"OFFLINE:${BASH_REMATCH[1]#PUBLIC.}:${BASH_REMATCH[3]}"$'\n'* ]]; then
+        && [[ $'\n'"$widened_checks"$'\n' == *$'\n'"OFFLINE:${BASH_REMATCH[2]}:${BASH_REMATCH[3]}"$'\n'* ]]; then
         echo "OFFLINE UPGRADE REVIEW: $file requires stopped writers; see .github/migration-offline-reviews.json" >&2
       elif [[ "$upper_statement" =~ $reviewed_enum_drop ]] \
         && [[ "$transactional" == true && "$lock_timeout_is_bounded" == true \
@@ -108,15 +108,7 @@ while IFS= read -r file; do
         report_failure "$file" "$line_number" "dropping schema objects is not adjacent-release compatible"
       fi
     elif [[ "$upper_statement" =~ RENAME[[:space:]]+(TO|COLUMN|CONSTRAINT) ]]; then
-      reviewed_function_rename='^ALTER FUNCTION (PUBLIC\.)?([A-Z_][A-Z_0-9]*)\([A-Z_0-9.,[:space:]]*\)[[:space:]]+RENAME TO ([A-Z_][A-Z_0-9]*);[[:space:]]+-- HUBUUM-COMPAT: REVIEWED-OFFLINE-FUNCTION-RENAME[[:space:]]*$'
-      if [[ "$upper_statement" =~ $reviewed_function_rename ]] \
-        && [[ "$transactional" == true && "$lock_timeout_is_bounded" == true \
-          && "$statement_timeout_is_bounded" == true ]] \
-        && [[ $'\n'"$widened_checks"$'\n' == *$'\n'"OFFLINE_FUNCTION_RENAME:${BASH_REMATCH[2]}:${BASH_REMATCH[3]}"$'\n'* ]]; then
-        echo "OFFLINE UPGRADE REVIEW: $file requires stopped writers; see .github/migration-offline-reviews.json" >&2
-      else
-        report_failure "$file" "$line_number" "renaming schema objects is not adjacent-release compatible"
-      fi
+      report_failure "$file" "$line_number" "renaming schema objects is not adjacent-release compatible"
     elif [[ "$upper_statement" =~ ALTER[[:space:]]+COLUMN.*[[:space:]]TYPE[[:space:]] ]]; then
       report_failure "$file" "$line_number" "changing a column type in place is not adjacent-release compatible"
     elif [[ "$upper_statement" =~ ADD[[:space:]]+COLUMN.*NOT[[:space:]]+NULL ]] \

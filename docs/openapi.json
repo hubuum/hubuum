@@ -555,128 +555,6 @@
         ]
       }
     },
-    "/api/v1/admin/task-capacity": {
-      "get": {
-        "tags": [
-          "admin"
-        ],
-        "summary": "Get Api V1 Admin Task Capacity",
-        "description": "Auto-generated documentation for GET /api/v1/admin/task-capacity.",
-        "operationId": "getApiV1AdminTaskCapacity",
-        "responses": {
-          "200": {
-            "description": "Authoritative shared task policy and capacity accounting",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StorageTaskCapacitySnapshot"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Unscoped human administrator required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      },
-      "put": {
-        "tags": [
-          "admin"
-        ],
-        "summary": "Put Api V1 Admin Task Capacity",
-        "description": "Auto-generated documentation for PUT /api/v1/admin/task-capacity.",
-        "operationId": "putApiV1AdminTaskCapacity",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/StorageTaskPolicyUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Policy committed; reductions drain existing work",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StorageTaskPolicy"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid policy",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Unscoped human administrator required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Policy revision changed; refetch before updating",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
     "/api/v1/auth/login": {
       "post": {
         "tags": [
@@ -1138,53 +1016,17 @@
             }
           },
           "409": {
-            "description": "Conflict; reason idempotency_key_conflict identifies a changed protected request",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "no-store for protected request conflicts; no Retry-After"
-              }
-            },
+            "description": "Conflict",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "410": {
-            "description": "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "no-store; no automatic retry is implied"
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskDetailsExpiredResponse"
                 }
               }
             }
           },
           "429": {
-            "description": "Shared task admission or byte capacity exhausted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Task identity or control reconciliation unavailable",
+            "description": "Too many active backup tasks",
             "content": {
               "application/json": {
                 "schema": {
@@ -7795,53 +7637,17 @@
             }
           },
           "409": {
-            "description": "Changed protected request; reason idempotency_key_conflict",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "no-store for protected request conflicts; no Retry-After"
-              }
-            },
+            "description": "Idempotency key conflict",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "410": {
-            "description": "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "no-store; no automatic retry is implied"
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskDetailsExpiredResponse"
                 }
               }
             }
           },
           "429": {
-            "description": "Shared task admission or byte capacity exhausted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Task identity or control reconciliation unavailable",
+            "description": "Two profiling tasks are already active",
             "content": {
               "application/json": {
                 "schema": {
@@ -16152,53 +15958,17 @@
             }
           },
           "409": {
-            "description": "Conflict; reason idempotency_key_conflict identifies a changed protected request",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "no-store for protected request conflicts; no Retry-After"
-              }
-            },
+            "description": "Conflict",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "410": {
-            "description": "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "no-store; no automatic retry is implied"
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskDetailsExpiredResponse"
                 }
               }
             }
           },
           "429": {
-            "description": "Shared task admission or byte capacity exhausted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Task identity or control reconciliation unavailable",
+            "description": "Too many active export tasks",
             "content": {
               "application/json": {
                 "schema": {
@@ -16494,53 +16264,17 @@
             }
           },
           "409": {
-            "description": "Conflict; reason idempotency_key_conflict identifies a changed protected request",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "no-store for protected request conflicts; no Retry-After"
-              }
-            },
+            "description": "Conflict",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "410": {
-            "description": "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "no-store; no automatic retry is implied"
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskDetailsExpiredResponse"
                 }
               }
             }
           },
           "429": {
-            "description": "Shared task admission or byte capacity exhausted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Task identity or control reconciliation unavailable",
+            "description": "Too many active export tasks",
             "content": {
               "application/json": {
                 "schema": {
@@ -21469,53 +21203,17 @@
             }
           },
           "409": {
-            "description": "Conflict; reason idempotency_key_conflict identifies a changed protected request",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "no-store for protected request conflicts; no Retry-After"
-              }
-            },
+            "description": "Conflict",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "410": {
-            "description": "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "no-store; no automatic retry is implied"
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskDetailsExpiredResponse"
                 }
               }
             }
           },
           "429": {
-            "description": "Shared task admission or byte capacity exhausted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Task identity or control reconciliation unavailable",
+            "description": "Too many active import tasks",
             "content": {
               "application/json": {
                 "schema": {
@@ -23454,53 +23152,7 @@
             }
           },
           "409": {
-            "description": "Conflict; reason idempotency_key_conflict identifies a changed protected request",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "no-store for protected request conflicts; no Retry-After"
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "410": {
-            "description": "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "no-store; no automatic retry is implied"
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskDetailsExpiredResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Shared task admission or byte capacity exhausted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Task identity or control reconciliation unavailable",
+            "description": "Conflict",
             "content": {
               "application/json": {
                 "schema": {
@@ -25571,24 +25223,6 @@
           "message": "Authentication failure"
         }
       },
-      "ArtifactOptions": {
-        "type": "object",
-        "description": "Operational admission limits. Retained manifests use a stable format ceiling,\nso lowering these limits never changes which existing outputs can be read.",
-        "properties": {
-          "max_spool_bytes": {
-            "type": "integer",
-            "format": "int64",
-            "default": 268435456,
-            "minimum": 0
-          },
-          "worker_resident_bytes": {
-            "type": "integer",
-            "format": "int64",
-            "default": 4294967296,
-            "minimum": 0
-          }
-        }
-      },
       "AuthProvidersResponse": {
         "type": "object",
         "required": [
@@ -25730,7 +25364,6 @@
         "properties": {
           "max_active_tasks_per_user": {
             "type": "integer",
-            "format": "int64",
             "minimum": 0
           },
           "max_capture_rows": {
@@ -37096,10 +36729,6 @@
             "type": "integer",
             "format": "int32"
           },
-          "identity_quarantine": {
-            "type": "boolean",
-            "description": "Legacy formats are upgraded in an isolated cohort before replacement."
-          },
           "includes_history": {
             "type": "boolean"
           },
@@ -37109,12 +36738,6 @@
           "total_items": {
             "type": "integer",
             "format": "int64"
-          },
-          "unresolved_identity_references": {
-            "type": "integer",
-            "format": "int64",
-            "description": "References whose correspondence cannot be established from the backup.",
-            "minimum": 0
           }
         }
       },
@@ -37265,8 +36888,6 @@
       "RunningConfig": {
         "type": "object",
         "required": [
-          "artifacts",
-          "control_recovery_required",
           "schema_validation",
           "query_observations",
           "server",
@@ -37285,18 +36906,11 @@
           "tracing"
         ],
         "properties": {
-          "artifacts": {
-            "$ref": "#/components/schemas/ArtifactOptions"
-          },
           "authentication": {
             "$ref": "#/components/schemas/AuthenticationConfig"
           },
           "backups": {
             "$ref": "#/components/schemas/BackupConfig"
-          },
-          "control_recovery_required": {
-            "type": "boolean",
-            "description": "Runtime startup requires independently retained control evidence."
           },
           "database": {
             "$ref": "#/components/schemas/DatabaseConfig"
@@ -37333,17 +36947,6 @@
           },
           "server": {
             "$ref": "#/components/schemas/ServerConfig"
-          },
-          "task_capacity": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/StorageTaskCapacitySnapshot",
-                "description": "Authoritative shared policy and administrator-only usage, read on demand."
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "tasks": {
             "$ref": "#/components/schemas/TaskConfig"
@@ -38784,128 +38387,6 @@
           }
         }
       },
-      "StorageTaskCapacitySnapshot": {
-        "type": "object",
-        "description": "One consistent view of the policy, maintenance generation and accounting.",
-        "required": [
-          "scheduling",
-          "policy",
-          "generation",
-          "ordinary",
-          "internal",
-          "blocked_owners",
-          "work_budget_blocked"
-        ],
-        "properties": {
-          "blocked_owners": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "generation": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "internal": {
-            "$ref": "#/components/schemas/StorageTaskCapacityUsage"
-          },
-          "ordinary": {
-            "$ref": "#/components/schemas/StorageTaskCapacityUsage"
-          },
-          "policy": {
-            "$ref": "#/components/schemas/StorageTaskPolicy"
-          },
-          "scheduling": {
-            "$ref": "#/components/schemas/TaskSchedulingSnapshot"
-          },
-          "work_budget_blocked": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          }
-        },
-        "additionalProperties": false
-      },
-      "StorageTaskCapacityUsage": {
-        "type": "object",
-        "description": "Aggregate administrator diagnostics. These values never appear in public\ncapacity rejection responses. Cumulative charges include detached owners.",
-        "required": [
-          "outstanding",
-          "executing",
-          "resident_bytes",
-          "cumulative_input_bytes",
-          "cumulative_output_bytes",
-          "cumulative_items"
-        ],
-        "properties": {
-          "cumulative_input_bytes": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "cumulative_items": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "cumulative_output_bytes": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "executing": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "outstanding": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "resident_bytes": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          }
-        },
-        "additionalProperties": false
-      },
-      "StorageTaskPolicy": {
-        "type": "object",
-        "description": "A committed policy, including its optimistic update token.",
-        "required": [
-          "revision",
-          "policy"
-        ],
-        "properties": {
-          "policy": {
-            "$ref": "#/components/schemas/TaskAdmissionPolicy"
-          },
-          "revision": {
-            "$ref": "#/components/schemas/TaskPolicyRevision"
-          }
-        },
-        "additionalProperties": false
-      },
-      "StorageTaskPolicyUpdate": {
-        "type": "object",
-        "description": "Compare-and-replace request; a stale revision cannot silently overwrite a\nconcurrent administrator's policy change.",
-        "required": [
-          "expected_revision",
-          "policy"
-        ],
-        "properties": {
-          "expected_revision": {
-            "$ref": "#/components/schemas/TaskPolicyRevision"
-          },
-          "policy": {
-            "$ref": "#/components/schemas/TaskAdmissionPolicy"
-          }
-        },
-        "additionalProperties": false
-      },
       "StructuredClassSelector": {
         "oneOf": [
           {
@@ -39744,52 +39225,6 @@
           }
         }
       },
-      "TaskAdmissionPolicy": {
-        "type": "object",
-        "description": "Complete deployment policy. No member binds an integer database identity.\nTask owners and collection membership are captured separately at admission.",
-        "required": [
-          "scheduling",
-          "deployment",
-          "principal",
-          "collection",
-          "internal",
-          "kinds",
-          "cumulative_input_bytes_per_task"
-        ],
-        "properties": {
-          "collection": {
-            "$ref": "#/components/schemas/TaskScopeCapacity"
-          },
-          "cumulative_input_bytes_per_task": {
-            "$ref": "#/components/schemas/TaskByteLimit"
-          },
-          "deployment": {
-            "$ref": "#/components/schemas/TaskScopeCapacity"
-          },
-          "internal": {
-            "$ref": "#/components/schemas/TaskScopeCapacity"
-          },
-          "kinds": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TaskKindCapacity"
-            }
-          },
-          "principal": {
-            "$ref": "#/components/schemas/TaskScopeCapacity"
-          },
-          "scheduling": {
-            "$ref": "#/components/schemas/TaskSchedulingPolicy"
-          }
-        }
-      },
-      "TaskByteLimit": {
-        "type": "integer",
-        "format": "int64",
-        "description": "Positive byte ceiling, distinct from a number of tasks or execution slots.",
-        "maximum": 9223372036854775807,
-        "minimum": 1
-      },
       "TaskCancelRequest": {
         "type": "object",
         "description": "An idempotent stop request. The optional expected status protects queued-only withdrawals.",
@@ -39813,13 +39248,6 @@
           }
         },
         "additionalProperties": false
-      },
-      "TaskCapacityLimit": {
-        "type": "integer",
-        "format": "int64",
-        "description": "Positive capacity representable by every supported persistence adapter.",
-        "maximum": 9223372036854775807,
-        "minimum": 1
       },
       "TaskConfig": {
         "type": "object",
@@ -39858,7 +39286,6 @@
           },
           "export_max_active_per_user": {
             "type": "integer",
-            "format": "int64",
             "minimum": 0
           },
           "heartbeat_seconds": {
@@ -39873,7 +39300,6 @@
           },
           "import_max_active_per_user": {
             "type": "integer",
-            "format": "int64",
             "minimum": 0
           },
           "lease_seconds": {
@@ -39903,7 +39329,6 @@
           },
           "remote_call_max_active_per_user": {
             "type": "integer",
-            "format": "int64",
             "minimum": 0
           },
           "schema_profiling_execution_timeout_seconds": {
@@ -39997,42 +39422,6 @@
           }
         },
         "additionalProperties": false
-      },
-      "TaskDetailsExpiredResponse": {
-        "type": "object",
-        "description": "Minimal recognized submission response after its task details have expired.\nConstruction is restricted to the authorized receipt application path.",
-        "required": [
-          "error",
-          "message",
-          "reason",
-          "task_identity",
-          "kind"
-        ],
-        "properties": {
-          "error": {
-            "type": "string"
-          },
-          "expires_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "kind": {
-            "$ref": "#/components/schemas/TaskKind"
-          },
-          "message": {
-            "type": "string"
-          },
-          "reason": {
-            "type": "string"
-          },
-          "task_identity": {
-            "type": "string",
-            "format": "uuid"
-          }
-        }
       },
       "TaskDiscoveryTarget": {
         "oneOf": [
@@ -40191,44 +39580,6 @@
           "schema_profiling"
         ]
       },
-      "TaskKindCapacity": {
-        "type": "object",
-        "description": "Kind-wide limits and the compatibility per-principal admission ceiling.",
-        "required": [
-          "kind",
-          "capacity",
-          "principal_outstanding"
-        ],
-        "properties": {
-          "capacity": {
-            "$ref": "#/components/schemas/TaskScopeCapacity"
-          },
-          "kind": {
-            "$ref": "#/components/schemas/TaskKind"
-          },
-          "principal_outstanding": {
-            "$ref": "#/components/schemas/TaskCapacityLimit"
-          }
-        },
-        "additionalProperties": false
-      },
-      "TaskKindWeight": {
-        "type": "object",
-        "required": [
-          "kind",
-          "weight"
-        ],
-        "properties": {
-          "kind": {
-            "$ref": "#/components/schemas/TaskKind"
-          },
-          "weight": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          }
-        }
-      },
       "TaskLinks": {
         "type": "object",
         "required": [
@@ -40289,13 +39640,6 @@
           "unknown"
         ]
       },
-      "TaskPolicyRevision": {
-        "type": "integer",
-        "format": "int64",
-        "description": "Optimistic concurrency token for a committed shared policy.",
-        "maximum": 9223372036854775807,
-        "minimum": 1
-      },
       "TaskProgress": {
         "type": "object",
         "required": [
@@ -40333,7 +39677,6 @@
           "queued_tasks",
           "validating_tasks",
           "running_tasks",
-          "waiting_tasks",
           "active_tasks",
           "succeeded_tasks",
           "failed_tasks",
@@ -40424,10 +39767,6 @@
             "format": "int64"
           },
           "validating_tasks": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "waiting_tasks": {
             "type": "integer",
             "format": "int64"
           }
@@ -40568,167 +39907,12 @@
           }
         }
       },
-      "TaskSchedulingMode": {
-        "oneOf": [
-          {
-            "type": "object",
-            "required": [
-              "mode"
-            ],
-            "properties": {
-              "mode": {
-                "type": "string",
-                "enum": [
-                  "reserved"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "required": [
-              "reason",
-              "mode"
-            ],
-            "properties": {
-              "mode": {
-                "type": "string",
-                "enum": [
-                  "shared"
-                ]
-              },
-              "reason": {
-                "$ref": "#/components/schemas/TaskSharedCapacityReason"
-              }
-            }
-          }
-        ]
-      },
-      "TaskSchedulingPolicy": {
-        "type": "object",
-        "description": "Complete scheduling policy, persisted with admission in one revision.",
-        "required": [
-          "execution_slots",
-          "internal_reserved_slots",
-          "promotion_interval",
-          "overdue_seconds",
-          "weights"
-        ],
-        "properties": {
-          "execution_slots": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "internal_reserved_slots": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "overdue_seconds": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "promotion_interval": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "weights": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TaskKindWeight"
-            }
-          }
-        }
-      },
-      "TaskSchedulingSnapshot": {
-        "type": "object",
-        "description": "Aggregate diagnostics only; worker and principal identities stay private.",
-        "required": [
-          "mode",
-          "eligible_slots",
-          "internal_capable_slots",
-          "unsupported_kinds",
-          "successful_claims",
-          "promoted_claims",
-          "ordinary_position"
-        ],
-        "properties": {
-          "eligible_slots": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "internal_capable_slots": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "mode": {
-            "$ref": "#/components/schemas/TaskSchedulingMode"
-          },
-          "ordinary_position": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "promoted_claims": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "successful_claims": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "unsupported_kinds": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TaskKind"
-            }
-          }
-        }
-      },
-      "TaskScopeCapacity": {
-        "type": "object",
-        "description": "Independent ceilings for one admission scope. Reductions drain existing\nwork; a lower outstanding limit does not revoke existing execution claims.",
-        "required": [
-          "outstanding",
-          "executing",
-          "resident_bytes"
-        ],
-        "properties": {
-          "executing": {
-            "$ref": "#/components/schemas/TaskCapacityLimit"
-          },
-          "outstanding": {
-            "$ref": "#/components/schemas/TaskCapacityLimit"
-          },
-          "resident_bytes": {
-            "$ref": "#/components/schemas/TaskByteLimit"
-          }
-        },
-        "additionalProperties": false
-      },
-      "TaskSharedCapacityReason": {
-        "type": "string",
-        "enum": [
-          "single_slot",
-          "insufficient_workers",
-          "insufficient_internal_workers",
-          "no_ordinary_workers"
-        ]
-      },
       "TaskStatus": {
         "type": "string",
         "enum": [
           "queued",
           "validating",
           "running",
-          "waiting",
           "succeeded",
           "failed",
           "partially_succeeded",

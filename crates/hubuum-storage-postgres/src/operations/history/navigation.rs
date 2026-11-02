@@ -1,4 +1,3 @@
-use diesel::SelectableHelper;
 use diesel::{
     dsl::sql,
     sql_types::{BigInt, Bool, Timestamptz},
@@ -18,7 +17,6 @@ fn timestamp_floor(at: DateTime<Utc>) -> DateTime<Utc> {
 
 #[derive(diesel::Queryable)]
 struct MarkerRow {
-    logical_identity: Option<Value>,
     collection_id: i32,
     name: String,
     op: String,
@@ -49,8 +47,7 @@ impl MarkerRow {
             self.actor_kind.clone(),
         )
         .initiator_principal_id(self.initiator_user_id.map(PrincipalId::new).transpose()?)
-        .task_id(self.task_id.map(TaskId::new).transpose()?)
-        .with_logical_identity(history_identity(self.logical_identity)?);
+        .task_id(self.task_id.map(TaskId::new).transpose()?);
         Ok(StorageHistoryMarker::new(
             resource,
             CollectionId::new(self.collection_id)?,
@@ -145,7 +142,6 @@ macro_rules! marker_page {
                     None
                 };
                 let mut records = base_query().select((
-                    h::logical_identity,
                     h::collection_id,
                     h::name,
                     h::op,
@@ -217,7 +213,6 @@ pub(crate) async fn get_history_entry(
                 h::hubuumclass_history
                     .filter(h::id.eq(id.id()))
                     .filter(h::history_id.eq(query.history_id().id()))
-                    .select(ClassHistoryRow::as_select())
                     .first::<ClassHistoryRow>(connection)
                     .await
                     .optional()?
@@ -234,7 +229,6 @@ pub(crate) async fn get_history_entry(
                     .filter(h::id.eq(object_id.id()))
                     .filter(h::hubuum_class_id.eq(class_id.id()))
                     .filter(h::history_id.eq(query.history_id().id()))
-                    .select(ObjectHistoryRow::as_select())
                     .first::<ObjectHistoryRow>(connection)
                     .await
                     .optional()?

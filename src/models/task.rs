@@ -2,12 +2,13 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
-use hubuum_storage_core::{StorageIdentityEvidence, StorageTaskCheckpoint};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use utoipa::{PartialSchema, ToSchema};
 
 use crate::errors::ApiError;
-use crate::events::{Event, MutationProvenance, Provenance, StoredProvenance, TraceLink};
+use crate::events::{
+    Event, MutationProvenance, PrincipalNames, Provenance, StoredProvenance, TraceLink,
+};
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     BackupOutputLookup, REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_option,
@@ -24,46 +25,12 @@ pub(crate) fn task_kind_from_db(value: &str) -> Result<TaskKind, ApiError> {
         .ok_or_else(|| ApiError::InternalServerError(format!("Unknown task kind '{value}'")))
 }
 
-/// Minimal recognized submission response after its task details have expired.
-/// Construction is restricted to the authorized receipt application path.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq, ToSchema)]
-pub struct TaskDetailsExpiredResponse {
-    error: &'static str,
-    message: &'static str,
-    reason: &'static str,
-    #[schema(value_type = String, format = Uuid)]
-    task_identity: hubuum_domain::TaskIdentity,
-    kind: TaskKind,
-    expires_at: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-impl TaskDetailsExpiredResponse {
-    pub(crate) fn authorized(
-        proof: &crate::services::tasks::AuthorizedExpiredTaskSubmission,
-    ) -> Self {
-        let receipt = proof.receipt();
-        Self {
-            error: "Gone",
-            message: "Task details have expired; the original submission is still recognized; no new work was created",
-            reason: "task_details_expired",
-            task_identity: receipt.task(),
-            kind: receipt.kind(),
-            expires_at: receipt.expires_at(),
-        }
-    }
-
-    pub(crate) const fn public_message(&self) -> &'static str {
-        self.message
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     Queued,
     Validating,
     Running,
-    Waiting,
     Succeeded,
     Failed,
     PartiallySucceeded,
@@ -71,11 +38,10 @@ pub enum TaskStatus {
 }
 
 impl TaskStatus {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 7] = [
         Self::Queued,
         Self::Validating,
         Self::Running,
-        Self::Waiting,
         Self::Succeeded,
         Self::Failed,
         Self::PartiallySucceeded,
@@ -83,8 +49,7 @@ impl TaskStatus {
     ];
 
     pub const ACTIVE: [Self; 2] = [Self::Validating, Self::Running];
-    pub const NON_TERMINAL: [Self; 4] =
-        [Self::Queued, Self::Validating, Self::Running, Self::Waiting];
+    pub const NON_TERMINAL: [Self; 3] = [Self::Queued, Self::Validating, Self::Running];
 
     pub const TERMINAL: [Self; 4] = [
         Self::Succeeded,
@@ -95,7 +60,7 @@ impl TaskStatus {
 
     pub const fn is_terminal(self) -> bool {
         match self {
-            Self::Queued | Self::Validating | Self::Running | Self::Waiting => false,
+            Self::Queued | Self::Validating | Self::Running => false,
             Self::Succeeded | Self::Failed | Self::PartiallySucceeded | Self::Cancelled => true,
         }
     }
@@ -105,7 +70,6 @@ impl TaskStatus {
             TaskStatus::Queued => "queued",
             TaskStatus::Validating => "validating",
             TaskStatus::Running => "running",
-            TaskStatus::Waiting => "waiting",
             TaskStatus::Succeeded => "succeeded",
             TaskStatus::Failed => "failed",
             TaskStatus::PartiallySucceeded => "partially_succeeded",
@@ -118,7 +82,6 @@ impl TaskStatus {
             "queued" => Ok(TaskStatus::Queued),
             "validating" => Ok(TaskStatus::Validating),
             "running" => Ok(TaskStatus::Running),
-            "waiting" => Ok(TaskStatus::Waiting),
             "succeeded" => Ok(TaskStatus::Succeeded),
             "failed" => Ok(TaskStatus::Failed),
             "partially_succeeded" => Ok(TaskStatus::PartiallySucceeded),
@@ -214,7 +177,6 @@ pub struct TaskRecord {
     pub(crate) discovery_state: hubuum_storage_core::StorageTaskDiscoveryState,
     pub(crate) discovery_authorized: bool,
     pub(crate) control: hubuum_storage_core::StorageTaskControl,
-    pub(crate) checkpoint: Option<StorageTaskCheckpoint>,
     pub id: i32,
     pub kind: String,
     pub status: String,
@@ -300,7 +262,6 @@ impl TaskRecord {
 
 #[derive(Clone)]
 pub struct TaskEventRecord {
-    pub(crate) logical_identity: Option<StorageIdentityEvidence>,
     pub id: i64,
     pub task_id: i32,
     pub event_type: String,
@@ -1149,7 +1110,6 @@ pub struct ImportTaskResultResponse {
 
 /// Backend-neutral application projection of a retained export output.
 pub struct ExportTaskOutput {
-    pub artifact_reference: Option<hubuum_storage_core::artifacts::ArtifactReference>,
     pub content_type: String,
     pub json_output: Option<serde_json::Value>,
     pub text_output: Option<String>,
@@ -1206,8 +1166,7 @@ pub struct BackupTaskOutputSummary {
 }
 
 pub struct BackupTaskOutput {
-    pub artifact_reference: Option<hubuum_storage_core::artifacts::ArtifactReference>,
-    pub document: Option<Vec<u8>>,
+    pub document: Vec<u8>,
     pub sha256: String,
 }
 
@@ -1347,11 +1306,20 @@ impl TaskRecord {
 
 impl From<TaskEventRecord> for TaskEventResponse {
     fn from(value: TaskEventRecord) -> Self {
+        Self::from_record_with_names(value, &PrincipalNames::default())
+    }
+}
+
+impl TaskEventResponse {
+    pub(crate) fn from_record_with_names(
+        value: TaskEventRecord,
+        principal_names: &PrincipalNames,
+    ) -> Self {
         let provenance = StoredProvenance::from_actor_kind(Some(&value.actor_kind))
             .with_actor_user_id(value.actor_user_id)
             .with_initiator_user_id(value.initiator_user_id)
             .with_task_id(value.provenance_task_id)
-            .without_names();
+            .resolve(principal_names);
         Self {
             id: value.id,
             task_id: value.task_id,
@@ -1379,7 +1347,6 @@ impl TryFrom<Event> for TaskEventRecord {
         };
 
         Ok(Self {
-            logical_identity: None,
             id: value.id,
             task_id,
             event_type: value.action,
@@ -1696,7 +1663,7 @@ mod tests {
         );
         assert_eq!(
             TaskStatus::ALL.map(TaskStatus::is_terminal),
-            [false, false, false, false, true, true, true, true]
+            [false, false, false, true, true, true, true]
         );
     }
 
@@ -1708,7 +1675,7 @@ mod tests {
         );
         assert_eq!(
             TaskStatus::NON_TERMINAL.map(TaskStatus::as_str),
-            ["queued", "validating", "running", "waiting"]
+            ["queued", "validating", "running"]
         );
     }
 
@@ -1790,7 +1757,6 @@ mod tests {
             discovery_metadata: None,
             discovery_state: Default::default(),
             discovery_authorized: true,
-            checkpoint: None,
             control: hubuum_storage_core::StorageTaskControl::new(
                 hubuum_storage_core::StorageTaskKind::Import,
             ),
@@ -1843,7 +1809,6 @@ mod tests {
             discovery_metadata: None,
             discovery_state: Default::default(),
             discovery_authorized: true,
-            checkpoint: None,
             control: hubuum_storage_core::StorageTaskControl::new(
                 hubuum_storage_core::StorageTaskKind::Import,
             ),

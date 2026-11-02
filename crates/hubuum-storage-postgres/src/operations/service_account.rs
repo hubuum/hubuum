@@ -322,7 +322,6 @@ async fn create_service_account_parts(
                     crate::schema::service_accounts::owner_group_id.eq(owner_group_id),
                     crate::schema::service_accounts::created_by.eq(created_by),
                 ))
-                .returning(ServiceAccountRow::as_select())
                 .get_result::<ServiceAccountRow>(connection)
                 .await?;
             let revision = principal_revision(connection, principal_id).await?;
@@ -376,7 +375,6 @@ pub async fn update_service_account(
                 description: description.as_deref(),
                 owner_group_id,
             })
-            .returning(ServiceAccountRow::as_select())
             .get_result::<ServiceAccountRow>(connection)
             .await?;
             let name = principal_name(connection, service_account_id).await?;
@@ -425,7 +423,6 @@ async fn disable_service_account_parts(
                     .filter(crate::schema::service_accounts::id.eq(service_account_id)),
             )
             .set(crate::schema::service_accounts::disabled_at.eq(diesel::dsl::now))
-            .returning(ServiceAccountRow::as_select())
             .get_result::<ServiceAccountRow>(connection)
             .await?;
             let name = principal_name(connection, service_account_id).await?;
@@ -508,7 +505,7 @@ async fn cancel_pending_tasks(
 ) -> Result<Vec<String>, PostgresStorageError> {
     let task_ids = crate::schema::tasks::table
         .filter(crate::schema::tasks::submitted_by.eq(principal_id))
-        .filter(crate::schema::tasks::status.eq_any([QUEUED_TASK_STATUS, "waiting"]))
+        .filter(crate::schema::tasks::status.eq(QUEUED_TASK_STATUS))
         .filter(crate::schema::tasks::kind.ne(REINDEX_TASK_KIND))
         .select(crate::schema::tasks::id)
         .load::<i32>(connection)
@@ -521,7 +518,7 @@ async fn cancel_pending_tasks(
     let cancelled = diesel::update(
         crate::schema::tasks::table
             .filter(crate::schema::tasks::id.eq_any(task_ids))
-            .filter(crate::schema::tasks::status.eq_any([QUEUED_TASK_STATUS, "waiting"])),
+            .filter(crate::schema::tasks::status.eq(QUEUED_TASK_STATUS)),
     )
     .set((
         crate::schema::tasks::status.eq(CANCELLED_TASK_STATUS),

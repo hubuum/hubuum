@@ -1,4 +1,3 @@
-use diesel::SelectableHelper;
 use std::fmt;
 
 use chrono::NaiveDateTime;
@@ -381,7 +380,7 @@ pub async fn create_remote_target(
 
             let created = diesel::insert_into(remote_targets)
                 .values(new_target)
-                .returning(RemoteTargetRow::as_select()).get_result::<RemoteTargetRow>(connection)
+                .get_result::<RemoteTargetRow>(connection)
                 .await?;
             let audit = append_remote_target_audit(
                 connection,
@@ -413,7 +412,7 @@ pub async fn update_remote_target(
             let before = remote_targets
                 .filter(id.eq(target_id))
                 .for_update()
-                .select(RemoteTargetRow::as_select()).first::<RemoteTargetRow>(connection)
+                .first::<RemoteTargetRow>(connection)
                 .await?;
             assert_locked_revision_precondition(
                 connection,
@@ -431,7 +430,7 @@ pub async fn update_remote_target(
             }
             let updated = diesel::update(remote_targets.filter(id.eq(target_id)))
                 .set(changes)
-                .returning(RemoteTargetRow::as_select()).get_result::<RemoteTargetRow>(connection)
+                .get_result::<RemoteTargetRow>(connection)
                 .await?;
             let audit = append_remote_target_audit(
                 connection,
@@ -461,7 +460,6 @@ pub async fn delete_remote_target(
             let before = remote_targets
                 .filter(id.eq(target_id))
                 .for_update()
-                .select(RemoteTargetRow::as_select())
                 .first::<RemoteTargetRow>(connection)
                 .await?;
             assert_locked_revision_precondition(
@@ -533,7 +531,6 @@ async fn load_remote_target_row(
 
     remote_targets
         .filter(id.eq(target_id))
-        .select(RemoteTargetRow::as_select())
         .first::<RemoteTargetRow>(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -561,7 +558,6 @@ async fn load_remote_target_rows(
         )
     );
     records
-        .select(RemoteTargetRow::as_select())
         .load::<RemoteTargetRow>(connection)
         .await?
         .into_iter()

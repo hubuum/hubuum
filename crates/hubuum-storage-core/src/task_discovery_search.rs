@@ -11,8 +11,7 @@ use hubuum_domain::{
     RemoteTargetId, SchemaRevision,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskRemoteSideEffectState {
     NotSent,
     PossiblySent,

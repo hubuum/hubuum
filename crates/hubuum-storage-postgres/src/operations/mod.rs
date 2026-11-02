@@ -3,7 +3,6 @@
 pub mod authentication;
 pub mod authorization;
 pub mod backup;
-mod backup_artifacts;
 pub mod bootstrap;
 pub mod catalog;
 pub mod class;
@@ -55,7 +54,6 @@ pub(crate) mod task_control;
 mod task_discovery;
 pub mod task_execution;
 pub mod task_queue;
-pub(crate) mod task_retention;
 pub(crate) mod task_rows;
 pub mod token;
 pub mod token_retention;

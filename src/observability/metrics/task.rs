@@ -89,7 +89,6 @@ pub fn task_cancellation_requested(outcome: &hubuum_storage_core::StorageTaskCan
     use hubuum_storage_core::StorageTaskCancellationChange;
     let result = match outcome.change() {
         StorageTaskCancellationChange::CancelledQueued => "queued",
-        StorageTaskCancellationChange::CancelledWaiting => "waiting",
         StorageTaskCancellationChange::Requested => "active",
         StorageTaskCancellationChange::Unchanged => "unchanged",
     };
@@ -102,11 +101,7 @@ pub fn task_cancellation_requested(outcome: &hubuum_storage_core::StorageTaskCan
             ],
         );
     }
-    if matches!(
-        outcome.change(),
-        StorageTaskCancellationChange::CancelledQueued
-            | StorageTaskCancellationChange::CancelledWaiting
-    ) {
+    if outcome.change() == StorageTaskCancellationChange::CancelledQueued {
         task_stop_acknowledged(outcome.task());
     }
 }

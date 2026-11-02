@@ -5,7 +5,7 @@ use std::io;
 use chrono::{Duration, Utc};
 use hubuum_domain::{ClassId, ObjectId};
 use hubuum_storage_core::{StorageSchemaProfileArtifact, StorageTaskCompletionPayload};
-use hubuum_task_core::TaskExecutionContext;
+use hubuum_task_core::{IdempotencyKey, TaskExecutionContext};
 use json_schema_profiler::{
     Document, EvaluationOptions, EvaluationStatus, Profiler, SchemaOptions, Suggestion, ValueLimits,
 };
@@ -24,13 +24,12 @@ use crate::models::{
 };
 use crate::permissions::visibility::authorize_all_candidates;
 use crate::permissions::{AppContext, PrincipalRef};
-use crate::restores::MaintenanceActivityGuard;
 use crate::services::authentication::ExecutionPrincipal;
 use crate::services::authorization_resources::schema_compliance_authorization_resources;
 use crate::services::class_fields::AuthorizedObjectSample;
 use crate::services::tasks::{
-    ClaimedTask, TaskStateChange, TaskSubmission, TaskSubmissionAttempt, complete_task,
-    task_scope_snapshot, update_task_state,
+    ClaimedTask, TaskStateChange, TaskSubmission, complete_task, submit_task, task_scope_snapshot,
+    update_task_state,
 };
 use crate::tasks::{control, request_hash};
 use crate::traits::{SelfAccessors, UserPermissions, scope_allows};
@@ -46,30 +45,30 @@ pub(crate) async fn submit(
     requestor: &Authenticated,
     class: &HubuumClass,
     options: SchemaProfileRequest,
-    attempt: TaskSubmissionAttempt,
+    key: Option<IdempotencyKey>,
 ) -> Result<TaskRecord, ApiError> {
     let payload = serde_json::to_value(ProfileTaskPayload {
         class_id: ClassId::new(class.id)?,
         options,
     })?;
     let hash = request_hash(&payload)?;
-    attempt
-        .submit(
-            context,
-            &requestor.principal,
-            TaskSubmission::new(
-                TaskKind::SchemaProfiling,
-                requestor.principal.id(),
-                payload,
-                1,
-            )
-            .request_hash(Some(hash))
-            .scope_snapshot(task_scope_snapshot(
-                Some(requestor.token_meta.id()),
-                requestor.scopes(),
-            )),
+    submit_task(
+        context,
+        TaskSubmission::new(
+            TaskKind::SchemaProfiling,
+            requestor.principal.id(),
+            payload,
+            1,
+            2,
         )
-        .await
+        .idempotency_key(key)
+        .request_hash(Some(hash))
+        .scope_snapshot(task_scope_snapshot(
+            Some(requestor.token_meta.id()),
+            requestor.scopes(),
+        )),
+    )
+    .await
 }
 
 pub(crate) async fn execute(
@@ -103,14 +102,10 @@ pub(crate) async fn execute(
     .await?;
     control::checkpoint()?;
     let execution = control::execution_context();
-    let activity = MaintenanceActivityGuard::begin();
     // Await completion, including cooperative stops, before releasing the task lease.
-    let output = tokio::task::spawn_blocking(move || {
-        let _activity = activity;
-        profile_sample(payload, sample, execution)
-    })
-    .await
-    .map_err(|_| ApiError::InternalServerError("Schema profiling worker failed".into()))??;
+    let output = tokio::task::spawn_blocking(move || profile_sample(payload, sample, execution))
+        .await
+        .map_err(|_| ApiError::InternalServerError("Schema profiling worker failed".into()))??;
     control::checkpoint()?;
     let artifact = StorageSchemaProfileArtifact::new(output, Utc::now() + Duration::hours(24))
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;

@@ -4,20 +4,18 @@
 //! give adapter authors and focused application services stable bounds without
 //! duplicating or wrapping any operation.
 
-use crate::artifacts::{ArtifactStore, TaskArtifactStore};
 use crate::{
     AuditEventStorage, AuthenticationStorage, AuthorizationDataStorage, BackupSnapshotStorage,
     CatalogStorage, ClassRelationStorage, ClassStorage, CollectionAuthorizationQueryStorage,
-    CollectionStorage, ComputedFieldStorage, ComputedObjectStorage, DeletionControlStorage,
-    EventConfigurationStorage, EventDeliveryAdministrationStorage, EventDeliveryWorkerStorage,
-    EventFanoutStorage, EventHealthStorage, EventRetentionStorage, ExecutionStorage,
-    ExportTemplateStorage, ExternalIdentityStorage, GroupMembershipStorage, GroupStorage,
-    HistoryStorage, IdentityScopeStorage, ImportStorage, InventoryStorage,
-    LocalIdentityCredentialStorage, LogicalIdentityStorage, MetricsStorage, ObjectAggregateStorage,
-    ObjectRelationStorage, ObjectStorage, OperationalStateStorage, PrincipalStorage,
-    QueryUsageStorage, RelationQueryStorage, RemoteTargetStorage, RestoreStorage,
-    SchemaEvolutionStorage, ServiceAccountStorage, TaskCapacityStorage, TaskExecutionStorage,
-    TaskQueueStorage, TaskRetentionStorage, TokenRetentionStorage, TokenStorage,
+    CollectionStorage, ComputedFieldStorage, ComputedObjectStorage, EventConfigurationStorage,
+    EventDeliveryAdministrationStorage, EventDeliveryWorkerStorage, EventFanoutStorage,
+    EventHealthStorage, EventRetentionStorage, ExecutionStorage, ExportTemplateStorage,
+    ExternalIdentityStorage, GroupMembershipStorage, GroupStorage, HistoryStorage,
+    IdentityScopeStorage, ImportStorage, InventoryStorage, LocalIdentityCredentialStorage,
+    MetricsStorage, ObjectAggregateStorage, ObjectRelationStorage, ObjectStorage,
+    OperationalStateStorage, PrincipalStorage, QueryUsageStorage, RelationQueryStorage,
+    RemoteTargetStorage, RestoreStorage, SchemaEvolutionStorage, ServiceAccountStorage,
+    TaskExecutionStorage, TaskQueueStorage, TokenRetentionStorage, TokenStorage,
     TransactionStorage, UnifiedSearchStorage, UserStorage,
 };
 
@@ -84,7 +82,6 @@ pub trait QueryStorage:
     + ObjectAggregateStorage
     + RelationQueryStorage
     + HistoryStorage
-    + LogicalIdentityStorage
     + InventoryStorage
     + UnifiedSearchStorage
 {
@@ -96,7 +93,6 @@ impl<T> QueryStorage for T where
         + ObjectAggregateStorage
         + RelationQueryStorage
         + HistoryStorage
-        + LogicalIdentityStorage
         + InventoryStorage
         + UnifiedSearchStorage
         + ?Sized
@@ -110,10 +106,6 @@ pub trait WorkflowStorage:
     + SchemaEvolutionStorage
     + QueryUsageStorage
     + TaskQueueStorage
-    + TaskRetentionStorage
-    + TaskCapacityStorage
-    + ArtifactStore
-    + TaskArtifactStore
     + TaskExecutionStorage
     + BackupSnapshotStorage
     + ImportStorage
@@ -128,10 +120,6 @@ impl<T> WorkflowStorage for T where
         + SchemaEvolutionStorage
         + QueryUsageStorage
         + TaskQueueStorage
-        + TaskRetentionStorage
-        + TaskCapacityStorage
-        + ArtifactStore
-        + TaskArtifactStore
         + TaskExecutionStorage
         + BackupSnapshotStorage
         + ImportStorage
@@ -167,20 +155,11 @@ impl<T> EventStorage for T where
 
 /// Cross-cutting execution, metrics, operational state, and token retention.
 pub trait OperationalStorage:
-    MetricsStorage
-    + OperationalStateStorage
-    + TokenRetentionStorage
-    + ExecutionStorage
-    + DeletionControlStorage
+    MetricsStorage + OperationalStateStorage + TokenRetentionStorage + ExecutionStorage
 {
 }
 
 impl<T> OperationalStorage for T where
-    T: MetricsStorage
-        + OperationalStateStorage
-        + TokenRetentionStorage
-        + ExecutionStorage
-        + DeletionControlStorage
-        + ?Sized
+    T: MetricsStorage + OperationalStateStorage + TokenRetentionStorage + ExecutionStorage + ?Sized
 {
 }

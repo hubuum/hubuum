@@ -1,10 +1,9 @@
 use std::collections::BTreeMap;
 
 use chrono::{Duration, NaiveDate};
-use hubuum_domain::{IdentityReference, ResourceIdentity, VersionIdentity};
 #[cfg(feature = "embedded-migrations")]
 use hubuum_storage_core::StorageBackupBudget;
-use hubuum_storage_core::{StorageBackupSnapshot, StorageIdentityEvidence, StorageIdentitySubject};
+use hubuum_storage_core::StorageBackupSnapshot;
 use rstest::rstest;
 use serde_json::json;
 
@@ -27,32 +26,11 @@ fn verify_backup_document(
     super::verify_backup_reader(bytes, max_bytes, hubuum_domain::JsonSchemaLimits::default())
 }
 
-fn historical_manifest_exclusions() -> Vec<String> {
-    // Frozen independently of the current writer, matching shipped formats 6–11.
-    [
-        "backup_task_outputs (backup artifacts never recursively contain prior backups)",
-        "authentication tokens and token scopes (credentials must be reissued after restore)",
-        "class reachability cache (rebuilt by database triggers during restore)",
-        "computed-field class state and materialized object cache (rebuilt after restore)",
-        "active tasks and non-terminal event deliveries",
-        "restore control-plane tables and server instance heartbeats",
-    ]
-    .map(str::to_owned)
-    .to_vec()
-}
-
-fn refresh_document_manifest(document: &mut BackupDocument) {
-    document.manifest = BackupManifest::from_sections(&document.state, document.history.as_ref());
-    if document.backup_version < 11 {
-        document.manifest.exclusions = historical_manifest_exclusions();
-    }
-}
-
 #[cfg(feature = "embedded-migrations")]
 fn comparison_document(
     mut document: BackupDocument,
 ) -> Result<super::replay::ReplayDocument, ApiError> {
-    refresh_document_manifest(&mut document);
+    document.manifest = BackupManifest::from_sections(&document.state, document.history.as_ref());
     let bytes = serde_json::to_vec(&document)?;
     Ok(super::replay::parse(
         bytes.as_slice(),
@@ -78,34 +56,6 @@ fn backup_instant() -> chrono::DateTime<chrono::Utc> {
         .and_utc()
 }
 
-fn resource_identity() -> StorageIdentityEvidence {
-    StorageIdentityEvidence::try_new(
-        Some(StorageIdentitySubject::Resource {
-            identity: IdentityReference::Known {
-                identity: ResourceIdentity::generate(),
-            },
-            version: VersionIdentity::generate(),
-        }),
-        BTreeMap::new(),
-    )
-    .unwrap()
-}
-
-#[cfg(feature = "embedded-migrations")]
-fn audit_row(id: i32, entity_type: &str, action: &str) -> StorageBackupRow {
-    let event_id = hubuum_events_core::EventId::from(uuid::Uuid::new_v4());
-    let evidence = StorageIdentityEvidence::try_new(
-        Some(StorageIdentitySubject::Event { identity: event_id }),
-        BTreeMap::new(),
-    )
-    .unwrap();
-    StorageBackupRow::try_from_value(json!({
-        "id": id, "event_id": event_id, "entity_type": entity_type, "action": action,
-        "logical_identity": evidence,
-    }))
-    .unwrap()
-}
-
 fn minimally_valid_document() -> BackupDocument {
     let mut sections = StorageBackupStateSection::ALL
         .iter()
@@ -119,7 +69,6 @@ fn minimally_valid_document() -> BackupDocument {
             StorageBackupRow::try_from_value(json!({
                 "id": 1,
                 "name": "local",
-                "logical_identity": resource_identity(),
                 "provider_kind": "local",
                 "created_at": "2026-07-16T00:00:00Z",
                 "updated_at": "2026-07-16T00:00:00Z",
@@ -134,7 +83,6 @@ fn minimally_valid_document() -> BackupDocument {
             StorageBackupRow::try_from_value(json!({
                 "id": 1,
                 "name": "root",
-                "logical_identity": resource_identity(),
                 "parent_collection_id": null,
                 "created_at": "2026-07-16T00:00:00Z",
                 "updated_at": "2026-07-16T00:00:00Z",
@@ -185,7 +133,6 @@ fn offline_backup_verification_returns_only_sanitized_artifact_evidence() {
         .unwrap()[0] = StorageBackupRow::try_from_value(json!({
         "id": 1,
         "name": "verification-canary",
-        "logical_identity": resource_identity(),
         "parent_collection_id": null,
         "created_at": "2026-07-16T00:00:00Z",
         "updated_at": "2026-07-16T00:00:00Z",
@@ -202,19 +149,13 @@ fn offline_backup_verification_returns_only_sanitized_artifact_evidence() {
     assert!(!report.contains("verification-canary"));
 }
 
-#[rstest]
-#[case::wrong_count(Some(99))]
-#[case::missing_count(None)]
-fn offline_backup_verification_rejects_manifest_count_drift(#[case] count: Option<i64>) {
+#[test]
+fn offline_backup_verification_rejects_manifest_count_drift() {
     let mut document = minimally_valid_document();
-    if let Some(count) = count {
-        document
-            .manifest
-            .item_counts
-            .insert("collections".to_string(), count);
-    } else {
-        document.manifest.item_counts.remove("collections");
-    }
+    document
+        .manifest
+        .item_counts
+        .insert("collections".to_string(), 99);
     let bytes = serde_json::to_vec(&document).unwrap();
 
     let error = verify_backup_document(&bytes, bytes.len()).unwrap_err();
@@ -228,7 +169,6 @@ fn offline_backup_verification_rejects_manifest_count_drift(#[case] count: Optio
 #[case::seven(7)]
 #[case::eight(8)]
 #[case::nine(9)]
-#[case::ten(10)]
 #[case::current(CURRENT_BACKUP_VERSION)]
 fn offline_backup_verification_accepts_supported_versions(#[case] version: i32) {
     let mut document = minimally_valid_document();
@@ -245,84 +185,9 @@ fn offline_backup_verification_accepts_supported_versions(#[case] version: i32) 
             .sections
             .remove(&StorageBackupStateSection::EventSinkCollectionGrants);
     }
-    refresh_document_manifest(&mut document);
+    document.manifest = BackupManifest::from_sections(&document.state, None);
     let bytes = serde_json::to_vec(&document).unwrap();
     assert!(verify_backup_document(&bytes, bytes.len()).is_ok());
-}
-
-#[test]
-fn offline_backup_verification_accepts_unchanged_comprehensive_format_six() {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test-corpora/comprehensive.json");
-    let file = std::fs::File::open(path).unwrap();
-    let byte_size = file.metadata().unwrap().len();
-
-    let report = super::verify_backup_reader(
-        file,
-        usize::try_from(byte_size).unwrap(),
-        hubuum_domain::JsonSchemaLimits::default(),
-    )
-    .unwrap();
-
-    assert_eq!(report.backup_version(), 6);
-    assert_eq!(report.source_version(), "0.0.14");
-    assert_eq!(report.byte_size(), byte_size);
-}
-
-#[rstest]
-#[case::original_writer(true)]
-#[case::protected_authority_writer(false)]
-fn offline_backup_verification_accepts_original_and_protected_manifests(
-    #[values(11, 12)] version: i32,
-    #[case] historical: bool,
-) {
-    let mut document = minimally_valid_document();
-    document.backup_version = version;
-    if historical {
-        document.manifest.exclusions = historical_manifest_exclusions();
-    }
-    let bytes = serde_json::to_vec(&document).unwrap();
-
-    assert!(verify_backup_document(&bytes, bytes.len()).is_ok());
-}
-
-#[rstest]
-fn offline_backup_verification_rejects_current_exclusions_for_legacy_formats(
-    #[values(6, 7, 8, 9, 10)] version: i32,
-) {
-    let mut document = minimally_valid_document();
-    document.backup_version = version;
-    let bytes = serde_json::to_vec(&document).unwrap();
-
-    let error = verify_backup_document(&bytes, bytes.len()).unwrap_err();
-
-    assert!(error.to_string().contains(&format!(
-        "manifest exclusions do not match backup version {version}"
-    )));
-}
-
-#[rstest]
-#[case::changed(|exclusions: &mut Vec<String>| exclusions[0] = "changed exclusion".into())]
-#[case::unknown(|exclusions: &mut Vec<String>| exclusions.push("unknown exclusion".into()))]
-#[case::duplicate(|exclusions: &mut Vec<String>| exclusions.push(exclusions[0].clone()))]
-#[case::missing(|exclusions: &mut Vec<String>| { exclusions.pop(); })]
-#[case::reordered(|exclusions: &mut Vec<String>| exclusions.swap(0, 1))]
-#[case::empty(Vec::clear)]
-fn offline_backup_verification_rejects_invalid_exclusions(
-    #[values(6, 11, 12)] version: i32,
-    #[case] invalidate: fn(&mut Vec<String>),
-) {
-    let mut document = minimally_valid_document();
-    document.backup_version = version;
-    document.manifest.exclusions = historical_manifest_exclusions();
-    invalidate(&mut document.manifest.exclusions);
-    let bytes = serde_json::to_vec(&document).unwrap();
-
-    let error = verify_backup_document(&bytes, bytes.len()).unwrap_err();
-
-    assert!(error.to_string().contains(&format!(
-        "manifest exclusions do not match backup version {version}"
-    )));
 }
 
 #[rstest]
@@ -491,7 +356,12 @@ fn streaming_comparison_requires_exactly_one_success_provenance_event(
         .get_mut(&StorageBackupHistorySection::AuditEvents)
         .unwrap();
     for id in 1..=count {
-        events.push(audit_row(id, entity_type, action));
+        events.push(
+            StorageBackupRow::try_from_value(
+                json!({"id":id,"entity_type":entity_type,"action":action}),
+            )
+            .unwrap(),
+        );
     }
     assert_eq!(compare_backups(source, restored).is_ok(), accepted);
 }
@@ -505,12 +375,17 @@ fn streaming_comparison_rejects_retained_history_drift() {
     history
         .get_mut(&StorageBackupHistorySection::AuditEvents)
         .unwrap()
-        .push(audit_row(1, "restore", "succeeded"));
+        .push(
+            StorageBackupRow::try_from_value(
+                json!({"id":1,"entity_type":"restore","action":"succeeded"}),
+            )
+            .unwrap(),
+        );
     let rows = history
         .get_mut(&StorageBackupHistorySection::CollectionHistory)
         .unwrap();
     let mut row = rows[0].clone().into_value();
-    row["origin"] = json!("changed historical provenance");
+    row["task_id"] = json!(1);
     rows[0] = StorageBackupRow::try_from_value(row).unwrap();
     let error = compare_backups(source, restored).unwrap_err();
     assert!(error.to_string().contains("collection_history"), "{error}");
@@ -614,12 +489,6 @@ fn restore_status_preserves_public_safe_errors(#[case] error: ApiError, #[case] 
 }
 
 #[test]
-fn replay_parser_accepts_committed_legacy_corpus() {
-    let bytes = include_bytes!("../../test-corpora/comprehensive.json");
-    verify_backup_document(bytes, bytes.len()).expect("committed legacy corpus remains readable");
-}
-
-#[test]
 fn replay_parser_accepts_reordered_members_and_single_byte_reads() {
     use std::io::Read;
     struct OneByte<'a>(&'a [u8]);
@@ -690,13 +559,8 @@ fn replay_parser_enforces_input_limit_including_trailing_whitespace() {
     assert!(matches!(error, ApiError::PayloadTooLarge(_)));
 }
 
-#[rstest]
-#[case::computed_history(9, StorageBackupHistorySection::ComputedFieldHistory)]
-#[case::export_artifacts(11, StorageBackupHistorySection::ExportArtifacts)]
-fn streaming_restore_accepts_legacy_missing_optional_history(
-    #[case] version: i32,
-    #[case] section: StorageBackupHistorySection,
-) {
+#[test]
+fn streaming_restore_accepts_legacy_missing_computed_history() {
     let mut document = minimally_valid_document();
     let bytes = serde_json::to_vec(&document).unwrap();
     let (replay, _, _) = super::replay::parse(
@@ -712,11 +576,14 @@ fn streaming_restore_accepts_legacy_missing_optional_history(
         .materialize()
         .unwrap()
         .into_parts();
-    history.as_mut().unwrap().remove(&section);
+    history
+        .as_mut()
+        .unwrap()
+        .remove(&StorageBackupHistorySection::ComputedFieldHistory);
     document.state = BackupState { sections: state };
     document.history = history.map(|sections| BackupHistory { sections });
-    document.backup_version = version;
-    refresh_document_manifest(&mut document);
+    document.backup_version = 9;
+    document.manifest = BackupManifest::from_sections(&document.state, document.history.as_ref());
     let bytes = serde_json::to_vec(&document).unwrap();
-    verify_backup_document(&bytes, bytes.len()).expect("legacy optional history remains readable");
+    verify_backup_document(&bytes, bytes.len()).expect("legacy computed history is optional");
 }

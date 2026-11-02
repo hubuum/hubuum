@@ -68,8 +68,7 @@ for path in "$@"; do
   done <<< "$declared_policy_documents"
 
   case "$path" in
-    src/models/task.rs | src/api/handlers/meta.rs | \
-      src/models/class_fields.rs | src/models/class_fields/* | src/api/v1/handlers/classes/field_discovery.rs | \
+    src/models/class_fields.rs | src/models/class_fields/* | src/api/v1/handlers/classes/field_discovery.rs | \
       src/api/v1/handlers/auth.rs | src/models/auth_session.rs | src/models/credential_activity.rs | \
       src/models/history/computed.rs | src/api/v1/handlers/classes/history_computed.rs | src/api/v1/handlers/classes/history_population.rs | src/api/v1/handlers/classes/history_relations.rs | \
       src/config/running.rs | src/api/v1/handlers/runtime_config.rs | src/models/query_usage.rs | src/models/credential_approval.rs | \
@@ -121,21 +120,11 @@ for path in "$@"; do
       # The standalone fuzz workflow owns these tests and lint checks.
       code=true
       ;;
-    test-corpora/comprehensive.json | .gitattributes)
-      # Rust embeds byte-sensitive fixtures; attributes control checkout bytes.
-      code=true
-      rust=true
-      container=true
-      ;;
-    test-corpora/* | tests/python/integration/corpus.py | tests/python/unit/tooling/test_corpus.py | \
+    test-corpora/* | tests/python/integration/corpus.py | tests/python/unit/tooling/test_corpus.py | .gitattributes | \
       docs/assets/atlas/* | docs/getting-started/example-dataset.md | \
       tests/python/integration/atlas.py | tests/python/unit/tooling/test_atlas.py)
       code=true
       container=true
-      if [[ "$path" == test-corpora/comprehensive.json ]]; then
-        # The production-reader Rust regression opens this unchanged fixture.
-        rust=true
-      fi
       ;;
     CHANGELOG.md)
       # Release notes participate in both compatibility exception contracts.
@@ -169,9 +158,6 @@ for path in "$@"; do
       docs/treetop/test-fixture.cedar)
       code=true
       rust=true
-      ;;
-    docs/performance/scheduling_acceptance.json | docs/performance/scheduling_integration.json)
-      # Retained measurement evidence; no build or test consumes this report.
       ;;
     docs/generated/project_inventory.json | docs/querying.md | docs/webhook_notifications.md)
       code=true
@@ -229,8 +215,7 @@ for path in "$@"; do
       benchmarks=true
       runtime_benchmark=true
       ;;
-    crates/hubuum-scale-benchmark/Cargo.toml | crates/hubuum-scale-core/Cargo.toml | \
-      crates/hubuum-storage-postgres/Cargo.toml)
+    crates/hubuum-scale-benchmark/Cargo.toml | crates/hubuum-scale-core/Cargo.toml)
       code=true
       rust=true
       benchmarks=true
@@ -238,14 +223,7 @@ for path in "$@"; do
       container=true
       artifacts=true
       ;;
-    scale-benchmarks/lifecycle/affinity.Dockerfile)
-      code=true
-      rust=true
-      benchmarks=true
-      scale_benchmark=true
-      container=true
-      ;;
-    .github/workflows/scale-benchmarks.yml | .github/workflows/scheduler-benchmarks.yml | scale-benchmarks/* | \
+    .github/workflows/scale-benchmarks.yml | scale-benchmarks/* | \
       crates/hubuum-scale-benchmark/* | crates/hubuum-scale-core/* | \
       crates/hubuum-storage-postgres/src/scale_benchmark.rs | \
       crates/hubuum-storage-postgres/src/scale_benchmark/*)
@@ -285,7 +263,7 @@ for path in "$@"; do
       code=true
       openapi=true
       ;;
-    tests/python/integration/event_transports.py | tests/python/integration/rust_tests.py | src/tests/*)
+    tests/python/integration/event_transports.py | src/tests/*)
       code=true
       rust=true
       ;;
@@ -353,8 +331,7 @@ for path in "$@"; do
       code=true
       container=true
       ;;
-    tests/python/integration/scheduling_benchmark.py | tests/python/unit/tooling/test_scheduling_benchmark.py | \
-      tests/python/integration/schema_budget.py | scripts/classify-ci-changes.sh | scripts/test-classify-ci-changes.sh | \
+    tests/python/integration/schema_budget.py | scripts/classify-ci-changes.sh | scripts/test-classify-ci-changes.sh | \
       scripts/ci-changed-paths.sh | tests/python/unit/tooling/test_ci_changed_paths.py)
       code=true
       rust=true
@@ -374,14 +351,6 @@ for path in "$@"; do
       scripts/uninstall-single-host.sh | scripts/stop-single-host.sh)
       code=true
       container=true
-      ;;
-    tests/python/integration/task_retention.py | tests/python/support/task_effects.py | \
-      tests/python/support/task_retention_recovery.py | tests/python/support/task_retention_safety.py)
-      code=true
-      rust=true
-      container=true
-      benchmarks=true
-      scale_benchmark=true
       ;;
     tests/python/run.py | tests/python/support/__init__.py)
       # The shared runner also launches the resource-budget benchmark probe.

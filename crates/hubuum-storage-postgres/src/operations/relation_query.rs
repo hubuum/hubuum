@@ -16,7 +16,6 @@ use diesel::dsl::not;
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
 use diesel::{QueryableByName, SelectableHelper};
 use diesel_async::RunQueryDsl;
-use futures_util::TryStreamExt;
 use hubuum_domain::{ClassId, CollectionId, ObjectId};
 use hubuum_query::TraversalBudget;
 use hubuum_query::{DataType, FilterField, Operator, ParsedQueryParam, QueryOptions, SortParam};
@@ -569,23 +568,11 @@ pub async fn list_related_objects_for_roots(
                 "executing PostgreSQL relation graph query"
             );
             let rows = bind_raw_sql_query!(spec)
-                .load_stream::<RelatedObjectIncludeQueryRow>(connection)
+                .get_results::<RelatedObjectIncludeQueryRow>(connection)
                 .await?;
-            futures_util::pin_mut!(rows);
-            let mut retained = Vec::new();
-            let mut budget = hubuum_budget::LimitedWriter::new(
-                std::io::sink(),
-                hubuum_budget::ByteLimit::new(8 * 1024 * 1024),
-            );
-            while let Some(row) = rows.try_next().await? {
-                serde_json::to_writer(&mut budget, &row).map_err(|_| {
-                    PostgresStorageError::input_too_large(
-                        "Related export source exceeds 8 MiB; narrow the query",
-                    )
-                })?;
-                retained.push(row.into_storage()?);
-            }
-            Ok::<_, PostgresStorageError>(retained)
+            rows.into_iter()
+                .map(RelatedObjectIncludeQueryRow::into_storage)
+                .collect::<Result<Vec<_>, _>>()
         })
         .await
 }
@@ -640,23 +627,11 @@ pub async fn list_bidirectionally_related_objects_for_roots(
                 "executing PostgreSQL relation graph query"
             );
             let rows = bind_raw_sql_query!(spec)
-                .load_stream::<RelatedObjectForRootQueryRow>(connection)
+                .get_results::<RelatedObjectForRootQueryRow>(connection)
                 .await?;
-            futures_util::pin_mut!(rows);
-            let mut retained = Vec::new();
-            let mut budget = hubuum_budget::LimitedWriter::new(
-                std::io::sink(),
-                hubuum_budget::ByteLimit::new(8 * 1024 * 1024),
-            );
-            while let Some(row) = rows.try_next().await? {
-                serde_json::to_writer(&mut budget, &row).map_err(|_| {
-                    PostgresStorageError::input_too_large(
-                        "Related export source exceeds 8 MiB; narrow the query",
-                    )
-                })?;
-                retained.push(row.into_storage()?);
-            }
-            Ok::<_, PostgresStorageError>(retained)
+            rows.into_iter()
+                .map(RelatedObjectForRootQueryRow::into_storage)
+                .collect::<Result<Vec<_>, _>>()
         })
         .await
 }
@@ -1769,7 +1744,7 @@ impl ClassGraphQueryRow {
     }
 }
 
-#[derive(Clone, QueryableByName, serde::Serialize)]
+#[derive(Clone, QueryableByName)]
 struct ObjectGraphQueryRow {
     #[diesel(sql_type = diesel::sql_types::Integer)]
     ancestor_object_id: i32,
@@ -1854,7 +1829,7 @@ impl ObjectGraphQueryRow {
     }
 }
 
-#[derive(QueryableByName, serde::Serialize)]
+#[derive(QueryableByName)]
 struct RelatedObjectIncludeQueryRow {
     #[diesel(sql_type = diesel::sql_types::Integer)]
     root_object_id: i32,
@@ -1874,7 +1849,7 @@ impl RelatedObjectIncludeQueryRow {
     }
 }
 
-#[derive(QueryableByName, serde::Serialize)]
+#[derive(QueryableByName)]
 struct RelatedObjectForRootQueryRow {
     #[diesel(sql_type = diesel::sql_types::Integer)]
     root_object_id: i32,

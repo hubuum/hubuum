@@ -1,5 +1,3 @@
-use crate::StorageTaskClaimRequest;
-use crate::artifacts::VerifiedArtifact;
 use hubuum_budget::{ByteLimit, LimitedWriter};
 use std::{fmt, io};
 
@@ -10,12 +8,10 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    ApplicationFence, StorageError, StorageRemoteTargetHttpMethod, StorageRemoteTargetSubjectType,
-    StorageTask, StorageTaskCancellationOutcome, StorageTaskCancellationRequest,
-    StorageTaskDurations, StorageTaskExecutionAdmission, StorageTaskExecutionObservation,
-    StorageTaskKind, StorageTaskOutputLookup, StorageTaskRemoteDispatch, StorageTaskResumeOutcome,
-    StorageTaskResumeRequest, StorageTaskStatus, StorageTaskWait, StorageTaskWaitRequest,
-    StorageValidationError,
+    StorageError, StorageRemoteTargetHttpMethod, StorageRemoteTargetSubjectType, StorageTask,
+    StorageTaskCancellationOutcome, StorageTaskCancellationRequest, StorageTaskDurations,
+    StorageTaskExecutionAdmission, StorageTaskExecutionObservation, StorageTaskKind,
+    StorageTaskOutputLookup, StorageTaskRemoteDispatch, StorageTaskStatus, StorageValidationError,
 };
 
 /// Validated lease duration shared with a storage adapter.
@@ -69,28 +65,15 @@ impl fmt::Debug for StorageTaskClaimToken {
 pub struct StorageTaskLease {
     task_id: TaskId,
     token: StorageTaskClaimToken,
-    execution_fence: Option<ApplicationFence>,
 }
 
 impl StorageTaskLease {
     #[must_use]
     pub const fn new(task_id: TaskId, token: StorageTaskClaimToken) -> Self {
-        Self {
-            task_id,
-            token,
-            execution_fence: None,
-        }
+        Self { task_id, token }
     }
 
     #[must_use]
-    pub const fn with_execution_fence(mut self, fence: ApplicationFence) -> Self {
-        self.execution_fence = Some(fence);
-        self
-    }
-    pub const fn execution_fence(&self) -> Option<ApplicationFence> {
-        self.execution_fence
-    }
-
     pub const fn task_id(&self) -> TaskId {
         self.task_id
     }
@@ -256,8 +239,7 @@ impl StorageTaskActiveStatus {
 }
 
 /// A task status that permanently ends worker execution.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StorageTaskTerminalStatus {
     Succeeded,
     Failed,
@@ -473,55 +455,6 @@ impl StorageTaskTerminalUpdate {
     }
 }
 
-/// An existing deadline or a validated lifetime anchored by the adapter's
-/// successful publication clock. Restore uses existing deadlines unchanged.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StorageOutputAvailability(OutputAvailabilityAnchor);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum OutputAvailabilityAnchor {
-    Deadline(DateTime<Utc>),
-    AfterReady(chrono::Duration),
-}
-
-impl StorageOutputAvailability {
-    pub const fn deadline(deadline: DateTime<Utc>) -> Self {
-        Self(OutputAvailabilityAnchor::Deadline(deadline))
-    }
-
-    pub fn after_ready_seconds(seconds: u64) -> Result<Self, StorageError> {
-        let duration = i64::try_from(seconds)
-            .ok()
-            .and_then(chrono::Duration::try_seconds)
-            .filter(|duration| *duration > chrono::Duration::zero())
-            .ok_or_else(|| {
-                StorageError::invalid_input(
-                    "Output availability must be a positive supported duration",
-                )
-            })?;
-        Ok(Self(OutputAvailabilityAnchor::AfterReady(duration)))
-    }
-
-    pub fn expires_at(self, ready_at: DateTime<Utc>) -> Result<DateTime<Utc>, StorageError> {
-        match self.0 {
-            OutputAvailabilityAnchor::Deadline(deadline) => Ok(deadline),
-            OutputAvailabilityAnchor::AfterReady(duration) => {
-                ready_at.checked_add_signed(duration).ok_or_else(|| {
-                    StorageError::invalid_input(
-                        "Output availability exceeds the supported timestamp range",
-                    )
-                })
-            }
-        }
-    }
-}
-
-impl From<DateTime<Utc>> for StorageOutputAvailability {
-    fn from(deadline: DateTime<Utc>) -> Self {
-        Self::deadline(deadline)
-    }
-}
-
 /// Export artifact stored atomically with the terminal task transition.
 #[derive(Clone, PartialEq)]
 pub struct StorageExportTaskArtifact {
@@ -532,7 +465,7 @@ pub struct StorageExportTaskArtifact {
     warnings: Value,
     warning_count: i32,
     truncated: bool,
-    output_availability: StorageOutputAvailability,
+    output_expires_at: DateTime<Utc>,
     durations: StorageTaskDurations,
 }
 
@@ -554,16 +487,14 @@ impl StorageExportTaskArtifactIdentity {
 pub enum StorageExportTaskArtifactContent {
     Json(Value),
     Text(String),
-    Verified(VerifiedArtifact),
 }
 
 impl StorageExportTaskArtifactContent {
     #[must_use]
-    pub fn into_parts(self) -> (Option<Value>, Option<String>, Option<VerifiedArtifact>) {
+    pub fn into_parts(self) -> (Option<Value>, Option<String>) {
         match self {
-            Self::Json(output) => (Some(output), None, None),
-            Self::Text(output) => (None, Some(output), None),
-            Self::Verified(proof) => (None, None, Some(proof)),
+            Self::Json(output) => (Some(output), None),
+            Self::Text(output) => (None, Some(output)),
         }
     }
 }
@@ -595,7 +526,7 @@ impl StorageExportTaskArtifact {
         content: StorageExportTaskArtifactContent,
         metadata: Value,
         warnings: Value,
-        output_availability: impl Into<StorageOutputAvailability>,
+        output_expires_at: DateTime<Utc>,
     ) -> StorageExportTaskArtifactBuilder {
         StorageExportTaskArtifactBuilder {
             artifact: Self {
@@ -606,26 +537,23 @@ impl StorageExportTaskArtifact {
                 warnings,
                 warning_count: 0,
                 truncated: false,
-                output_availability: output_availability.into(),
+                output_expires_at,
                 durations: StorageTaskDurations::default(),
             },
         }
     }
 
+    #[must_use]
     pub fn into_parts(
         self,
-        ready_at: DateTime<Utc>,
-    ) -> Result<
+    ) -> (
+        StorageExportTaskArtifactIdentity,
+        StorageExportTaskArtifactContent,
+        StorageExportTaskArtifactReport,
+        DateTime<Utc>,
+        StorageTaskDurations,
+    ) {
         (
-            StorageExportTaskArtifactIdentity,
-            StorageExportTaskArtifactContent,
-            StorageExportTaskArtifactReport,
-            DateTime<Utc>,
-            StorageTaskDurations,
-        ),
-        StorageError,
-    > {
-        Ok((
             StorageExportTaskArtifactIdentity {
                 template_name: self.template_name,
                 content_type: self.content_type,
@@ -637,9 +565,9 @@ impl StorageExportTaskArtifact {
                 warning_count: self.warning_count,
                 truncated: self.truncated,
             },
-            self.output_availability.expires_at(ready_at)?,
+            self.output_expires_at,
             self.durations,
-        ))
+        )
     }
 }
 
@@ -692,41 +620,16 @@ impl StorageExportTaskArtifactBuilder {
 /// Backup artifact stored atomically with the terminal task transition.
 #[derive(Clone, PartialEq)]
 pub struct StorageBackupTaskArtifact {
-    document: StorageBackupTaskContent,
+    document: Vec<u8>,
     byte_size: i64,
     sha256: String,
-    output_availability: StorageOutputAvailability,
-}
-
-#[derive(Clone, PartialEq)]
-pub enum StorageBackupTaskContent {
-    Inline(Vec<u8>),
-    Verified(VerifiedArtifact),
+    output_expires_at: DateTime<Utc>,
 }
 
 impl StorageBackupTaskArtifact {
-    pub fn verified(
-        proof: VerifiedArtifact,
-        output_availability: impl Into<StorageOutputAvailability>,
-    ) -> Self {
-        let byte_size = proof.manifest().byte_size() as i64;
-        let sha256 = proof
-            .manifest()
-            .stream_digest()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        Self {
-            document: StorageBackupTaskContent::Verified(proof),
-            byte_size,
-            sha256,
-            output_availability: output_availability.into(),
-        }
-    }
-
     pub fn try_new(
         document: Vec<u8>,
-        output_availability: impl Into<StorageOutputAvailability>,
+        output_expires_at: DateTime<Utc>,
     ) -> Result<Self, StorageError> {
         let byte_size = i64::try_from(document.len()).map_err(|_| {
             StorageError::input_too_large("Backup artifact exceeds the supported byte-size range")
@@ -736,23 +639,21 @@ impl StorageBackupTaskArtifact {
             .map(|byte| format!("{byte:02x}"))
             .collect();
         Ok(Self {
-            document: StorageBackupTaskContent::Inline(document),
+            document,
             byte_size,
             sha256,
-            output_availability: output_availability.into(),
+            output_expires_at,
         })
     }
 
-    pub fn into_parts(
-        self,
-        ready_at: DateTime<Utc>,
-    ) -> Result<(StorageBackupTaskContent, i64, String, DateTime<Utc>), StorageError> {
-        Ok((
+    #[must_use]
+    pub fn into_parts(self) -> (Vec<u8>, i64, String, DateTime<Utc>) {
+        (
             self.document,
             self.byte_size,
             self.sha256,
-            self.output_availability.expires_at(ready_at)?,
-        ))
+            self.output_expires_at,
+        )
     }
 }
 
@@ -1086,22 +987,8 @@ impl StorageTaskFailure {
 /// Mandatory worker state-machine behavior for every selectable backend.
 #[async_trait]
 pub trait TaskExecutionStorage: Send + Sync {
-    /// Persist a bounded continuation under a live lease and release execution
-    /// capacity while retaining the task's admission and original deadline.
-    async fn wait_task(
-        &self,
-        request: StorageTaskWaitRequest,
-    ) -> Result<StorageTaskWait, StorageError>;
-
-    /// Queue the exact waiting continuation once. A normal scheduler claim is
-    /// still required; a matching stop request or deadline settles it instead.
-    async fn resume_task(
-        &self,
-        request: StorageTaskResumeRequest,
-    ) -> Result<StorageTaskResumeOutcome, StorageError>;
-
-    /// Persist an authorized request; queued and waiting cancellation is terminal
-    /// in the same transaction, while active execution retains its fenced lease.
+    /// Persist an authorized request; queued cancellation is terminal in the
+    /// same transaction, while active execution retains its fenced lease.
     async fn request_task_cancellation(
         &self,
         request: StorageTaskCancellationRequest,
@@ -1134,7 +1021,7 @@ pub trait TaskExecutionStorage: Send + Sync {
 
     async fn claim_next_task(
         &self,
-        request: StorageTaskClaimRequest,
+        lease_duration: StorageTaskLeaseDuration,
     ) -> Result<Option<StorageTaskClaim>, StorageError>;
 
     async fn renew_task_lease(
@@ -1199,7 +1086,7 @@ mod tests {
     fn backup_artifact_derives_size_and_digest_from_its_document() {
         let artifact = StorageBackupTaskArtifact::try_new(b"{}".to_vec(), chrono::Utc::now())
             .expect("small backup artifact should be valid");
-        let (_, byte_size, sha256, _) = artifact.into_parts(chrono::Utc::now()).unwrap();
+        let (_, byte_size, sha256, _) = artifact.into_parts();
 
         assert_eq!(byte_size, 2);
         assert_eq!(

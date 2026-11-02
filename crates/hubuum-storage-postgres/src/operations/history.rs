@@ -3,12 +3,10 @@ pub(crate) mod navigation;
 pub(crate) mod relations;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-use diesel::SelectableHelper;
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{
-    ClassId, CollectionId, HistoryRecordId, PrincipalId, PrincipalIdentity, ResourceRevision,
-    TaskId,
+    ClassId, CollectionId, HistoryRecordId, PrincipalId, ResourceRevision, TaskId,
 };
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
@@ -16,10 +14,9 @@ use hubuum_storage_core::{
     StorageClassSchemaPolicy, StorageCollection, StorageCollectionHistoryRecord,
     StorageExportTemplate, StorageExportTemplateDefinition, StorageExportTemplateHistoryRecord,
     StorageHistoryAsOfQuery, StorageHistoryCollectionScope, StorageHistoryListQuery,
-    StorageHistoryMetadata, StorageHistoryOperation, StorageHistoryPrincipalName,
-    StorageIdentityEvidence, StorageObject, StorageObjectHistoryAsOfQuery,
-    StorageObjectHistoryListQuery, StorageObjectHistoryNameQuery, StorageObjectHistoryRecord,
-    StoragePage, StorageRemoteTarget, StorageRemoteTargetDefinition,
+    StorageHistoryMetadata, StorageHistoryOperation, StorageHistoryPrincipalName, StorageObject,
+    StorageObjectHistoryAsOfQuery, StorageObjectHistoryListQuery, StorageObjectHistoryNameQuery,
+    StorageObjectHistoryRecord, StoragePage, StorageRemoteTarget, StorageRemoteTargetDefinition,
     StorageRemoteTargetHistoryRecord, StorageRemoteTargetHttpMethod, StorageRemoteTargetPolicy,
     StorageRemoteTargetSubjectType, StorageRemoteTargetTransport,
 };
@@ -34,10 +31,9 @@ mod name_tests;
 #[cfg(test)]
 mod population_tests;
 
-#[derive(diesel::Queryable, diesel::Selectable)]
+#[derive(diesel::Queryable)]
 #[diesel(table_name = crate::schema::collections_history)]
 struct CollectionHistoryRow {
-    logical_identity: Option<Value>,
     id: i32,
     name: String,
     description: String,
@@ -55,10 +51,9 @@ struct CollectionHistoryRow {
     revision: PostgresRevision,
 }
 
-#[derive(diesel::Queryable, diesel::Selectable)]
+#[derive(diesel::Queryable)]
 #[diesel(table_name = crate::schema::hubuumclass_history)]
 struct ClassHistoryRow {
-    logical_identity: Option<Value>,
     id: i32,
     name: String,
     collection_id: i32,
@@ -78,10 +73,9 @@ struct ClassHistoryRow {
     revision: PostgresRevision,
 }
 
-#[derive(diesel::Queryable, diesel::Selectable)]
+#[derive(diesel::Queryable)]
 #[diesel(table_name = crate::schema::hubuumobject_history)]
 struct ObjectHistoryRow {
-    logical_identity: Option<Value>,
     id: i32,
     name: String,
     collection_id: i32,
@@ -101,10 +95,9 @@ struct ObjectHistoryRow {
     revision: PostgresRevision,
 }
 
-#[derive(diesel::Queryable, diesel::Selectable)]
+#[derive(diesel::Queryable)]
 #[diesel(table_name = crate::schema::export_templates_history)]
 struct ExportTemplateHistoryRow {
-    logical_identity: Option<Value>,
     id: i32,
     collection_id: i32,
     name: String,
@@ -132,10 +125,9 @@ struct ExportTemplateHistoryRow {
     revision: PostgresRevision,
 }
 
-#[derive(diesel::Queryable, diesel::Selectable)]
+#[derive(diesel::Queryable)]
 #[diesel(table_name = crate::schema::remote_targets_history)]
 struct RemoteTargetHistoryRow {
-    logical_identity: Option<Value>,
     id: i32,
     collection_id: i32,
     class_id: Option<i32>,
@@ -178,19 +170,9 @@ macro_rules! metadata {
                 row.actor_kind.clone(),
             )
             .initiator_principal_id(row.initiator_user_id.map(PrincipalId::new).transpose()?)
-            .task_id(row.task_id.map(TaskId::new).transpose()?)
-            .with_logical_identity(history_identity(row.logical_identity.clone())?),
+            .task_id(row.task_id.map(TaskId::new).transpose()?),
         )
     }};
-}
-
-pub(super) fn history_identity(
-    value: Option<Value>,
-) -> Result<StorageIdentityEvidence, PostgresStorageError> {
-    let value = value
-        .ok_or_else(|| PostgresStorageError::database("History identity backfill is incomplete"))?;
-    serde_json::from_value(value)
-        .map_err(|error| PostgresStorageError::invalid_persisted_value("history identity", error))
 }
 
 fn project_history_metadata(
@@ -391,7 +373,7 @@ impl TryFrom<RemoteTargetHistoryRow> for StorageRemoteTargetHistoryRecord {
 
 pub async fn resolve_principal_names(
     runtime: &PostgresRuntime,
-    mut principal_ids: Vec<PrincipalIdentity>,
+    mut principal_ids: Vec<PrincipalId>,
 ) -> Result<Vec<StorageHistoryPrincipalName>, PostgresStorageError> {
     principal_ids.sort_unstable();
     principal_ids.dedup();
@@ -400,26 +382,24 @@ pub async fn resolve_principal_names(
     }
     let principal_ids = principal_ids
         .into_iter()
-        .map(|id| id.to_string())
+        .map(PrincipalId::id)
         .collect::<Vec<_>>();
     runtime
         .with_connection(async |connection| {
-            use crate::schema::principals::dsl::{name as principal_name, principals};
-            use diesel::dsl::sql;
-            use diesel::sql_types::Text;
-            let identity = sql::<Text>("logical_identity #>> '{subject,identity,identity}'");
+            use crate::schema::principals::dsl::{id, name as principal_name, principals};
+
             principals
-                .filter(identity.clone().eq_any(principal_ids))
-                .order(identity.clone().asc())
-                .select((identity, principal_name))
-                .load::<(String, String)>(connection)
-                .await?
+                .filter(id.eq_any(principal_ids))
+                .select((id, principal_name))
+                .load::<(i32, String)>(connection)
+                .await
+                .map_err(PostgresStorageError::from)?
                 .into_iter()
-                .map(|(identity, name)| {
-                    let identity = identity.parse().map_err(|_| {
-                        PostgresStorageError::database("Invalid principal identity")
-                    })?;
-                    Ok::<_, PostgresStorageError>(StorageHistoryPrincipalName::new(identity, name))
+                .map(|(principal_id, name)| {
+                    Ok::<_, PostgresStorageError>(StorageHistoryPrincipalName::new(
+                        PrincipalId::new(principal_id)?,
+                        name,
+                    ))
                 })
                 .collect()
         })
@@ -535,7 +515,6 @@ macro_rules! history_operations {
                         )
                     );
                     let rows = records
-                        .select(<$row>::as_select())
                         .load::<$row>(connection)
                         .await?
                         .into_iter()
@@ -560,7 +539,6 @@ macro_rules! history_operations {
                         .filter(valid_from.le(at))
                         .filter(valid_to.is_null().or(valid_to.gt(at)))
                         .order(history_id.desc())
-                        .select(<$row>::as_select())
                         .first::<$row>(connection)
                         .await
                         .optional()
@@ -662,7 +640,6 @@ pub async fn list_object_history(
                 )
             );
             let rows = records
-                .select(ObjectHistoryRow::as_select())
                 .load::<ObjectHistoryRow>(connection)
                 .await?
                 .into_iter()
@@ -735,7 +712,6 @@ pub async fn list_object_history_by_name(
                 )
             );
             let rows = records
-                .select(ObjectHistoryRow::as_select())
                 .load::<ObjectHistoryRow>(connection)
                 .await?
                 .into_iter()
@@ -811,7 +787,6 @@ pub async fn list_class_objects_as_of(
                 )
             );
             let rows = records
-                .select(ObjectHistoryRow::as_select())
                 .load::<ObjectHistoryRow>(connection)
                 .await?
                 .into_iter()
@@ -837,7 +812,6 @@ pub async fn get_object_history_as_of(
                 .filter(history::valid_from.le(at))
                 .filter(history::valid_to.is_null().or(history::valid_to.gt(at)))
                 .order(history::history_id.desc())
-                .select(ObjectHistoryRow::as_select())
                 .first::<ObjectHistoryRow>(connection)
                 .await
                 .optional()

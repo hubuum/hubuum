@@ -20,7 +20,6 @@ rust-api = "internal-application"
 [workspace]
 default-members = [".", "crates/hubuum-templates"]
 members = [
-    "crates/hubuum-artifacts",
     "crates/hubuum-budget",
     "crates/hubuum-auth-core",
     "crates/hubuum-auth-ldap",
@@ -92,7 +91,6 @@ serde_json = { version = "1", features = ["arbitrary_precision"] }
 sha2 = "0.11"
 hmac = "0.13"
 hubuum-budget = { path = "crates/hubuum-budget" }
-hubuum-artifacts = { path = "crates/hubuum-artifacts" }
 hubuum-auth-core = { path = "crates/hubuum-auth-core" }
 hubuum-auth-ldap = { path = "crates/hubuum-auth-ldap" }
 hubuum-computed-fields = { path = "crates/hubuum-computed-fields" }
@@ -107,7 +105,7 @@ hubuum-events-core = { path = "crates/hubuum-events-core", features = ["schema"]
 hubuum-outbound-http = { path = "crates/hubuum-outbound-http" }
 hubuum-query = { path = "crates/hubuum-query" }
 hubuum-secrets = { path = "crates/hubuum-secrets" }
-hubuum-storage-core = { path = "crates/hubuum-storage-core", features = ["openapi"] }
+hubuum-storage-core = { path = "crates/hubuum-storage-core" }
 hubuum-storage-memory = { path = "crates/hubuum-storage-memory" }
 hubuum-storage-postgres = { path = "crates/hubuum-storage-postgres" }
 hubuum-task-core = { path = "crates/hubuum-task-core" }
@@ -364,7 +362,3 @@ required-features = ["postgres-bench", "query-capture"]
 name = "computed_hash_criterion"
 harness = false
 required-features = ["postgres-bench"]
-
-# Keep SHA-256 throughput practical in debug backup/restore tests.
-[profile.dev.package.sha2]
-opt-level = 3

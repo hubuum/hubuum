@@ -240,7 +240,7 @@ async fn credential_import_consumption_commits_with_queue_admission_and_allows_i
         )
         .idempotency_key(Some(key))
         .request_hash(Some("b".repeat(64)))
-        .try_build()
+        .try_build(10)
         .unwrap()
         .with_approval(Some(StorageCredentialUse::new(
             f.claim.clone(),
@@ -250,8 +250,8 @@ async fn credential_import_consumption_commits_with_queue_admission_and_allows_i
             f.backend.create_task(request.clone()),
             f.backend.create_task(request)
         );
-        let first = crate::tests::asserts::expect_legacy_task(first.unwrap());
-        let second = crate::tests::asserts::expect_legacy_task(second.unwrap());
+        let first = first.unwrap();
+        let second = second.unwrap();
         assert_eq!(first.id(), second.id());
         assert!(
             f.backend

@@ -73,36 +73,7 @@ impl MemoryState {
             ResourceRevision::INITIAL,
         )
         .expect("admin group membership is valid");
-        let mut logical_identities = logical_identity::MemoryLogicalIdentities::default();
-        logical_identities.capture(&local_scope);
-        logical_identities.capture(&admin_principal);
-        logical_identities.capture(&admin_group);
-        logical_identities.capture(&root);
-        let root_identity = logical_identities.history(
-            &MemoryHistoryValue::Collection(root.clone()),
-            StorageHistoryOperation::Create,
-            None,
-        );
-        let deletion_control = DeletionControlState::empty(Uuid::new_v4(), Uuid::new_v4())
-            .expect("generated control identities");
-        let mut state = Self {
-            task_control: TaskControlState::initial(
-                deletion_control.lineage(),
-                deletion_control.epoch(),
-                TaskRetentionPolicy::disabled_default(),
-            )
-            .expect("generated task control identities"),
-            task_reapplication: None,
-            restore_repairs_pending: false,
-            task_purge_attempts: BTreeMap::new(),
-            next_task_purge_attempt: 1,
-            task_capacity: Default::default(),
-            artifacts: Default::default(),
-            application_control: ApplicationControlState::initial(&deletion_control),
-            pending_restore: false,
-            deletion_control,
-            runtime_registrations: BTreeMap::new(),
-            logical_identities,
+        Self {
             schema_repair_reports: Default::default(),
             generation: Arc::new(()),
             schema_history: Vec::new(),
@@ -193,7 +164,6 @@ impl MemoryState {
             event_delivery_claims: BTreeMap::new(),
             event_retention_batches: BTreeMap::new(),
             history: vec![MemoryHistoryEntry {
-                logical_identity: root_identity,
                 id: HistoryRecordId::new(1).expect("initial history id"),
                 value: MemoryHistoryValue::Collection(root),
                 operation: StorageHistoryOperation::Create,
@@ -215,10 +185,6 @@ impl MemoryState {
             maintenance_generation: 0,
             restore_instances: BTreeMap::new(),
             events: Vec::new(),
-        };
-        let key = (admin_principal_id.id(), admin_group_id.id());
-        let membership = state.memberships[&key].clone();
-        state.store_membership(key, membership);
-        state
+        }
     }
 }

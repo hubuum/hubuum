@@ -26,12 +26,8 @@ INTEGRATION = {
     "monitoring-fixture": "integration.monitoring_fixture",
     "event-transports": "integration.event_transports",
     "corpus": "integration.corpus",
-    "task-retention": "integration.task_retention",
     "atlas": "integration.atlas",
-    "scheduling-benchmark": "integration.scheduling_benchmark",
     "schema-budget": "integration.schema_budget",
-    "artifact-pipeline": "integration.artifact_pipeline",
-    "rust-tests": "integration.rust_tests",
     "class-field-discovery": "integration.class_field_discovery",
     "treetop-server": "support.treetop_server",
 }

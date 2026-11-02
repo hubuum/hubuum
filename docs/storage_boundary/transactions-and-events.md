@@ -179,8 +179,6 @@ for an exception.
   Worker-only transitions are `TaskExecutionStorage::admit_task_execution`,
   `TaskExecutionStorage::acknowledge_task_stop`,
   `TaskExecutionStorage::begin_remote_dispatch`,
-  `TaskExecutionStorage::wait_task`,
-  `TaskExecutionStorage::resume_task`,
   `TaskExecutionStorage::claim_next_task`,
   `TaskExecutionStorage::renew_task_lease`,
   `TaskExecutionStorage::recover_expired_task_leases`,
@@ -206,51 +204,6 @@ for an exception.
   ordinary domain lifecycle shortcut.
 - Retention: `TokenRetentionStorage::purge_expired_tokens` applies configured
   expiry and emits the token-purge semantics owned by the retention worker.
-- Application admission and recovery: `DeletionControlStorage::register_runtime_isolated`
-  records the trusted local process-isolation identity. `DeletionControlStorage::capture_application_execution`
-  validates live ownership and released application state, then invalidates any
-  prior drain acknowledgement before admitting work.
-  `DeletionControlStorage::capture_application_execution_with_maintenance` also
-  observes maintenance in the same protected operation; an inherited permit is
-  validated and preserved rather than refreshed. `DeletionControlStorage::acknowledge_runtime_drain`
-  acknowledges only an exact current application fence. `DeletionControlStorage::reapply_deletion_decisions`
-  rechecks all supported bindings, removes recovered closed history, and records
-  an application-specific receipt atomically. `DeletionControlStorage::release_application_exposure`
-  requires that exact receipt and its independently protected checkpoint identity;
-  it releases pending restore maintenance in the same transaction.
-  `DeletionControlStorage::recover_application_control` preserves newer compatible
-  authority, rotates local application identity and revokes only owners covered
-  by the caller's actual exclusive process-isolation proof. Unknown domains block.
-  Registration and drain housekeeping emit no application audit events. Physical
-  deletion transitions retain required canonical audit facts without erased payload.
-- Deletion authority maintenance: `DeletionControlStorage::commit_deletion_control`
-  persists a validated exact-predecessor transition under privileged authority.
-  `DeletionControlStorage::register_runtime` records bounded, restore-isolated
-  ownership before runtime work starts; `DeletionControlStorage::unregister_runtime`
-  consumes that ownership only after a confirmed shutdown.
-  `DeletionControlStorage::prepare_hot_object_history_deletion` checks the exact
-  predecessor and a closed UUID-bound history
-  copy before retaining its deletion intent, exact historical membership, and
-  requested/access-restricted canonical events in the same transaction.
-  `DeletionControlStorage::cleanup_hot_object_history` rechecks those fences and
-  commits exact-copy removal with its receipt and required audit fact in one transaction, including
-  reconciliation of a recovered copy whose prior outcome was already removed.
-  These operations retain only UUID selectors, ownership, copy outcomes, and
-  checkpoint identities outside logical application replacement. Independent
-  durable intent protection precedes cleanup; completion acknowledgement requires
-  independently protected removal evidence. This workflow does not release
-  application quarantine or erase other managed copies.
-  `DeletionControlStorage::observe_deletion_checkpoint` atomically records an
-  independently verified intent/completion observation and its canonical event.
-  The service retains the authenticated repository session and independently
-  protects required audit evidence before cleanup or completion acknowledgement.
-- Task policy maintenance: `TaskCapacityStorage::initialize_task_policy`
-  establishes deployment control state only once; subsequent initializers read
-  the existing policy. `TaskCapacityStorage::replace_task_policy` is an explicit
-  administrator action with a required revision token. Both serialize with
-  admission, retain control state across restore, and return the effective
-  revision. The application records the authorized administrator and resulting
-  revision through its common diagnostics.
 - Maintenance: `RestoreStorage::stage_restore_artifact`,
   `RestoreStorage::expire_restore_stage`,
   `RestoreStorage::start_restore_draining`, `RestoreStorage::apply_restore_replay`,
@@ -436,37 +389,3 @@ not a domain resource. It atomically replaces the shared override and publishes 
 commit-ordered wake-up on notification-capable adapters. The administrator handler
 logs the actor and enabled state; this operation does not create a domain audit
 event. Logical restores preserve the setting and portable backups exclude it.
-
-### Artifact workflow mutations
-
-`ArtifactStore::register_destination`, `ArtifactStore::stage`,
-`ArtifactStore::append`, `ArtifactStore::seal`, `ArtifactStore::publish`,
-`ArtifactStore::abort`, `ArtifactStore::cleanup`, and
-`TaskArtifactStore::bind_task` are context-free workflow operations. They change
-physical storage state and durable ownership, not ordinary domain resources.
-Task completion owns the terminal task event and atomic output publication.
-Cleanup retains obligations and reservations until bounded physical deletion
-finishes, independently of application task deletion and logical restore.
-
-## Protected task-control mutations
-
-`TaskQueueStorage::activate_task_submission` atomically acknowledges an exact
-protected admission generation. It consumes no fresh capacity or approval and
-emits creation provenance once. The following administrator/worker state-machine
-operations carry canonical protected authority and generation preconditions
-instead of ordinary domain mutation event contexts:
-
-- `TaskRetentionStorage::prepare_expired_task_outputs`
-- `TaskRetentionStorage::commit_task_control`
-- `TaskRetentionStorage::recover_task_control`
-- `TaskRetentionStorage::replace_task_retention_policy`
-- `TaskRetentionStorage::change_task_hold`
-- `TaskRetentionStorage::expire_task_receipts`
-- `TaskRetentionStorage::prepare_task_details_purge`
-- `TaskRetentionStorage::purge_task_details_batch`
-- `TaskRetentionStorage::reapply_task_retention`
-- `TaskRetentionStorage::backfill_task_receipts`
-
-Their immutable manifests, receipt generations, policy revisions, holds and
-independently authenticated checkpoints provide recovery provenance. Normal
-domain mutations retain their existing event-context requirements.

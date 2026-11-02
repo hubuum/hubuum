@@ -512,7 +512,6 @@ pub enum EntityType {
     ComputedFieldDefinition,
     ExternalIdentitySync,
     Restore,
-    Lifecycle,
 }
 
 impl EntityType {
@@ -541,7 +540,6 @@ impl EntityType {
         Self::ComputedFieldDefinition,
         Self::ExternalIdentitySync,
         Self::Restore,
-        Self::Lifecycle,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -570,7 +568,6 @@ impl EntityType {
             EntityType::ComputedFieldDefinition => "computed_field_definition",
             EntityType::ExternalIdentitySync => "external_identity_sync",
             EntityType::Restore => "restore",
-            EntityType::Lifecycle => "lifecycle",
         }
     }
 
@@ -600,7 +597,6 @@ impl EntityType {
             "computed_field_definition" => Ok(EntityType::ComputedFieldDefinition),
             "external_identity_sync" => Ok(EntityType::ExternalIdentitySync),
             "restore" => Ok(EntityType::Restore),
-            "lifecycle" => Ok(EntityType::Lifecycle),
             other => Err(EventCatalogError::UnknownEntityType(other.to_string())),
         }
     }
@@ -628,7 +624,6 @@ pub enum Action {
     Started,
     Validating,
     Running,
-    Waiting,
     Succeeded,
     Failed,
     PartiallySucceeded,
@@ -653,7 +648,6 @@ impl Action {
         Self::Started,
         Self::Validating,
         Self::Running,
-        Self::Waiting,
         Self::Succeeded,
         Self::Failed,
         Self::PartiallySucceeded,
@@ -678,7 +672,6 @@ impl Action {
             Action::Started => "started",
             Action::Validating => "validating",
             Action::Running => "running",
-            Action::Waiting => "waiting",
             Action::Succeeded => "succeeded",
             Action::Failed => "failed",
             Action::PartiallySucceeded => "partially_succeeded",
@@ -704,7 +697,6 @@ impl Action {
             "started" => Ok(Action::Started),
             "validating" => Ok(Action::Validating),
             "running" => Ok(Action::Running),
-            "waiting" => Ok(Action::Waiting),
             "succeeded" => Ok(Action::Succeeded),
             "failed" => Ok(Action::Failed),
             "partially_succeeded" => Ok(Action::PartiallySucceeded),
@@ -735,7 +727,6 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
         E::EventSink => &[A::Created, A::Updated, A::Deleted, A::Invoked],
         E::ExternalIdentitySync => &[A::Succeeded, A::Failed],
         E::Restore => &[A::Succeeded],
-        E::Lifecycle => &[A::Queued, A::Updated, A::Succeeded],
         E::Authentication => &[A::Updated, A::Revoked, A::Succeeded],
         E::RemoteTarget => &[A::Created, A::Updated, A::Deleted, A::Invoked],
         E::ClassRelation => &[A::Created, A::Updated, A::Deleted],
@@ -749,7 +740,6 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
             A::Started,
             A::Validating,
             A::Running,
-            A::Waiting,
             A::Succeeded,
             A::Failed,
             A::PartiallySucceeded,
@@ -1397,11 +1387,6 @@ pub struct EventSubscriptionFilter {
 
 impl EventSubscriptionFilter {
     pub fn matches(&self, event: &EventEnvelope) -> bool {
-        // The offline recovery milestone emits privileged audit evidence only.
-        // Lifecycle delivery needs its own reviewed safe projection and opt-in.
-        if event.entity_type() == EntityType::Lifecycle {
-            return false;
-        }
         matches_optional(
             &self.subject_principal_ids,
             event.subject().map(EventSubject::principal_id),
@@ -1823,13 +1808,11 @@ impl std::error::Error for AuditDocumentError {}
 
 /// A validated event mutation ready to be appended by a storage adapter.
 ///
-/// Storage assigns the database sequence and default occurrence time. Retained
-/// recovery facts may supply their original UUID and timestamp explicitly.
-/// Dispatch claim state stays storage-owned. Debug output never exposes
+/// Storage-owned columns such as the database id, occurrence timestamp, and
+/// dispatch claim state are intentionally absent. Debug output never exposes
 /// snapshots or metadata because those values can contain credentials.
 pub struct NewEvent {
     event_id: EventId,
-    occurred_at: Option<DateTime<Utc>>,
     entity_type: EntityType,
     entity_id: Option<EventEntityId>,
     entity_name: Option<String>,
@@ -1898,7 +1881,6 @@ impl NewEvent {
         }
         Ok(Self {
             event_id: EventId::new(),
-            occurred_at: None,
             entity_type,
             entity_id: None,
             entity_name: None,
@@ -1913,18 +1895,6 @@ impl NewEvent {
             trace_link: None,
             document,
         })
-    }
-
-    #[must_use]
-    pub fn with_recorded_identity(mut self, event_id: EventId, occurred_at: DateTime<Utc>) -> Self {
-        self.event_id = event_id;
-        self.occurred_at = Some(occurred_at);
-        self
-    }
-
-    #[must_use]
-    pub const fn occurred_at(&self) -> Option<DateTime<Utc>> {
-        self.occurred_at
     }
 
     #[must_use]
@@ -2269,7 +2239,6 @@ mod tests {
             Action::Started,
             Action::Validating,
             Action::Running,
-            Action::Waiting,
             Action::Succeeded,
             Action::Failed,
             Action::PartiallySucceeded,
@@ -2509,18 +2478,8 @@ mod tests {
     }
 
     #[test]
-    fn empty_subscription_filter_matches_ordinary_events() {
+    fn empty_subscription_filter_matches_any_event() {
         assert!(EventSubscriptionFilter::default().matches(&envelope()));
-    }
-
-    #[test]
-    fn lifecycle_audit_is_not_implicitly_deliverable() {
-        let event = envelope_builder()
-            .entity_type(EntityType::Lifecycle)
-            .action(Action::Queued)
-            .try_build()
-            .unwrap();
-        assert!(!EventSubscriptionFilter::default().matches(&event));
     }
 
     #[test]

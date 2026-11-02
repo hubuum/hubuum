@@ -193,7 +193,6 @@ fn scenario_asserts_an_effect(body: &str) -> bool {
 
 #[cfg(test)]
 const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
-    "DeletionControlStorage",
     "CollectionStorage",
     "ClassStorage",
     "ObjectStorage",
@@ -223,7 +222,6 @@ const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
     "EventHealthStorage",
     "EventRetentionStorage",
     "HistoryStorage",
-    "LogicalIdentityStorage",
     "InventoryStorage",
     "MetricsStorage",
     "OperationalStateStorage",
@@ -234,11 +232,7 @@ const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
     "CollectionAuthorizationQueryStorage",
     "RemoteTargetStorage",
     "TaskQueueStorage",
-    "TaskRetentionStorage",
-    "TaskCapacityStorage",
     "TaskExecutionStorage",
-    "ArtifactStore",
-    "TaskArtifactStore",
     "BackupSnapshotStorage",
     "RestoreStorage",
     "ImportStorage",

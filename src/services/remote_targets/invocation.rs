@@ -1,7 +1,3 @@
-use crate::events::EventContext;
-use hubuum_domain::{RemoteTargetId, ResourceId};
-use hubuum_storage_core::StorageTaskRemoteInvocation;
-
 use std::time::Duration;
 
 use hubuum_outbound_http::{OutboundMethod, OutboundRequest, OutboundUrlParts};
@@ -45,18 +41,6 @@ impl AuthorizedRemoteInvocation {
         let target = super::get_remote_target(backend, request.target_id.id()).await?;
         request.validate_target_revision(target.revision)?;
         Self::authorize(backend, actor, scopes, target, &request.subject).await
-    }
-
-    pub(crate) fn task_event(
-        &self,
-        context: EventContext,
-    ) -> Result<StorageTaskRemoteInvocation, ApiError> {
-        Ok(StorageTaskRemoteInvocation::new(
-            RemoteTargetId::new(self.target.id)?,
-            super::subject_type_to_storage(self.subject_type()),
-            ResourceId::new(self.subject_id())?,
-            context,
-        ))
     }
 
     pub(crate) fn target(&self) -> &RemoteTarget {

@@ -2,9 +2,8 @@
 //! a response wrapper that adds the actor's username and `as_of` query parsing.
 
 use crate::errors::ApiError;
-use crate::events::{Provenance, StoredProvenance};
+use crate::events::{PrincipalNames, Provenance, StoredProvenance};
 use crate::models::TemporalHistoryProvenance;
-use crate::services::history::CapturedPrincipalNames;
 pub use crate::services::history::access::{
     authorize_history_page, authorize_history_snapshot, can_read_deleted_history,
     readable_history_collection_ids,
@@ -27,18 +26,15 @@ impl<T> HistoryResponse<T>
 where
     T: Serialize + ToSchema + TemporalHistoryProvenance,
 {
-    pub(crate) fn new(entry: T, names: &CapturedPrincipalNames) -> Self {
+    pub(crate) fn new(entry: T, principal_names: &PrincipalNames) -> Self {
+        let actor_username = entry
+            .actor_id()
+            .and_then(|actor_id| principal_names.name(actor_id).map(ToOwned::to_owned));
         let provenance = StoredProvenance::from_actor_kind(entry.actor_kind())
             .with_actor_user_id(entry.actor_id())
             .with_initiator_user_id(entry.initiator_user_id())
             .with_task_id(entry.task_id())
-            .without_names();
-        let provenance = names.enrich(entry.logical_identity(), provenance);
-        let actor_username = provenance
-            .actor
-            .principal
-            .as_ref()
-            .and_then(|actor| actor.name.clone());
+            .resolve(principal_names);
         Self {
             entry,
             actor_username,
@@ -51,18 +47,13 @@ where
 pub(crate) async fn resolve_history_principal_names<T>(
     pool: &impl crate::storage::StorageContext,
     rows: &[T],
-) -> Result<CapturedPrincipalNames, ApiError>
+) -> Result<PrincipalNames, ApiError>
 where
     T: TemporalHistoryProvenance,
 {
     let principal_ids = rows
         .iter()
-        .flat_map(|row| {
-            ["/actor_principal_id", "/initiator_principal_id"].map(|path| {
-                row.logical_identity()
-                    .and_then(|identity| identity.principal_reference(path))
-            })
-        })
+        .flat_map(|row| [row.actor_id(), row.initiator_user_id()])
         .flatten()
         .collect();
     resolve_principal_names(pool, principal_ids).await
@@ -196,7 +187,6 @@ mod tests {
         );
         let timestamp = Utc::now();
         let visible = HubuumClassHistory {
-            logical_identity: None,
             id: 41,
             name: "visible-version".to_string(),
             collection_id: 73,

@@ -1,5 +1,4 @@
 use chrono::NaiveDateTime;
-use diesel::SelectableHelper;
 use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{AsChangeset, Insertable, Queryable, Selectable};
 use diesel_async::RunQueryDsl;
@@ -316,7 +315,6 @@ pub async fn list_export_templates_in_collection(
             }
             let rows = query
                 .order_by(id.asc())
-                .select(ExportTemplateRow::as_select())
                 .load::<ExportTemplateRow>(connection)
                 .await?;
             rows.into_iter()
@@ -342,7 +340,6 @@ pub async fn create_export_template(
 
                 let created = diesel::insert_into(export_templates)
                     .values(new_template)
-                    .returning(ExportTemplateRow::as_select())
                     .get_result::<ExportTemplateRow>(connection)
                     .await?;
                 let audit = append_export_template_audit(
@@ -380,7 +377,6 @@ pub async fn replace_export_template(
                 let before = export_templates
                     .filter(id.eq(template_id))
                     .for_update()
-                    .select(ExportTemplateRow::as_select())
                     .first::<ExportTemplateRow>(connection)
                     .await?;
                 assert_locked_revision_precondition(
@@ -394,7 +390,6 @@ pub async fn replace_export_template(
                 }
                 let updated = diesel::update(export_templates.filter(id.eq(template_id)))
                     .set(replacement)
-                    .returning(ExportTemplateRow::as_select())
                     .get_result::<ExportTemplateRow>(connection)
                     .await?;
                 let audit = append_export_template_audit(
@@ -428,7 +423,6 @@ pub async fn delete_export_template(
                 let before = export_templates
                     .filter(id.eq(template_id))
                     .for_update()
-                    .select(ExportTemplateRow::as_select())
                     .first::<ExportTemplateRow>(connection)
                     .await?;
                 assert_locked_revision_precondition(
@@ -462,7 +456,6 @@ async fn load_export_template_row(
 
     export_templates
         .filter(id.eq(template_id))
-        .select(ExportTemplateRow::as_select())
         .first::<ExportTemplateRow>(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -489,10 +482,7 @@ async fn load_export_template_rows(
             export_template_cursor_field(&FilterField::Id)?,
         )
     );
-    let rows = records
-        .select(ExportTemplateRow::as_select())
-        .load::<ExportTemplateRow>(connection)
-        .await?;
+    let rows = records.load::<ExportTemplateRow>(connection).await?;
     rows.into_iter()
         .map(ExportTemplateRow::into_storage)
         .collect()

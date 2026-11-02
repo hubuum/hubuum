@@ -20,14 +20,13 @@ use tracing::{Instrument, debug, info_span, warn};
 
 use serde::{Deserialize, Serialize};
 
-use crate::spool::SpoolFile;
 use crate::{MissingValue, SizeLimitedWriter, TemplateAutoEscape, TemplateError, TemplateLimits};
 
 pub const MAX_WORKER_HEAP_BYTES: usize = 128 * 1024 * 1024;
 pub(crate) const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const MAX_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
 pub(crate) const MAX_BATCH_TEMPLATES: usize = 130;
-pub const MAX_WORKER_EXECUTION_TIME: Duration = Duration::from_secs(5);
+const DEADLINE: Duration = Duration::from_secs(5);
 const MAX_CONCURRENT_WORKERS: usize = 4;
 const MAX_WAITING_WORKERS: usize = 16;
 static RUNTIME: OnceLock<Result<WorkerRuntime, String>> = OnceLock::new();
@@ -47,10 +46,6 @@ pub enum MissingDataPolicy {
 pub(crate) enum Operation {
     Syntax,
     Render,
-    Spool {
-        rows: crate::spool::RowFiles,
-        output: PathBuf,
-    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -84,8 +79,6 @@ pub struct RenderedTemplate {
     output: String,
     missing: Vec<MissingValue>,
     peak_heap_bytes: usize,
-    #[serde(default)]
-    output_bytes: u64,
 }
 impl RenderedTemplate {
     pub(crate) fn truncate_missing_values(&mut self, limit: usize) {
@@ -104,16 +97,11 @@ impl RenderedTemplate {
     pub fn into_parts(self) -> (String, Vec<MissingValue>) {
         (self.output, self.missing)
     }
-    pub(crate) fn set_output_bytes(&mut self, bytes: u64) {
-        self.output_bytes = bytes;
-    }
-
     pub(crate) fn new(output: String, missing: Vec<MissingValue>) -> Self {
         Self {
             output,
             missing,
             peak_heap_bytes: 0,
-            output_bytes: 0,
         }
     }
 }
@@ -162,7 +150,7 @@ impl<'a> TemplateExecution<'a> {
         self
     }
     pub fn max_output_bytes(mut self, value: usize) -> Self {
-        self.max_output_bytes = value;
+        self.max_output_bytes = value.min(MAX_OUTPUT_BYTES);
         self
     }
     pub async fn render(
@@ -176,54 +164,6 @@ impl<'a> TemplateExecution<'a> {
             .await?
             .pop()
             .ok_or_else(|| TemplateError::boundary("missing template worker result"))
-    }
-
-    /// Replay indexed rows in the existing isolated renderer and stream output
-    /// to a bounded file. The supervisor pins both files until the child is reaped.
-    pub async fn render_spooled(
-        self,
-        context: &serde_json::Value,
-        rows: Arc<crate::TemplateRows>,
-    ) -> Result<crate::RenderedSpool, TemplateError> {
-        let output = Arc::new(
-            SpoolFile::new()
-                .map_err(|_| TemplateError::boundary("cannot create template output spool"))?,
-        );
-        let descriptor = rows.descriptor()?;
-        let max_output_bytes = self.max_output_bytes;
-        if max_output_bytes as u64 > crate::spool::MAX_SPOOL_BYTES {
-            return Err(TemplateError::boundary(
-                "template output spool limit exceeded",
-            ));
-        }
-        let request = WorkerRequest {
-            operation: Operation::Spool {
-                rows: descriptor,
-                output: output.path().to_owned(),
-            },
-            templates: vec![self.into_request()],
-            context: Cow::Borrowed(context),
-            max_output_bytes,
-        };
-        let mut rendered = execute_pinned(request, Some((rows, output.clone()))).await?;
-        let rendered = rendered
-            .pop()
-            .ok_or_else(|| TemplateError::boundary("missing template output"))?;
-        if output
-            .as_file()
-            .metadata()
-            .map_err(|_| TemplateError::boundary("missing rendered spool"))?
-            .len()
-            != rendered.output_bytes
-        {
-            return Err(TemplateError::boundary("rendered spool length mismatch"));
-        }
-        Ok(crate::RenderedSpool {
-            file: output,
-            bytes: rendered.output_bytes,
-            missing: rendered.missing,
-            peak_heap_bytes: rendered.peak_heap_bytes,
-        })
     }
 
     fn source_bytes(&self) -> Option<usize> {
@@ -396,25 +336,8 @@ struct WorkerRuntime {
     capacity: Arc<Semaphore>,
     stopping: watch::Sender<bool>,
     stopped: watch::Receiver<bool>,
-    uncertain: Arc<AtomicBool>,
 }
-
-struct WorkerCompletion {
-    uncertain: Arc<AtomicBool>,
-    complete: bool,
-}
-
-impl Drop for WorkerCompletion {
-    fn drop(&mut self) {
-        if !self.complete {
-            self.uncertain.store(true, Ordering::Release);
-        }
-    }
-}
-type SpoolPins = (Arc<crate::TemplateRows>, Arc<SpoolFile>);
-
 struct Job {
-    spool_pins: Option<SpoolPins>,
     encoded: String,
     max_response_bytes: usize,
     expected_results: usize,
@@ -427,12 +350,6 @@ struct Job {
     command: Command,
 }
 impl WorkerRuntime {
-    fn is_idle(&self) -> bool {
-        self.capacity.available_permits() == MAX_CONCURRENT_WORKERS + MAX_WAITING_WORKERS
-            && !self.uncertain.load(Ordering::Acquire)
-            && (self.stopped.has_changed().is_ok() || *self.stopped.borrow())
-    }
-
     fn admit(&self, started: Instant) -> Result<OwnedSemaphorePermit, TemplateError> {
         self.capacity.clone().try_acquire_owned().map_err(|_| {
             event("overloaded", started);
@@ -449,8 +366,6 @@ impl WorkerRuntime {
             mpsc::channel::<Job>(MAX_CONCURRENT_WORKERS + MAX_WAITING_WORKERS);
         let (stopping, mut shutdown) = watch::channel(false);
         let (finished, stopped) = watch::channel(false);
-        let uncertain = Arc::new(AtomicBool::new(false));
-        let supervisor_uncertain = Arc::clone(&uncertain);
         std::thread::Builder::new().name("template-supervisor".into()).spawn(move || {
             runtime.block_on(async move {
                 let workers = Arc::new(Semaphore::new(MAX_CONCURRENT_WORKERS));
@@ -468,7 +383,7 @@ impl WorkerRuntime {
                         Some(job) = incoming.recv() => {
                             let span = job.span.clone();
                             let dispatcher = job.dispatcher.clone();
-                            running.spawn(supervise(job, workers.clone(), shutdown.clone(), Arc::clone(&supervisor_uncertain)).instrument(span).with_subscriber(dispatcher));
+                            running.spawn(supervise(job, workers.clone(), shutdown.clone()).instrument(span).with_subscriber(dispatcher));
                             debug_assert!(running.len() <= MAX_CONCURRENT_WORKERS + MAX_WAITING_WORKERS);
                         }
                         else => break,
@@ -491,60 +406,27 @@ impl WorkerRuntime {
             capacity,
             stopping,
             stopped,
-            uncertain,
         })
     }
 
-    async fn shutdown(&self) -> Result<(), TemplateError> {
+    async fn shutdown(&self) {
         self.capacity.close();
         let _ = self.stopping.send(true);
         let mut stopped = self.stopped.clone();
-        stopped
-            .wait_for(|value| *value)
-            .await
-            .map(|_| ())
-            .map_err(|_| {
-                TemplateError::boundary(
-                    "template supervisor stopped without confirming child cleanup",
-                )
-            })?;
-        if self.is_idle() {
-            Ok(())
-        } else {
-            Err(TemplateError::boundary(
-                "template worker cleanup could not be confirmed",
-            ))
-        }
+        let _ = stopped.wait_for(|value| *value).await;
     }
 }
 
 /// Stop admission and drain children before the application's telemetry/runtime
 /// shuts down. The supervisor is independent of individual HTTP runtimes.
-pub async fn shutdown_template_workers() -> Result<(), TemplateError> {
+pub async fn shutdown_template_workers() {
     SHUTTING_DOWN.store(true, Ordering::SeqCst);
     if let Some(Ok(runtime)) = RUNTIME.get() {
-        runtime.shutdown().await?;
+        runtime.shutdown().await;
     }
-    Ok(())
-}
-
-/// Whether every admitted job has finished, including cancelled callers' child
-/// processes and response decoding. Callers must independently stop new work
-/// before treating this snapshot as a completed drain.
-pub fn template_workers_idle() -> bool {
-    RUNTIME
-        .get()
-        .is_none_or(|runtime| runtime.as_ref().map_or(true, WorkerRuntime::is_idle))
 }
 
 async fn execute(request: WorkerRequest<'_>) -> Result<Vec<RenderedTemplate>, TemplateError> {
-    execute_pinned(request, None).await
-}
-
-async fn execute_pinned(
-    request: WorkerRequest<'_>,
-    spool_pins: Option<SpoolPins>,
-) -> Result<Vec<RenderedTemplate>, TemplateError> {
     let started = Instant::now();
     if SHUTTING_DOWN.load(Ordering::SeqCst) {
         return Err(TemplateError::boundary(
@@ -558,20 +440,16 @@ async fn execute_pinned(
     // Shutdown may have raced the first lazy initialization. Never submit work
     // to a supervisor that was not yet visible to the shutdown caller.
     if SHUTTING_DOWN.load(Ordering::SeqCst) {
-        runtime.shutdown().await?;
+        runtime.shutdown().await;
         return Err(TemplateError::boundary(
             "template supervisor is shutting down",
         ));
     }
     let capacity = runtime.admit(started)?;
-    let max_response_bytes = if spool_pins.is_some() {
-        1024 * 1024
-    } else {
-        request
-            .max_output_bytes
-            .saturating_mul(6)
-            .saturating_add(1024 * 1024)
-    };
+    let max_response_bytes = request
+        .max_output_bytes
+        .saturating_mul(6)
+        .saturating_add(1024 * 1024);
     // Borrowed input is encoded into a size-bounded buffer before transferring
     // ownership. No unbounded clone of the caller's context is made.
     let mut encoded = SizeLimitedWriter::new(MAX_REQUEST_BYTES);
@@ -584,32 +462,14 @@ async fn execute_pinned(
         .map_err(|_| TemplateError::boundary("invalid template protocol input"))?;
     let mut command = Command::new(worker_executable()?);
     command.env_clear();
-    #[cfg(unix)]
-    if let Some((rows, output)) = &spool_pins {
-        let [data, index] = rows.raw_fds();
-        let descriptors = [data, index, output.raw_fd()];
-        // SAFETY: only async-signal-safe fcntl runs after fork. The supervisor
-        // pins all three files until the child is reaped; parent CLOEXEC stays set.
-        unsafe {
-            command.pre_exec(move || {
-                for descriptor in descriptors {
-                    if libc::fcntl(descriptor, libc::F_SETFD, 0) == -1 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                }
-                Ok(())
-            });
-        }
-    }
     let (response, result) = oneshot::channel();
     let span = info_span!("template_execution", operation_id = NEXT_OPERATION.fetch_add(1, Ordering::Relaxed), operation = ?request.operation, pid = tracing::field::Empty);
     let job = Job {
-        spool_pins,
         encoded,
         max_response_bytes,
         expected_results: request.templates.len(),
         started,
-        deadline: started + MAX_WORKER_EXECUTION_TIME,
+        deadline: started + DEADLINE,
         response,
         capacity,
         span,
@@ -627,21 +487,8 @@ async fn execute_pinned(
         .map_err(|_| TemplateError::boundary("template supervisor unavailable"))?
 }
 
-async fn supervise(
-    mut job: Job,
-    workers: Arc<Semaphore>,
-    mut shutdown: watch::Receiver<bool>,
-    uncertain: Arc<AtomicBool>,
-) {
+async fn supervise(mut job: Job, workers: Arc<Semaphore>, mut shutdown: watch::Receiver<bool>) {
     let _capacity = job.capacity;
-    let _spool_pins = job.spool_pins;
-    // This guard drops before capacity: a panic cannot transiently advertise
-    // an idle runtime before recording that child cleanup is uncertain.
-    let mut completion = WorkerCompletion {
-        uncertain: Arc::clone(&uncertain),
-        complete: false,
-    };
-    async {
     event("admitted", job.started);
     let worker = tokio::select! {
         biased;
@@ -750,9 +597,6 @@ async fn supervise(
     // Always reap before releasing either admission permit, even when the
     // request's future or its entire HTTP runtime has already disappeared.
     let reaped = child.wait().await;
-    if reaped.is_err() {
-        uncertain.store(true, Ordering::Release);
-    }
     debug!(status = ?reaped, "Template worker reaped");
     let result = match result {
         Ok(bytes) => {
@@ -809,12 +653,7 @@ async fn supervise(
         ("completed", result)
     };
     event(kind, job.started);
-    // Release input files before waking a caller that can begin staging the
-    // rendered output. Their byte reservations must not overlap that transfer.
-    drop(_spool_pins);
     let _ = job.response.send(result);
-    }.await;
-    completion.complete = true;
 }
 
 #[cfg(test)]
