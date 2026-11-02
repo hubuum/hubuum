@@ -293,3 +293,26 @@ class PublicationGateTests(unittest.TestCase):
         self.assertIn("needs.changes.outputs.run_container == 'true'", contracts)
         self.assertIn("needs.changes.outputs.run_default_suite != 'true'", contracts)
         self.assertIn("cargo test --bin hubuum-server --locked", contracts)
+
+
+class ProjectBranchTests(unittest.TestCase):
+    def test_project_pushes_trigger_validation(self):
+        for name in ("ci.yml", "regex-fuzz.yml"):
+            with self.subTest(workflow=name):
+                workflow = (ROOT / ".github/workflows" / name).read_text()
+                push = workflow.split("  push:\n", 1)[1]
+                self.assertIn('"project/**"', push.split("jobs:", 1)[0])
+
+    def test_project_pushes_keep_container_validation_and_required_gate(self):
+        for name in ("container-build", "ci-gate"):
+            with self.subTest(job=name):
+                condition = job(name).split("    if: >-\n", 1)[1].split("    needs:", 1)[0]
+                self.assertIn("startsWith(github.ref, 'refs/heads/project/')", condition)
+
+    def test_project_pushes_cannot_publish_main_images_or_release_artifacts(self):
+        for name in ("build-main-linux-artifacts", "build-main-native-artifacts",
+                     "publish-main-container-images", "publish-main-container-manifests"):
+            with self.subTest(job=name):
+                condition = job(name).split("    if: >-\n", 1)[1].split("    runs-on:", 1)[0]
+                self.assertIn("github.ref == 'refs/heads/main'", condition)
+                self.assertNotIn("refs/heads/project/", condition)

@@ -4,6 +4,43 @@ To edit or preview the documentation website, use the
 [documentation workflow](contributing/documentation.md). The site builds from
 the Markdown in `docs/` using the pinned Zensical container.
 
+## Dedicated project branches
+
+Every GitHub project declares its integration branch in the project README.
+Project implementation and project-only support PRs target that branch;
+unrelated work targets `main`. Merge `main` into the project branch regularly,
+and promote an agreed release milestone through a reviewed integration PR.
+Independent fixes needed by both branches land on `main` first.
+
+[Project #3](https://github.com/orgs/hubuum/projects/3), Workload capacity and data
+lifecycle, targets
+[`project/workload-lifecycle`](https://github.com/hubuum/hubuum/tree/project/workload-lifecycle).
+Correctness CI runs for `project/**` pushes and PRs. Stable release publication,
+`main` container tags, and published documentation retain their existing targets.
+
+### Separating project #3 from main
+
+The complete pre-separation tree is preserved at `ffbd4420` on the project branch.
+The stable candidate uses `v0.0.21` plus the independent fixes from PRs #537, #543,
+PRs #554, #555 and #560. Project SQL migrations remain unchanged in the preserved
+project history and branch; the stable build does not package or apply them.
+
+This source separation is **not a database downgrade**. Databases that have run
+project migrations must continue using the project build and retain their
+independent deletion authority, recovery material and keys. Do not remove
+migration records, run project down migrations, or restore an older snapshot to
+bypass deletion decisions. The stable server rejects newer schema versions;
+its migration command rejects unknown applied migrations before making changes.
+Stable installations at `v0.0.21` can continue on the stable line.
+
+After the rollback PR merges, merge its **actual main commit** into the project
+branch, resolve the project removals by restoring the preserved project tree,
+and commit that resolution. Verify that all project changes appear in the
+project-to-main diff. Reverting changes on main does not erase their ancestry;
+branching from the old tip alone cannot make those changes merge back later.
+Keep this integration step tied to the actual merged commit, including when the
+rollback PR is squash-merged.
+
 ## Python tooling
 
 Repository Python scripts and tests require **Python 3.11 or newer**, available
