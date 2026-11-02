@@ -77,12 +77,7 @@ impl TaskAccounting {
             task_id: Some(task.id),
             outstanding: !task.status.is_terminal(),
             executing: task.status.is_active() && task.claim_token.is_some(),
-            resident_input: task
-                .request_payload
-                .as_ref()
-                .map(json_bytes)
-                .transpose()?
-                .unwrap_or(0),
+            resident_input: task_input_bytes(task)?,
             resident_output: 0,
             cumulative_input: 0,
             cumulative_output: 0,
@@ -96,7 +91,7 @@ impl TaskAccounting {
 enum CapacityChange {
     Admission,
     Claim,
-    Output,
+    Resident,
 }
 
 #[derive(Default)]
@@ -120,6 +115,20 @@ fn json_bytes(value: &impl serde::Serialize) -> Result<u64, StorageError> {
     serde_json::to_writer(&mut size, value)
         .map_err(|error| StorageError::internal(error.to_string()))?;
     Ok(size.0)
+}
+
+fn task_input_bytes(task: &MemoryTaskRecord) -> Result<u64, StorageError> {
+    task.request_payload
+        .as_ref()
+        .map(json_bytes)
+        .transpose()?
+        .unwrap_or(0)
+        .checked_add(
+            task.checkpoint
+                .as_ref()
+                .map_or(0, StorageTaskCheckpoint::byte_size),
+        )
+        .ok_or_else(|| StorageError::internal("Task byte accounting overflow"))
 }
 
 fn unknown_identity() -> StorageError {
@@ -444,12 +453,7 @@ impl MemoryState {
             entry.task_id = Some(task.id);
             entry.outstanding = !task.status.is_terminal();
             entry.executing = task.status.is_active() && task.claim_token.is_some();
-            entry.resident_input = task
-                .request_payload
-                .as_ref()
-                .map(json_bytes)
-                .transpose()?
-                .unwrap_or(0);
+            entry.resident_input = task_input_bytes(task)?;
             let output_bytes = self.task_output_bytes(task.id)?;
             if !capacity.partial || output_bytes > 0 {
                 entry.resident_output = output_bytes;
@@ -514,7 +518,7 @@ impl MemoryState {
                 .owners
                 .get(&identity)
                 .ok_or_else(unknown_identity)?,
-            CapacityChange::Output,
+            CapacityChange::Resident,
         )
     }
 
@@ -578,6 +582,25 @@ impl MemoryState {
         Ok(())
     }
 
+    pub(super) fn account_task_checkpoint(&mut self, id: TaskId) -> Result<(), StorageError> {
+        let identity = self.task_identity(id)?;
+        let capacity = self.task_accounting_snapshot()?;
+        let entry = capacity
+            .owners
+            .get(&identity)
+            .ok_or_else(unknown_identity)?;
+        let previous_bytes = self
+            .task_capacity
+            .owners
+            .get(&identity)
+            .map_or(0, |entry| entry.resident_input);
+        if entry.resident_input > previous_bytes {
+            capacity.check(entry, CapacityChange::Resident)?;
+        }
+        self.task_capacity = capacity;
+        Ok(())
+    }
+
     pub(super) fn account_task_output(&mut self, id: TaskId) -> Result<(), StorageError> {
         let identity = self.task_identity(id)?;
         let mut capacity = self.task_accounting_snapshot()?;
@@ -591,7 +614,7 @@ impl MemoryState {
             .get(&identity)
             .map_or(0, |entry| entry.resident_output);
         if entry.resident_output > previous_bytes {
-            capacity.check(entry, CapacityChange::Output)?;
+            capacity.check(entry, CapacityChange::Resident)?;
         }
         let entry = capacity.owners.get_mut(&identity).expect("known owner");
         entry.cumulative_output = entry

@@ -464,6 +464,7 @@ pub fn persisted_test_task_request(
         crate::models::TaskStatus::Queued => hubuum_storage_core::StorageTaskStatus::Queued,
         crate::models::TaskStatus::Validating => hubuum_storage_core::StorageTaskStatus::Validating,
         crate::models::TaskStatus::Running => hubuum_storage_core::StorageTaskStatus::Running,
+        crate::models::TaskStatus::Waiting => hubuum_storage_core::StorageTaskStatus::Waiting,
         crate::models::TaskStatus::Succeeded => hubuum_storage_core::StorageTaskStatus::Succeeded,
         crate::models::TaskStatus::Failed => hubuum_storage_core::StorageTaskStatus::Failed,
         crate::models::TaskStatus::PartiallySucceeded => {
@@ -486,6 +487,7 @@ pub fn persisted_internal_reindex_task_request(
         crate::models::TaskStatus::Queued => hubuum_storage_core::StorageTaskStatus::Queued,
         crate::models::TaskStatus::Validating => hubuum_storage_core::StorageTaskStatus::Validating,
         crate::models::TaskStatus::Running => hubuum_storage_core::StorageTaskStatus::Running,
+        crate::models::TaskStatus::Waiting => hubuum_storage_core::StorageTaskStatus::Waiting,
         crate::models::TaskStatus::Succeeded => hubuum_storage_core::StorageTaskStatus::Succeeded,
         crate::models::TaskStatus::Failed => hubuum_storage_core::StorageTaskStatus::Failed,
         crate::models::TaskStatus::PartiallySucceeded => {

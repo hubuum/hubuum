@@ -607,6 +607,8 @@ impl MemoryState {
         );
         let now = Utc::now();
         let task = MemoryTaskRecord {
+            checkpoint: None,
+            wait_token: None,
             control: StorageTaskControl::new(StorageTaskKind::SchemaValidation),
             id: task_id,
             kind: StorageTaskKind::SchemaValidation,

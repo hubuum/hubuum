@@ -14,6 +14,14 @@ CANDIDATE = """ALTER TABLE tasks DROP CONSTRAINT tasks_kind_check; -- hubuum-com
 ALTER TABLE tasks ADD CONSTRAINT tasks_kind_check CHECK (kind IN ('import', 'export', 'schema_validation')) NOT VALID;
 ALTER TABLE tasks VALIDATE CONSTRAINT tasks_kind_check;
 """
+INLINE_BASELINE = """CREATE TABLE public.tasks (
+    id SERIAL PRIMARY KEY,
+    kind VARCHAR NOT NULL CHECK (
+        kind IN ('import', 'export')
+    ),
+    description TEXT
+);
+"""
 
 
 class ReplacementTests(unittest.TestCase):
@@ -23,6 +31,42 @@ class ReplacementTests(unittest.TestCase):
     def test_unrelated_multi_column_additions_preserve_existing_check(self):
         later = "ALTER TABLE tasks ADD COLUMN attempts INT, ADD CONSTRAINT attempts_positive CHECK (attempts >= 0);"
         self.assertEqual(MODULE.approved_replacements([BASELINE, later], CANDIDATE), {"TASKS:TASKS_KIND_CHECK"})
+
+    def test_inline_create_table_check_supplies_its_default_name(self):
+        self.assertEqual(MODULE.approved_replacements([INLINE_BASELINE], CANDIDATE), {"TASKS:TASKS_KIND_CHECK"})
+
+    def test_inline_check_still_requires_strict_widening(self):
+        for candidate in (CANDIDATE.replace("'import', 'export', ", ""), CANDIDATE.replace("CHECK (kind", "CHECK (name")):
+            with self.subTest(candidate=candidate):
+                self.assertEqual(MODULE.approved_replacements([INLINE_BASELINE], candidate), set())
+
+    def test_ambiguous_or_unsupported_inline_checks_fail_closed(self):
+        long_table = "tasks" * 13
+        cases = {
+            "named": INLINE_BASELINE.replace("NOT NULL CHECK", "NOT NULL CONSTRAINT chosen_name CHECK"),
+            "multiple_checks": INLINE_BASELINE.replace("    ),", "    ) CHECK (kind <> 'other'),"),
+            "different_column": INLINE_BASELINE.replace("kind IN", "description IN"),
+            "arbitrary_expression": INLINE_BASELINE.replace("kind IN ('import', 'export')", "kind IN ('import', 'export') OR true"),
+            "explicit_name_collision": INLINE_BASELINE.replace("description TEXT", "description TEXT, CONSTRAINT tasks_kind_check CHECK (id > 0)"),
+            "truncated_name": INLINE_BASELINE.replace("tasks", long_table),
+        }
+        for name, baseline in cases.items():
+            with self.subTest(name=name):
+                candidate = CANDIDATE.replace("tasks", long_table) if name == "truncated_name" else CANDIDATE
+                self.assertEqual(MODULE.approved_replacements([baseline], candidate), set())
+
+    def test_later_schema_changes_invalidate_inline_proof_in_sql_order(self):
+        changes = (
+            "ALTER TABLE tasks DROP CONSTRAINT tasks_kind_check;",
+            BASELINE.replace("'export'", "'backup'"),
+            "ALTER TABLE tasks RENAME COLUMN kind TO previous_kind;",
+            "DROP TABLE tasks;",
+        )
+        for change in changes:
+            with self.subTest(change=change):
+                self.assertEqual(MODULE.approved_replacements([INLINE_BASELINE + change], CANDIDATE), set())
+        # A later recreated table owns its new column CHECK, not an earlier one.
+        self.assertEqual(MODULE.approved_replacements([BASELINE.replace("'export'", "'backup'") + "\nDROP TABLE tasks;\n" + INLINE_BASELINE], CANDIDATE), {"TASKS:TASKS_KIND_CHECK"})
 
     def test_unsafe_or_unproven_replacements_are_rejected(self):
         cases = {

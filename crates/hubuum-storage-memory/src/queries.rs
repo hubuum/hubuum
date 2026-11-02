@@ -474,6 +474,8 @@ impl ComputedFieldStorage for MemoryStorage {
             .checked_add(1)
             .ok_or_else(|| StorageError::internal("Task identity exhausted"))?;
         let record = MemoryTaskRecord {
+            checkpoint: None,
+            wait_token: None,
             id: task_id,
             kind: StorageTaskKind::Reindex,
             status: StorageTaskStatus::Queued,

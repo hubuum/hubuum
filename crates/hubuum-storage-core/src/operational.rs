@@ -71,6 +71,7 @@ impl StorageOperationalTaskStatusCounts {
                 active.queued,
                 active.validating,
                 active.running,
+                active.waiting,
                 terminal.succeeded,
                 terminal.failed,
                 terminal.partially_succeeded,
@@ -111,6 +112,11 @@ impl StorageOperationalTaskStatusCounts {
     }
 
     #[must_use]
+    pub const fn waiting(self) -> i64 {
+        self.active.waiting
+    }
+
+    #[must_use]
     pub const fn succeeded(self) -> i64 {
         self.terminal.succeeded
     }
@@ -137,6 +143,7 @@ pub struct StorageOperationalTaskActiveCounts {
     queued: i64,
     validating: i64,
     running: i64,
+    waiting: i64,
 }
 
 impl StorageOperationalTaskActiveCounts {
@@ -144,12 +151,17 @@ impl StorageOperationalTaskActiveCounts {
         queued: i64,
         validating: i64,
         running: i64,
+        waiting: i64,
     ) -> Result<Self, StorageValidationError> {
-        checked_nonnegative_sum(&[queued, validating, running], "active task counts")?;
+        checked_nonnegative_sum(
+            &[queued, validating, running, waiting],
+            "active task counts",
+        )?;
         Ok(Self {
             queued,
             validating,
             running,
+            waiting,
         })
     }
 }
@@ -879,13 +891,24 @@ mod tests {
     use super::*;
     use hubuum_domain::{CollectionId, ExportTemplateId};
 
+    #[test]
+    fn task_status_totals_include_waiting_tasks() {
+        let counts = StorageOperationalTaskStatusCounts::try_new(
+            3,
+            StorageOperationalTaskActiveCounts::try_new(0, 0, 1, 2).unwrap(),
+            StorageOperationalTaskTerminalCounts::try_new(0, 0, 0, 0).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(counts.waiting(), 2);
+    }
+
     fn task_statuses(
         queued: i64,
         validating: i64,
         running: i64,
     ) -> StorageOperationalTaskStatusCounts {
         let active =
-            StorageOperationalTaskActiveCounts::try_new(queued, validating, running).unwrap();
+            StorageOperationalTaskActiveCounts::try_new(queued, validating, running, 0).unwrap();
         let terminal = StorageOperationalTaskTerminalCounts::try_new(0, 0, 0, 0).unwrap();
         StorageOperationalTaskStatusCounts::try_new(queued + validating + running, active, terminal)
             .unwrap()

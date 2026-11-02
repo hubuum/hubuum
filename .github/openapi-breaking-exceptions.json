@@ -2,6 +2,29 @@
   "schema_version": 1,
   "exceptions": [
     {
+      "id": "v0.0.21-durable-task-waiting-status",
+      "baseline": "v0.0.21",
+      "expires": "2027-01-31",
+      "reason": "The durable-wait foundation adds waiting to the shared task-status response enum. Only admitted, uncommitted export/backup continuations may enter that state, and built-in producers remain dormant. Clients with closed response enums must accept the new value before activation.",
+      "migration": "Regenerate clients from OpenAPI or extend task-status enums before enabling a wait-capable consumer.",
+      "changelog_entry": "**Breaking (REST clients with closed task-status enums):** task responses and cancellation requests support `waiting`.",
+      "fingerprints": [
+        "067de83caaf0",
+        "0bd35f50549a",
+        "515c2328a0e5",
+        "5c42f17e3648",
+        "8e882be852fb",
+        "97b737dcd6fd",
+        "9a5e7be26945",
+        "abf1c32a0925",
+        "c2e6a921bc21",
+        "d1d5d30e5656",
+        "deb121e8f6b5",
+        "eba9e7bae2e6",
+        "ec148ae56749"
+      ]
+    },
+    {
       "id": "v0.0.20-schema-profiling-task-kind",
       "baseline": "v0.0.20",
       "expires": "2027-01-31",

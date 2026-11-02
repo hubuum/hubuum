@@ -4,9 +4,10 @@ use hubuum_storage_core::{
     ProtectedTaskAdmission, StorageBackupReplay, StorageSchemaProfileArtifact,
     StorageTaskCancellationOutcome, StorageTaskCancellationRequest, StorageTaskCapacitySnapshot,
     StorageTaskExecutionAdmission, StorageTaskExecutionObservation, StorageTaskPolicy,
-    StorageTaskPolicyUpdate, StorageTaskRemoteDispatch, StorageTaskSubmissionOutcome,
-    TaskActivationOutcome, TaskAdmissionPolicy, TaskCapacityStorage, TaskSubmissionLookup,
-    TaskSubmissionResolution,
+    StorageTaskPolicyUpdate, StorageTaskRemoteDispatch, StorageTaskResumeOutcome,
+    StorageTaskResumeRequest, StorageTaskSubmissionOutcome, StorageTaskWait,
+    StorageTaskWaitRequest, TaskActivationOutcome, TaskAdmissionPolicy, TaskCapacityStorage,
+    TaskSubmissionLookup, TaskSubmissionResolution,
 };
 
 #[async_trait]
@@ -261,6 +262,32 @@ impl TaskQueueStorage for StorageHandle {
 
 #[async_trait]
 impl TaskExecutionStorage for StorageHandle {
+    async fn wait_task(
+        &self,
+        request: StorageTaskWaitRequest,
+    ) -> Result<StorageTaskWait, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::TaskExecution,
+            "wait_task",
+            async { dispatch_backend!(self, |backend| backend.wait_task(request).await) },
+        )
+        .await
+    }
+
+    async fn resume_task(
+        &self,
+        request: StorageTaskResumeRequest,
+    ) -> Result<StorageTaskResumeOutcome, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::TaskExecution,
+            "resume_task",
+            async { dispatch_backend!(self, |backend| backend.resume_task(request).await) },
+        )
+        .await
+    }
+
     async fn get_schema_profile_output(
         &self,
         task_id: TaskId,

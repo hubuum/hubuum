@@ -375,6 +375,8 @@ fn history_private_fields(section: StorageBackupHistorySection) -> &'static [&'s
             "receipt_legacy",
             "admission_event",
             "details_purge_pending",
+            "task_checkpoint",
+            "wait_token",
         ],
         StorageBackupHistorySection::AuditEvents => &["fanout_locked_until", "fanout_claim_token"],
         StorageBackupHistorySection::ImportResults => &["execution_index", "execution_claim_token"],

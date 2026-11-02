@@ -123,6 +123,7 @@ Generic statuses are defined in [src/models/task.rs](https://github.com/hubuum/h
 - `queued`
 - `validating`
 - `running`
+- `waiting`
 - `succeeded`
 - `failed`
 - `partially_succeeded`
@@ -141,6 +142,12 @@ For imports:
 - `validating` means a worker has claimed it and is planning/validating the import
 - `running` means planning is complete and execution is underway, or a dry-run is materializing results
 - terminal states are set after results are written and summary counters are finalized
+
+The storage contract also supports durable `waiting` for checkpointed export and
+backup tasks. Waiting retains admission and the original deadline while releasing
+execution occupancy. Current built-in executors reject stored checkpoints they
+cannot interpret; this foundation does not activate a provider integration.
+See [the waiting protocol and compatibility limits](task_admission.md#durable-waiting-foundation).
 
 ## How tasks enter the system
 
@@ -492,6 +499,7 @@ This endpoint exports:
 - configured worker counts
 - poll interval
 - task counts by status
+- waiting tasks separately from queued work and occupied execution
 - task counts by kind
 - total task events
 - total import result rows

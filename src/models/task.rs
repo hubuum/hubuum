@@ -2,7 +2,7 @@ use std::fmt;
 
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
-use hubuum_storage_core::StorageIdentityEvidence;
+use hubuum_storage_core::{StorageIdentityEvidence, StorageTaskCheckpoint};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use utoipa::{PartialSchema, ToSchema};
 
@@ -63,6 +63,7 @@ pub enum TaskStatus {
     Queued,
     Validating,
     Running,
+    Waiting,
     Succeeded,
     Failed,
     PartiallySucceeded,
@@ -70,10 +71,11 @@ pub enum TaskStatus {
 }
 
 impl TaskStatus {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Queued,
         Self::Validating,
         Self::Running,
+        Self::Waiting,
         Self::Succeeded,
         Self::Failed,
         Self::PartiallySucceeded,
@@ -81,7 +83,8 @@ impl TaskStatus {
     ];
 
     pub const ACTIVE: [Self; 2] = [Self::Validating, Self::Running];
-    pub const NON_TERMINAL: [Self; 3] = [Self::Queued, Self::Validating, Self::Running];
+    pub const NON_TERMINAL: [Self; 4] =
+        [Self::Queued, Self::Validating, Self::Running, Self::Waiting];
 
     pub const TERMINAL: [Self; 4] = [
         Self::Succeeded,
@@ -92,7 +95,7 @@ impl TaskStatus {
 
     pub const fn is_terminal(self) -> bool {
         match self {
-            Self::Queued | Self::Validating | Self::Running => false,
+            Self::Queued | Self::Validating | Self::Running | Self::Waiting => false,
             Self::Succeeded | Self::Failed | Self::PartiallySucceeded | Self::Cancelled => true,
         }
     }
@@ -102,6 +105,7 @@ impl TaskStatus {
             TaskStatus::Queued => "queued",
             TaskStatus::Validating => "validating",
             TaskStatus::Running => "running",
+            TaskStatus::Waiting => "waiting",
             TaskStatus::Succeeded => "succeeded",
             TaskStatus::Failed => "failed",
             TaskStatus::PartiallySucceeded => "partially_succeeded",
@@ -114,6 +118,7 @@ impl TaskStatus {
             "queued" => Ok(TaskStatus::Queued),
             "validating" => Ok(TaskStatus::Validating),
             "running" => Ok(TaskStatus::Running),
+            "waiting" => Ok(TaskStatus::Waiting),
             "succeeded" => Ok(TaskStatus::Succeeded),
             "failed" => Ok(TaskStatus::Failed),
             "partially_succeeded" => Ok(TaskStatus::PartiallySucceeded),
@@ -209,6 +214,7 @@ pub struct TaskRecord {
     pub(crate) discovery_state: hubuum_storage_core::StorageTaskDiscoveryState,
     pub(crate) discovery_authorized: bool,
     pub(crate) control: hubuum_storage_core::StorageTaskControl,
+    pub(crate) checkpoint: Option<StorageTaskCheckpoint>,
     pub id: i32,
     pub kind: String,
     pub status: String,
@@ -1690,7 +1696,7 @@ mod tests {
         );
         assert_eq!(
             TaskStatus::ALL.map(TaskStatus::is_terminal),
-            [false, false, false, true, true, true, true]
+            [false, false, false, false, true, true, true, true]
         );
     }
 
@@ -1702,7 +1708,7 @@ mod tests {
         );
         assert_eq!(
             TaskStatus::NON_TERMINAL.map(TaskStatus::as_str),
-            ["queued", "validating", "running"]
+            ["queued", "validating", "running", "waiting"]
         );
     }
 
@@ -1784,6 +1790,7 @@ mod tests {
             discovery_metadata: None,
             discovery_state: Default::default(),
             discovery_authorized: true,
+            checkpoint: None,
             control: hubuum_storage_core::StorageTaskControl::new(
                 hubuum_storage_core::StorageTaskKind::Import,
             ),
@@ -1836,6 +1843,7 @@ mod tests {
             discovery_metadata: None,
             discovery_state: Default::default(),
             discovery_authorized: true,
+            checkpoint: None,
             control: hubuum_storage_core::StorageTaskControl::new(
                 hubuum_storage_core::StorageTaskKind::Import,
             ),

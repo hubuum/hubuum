@@ -14,9 +14,9 @@ rust-api = "workspace-internal"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
-hubuum-domain = { version = "=0.16.0", path = "../hubuum-domain" }
+hubuum-domain = { version = "=0.17.0", path = "../hubuum-domain" }
 hubuum-scale-core = { path = "../hubuum-scale-core" }
-hubuum-storage-core = { version = "=0.16.0", path = "../hubuum-storage-core" }
+hubuum-storage-core = { version = "=0.17.0", path = "../hubuum-storage-core" }
 hubuum-storage-postgres = { path = "../hubuum-storage-postgres", features = ["scale-benchmark-support"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 serde = "1"

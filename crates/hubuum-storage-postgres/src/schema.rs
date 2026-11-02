@@ -1104,6 +1104,8 @@ diesel::table! {
         detail_expires_at -> Nullable<Timestamp>,
         details_purge_pending -> Bool,
         recovery_unavailable -> Bool,
+        task_checkpoint -> Nullable<Text>,
+        wait_token -> Nullable<Uuid>,
     }
 }
 

@@ -508,7 +508,7 @@ async fn cancel_pending_tasks(
 ) -> Result<Vec<String>, PostgresStorageError> {
     let task_ids = crate::schema::tasks::table
         .filter(crate::schema::tasks::submitted_by.eq(principal_id))
-        .filter(crate::schema::tasks::status.eq(QUEUED_TASK_STATUS))
+        .filter(crate::schema::tasks::status.eq_any([QUEUED_TASK_STATUS, "waiting"]))
         .filter(crate::schema::tasks::kind.ne(REINDEX_TASK_KIND))
         .select(crate::schema::tasks::id)
         .load::<i32>(connection)
@@ -521,7 +521,7 @@ async fn cancel_pending_tasks(
     let cancelled = diesel::update(
         crate::schema::tasks::table
             .filter(crate::schema::tasks::id.eq_any(task_ids))
-            .filter(crate::schema::tasks::status.eq(QUEUED_TASK_STATUS)),
+            .filter(crate::schema::tasks::status.eq_any([QUEUED_TASK_STATUS, "waiting"])),
     )
     .set((
         crate::schema::tasks::status.eq(CANCELLED_TASK_STATUS),

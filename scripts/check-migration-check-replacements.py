@@ -21,12 +21,17 @@ IDENTIFIER = r"[a-z_][a-z_0-9]*"
 TABLE = rf"(?:public\.)?{IDENTIFIER}"
 OFFLINE_TABLE = rf"(?:(?:public|hubuum_control)\.)?{IDENTIFIER}"
 ALTER = re.compile(rf"^\s*ALTER\s+TABLE\s+({TABLE})\s+([^;]+);", re.I | re.M)
+CREATE = re.compile(rf"^\s*CREATE\s+TABLE\s+({TABLE})\s*\(([^;]+)\)\s*;", re.I | re.M)
+DROP = re.compile(rf"^\s*DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?({TABLE})(?:\s+(?:CASCADE|RESTRICT))?\s*;", re.I | re.M)
 ADD = re.compile(rf"ADD\s+CONSTRAINT\s+({IDENTIFIER})\s+(.+)", re.I | re.S)
-CHECK = re.compile(
+LITERAL_CHECK = (
     rf"CHECK\s*\(\s*({IDENTIFIER})\s+IN\s*\(\s*"
     r"('[a-z_0-9-]+'(?:\s*,\s*'[a-z_0-9-]+')*)\s*\)\s*\)"
-    r"(?:\s+NOT\s+VALID)?\s*",
-    re.I,
+)
+CHECK = re.compile(LITERAL_CHECK + r"(?:\s+NOT\s+VALID)?\s*", re.I)
+INLINE_CHECK = re.compile(
+    rf"(?:^|,)\s*({IDENTIFIER})\s+(?:TEXT|VARCHAR)(?:\s+NOT\s+NULL)?\s+"
+    rf"({LITERAL_CHECK})(?=\s*(?:,|$))", re.I,
 )
 REPLACEMENT = re.compile(
     rf"^\s*ALTER\s+TABLE\s+({TABLE})\s+DROP\s+CONSTRAINT\s+({IDENTIFIER});"
@@ -49,8 +54,26 @@ def approved_replacements(baseline_documents, candidate):
     constraints = {}
     for document in baseline_documents:
         document = re.sub(r"--[^\n]*|/\*.*?\*/", "", document, flags=re.S)
-        for table, operation in ALTER.findall(document):
-            table = table.lower().removeprefix("public.")
+        operations = sorted(
+            (match.start(), kind, match)
+            for kind, pattern in (("create", CREATE), ("alter", ALTER), ("drop", DROP))
+            for match in pattern.finditer(document)
+        )
+        for _, kind, match in operations:
+            table = match[1].lower().removeprefix("public.")
+            if kind != "alter":
+                constraints = {key: value for key, value in constraints.items() if key[0] != table}
+                if kind == "create":
+                    for column in INLINE_CHECK.finditer(match[2]):
+                        name = f"{table}_{column[1].lower()}_check"
+                        check = enum_check(column[2])
+                        # PostgreSQL may truncate or suffix generated names. Only
+                        # accept an unambiguous, short default column CHECK name.
+                        if (len(name) <= 63 and check[0] == column[1].lower()
+                                and not re.search(rf"\bCONSTRAINT\s+{name}\b", match[2], re.I)):
+                            constraints[(table, name)] = check
+                continue
+            operation = match[2]
             for name in re.findall(
                 rf"\b(?:ADD|DROP|RENAME|ALTER)\s+CONSTRAINT\s+({IDENTIFIER})", operation, re.I
             ):
