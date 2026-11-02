@@ -20,10 +20,11 @@ Correctness CI runs for `project/**` pushes and PRs. Stable release publication,
 
 ### Separating project #3 from main
 
-The complete pre-separation tree is preserved at `ffbd4420` on the project branch.
-The stable candidate uses `v0.0.21` plus the independent fixes from PRs #537, #543,
-PRs #554, #555 and #560. Project SQL migrations remain unchanged in the preserved
-project history and branch; the stable build does not package or apply them.
+[PR #562](https://github.com/hubuum/hubuum/pull/562) separated the server project
+from stable `main` at `50e0d36f`. The stable line is based on `v0.0.21` and
+retains the independent fixes from PRs #537, #543, #554, #555 and #560, plus the
+generic isolated restore-test infrastructure. The complete project implementation
+and its unchanged SQL migration history remain on `project/workload-lifecycle`.
 
 This source separation is **not a database downgrade**. Databases that have run
 project migrations must continue using the project build and retain their
@@ -33,13 +34,13 @@ bypass deletion decisions. The stable server rejects newer schema versions;
 its migration command rejects unknown applied migrations before making changes.
 Stable installations at `v0.0.21` can continue on the stable line.
 
-After the rollback PR merges, merge its **actual main commit** into the project
-branch, resolve the project removals by restoring the preserved project tree,
-and commit that resolution. Verify that all project changes appear in the
-project-to-main diff. Reverting changes on main does not erase their ancestry;
-branching from the old tip alone cannot make those changes merge back later.
-Keep this integration step tied to the actual merged commit, including when the
-rollback PR is squash-merged.
+The actual main split commit was merged back into the project branch while
+retaining its project content. This records the rollback in the branch's ancestry
+and lets a later project-to-main PR reintroduce the implementation normally.
+Merely branching from the old main tip would not achieve that, because Git
+remembers the original project merges. Keep merging unrelated main fixes into
+the project branch and promote agreed milestones through reviewed integration
+PRs. The project README records the completed split and preservation commits.
 
 ## Python tooling
 
