@@ -1,6 +1,6 @@
 # `hubuum-storage-core` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.17` release train.
+Status: experimental public API in the storage SDK `0.6` release train.
 
 ## Purpose and Callers
 
@@ -15,13 +15,6 @@ no runtime contract version handshake.
 The normative semantics of that Rust surface are documented in the
 [storage contract](../storage_boundary/contract.md). The Rust declarations,
 semantic coverage inventory, and contract documentation must change together.
-
-The 0.9 train adds mandatory `artifacts::TaskArtifactStore`, including
-`ArtifactStore`, to the complete backend. Verified task completion carries a
-private-field proof, and output records carry either inline legacy content or a
-trusted artifact reference. Backup format 12 adds portable `ExportArtifacts`
-frames. Implement publication, cleanup accounting and replay before upgrading;
-see [verified artifacts](../artifact_staging.md).
 
 The crate also exposes the mandatory `TransactionStorage` unit of work.
 Applications compose safe lifecycle semantics through the crate-owned
@@ -182,8 +175,8 @@ receipts, no-op behavior, rollback, outbox-to-sink delivery, telemetry, exact
 revision conflicts, retention retry identity, delivery recovery, restore
 coordination rollback, and lease-loss finalization, while each backend owns
 native query, transaction, migration, connection-loss, and failure tests.
-External-crate integration tests implement all 50 complete-backend traits,
-compile every one of their 349 methods, exercise every transaction port, and
+External-crate integration tests implement all 44 complete-backend traits,
+compile every one of their 250 methods, exercise every transaction port, and
 name public construction paths for all current adapter-returned values. CI also
 packages the crate, builds rustdoc with warnings denied, and compares it with
 the latest crates.io release when a baseline exists.
@@ -248,15 +241,3 @@ variant. Every adapter implements `get_schema_profile_output` and
 `purge_expired_schema_profile_outputs`, fences publication with terminal task
 completion, and retains expiry metadata after removal. See the
 [0.6 upgrade guide](../storage_adapter_sdk.md#upgrading-from-05-to-06).
-
-## Shared task admission
-
-`TaskCapacityStorage` is a required workflow capability in SDK 0.8. Its
-private-field policy types validate capacity units and require one entry for
-every task kind. The optional `openapi` feature adds schemas without changing
-the default storage contract or depending on application HTTP code.
-
-Adapters return one consistent policy/usage snapshot and preserve policy and
-cumulative work outside logical restore. Admission requests carry no local
-quota override. See the [SDK upgrade notes](../storage_adapter_sdk.md#upgrading-from-07-to-08)
-and [restore ownership table](../task_admission.md#ownership-and-restore-reconciliation).

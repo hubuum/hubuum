@@ -1,13 +1,8 @@
-mod task_retention;
-
-use crate::config::{ControlRecoveryOptions, SchemaValidationOptions};
+use crate::config::SchemaValidationOptions;
 use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
 use hubuum_domain::ClassId;
-use hubuum_domain::{JsonSchemaLimits, ResourceIdentity, VersionIdentity};
-use hubuum_storage_core::{
-    DeletionControlStorage, ExecutionStorage, StorageBackupBudget, StorageRecordIdentity,
-    StorageRestoreArtifact, StorageRestoreIdentityContext,
-};
+use hubuum_domain::JsonSchemaLimits;
+use hubuum_storage_core::{StorageBackupBudget, StorageRestoreArtifact};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -32,8 +27,8 @@ use crate::models::{
     RestoreJobID, RestoreStageRequest,
 };
 use crate::restores::{
-    BackupVerificationReport, RestoreSettings, confirm_restore,
-    execute_confirmed_restore_with_recovery, restore_status, stage_restore,
+    BackupVerificationReport, RestoreSettings, confirm_restore, execute_confirmed_restore,
+    restore_status, stage_restore,
 };
 use crate::secrets::{self, DatabaseCredential};
 use crate::services::identity as identity_service;
@@ -41,7 +36,7 @@ use crate::services::operational_administration as operational_service;
 #[cfg(feature = "embedded-migrations")]
 use crate::storage::reset_disposable_restore_database;
 use crate::storage::{
-    OperationalStateStorage, RestoreStorage, StorageBackendKind, StorageDatabasePrivilegeReport,
+    OperationalStateStorage, StorageBackendKind, StorageDatabasePrivilegeReport,
     StorageDatabaseRole, StorageDatabaseRoleNames, StorageHandle, StorageSettings,
     StorageTokenKeyUsage, StorageTokenObservation, TokenStorage, initialize_storage,
     inspect_storage_database_privileges, storage_database_role_grants_sql,
@@ -64,14 +59,6 @@ fn parse_query_usage_class(value: &str) -> Result<ClassId, String> {
     ClassId::new(id).map_err(|error| error.to_string())
 }
 
-fn parse_deletion_intent(value: &str) -> Result<Uuid, String> {
-    let identity = value.parse::<Uuid>().map_err(|error| error.to_string())?;
-    if identity.is_nil() {
-        return Err("Deletion intent must be a non-nil UUID".into());
-    }
-    Ok(identity)
-}
-
 #[derive(Parser)]
 #[command(
     author = "Terje Kvernes <terje@kvernes.no>",
@@ -80,74 +67,6 @@ fn parse_deletion_intent(value: &str) -> Result<Uuid, String> {
     long_about = None
 )]
 struct AdminCli {
-    #[command(flatten)]
-    task_retention: task_retention::TaskRetentionAdminOptions,
-
-    #[command(flatten)]
-    control_recovery: crate::config::ControlRecoveryOptions,
-
-    /// Publish independent deletion recovery evidence (does not execute deletion)
-    #[arg(
-        long,
-        value_name = "DIRECTORY",
-        requires = "control_checkpoint_key",
-        conflicts_with_all = ["verify_control_recovery", "backup", "restore", "restore_executor", "verify_backup", "reconcile_query_usage", "database_ready", "reset_password", "audit_templates", "export_template_health", "token_key_status", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges"]
-    )]
-    #[cfg_attr(feature = "embedded-migrations", arg(conflicts_with_all = ["migrate", "migration_mode"]))]
-    control_checkpoint: Option<PathBuf>,
-
-    /// Verify that local control covers the latest independently stored checkpoint
-    #[arg(long, value_name = "DIRECTORY", requires = "control_checkpoint_key", conflicts_with_all = ["control_checkpoint", "backup", "restore", "restore_executor", "verify_backup", "reconcile_query_usage", "database_ready", "reset_password", "audit_templates", "export_template_health", "token_key_status", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges"])]
-    #[cfg_attr(feature = "embedded-migrations", arg(conflicts_with_all = ["migrate", "migration_mode"]))]
-    verify_control_recovery: Option<PathBuf>,
-
-    /// Read bounded deletion/recovery status as JSON without granting cleanup or exposure
-    #[arg(long, value_name = "DIRECTORY", requires = "control_checkpoint_key", conflicts_with_all = ["control_checkpoint", "verify_control_recovery", "recover_control", "reapply_control", "delete_object_history_version", "backup", "restore", "restore_executor", "verify_backup", "reconcile_query_usage", "database_ready", "reset_password", "audit_templates", "export_template_health", "token_key_status", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges"])]
-    #[cfg_attr(feature = "embedded-migrations", arg(conflicts_with_all = ["migrate", "migration_mode"]))]
-    control_status: Option<PathBuf>,
-
-    /// Recover the latest authenticated control checkpoint; all runtime replicas must be stopped
-    #[arg(long, value_name = "DIRECTORY", requires = "control_checkpoint_key", conflicts_with_all = ["control_checkpoint", "verify_control_recovery", "backup", "restore", "restore_executor", "verify_backup", "reconcile_query_usage", "database_ready", "reset_password", "audit_templates", "export_template_health", "token_key_status", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges"])]
-    #[cfg_attr(feature = "embedded-migrations", arg(conflicts_with_all = ["migrate", "migration_mode"]))]
-    recover_control: Option<PathBuf>,
-
-    /// Reapply retained deletion decisions and protect completion before reopening access
-    #[arg(long, value_name = "DIRECTORY", requires = "control_checkpoint_key", conflicts_with_all = ["control_checkpoint", "verify_control_recovery", "recover_control", "delete_object_history_version", "backup", "restore", "restore_executor", "verify_backup", "reconcile_query_usage", "database_ready", "reset_password", "audit_templates", "export_template_health", "token_key_status", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges"])]
-    #[cfg_attr(feature = "embedded-migrations", arg(conflicts_with_all = ["migrate", "migration_mode"]))]
-    reapply_control: Option<PathBuf>,
-
-    /// Remove one closed object-history version while all runtimes are stopped; quarantine remains
-    #[arg(long, value_name = "VERSION_UUID", requires_all = ["history_resource", "deletion_intent", "control_repository", "control_checkpoint_key"], conflicts_with_all = ["control_checkpoint", "verify_control_recovery", "recover_control", "backup", "restore", "restore_executor", "verify_backup", "reconcile_query_usage", "database_ready", "reset_password", "audit_templates", "export_template_health", "token_key_status", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges"])]
-    #[cfg_attr(feature = "embedded-migrations", arg(conflicts_with_all = ["migrate", "migration_mode"]))]
-    delete_object_history_version: Option<VersionIdentity>,
-
-    /// Stable resource identity that owns the selected object-history version
-    #[arg(
-        long,
-        value_name = "RESOURCE_UUID",
-        requires = "delete_object_history_version"
-    )]
-    history_resource: Option<ResourceIdentity>,
-
-    /// Stable deletion intent identity; reuse the same value on every retry
-    #[arg(long, value_name = "UUID", requires = "delete_object_history_version", value_parser = parse_deletion_intent)]
-    deletion_intent: Option<Uuid>,
-
-    /// Initialized independent recovery repository for the managed-copy operation
-    #[arg(
-        long,
-        value_name = "DIRECTORY",
-        requires = "delete_object_history_version"
-    )]
-    control_repository: Option<PathBuf>,
-
-    /// Owner-only file containing exactly 32 random signing-key bytes
-    #[arg(long, value_name = "PATH", required_if_eq_any = [("initialize_control_checkpoint", "true")])]
-    control_checkpoint_key: Option<PathBuf>,
-
-    /// Bootstrap an empty independent repository from empty deletion authority
-    #[arg(long, requires = "control_checkpoint")]
-    initialize_control_checkpoint: bool,
     #[command(flatten)]
     schema_validation: SchemaValidationOptions,
     #[command(flatten)]
@@ -381,21 +300,10 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let matches = AdminCli::command().get_matches();
     let admin_cli = AdminCli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
     let schema_limits = admin_cli.schema_validation.validate()?;
-    let task_retention_action = admin_cli.task_retention.action()?;
     let database_url_override = CommandLineDatabaseUrl::from_matches(&matches, "database_url");
     let migration_url_override =
         CommandLineDatabaseUrl::from_matches(&matches, "migration_database_url");
-    init_logging(
-        &admin_cli.log_level,
-        admin_cli.task_retention.selected()
-            || admin_cli.reconcile_query_usage
-            || admin_cli.delete_object_history_version.is_some()
-            || admin_cli.control_checkpoint.is_some()
-            || admin_cli.reapply_control.is_some()
-            || admin_cli.recover_control.is_some()
-            || admin_cli.control_status.is_some()
-            || admin_cli.verify_control_recovery.is_some(),
-    );
+    init_logging(&admin_cli.log_level, admin_cli.reconcile_query_usage);
 
     if let Some(path) = admin_cli.verify_backup.as_deref() {
         verify_backup_file(BackupVerificationOptions {
@@ -452,14 +360,7 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
             "Query usage reconciliation must run separately from migrations".into(),
         ));
     }
-    let privileged_database_operation = admin_cli.task_retention.selected()
-        || migration_requested
-        || admin_cli.delete_object_history_version.is_some()
-        || admin_cli.control_checkpoint.is_some()
-        || admin_cli.reapply_control.is_some()
-        || admin_cli.recover_control.is_some()
-        || admin_cli.control_status.is_some()
-        || admin_cli.verify_control_recovery.is_some()
+    let privileged_database_operation = migration_requested
         || admin_cli.restore.is_some()
         || admin_cli.restore_executor
         || admin_cli.reconcile_query_usage;
@@ -585,337 +486,75 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     }
 
     let storage = initialize_storage(&storage_settings)?;
+    ensure_storage_schema_ready(&storage).await?;
 
     if admin_cli.reconcile_query_usage {
         let roles = database_role_mode
             .uses_split_roles()
             .then(|| configured_database_roles(&admin_cli))
             .transpose()?;
-        // Native concurrent DDL cannot run inside the ordinary transaction
-        // wrapper. Its process registration excludes destructive cleanup until
-        // the complete executor pass and report have settled.
-        let recovery = crate::services::deletion_recovery::require_runtime_permit(
-            &storage,
-            &admin_cli.control_recovery,
-        )
-        .await?;
-        let registration = storage
-            .register_runtime_isolated(recovery.isolation_domain())
-            .await?;
-        let recovery = recovery.into_runtime_lifetime();
-        let storage = storage.with_runtime_owner(registration.owner());
-        let result = async {
-            let permit = storage.admit_application_work().await?;
-            let scope = storage
-                .current_execution_scope()
-                .with_application_access(permit);
-            let report = storage
-                .run_in_scope(
-                    scope,
-                    crate::storage::reconcile_query_usage_resources(
-                        &storage_settings,
-                        roles.as_ref(),
-                        admin_cli.query_usage_class,
-                    ),
-                )
-                .await?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&report).map_err(
-                    |_| ApiError::InternalServerError(
-                        "Query usage executor report serialization failed".into()
-                    )
-                )?
-            );
-            Ok::<(), ApiError>(())
-        }
-        .await;
-        storage.unregister_runtime(registration).await?;
-        recovery.release();
-        return result;
-    }
-
-    if let Some(action) = task_retention_action {
-        let lifetime = crate::services::deletion_recovery::require_control_runtime_lifetime(
-            &storage,
-            &admin_cli.control_recovery,
-        )
-        .await?;
-        let registration = if action.requires_execution() {
-            Some(
-                storage
-                    .register_runtime_isolated(lifetime.isolation_domain())
-                    .await?,
-            )
-        } else {
-            None
-        };
-        let storage = match &registration {
-            Some(registration) => storage.with_runtime_owner(registration.owner()),
-            None => storage,
-        };
-        let result = if registration.is_some() {
-            match storage.admit_application_work().await {
-                Ok(permit) => {
-                    let scope = storage
-                        .current_execution_scope()
-                        .with_application_access(permit);
-                    storage
-                        .run_in_scope(
-                            scope,
-                            crate::services::deletion_recovery::administer_task_retention(
-                                &storage,
-                                &admin_cli.control_recovery,
-                                action,
-                            ),
-                        )
-                        .await
-                }
-                Err(error) => Err(error.into()),
-            }
-        } else {
-            crate::services::deletion_recovery::administer_task_retention(
-                &storage,
-                &admin_cli.control_recovery,
-                action,
-            )
-            .await
-        };
-        if let Some(registration) = registration {
-            storage.unregister_runtime(registration).await?;
-        }
-        lifetime.release();
-        let report = result?;
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&report).map_err(|_| ApiError::InternalServerError(
-                "Cannot encode task retention report".into()
-            ))?
-        );
-        return Ok(());
-    }
-
-    if let Some(version) = admin_cli.delete_object_history_version {
-        let report = crate::services::deletion_recovery::cleanup_object_history(
-            &storage,
-            admin_cli
-                .control_repository
-                .as_deref()
-                .expect("required by clap"),
-            admin_cli
-                .control_checkpoint_key
-                .as_deref()
-                .expect("required by clap"),
-            admin_cli.deletion_intent.expect("required by clap"),
-            StorageRecordIdentity::new(
-                admin_cli.history_resource.expect("required by clap"),
-                version,
-            ),
+        let report = crate::storage::reconcile_query_usage_resources(
+            &storage_settings,
+            roles.as_ref(),
+            admin_cli.query_usage_class,
         )
         .await?;
         println!(
             "{}",
             serde_json::to_string_pretty(&report).map_err(|_| ApiError::InternalServerError(
-                "Cannot encode copy cleanup report".into()
+                "Query usage executor report serialization failed".into()
             ))?
         );
         return Ok(());
     }
 
-    if let Some(directory) = admin_cli.control_status.as_deref() {
-        let key = admin_cli
-            .control_checkpoint_key
-            .as_deref()
-            .expect("Clap requires the status authentication key");
-        let report = crate::services::deletion_recovery::status(&storage, directory, key).await?;
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&report).map_err(|_| {
-                ApiError::InternalServerError("Cannot encode deletion status".into())
-            })?
-        );
-        return Ok(());
-    }
-
-    if admin_cli.control_checkpoint.is_some()
-        || admin_cli.reapply_control.is_some()
-        || admin_cli.recover_control.is_some()
-        || admin_cli.verify_control_recovery.is_some()
-    {
-        let key = admin_cli.control_checkpoint_key.as_deref().ok_or_else(|| {
-            ApiError::BadRequest(
-                "--control-checkpoint-key is required for independent recovery evidence".into(),
-            )
-        })?;
-        let report = if let Some(directory) = admin_cli.control_checkpoint.as_deref() {
-            crate::services::deletion_recovery::checkpoint(
-                &storage,
-                directory,
-                key,
-                admin_cli.initialize_control_checkpoint,
-            )
-            .await?
-        } else if let Some(directory) = admin_cli.reapply_control.as_deref() {
-            crate::services::deletion_recovery::reapply(&storage, directory, key).await?
-        } else if let Some(directory) = admin_cli.recover_control.as_deref() {
-            crate::services::deletion_recovery::recover(&storage, directory, key).await?
-        } else {
-            crate::services::deletion_recovery::verify(
-                &storage,
-                admin_cli
-                    .verify_control_recovery
-                    .as_deref()
-                    .expect("selected verification"),
-                key,
-            )
-            .await?
-        };
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&report).map_err(|_| ApiError::InternalServerError(
-                "Cannot encode control recovery report".into()
-            ))?
-        );
-        return Ok(());
-    }
-
-    let control_lifetime = if admin_cli.restore_executor || admin_cli.restore.is_some() {
-        Some(
-            crate::services::deletion_recovery::require_control_runtime_lifetime(
-                &storage,
-                &admin_cli.control_recovery,
-            )
-            .await?,
-        )
-    } else {
-        None
-    };
-
-    // Ordinary administrator commands are producers too: hold registration
-    // until their output and child work settle, rather than recapturing access
-    // between database reads and writing a backup or printing a report.
-    let ordinary = admin_cli.backup.is_some()
-        || admin_cli.reset_password.is_some()
-        || admin_cli.audit_templates
-        || admin_cli.export_template_health
-        || admin_cli.token_key_status;
-    let recovery = if ordinary {
-        Some(
-            crate::services::deletion_recovery::require_runtime_permit(
-                &storage,
-                &admin_cli.control_recovery,
-            )
-            .await?,
-        )
-    } else {
-        None
-    };
-    let mut registration = if let Some(recovery) = &recovery {
-        Some(
-            storage
-                .register_runtime_isolated(recovery.isolation_domain())
-                .await?,
-        )
-    } else {
-        None
-    };
-    let recovery = recovery.map(|permit| permit.into_runtime_lifetime());
-    let storage = match &registration {
-        Some(registration) => storage.with_runtime_owner(registration.owner()),
-        None => storage,
-    };
-    let scope = if ordinary {
-        let permit = match storage.admit_application_work().await {
-            Ok(permit) => permit,
-            Err(error) => {
-                if let Some(registration) = registration.take() {
-                    storage.unregister_runtime(registration).await?;
-                }
-                if let Some(recovery) = recovery {
-                    recovery.release();
-                }
-                return Err(error.into());
-            }
-        };
-        Some(
-            storage
-                .current_execution_scope()
-                .with_application_access(permit),
-        )
-    } else {
-        None
-    };
-    let operation = async {
-        if admin_cli.restore_executor {
-            if !matches!(admin_cli.storage_backend, StorageBackendKind::Postgres) {
-                return Err(ApiError::BadRequest(
-                    "The restore executor requires the PostgreSQL storage backend".to_string(),
-                ));
-            }
-            run_restore_executor(&storage, &admin_cli.control_recovery).await?;
-        } else if let Some(path) = admin_cli.backup {
-            backup_database(
-                &storage,
-                &path,
-                !admin_cli.backup_without_history,
-                StorageBackupBudget::new(
-                    admin_cli.backup_max_output_bytes,
-                    admin_cli.backup_max_capture_rows,
-                )
-                .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-            )
-            .await?;
-        } else if let Some(path) = admin_cli.restore {
-            restore_database(
-                &storage,
-                &path,
-                admin_cli.restore_confirmation.as_deref(),
-                admin_cli.restore_max_upload_bytes,
-                &admin_cli.control_recovery,
-            )
-            .await?;
-        } else if let Some(username) = admin_cli.reset_password {
-            reset_password(&storage, &username).await?;
-        } else if admin_cli.audit_templates {
-            audit_templates(
-                &storage,
-                admin_cli.export_template_recursion_limit,
-                admin_cli.export_template_fuel,
-            )
-            .await?;
-        } else if admin_cli.export_template_health {
-            load_export_template_health(&storage).await?;
-        } else if admin_cli.database_ready {
-            storage_ready(&storage).await?;
-        } else if admin_cli.token_key_status {
-            print_token_key_status(&storage, admin_cli.token_lifetime_hours).await?;
-        } else {
-            println!("No command specified. Use --help for usage information.");
+    if admin_cli.restore_executor {
+        if !matches!(admin_cli.storage_backend, StorageBackendKind::Postgres) {
+            return Err(ApiError::BadRequest(
+                "The restore executor requires the PostgreSQL storage backend".to_string(),
+            ));
         }
+        run_restore_executor(&storage).await?;
+    } else if let Some(path) = admin_cli.backup {
+        backup_database(
+            &storage,
+            &path,
+            !admin_cli.backup_without_history,
+            StorageBackupBudget::new(
+                admin_cli.backup_max_output_bytes,
+                admin_cli.backup_max_capture_rows,
+            )
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+        )
+        .await?;
+    } else if let Some(path) = admin_cli.restore {
+        restore_database(
+            &storage,
+            &path,
+            admin_cli.restore_confirmation.as_deref(),
+            admin_cli.restore_max_upload_bytes,
+        )
+        .await?;
+    } else if let Some(username) = admin_cli.reset_password {
+        reset_password(&storage, &username).await?;
+    } else if admin_cli.audit_templates {
+        audit_templates(
+            &storage,
+            admin_cli.export_template_recursion_limit,
+            admin_cli.export_template_fuel,
+        )
+        .await?;
+    } else if admin_cli.export_template_health {
+        load_export_template_health(&storage).await?;
+    } else if admin_cli.database_ready {
+        storage_ready(&storage).await?;
+    } else if admin_cli.token_key_status {
+        print_token_key_status(&storage, admin_cli.token_lifetime_hours).await?;
+    } else {
+        println!("No command specified. Use --help for usage information.");
+    }
 
-        Ok::<(), ApiError>(())
-    };
-    let result = match scope {
-        Some(scope) => storage.run_in_scope(scope, operation).await,
-        None => operation.await,
-    };
-    if let Some(registration) = registration {
-        // Any detached template child keeps the registration for offline
-        // recovery. A command error alone is not proof that its child stopped.
-        if crate::utilities::exporting::template_workers_idle() {
-            storage.unregister_runtime(registration).await?;
-        } else {
-            // The lifetime destructor retains OS exclusion until process exit.
-            return result;
-        }
-    }
-    if let Some(recovery) = recovery {
-        recovery.release();
-    }
-    if let Some(lifetime) = control_lifetime {
-        lifetime.release();
-    }
-    result
+    Ok(())
 }
 
 fn resolve_database_roles(
@@ -1280,12 +919,7 @@ async fn verify_backup_restore(
         let storage = initialize_storage(&target)?;
         let started_at = std::time::Instant::now();
         // The report, staging and comparison all read the same immutable artifact.
-        let (_, context) = restore_database_artifact(
-            &storage,
-            artifact.clone(),
-            &ControlRecoveryOptions::default(),
-        )
-        .await?;
+        restore_database_artifact(&storage, artifact.clone()).await?;
         let restore_duration = started_at.elapsed();
         let readiness = storage.get_readiness_snapshot().await?;
         if !readiness.storage_is_ready() {
@@ -1299,8 +933,12 @@ async fn verify_backup_restore(
             storage.schema_limits(),
         )?;
         drop(artifact);
-        let source = source.at_restore_boundary(context)?;
-        let restored = crate::restores::replay::capture(&storage, true, capture_budget).await?;
+        let restored = crate::restores::replay::capture(
+            &storage,
+            source.snapshot.includes_history(),
+            capture_budget,
+        )
+        .await?;
         crate::restores::replay::compare(&source, &restored)?;
         Ok::<_, ApiError>(restore_duration)
     }
@@ -1575,7 +1213,6 @@ async fn restore_database(
     path: &Path,
     confirmation: Option<&str>,
     max_bytes: usize,
-    recovery: &ControlRecoveryOptions,
 ) -> Result<(), ApiError> {
     if confirmation != Some(RESTORE_CONFIRMATION_PHRASE) {
         return Err(destructive_confirmation_error());
@@ -1589,7 +1226,7 @@ async fn restore_database(
         ))
     })?;
     let artifact = StorageRestoreArtifact::from_reader(file, max_bytes)?;
-    let (restored, _) = restore_database_artifact(storage, artifact, recovery).await?;
+    let restored = restore_database_artifact(storage, artifact).await?;
     println!(
         "Restore {} completed with status '{}'.",
         restored.id,
@@ -1601,14 +1238,7 @@ async fn restore_database(
 async fn restore_database_artifact(
     storage: &StorageHandle,
     artifact: StorageRestoreArtifact,
-    recovery: &ControlRecoveryOptions,
-) -> Result<
-    (
-        crate::models::RestoreStageResponse,
-        StorageRestoreIdentityContext,
-    ),
-    ApiError,
-> {
+) -> Result<crate::models::RestoreStageResponse, ApiError> {
     let settings = RestoreSettings::new(
         DEFAULT_RESTORE_STAGE_RETENTION_MINUTES,
         DEFAULT_RESTORE_MAX_UPLOAD_BYTES.max(artifact.summary().byte_size() as usize),
@@ -1630,28 +1260,20 @@ async fn restore_database_artifact(
         },
     )
     .await?;
-    let context = storage
-        .get_restore_artifact(RestoreJobID::new(confirmed.id)?)
-        .await?
-        .identity_context()
-        .map_err(|error| ApiError::Conflict(error.to_string()))?;
-    if !execute_confirmed_restore_with_recovery(storage, recovery).await? {
+    if !execute_confirmed_restore(storage).await? {
         return Err(ApiError::Conflict(format!(
             "Restore {} was confirmed but no longer owns draining maintenance",
             confirmed.id
         )));
     }
     let restored = restore_status(storage, RestoreJobID::new(confirmed.id)?, &capability).await?;
-    Ok((restored, context))
+    Ok(restored)
 }
 
-async fn run_restore_executor(
-    storage: &StorageHandle,
-    recovery: &ControlRecoveryOptions,
-) -> Result<(), ApiError> {
+async fn run_restore_executor(storage: &StorageHandle) -> Result<(), ApiError> {
     println!("Restore executor is ready for confirmed web restores.");
     loop {
-        match execute_confirmed_restore_with_recovery(storage, recovery).await {
+        match execute_confirmed_restore(storage).await {
             Ok(true) => tracing::info!(message = "Confirmed restore completed"),
             Ok(false) => {}
             Err(error) => {
@@ -1699,13 +1321,18 @@ fn destructive_confirmation_error() -> ApiError {
     ))
 }
 
-async fn storage_ready(storage: &StorageHandle) -> Result<(), ApiError> {
+async fn ensure_storage_schema_ready(storage: &StorageHandle) -> Result<(), ApiError> {
     let readiness = storage.get_readiness_snapshot().await?;
     if !readiness.storage_is_ready() {
         return Err(ApiError::ServiceUnavailable(
             "Storage backend schema is not ready".to_string(),
         ));
     }
+    Ok(())
+}
+
+async fn storage_ready(storage: &StorageHandle) -> Result<(), ApiError> {
+    ensure_storage_schema_ready(storage).await?;
     println!("Storage backend is ready and all required migrations are applied.");
     Ok(())
 }
@@ -1845,7 +1472,6 @@ mod tests {
     #[cfg(feature = "embedded-migrations")]
     use clap::{CommandFactory, FromArgMatches};
     use hubuum_domain::ClassId;
-    use rstest::rstest;
     use uuid::Uuid;
 
     #[cfg(feature = "embedded-migrations")]
@@ -1855,85 +1481,6 @@ mod tests {
         DEFAULT_DATABASE_RUNTIME_ROLE, DatabaseRoleMode, StorageBackendKind,
         StorageDatabaseRoleNames, resolve_database_roles,
     };
-
-    fn history_cleanup_arguments() -> Vec<String> {
-        vec![
-            "hubuum-admin",
-            "--delete-object-history-version",
-            "a1db7312-acb1-4a4e-8797-bf5bc55d47ec",
-            "--history-resource",
-            "f92b92b2-db30-4501-9678-a14b9780a12f",
-            "--deletion-intent",
-            "bcdf80ed-4ba2-435a-ab11-db89ead89a33",
-            "--control-repository",
-            "/independent/control",
-            "--control-checkpoint-key",
-            "/independent-secrets/control.key",
-        ]
-        .into_iter()
-        .map(str::to_owned)
-        .collect()
-    }
-
-    #[rstest]
-    #[case("--history-resource")]
-    #[case("--deletion-intent")]
-    #[case("--control-repository")]
-    #[case("--control-checkpoint-key")]
-    fn history_cleanup_requires_exact_scope_and_recovery_configuration(#[case] missing: &str) {
-        let mut arguments = history_cleanup_arguments();
-        let position = arguments
-            .iter()
-            .position(|argument| *argument == missing)
-            .unwrap();
-        arguments.drain(position..=position + 1);
-        let error = AdminCli::try_parse_from(arguments)
-            .err()
-            .expect("required argument");
-        assert_eq!(
-            error.kind(),
-            clap::error::ErrorKind::MissingRequiredArgument
-        );
-    }
-
-    #[rstest]
-    #[case("--deletion-intent", "00000000-0000-0000-0000-000000000000")]
-    #[case("--history-resource", "1")]
-    #[case(
-        "--delete-object-history-version",
-        "00000000-0000-0000-0000-000000000000"
-    )]
-    fn history_cleanup_rejects_invalid_identities_before_database_access(
-        #[case] argument: &str,
-        #[case] invalid: &str,
-    ) {
-        let mut arguments = history_cleanup_arguments();
-        let position = arguments
-            .iter()
-            .position(|value| *value == argument)
-            .unwrap();
-        arguments[position + 1] = invalid.to_owned();
-        let error = AdminCli::try_parse_from(arguments)
-            .err()
-            .expect("invalid identity");
-        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
-    }
-
-    #[rstest]
-    #[case("--backup", "backup.json")]
-    #[case("--recover-control", "/independent/control")]
-    #[case("--control-status", "/independent/control")]
-    fn history_cleanup_cannot_run_with_another_administrator_operation(
-        #[case] argument: &str,
-        #[case] value: &str,
-    ) {
-        let mut arguments = history_cleanup_arguments();
-        arguments.extend([argument.to_owned(), value.to_owned()]);
-        let error = AdminCli::try_parse_from(arguments)
-            .err()
-            .expect("conflicting operation");
-        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
-    }
 
     #[test]
     fn failed_streaming_backup_preserves_the_destination_and_removes_partial_output() {

@@ -9,7 +9,7 @@ impl AuthenticationStorage for MemoryStorage {
         token: TokenId,
         creation: StorageCredentialCreation,
     ) -> Result<(), StorageError> {
-        self.state.write().await?.record_creation(token, creation)
+        self.state.write().await.record_creation(token, creation)
     }
     async fn observe_credential_source(
         &self,
@@ -19,28 +19,28 @@ impl AuthenticationStorage for MemoryStorage {
     ) -> Result<(), StorageError> {
         self.state
             .write()
-            .await?
+            .await
             .observe_source(token, source, policy)
     }
     async fn credential_activity(
         &self,
         query: StorageActivityQuery,
     ) -> Result<StorageCredentialActivity, StorageError> {
-        self.state.read().await?.read_activity(query)
+        self.state.read().await.read_activity(query)
     }
     async fn purge_credential_sources(
         &self,
         policy: CredentialActivityPolicy,
         limit: usize,
     ) -> Result<usize, StorageError> {
-        Ok(self.state.write().await?.purge_sources(policy, limit))
+        Ok(self.state.write().await.purge_sources(policy, limit))
     }
 
     async fn create_auth_session(
         &self,
         request: StorageSessionCreate,
     ) -> Result<StorageMutationOutcome<StorageSessionIssued>, StorageError> {
-        let mut live = self.state.write().await?;
+        let mut live = self.state.write().await;
         let mut staged = live.clone();
         let result = staged.create_session(request)?;
         *live = staged;
@@ -50,13 +50,13 @@ impl AuthenticationStorage for MemoryStorage {
         &self,
         credential: RefreshCredential,
     ) -> Result<PrincipalId, StorageError> {
-        self.state.read().await?.refresh_owner(&credential)
+        self.state.read().await.refresh_owner(&credential)
     }
     async fn rotate_auth_session(
         &self,
         request: StorageSessionRotate,
     ) -> Result<StorageMutationOutcome<StorageSessionRotation>, StorageError> {
-        let mut live = self.state.write().await?;
+        let mut live = self.state.write().await;
         let mut staged = live.clone();
         let result = staged.rotate_session(request)?;
         *live = staged;
@@ -67,14 +67,14 @@ impl AuthenticationStorage for MemoryStorage {
         target: SessionRevocation,
         context: EventContext,
     ) -> Result<StorageMutationOutcome<usize>, StorageError> {
-        let mut live = self.state.write().await?;
+        let mut live = self.state.write().await;
         let mut staged = live.clone();
         let result = staged.revoke_sessions(target, context)?;
         *live = staged;
         Ok(result)
     }
     async fn purge_auth_sessions(&self, limit: usize) -> Result<usize, StorageError> {
-        Ok(self.state.write().await?.purge_sessions(limit))
+        Ok(self.state.write().await.purge_sessions(limit))
     }
 
     async fn authenticate_bearer_token(
@@ -84,7 +84,7 @@ impl AuthenticationStorage for MemoryStorage {
         let (credentials, migration_target, observed_at, legacy_valid_after) = attempt.into_parts();
         let observation = StorageTokenObservation::try_new(observed_at, legacy_valid_after)
             .map_err(invalid_contract_value)?;
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let matching = state
             .tokens
             .values()
@@ -185,7 +185,7 @@ impl AuthenticationStorage for MemoryStorage {
         &self,
         principal_id: PrincipalId,
     ) -> Result<StorageAuthenticationIdentity, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let principal = state.principals.get(&principal_id.id()).ok_or_else(|| {
             StorageError::not_found(format!("Principal {} was not found", principal_id.id()))
         })?;
@@ -230,7 +230,7 @@ impl AuthenticationStorage for MemoryStorage {
         let persisted = self
             .state
             .read()
-            .await?
+            .await
             .tokens
             .get(&query.token_id().id())
             .and_then(|record| record.scope.clone());
@@ -251,7 +251,7 @@ impl AuthenticationStorage for MemoryStorage {
 #[async_trait]
 impl LocalIdentityCredentialStorage for MemoryStorage {
     async fn is_default_admin_bootstrap_required(&self) -> Result<bool, StorageError> {
-        Ok(self.state.read().await?.users.is_empty())
+        Ok(self.state.read().await.users.is_empty())
     }
 
     async fn bootstrap_default_admin(
@@ -266,7 +266,7 @@ impl LocalIdentityCredentialStorage for MemoryStorage {
         request: StorageLocalPasswordReset,
     ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         let (name, password_hash, context) = request.into_parts();
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let user_id = state
             .users
             .iter()
@@ -306,7 +306,7 @@ impl LocalIdentityCredentialStorage for MemoryStorage {
             .get(&user_id)
             .cloned()
             .ok_or_else(|| StorageError::internal("password reset principal is missing"))?;
-        state.store_principal(
+        state.principals.insert(
             user_id,
             advanced_principal(
                 &principal,
@@ -339,7 +339,7 @@ impl IdentityScopeStorage for MemoryStorage {
         &self,
         request: StorageIdentityScopeEnsure,
     ) -> Result<StorageIdentityScope, StorageError> {
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         if let Some(scope) = state.identity_scope_by_name(request.name()) {
             if scope.provider_kind() != request.provider_kind() {
                 return Err(StorageError::conflict(format!(
@@ -363,7 +363,7 @@ impl IdentityScopeStorage for MemoryStorage {
             ResourceRevision::INITIAL,
         )
         .map_err(invalid_contract_value)?;
-        state.store_identity_scope(id.id(), scope.clone());
+        state.identity_scopes.insert(id.id(), scope.clone());
         Ok(scope)
     }
 
@@ -373,7 +373,7 @@ impl IdentityScopeStorage for MemoryStorage {
     ) -> Result<String, StorageError> {
         self.state
             .read()
-            .await?
+            .await
             .identity_scopes
             .get(&scope_id.id())
             .map(|scope| scope.name().to_string())
@@ -386,7 +386,7 @@ impl IdentityScopeStorage for MemoryStorage {
         &self,
         scope_ids: Vec<IdentityScopeId>,
     ) -> Result<Vec<(IdentityScopeId, String)>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         scope_ids
             .into_iter()
             .map(|id| {
@@ -411,7 +411,7 @@ impl GroupMembershipStorage for MemoryStorage {
     ) -> Result<StoragePrincipalGroup, StorageError> {
         self.state
             .read()
-            .await?
+            .await
             .memberships
             .get(&(principal_id.id(), group_id.id()))
             .cloned()
@@ -429,7 +429,7 @@ impl GroupMembershipStorage for MemoryStorage {
         query: StoragePrincipalGroupListQuery,
     ) -> Result<StoragePage<StorageIdentityGroup>, StorageError> {
         let (principal_id, options) = query.into_parts();
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let rows = state
             .memberships
             .values()
@@ -444,7 +444,7 @@ impl GroupMembershipStorage for MemoryStorage {
         principal_id: PrincipalId,
         owner_group_id: GroupId,
     ) -> Result<bool, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         Ok(state
             .principals
             .get(&principal_id.id())
@@ -458,7 +458,7 @@ impl GroupMembershipStorage for MemoryStorage {
         &self,
         group_id: GroupId,
     ) -> Result<Vec<StoragePrincipal>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         Ok(state
             .memberships
             .values()
@@ -477,7 +477,7 @@ impl GroupMembershipStorage for MemoryStorage {
         group_id: GroupId,
         query_options: QueryOptions,
     ) -> Result<StoragePage<StorageGroupMember>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let rows = state
             .memberships
             .values()
@@ -501,7 +501,7 @@ impl GroupMembershipStorage for MemoryStorage {
         group_id: GroupId,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StoragePrincipalGroup>, StorageError> {
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         if !state.principals.contains_key(&principal_id.id()) {
             return Err(StorageError::not_found(format!(
                 "Principal {} was not found",
@@ -526,7 +526,9 @@ impl GroupMembershipStorage for MemoryStorage {
             ResourceRevision::INITIAL,
         )
         .map_err(invalid_contract_value)?;
-        state.store_membership((principal_id.id(), group_id.id()), membership.clone());
+        state
+            .memberships
+            .insert((principal_id.id(), group_id.id()), membership.clone());
         let receipt = state.append_simple_event(
             EntityType::UserGroup,
             principal_id.id(),
@@ -548,7 +550,7 @@ impl GroupMembershipStorage for MemoryStorage {
         group_id: GroupId,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         if state
             .memberships
             .remove(&(principal_id.id(), group_id.id()))
@@ -580,7 +582,7 @@ impl ServiceAccountStorage for MemoryStorage {
     ) -> Result<bool, StorageError> {
         self.state
             .read()
-            .await?
+            .await
             .service_accounts
             .get(&principal_id.id())
             .map(StorageServiceAccount::is_disabled)
@@ -598,7 +600,7 @@ impl ServiceAccountStorage for MemoryStorage {
     ) -> Result<StorageServiceAccount, StorageError> {
         self.state
             .read()
-            .await?
+            .await
             .service_accounts
             .get(&service_account_id.id())
             .cloned()
@@ -614,7 +616,7 @@ impl ServiceAccountStorage for MemoryStorage {
         &self,
         service_account_id: ServiceAccountId,
     ) -> Result<StorageServiceAccountDetails, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let account = state
             .service_accounts
             .get(&service_account_id.id())
@@ -642,7 +644,7 @@ impl ServiceAccountStorage for MemoryStorage {
         query: StorageServiceAccountListQuery,
     ) -> Result<StoragePage<StorageServiceAccountListItem>, StorageError> {
         let (requestor_id, administrator, options) = query.into_parts();
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let rows = state
             .service_accounts
             .values()
@@ -679,7 +681,7 @@ impl ServiceAccountStorage for MemoryStorage {
         request: StorageServiceAccountCreate,
     ) -> Result<StorageMutationOutcome<StorageServiceAccount>, StorageError> {
         let (name, description, owner_group_id, created_by, context) = request.into_parts();
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         if !state.groups.contains_key(&owner_group_id.id()) {
             return Err(StorageError::not_found(format!(
                 "Owner group {} was not found",
@@ -728,8 +730,8 @@ impl ServiceAccountStorage for MemoryStorage {
             now,
         )
         .map_err(invalid_contract_value)?;
-        state.store_principal(principal_id.id(), principal);
-        state.store_service_account(id.id(), account.clone());
+        state.principals.insert(principal_id.id(), principal);
+        state.service_accounts.insert(id.id(), account.clone());
         let receipt = state.append_simple_event(
             EntityType::ServiceAccount,
             id.id(),
@@ -746,7 +748,7 @@ impl ServiceAccountStorage for MemoryStorage {
         request: StorageServiceAccountUpdate,
     ) -> Result<StorageMutationOutcome<StorageServiceAccount>, StorageError> {
         let (id, description, owner_group_id, context) = request.into_parts();
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let current = state
             .service_accounts
             .get(&id.id())
@@ -775,13 +777,13 @@ impl ServiceAccountStorage for MemoryStorage {
             now,
         )
         .map_err(invalid_contract_value)?;
-        state.store_service_account(id.id(), updated.clone());
+        state.service_accounts.insert(id.id(), updated.clone());
         let principal = state
             .principals
             .get(&id.id())
             .cloned()
             .ok_or_else(|| StorageError::internal("service-account principal is missing"))?;
-        state.store_principal(
+        state.principals.insert(
             id.id(),
             advanced_principal(
                 &principal,
@@ -806,7 +808,7 @@ impl ServiceAccountStorage for MemoryStorage {
         request: StorageServiceAccountMutation,
     ) -> Result<StorageMutationOutcome<StorageServiceAccountDisableOutcome>, StorageError> {
         let (id, context) = request.into_parts();
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let current = state
             .service_accounts
             .get(&id.id())
@@ -830,7 +832,7 @@ impl ServiceAccountStorage for MemoryStorage {
             now,
         )
         .map_err(invalid_contract_value)?;
-        state.store_service_account(id.id(), disabled.clone());
+        state.service_accounts.insert(id.id(), disabled.clone());
         state.invalidate_principal_sessions(id.id());
         for token in state.tokens.values_mut() {
             if token.principal_id.id() == id.id() && token.revoked_at.is_none() {
@@ -845,7 +847,7 @@ impl ServiceAccountStorage for MemoryStorage {
             .get(&id.id())
             .cloned()
             .ok_or_else(|| StorageError::internal("service-account principal is missing"))?;
-        state.store_principal(
+        state.principals.insert(
             id.id(),
             advanced_principal(
                 &principal,
@@ -873,7 +875,7 @@ impl ServiceAccountStorage for MemoryStorage {
         request: StorageServiceAccountMutation,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let (id, context) = request.into_parts();
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let Some(account) = state.service_accounts.remove(&id.id()) else {
             return Ok(StorageMutationOutcome::unchanged(()));
         };
@@ -919,7 +921,7 @@ impl ExternalIdentityStorage for MemoryStorage {
         &self,
         principal_id: PrincipalId,
     ) -> Result<Option<StorageExternalPrincipalState>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let Some(record) = state.users.get(&principal_id.id()) else {
             return Ok(None);
         };
@@ -949,7 +951,7 @@ impl ExternalIdentityStorage for MemoryStorage {
         principal_id: PrincipalId,
         failure: StorageExternalSyncFailure,
     ) -> Result<(), StorageError> {
-        let mut live = self.state.write().await?;
+        let mut live = self.state.write().await;
         let mut state = live.clone();
         let current = state
             .users
@@ -1034,7 +1036,7 @@ impl ExternalIdentityStorage for MemoryStorage {
         })
         .try_build()
         .map_err(invalid_contract_value)?;
-        state.store_principal(principal_id.id(), updated);
+        state.principals.insert(principal_id.id(), updated);
         *live = state;
         Ok(())
     }
@@ -1045,7 +1047,7 @@ impl ExternalIdentityStorage for MemoryStorage {
     ) -> Result<StorageMutationOutcome<StorageSyncedHuman>, StorageError> {
         let (scope_name, provider_kind, subject, name, proper_name, email, groups) =
             request.into_parts();
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let scope = if let Some(scope) = state.identity_scope_by_name(&scope_name).cloned() {
             if scope.provider_kind() != provider_kind {
                 return Err(StorageError::conflict(format!(
@@ -1068,7 +1070,7 @@ impl ExternalIdentityStorage for MemoryStorage {
                 ResourceRevision::INITIAL,
             )
             .map_err(invalid_contract_value)?;
-            state.store_identity_scope(id.id(), scope.clone());
+            state.identity_scopes.insert(id.id(), scope.clone());
             scope
         };
         // A name is not evidence that two external identities are the same user.
@@ -1154,7 +1156,7 @@ impl ExternalIdentityStorage for MemoryStorage {
                     .last_sync_success_at(Some(now))
                     .try_build()
                     .map_err(invalid_contract_value)?;
-            state.store_principal(id, principal);
+            state.principals.insert(id, principal);
             PrincipalId::new(id).expect("external principal id is positive")
         } else {
             let principal_id =
@@ -1186,7 +1188,7 @@ impl ExternalIdentityStorage for MemoryStorage {
                 None,
             )
             .map_err(invalid_contract_value)?;
-            state.store_principal(principal_id.id(), principal);
+            state.principals.insert(principal_id.id(), principal);
             state.users.insert(
                 user_id.id(),
                 MemoryUserRecord {
@@ -1233,12 +1235,13 @@ impl ExternalIdentityStorage for MemoryStorage {
                 .last_sync_success_at(Some(now))
                 .try_build()
                 .map_err(invalid_contract_value)?;
-                state.store_group(group_id.id(), group.clone());
+                state.groups.insert(group_id.id(), group.clone());
                 group
             };
             let key = (principal_id.id(), group.id().id());
             current_external_groups.insert(key);
-            if !state.memberships.contains_key(&key) {
+            if let std::collections::btree_map::Entry::Vacant(entry) = state.memberships.entry(key)
+            {
                 let membership = StoragePrincipalGroup::try_new(
                     principal_id,
                     group.id(),
@@ -1247,7 +1250,7 @@ impl ExternalIdentityStorage for MemoryStorage {
                     ResourceRevision::INITIAL,
                 )
                 .map_err(invalid_contract_value)?;
-                state.store_membership(key, membership);
+                entry.insert(membership);
             }
         }
         let stale_groups = state
@@ -1295,7 +1298,7 @@ impl UserStorage for MemoryStorage {
     async fn get_user(&self, id: UserId) -> Result<StorageUser, StorageError> {
         self.state
             .read()
-            .await?
+            .await
             .users
             .get(&id.id())
             .map(|record| record.user.clone())
@@ -1307,7 +1310,7 @@ impl UserStorage for MemoryStorage {
         identity_scope: String,
         name: String,
     ) -> Result<StorageUser, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         state
             .users
             .values()
@@ -1327,7 +1330,7 @@ impl UserStorage for MemoryStorage {
     }
 
     async fn get_user_details(&self, id: UserId) -> Result<StorageUserDetails, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let record = state
             .users
             .get(&id.id())
@@ -1355,7 +1358,7 @@ impl UserStorage for MemoryStorage {
             })
             .map(|filter| Ok((filter.field(), StringFilter::new(filter)?)))
             .collect::<Result<Vec<_>, StorageError>>()?;
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let rows = state
             .users
             .values()
@@ -1396,7 +1399,7 @@ impl UserStorage for MemoryStorage {
         &self,
         request: StorageUserCreate,
     ) -> Result<StorageMutationOutcome<StorageUser>, StorageError> {
-        let mut live = self.state.write().await?;
+        let mut live = self.state.write().await;
         let mut staged = live.clone();
         let result = create_user_in_state(&mut staged, request)?;
         *live = staged;
@@ -1407,7 +1410,7 @@ impl UserStorage for MemoryStorage {
         &self,
         request: StorageUserUpdate,
     ) -> Result<StorageMutationOutcome<StorageUser>, StorageError> {
-        let mut live = self.state.write().await?;
+        let mut live = self.state.write().await;
         let mut staged = live.clone();
         let result = update_user_in_state(&mut staged, request)?;
         *live = staged;
@@ -1429,7 +1432,7 @@ impl UserStorage for MemoryStorage {
             ))
             .await?;
         let now = Utc::now();
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let mut revoked = 0_usize;
         state.invalidate_principal_sessions(id.id());
         for token in state.tokens.values_mut() {
@@ -1446,7 +1449,7 @@ impl UserStorage for MemoryStorage {
         request: StorageUserDelete,
     ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         let (id, context) = request.into_parts();
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let Some(record) = state.users.remove(&id.id()) else {
             return Ok(StorageMutationOutcome::unchanged(0));
         };
@@ -1482,7 +1485,7 @@ impl UserStorage for MemoryStorage {
         request: StorageUserAnonymize,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let (id, context) = request.into_parts();
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let current =
             state.users.get(&id.id()).cloned().ok_or_else(|| {
                 StorageError::not_found(format!("User {} was not found", id.id()))
@@ -1516,7 +1519,7 @@ impl UserStorage for MemoryStorage {
             .get(&id.id())
             .cloned()
             .ok_or_else(|| StorageError::internal("anonymized user principal is missing"))?;
-        state.store_principal(
+        state.principals.insert(
             id.id(),
             advanced_principal(
                 &principal,
@@ -1543,7 +1546,7 @@ impl TokenStorage for MemoryStorage {
         &self,
         request: StorageCredentialApprovalCreate,
     ) -> Result<StorageMutationOutcome<StorageCredentialApprovalMetadata>, StorageError> {
-        let mut live = self.state.write().await?;
+        let mut live = self.state.write().await;
         let mut staged = live.clone();
         let result = staged.create_credential_approval(request)?;
         *live = staged;
@@ -1555,7 +1558,7 @@ impl TokenStorage for MemoryStorage {
     ) -> Result<StorageCredentialApprovalMetadata, StorageError> {
         self.state
             .read()
-            .await?
+            .await
             .credential_approvals
             .get(&id)
             .map(|(_, metadata)| metadata.clone())
@@ -1567,7 +1570,7 @@ impl TokenStorage for MemoryStorage {
         query: StorageTokenListQuery,
     ) -> Result<StoragePage<StorageTokenMetadata>, StorageError> {
         let (principal_id, options, list_state, observation) = query.into_parts();
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let rows = state
             .tokens
             .values()
@@ -1594,7 +1597,7 @@ impl TokenStorage for MemoryStorage {
             latest_expiry: Option<DateTime<Utc>>,
         }
 
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let mut usage = BTreeMap::<Option<StorageTokenHashKeyId>, Usage>::new();
         for token in state.tokens.values() {
             let metadata = token.metadata(observation)?;
@@ -1653,7 +1656,7 @@ impl TokenStorage for MemoryStorage {
         &self,
         request: StorageTokenCreate,
     ) -> Result<StorageMutationOutcome<StorageTokenMetadata>, StorageError> {
-        let mut live = self.state.write().await?;
+        let mut live = self.state.write().await;
         let mut staged = live.clone();
         let result = create_token_in_state(&mut staged, request)?;
         *live = staged;
@@ -1666,7 +1669,7 @@ impl TokenStorage for MemoryStorage {
     ) -> Result<StorageMutationOutcome<StorageTokenMetadata>, StorageError> {
         let claim = request.take_credential_claim();
         let (source_id, principal_id, digest, expires_at, policy, context) = request.into_parts();
-        let mut live = self.state.write().await?;
+        let mut live = self.state.write().await;
         let mut staged = live.clone();
         let approval_audit = staged.consume_credential_claim(
             claim.as_ref(),
@@ -1717,7 +1720,7 @@ impl TokenStorage for MemoryStorage {
         token_id: TokenId,
         observation: StorageTokenObservation,
     ) -> Result<StorageTokenMetadata, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let token = state.tokens.get(&token_id.id()).ok_or_else(|| {
             StorageError::not_found(format!("Token {} was not found", token_id.id()))
         })?;
@@ -1736,7 +1739,7 @@ impl TokenStorage for MemoryStorage {
         token_ids: Vec<TokenId>,
         observation: StorageTokenObservation,
     ) -> Result<Vec<StorageTokenMetadata>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         token_ids
             .into_iter()
             .map(|id| {
@@ -1756,7 +1759,7 @@ impl TokenStorage for MemoryStorage {
         request: StorageTokenRevoke,
     ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         let (token_id, principal_id, context) = request.into_parts();
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let token = state.tokens.get_mut(&token_id.id()).ok_or_else(|| {
             StorageError::not_found(format!("Token {} was not found", token_id.id()))
         })?;
@@ -1801,7 +1804,7 @@ impl TokenStorage for MemoryStorage {
         let token_id = self
             .state
             .read()
-            .await?
+            .await
             .tokens
             .values()
             .find(|token| {
@@ -1817,7 +1820,7 @@ impl TokenStorage for MemoryStorage {
         let owner = self
             .state
             .read()
-            .await?
+            .await
             .tokens
             .get(&token_id.id())
             .expect("token selected by id exists")
@@ -1831,7 +1834,7 @@ impl TokenStorage for MemoryStorage {
         request: StoragePrincipalTokensRevoke,
     ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         let (principal_id, context) = request.into_parts();
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let now = Utc::now();
         let mut revoked = Vec::new();
         state.invalidate_principal_sessions(principal_id.id());
@@ -1876,7 +1879,7 @@ impl AuthorizationDataStorage for MemoryStorage {
     ) -> Result<Vec<StorageAuthorizationResource>, StorageError> {
         use StorageAuthorizationResource as R;
         use hubuum_storage_core::StorageAuthorizationResourceKey as K;
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let class = |id: ClassId| {
             state
                 .classes
@@ -1952,7 +1955,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         principal_id: PrincipalId,
     ) -> Result<StorageAuthorizationPrincipal, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         if !state.principals.contains_key(&principal_id.id()) {
             return Err(StorageError::not_found(format!(
                 "Principal {} was not found",
@@ -1969,7 +1972,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationGroupMembershipQuery,
     ) -> Result<bool, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         Ok(state.groups.values().any(|group| {
             group.name() == query.group_name()
                 && state
@@ -1986,7 +1989,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationResourceIds,
     ) -> Result<Vec<StorageAuthorizationClassResource>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         Ok(query
             .ids()
             .iter()
@@ -1999,7 +2002,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationResourceIds,
     ) -> Result<Vec<StorageAuthorizationObjectResource>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         Ok(query
             .ids()
             .iter()
@@ -2019,7 +2022,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         queries: Vec<StorageAuthorizationCollectionAccessQuery>,
     ) -> Result<Vec<bool>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         Ok(queries
             .iter()
             .map(|query| {
@@ -2037,7 +2040,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationCollectionAccessQuery,
     ) -> Result<bool, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         Ok(principal_has_collection_permissions(
             &state,
             query.principal_id(),
@@ -2050,7 +2053,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationCollectionsAccessQuery,
     ) -> Result<bool, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         Ok(query.collection_ids().iter().all(|collection_id| {
             principal_has_collection_permissions(
                 &state,
@@ -2065,7 +2068,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationCollectionsQuery,
     ) -> Result<Vec<StorageAuthorizationCollection>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         state
             .collections
             .values()
@@ -2085,7 +2088,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationCollectionCandidateQuery,
     ) -> Result<StorageCandidatePage<StorageAuthorizationCollection>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let limit = query.page_limit();
         let mut rows = state
             .collections
@@ -2104,7 +2107,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         query: StorageAuthorizationGroupCandidateQuery,
     ) -> Result<StorageCandidatePage<StorageAuthorizationGroup>, StorageError> {
         let filters = ResourceFilters::for_groups(query.options())?;
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let limit = query.page_limit();
         let mut rows = state
             .groups
@@ -2131,7 +2134,7 @@ impl AuthorizationDataStorage for MemoryStorage {
     async fn get_authorization_policy_snapshot(
         &self,
     ) -> Result<Vec<StorageAuthorizationPolicySnapshotRow>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         state
             .authorization_grants
             .values()
@@ -2143,7 +2146,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationCollectionGrantListQuery,
     ) -> Result<StoragePage<StorageAuthorizationGroupGrant>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let rows = state
             .authorization_grants
             .values()
@@ -2163,7 +2166,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await?
+            .await
             .authorization_grants
             .get(&(key.collection_id().id(), key.group_id().id()))
             .cloned())
@@ -2173,7 +2176,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationPermissionSetQuery,
     ) -> Result<StorageAuthorizationPermissionSet, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let collection = state
             .collections
             .get(&query.collection_id().id())
@@ -2209,7 +2212,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         mutation: StorageAuthorizationGrantMutation,
     ) -> Result<StorageMutationOutcome<StorageAuthorizationGrant>, StorageError> {
         let key = mutation.key();
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         if !state.collections.contains_key(&key.collection_id().id()) {
             return Err(StorageError::not_found(format!(
                 "Collection {} was not found",
@@ -2272,7 +2275,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         state
             .authorization_revisions
             .insert(key.collection_id().id(), revision);
-        state.store_authorization_grant(map_key, grant.clone());
+        state.authorization_grants.insert(map_key, grant.clone());
         let receipt = state.append_simple_event(
             EntityType::Permission,
             id.id(),
@@ -2293,7 +2296,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         mutation: StorageAuthorizationGrantMutation,
     ) -> Result<StorageMutationOutcome<StorageAuthorizationGrant>, StorageError> {
         let key = mutation.key();
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let map_key = (key.collection_id().id(), key.group_id().id());
         let Some(current) = state.authorization_grants.get(&map_key).cloned() else {
             return Err(StorageError::not_found(format!(
@@ -2330,7 +2333,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         state
             .authorization_revisions
             .insert(key.collection_id().id(), revision);
-        state.store_authorization_grant(map_key, grant.clone());
+        state.authorization_grants.insert(map_key, grant.clone());
         let receipt = state.append_simple_event(
             EntityType::Permission,
             grant.id().id(),
@@ -2351,7 +2354,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         request: StorageAuthorizationGrantDelete,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let key = request.key();
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let Some(grant) = state
             .authorization_grants
             .remove(&(key.collection_id().id(), key.group_id().id()))
@@ -2381,7 +2384,7 @@ impl GroupStorage for MemoryStorage {
     ) -> Result<StoragePage<StorageIdentityGroup>, StorageError> {
         let options = query.into_options();
         let filters = ResourceFilters::for_groups(&options)?;
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let rows = state
             .groups
             .values()
@@ -2404,7 +2407,7 @@ impl GroupStorage for MemoryStorage {
     async fn get_group(&self, group_id: GroupId) -> Result<StorageIdentityGroup, StorageError> {
         self.state
             .read()
-            .await?
+            .await
             .groups
             .get(&group_id.id())
             .cloned()
@@ -2417,7 +2420,7 @@ impl GroupStorage for MemoryStorage {
         &self,
         group_id: GroupId,
     ) -> Result<String, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let group = state.groups.get(&group_id.id()).ok_or_else(|| {
             StorageError::not_found(format!("Group {} was not found", group_id.id()))
         })?;
@@ -2435,7 +2438,7 @@ impl GroupStorage for MemoryStorage {
     ) -> Result<crate::StorageMutationOutcome<StorageIdentityGroup>, StorageError> {
         let (identity_scope, name, description) = command.into_parts();
         let identity_scope = identity_scope.unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string());
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let scope = state
             .identity_scope_by_name(&identity_scope)
             .cloned()
@@ -2470,7 +2473,7 @@ impl GroupStorage for MemoryStorage {
         )
         .try_build()
         .map_err(invalid_contract_value)?;
-        state.store_group(id.id(), group.clone());
+        state.groups.insert(id.id(), group.clone());
         let receipt = state.append_simple_event(
             EntityType::Group,
             id.id(),
@@ -2488,7 +2491,7 @@ impl GroupStorage for MemoryStorage {
         update: StorageGroupUpdate,
         context: &EventContext,
     ) -> Result<crate::StorageMutationOutcome<StorageIdentityGroup>, StorageError> {
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let current = state.groups.get(&group_id.id()).cloned().ok_or_else(|| {
             StorageError::not_found(format!("Group {} was not found", group_id.id()))
         })?;
@@ -2531,7 +2534,7 @@ impl GroupStorage for MemoryStorage {
         .last_sync_success_at(current.last_sync_success_at())
         .try_build()
         .map_err(invalid_contract_value)?;
-        state.store_group(group_id.id(), group.clone());
+        state.groups.insert(group_id.id(), group.clone());
         let receipt = state.append_simple_event(
             EntityType::Group,
             group_id.id(),
@@ -2548,7 +2551,7 @@ impl GroupStorage for MemoryStorage {
         group_id: GroupId,
         context: &EventContext,
     ) -> Result<crate::StorageMutationOutcome<usize>, StorageError> {
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let Some(group) = state.groups.remove(&group_id.id()) else {
             return Ok(StorageMutationOutcome::unchanged(0));
         };
@@ -2575,7 +2578,7 @@ impl PrincipalStorage for MemoryStorage {
     ) -> Result<StoragePrincipal, StorageError> {
         self.state
             .read()
-            .await?
+            .await
             .principals
             .get(&principal_id.id())
             .cloned()
@@ -2603,7 +2606,7 @@ impl PrincipalStorage for MemoryStorage {
         mutation: StoragePrincipalSettingsMutation,
         context: &EventContext,
     ) -> Result<crate::StorageMutationOutcome<StoragePrincipalSettings>, StorageError> {
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let current = state
             .principals
             .get(&principal_id.id())
@@ -2640,7 +2643,7 @@ impl PrincipalStorage for MemoryStorage {
         let settings =
             StoragePrincipalSettings::try_new(principal_id, updated.revision(), document)
                 .map_err(invalid_contract_value)?;
-        state.store_principal(principal_id.id(), updated);
+        state.principals.insert(principal_id.id(), updated);
         let entity_type = if current.kind().is_human() {
             EntityType::User
         } else {
@@ -2664,7 +2667,7 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationPrincipalCollectionQuery,
     ) -> Result<Vec<StorageAuthorizationGroupGrant>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let group_ids = principal_group_ids(&state, query.principal_id());
         state
             .authorization_grants
@@ -2681,7 +2684,7 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
         &self,
         principal_id: PrincipalId,
     ) -> Result<Vec<StorageAuthorizationPolicySnapshotRow>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let group_ids = principal_group_ids(&state, principal_id);
         state
             .authorization_grants
@@ -2695,7 +2698,7 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationPrincipalCollectionPageQuery,
     ) -> Result<StoragePage<StorageAuthorizationGroupGrant>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let group_ids = principal_group_ids(&state, query.principal().principal_id());
         let rows = state
             .authorization_grants
@@ -2713,7 +2716,7 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationPrincipalCollectionQuery,
     ) -> Result<Vec<StorageAuthorizationEffectiveGroupGrant>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let group_ids = principal_group_ids(&state, query.principal_id());
         state
             .authorization_grants
@@ -2741,7 +2744,7 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
             return Ok(Vec::new());
         }
         let resources = scope_resources.map(StorageAuthenticationResourceScope::into_parts);
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         state
             .collections
             .values()
@@ -2782,7 +2785,7 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await?
+            .await
             .authorization_grants
             .get(&(query.collection_id().id(), query.group_id().id()))
             .is_some_and(|grant| grant.permissions().contains(&query.permission())))
@@ -2793,7 +2796,7 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
         collection_id: CollectionId,
         group_id: GroupId,
     ) -> Result<Vec<StorageAuthorizationEffectiveGroupGrant>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         state
             .authorization_grants
             .get(&(collection_id.id(), group_id.id()))
@@ -2806,7 +2809,7 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationCollectionGroupsQuery,
     ) -> Result<Vec<StorageAuthorizationGroup>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         state
             .authorization_grants
             .values()
@@ -2829,7 +2832,7 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
         query: StorageAuthorizationCollectionGroupsPageQuery,
     ) -> Result<StoragePage<StorageAuthorizationGroup>, StorageError> {
         let filters = ResourceFilters::for_groups(query.query_options())?;
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         let groups = query.groups();
         let mut rows = state
             .authorization_grants
@@ -2907,7 +2910,7 @@ fn create_user_in_state(
         None,
     )
     .map_err(invalid_contract_value)?;
-    state.store_principal(principal_id.id(), principal);
+    state.principals.insert(principal_id.id(), principal);
     state.users.insert(
         user_id.id(),
         MemoryUserRecord {
@@ -2986,7 +2989,7 @@ fn update_user_in_state(
         .get(&id.id())
         .cloned()
         .ok_or_else(|| StorageError::internal("updated user principal is missing"))?;
-    state.store_principal(
+    state.principals.insert(
         id.id(),
         advanced_principal(
             &principal,

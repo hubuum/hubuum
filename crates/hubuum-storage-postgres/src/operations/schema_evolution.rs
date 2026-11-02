@@ -486,7 +486,6 @@ pub async fn save_schema_repair_report(
     request: StorageSchemaRepairReportWrite,
 ) -> Result<(), PostgresStorageError> {
     runtime.with_transaction(async move |connection| {
-        crate::runtime::require_deletion_execution(connection).await?;
         let report = request.report();
         let class = lock_class(connection, report.target().class_id()).await?;
         check_collection(&class, request.authorized_collection())?;
@@ -639,7 +638,7 @@ async fn evidence_on(
     connection: &mut PostgresConnection,
     object_id: ObjectId,
 ) -> Result<Option<StorageSchemaEvidence>, PostgresStorageError> {
-    let row=diesel::sql_query("SELECT jsonb_build_object('logical_identity',logical_identity,'schema',jsonb_build_object('class_id',class_id,'revision',schema_revision),'object_revision',object_revision,'valid',valid,'validated_at',validated_at) AS value FROM object_schema_evidence WHERE object_id=$1").bind::<Integer,_>(object_id.id()).get_result::<JsonRow>(connection).await.optional()?;
+    let row=diesel::sql_query("SELECT jsonb_build_object('schema',jsonb_build_object('class_id',class_id,'revision',schema_revision),'object_revision',object_revision,'valid',valid,'validated_at',validated_at) AS value FROM object_schema_evidence WHERE object_id=$1").bind::<Integer,_>(object_id.id()).get_result::<JsonRow>(connection).await.optional()?;
     row.map(|row| serde_json::from_value(row.value).map_err(invalid))
         .transpose()
 }
@@ -816,7 +815,6 @@ pub async fn process_schema_work(
         })
         .collect::<Result<Vec<_>, PostgresStorageError>>()?;
     runtime.with_transaction(async move |connection|{
-        crate::runtime::require_deletion_execution(connection).await?;
         lock_class(connection,work.target().class_id()).await?;
         task_execution::runnable_claimed_task(connection,claimed).await?;
         let persisted=work_on(connection,work.task_id()).await?;
@@ -865,7 +863,6 @@ pub async fn cancel_schema_work(
     runtime
         .with_transaction(async move |connection| {
             let work = work_on(connection, task_id).await?;
-            super::task_retention::lock_on(connection).await?;
             let class = lock_class(connection, work.target().class_id()).await?;
             check_collection(&class, authorized_collection)?;
             use crate::schema::tasks::dsl as tasks;

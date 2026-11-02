@@ -4,7 +4,6 @@
 //! asynchronous-runtime dependencies. Application services and adapters share
 //! these values without reversing the dependency from storage into the server.
 
-pub mod artifacts;
 mod credential_activity;
 pub use credential_activity::*;
 mod auth_sessions;
@@ -13,8 +12,6 @@ pub use auth_sessions::*;
 mod authorization;
 mod authorization_resources;
 mod backend;
-mod deletion_control;
-pub use deletion_control::*;
 mod backup_snapshot;
 pub mod capabilities;
 mod catalog;
@@ -41,20 +38,12 @@ mod identity_tokens;
 mod identity_users;
 mod import_workflow;
 mod inventory;
-mod logical_identity;
-pub use logical_identity::{
-    LogicalIdentityStorage, StorageCapturedIdentity, StorageIdentityEvidence,
-    StorageIdentityHistoryKind, StorageIdentityResourceKind, StorageIdentitySubject,
-    StorageIdentityTarget, StorageRestoreVersionAncestry,
-};
 mod metrics;
 mod mutation;
 mod object_aggregate;
 mod operational;
 mod page;
 mod record;
-mod record_identity;
-pub use record_identity::StorageRecordIdentity;
 mod relation_lifecycle;
 mod relation_query;
 mod remote_target;
@@ -62,26 +51,11 @@ mod resource_lifecycle;
 mod restore;
 mod restore_artifact;
 pub use restore_artifact::{StorageRestoreArtifact, StorageRestoreArtifactBuilder};
-mod task_capacity;
-mod task_scheduling;
-pub use task_scheduling::{
-    StorageTaskClaimRequest, TaskKindWeight, TaskSchedulingMode, TaskSchedulingPolicy,
-    TaskSchedulingSnapshot, TaskSharedCapacityReason, TaskWorkerId, TaskWorkerKinds,
-};
 mod task_control;
-pub use task_capacity::{
-    StorageTaskCapacitySnapshot, StorageTaskCapacityUsage, StorageTaskPolicy,
-    StorageTaskPolicyUpdate, TaskAdmissionPolicy, TaskByteLimit, TaskCapacityLimit,
-    TaskCapacityRejection, TaskCapacityStorage, TaskKindCapacity, TaskPolicyRevision,
-    TaskScopeCapacity,
-};
 mod task_execution;
 mod task_metadata;
 mod task_queue;
-mod task_retention;
-pub use task_retention::*;
 mod task_search;
-mod task_waiting;
 mod telemetry;
 mod token_credentials;
 mod transaction;
@@ -113,8 +87,7 @@ pub use backup_snapshot::{
     BackupSnapshotStorage, StorageBackupBudget, StorageBackupCaptureProgress,
     StorageBackupHistorySection, StorageBackupHistorySections, StorageBackupReplay,
     StorageBackupReplayBuilder, StorageBackupReplayRows, StorageBackupRow, StorageBackupSnapshot,
-    StorageBackupStateSection, StorageBackupStateSections, StorageIdentityReplay,
-    StorageIdentityUpgrade,
+    StorageBackupStateSection, StorageBackupStateSections,
 };
 pub use catalog::{CatalogStorage, StorageCatalogListQuery};
 pub use collection_authorization::{
@@ -323,22 +296,22 @@ pub use restore::{
     RestoreStorage, StorageRestoreArtifactJob, StorageRestoreArtifactSummary,
     StorageRestoreArtifactSummaryParts, StorageRestoreCompletion,
     StorageRestoreCoordinatorSnapshot, StorageRestoreDocumentMetadata, StorageRestoreDrainState,
-    StorageRestoreFailure, StorageRestoreIdentityContext, StorageRestoreInitiator,
-    StorageRestoreInitiatorParts, StorageRestoreInstance, StorageRestoreJobStatus,
-    StorageRestoreJobSummary, StorageRestoreReplayApply, StorageRestoreStageArtifact,
-    StorageRestoreStatus, StorageRestoreTimestamps, StorageRestoreTimestampsParts,
+    StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreInitiatorParts,
+    StorageRestoreInstance, StorageRestoreJobStatus, StorageRestoreJobSummary,
+    StorageRestoreReplayApply, StorageRestoreStageArtifact, StorageRestoreStatus,
+    StorageRestoreTimestamps, StorageRestoreTimestampsParts,
 };
 pub use task_execution::{
-    StorageBackupTaskArtifact, StorageBackupTaskContent, StorageExportTaskArtifact,
-    StorageExportTaskArtifactBuilder, StorageExportTaskArtifactContent,
-    StorageExportTaskArtifactIdentity, StorageExportTaskArtifactReport, StorageOutputAvailability,
-    StorageRemoteCallArtifactOutcome, StorageRemoteCallArtifactResponse,
-    StorageRemoteCallArtifactTarget, StorageRemoteCallArtifactTargetParts,
-    StorageRemoteCallTaskArtifact, StorageSchemaProfileArtifact, StorageTaskActiveStatus,
-    StorageTaskActiveUpdate, StorageTaskClaim, StorageTaskClaimToken, StorageTaskCompletion,
-    StorageTaskCompletionPayload, StorageTaskEventAppend, StorageTaskEventInput,
-    StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskResultCounts,
-    StorageTaskTerminalStatus, StorageTaskTerminalUpdate, TaskExecutionStorage,
+    StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageExportTaskArtifactBuilder,
+    StorageExportTaskArtifactContent, StorageExportTaskArtifactIdentity,
+    StorageExportTaskArtifactReport, StorageRemoteCallArtifactOutcome,
+    StorageRemoteCallArtifactResponse, StorageRemoteCallArtifactTarget,
+    StorageRemoteCallArtifactTargetParts, StorageRemoteCallTaskArtifact,
+    StorageSchemaProfileArtifact, StorageTaskActiveStatus, StorageTaskActiveUpdate,
+    StorageTaskClaim, StorageTaskClaimToken, StorageTaskCompletion, StorageTaskCompletionPayload,
+    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskLease,
+    StorageTaskLeaseDuration, StorageTaskResultCounts, StorageTaskTerminalStatus,
+    StorageTaskTerminalUpdate, TaskExecutionStorage,
 };
 pub use task_queue::{
     StorageBackupOutput, StorageBackupOutputSummary, StorageExportOutput,
@@ -346,14 +319,10 @@ pub use task_queue::{
     StorageImportTaskResultBuilder, StorageTask, StorageTaskAccess, StorageTaskBuilder,
     StorageTaskChildListQuery, StorageTaskCreateRequest, StorageTaskCreateRequestBuilder,
     StorageTaskDurations, StorageTaskEvent, StorageTaskEventBuilder, StorageTaskKind,
-    StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskProgress,
-    StorageTaskRemoteInvocation, StorageTaskScopeSnapshot, StorageTaskStatus, TaskQueueStorage,
+    StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskProgress, StorageTaskScopeSnapshot,
+    StorageTaskStatus, TaskQueueStorage,
 };
 pub use task_search::{StorageTaskSearch, TaskTimeRange};
-pub use task_waiting::{
-    StorageTaskCheckpoint, StorageTaskResumeOutcome, StorageTaskResumeRequest, StorageTaskWait,
-    StorageTaskWaitRequest, StorageTaskWaitToken,
-};
 pub use telemetry::{StorageCapability, StorageObservation, StorageObserver};
 pub use token_credentials::{
     MAX_TOKEN_HASH_KEYS, StorageAuthenticationCredential, StorageTokenDigest, StorageTokenFormat,
@@ -395,8 +364,6 @@ pub enum StorageErrorKind {
     InvalidInput,
     /// The requested state conflicts with an existing durable state.
     Conflict,
-    /// A retained idempotency key identifies a different request or task kind.
-    IdempotencyConflict,
     /// The adapter's persistence service or driver failed.
     Backend,
     /// The authenticated caller lacks the required permission.
@@ -423,13 +390,12 @@ pub enum StorageErrorKind {
 }
 
 impl StorageErrorKind {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 17] = [
         Self::TaskCancelled,
         Self::TaskDeadlineExceeded,
         Self::AuthorizationUnavailable,
         Self::InvalidInput,
         Self::Conflict,
-        Self::IdempotencyConflict,
         Self::Backend,
         Self::PermissionDenied,
         Self::Internal,
@@ -452,7 +418,6 @@ impl StorageErrorKind {
             Self::AuthorizationUnavailable => "authorization_unavailable",
             Self::InvalidInput => "invalid_input",
             Self::Conflict => "conflict",
-            Self::IdempotencyConflict => "idempotency_key_conflict",
             Self::Backend => "backend",
             Self::PermissionDenied => "permission_denied",
             Self::Internal => "internal",
@@ -489,26 +454,9 @@ pub struct StorageError {
     kind: StorageErrorKind,
     message: String,
     current_revision: Option<ResourceRevision>,
-    task_capacity: Option<TaskCapacityRejection>,
 }
 
 impl StorageError {
-    #[must_use]
-    pub fn task_capacity(reason: TaskCapacityRejection) -> Self {
-        let kind = if reason.is_unavailable() {
-            StorageErrorKind::Unavailable
-        } else {
-            StorageErrorKind::RateLimited
-        };
-        let mut error = Self::new(kind, reason.as_str(), None);
-        error.task_capacity = Some(reason);
-        error
-    }
-
-    #[must_use]
-    pub const fn task_capacity_rejection(&self) -> Option<TaskCapacityRejection> {
-        self.task_capacity
-    }
     #[must_use]
     pub fn task_stopped(reason: hubuum_task_core::TaskStopReason) -> Self {
         let kind = match reason {
@@ -528,11 +476,6 @@ impl StorageError {
     #[must_use]
     pub fn conflict(message: impl Into<String>) -> Self {
         Self::new(StorageErrorKind::Conflict, message, None)
-    }
-
-    #[must_use]
-    pub fn idempotency_conflict(message: impl Into<String>) -> Self {
-        Self::new(StorageErrorKind::IdempotencyConflict, message, None)
     }
 
     #[must_use]
@@ -626,25 +569,12 @@ impl StorageError {
             kind,
             message: message.into(),
             current_revision,
-            task_capacity: None,
         }
     }
 
     #[must_use]
-    pub fn into_parts(
-        self,
-    ) -> (
-        StorageErrorKind,
-        String,
-        Option<ResourceRevision>,
-        Option<TaskCapacityRejection>,
-    ) {
-        (
-            self.kind,
-            self.message,
-            self.current_revision,
-            self.task_capacity,
-        )
+    pub fn into_parts(self) -> (StorageErrorKind, String, Option<ResourceRevision>) {
+        (self.kind, self.message, self.current_revision)
     }
 
     #[must_use]
@@ -689,7 +619,6 @@ mod tests {
                 StorageErrorKind::RevisionConflict,
                 "stale resource".to_string(),
                 Some(current_revision),
-                None,
             )
         );
     }

@@ -1,5 +1,3 @@
-use hubuum_storage_core::StorageIdentityEvidence;
-
 mod computed;
 pub use computed::*;
 mod navigation;
@@ -20,7 +18,6 @@ use super::{
 
 /// Common durable provenance columns stored on temporal-history rows.
 pub trait TemporalHistoryProvenance {
-    fn logical_identity(&self) -> Option<&StorageIdentityEvidence>;
     fn actor_id(&self) -> Option<i32>;
     fn actor_kind(&self) -> Option<&str>;
     fn initiator_user_id(&self) -> Option<i32>;
@@ -31,7 +28,6 @@ macro_rules! impl_temporal_history_provenance {
     ($($ty:ty),+ $(,)?) => {
         $(
             impl TemporalHistoryProvenance for $ty {
-                fn logical_identity(&self) -> Option<&StorageIdentityEvidence> { self.logical_identity.as_ref() }
                 fn actor_id(&self) -> Option<i32> {
                     self.actor_id
                 }

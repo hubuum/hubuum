@@ -10,7 +10,6 @@ use hubuum_domain::{
     TokenRetentionBatchSize,
 };
 use hubuum_query::MAX_TRAVERSAL_DEPTH;
-use hubuum_storage_core::artifacts::ArtifactLimits;
 
 use crate::models::retention::{MAX_FUTURE_RETENTION_HOURS, MAX_FUTURE_RETENTION_MINUTES};
 use crate::observability::tracing::{MAX_BATCH_SIZE, MAX_QUEUE_CAPACITY, MAX_TIMEOUT_MS};
@@ -175,15 +174,11 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_BACKUP_MAX_CAPTURE_ROWS", Backups),
     option!("HUBUUM_RESTORE_STAGE_RETENTION_MINUTES", Restores),
     option!("HUBUUM_RESTORE_MAX_UPLOAD_BYTES", Restores),
-    option!("HUBUUM_CONTROL_RECOVERY_DIRECTORY", Restores, metadata),
-    option!("HUBUUM_CONTROL_RECOVERY_KEY", Restores, metadata),
     option!("HUBUUM_EXPORT_MAX_ACTIVE_TASKS_PER_USER", Exports),
     option!("HUBUUM_EXPORT_TEMPLATE_RECURSION_LIMIT", Exports),
     option!("HUBUUM_EXPORT_TEMPLATE_FUEL", Exports),
     option!("HUBUUM_EXPORT_TEMPLATE_MAX_OBJECTS", Exports),
     option!("HUBUUM_EXPORT_MAX_OUTPUT_BYTES", Exports),
-    option!("HUBUUM_ARTIFACT_MAX_SPOOL_BYTES", Exports),
-    option!("HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES", Exports),
     option!("HUBUUM_EXPORT_STAGE_TIMEOUT_MS", Exports),
     option!("HUBUUM_EXPORT_DB_STATEMENT_TIMEOUT_MS", Exports),
     option!("HUBUUM_REMOTE_CALL_TIMEOUT_MS", RemoteCalls),
@@ -268,15 +263,8 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
 
 /// Exact Hubuum variables resolved outside clap's `AppConfig` adapter.
 pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
-    option!("HUBUUM_CONTROL_CHECKPOINT_MEASURE", Operations),
-    option!("HUBUUM_MEASUREMENT_CPU_AFFINITY", Operations),
     option!("HUBUUM_MIGRATION_DATABASE_URL", Database, sensitive),
     option!("HUBUUM_DATABASE_ROLE_TESTS", Operations),
-    option!("HUBUUM_PROBE_ROWS", Operations),
-    option!("HUBUUM_PROBE_ROW_BYTES", Operations),
-    option!("HUBUUM_PROBE_MODE", Operations),
-    option!("HUBUUM_PROBE_SLOTS", Operations),
-    option!("HUBUUM_PROBE_RATE", Operations),
     option!("HUBUUM_TOKEN_HASH_KEY", Authentication, sensitive),
     option!("HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID", Authentication),
     option!("HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS", Authentication),
@@ -347,18 +335,6 @@ macro_rules! configuration_bound {
 /// Runtime validation and the generated operational contract consume these
 /// same entries, including the accessor for the value being validated.
 pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
-    ConfigurationBound {
-        name: "HUBUUM_ARTIFACT_MAX_SPOOL_BYTES",
-        minimum: Some(1),
-        maximum: Some(ArtifactLimits::format_ceiling().artifact_bytes() as i64),
-        value: |config| config.artifacts.max_spool_bytes as i128,
-    },
-    ConfigurationBound {
-        name: "HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES",
-        minimum: Some(1),
-        maximum: Some(i64::MAX),
-        value: |config| config.artifacts.worker_resident_bytes as i128,
-    },
     ConfigurationBound {
         name: "HUBUUM_QUERY_OBSERVATIONS_SAMPLE_EVERY",
         minimum: Some(1),
@@ -572,11 +548,7 @@ pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
         "HUBUUM_BACKUP_MAX_ACTIVE_TASKS_PER_USER",
         backup_max_active_tasks_per_user
     ),
-    configuration_bound!(
-        "HUBUUM_BACKUP_MAX_OUTPUT_BYTES",
-        backup_max_output_bytes,
-        maximum = ArtifactLimits::format_ceiling().artifact_bytes() as i64
-    ),
+    configuration_bound!("HUBUUM_BACKUP_MAX_OUTPUT_BYTES", backup_max_output_bytes),
     configuration_bound!("HUBUUM_BACKUP_MAX_CAPTURE_ROWS", backup_max_capture_rows),
     configuration_bound!(
         "HUBUUM_RESTORE_STAGE_RETENTION_MINUTES",
@@ -601,11 +573,7 @@ pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
         "HUBUUM_EXPORT_TEMPLATE_MAX_OBJECTS",
         export_template_max_objects
     ),
-    configuration_bound!(
-        "HUBUUM_EXPORT_MAX_OUTPUT_BYTES",
-        export_max_output_bytes,
-        maximum = ArtifactLimits::format_ceiling().artifact_bytes() as i64
-    ),
+    configuration_bound!("HUBUUM_EXPORT_MAX_OUTPUT_BYTES", export_max_output_bytes),
     configuration_bound!("HUBUUM_EXPORT_STAGE_TIMEOUT_MS", export_stage_timeout_ms),
     configuration_bound!("HUBUUM_REMOTE_CALL_TIMEOUT_MS", remote_call_timeout_ms),
     configuration_bound!(
@@ -830,19 +798,14 @@ pub(crate) fn configuration_constraints() -> Vec<String> {
 /// dynamic namespace mapping and injects resolved values into consumers.
 pub const ENVIRONMENT_ADAPTER_PATHS: &[&str] = &[
     "src/config.rs",
-    #[cfg(any(test, feature = "integration-test-support"))]
-    "src/config/control_recovery.rs",
     "src/config/token_hash.rs",
     "src/administration.rs",
     "src/logger.rs",
-    "src/observability/metrics/checkpoint.rs",
     "src/secrets.rs",
     "src/test_support.rs",
     "src/tests/temporal/mod.rs",
-    "src/tasks/tests/artifact_pipeline.rs",
     "src/tests/permissions/live_treetop_parity.rs",
     "crates/hubuum-storage-postgres/src/test_support.rs",
-    "crates/hubuum-scale-benchmark/src/lifecycle_process.rs",
 ];
 
 pub fn declared(name: &str) -> bool {

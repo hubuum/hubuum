@@ -9,12 +9,11 @@ use std::time::{Duration, Instant};
 
 use diesel::QueryableByName;
 use diesel::result::{DatabaseErrorKind, Error as DieselError};
-use diesel::sql_types::{BigInt, Bool, Integer, Text};
+use diesel::sql_types::{BigInt, Integer, Text};
 use diesel_async::{AsyncConnection, RunQueryDsl};
 use hubuum_events_core::{EventContext, MutationProvenance, TraceLink};
 use hubuum_storage_core::{
-    RuntimeOwner, StorageCallSite, StorageErrorKind, StorageExecutionPermit, StorageExecutionScope,
-    StorageQueryBudget, StorageRevisionPrecondition,
+    StorageCallSite, StorageErrorKind, StorageQueryBudget, StorageRevisionPrecondition,
 };
 use hubuum_task_core::{TaskExecutionContext, TaskStopReason};
 use tracing::{debug, warn};
@@ -23,15 +22,12 @@ use crate::revision::revision_owner_key;
 use crate::{PostgresConnection, PostgresPool, PostgresPooledConnection, PostgresStorageError};
 
 /// Latest migration required by this adapter.
-pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = env!("PACKAGED_POSTGRES_MIGRATION_VERSION");
+pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20261026000001";
 // These migrations were added on a parallel branch and precede the latest
 // checkpoint. Its presence alone does not prove that tracing is installed.
 const REQUIRED_DATABASE_MIGRATION_VERSIONS: &[&str] = &[
     "20260903000002",
     "20260903000003",
-    "20261027000002",
-    "20261027000003",
-    "20261029000001",
     REQUIRED_DATABASE_MIGRATION_VERSION,
 ];
 pub const DEFAULT_COMPUTED_REINDEX_BATCH_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
@@ -95,7 +91,6 @@ pub struct PostgresRuntime {
     task_lease_pool: PostgresPool,
     computed_reindex_batch_size: NonZeroUsize,
     observer: Arc<dyn PostgresObserver>,
-    runtime_owner: Option<RuntimeOwner>,
 }
 
 impl fmt::Debug for PostgresRuntime {
@@ -122,18 +117,7 @@ impl PostgresRuntime {
             computed_reindex_batch_size: DEFAULT_COMPUTED_REINDEX_BATCH_SIZE,
             pool,
             observer,
-            runtime_owner: None,
         }
-    }
-
-    #[must_use]
-    pub fn with_runtime_owner(mut self, owner: RuntimeOwner) -> Self {
-        self.runtime_owner = Some(owner);
-        self
-    }
-
-    pub(crate) fn runtime_owner(&self) -> Option<&RuntimeOwner> {
-        self.runtime_owner.as_ref()
     }
 
     /// Construct a runtime with an explicit telemetry opt-out.
@@ -255,25 +239,6 @@ impl PostgresRuntime {
             .await
     }
 
-    pub(crate) async fn with_control_connection<F, R, E>(
-        &self,
-        operation: F,
-    ) -> Result<R, PostgresStorageError>
-    where
-        F: for<'connection> AsyncFnOnce(&'connection mut PostgresConnection) -> Result<R, E>
-            + for<'connection> SendAsyncFn<
-                &'connection mut PostgresConnection,
-                Result<R, E>,
-                Fut: Send,
-            > + Send,
-        R: Send,
-        E: Send,
-        PostgresStorageError: From<E>,
-    {
-        self.with_connection_context(operation, TransactionLocalContext::control())
-            .await
-    }
-
     /// Execute a read without installing mutation provenance. Query deadlines
     /// remain effective. Callers that can mutate must use `with_connection` or
     /// `with_transaction`, including read-repair and token activity updates.
@@ -312,13 +277,9 @@ impl PostgresRuntime {
         E: Send,
         PostgresStorageError: From<E>,
     {
-        let mut connection = if context.exempt {
-            self.acquire_connection_from(&self.pool).await?
-        } else {
-            self.acquire_connection().await?
-        };
+        let mut connection = self.acquire_connection().await?;
         let started_at = Instant::now();
-        let result = if context.is_empty() && (context.exempt || self.runtime_owner.is_none()) {
+        let result = if context.is_empty() {
             operation(&mut connection)
                 .await
                 .map_err(PostgresStorageError::from)
@@ -326,7 +287,7 @@ impl PostgresRuntime {
             connection
                 .transaction::<R, PostgresStorageError, _>(async move |connection| {
                     context.apply(connection).await?;
-                    self.execute_controlled(connection, &context, operation)
+                    self.execute_controlled(connection, context.task_execution.as_ref(), operation)
                         .await
                 })
                 .await
@@ -355,7 +316,7 @@ impl PostgresRuntime {
         E: Send,
         PostgresStorageError: From<E>,
     {
-        let context = TransactionLocalContext::control();
+        let context = TransactionLocalContext::ambient();
         let mut connection = self.acquire_connection_from(&self.task_lease_pool).await?;
         let started_at = Instant::now();
         let result = if context.is_empty() {
@@ -379,7 +340,7 @@ impl PostgresRuntime {
     async fn execute_controlled<F, R, E>(
         &self,
         connection: &mut PostgresConnection,
-        context: &TransactionLocalContext,
+        execution: Option<&TaskExecutionContext>,
         operation: F,
     ) -> Result<R, PostgresStorageError>
     where
@@ -393,9 +354,7 @@ impl PostgresRuntime {
         E: Send,
         PostgresStorageError: From<E>,
     {
-        let Some(execution) = context.task_execution.as_ref() else {
-            self.require_application_execution(connection, context)
-                .await?;
+        let Some(execution) = execution else {
             return operation(connection)
                 .await
                 .map_err(PostgresStorageError::from);
@@ -406,18 +365,10 @@ impl PostgresRuntime {
         let pid = diesel::select(diesel::dsl::sql::<Integer>("pg_backend_pid()"))
             .get_result::<i32>(connection)
             .await?;
-        // Authority lock waits belong to the same cancellation boundary as the
-        // task's SQL. User cancellation must be able to cancel a blocked gate.
-        let work = async {
-            self.require_application_execution(connection, context)
-                .await?;
-            operation(connection)
-                .await
-                .map_err(PostgresStorageError::from)
-        };
+        let work = operation(connection);
         tokio::pin!(work);
         let result = tokio::select! {
-            result = &mut work => result,
+            result = &mut work => result.map_err(PostgresStorageError::from),
             reason = wait_for_task_stop(execution) => {
                 let cancel = async {
                     let mut cancel_connection = self.acquire_connection_from(&self.task_lease_pool).await?;
@@ -450,65 +401,25 @@ impl PostgresRuntime {
         E: Send,
         PostgresStorageError: From<E>,
     {
-        self.with_transaction_context(operation, TransactionLocalContext::ambient())
-            .await
-    }
-
-    pub(crate) async fn with_control_transaction<F, R, E>(
-        &self,
-        operation: F,
-    ) -> Result<R, PostgresStorageError>
-    where
-        F: for<'connection> AsyncFnOnce(&'connection mut PostgresConnection) -> Result<R, E>
-            + for<'connection> SendAsyncFn<
-                &'connection mut PostgresConnection,
-                Result<R, E>,
-                Fut: Send,
-            > + Send,
-        R: Send,
-        E: Send,
-        PostgresStorageError: From<E>,
-    {
-        self.with_transaction_context(operation, TransactionLocalContext::control())
-            .await
-    }
-
-    async fn with_transaction_context<F, R, E>(
-        &self,
-        operation: F,
-        context: TransactionLocalContext,
-    ) -> Result<R, PostgresStorageError>
-    where
-        F: for<'connection> AsyncFnOnce(&'connection mut PostgresConnection) -> Result<R, E>
-            + for<'connection> SendAsyncFn<
-                &'connection mut PostgresConnection,
-                Result<R, E>,
-                Fut: Send,
-            > + Send,
-        R: Send,
-        E: Send,
-        PostgresStorageError: From<E>,
-    {
-        let mut connection = if context.exempt {
-            self.acquire_connection_from(&self.pool).await?
-        } else {
-            self.acquire_connection().await?
-        };
+        let context = TransactionLocalContext::ambient();
+        let mut connection = self.acquire_connection().await?;
         let started_at = Instant::now();
         let result = connection
             .transaction::<R, PostgresStorageError, _>(async move |connection| {
                 context.apply(connection).await?;
                 let value = self
-                    .execute_controlled(&mut *connection, &context, operation)
+                    .execute_controlled(
+                        &mut *connection,
+                        context.task_execution.as_ref(),
+                        operation,
+                    )
                     .await?;
                 crate::reach_fault_point(
                     crate::PostgresFaultPoint::TransactionBeforeCommit,
                     Some(connection),
                 )
                 .await?;
-                if !context.exempt {
-                    task_execution_checkpoint()?;
-                }
+                task_execution_checkpoint()?;
                 Ok(value)
             })
             .await;
@@ -536,108 +447,21 @@ impl PostgresRuntime {
         E: Send,
         PostgresStorageError: From<E>,
     {
-        self.with_snapshot_context(operation, TransactionLocalContext::read_only())
-            .await
-    }
-
-    pub(crate) async fn with_control_snapshot<F, R, E>(
-        &self,
-        operation: F,
-    ) -> Result<R, PostgresStorageError>
-    where
-        F: for<'connection> AsyncFnOnce(&'connection mut PostgresConnection) -> Result<R, E>
-            + for<'connection> SendAsyncFn<
-                &'connection mut PostgresConnection,
-                Result<R, E>,
-                Fut: Send,
-            > + Send,
-        R: Send,
-        E: Send,
-        PostgresStorageError: From<E>,
-    {
-        self.with_snapshot_context(operation, TransactionLocalContext::control())
-            .await
-    }
-
-    async fn with_snapshot_context<F, R, E>(
-        &self,
-        operation: F,
-        context: TransactionLocalContext,
-    ) -> Result<R, PostgresStorageError>
-    where
-        F: for<'connection> AsyncFnOnce(&'connection mut PostgresConnection) -> Result<R, E>
-            + for<'connection> SendAsyncFn<
-                &'connection mut PostgresConnection,
-                Result<R, E>,
-                Fut: Send,
-            > + Send,
-        R: Send,
-        E: Send,
-        PostgresStorageError: From<E>,
-    {
-        let mut connection = if context.exempt {
-            self.acquire_connection_from(&self.pool).await?
-        } else {
-            self.acquire_connection().await?
-        };
+        let context = TransactionLocalContext::read_only();
+        let mut connection = self.acquire_connection().await?;
         let started_at = Instant::now();
         let result = connection
             .transaction::<R, PostgresStorageError, _>(async move |connection| {
-                diesel::sql_query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+                diesel::sql_query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
                     .execute(connection)
                     .await?;
                 context.apply(connection).await?;
-                self.execute_controlled(connection, &context, operation)
+                self.execute_controlled(connection, context.task_execution.as_ref(), operation)
                     .await
             })
             .await;
         self.record_completion("transaction", started_at, &result);
         result
-    }
-
-    async fn require_application_execution(
-        &self,
-        connection: &mut PostgresConnection,
-        context: &TransactionLocalContext,
-    ) -> Result<(), PostgresStorageError> {
-        if context.exempt {
-            return Ok(());
-        }
-        if let Some(owner) = &self.runtime_owner
-            && context
-                .application_access
-                .as_ref()
-                .and_then(StorageExecutionPermit::owner)
-                != Some(owner)
-        {
-            return Err(PostgresStorageError::unavailable(
-                "Bound runtime requires its captured application permit",
-            ));
-        }
-        if let Some(permit) = &context.application_access {
-            use diesel::sql_types::{Nullable, Uuid as SqlUuid};
-            let allowed = diesel::select(
-                diesel::dsl::sql::<Bool>("public.hubuum_application_execution_allowed(")
-                    .bind::<Nullable<SqlUuid>, _>(permit.owner().map(RuntimeOwner::id))
-                    .sql(",")
-                    .bind::<Nullable<SqlUuid>, _>(permit.owner().map(RuntimeOwner::ownership_token))
-                    .sql(",")
-                    .bind::<SqlUuid, _>(permit.fence().incarnation())
-                    .sql(",")
-                    .bind::<BigInt, _>(permit.fence().revision())
-                    .sql(")"),
-            )
-            .get_result::<bool>(connection)
-            .await?;
-            if !allowed {
-                return Err(PostgresStorageError::unavailable(
-                    "Application execution permit is stale, retired, or quarantined",
-                ));
-            }
-        } else if context.task_execution.is_some() {
-            require_deletion_execution(connection).await?;
-        }
-        Ok(())
     }
 
     fn record_completion<R>(
@@ -696,106 +520,6 @@ impl PostgresRuntime {
 
     pub(crate) fn record_computed_rebuild_batch(&self, object_count: usize) {
         self.observer.computed_rebuild_batch(object_count);
-    }
-}
-
-tokio::task_local! {
-    static AMBIENT_APPLICATION_ACCESS: StorageExecutionPermit;
-}
-
-pub(crate) fn ambient_application_access() -> Option<StorageExecutionPermit> {
-    AMBIENT_APPLICATION_ACCESS.try_with(Clone::clone).ok()
-}
-
-pub(crate) async fn with_application_access<F: Future>(
-    permit: StorageExecutionPermit,
-    future: F,
-) -> F::Output {
-    if ambient_application_access().is_some() {
-        future.await
-    } else {
-        AMBIENT_APPLICATION_ACCESS.scope(permit, future).await
-    }
-}
-
-pub(crate) fn current_execution_scope() -> StorageExecutionScope {
-    let mut scope = StorageExecutionScope::default().with_call_site(ambient_storage_call_site());
-    if let Some(permit) = ambient_application_access() {
-        scope = scope.with_application_access(permit);
-    }
-    if let Ok(execution) = AMBIENT_TASK_EXECUTION.try_with(Clone::clone) {
-        scope = scope.with_task_execution(execution);
-    }
-    if let Ok(budget) = AMBIENT_QUERY_BUDGET.try_with(|value| *value) {
-        scope = scope.with_query_budget(budget);
-    }
-    if let Ok(provenance) = AMBIENT_MUTATION_PROVENANCE.try_with(Clone::clone) {
-        scope = scope.with_mutation_provenance(provenance);
-    }
-    if let Ok(precondition) = AMBIENT_REVISION_PRECONDITION.try_with(Clone::clone) {
-        scope = scope.with_revision_precondition(precondition);
-    }
-    scope
-}
-
-pub(crate) fn run_in_scope_sync<F: FnOnce() -> R, R>(
-    scope: StorageExecutionScope,
-    operation: F,
-) -> R {
-    // Preserve an inherited admission: nesting must not refresh old producers.
-    let application =
-        ambient_application_access().or_else(|| scope.application_access_override().cloned());
-    let inner = || {
-        AMBIENT_STORAGE_CALL_SITE.sync_scope(
-            scope
-                .call_site_override()
-                .unwrap_or_else(ambient_storage_call_site),
-            || {
-                AMBIENT_TASK_EXECUTION.sync_scope(
-                    scope.task_execution_override().cloned().unwrap_or_else(|| {
-                        AMBIENT_TASK_EXECUTION
-                            .try_with(Clone::clone)
-                            .unwrap_or(None)
-                    }),
-                    || {
-                        AMBIENT_QUERY_BUDGET.sync_scope(
-                            scope.query_budget_override().unwrap_or_else(|| {
-                                AMBIENT_QUERY_BUDGET.try_with(|v| *v).unwrap_or(None)
-                            }),
-                            || {
-                                AMBIENT_MUTATION_PROVENANCE.sync_scope(
-                                    scope
-                                        .mutation_provenance_override()
-                                        .cloned()
-                                        .unwrap_or_else(|| {
-                                            AMBIENT_MUTATION_PROVENANCE
-                                                .try_with(Clone::clone)
-                                                .unwrap_or(None)
-                                        }),
-                                    || {
-                                        AMBIENT_REVISION_PRECONDITION.sync_scope(
-                                            scope
-                                                .revision_precondition_override()
-                                                .cloned()
-                                                .unwrap_or_else(|| {
-                                                    AMBIENT_REVISION_PRECONDITION
-                                                        .try_with(Clone::clone)
-                                                        .unwrap_or(None)
-                                                }),
-                                            operation,
-                                        )
-                                    },
-                                )
-                            },
-                        )
-                    },
-                )
-            },
-        )
-    };
-    match application {
-        Some(permit) => AMBIENT_APPLICATION_ACCESS.sync_scope(permit, inner),
-        None => inner(),
     }
 }
 
@@ -973,33 +697,7 @@ pub(crate) fn require_existing_revision_target<T>(
     }
 }
 
-/// Order productive task transactions against deletion intent commits. The
-/// SECURITY DEFINER function holds the authority row FOR SHARE until transaction
-/// completion, before application row and advisory locks are acquired.
-pub(crate) async fn require_deletion_execution(
-    connection: &mut PostgresConnection,
-) -> Result<(), PostgresStorageError> {
-    require_deletion_exposure(connection, "public.hubuum_deletion_execution_allowed()").await
-}
-
-async fn require_deletion_exposure(
-    connection: &mut PostgresConnection,
-    query: &'static str,
-) -> Result<(), PostgresStorageError> {
-    let allowed = diesel::select(diesel::dsl::sql::<Bool>(query))
-        .get_result::<bool>(connection)
-        .await?;
-    if !allowed {
-        return Err(PostgresStorageError::unavailable(
-            "Deletion recovery quarantine prevents task execution and publication",
-        ));
-    }
-    Ok(())
-}
-
 struct TransactionLocalContext {
-    application_access: Option<StorageExecutionPermit>,
-    exempt: bool,
     task_execution: Option<TaskExecutionContext>,
     query_budget: Option<StorageQueryBudget>,
     provenance: Option<MutationProvenance>,
@@ -1007,23 +705,8 @@ struct TransactionLocalContext {
 }
 
 impl TransactionLocalContext {
-    fn control() -> Self {
-        Self {
-            application_access: None,
-            exempt: true,
-            task_execution: None,
-            query_budget: AMBIENT_QUERY_BUDGET
-                .try_with(|budget| *budget)
-                .unwrap_or(None),
-            provenance: None,
-            revision_precondition: None,
-        }
-    }
-
     fn read_only() -> Self {
         Self {
-            application_access: ambient_application_access(),
-            exempt: false,
             task_execution: AMBIENT_TASK_EXECUTION
                 .try_with(Clone::clone)
                 .unwrap_or(None),
@@ -1037,8 +720,6 @@ impl TransactionLocalContext {
 
     fn ambient() -> Self {
         Self {
-            application_access: ambient_application_access(),
-            exempt: false,
             task_execution: AMBIENT_TASK_EXECUTION
                 .try_with(Clone::clone)
                 .unwrap_or(None),
@@ -1055,8 +736,7 @@ impl TransactionLocalContext {
     }
 
     fn is_empty(&self) -> bool {
-        self.application_access.is_none()
-            && self.query_budget.is_none()
+        self.query_budget.is_none()
             && self.task_execution.is_none()
             && self.provenance.is_none()
             && self.revision_precondition.is_none()
@@ -1158,9 +838,12 @@ pub(crate) async fn postgres_schema_is_ready(
         "SELECT NOT EXISTS (\
             SELECT unnest($1::text[]) \
             EXCEPT SELECT version::text FROM __diesel_schema_migrations\
+        ) AND NOT EXISTS (\
+            SELECT 1 FROM __diesel_schema_migrations WHERE version::text > $2\
         ) AS ready",
     )
     .bind::<diesel::sql_types::Array<Text>, _>(REQUIRED_DATABASE_MIGRATION_VERSIONS)
+    .bind::<Text, _>(REQUIRED_DATABASE_MIGRATION_VERSION)
     .get_result::<DatabaseSchemaReadiness>(connection)
     .await?
     .ready)
@@ -1277,7 +960,6 @@ mod tests {
     #[case::complete(None)]
     #[case::trace_schema(Some("20260903000002"))]
     #[case::trace_validation(Some("20260903000003"))]
-    #[case::artifact_outputs(Some("20261029000001"))]
     #[case::latest(Some(REQUIRED_DATABASE_MIGRATION_VERSION))]
     #[tokio::test]
     async fn readiness_requires_every_schema_checkpoint(#[case] missing: Option<&str>) {
@@ -1309,6 +991,40 @@ mod tests {
         .unwrap();
 
         assert_eq!(ready, missing.is_none());
+    }
+
+    #[cfg(feature = "integration-test-support")]
+    #[rstest::rstest]
+    #[case::project_identity("20261027000001")]
+    #[case::project_waiting("20261101000001")]
+    #[case::future("20990101000001")]
+    #[tokio::test]
+    async fn readiness_rejects_newer_schema_versions(#[case] version: &str) {
+        use diesel::sql_types::Text;
+        use diesel_async::RunQueryDsl;
+
+        use crate::test_support::{database_role_tests_enabled, integration_test_migration_pool};
+        use crate::with_connection;
+
+        if !database_role_tests_enabled() {
+            return;
+        }
+        let pool = integration_test_migration_pool(1);
+        let ready = with_connection(&pool, async |connection| {
+            diesel::sql_query("BEGIN").execute(&mut *connection).await?;
+            diesel::sql_query("INSERT INTO __diesel_schema_migrations (version) VALUES ($1)")
+                .bind::<Text, _>(version)
+                .execute(&mut *connection)
+                .await?;
+            let result = super::postgres_schema_is_ready(connection).await;
+            diesel::sql_query("ROLLBACK")
+                .execute(&mut *connection)
+                .await?;
+            result
+        })
+        .await
+        .unwrap();
+        assert!(!ready);
     }
 
     #[test]

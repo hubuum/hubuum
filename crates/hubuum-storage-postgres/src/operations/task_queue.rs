@@ -4,11 +4,13 @@
 //! application receives only storage-core DTOs and never needs to translate a
 //! PostgreSQL row or classify output-retention state.
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use diesel::dsl::sql;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
-use diesel::sql_types::Bool;
-use diesel::{Insertable, Queryable, Selectable, SelectableHelper};
+use diesel::sql_types::{BigInt, Bool};
+use diesel::{Insertable, Queryable, QueryableByName, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{GroupId, ImportTaskResultId, PrincipalId, TaskId};
 use hubuum_events_core::{
@@ -20,8 +22,7 @@ use hubuum_storage_core::{
     StorageExportOutputSummary, StorageImportTaskResult, StoragePage, StorageTask,
     StorageTaskAccess, StorageTaskChildListQuery, StorageTaskCreateRequest, StorageTaskDurations,
     StorageTaskEvent, StorageTaskKind, StorageTaskListQuery, StorageTaskOutputLookup,
-    StorageTaskSearch, StorageTaskStatus, StorageTaskSubmissionOutcome, TaskReceiptActivation,
-    TaskSubmissionResolution,
+    StorageTaskSearch, StorageTaskStatus,
 };
 use serde_json::{Value, json};
 
@@ -99,7 +100,6 @@ impl NewTaskRow {
 
 #[derive(Queryable)]
 struct TaskEventRow {
-    logical_identity: Option<Value>,
     id: i64,
     entity_id: Option<i32>,
     action: String,
@@ -130,7 +130,6 @@ impl TaskEventRow {
             self.actor_kind,
         )
         .data(data)
-        .logical_identity(super::history::history_identity(self.logical_identity)?)
         .actor_principal_id(self.actor_user_id.map(PrincipalId::new).transpose()?)
         .provenance(
             self.initiator_user_id.map(PrincipalId::new).transpose()?,
@@ -179,7 +178,6 @@ impl ImportTaskResultRow {
 #[derive(Queryable, Selectable)]
 #[diesel(table_name = crate::schema::export_task_outputs)]
 struct ExportOutputRow {
-    artifact_reference: Option<Value>,
     task_id: i32,
     template_name: Option<String>,
     content_type: String,
@@ -220,12 +218,6 @@ impl ExportOutputRow {
             )
             .template_name(self.template_name)
             .output(self.json_output, self.text_output)
-            .artifact_reference(
-                self.artifact_reference
-                    .map(serde_json::from_value)
-                    .transpose()
-                    .map_err(|error| PostgresStorageError::database(error.to_string()))?,
-            )
             .warning_state(self.warning_count, self.truncated)
             .durations(durations)
             .try_build(),
@@ -277,7 +269,6 @@ impl ExportOutputSummaryRow {
 #[derive(Queryable, Selectable)]
 #[diesel(table_name = crate::schema::backup_task_outputs)]
 struct BackupOutputRow {
-    artifact_reference: Option<Value>,
     task_id: i32,
     document: Vec<u8>,
     byte_size: i64,
@@ -288,25 +279,6 @@ struct BackupOutputRow {
 
 impl BackupOutputRow {
     fn into_storage(self) -> Result<StorageBackupOutput, PostgresStorageError> {
-        if let Some(reference) = self.artifact_reference {
-            if !self.document.is_empty() {
-                return Err(PostgresStorageError::database(
-                    "Referenced backup contains inline bytes",
-                ));
-            }
-            return crate::validate_persisted(
-                "backup artifact reference",
-                StorageBackupOutput::from_reference(
-                    TaskId::new(self.task_id)?,
-                    serde_json::from_value(reference)
-                        .map_err(|error| PostgresStorageError::database(error.to_string()))?,
-                    self.byte_size,
-                    self.sha256,
-                    self.output_expires_at.and_utc(),
-                    self.created_at.and_utc(),
-                ),
-            );
-        }
         crate::validate_persisted(
             "backup output",
             StorageBackupOutput::try_new(
@@ -344,65 +316,32 @@ impl BackupOutputSummaryRow {
     }
 }
 
+#[derive(QueryableByName)]
+struct AdvisoryLockRow {
+    #[diesel(sql_type = Bool)]
+    locked: bool,
+}
+
 pub async fn create_task(
     runtime: &PostgresRuntime,
     request: StorageTaskCreateRequest,
-) -> Result<StorageTaskSubmissionOutcome, PostgresStorageError> {
-    let mut new_task = NewTaskRow::from_request(&request)?;
+) -> Result<StorageTask, PostgresStorageError> {
+    let new_task = NewTaskRow::from_request(&request)?;
     let submitted_by = request.submitted_by().id();
     let kind = request.kind();
-    runtime
+    let idempotency_key = new_task.idempotency_key.clone();
+    let request_hash = new_task.request_hash.clone();
+
+    if let Some(key) = idempotency_key.as_deref()
+        && let Some(existing) = find_task_by_idempotency(runtime, submitted_by, key).await?
+    {
+        return matching_idempotent_task(existing, kind, &request_hash, key);
+    }
+
+    let maximum_active_tasks = i64::try_from(request.maximum_active_tasks()).unwrap_or(i64::MAX);
+    let create_result = runtime
         .with_transaction(async move |connection| {
-            let header = super::task_retention::lock_on(connection).await?;
-            let protected = header.activation.is_protected();
-            if !matches!(header.activation, TaskReceiptActivation::Disabled) {
-                if let Some(binding) = request.receipt_binding() {
-                    if header.activation.key_fingerprint() != Some(binding.key_fingerprint()) {
-                        return Err(PostgresStorageError::unavailable(
-                            "Task control signing key does not match",
-                        ));
-                    }
-                    match super::task_retention::resolve_on(connection, &header, binding.lookup())
-                        .await?
-                    {
-                        TaskSubmissionResolution::Fresh => {}
-                        TaskSubmissionResolution::PendingProtection(ticket) => {
-                            return Ok(StorageTaskSubmissionOutcome::DuplicatePendingProtection(
-                                ticket,
-                            ));
-                        }
-                        TaskSubmissionResolution::Available(task) => {
-                            return Ok(StorageTaskSubmissionOutcome::DuplicateAvailable(*task));
-                        }
-                        TaskSubmissionResolution::DetailsExpired(receipt) => {
-                            return Ok(StorageTaskSubmissionOutcome::DuplicateDetailsExpired(
-                                receipt,
-                            ));
-                        }
-                        TaskSubmissionResolution::ExpiryProtectionRequired(receipt) => {
-                            return Ok(StorageTaskSubmissionOutcome::ExpiryProtectionRequired(
-                                receipt,
-                            ));
-                        }
-                        TaskSubmissionResolution::LegacyUnverifiable(receipt) => {
-                            return Ok(StorageTaskSubmissionOutcome::LegacyUnverifiable(receipt));
-                        }
-                        TaskSubmissionResolution::ProtectionDisabled => {
-                            return Err(PostgresStorageError::conflict(
-                                "Task receipt activation changed",
-                            ));
-                        }
-                    }
-                    new_task.idempotency_key = None;
-                } else if new_task.idempotency_key.is_some() {
-                    return Err(PostgresStorageError::unavailable(
-                        "Protected task submission requires a receipt binding",
-                    ));
-                }
-            }
-            diesel::sql_query("SELECT public.hubuum_task_capacity_lock()")
-                .execute(connection)
-                .await?;
+            acquire_capacity_lock(connection, submitted_by, kind).await?;
             // A concurrent matching submission may have committed while this
             // transaction waited. Reading it must not consume the approval again.
             if let Some(key) = new_task.idempotency_key.as_deref() {
@@ -411,65 +350,50 @@ pub async fn create_task(
                     .filter(stored::submitted_by.eq(Some(submitted_by)))
                     .filter(stored::idempotency_key.eq(key))
                     .select(TaskRow::as_select())
-                    .first::<TaskRow>(connection)
-                    .await
-                    .optional()?
-                {
-                    if existing.kind != kind.as_str()
-                        || existing.request_hash != new_task.request_hash
-                    {
-                        return Err(PostgresStorageError::conflict(
-                            "Idempotency-Key is already in use for a different task submission",
-                        ));
+                    .first::<TaskRow>(connection).await.optional()? {
+                    if existing.kind != kind.as_str() || existing.request_hash != new_task.request_hash {
+                        return Err(PostgresStorageError::conflict("Idempotency-Key is already in use for a different task submission"));
                     }
-                    return Ok(StorageTaskSubmissionOutcome::DuplicateAvailable(
-                        existing.into_storage()?,
-                    ));
+                    return Ok(existing);
                 }
             }
-            use crate::schema::tasks::dsl as stored;
-            let task = diesel::insert_into(stored::tasks)
-                .values(new_task)
-                .returning(TaskRow::as_returning())
-                .get_result::<TaskRow>(connection)
-                .await?;
+            let active_count = count_active_tasks(connection, submitted_by, kind).await?;
+            if active_count >= maximum_active_tasks {
+                return Err(PostgresStorageError::rate_limited(format!(
+                    "Too many active {} tasks for user ({active_count} >= {maximum_active_tasks}); wait for queued or running tasks to finish",
+                    kind.as_str()
+                )));
+            }
+            let task = insert_queued_task(connection, new_task).await?;
             if let Some(approval) = request.approval() {
-                if kind != hubuum_storage_core::StorageTaskKind::Import
-                    || approval.claim().actor_id() != request.submitted_by()
-                {
+                if kind != hubuum_storage_core::StorageTaskKind::Import || approval.claim().actor_id() != request.submitted_by() {
                     return Err(PostgresStorageError::reauthentication_required());
                 }
-                super::credential_approval::consume(
-                    connection,
-                    Some(approval.claim()),
-                    hubuum_storage_core::StorageCredentialOperation::ImportCredentials,
-                    None,
-                    &approval
-                        .context()
-                        .clone()
-                        .with_task_id(TaskId::new(task.id)?),
-                )
-                .await?;
+                super::credential_approval::consume(connection, Some(approval.claim()), hubuum_storage_core::StorageCredentialOperation::ImportCredentials, None, &approval.context().clone().with_task_id(TaskId::new(task.id)?)).await?;
             }
-            if let Some(invocation) = request.remote_invocation() {
-                super::task_retention::capture_invocation_on(connection, task.id, invocation)
-                    .await?;
-            }
-            if protected && let Some(binding) = request.receipt_binding() {
-                let ticket =
-                    super::task_retention::record_admission_on(connection, &header, &task, binding)
-                        .await?;
-                Ok(StorageTaskSubmissionOutcome::PendingProtection(ticket))
-            } else {
-                emit_queued_on(connection, &task).await?;
-                super::task_retention::emit_invocation_on(connection, task.id).await?;
-                log_task_queued(&task);
-                Ok(StorageTaskSubmissionOutcome::CreatedReady(
-                    task.into_storage()?,
-                ))
-            }
+            Ok(task)
         })
-        .await
+        .await;
+
+    match create_result {
+        Ok(task) => {
+            log_task_queued(&task);
+            task.into_storage()
+        }
+        Err(error) if error.kind() == hubuum_storage_core::StorageErrorKind::Conflict => {
+            if let Some(key) = idempotency_key.as_deref()
+                && let Some(existing) = find_task_by_idempotency(runtime, submitted_by, key).await?
+                && existing.kind == kind.as_str()
+                && existing.request_hash == request_hash
+            {
+                return existing.into_storage();
+            }
+            Err(PostgresStorageError::conflict(
+                "Idempotency-Key is already in use for a different task submission",
+            ))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub async fn get_task_access(
@@ -484,7 +408,6 @@ pub async fn get_task_access(
 
             let task = stored::tasks
                 .filter(stored::id.eq(task_id))
-                .filter(sql::<Bool>("public.hubuum_task_details_visible(tasks.id)"))
                 .select(TaskRow::as_select())
                 .first::<TaskRow>(connection)
                 .await?;
@@ -607,7 +530,6 @@ pub async fn list_export_output_summaries(
             use crate::schema::export_task_outputs::dsl as outputs;
             outputs::export_task_outputs
                 .filter(outputs::task_id.eq_any(task_ids))
-                .filter(sql::<Bool>("public.hubuum_task_outputs_visible(task_id)"))
                 .select(ExportOutputSummaryRow::as_select())
                 .load::<ExportOutputSummaryRow>(connection)
                 .await
@@ -632,7 +554,6 @@ pub async fn list_backup_output_summaries(
             use crate::schema::backup_task_outputs::dsl as outputs;
             outputs::backup_task_outputs
                 .filter(outputs::task_id.eq_any(task_ids))
-                .filter(sql::<Bool>("public.hubuum_task_outputs_visible(task_id)"))
                 .select(BackupOutputSummaryRow::as_select())
                 .load::<BackupOutputSummaryRow>(connection)
                 .await
@@ -655,7 +576,6 @@ pub async fn get_export_output_summary(
             use crate::schema::export_task_outputs::dsl as outputs;
             outputs::export_task_outputs
                 .filter(outputs::task_id.eq(task_id))
-                .filter(sql::<Bool>("public.hubuum_task_outputs_visible(task_id)"))
                 .select(ExportOutputSummaryRow::as_select())
                 .first::<ExportOutputSummaryRow>(connection)
                 .await
@@ -675,7 +595,6 @@ pub async fn get_backup_output_summary(
             use crate::schema::backup_task_outputs::dsl as outputs;
             outputs::backup_task_outputs
                 .filter(outputs::task_id.eq(task_id))
-                .filter(sql::<Bool>("public.hubuum_task_outputs_visible(task_id)"))
                 .select(BackupOutputSummaryRow::as_select())
                 .first::<BackupOutputSummaryRow>(connection)
                 .await
@@ -695,7 +614,6 @@ pub async fn get_export_output(
             use crate::schema::export_task_outputs::dsl as outputs;
             outputs::export_task_outputs
                 .filter(outputs::task_id.eq(task_id))
-                .filter(sql::<Bool>("public.hubuum_task_outputs_visible(task_id)"))
                 .select(ExportOutputRow::as_select())
                 .first::<ExportOutputRow>(connection)
                 .await
@@ -715,7 +633,6 @@ pub async fn get_backup_output(
             use crate::schema::backup_task_outputs::dsl as outputs;
             outputs::backup_task_outputs
                 .filter(outputs::task_id.eq(task_id))
-                .filter(sql::<Bool>("public.hubuum_task_outputs_visible(task_id)"))
                 .select(BackupOutputRow::as_select())
                 .first::<BackupOutputRow>(connection)
                 .await
@@ -733,9 +650,7 @@ fn build_task_query(
     search: &StorageTaskSearch,
 ) -> crate::schema::tasks::BoxedQuery<'static, diesel::pg::Pg> {
     use crate::schema::tasks::dsl as stored;
-    let mut query = stored::tasks
-        .filter(sql::<Bool>("public.hubuum_task_details_visible(tasks.id)"))
-        .into_boxed();
+    let mut query = stored::tasks.into_boxed();
     if let Some(submitted_by) = submitted_by {
         query = query.filter(stored::submitted_by.eq(Some(submitted_by)));
     }
@@ -876,7 +791,6 @@ async fn list_tasks_on(
         )
     );
     let mut tasks = storage_query
-        .select(TaskRow::as_select())
         .load::<TaskRow>(connection)
         .await?
         .into_iter()
@@ -939,10 +853,103 @@ fn task_cursor_field(field: &FilterField) -> Result<CursorSqlField, PostgresStor
     })
 }
 
-pub(super) async fn emit_queued_on(
+async fn find_task_by_idempotency(
+    runtime: &PostgresRuntime,
+    submitted_by: i32,
+    key: &str,
+) -> Result<Option<TaskRow>, PostgresStorageError> {
+    let key = key.to_string();
+    runtime
+        .with_connection(async move |connection| {
+            use crate::schema::tasks::dsl as stored;
+            stored::tasks
+                .filter(stored::submitted_by.eq(Some(submitted_by)))
+                .filter(stored::idempotency_key.eq(key))
+                .select(TaskRow::as_select())
+                .first::<TaskRow>(connection)
+                .await
+                .optional()
+        })
+        .await
+}
+
+fn matching_idempotent_task(
+    task: TaskRow,
+    kind: StorageTaskKind,
+    request_hash: &Option<String>,
+    key: &str,
+) -> Result<StorageTask, PostgresStorageError> {
+    if task.kind == kind.as_str() && task.request_hash == *request_hash {
+        task.into_storage()
+    } else {
+        Err(PostgresStorageError::conflict(format!(
+            "Idempotency-Key '{key}' is already in use for a different task submission"
+        )))
+    }
+}
+
+async fn acquire_capacity_lock(
     connection: &mut PostgresConnection,
-    task: &TaskRow,
+    submitted_by: i32,
+    kind: StorageTaskKind,
 ) -> Result<(), PostgresStorageError> {
+    let lock = diesel::sql_query("SELECT TRUE AS locked FROM pg_advisory_xact_lock($1)")
+        .bind::<BigInt, _>(task_capacity_lock_key(submitted_by, kind))
+        .get_result::<AdvisoryLockRow>(connection)
+        .await?;
+    if lock.locked {
+        Ok(())
+    } else {
+        Err(PostgresStorageError::database(
+            "Failed to acquire task capacity lock",
+        ))
+    }
+}
+
+fn task_capacity_lock_key(submitted_by: i32, kind: StorageTaskKind) -> i64 {
+    const BASE_KEY: i64 = 4_801_000_000_000;
+    const KIND_STRIDE: i64 = 1_i64 << 32;
+    let kind_slot = match kind {
+        StorageTaskKind::Export => 1,
+        StorageTaskKind::RemoteCall => 2,
+        StorageTaskKind::Backup => 3,
+        StorageTaskKind::SchemaProfiling => 4,
+        StorageTaskKind::Import | StorageTaskKind::Reindex | StorageTaskKind::SchemaValidation => 9,
+    };
+    BASE_KEY + (kind_slot * KIND_STRIDE) + i64::from(submitted_by)
+}
+
+async fn count_active_tasks(
+    connection: &mut PostgresConnection,
+    submitted_by: i32,
+    task_kind: StorageTaskKind,
+) -> Result<i64, PostgresStorageError> {
+    use crate::schema::tasks::dsl as stored;
+    let non_terminal = [
+        StorageTaskStatus::Queued.as_str(),
+        StorageTaskStatus::Validating.as_str(),
+        StorageTaskStatus::Running.as_str(),
+    ];
+    Ok(stored::tasks
+        .filter(stored::kind.eq(task_kind.as_str()))
+        .filter(stored::submitted_by.eq(Some(submitted_by)))
+        .filter(stored::status.eq_any(non_terminal))
+        .filter(stored::deleted_at.is_null())
+        .count()
+        .get_result::<i64>(connection)
+        .await?)
+}
+
+async fn insert_queued_task(
+    connection: &mut PostgresConnection,
+    row: NewTaskRow,
+) -> Result<TaskRow, PostgresStorageError> {
+    use crate::schema::tasks::dsl as stored;
+    let task = diesel::insert_into(stored::tasks)
+        .values(row)
+        .returning(TaskRow::as_returning())
+        .get_result::<TaskRow>(connection)
+        .await?;
     let actor_user_id = task.submitted_by.ok_or_else(|| {
         PostgresStorageError::database("Newly queued task is missing its submitter")
     })?;
@@ -968,7 +975,7 @@ pub(super) async fn emit_queued_on(
             .with_mutation_provenance(&provenance);
     append_event(connection, &event).await?;
     notify_task_queue(connection, task.id).await?;
-    Ok(())
+    Ok(task)
 }
 
 fn log_task_queued(task: &TaskRow) {
@@ -994,7 +1001,6 @@ async fn list_task_events_on(
         let total = stored::events
             .filter(stored::entity_type.eq(EntityType::Task.as_str()))
             .filter(stored::entity_id.eq(Some(task_id)))
-        .filter(sql::<Bool>("public.hubuum_task_details_visible(events.entity_id) AND events.logical_identity #>> '{references,/entity_id,reference,identity}' = (SELECT t.logical_identity #>> '{subject,identity,identity}' FROM tasks t WHERE t.id=events.entity_id)"))
             .count()
             .get_result::<i64>(connection)
             .await?;
@@ -1004,7 +1010,8 @@ async fn list_task_events_on(
     } else {
         None
     };
-    let events = load_task_events(connection, task_id, options).await?;
+    let mut events = load_task_events(connection, task_id, options).await?;
+    enrich_legacy_event_initiators(connection, &mut events).await?;
     let events = events
         .into_iter()
         .map(TaskEventRow::into_storage)
@@ -1024,7 +1031,6 @@ async fn load_task_events(
     let mut query = stored::events
         .filter(stored::entity_type.eq(EntityType::Task.as_str()))
         .filter(stored::entity_id.eq(Some(task_id)))
-        .filter(sql::<Bool>("public.hubuum_task_details_visible(events.entity_id) AND events.logical_identity #>> '{references,/entity_id,reference,identity}' = (SELECT t.logical_identity #>> '{subject,identity,identity}' FROM tasks t WHERE t.id=events.entity_id)"))
         .into_boxed();
     if let Some(cursor_id) = cursor_id {
         query = if descending {
@@ -1034,7 +1040,6 @@ async fn load_task_events(
         };
     }
     let selection = (
-        stored::logical_identity,
         stored::id,
         stored::entity_id,
         stored::action,
@@ -1063,6 +1068,47 @@ async fn load_task_events(
     }
 }
 
+async fn enrich_legacy_event_initiators(
+    connection: &mut PostgresConnection,
+    events: &mut [TaskEventRow],
+) -> Result<(), PostgresStorageError> {
+    let task_ids = events
+        .iter()
+        .filter(|event| event.initiator_user_id.is_none())
+        .filter_map(|event| event.entity_id)
+        .collect::<Vec<_>>();
+    if task_ids.is_empty() {
+        return Ok(());
+    }
+    use crate::schema::events::dsl as stored;
+    let queued = stored::events
+        .filter(stored::entity_type.eq(EntityType::Task.as_str()))
+        .filter(stored::action.eq(Action::Queued.as_str()))
+        .filter(stored::entity_id.eq_any(task_ids.into_iter().map(Some)))
+        .order(stored::id.asc())
+        .select((
+            stored::entity_id,
+            stored::initiator_user_id,
+            stored::actor_user_id,
+        ))
+        .load::<(Option<i32>, Option<i32>, Option<i32>)>(connection)
+        .await?;
+    let initiators = queued
+        .into_iter()
+        .filter_map(|(task_id, initiator, actor)| {
+            task_id.map(|task_id| (task_id, initiator.or(actor)))
+        })
+        .collect::<HashMap<_, _>>();
+    for event in events {
+        if event.initiator_user_id.is_none()
+            && let Some(task_id) = event.entity_id
+        {
+            event.initiator_user_id = initiators.get(&task_id).copied().flatten();
+        }
+    }
+    Ok(())
+}
+
 async fn list_import_task_results_on(
     connection: &mut PostgresConnection,
     task_id: i32,
@@ -1072,7 +1118,6 @@ async fn list_import_task_results_on(
     let total = if options.include_total() {
         let total = stored::import_task_results
             .filter(stored::task_id.eq(task_id))
-            .filter(sql::<Bool>("public.hubuum_task_details_visible(task_id)"))
             .count()
             .get_result::<i64>(connection)
             .await?;
@@ -1087,7 +1132,6 @@ async fn list_import_task_results_on(
     let limit = page_limit(options)?;
     let mut storage_query = stored::import_task_results
         .filter(stored::task_id.eq(task_id))
-        .filter(sql::<Bool>("public.hubuum_task_details_visible(task_id)"))
         .into_boxed();
     if let Some(cursor_id) = cursor_id {
         storage_query = if descending {
@@ -1302,12 +1346,21 @@ mod tests {
     }
 
     #[test]
+    fn capacity_lock_partitions_kinds_and_submitters() {
+        let export = task_capacity_lock_key(7, StorageTaskKind::Export);
+        let backup = task_capacity_lock_key(7, StorageTaskKind::Backup);
+        let other_submitter = task_capacity_lock_key(8, StorageTaskKind::Export);
+
+        assert_ne!(export, backup);
+        assert_ne!(export, other_submitter);
+    }
+
+    #[test]
     fn invalid_persisted_export_output_is_a_backend_failure() {
         let timestamp = chrono::DateTime::from_timestamp(1_700_000_000, 0)
             .unwrap()
             .naive_utc();
         let row = ExportOutputRow {
-            artifact_reference: None,
             task_id: 1,
             template_name: None,
             content_type: "application/json".to_string(),
@@ -1339,7 +1392,6 @@ mod tests {
             .unwrap()
             .naive_utc();
         let row = BackupOutputRow {
-            artifact_reference: None,
             task_id: 1,
             document: b"{}".to_vec(),
             byte_size: 3,

@@ -1,6 +1,5 @@
 //! Complete PostgreSQL implementation of the backend-neutral storage contract.
 
-mod artifacts;
 use hubuum_domain::JsonSchemaLimits;
 use std::future::Future;
 use std::num::NonZeroUsize;
@@ -19,27 +18,22 @@ use hubuum_query::QueryOptions;
 use hubuum_storage_core::*;
 
 use crate::{
-    PostgresArtifactStore, PostgresObserver, PostgresPool, PostgresPoolState, PostgresRuntime,
-    PostgresStorageError, PostgresStorageSnapshot,
+    PostgresObserver, PostgresPool, PostgresPoolState, PostgresRuntime, PostgresStorageError,
+    PostgresStorageSnapshot,
 };
 
 mod backup_snapshot;
 mod capabilities;
 mod computed_fields;
-pub(crate) mod deletion_control;
-pub(crate) use deletion_control::acknowledge_coordinator_drain_on;
 mod export_templates;
 mod imports;
-mod logical_identity;
 mod notifications;
 mod query_usage;
 mod remote_targets;
 mod restores;
 mod schema_evolution;
-mod task_capacity;
 mod task_execution;
 mod task_queue;
-mod task_retention;
 mod transaction;
 
 /// Complete statically linked PostgreSQL storage backend.
@@ -54,12 +48,6 @@ pub struct PostgresStorage {
 }
 
 impl PostgresStorage {
-    /// Compose the immutable artifact store with this adapter's configured
-    /// runtime and observer, without exposing its pool or runtime internals.
-    pub fn artifact_store(&self) -> PostgresArtifactStore {
-        PostgresArtifactStore::new(self.runtime.clone())
-    }
-
     #[must_use]
     pub fn new(pool: PostgresPool, observer: Arc<dyn PostgresObserver>) -> Self {
         Self {
@@ -74,12 +62,6 @@ impl PostgresStorage {
     #[must_use]
     pub fn unobserved(pool: PostgresPool) -> Self {
         Self::new(pool, Arc::new(crate::NoopPostgresObserver))
-    }
-
-    #[must_use]
-    pub fn with_runtime_owner(mut self, owner: RuntimeOwner) -> Self {
-        self.runtime = self.runtime.with_runtime_owner(owner);
-        self
     }
 
     #[must_use]

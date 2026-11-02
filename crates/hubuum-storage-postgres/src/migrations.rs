@@ -3,7 +3,7 @@ use diesel::connection::SimpleConnection;
 use diesel::deserialize::QueryableByName;
 use diesel::migration::MigrationSource;
 use diesel::pg::Pg;
-use diesel::sql_types::{BigInt, Integer, Text};
+use diesel::sql_types::{BigInt, Text};
 use diesel::{Connection, PgConnection};
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 use hubuum_storage_core::StorageError;
@@ -13,19 +13,7 @@ use crate::{DatabaseRoleNames, PostgresStorageError, database_role_reconciliatio
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 
 // Keep this set aligned with the hash-pinned offline migration reviews.
-const OFFLINE_MIGRATIONS: &[&str] = &[
-    "20261001000001",
-    "20261005000001",
-    "20261021000002",
-    "20261027000001",
-    "20261027000003",
-    "20261029000001",
-    "20261029000005",
-    "20261029000006",
-    "20261030000001",
-    "20261031000001",
-    "20261031000008",
-];
+const OFFLINE_MIGRATIONS: &[&str] = &["20261001000001", "20261005000001", "20261021000002"];
 
 /// Whether pending migrations permit the previous API to remain online.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -38,39 +26,6 @@ pub enum MigrationMode {
 struct AppliedMigration {
     #[diesel(sql_type = Text)]
     version: String,
-}
-
-#[derive(QueryableByName)]
-struct IdentityBackfillBatch {
-    #[diesel(sql_type = Integer)]
-    changed: i32,
-}
-
-// Every call commits independently. A failed upgrade can resume without
-// rewriting assigned identities or holding a transaction over the full history.
-fn backfill_logical_identities(connection: &mut PgConnection) -> Result<(), StorageError> {
-    loop {
-        let batch =
-            diesel::sql_query("SELECT public.hubuum_backfill_logical_identities(500) AS changed")
-                .get_result::<IdentityBackfillBatch>(connection)
-                .map_err(PostgresStorageError::from)?;
-        if batch.changed == 0 {
-            break;
-        }
-    }
-    connection
-        .batch_execute("SELECT public.hubuum_validate_logical_identities()")
-        .map_err(PostgresStorageError::from)?;
-    loop {
-        let batch =
-            diesel::sql_query("SELECT public.hubuum_backfill_task_capacity(500) AS changed")
-                .get_result::<IdentityBackfillBatch>(connection)
-                .map_err(PostgresStorageError::from)?;
-        if batch.changed == 0 {
-            break;
-        }
-    }
-    Ok(())
 }
 
 /// Inspect migration history without modifying the database. Unknown applied
@@ -116,7 +71,7 @@ fn migration_mode_for_versions(
 ) -> Result<MigrationMode, PostgresStorageError> {
     if applied.iter().any(|version| !known.contains(version)) {
         return Err(PostgresStorageError::database(
-            "Database contains migrations unknown to this binary; restore a pre-upgrade database snapshot before downgrading",
+            "Database contains migrations unknown to this binary; use a matching binary and preserve independent deletion authority and recovery material; database downgrade is not supported",
         ));
     }
     Ok(
@@ -220,16 +175,14 @@ pub fn prepare_disposable_restore_database(connection_url: &str) -> Result<usize
             state.user_object_count
         )));
     }
-    let count = connection
+    connection
         .run_pending_migrations(MIGRATIONS)
         .map_err(|error| {
             StorageError::from(PostgresStorageError::database(format!(
                 "failed to migrate the disposable restore-test database: {error}"
             )))
         })
-        .map(|migrations| migrations.len())?;
-    backfill_logical_identities(&mut connection)?;
-    Ok(count)
+        .map(|migrations| migrations.len())
 }
 
 /// Remove the Hubuum schema created by [`prepare_disposable_restore_database`]
@@ -257,9 +210,7 @@ pub fn reset_disposable_restore_database(connection_url: &str) -> Result<(), Sto
         ));
     }
     connection
-        .batch_execute(
-            "DROP SCHEMA public CASCADE; DROP SCHEMA hubuum_control CASCADE; CREATE SCHEMA public;",
-        )
+        .batch_execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
         .map_err(|error| {
             StorageError::from(PostgresStorageError::database(format!(
                 "failed to reset the disposable restore-test database: {error}"
@@ -271,6 +222,7 @@ fn run_embedded_migrations_with_roles(
     connection_url: &str,
     roles: Option<&DatabaseRoleNames>,
 ) -> Result<usize, StorageError> {
+    inspect_migration_mode(connection_url, roles)?;
     let mut connection = PgConnection::establish(connection_url).map_err(|error| {
         StorageError::from(PostgresStorageError::database(format!(
             "failed to connect for storage migrations: {error}"
@@ -303,7 +255,6 @@ fn run_embedded_migrations_with_roles(
                 )))
             })?;
     }
-    backfill_logical_identities(&mut connection)?;
     Ok(applied_count)
 }
 
@@ -317,16 +268,7 @@ mod tests {
     #[case::previous(vec!["20260919000001"], MigrationMode::Offline)]
     #[case::before_collection_sinks(vec!["20260919000001", "20261001000001"], MigrationMode::Offline)]
     #[case::before_interactive_sessions(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001"], MigrationMode::Offline)]
-    #[case::before_identities(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002"], MigrationMode::Offline)]
-    #[case::before_capacity(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001"], MigrationMode::Offline)]
-    #[case::before_artifact_outputs(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003"], MigrationMode::Offline)]
-    #[case::before_managed_cleanup(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001", "20261029000002", "20261029000003", "20261029000004"], MigrationMode::Offline)]
-    #[case::before_application_reapplication(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001", "20261029000002", "20261029000003", "20261029000004", "20261029000005"], MigrationMode::Offline)]
-    #[case::before_protected_audit(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001", "20261029000002", "20261029000003", "20261029000004", "20261029000005", "20261029000006"], MigrationMode::Offline)]
-    #[case::before_scheduling(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001", "20261029000002", "20261029000003", "20261029000004", "20261029000005", "20261029000006", "20261030000001"], MigrationMode::Offline)]
-    #[case::before_task_retention(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001", "20261029000002", "20261029000003", "20261029000004", "20261029000005", "20261029000006", "20261030000001", "20261031000001"], MigrationMode::Offline)]
-    #[case::before_waiting(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001", "20261029000002", "20261029000003", "20261029000004", "20261029000005", "20261029000006", "20261030000001", "20261031000001", "20261031000008"], MigrationMode::Rolling)]
-    #[case::current(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001", "20261029000002", "20261029000003", "20261029000004", "20261029000005", "20261029000006", "20261030000001", "20261031000001", "20261031000008", "20261101000001"], MigrationMode::Rolling)]
+    #[case::current(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002"], MigrationMode::Rolling)]
     fn pending_offline_migrations_determine_mode(
         #[case] applied: Vec<&str>,
         #[case] expected: MigrationMode,
@@ -338,18 +280,6 @@ mod tests {
             "20261005000001",
             "20261021000001",
             "20261021000002",
-            "20261027000001",
-            "20261027000003",
-            "20261029000001",
-            "20261029000002",
-            "20261029000003",
-            "20261029000004",
-            "20261029000005",
-            "20261029000006",
-            "20261030000001",
-            "20261031000001",
-            "20261031000008",
-            "20261101000001",
         ]
         .map(str::to_owned);
         assert_eq!(
@@ -362,7 +292,7 @@ mod tests {
     fn unknown_applied_migrations_reject_downgrades() {
         let error = migration_mode_for_versions(&["20990101000001".to_string()], &[])
             .expect_err("unknown database history must fail closed");
-        assert!(error.to_string().contains("pre-upgrade database snapshot"));
+        assert!(error.to_string().contains("use a matching binary"));
     }
 
     #[test]

@@ -38,13 +38,6 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --all --check
 ```
 
-API task tests use 200 completion polls by default. A remote database containing
-the full suite's fixtures can need a longer wait, especially when a full backup
-occupies the shared test worker. Set `HUBUUM_TEST_TASK_POLL_ATTEMPTS=2000` for such
-runs. This positive-integer setting changes the functional tests' polling budget;
-production deadlines and the tests' result, authorization and cancellation
-assertions stay unchanged.
-
 The runner includes PostgreSQL adapter tests and a resource-limited JSON Schema
 probe. Python applies the probe's process limits; its assertions remain in Rust.
 Destructive restore contracts use a second runner-owned database with the same
@@ -71,9 +64,9 @@ Only `true` and `false` are accepted; an unset flag defaults to `true`.
 
 CI's direct Cargo jobs use `python3 tests/python/run.py integration rust-tests --`
 before the Cargo command to provision equivalent isolated restore authority on
-Linux, macOS and Windows. The driver uses the built migration binary, preserves
-the application database settings and test exit status, and removes its temporary
-database and roles even when migration or testing fails.
+Linux, macOS and Windows. The driver preserves the application database settings
+and test exit status and removes its temporary database and roles on failure.
+
 Use Rust's shared fixtures and scoped names for application data. Never replace
 database concurrency or migration coverage with a Python mock.
 

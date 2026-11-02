@@ -416,7 +416,6 @@ pub async fn update_group(
                 crate::schema::groups::table.filter(crate::schema::groups::id.eq(group_id)),
             )
             .set(UpdateGroupRow::from(&update))
-            .returning(GroupRow::as_select())
             .get_result::<GroupRow>(connection)
             .await?;
             let document = AuditDocument::try_new(
@@ -637,7 +636,6 @@ async fn insert_local_group(
             crate::schema::groups::description.eq(description),
             crate::schema::groups::managed_by.eq(LOCAL_PROVIDER_KIND),
         ))
-        .returning(GroupRow::as_select())
         .get_result::<GroupRow>(connection)
         .await
         .map_err(PostgresStorageError::from)

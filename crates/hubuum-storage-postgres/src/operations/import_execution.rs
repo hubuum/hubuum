@@ -236,8 +236,6 @@ pub async fn apply_claimed_import_strict(
     let (lease, items) = plan.into_parts();
     runtime
         .with_transaction(async move |connection| {
-            super::task_execution::require_claimed_execution(connection, claimed_task(&lease)?)
-                .await?;
             let mut state = ImportRuntime::for_plan(&fenced_operations(&items));
             for item in items {
                 crate::runtime::task_execution_checkpoint()?;
@@ -297,8 +295,6 @@ pub async fn apply_claimed_import_best_effort(
         let receipt = result.clone();
         let outcome = runtime
             .with_transaction(async |connection| {
-                super::task_execution::require_claimed_execution(connection, claimed_task(&lease)?)
-                    .await?;
                 let change = if let Some(operation) = operation {
                     execute_operation(schema_limits, connection, &state, operation).await?
                 } else {
@@ -326,11 +322,6 @@ pub async fn apply_claimed_import_best_effort(
                 let error = StorageError::from(error);
                 runtime
                     .with_transaction(async |connection| {
-                        super::task_execution::require_claimed_execution(
-                            connection,
-                            claimed_task(&lease)?,
-                        )
-                        .await?;
                         live_claimed_task(connection, claimed_task(&lease)?).await?;
                         record_execution_receipt(
                             connection,
@@ -359,8 +350,6 @@ pub async fn record_claimed_import_results(
     let (lease, results) = results.into_parts();
     runtime
         .with_transaction(async move |connection| {
-            super::task_execution::require_claimed_execution(connection, claimed_task(&lease)?)
-                .await?;
             for result in results {
                 record_execution_receipt(connection, &lease, None, result).await?;
             }
@@ -803,7 +792,6 @@ async fn create_collection(
                     crate::schema::collections::created_at.eq(created_at),
                     crate::schema::collections::updated_at.eq(updated_at),
                 ))
-                .returning(CollectionRow::as_select())
                 .get_result::<CollectionRow>(connection)
                 .await?
         }
@@ -814,7 +802,6 @@ async fn create_collection(
                     crate::schema::collections::description.eq(parts.description),
                     crate::schema::collections::parent_collection_id.eq(parent_collection_id),
                 ))
-                .returning(CollectionRow::as_select())
                 .get_result::<CollectionRow>(connection)
                 .await?
         }
@@ -855,14 +842,12 @@ async fn update_collection(
                     crate::schema::collections::created_at.eq(created_at),
                     crate::schema::collections::updated_at.eq(updated_at),
                 ))
-                .returning(CollectionRow::as_select())
                 .get_result::<CollectionRow>(connection)
                 .await
                 .optional(),
                 async || {
                     crate::schema::collections::table
                         .filter(crate::schema::collections::id.eq(collection_id))
-                        .select(CollectionRow::as_select())
                         .first::<CollectionRow>(connection)
                         .await
                 },
@@ -881,14 +866,12 @@ async fn update_collection(
                 crate::schema::collections::name.eq(parts.name),
                 crate::schema::collections::description.eq(parts.description),
             ))
-            .returning(CollectionRow::as_select())
             .get_result::<CollectionRow>(connection)
             .await
             .optional(),
             async || {
                 crate::schema::collections::table
                     .filter(crate::schema::collections::id.eq(collection_id))
-                    .select(CollectionRow::as_select())
                     .first::<CollectionRow>(connection)
                     .await
             },
@@ -930,7 +913,6 @@ async fn create_class(
                     crate::schema::hubuumclass::created_at.eq(created_at),
                     crate::schema::hubuumclass::updated_at.eq(updated_at),
                 ))
-                .returning(ClassRow::as_select())
                 .get_result::<ClassRow>(connection)
                 .await?
         }
@@ -943,7 +925,6 @@ async fn create_class(
                     crate::schema::hubuumclass::validate_schema.eq(validate_schema),
                     crate::schema::hubuumclass::description.eq(parts.description),
                 ))
-                .returning(ClassRow::as_select())
                 .get_result::<ClassRow>(connection)
                 .await?
         }
@@ -1011,14 +992,12 @@ async fn update_class(
                     crate::schema::hubuumclass::created_at.eq(created_at),
                     crate::schema::hubuumclass::updated_at.eq(updated_at),
                 ))
-                .returning(ClassRow::as_select())
                 .get_result::<ClassRow>(connection)
                 .await
                 .optional(),
                 async || {
                     crate::schema::hubuumclass::table
                         .filter(crate::schema::hubuumclass::id.eq(class_id))
-                        .select(ClassRow::as_select())
                         .first::<ClassRow>(connection)
                         .await
                 },
@@ -1034,14 +1013,12 @@ async fn update_class(
                     .filter(crate::schema::hubuumclass::id.eq(class_id)),
             )
             .set(values)
-            .returning(ClassRow::as_select())
             .get_result::<ClassRow>(connection)
             .await
             .optional(),
             async || {
                 crate::schema::hubuumclass::table
                     .filter(crate::schema::hubuumclass::id.eq(class_id))
-                    .select(ClassRow::as_select())
                     .first::<ClassRow>(connection)
                     .await
             },
@@ -1086,7 +1063,6 @@ async fn create_object(
                     crate::schema::hubuumobject::created_at.eq(created_at),
                     crate::schema::hubuumobject::updated_at.eq(updated_at),
                 ))
-                .returning(ObjectRow::as_select())
                 .get_result::<ObjectRow>(connection)
                 .await?
         }
@@ -1099,7 +1075,6 @@ async fn create_object(
                     crate::schema::hubuumobject::data.eq(parts.data),
                     crate::schema::hubuumobject::description.eq(parts.description),
                 ))
-                .returning(ObjectRow::as_select())
                 .get_result::<ObjectRow>(connection)
                 .await?
         }
@@ -1171,14 +1146,12 @@ async fn update_object(
                     crate::schema::hubuumobject::created_at.eq(created_at),
                     crate::schema::hubuumobject::updated_at.eq(updated_at),
                 ))
-                .returning(ObjectRow::as_select())
                 .get_result::<ObjectRow>(connection)
                 .await
                 .optional(),
                 async || {
                     crate::schema::hubuumobject::table
                         .filter(crate::schema::hubuumobject::id.eq(object_id))
-                        .select(ObjectRow::as_select())
                         .first::<ObjectRow>(connection)
                         .await
                 },
@@ -1194,14 +1167,12 @@ async fn update_object(
                     .filter(crate::schema::hubuumobject::id.eq(object_id)),
             )
             .set(values)
-            .returning(ObjectRow::as_select())
             .get_result::<ObjectRow>(connection)
             .await
             .optional(),
             async || {
                 crate::schema::hubuumobject::table
                     .filter(crate::schema::hubuumobject::id.eq(object_id))
-                    .select(ObjectRow::as_select())
                     .first::<ObjectRow>(connection)
                     .await
             },
@@ -1395,7 +1366,6 @@ async fn execute_group(
         .filter(crate::schema::groups::identity_scope_id.eq(identity_scope_id))
         .filter(crate::schema::groups::groupname.eq(&parts.name))
         .for_update()
-        .select(GroupRow::as_select())
         .first::<GroupRow>(connection)
         .await
         .optional()?;
@@ -1733,7 +1703,6 @@ async fn upsert_principal(
         .filter(crate::schema::principals::identity_scope_id.eq(identity_scope_id))
         .filter(crate::schema::principals::name.eq(&parts.name))
         .for_update()
-        .select(PrincipalRow::as_select())
         .first::<PrincipalRow>(connection)
         .await
         .optional()?;
@@ -1829,7 +1798,6 @@ async fn upsert_principal(
         } => {
             let existing = crate::schema::users::table
                 .filter(crate::schema::users::id.eq(principal_id))
-                .select(UserRow::as_select())
                 .first::<UserRow>(connection)
                 .await
                 .optional()?;
@@ -1902,7 +1870,6 @@ async fn upsert_principal(
             })?;
             let existing = crate::schema::service_accounts::table
                 .filter(crate::schema::service_accounts::id.eq(principal_id))
-                .select(ServiceAccountRow::as_select())
                 .first::<ServiceAccountRow>(connection)
                 .await
                 .optional()?;

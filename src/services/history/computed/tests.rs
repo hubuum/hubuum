@@ -10,7 +10,6 @@ fn object(data: Value) -> HubuumObjectHistory {
         .unwrap()
         .to_utc();
     HubuumObjectHistory {
-        logical_identity: None,
         id: 1,
         name: "object".into(),
         collection_id: 1,

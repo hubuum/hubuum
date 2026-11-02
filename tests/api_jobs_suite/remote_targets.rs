@@ -523,7 +523,7 @@ mod tests {
         task_id: i32,
         expected: TaskStatus,
     ) -> TaskResponse {
-        for _ in 0..crate::tests::task_poll_attempts() {
+        for _ in 0..200 {
             let resp = get_request(
                 &context.pool,
                 &context.admin_token,
@@ -668,9 +668,6 @@ mod tests {
         let task: TaskResponse =
             test::read_body_json(assert_response_status(response, StatusCode::ACCEPTED).await)
                 .await;
-        // The process-wide worker also serves the other parallel API tests.
-        // Start the dispatch deadline after it has acquired this task's slot.
-        wait_for_task(&context, task.id, TaskStatus::Running).await;
         tokio::time::timeout(Duration::from_secs(10), received)
             .await
             .expect("remote endpoint must receive the request")

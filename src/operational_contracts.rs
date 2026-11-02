@@ -1,4 +1,3 @@
-use hubuum_storage_core::TaskCapacityRejection;
 use std::any::TypeId;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -46,7 +45,6 @@ const BACKGROUND_BUCKETS_SECONDS: &[f64] = &[
 ];
 const STORAGE_OPERATION_SOURCES: &[&str] = &[
     include_str!("storage/observed.rs"),
-    include_str!("storage/context/artifacts.rs"),
     include_str!("storage/context/schema_evolution.rs"),
     include_str!("storage/context/query_usage.rs"),
     include_str!("storage/context/api.rs"),
@@ -58,7 +56,6 @@ const STORAGE_OPERATION_SOURCES: &[&str] = &[
     include_str!("storage/context/operational.rs"),
     include_str!("storage/context/queries.rs"),
     include_str!("storage/context/relations.rs"),
-    include_str!("storage/context/task_retention.rs"),
     include_str!("storage/context/tasks.rs"),
     include_str!("storage/context/transaction.rs"),
     include_str!("storage/context/workflows.rs"),
@@ -119,69 +116,6 @@ macro_rules! metric {
 }
 
 pub(crate) const METRICS: &[MetricDefinition] = &[
-    metric!(
-        "hubuum_control_checkpoint_io_bytes_total",
-        Counter,
-        Some("bytes"),
-        ["operation"],
-        &[],
-        Process,
-        "Actual checkpoint file data bytes read or written, including partial operations"
-    ),
-    metric!(
-        "hubuum_control_checkpoint_operations_total",
-        Counter,
-        None,
-        ["operation", "outcome"],
-        &[],
-        Process,
-        "Checkpoint publisher operation outcomes"
-    ),
-    metric!(
-        "hubuum_control_checkpoint_operation_duration_seconds",
-        Histogram,
-        Some("seconds"),
-        ["operation", "outcome"],
-        BACKGROUND_BUCKETS_SECONDS,
-        Process,
-        "Checkpoint publisher operation duration"
-    ),
-    metric!(
-        "hubuum_control_checkpoint_lock_attempts_total",
-        Counter,
-        None,
-        ["outcome"],
-        &[],
-        Process,
-        "Nonblocking checkpoint publication lock attempts"
-    ),
-    metric!(
-        "hubuum_control_checkpoint_lock_duration_seconds",
-        Histogram,
-        Some("seconds"),
-        ["outcome"],
-        LATENCY_BUCKETS_SECONDS,
-        Process,
-        "Checkpoint publication lock attempt duration"
-    ),
-    metric!(
-        "hubuum_control_checkpoint_gc_files_total",
-        Counter,
-        None,
-        [],
-        &[],
-        Process,
-        "Authenticated superseded checkpoint files removed"
-    ),
-    metric!(
-        "hubuum_control_checkpoint_gc_bytes_total",
-        Counter,
-        Some("bytes"),
-        [],
-        &[],
-        Process,
-        "File lengths of authenticated superseded checkpoints removed"
-    ),
     metric!(
         "hubuum_tracing_info",
         Gauge,
@@ -1394,32 +1328,6 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             .collect::<Vec<_>>()
     };
     let values = match (metric, label) {
-        ("hubuum_control_checkpoint_io_bytes_total", "operation") => strings(&["read", "write"]),
-        (
-            "hubuum_control_checkpoint_operations_total"
-            | "hubuum_control_checkpoint_operation_duration_seconds",
-            "operation",
-        ) => strings(&[
-            "read",
-            "write",
-            "encode_sign",
-            "verify",
-            "fsync_file",
-            "fsync_directory",
-            "publish",
-            "gc",
-            "coalescing_wait",
-        ]),
-        (
-            "hubuum_control_checkpoint_operations_total"
-            | "hubuum_control_checkpoint_operation_duration_seconds",
-            "outcome",
-        ) => strings(&["success", "failure"]),
-        (
-            "hubuum_control_checkpoint_lock_attempts_total"
-            | "hubuum_control_checkpoint_lock_duration_seconds",
-            "outcome",
-        ) => strings(&["acquired", "contended", "failure"]),
         ("hubuum_tracing_info", "sampling_mode") => TracingSamplingMode::value_variants()
             .iter()
             .map(|mode| mode.as_str().to_string())
@@ -1444,40 +1352,33 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             | "hubuum_trace_flushes_total",
             "outcome",
         ) => strings(&["success", "failure"]),
-        ("hubuum_api_errors_total", "class") => {
-            let mut values = strings(&[
-                "cancel_requested",
-                "deadline_exceeded",
-                "unauthorized",
-                "reauthentication_required",
-                "internal_server_error",
-                "forbidden",
-                "not_acceptable",
-                "unsupported_media_type",
-                "payload_too_large",
-                "database_error",
-                "conflict",
-                "idempotency_key_conflict",
-                "task_details_expired",
-                "legacy_request_unverifiable",
-                "precondition_failed",
-                "revision_conflict",
-                "too_many_requests",
-                "service_unavailable",
-                "not_implemented",
-                "permission_backend_unavailable",
-                "not_found",
-                "gone",
-                "db_connection_error",
-                "hash_error",
-                "bad_request",
-                "operator_mismatch",
-                "invalid_integer_range",
-                "validation_error",
-            ]);
-            values.extend(TaskCapacityRejection::ALL.map(|reason| reason.as_str().to_owned()));
-            values
-        }
+        ("hubuum_api_errors_total", "class") => strings(&[
+            "cancel_requested",
+            "deadline_exceeded",
+            "unauthorized",
+            "reauthentication_required",
+            "internal_server_error",
+            "forbidden",
+            "not_acceptable",
+            "unsupported_media_type",
+            "payload_too_large",
+            "database_error",
+            "conflict",
+            "precondition_failed",
+            "revision_conflict",
+            "too_many_requests",
+            "service_unavailable",
+            "not_implemented",
+            "permission_backend_unavailable",
+            "not_found",
+            "gone",
+            "db_connection_error",
+            "hash_error",
+            "bad_request",
+            "operator_mismatch",
+            "invalid_integer_range",
+            "validation_error",
+        ]),
         ("hubuum_client_allowlist_rejections_total", "reason") => {
             strings(&["disallowed_ip", "missing_ip"])
         }
@@ -1641,7 +1542,7 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
         }
         (name, "result") if name.starts_with("hubuum_storage_operation") => storage_results(),
         ("hubuum_task_cancellation_requests_total", "result") => {
-            strings(&["queued", "waiting", "active", "unchanged"])
+            strings(&["queued", "active", "unchanged"])
         }
         (name, "reason") if name.starts_with("hubuum_task_") => {
             strings(&["cancel_requested", "deadline_exceeded"])
@@ -1976,8 +1877,6 @@ struct CliArgumentMetadata {
 
 fn process_environment_metadata(name: &str) -> Option<CliArgumentMetadata> {
     let (value_kind, default, allowed_values): (&str, &[&str], &[&str]) = match name {
-        "HUBUUM_CONTROL_CHECKPOINT_MEASURE" => ("boolean", &["false"], &["true", "false"]),
-        "HUBUUM_MEASUREMENT_CPU_AFFINITY" => ("cpu_set", &[], &[]),
         "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY" => {
             ("boolean", &["false"], &["true", "false", "1", "0"])
         }
@@ -2316,42 +2215,6 @@ fn argument_value_kind(argument: &clap::Arg) -> &'static str {
 
 fn cli_requirements(command: &str, argument: &str) -> &'static [&'static str] {
     match (command, argument) {
-        ("hubuum-admin", "task_retention") => {
-            &["control_recovery_directory", "control_recovery_key"]
-        }
-        (
-            "hubuum-admin",
-            "task_retention_confirmation"
-            | "task_retention_deduplication_seconds"
-            | "task_retention_details_seconds"
-            | "task_hold_id"
-            | "task_hold_task",
-        ) => &["task_retention"],
-        ("hubuum-admin", "task_hold_expires_at" | "task_hold_reason") => &["task_hold_task"],
-        (
-            "hubuum-admin",
-            "control_checkpoint"
-            | "verify_control_recovery"
-            | "control_status"
-            | "recover_control"
-            | "reapply_control",
-        ) => &["control_checkpoint_key"],
-        ("hubuum-admin", "initialize_control_checkpoint") => &["control_checkpoint"],
-        ("hubuum-admin", "delete_object_history_version") => &[
-            "history_resource",
-            "deletion_intent",
-            "control_repository",
-            "control_checkpoint_key",
-        ],
-        ("hubuum-admin", "history_resource" | "deletion_intent" | "control_repository") => {
-            &["delete_object_history_version"]
-        }
-        ("hubuum-server" | "hubuum-admin", "control_recovery_directory") => {
-            &["control_recovery_key"]
-        }
-        ("hubuum-server" | "hubuum-admin", "control_recovery_key") => {
-            &["control_recovery_directory"]
-        }
         ("hubuum-admin", "backup_without_history") => &["backup"],
         ("hubuum-admin", "query_usage_class") => &["reconcile_query_usage"],
         ("hubuum-admin", "restore_test_database_url") => &["verify_backup"],
@@ -2386,7 +2249,6 @@ fn admin_process_environment(name: &str) -> bool {
     matches!(
         name,
         "HUBUUM_TOKEN_HASH_KEY"
-            | "HUBUUM_CONTROL_CHECKPOINT_MEASURE"
             | "HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID"
             | "HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS"
             | "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY"
@@ -2394,16 +2256,10 @@ fn admin_process_environment(name: &str) -> bool {
 }
 
 fn runtime_roles(name: &str, admin_applicable: bool) -> Vec<&'static str> {
-    if name == "HUBUUM_MEASUREMENT_CPU_AFFINITY" {
-        return vec!["benchmark"];
-    }
     if name.contains("_TEST_") || name.ends_with("_TESTS") {
         return vec!["test"];
     }
-    if matches!(
-        name,
-        "HUBUUM_MIGRATION_DATABASE_URL" | "HUBUUM_CONTROL_CHECKPOINT_MEASURE"
-    ) {
+    if name == "HUBUUM_MIGRATION_DATABASE_URL" {
         return vec!["admin"];
     }
     let mut roles = match name {
@@ -2768,7 +2624,6 @@ mod tests {
 
     const METRIC_SOURCES: &[&str] = &[
         include_str!("observability/metrics.rs"),
-        include_str!("observability/metrics/checkpoint.rs"),
         include_str!("observability/metrics/computed_field.rs"),
         include_str!("observability/metrics/db.rs"),
         include_str!("observability/metrics/event.rs"),
@@ -3388,8 +3243,6 @@ mod tests {
     #[case(ApiError::ReauthenticationRequired)]
     #[case(ApiError::TaskStopped(TaskStopReason::Cancelled))]
     #[case(ApiError::TaskStopped(TaskStopReason::DeadlineExceeded))]
-    #[case(ApiError::TaskCapacity(TaskCapacityRejection::Deployment))]
-    #[case(ApiError::TaskCapacity(TaskCapacityRejection::IdentityUnavailable))]
     fn credential_and_task_error_classes_are_recordable(#[case] error: ApiError) {
         assert!(metric_label_value_is_allowed(
             "hubuum_api_errors_total",

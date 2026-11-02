@@ -2,8 +2,6 @@
 
 import unittest
 import hashlib
-import re
-from pathlib import Path
 
 from support import load_script
 
@@ -14,14 +12,6 @@ CANDIDATE = """ALTER TABLE tasks DROP CONSTRAINT tasks_kind_check; -- hubuum-com
 ALTER TABLE tasks ADD CONSTRAINT tasks_kind_check CHECK (kind IN ('import', 'export', 'schema_validation')) NOT VALID;
 ALTER TABLE tasks VALIDATE CONSTRAINT tasks_kind_check;
 """
-INLINE_BASELINE = """CREATE TABLE public.tasks (
-    id SERIAL PRIMARY KEY,
-    kind VARCHAR NOT NULL CHECK (
-        kind IN ('import', 'export')
-    ),
-    description TEXT
-);
-"""
 
 
 class ReplacementTests(unittest.TestCase):
@@ -31,42 +21,6 @@ class ReplacementTests(unittest.TestCase):
     def test_unrelated_multi_column_additions_preserve_existing_check(self):
         later = "ALTER TABLE tasks ADD COLUMN attempts INT, ADD CONSTRAINT attempts_positive CHECK (attempts >= 0);"
         self.assertEqual(MODULE.approved_replacements([BASELINE, later], CANDIDATE), {"TASKS:TASKS_KIND_CHECK"})
-
-    def test_inline_create_table_check_supplies_its_default_name(self):
-        self.assertEqual(MODULE.approved_replacements([INLINE_BASELINE], CANDIDATE), {"TASKS:TASKS_KIND_CHECK"})
-
-    def test_inline_check_still_requires_strict_widening(self):
-        for candidate in (CANDIDATE.replace("'import', 'export', ", ""), CANDIDATE.replace("CHECK (kind", "CHECK (name")):
-            with self.subTest(candidate=candidate):
-                self.assertEqual(MODULE.approved_replacements([INLINE_BASELINE], candidate), set())
-
-    def test_ambiguous_or_unsupported_inline_checks_fail_closed(self):
-        long_table = "tasks" * 13
-        cases = {
-            "named": INLINE_BASELINE.replace("NOT NULL CHECK", "NOT NULL CONSTRAINT chosen_name CHECK"),
-            "multiple_checks": INLINE_BASELINE.replace("    ),", "    ) CHECK (kind <> 'other'),"),
-            "different_column": INLINE_BASELINE.replace("kind IN", "description IN"),
-            "arbitrary_expression": INLINE_BASELINE.replace("kind IN ('import', 'export')", "kind IN ('import', 'export') OR true"),
-            "explicit_name_collision": INLINE_BASELINE.replace("description TEXT", "description TEXT, CONSTRAINT tasks_kind_check CHECK (id > 0)"),
-            "truncated_name": INLINE_BASELINE.replace("tasks", long_table),
-        }
-        for name, baseline in cases.items():
-            with self.subTest(name=name):
-                candidate = CANDIDATE.replace("tasks", long_table) if name == "truncated_name" else CANDIDATE
-                self.assertEqual(MODULE.approved_replacements([baseline], candidate), set())
-
-    def test_later_schema_changes_invalidate_inline_proof_in_sql_order(self):
-        changes = (
-            "ALTER TABLE tasks DROP CONSTRAINT tasks_kind_check;",
-            BASELINE.replace("'export'", "'backup'"),
-            "ALTER TABLE tasks RENAME COLUMN kind TO previous_kind;",
-            "DROP TABLE tasks;",
-        )
-        for change in changes:
-            with self.subTest(change=change):
-                self.assertEqual(MODULE.approved_replacements([INLINE_BASELINE + change], CANDIDATE), set())
-        # A later recreated table owns its new column CHECK, not an earlier one.
-        self.assertEqual(MODULE.approved_replacements([BASELINE.replace("'export'", "'backup'") + "\nDROP TABLE tasks;\n" + INLINE_BASELINE], CANDIDATE), {"TASKS:TASKS_KIND_CHECK"})
 
     def test_unsafe_or_unproven_replacements_are_rejected(self):
         cases = {
@@ -104,35 +58,6 @@ class OfflineReviewTests(unittest.TestCase):
         content = "ALTER TABLE deliveries DROP CONSTRAINT normal_unique;"
         self.assertEqual(MODULE.approved_offline_drops(self.review(content), "up.sql", content), {"OFFLINE:DELIVERIES:NORMAL_UNIQUE"})
 
-    def test_approved_schema_qualification_preserves_table_identity(self):
-        for table, expected in (
-            ("public.deliveries", "OFFLINE:DELIVERIES:NORMAL_UNIQUE"),
-            ("hubuum_control.deliveries", "OFFLINE:HUBUUM_CONTROL.DELIVERIES:NORMAL_UNIQUE"),
-        ):
-            with self.subTest(table=table):
-                content = f"ALTER TABLE {table} DROP CONSTRAINT normal_unique;"
-                review = self.review(content)
-                review["reviews"][0]["drop_constraints"] = {table: ["normal_unique"]}
-                self.assertEqual(MODULE.approved_offline_drops(review, "up.sql", content), {expected})
-
-    def test_arbitrary_schema_and_multipart_identifiers_are_rejected(self):
-        for table in ("audit.deliveries", "public.hubuum_control.deliveries", "hubuum_control.deliveries.extra"):
-            with self.subTest(table=table):
-                content = f"ALTER TABLE {table} DROP CONSTRAINT normal_unique;"
-                review = self.review(content)
-                review["reviews"][0]["drop_constraints"] = {table: ["normal_unique"]}
-                with self.assertRaises(ValueError):
-                    MODULE.approved_offline_drops(review, "up.sql", content)
-
-    def test_managed_deletion_format_widening_preserves_every_old_predicate(self):
-        migrations = Path(MODULE.__file__).resolve().parents[1] / "crates/hubuum-storage-postgres/migrations"
-        original = (migrations / "2026-10-29-000002_deletion_authority/up.sql").read_text()
-        replacement = (migrations / "2026-10-29-000005_managed_deletion_cleanup/up.sql").read_text()
-        old_check = original.split("material JSONB NOT NULL CHECK ", 1)[1].split(");", 1)[0]
-        new_check = replacement.split("ADD CONSTRAINT deletion_authority_material_check CHECK ", 1)[1].split(" NOT VALID;", 1)[0]
-        widened = old_check.replace("material->>'format' = '1'", "material->>'format' IN ('1', '2')")
-        self.assertEqual(re.sub(r"\s+", "", new_check), re.sub(r"\s+", "", widened))
-
     def test_changed_sql_requires_review(self):
         with self.assertRaises(ValueError):
             MODULE.approved_offline_drops(self.review("old"), "up.sql", "new")
@@ -145,22 +70,6 @@ class OfflineReviewTests(unittest.TestCase):
         review["reviews"][0]["upgrade_action"] = ""
         with self.assertRaises(ValueError):
             MODULE.approved_offline_drops(review, "up.sql", "sql")
-
-    def test_function_rename_requires_named_source_and_destination(self):
-        review = self.review("sql")
-        review["reviews"][0]["rename_functions"] = {"old_claim": "previous_claim"}
-        self.assertEqual(MODULE.approved_offline_drops(review, "up.sql", "sql"), {
-            "OFFLINE:DELIVERIES:NORMAL_UNIQUE",
-            "OFFLINE_FUNCTION_RENAME:OLD_CLAIM:PREVIOUS_CLAIM",
-        })
-
-    def test_function_rename_rejects_invalid_identifiers(self):
-        for source, destination in (("old;drop", "previous"), ("old", "previous;drop")):
-            with self.subTest(source=source, destination=destination):
-                review = self.review("sql")
-                review["reviews"][0]["rename_functions"] = {source: destination}
-                with self.assertRaises(ValueError):
-                    MODULE.approved_offline_drops(review, "up.sql", "sql")
 
 
 if __name__ == "__main__":

@@ -1,14 +1,14 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{
-    ClassId, CollectionId, HistoryRecordId, ObjectId, PrincipalId, PrincipalIdentity, ResourceId,
-    ResourceRevision, TaskId,
+    ClassId, CollectionId, HistoryRecordId, ObjectId, PrincipalId, ResourceId, ResourceRevision,
+    TaskId,
 };
 use hubuum_query::{FilterField, QueryOptions, SortParam};
 
 use crate::{
-    StorageClass, StorageCollection, StorageError, StorageExportTemplate, StorageIdentityEvidence,
-    StorageObject, StoragePage, StorageRemoteTarget, StorageValidationError,
+    StorageClass, StorageCollection, StorageError, StorageExportTemplate, StorageObject,
+    StoragePage, StorageRemoteTarget, StorageValidationError,
 };
 
 mod navigation;
@@ -360,7 +360,6 @@ impl StorageHistoryOperation {
 /// Common temporal and provenance values for one history entry.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageHistoryMetadata {
-    logical_identity: Option<StorageIdentityEvidence>,
     operation: StorageHistoryOperation,
     valid_from: DateTime<Utc>,
     valid_to: Option<DateTime<Utc>>,
@@ -374,7 +373,6 @@ pub struct StorageHistoryMetadata {
 
 /// Named temporal and provenance values used by application mappers.
 pub struct StorageHistoryMetadataParts {
-    logical_identity: Option<StorageIdentityEvidence>,
     operation: StorageHistoryOperation,
     valid_from: DateTime<Utc>,
     valid_to: Option<DateTime<Utc>>,
@@ -387,10 +385,6 @@ pub struct StorageHistoryMetadataParts {
 }
 
 impl StorageHistoryMetadataParts {
-    pub fn logical_identity(&self) -> Option<&StorageIdentityEvidence> {
-        self.logical_identity.as_ref()
-    }
-
     #[must_use]
     pub const fn operation(&self) -> StorageHistoryOperation {
         self.operation
@@ -438,15 +432,6 @@ impl StorageHistoryMetadataParts {
 }
 
 impl StorageHistoryMetadata {
-    pub fn logical_identity(&self) -> Option<&StorageIdentityEvidence> {
-        self.logical_identity.as_ref()
-    }
-    #[must_use]
-    pub fn with_logical_identity(mut self, identity: StorageIdentityEvidence) -> Self {
-        self.logical_identity = Some(identity);
-        self
-    }
-
     pub const fn operation(&self) -> StorageHistoryOperation {
         self.operation
     }
@@ -473,7 +458,6 @@ impl StorageHistoryMetadata {
             ));
         }
         Ok(Self {
-            logical_identity: None,
             operation,
             valid_from,
             valid_to,
@@ -511,7 +495,6 @@ impl StorageHistoryMetadata {
     #[must_use]
     pub fn into_parts(self) -> StorageHistoryMetadataParts {
         StorageHistoryMetadataParts {
-            logical_identity: self.logical_identity,
             operation: self.operation,
             valid_from: self.valid_from,
             valid_to: self.valid_to,
@@ -533,17 +516,13 @@ impl StorageHistoryMetadata {
 /// One resolved principal name used to enrich history provenance.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageHistoryPrincipalName {
-    principal_id: PrincipalIdentity,
+    principal_id: PrincipalId,
     name: String,
 }
 
 impl StorageHistoryPrincipalName {
     #[must_use]
-    pub const fn identity(&self) -> PrincipalIdentity {
-        self.principal_id
-    }
-    #[must_use]
-    pub fn new(principal_id: PrincipalIdentity, name: impl Into<String>) -> Self {
+    pub fn new(principal_id: PrincipalId, name: impl Into<String>) -> Self {
         Self {
             principal_id,
             name: name.into(),
@@ -551,7 +530,7 @@ impl StorageHistoryPrincipalName {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (PrincipalIdentity, String) {
+    pub fn into_parts(self) -> (PrincipalId, String) {
         (self.principal_id, self.name)
     }
 }
@@ -719,7 +698,7 @@ pub trait HistoryStorage: Send + Sync {
 
     async fn resolve_history_principal_names(
         &self,
-        principal_ids: Vec<PrincipalIdentity>,
+        principal_ids: Vec<PrincipalId>,
     ) -> Result<Vec<StorageHistoryPrincipalName>, StorageError>;
 
     async fn list_collection_history(

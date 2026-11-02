@@ -1,5 +1,4 @@
 use super::*;
-use hubuum_storage_core::StorageIdentityTarget;
 
 pub(super) fn capture(
     state: &MemoryState,
@@ -10,32 +9,23 @@ pub(super) fn capture(
         state
             .tasks
             .get(&id)
-            .is_some_and(|task| task.status.is_terminal() && state.task_details_visible(task.id))
+            .is_some_and(|task| task.status.is_terminal())
     };
     let mut tasks = Vec::new();
     for t in state.tasks.values() {
         progress.scan_row()?;
-        if !t.status.is_terminal() || !state.task_details_visible(t.id) {
+        if !t.status.is_terminal() {
             continue;
         }
         let mut fields = json!({"id": t.id.id(), "kind": t.kind.as_str(), "status": t.status.as_str(), "submitted_by": t.submitted_by.map(PrincipalId::id),
             "request_hash": t.request_hash, "request_payload": t.request_payload, "summary": t.summary, "total_items": t.progress.total(), "processed_items": t.progress.processed(),
             "success_items": t.progress.succeeded(), "failed_items": t.progress.failed(), "submitted_token_scoped": t.scope_snapshot.scoped(), "submitted_token_scopes": t.scope_snapshot.scopes(),
             "request_redacted_at": t.request_redacted_at, "started_at": t.started_at, "finished_at": t.finished_at, "deleted_at": t.deleted_at, "deleted_by": t.deleted_by.map(PrincipalId::id),
-            "created_at": t.created_at, "updated_at": t.updated_at, "attempt_count": t.attempt_count, "retention_policy_revision": t.retention_policy, "details_expires_at": t.details_expires_at, "recovery_unavailable": t.recovery_unavailable, "initiator_principal_id": t.initiator_principal_id.map(PrincipalId::id)}).as_object().expect("literal object").clone();
+            "created_at": t.created_at, "updated_at": t.updated_at, "attempt_count": t.attempt_count, "initiator_principal_id": t.initiator_principal_id.map(PrincipalId::id)}).as_object().expect("literal object").clone();
         if let Some(metadata) = t.discovery_metadata() {
             fields.insert("discovery_metadata".to_string(), metadata.to_value());
         }
         fields.extend(t.control.snapshot_fields());
-        fields.insert(
-            "logical_identity".into(),
-            serde_json::to_value(
-                state
-                    .logical_identities
-                    .record(StorageIdentityTarget::Task(t.id))?,
-            )
-            .map_err(|_| invalid("logical_identity"))?,
-        );
         add_trace(&mut fields, t.trace_link.as_ref());
         tasks.push(retain_row(progress, row(Value::Object(fields)))?);
     }
@@ -47,7 +37,6 @@ pub(super) fn capture(
             continue;
         }
         results.push(retain_row(progress, row(json!({
-            "logical_identity": state.logical_identities.association(Association::ImportResult(r.id()))?,
             "id": r.id().id(), "task_id": r.task_id().id(), "item_ref": r.item_ref(), "entity_kind": r.entity_kind(), "action": r.action(), "identifier": r.identifier(),
             "outcome": r.outcome(), "error": r.error(), "details": r.details(), "created_at": r.created_at()
         })))?);
@@ -56,23 +45,16 @@ pub(super) fn capture(
     let mut outputs = Vec::new();
     for o in state.export_outputs.values() {
         progress.scan_row()?;
-        if !terminal(o.task_id().id()) || !state.task_outputs_visible(o.task_id()) {
+        if !terminal(o.task_id().id()) {
             continue;
         }
         outputs.push(retain_row(progress, row(json!({
-            "logical_identity": state.logical_identities.association(Association::TaskOutput(o.task_id()))?,
-            "id": state.export_output_ids.get(&o.task_id().id()).copied().unwrap_or(o.task_id().id()), "task_id": o.task_id().id(), "template_name": o.template_name(), "content_type": o.content_type(), "artifact_reference": o.artifact_reference(), "json_output": o.json_output(), "text_output": o.text_output(),
+            "id": state.export_output_ids.get(&o.task_id().id()).copied().unwrap_or(o.task_id().id()), "task_id": o.task_id().id(), "template_name": o.template_name(), "content_type": o.content_type(), "json_output": o.json_output(), "text_output": o.text_output(),
             "meta_json": o.metadata(), "warnings_json": o.warnings(), "warning_count": o.warning_count(), "truncated": o.truncated(), "output_expires_at": o.output_expires_at(),
             "total_duration_ms": o.durations().total_ms(), "query_duration_ms": o.durations().query_ms(), "hydration_duration_ms": o.durations().hydration_ms(), "render_duration_ms": o.durations().render_ms(), "created_at": o.created_at()
         })))?);
     }
     sections.insert(StorageBackupHistorySection::ExportOutputs, outputs);
-    let mut artifacts = Vec::new();
-    for frame in state.capture_export_artifacts()? {
-        progress.scan_row()?;
-        artifacts.push(retain_row(progress, Ok(frame))?);
-    }
-    sections.insert(StorageBackupHistorySection::ExportArtifacts, artifacts);
     let mut remote = Vec::new();
     for r in &state.remote_call_results {
         progress.scan_row()?;
@@ -96,8 +78,6 @@ pub(super) fn restore(
         let r = Row(row);
         let id = TaskId::new(r.integer("id")?).map_err(|_| invalid("id"))?;
         let task = MemoryTaskRecord {
-            checkpoint: None,
-            wait_token: None,
             control: StorageTaskControl::from_snapshot(
                 StorageTaskKind::from_persisted(r.text("kind")?).ok_or_else(|| invalid("kind"))?,
                 row,
@@ -154,22 +134,6 @@ pub(super) fn restore(
             updated_at: r.time("updated_at")?,
             lease_expires_at: None,
             claim_token: None,
-            execution_fence: None,
-            receipt_admission: None,
-            retention_policy: r
-                .optional_value("retention_policy_revision")
-                .map(|value| {
-                    serde_json::from_value(value.clone())
-                        .map_err(|_| invalid("retention_policy_revision"))
-                })
-                .transpose()?,
-            details_expires_at: r.optional_time("details_expires_at")?,
-            recovery_unavailable: r
-                .optional_value("recovery_unavailable")
-                .map(|_| r.boolean("recovery_unavailable"))
-                .transpose()?
-                .unwrap_or(false),
-            invocation: None,
             attempt_count: r.integer("attempt_count")?,
             initiator_principal_id: r
                 .optional_integer("initiator_principal_id")?
@@ -179,9 +143,6 @@ pub(super) fn restore(
             trace_link: trace(&r)?,
         };
         task.projection()?;
-        state
-            .logical_identities
-            .restore_record(&task, r.identity()?);
         state.tasks.insert(id.id(), task);
     }
     for row in &sections[&StorageBackupHistorySection::ImportResults] {
@@ -200,32 +161,15 @@ pub(super) fn restore(
         .details(r.optional_value("details").cloned())
         .build();
         state
-            .logical_identities
-            .restore_association(Association::ImportResult(result.id()), r.identity()?);
-        state
             .import_task_results
             .entry(result.task_id().id())
             .or_default()
             .push(result);
     }
-    let artifact_references =
-        state.restore_export_artifacts(&sections[&StorageBackupHistorySection::ExportArtifacts])?;
     for row in &sections[&StorageBackupHistorySection::ExportOutputs] {
         let r = Row(row);
         let text_output = r.optional_text("text_output")?;
-        let artifact_reference = r
-            .optional_value("artifact_reference")
-            .map(|value| {
-                let source: hubuum_storage_core::artifacts::ArtifactReference =
-                    serde_json::from_value(value.clone())
-                        .map_err(|_| invalid("artifact_reference"))?;
-                artifact_references
-                    .get(&source.identity().artifact())
-                    .cloned()
-                    .ok_or_else(|| invalid("artifact_reference"))
-            })
-            .transpose()?;
-        let json_output = if text_output.is_none() && artifact_reference.is_none() {
+        let json_output = if text_output.is_none() {
             Some(r.value("json_output")?.clone())
         } else {
             r.optional_value("json_output").cloned()
@@ -240,7 +184,6 @@ pub(super) fn restore(
         )
         .template_name(r.optional_text("template_name")?)
         .output(json_output, text_output)
-        .artifact_reference(artifact_reference)
         .warning_state(r.integer("warning_count")?, r.boolean("truncated")?)
         .durations(
             StorageTaskDurations::try_new(
@@ -256,9 +199,6 @@ pub(super) fn restore(
         state
             .export_output_ids
             .insert(output.task_id().id(), r.integer("id")?);
-        state
-            .logical_identities
-            .restore_association(Association::TaskOutput(output.task_id()), r.identity()?);
         state.export_outputs.insert(output.task_id().id(), output);
     }
     state.remote_call_results = sections[&StorageBackupHistorySection::RemoteCallResults].clone();
@@ -287,7 +227,7 @@ mod tests {
             for _ in 0..10 {
                 queued_task(&storage).await;
             }
-            let state = storage.state.read().await.unwrap();
+            let state = storage.state.read().await;
             let mut progress =
                 StorageBackupCaptureProgress::new(StorageBackupBudget::new(4096, 3).unwrap());
             let mut sections = StorageBackupHistorySections::new();

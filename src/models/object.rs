@@ -4,7 +4,6 @@ use crate::services::storage_boundary::{
 };
 use crate::storage::StorageResolvedObject;
 use async_trait::async_trait;
-use hubuum_storage_core::StorageIdentityEvidence;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use utoipa::ToSchema;
@@ -369,9 +368,6 @@ fn update_hubuum_object_example() -> UpdateHubuumObject {
 
 #[derive(serde::Serialize, Clone, Debug, ToSchema)]
 pub struct HubuumObjectHistory {
-    #[serde(skip)]
-    #[schema(ignore)]
-    pub(crate) logical_identity: Option<StorageIdentityEvidence>,
     pub id: i32,
     pub name: String,
     pub collection_id: i32,

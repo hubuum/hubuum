@@ -1,4 +1,3 @@
-pub(crate) mod artifacts;
 pub mod authentication;
 pub(crate) mod authorization;
 pub(crate) mod authorization_resources;
@@ -139,5 +138,4 @@ pub mod credential_activity;
 
 pub(crate) mod exports;
 
-pub(crate) mod deletion_recovery;
 pub(crate) mod schema_profiling;

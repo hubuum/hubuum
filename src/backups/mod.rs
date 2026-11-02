@@ -1,6 +1,7 @@
 use crate::models::token_scope::TokenScope;
 use crate::services::authentication::ExecutionPrincipal;
 use chrono::Utc;
+use sha2::{Digest, Sha256};
 
 use crate::errors::ApiError;
 use crate::models::retention::FutureRetention;
@@ -12,22 +13,27 @@ use crate::storage::{
 };
 use crate::traits::AuthzSubject;
 
-mod producer;
-pub use producer::BackupArtifactProducer;
-
 #[derive(Clone, Debug)]
 pub struct BackupSettings {
     output_retention: FutureRetention,
+    max_active_tasks_per_user: usize,
     budget: StorageBackupBudget,
 }
 
 impl BackupSettings {
-    pub fn new(output_retention_hours: i64, budget: StorageBackupBudget) -> Result<Self, String> {
+    pub fn new(
+        output_retention_hours: i64,
+        max_active_tasks_per_user: usize,
+        budget: StorageBackupBudget,
+    ) -> Result<Self, String> {
         let output_retention =
             FutureRetention::from_hours(output_retention_hours, "backup output retention")?;
-
+        if max_active_tasks_per_user == 0 {
+            return Err("backup active-task limit must be greater than zero".to_string());
+        }
         Ok(Self {
             output_retention,
+            max_active_tasks_per_user,
             budget,
         })
     }
@@ -39,6 +45,10 @@ impl BackupSettings {
         self.output_retention
             .expires_at(now)
             .map_err(ApiError::BadRequest)
+    }
+
+    pub fn max_active_tasks_per_user(&self) -> usize {
+        self.max_active_tasks_per_user
     }
 
     pub fn output_retention_hours(&self) -> i64 {
@@ -62,84 +72,52 @@ pub(crate) async fn execute_backup_task(
         .clone()
         .ok_or_else(|| ApiError::BadRequest("Backup task payload is missing".to_string()))?;
     let request: BackupRequest = serde_json::from_value(payload)?;
-    let availability = settings
-        .output_retention
-        .output_availability()
-        .map_err(ApiError::BadRequest)?;
+    authorize_backup_request(context, user, scopes).await?;
+    let document =
+        crate::restores::replay::capture(context, request.include_history, settings.budget())
+            .await?;
+    crate::tasks::control::checkpoint()?;
+    let bytes = settings.budget().serialize(&document)?;
+    let total_items = document.summary()?.total_items;
+    drop(document);
+    crate::tasks::control::checkpoint()?;
+    let sha256 = Sha256::digest(&bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
     let expires_at = settings.output_expires_at(Utc::now().naive_utc())?;
-    let output = crate::services::artifacts::TaskOutput::begin(
+    let total_items = i32::try_from(total_items).unwrap_or(i32::MAX);
+    let summary = format!(
+        "Full backup completed with {} logical rows ({} bytes)",
+        total_items,
+        bytes.len()
+    );
+    let finished = complete_task(
         context,
         task,
-        settings.budget().max_bytes(),
-        settings.budget().max_bytes() as u64,
-        expires_at.and_utc(),
+        TaskStateChange::new(
+            TaskStatus::Succeeded,
+            TaskResultCounts::from_outcomes(total_items, 0)?,
+        )
+        .summary(summary.clone())
+        .started_at(task.started_at),
+        NewTaskEventRecord {
+            event_type: TaskStatus::Succeeded.as_str().to_string(),
+            message: summary,
+            data: Some(serde_json::json!({
+                "sha256": sha256,
+                "byte_size": bytes.len(),
+                "backup_kind": "full",
+                "include_history": request.include_history,
+            })),
+        },
+        StorageTaskCompletionPayload::Backup(StorageBackupTaskArtifact::try_new(
+            bytes,
+            expires_at.and_utc(),
+        )?),
     )
     .await?;
-    let result = async {
-        let producer = BackupArtifactProducer::capture(
-            context,
-            user,
-            scopes,
-            request.include_history,
-            settings.budget(),
-        )
-        .await?;
-        crate::tasks::control::checkpoint()?;
-        let total_items = producer.summary().total_items;
-        let (proof, _) = producer
-            .stage(
-                output.store.as_ref(),
-                output.identity.clone(),
-                output.limits,
-            )
-            .await
-            .map_err(crate::services::artifacts::error)?;
-        crate::tasks::control::checkpoint()?;
-        authorize_backup_request(context, user, scopes).await?;
-        let byte_size = proof.manifest().byte_size();
-        let sha256 = proof
-            .manifest()
-            .stream_digest()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        let total_items = i32::try_from(total_items).unwrap_or(i32::MAX);
-        let summary = format!(
-            "Full backup completed with {} logical rows ({} bytes)",
-            total_items, byte_size
-        );
-        let finished = complete_task(
-            context,
-            task,
-            TaskStateChange::new(
-                TaskStatus::Succeeded,
-                TaskResultCounts::from_outcomes(total_items, 0)?,
-            )
-            .summary(summary.clone())
-            .started_at(task.started_at),
-            NewTaskEventRecord {
-                event_type: TaskStatus::Succeeded.as_str().to_string(),
-                message: summary,
-                data: Some(serde_json::json!({
-                    "sha256": sha256,
-                    "byte_size": byte_size,
-                    "backup_kind": "full",
-                    "include_history": request.include_history,
-                })),
-            },
-            StorageTaskCompletionPayload::Backup(StorageBackupTaskArtifact::verified(
-                proof,
-                availability,
-            )),
-        )
-        .await?;
-        TaskStatus::from_db(&finished.status)
-    }
-    .await;
-    if result.is_err() || matches!(result, Ok(TaskStatus::Cancelled)) {
-        let _ = output.store.abort(&output.identity).await;
-    }
-    result
+    TaskStatus::from_db(&finished.status)
 }
 
 pub(crate) async fn authorize_backup_request(
@@ -159,6 +137,8 @@ pub(crate) async fn authorize_backup_request(
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+
+    use rstest::rstest;
 
     use super::{BackupSettings, authorize_backup_request};
     use crate::errors::ApiError;
@@ -199,13 +179,18 @@ mod tests {
             .unwrap();
     }
 
-    #[test]
-    fn backup_settings_reject_zero_retention() {
-        let retention_hours = 0;
-        let output_bytes = 1024;
+    #[rstest]
+    #[case::retention(0, 1, 1024)]
+    #[case::active_tasks(24, 0, 1024)]
+    fn backup_settings_reject_zero_limits(
+        #[case] retention_hours: i64,
+        #[case] active_tasks: usize,
+        #[case] output_bytes: usize,
+    ) {
         assert!(
             BackupSettings::new(
                 retention_hours,
+                active_tasks,
                 StorageBackupBudget::new(output_bytes, 100).unwrap()
             )
             .is_err()
@@ -214,7 +199,7 @@ mod tests {
 
     #[test]
     fn backup_settings_reject_unrepresentable_retention() {
-        let error = BackupSettings::new(i64::MAX, StorageBackupBudget::new(1024, 100).unwrap())
+        let error = BackupSettings::new(i64::MAX, 1, StorageBackupBudget::new(1024, 100).unwrap())
             .unwrap_err();
 
         assert_eq!(

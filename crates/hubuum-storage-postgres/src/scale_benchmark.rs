@@ -1,9 +1,3 @@
-mod lifecycle;
-mod scheduling;
-pub use scheduling::{SchedulingBenchmarkOptions, SchedulingBenchmarkReport};
-mod task_retention;
-pub use task_retention::PostgresTaskRetentionObservation;
-
 use std::collections::{BTreeMap, VecDeque};
 use std::time::Instant;
 
@@ -106,19 +100,6 @@ fn benchmark_pool(database_url: &str, max_size: u32) -> Result<PostgresPool> {
 }
 
 async fn load_dataset_with_pool(profile: &ScaleProfile, pool: &PostgresPool) -> Result<LoadReport> {
-    let mut report = load_raw_dataset_with_pool(profile, pool).await?;
-    let started = Instant::now();
-    initialize_benchmark_identities(pool).await?;
-    report.loading_ms += elapsed_ms(started);
-    Ok(report)
-}
-
-// Bulk fixture assembly runs before identity capture. Lifecycle overlays may
-// still change synthetic task ownership; publish identities only afterward.
-async fn load_raw_dataset_with_pool(
-    profile: &ScaleProfile,
-    pool: &PostgresPool,
-) -> Result<LoadReport> {
     profile.validate()?;
     let generation_started = Instant::now();
     let manifest = profile.manifest()?;
@@ -1317,7 +1298,7 @@ impl ScaleBenchmarkBackend for PostgresScaleBackend {
                        coalesce(sum(pg_relation_size(oid)), 0)::BIGINT AS table_bytes,\n\
                        coalesce(sum(pg_indexes_size(oid)), 0)::BIGINT AS index_bytes\n\
                      FROM pg_class\n\
-                     WHERE relnamespace IN ('public'::regnamespace,'hubuum_control'::regnamespace) AND relkind IN ('r', 'p')",
+                     WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r', 'p')",
                 )
                 .get_result::<DatabaseResourceRow>(connection)
                 .await
@@ -1372,7 +1353,7 @@ async fn load_database_settings(pool: &PostgresPool) -> Result<BTreeMap<String, 
         pool,
         async |connection| -> std::result::Result<_, diesel::result::Error> {
             diesel::sql_query(
-                "SELECT name || '=' || current_setting(name) AS value FROM pg_settings\n\
+                "SELECT name || '=' || setting || coalesce(unit, '') AS value FROM pg_settings\n\
                  WHERE name IN (\n\
                    'max_connections', 'shared_buffers', 'work_mem', 'maintenance_work_mem',\n\
                    'effective_cache_size', 'random_page_cost', 'max_parallel_workers_per_gather'\n\
@@ -1688,41 +1669,4 @@ mod tests {
         .await
         .expect("scale history baselines");
     }
-}
-
-async fn initialize_benchmark_identities(pool: &PostgresPool) -> Result<()> {
-    // The fresh database's migration completed before bulk fixture loading.
-    // Reopen its owner-only backfill for the newly assembled synthetic rows.
-    with_connection(pool, async |connection| {
-        connection
-            .batch_execute(
-                "UPDATE hubuum_control.identity_backfill SET completed=FALSE WHERE singleton",
-            )
-            .await
-    })
-    .await
-    .map_err(|error| invalid_data(format!("fixture backfill initialization failed: {error}")))?;
-    for function in [
-        "hubuum_backfill_logical_identities",
-        "hubuum_backfill_task_capacity",
-    ] {
-        loop {
-            let changed = scalar(
-                pool,
-                &format!("SELECT public.{function}(500)::bigint AS value"),
-            )
-            .await?;
-            if changed == 0 {
-                break;
-            }
-        }
-    }
-    with_connection(pool, async |connection| {
-        connection
-            .batch_execute("SELECT public.hubuum_validate_logical_identities(); ANALYZE")
-            .await
-    })
-    .await
-    .map_err(|error| invalid_data(format!("fixture identity initialization failed: {error}")))?;
-    Ok(())
 }

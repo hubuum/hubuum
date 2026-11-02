@@ -15,10 +15,9 @@ use hubuum_domain::{
 };
 use hubuum_events_core::{EventCatalogError, EventIdentifierError};
 
-use crate::models::{TaskDetailsExpiredResponse, TokenPolicyError};
+use crate::models::TokenPolicyError;
 use crate::observability::metrics;
 use crate::storage::{StorageError, StorageErrorKind};
-use hubuum_storage_core::TaskCapacityRejection;
 
 const PUBLIC_INTERNAL_ERROR: &str = "An internal error occurred";
 const PUBLIC_SERVICE_UNAVAILABLE: &str = "Service temporarily unavailable";
@@ -68,10 +67,6 @@ pub fn fatal_error(message: &str, exit_code: i32) -> ! {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub enum ApiError {
-    TaskCapacity(TaskCapacityRejection),
-    TaskDetailsExpired(TaskDetailsExpiredResponse),
-    IdempotencyConflict,
-    LegacyTaskRequestUnverifiable,
     TaskStopped(#[serde(serialize_with = "serialize_task_stop_reason")] TaskStopReason),
     Unauthorized(String),
     ReauthenticationRequired,
@@ -101,10 +96,6 @@ pub enum ApiError {
 impl ApiError {
     pub fn class(&self) -> &'static str {
         match self {
-            ApiError::TaskCapacity(reason) => reason.as_str(),
-            ApiError::TaskDetailsExpired(_) => "task_details_expired",
-            ApiError::IdempotencyConflict => "idempotency_key_conflict",
-            ApiError::LegacyTaskRequestUnverifiable => "legacy_request_unverifiable",
             ApiError::TaskStopped(reason) => reason.as_str(),
             ApiError::Unauthorized(_) => "unauthorized",
             ApiError::ReauthenticationRequired => "reauthentication_required",
@@ -156,25 +147,6 @@ impl ApiError {
     /// bodies and streaming events.
     pub fn public_message(&self) -> &str {
         match self {
-            ApiError::TaskDetailsExpired(receipt) => receipt.public_message(),
-            ApiError::IdempotencyConflict => {
-                "The idempotency key identifies a different protected request; no new work was created"
-            }
-            ApiError::LegacyTaskRequestUnverifiable => {
-                "The legacy submission is recognized but its original request cannot be verified"
-            }
-            ApiError::TaskCapacity(reason) if reason.is_unavailable() => {
-                "Task admission is unavailable until control reconciliation completes"
-            }
-            ApiError::TaskCapacity(TaskCapacityRejection::CumulativeWork) => {
-                "Task work budget is exhausted; reduce the request or ask an administrator to change the policy"
-            }
-            ApiError::TaskCapacity(TaskCapacityRejection::ResidentBytes) => {
-                "Task resident-byte capacity is exhausted; retry after retained content is cleaned up"
-            }
-            ApiError::TaskCapacity(_) => {
-                "Task capacity is exhausted; retry after outstanding work drains"
-            }
             ApiError::ReauthenticationRequired => hubuum_storage_core::CREDENTIAL_APPROVAL_REQUIRED,
             ApiError::TaskStopped(TaskStopReason::Cancelled) => "Task execution was cancelled",
             ApiError::TaskStopped(TaskStopReason::DeadlineExceeded) => {
@@ -208,10 +180,7 @@ impl ApiError {
 
 impl From<StorageError> for ApiError {
     fn from(error: StorageError) -> Self {
-        let (kind, message, current_revision, task_capacity) = error.into_parts();
-        if let Some(reason) = task_capacity {
-            return Self::TaskCapacity(reason);
-        }
+        let (kind, message, current_revision) = error.into_parts();
         match kind {
             StorageErrorKind::TaskCancelled => Self::TaskStopped(TaskStopReason::Cancelled),
             StorageErrorKind::TaskDeadlineExceeded => {
@@ -222,7 +191,6 @@ impl From<StorageError> for ApiError {
             }
             StorageErrorKind::InvalidInput => Self::BadRequest(message),
             StorageErrorKind::Conflict => Self::Conflict(message),
-            StorageErrorKind::IdempotencyConflict => Self::IdempotencyConflict,
             StorageErrorKind::Backend => Self::DatabaseError(message),
             StorageErrorKind::ReauthenticationRequired => Self::ReauthenticationRequired,
             StorageErrorKind::PermissionDenied => Self::Forbidden(message),
@@ -296,11 +264,7 @@ impl From<PositiveIdError> for ApiError {
 impl fmt::Display for ApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ApiError::TaskStopped(_)
-            | ApiError::TaskCapacity(_)
-            | ApiError::TaskDetailsExpired(_)
-            | ApiError::IdempotencyConflict
-            | ApiError::LegacyTaskRequestUnverifiable => f.write_str(self.public_message()),
+            ApiError::TaskStopped(_) => f.write_str(self.public_message()),
             ApiError::HashError(message) => write!(f, "{message}"),
             ApiError::NotFound(message) => write!(f, "{message}"),
             ApiError::Gone(message) => write!(f, "{message}"),
@@ -332,15 +296,6 @@ impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
         metrics::api_error(self.class());
         match self {
-            ApiError::TaskDetailsExpired(receipt) => HttpResponse::Gone()
-                .insert_header(("Cache-Control", "no-store"))
-                .json(receipt),
-            ApiError::IdempotencyConflict | ApiError::LegacyTaskRequestUnverifiable => HttpResponse::Conflict()
-                .insert_header(("Cache-Control", "no-store"))
-                .json(json!({"error":"Conflict", "reason":self.class(), "message":self.public_message()})),
-            ApiError::TaskCapacity(reason) => HttpResponse::build(self.status_code())
-                .insert_header(("Cache-Control", "no-store"))
-                .json(json!({"error":"Task Capacity", "reason":reason.as_str(), "message":self.public_message()})),
             ApiError::ReauthenticationRequired => HttpResponse::Forbidden()
                 .insert_header(("Cache-Control", "no-store"))
                 .json(json!({"error":"Forbidden", "reason":"reauthentication_required", "message":self.public_message()})),
@@ -422,14 +377,7 @@ impl ResponseError for ApiError {
 
     fn status_code(&self) -> StatusCode {
         match self {
-            ApiError::TaskStopped(_)
-            | ApiError::LegacyTaskRequestUnverifiable
-            | ApiError::IdempotencyConflict => StatusCode::CONFLICT,
-            ApiError::TaskDetailsExpired(_) => StatusCode::GONE,
-            ApiError::TaskCapacity(reason) if reason.is_unavailable() => {
-                StatusCode::SERVICE_UNAVAILABLE
-            }
-            ApiError::TaskCapacity(_) => StatusCode::TOO_MANY_REQUESTS,
+            ApiError::TaskStopped(_) => StatusCode::CONFLICT,
             ApiError::Conflict(_) => StatusCode::CONFLICT,
             ApiError::PreconditionFailed(_, _) => StatusCode::PRECONDITION_FAILED,
             ApiError::RevisionConflict(_, _) => StatusCode::PRECONDITION_FAILED,
@@ -529,43 +477,6 @@ impl From<TemplateAliasError> for ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::operational_contracts::metric_label_value_is_allowed;
-
-    #[rstest::rstest]
-    #[case::changed_request(ApiError::IdempotencyConflict)]
-    #[case::legacy_request(ApiError::LegacyTaskRequestUnverifiable)]
-    fn task_submission_errors_have_declared_metric_classes(#[case] error: ApiError) {
-        assert!(metric_label_value_is_allowed(
-            "hubuum_api_errors_total",
-            "class",
-            error.class(),
-        ));
-    }
-
-    #[rstest::rstest]
-    #[case::capacity(TaskCapacityRejection::Principal, StatusCode::TOO_MANY_REQUESTS)]
-    #[case::unresolved(
-        TaskCapacityRejection::IdentityUnavailable,
-        StatusCode::SERVICE_UNAVAILABLE
-    )]
-    #[actix_web::test]
-    async fn task_capacity_responses_expose_only_bounded_reason_codes(
-        #[case] reason: TaskCapacityRejection,
-        #[case] status: StatusCode,
-    ) {
-        let error = ApiError::from(StorageError::task_capacity(reason));
-        let response = error.error_response();
-        assert_eq!(response.status(), status);
-        assert_eq!(response.headers().get("Cache-Control").unwrap(), "no-store");
-        let bytes = actix_web::body::to_bytes(response.into_body())
-            .await
-            .unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(
-            body,
-            json!({"error":"Task Capacity", "reason":reason.as_str(), "message":error.public_message()})
-        );
-    }
 
     #[test]
     fn test_exit_codes_are_distinct() {

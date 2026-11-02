@@ -4,10 +4,6 @@ Hubuum stores one canonical event stream in `events`. Audit reads query that
 stream directly, while external delivery fans matching events out through
 `event_subscriptions` and `event_deliveries`.
 
-The [lifecycle audit proposal](lifecycle_audit_contract.md) specifies future
-tier movement, retrieval and deletion evidence and their separate safe sink
-projections. Its catalog entries and routes are not enabled by the proposal.
-
 The event stream is append-only during normal application operation. Domain
 changes emit events in the same database transaction as the state change, so an
 event exists only if the change commits.
@@ -36,13 +32,6 @@ not advance `updated_at` or append lifecycle events. This includes identical
 entity updates, moves to the current parent, repeated permission grants or
 revocations, repeated service-account disable requests, and membership changes
 that do not change effective membership.
-
-The offline deletion-recovery commands emit `lifecycle` audit events for intent,
-access restriction, recovery protection, exact hot-copy removal and completion.
-These system-only events require an unscoped administrator. They are unavailable
-to notification subscriptions, previews, tests and transports. Minimum original
-event references and membership survive ordinary audit expiry in protected control
-evidence; `hubuum-admin --control-status` exposes that bounded evidence separately.
 
 ## Audit Log
 

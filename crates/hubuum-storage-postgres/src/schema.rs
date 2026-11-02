@@ -1,54 +1,6 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
-    artifact_attempts (artifact_id) {
-        artifact_id -> Uuid,
-        attempt_id -> Uuid,
-        destination_id -> Uuid,
-        object_version -> Uuid,
-        state -> Text,
-        block_bytes -> Int4,
-        max_bytes -> Int8,
-        max_blocks -> Int4,
-        max_manifest_bytes -> Int4,
-        byte_size -> Int8,
-        block_count -> Int4,
-        manifest -> Nullable<Bytea>,
-        manifest_sha256 -> Nullable<Bytea>,
-        expires_at -> Timestamptz,
-    }
-}
-
-diesel::table! {
-    artifact_chunks (artifact_id, ordinal) {
-        artifact_id -> Uuid,
-        ordinal -> Int4,
-        content -> Bytea,
-    }
-}
-
-diesel::table! {
-    artifact_destinations (id) {
-        id -> Uuid,
-        name -> Text,
-    }
-}
-
-diesel::table! {
-    artifact_task_owners (artifact_id) {
-        artifact_id -> Uuid,
-        task_identity -> Uuid,
-        task_id -> Int4,
-        lease_token -> Uuid,
-        worker_identity -> Uuid,
-        spool_bytes -> Int8,
-        cleanup_after -> Nullable<Timestamptz>,
-        reserved_bytes -> Int8,
-        output_expires_at -> Timestamptz,
-    }
-}
-
-diesel::table! {
     auth_sessions (id) {
         id -> Uuid,
         principal_id -> Int4,
@@ -76,8 +28,6 @@ diesel::table! {
         sha256 -> Varchar,
         output_expires_at -> Timestamp,
         created_at -> Timestamp,
-        logical_identity -> Nullable<Jsonb>,
-        artifact_reference -> Nullable<Jsonb>,
     }
 }
 
@@ -103,7 +53,6 @@ diesel::table! {
         occurred_at -> Timestamptz,
         actor_id -> Nullable<Int4>,
         task_id -> Nullable<Int4>,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -118,7 +67,6 @@ diesel::table! {
         created_by -> Nullable<Int4>,
         activated_at -> Nullable<Timestamptz>,
         activation_policy -> Nullable<Text>,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -156,7 +104,6 @@ diesel::table! {
         updated_at -> Timestamp,
         parent_collection_id -> Nullable<Int4>,
         revision -> Int8,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -177,7 +124,6 @@ diesel::table! {
         initiator_user_id -> Nullable<Int4>,
         task_id -> Nullable<Int4>,
         revision -> Int8,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -199,7 +145,6 @@ diesel::table! {
         updated_by -> Nullable<Int4>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -211,7 +156,6 @@ diesel::table! {
         valid_to -> Nullable<Timestamptz>,
         evaluator_version -> Int2,
         definitions -> Jsonb,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -272,7 +216,6 @@ diesel::table! {
         updated_at -> Timestamp,
         purpose -> Text,
         deferred_reason -> Nullable<Text>,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -302,7 +245,6 @@ diesel::table! {
     event_sink_collection_grants (sink_id, collection_id) {
         sink_id -> Int4,
         collection_id -> Int4,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -327,7 +269,6 @@ diesel::table! {
         revision -> Int8,
         delivery_policy -> Jsonb,
         collection_id -> Nullable<Int4>,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -346,7 +287,6 @@ diesel::table! {
         created_at -> Timestamp,
         updated_at -> Timestamp,
         revision -> Int8,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -382,7 +322,6 @@ diesel::table! {
         trace_span_id -> Nullable<Varchar>,
         trace_flags -> Nullable<Int2>,
         trace_context_version -> Nullable<Int2>,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -404,8 +343,6 @@ diesel::table! {
         hydration_duration_ms -> Int4,
         render_duration_ms -> Int4,
         created_at -> Timestamp,
-        logical_identity -> Nullable<Jsonb>,
-        artifact_reference -> Nullable<Jsonb>,
     }
 }
 
@@ -428,7 +365,6 @@ diesel::table! {
         created_at -> Timestamp,
         updated_at -> Timestamp,
         revision -> Int8,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -459,7 +395,6 @@ diesel::table! {
         initiator_user_id -> Nullable<Int4>,
         task_id -> Nullable<Int4>,
         revision -> Int8,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -472,7 +407,6 @@ diesel::table! {
         source_key -> Varchar,
         created_at -> Timestamp,
         updated_at -> Timestamp,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -483,7 +417,6 @@ diesel::table! {
         created_at -> Timestamp,
         updated_at -> Timestamp,
         revision -> Int8,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -500,7 +433,6 @@ diesel::table! {
         last_sync_attempted_at -> Nullable<Timestamp>,
         last_sync_success_at -> Nullable<Timestamp>,
         revision -> Int8,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -515,7 +447,6 @@ diesel::table! {
         created_at -> Timestamp,
         updated_at -> Timestamp,
         revision -> Int8,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -538,7 +469,6 @@ diesel::table! {
         initiator_user_id -> Nullable<Int4>,
         task_id -> Nullable<Int4>,
         revision -> Int8,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -568,7 +498,6 @@ diesel::table! {
         forward_label -> Nullable<Varchar>,
         #[max_length = 128]
         reverse_label -> Nullable<Varchar>,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -596,7 +525,6 @@ diesel::table! {
         forward_label -> Nullable<Varchar>,
         #[max_length = 128]
         reverse_label -> Nullable<Varchar>,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -611,7 +539,6 @@ diesel::table! {
         created_at -> Timestamp,
         updated_at -> Timestamp,
         revision -> Int8,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -634,7 +561,6 @@ diesel::table! {
         initiator_user_id -> Nullable<Int4>,
         task_id -> Nullable<Int4>,
         revision -> Int8,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -647,7 +573,6 @@ diesel::table! {
         created_at -> Timestamp,
         updated_at -> Timestamp,
         revision -> Int8,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -668,7 +593,6 @@ diesel::table! {
         initiator_user_id -> Nullable<Int4>,
         task_id -> Nullable<Int4>,
         revision -> Int8,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -680,7 +604,6 @@ diesel::table! {
         created_at -> Timestamp,
         updated_at -> Timestamp,
         revision -> Int8,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -698,7 +621,6 @@ diesel::table! {
         created_at -> Timestamp,
         execution_index -> Nullable<Int8>,
         execution_claim_token -> Nullable<Uuid>,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -723,7 +645,6 @@ diesel::table! {
         object_revision -> Int8,
         valid -> Bool,
         validated_at -> Timestamptz,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -765,7 +686,6 @@ diesel::table! {
         updated_at -> Timestamp,
         has_read_audit -> Bool,
         has_manage_event_subscription -> Bool,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -783,7 +703,6 @@ diesel::table! {
         last_sync_attempted_at -> Nullable<Timestamp>,
         last_sync_success_at -> Nullable<Timestamp>,
         revision -> Int8,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -804,7 +723,6 @@ diesel::table! {
         updated_at -> Timestamptz,
         created_by -> Nullable<Int4>,
         updated_by -> Nullable<Int4>,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -866,7 +784,6 @@ diesel::table! {
         created_at -> Timestamp,
         #[max_length = 32]
         side_effect_state -> Varchar,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -888,7 +805,6 @@ diesel::table! {
         created_at -> Timestamp,
         updated_at -> Timestamp,
         revision -> Int8,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -918,7 +834,6 @@ diesel::table! {
         initiator_user_id -> Nullable<Int4>,
         task_id -> Nullable<Int4>,
         revision -> Int8,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -950,7 +865,6 @@ diesel::table! {
         finished_at -> Nullable<Timestamp>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -971,7 +885,6 @@ diesel::table! {
         finished_at -> Timestamp,
         created_at -> Timestamp,
         updated_at -> Timestamp,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -981,7 +894,6 @@ diesel::table! {
         object_id -> Int4,
         reason -> Jsonb,
         snapshot -> Nullable<Jsonb>,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -990,7 +902,6 @@ diesel::table! {
         task_id -> Int4,
         report -> Jsonb,
         output_expires_at -> Timestamp,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -998,7 +909,6 @@ diesel::table! {
     schema_repair_reports (task_id) {
         task_id -> Int4,
         document -> Jsonb,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -1010,7 +920,6 @@ diesel::table! {
         kind -> Text,
         active -> Bool,
         checkpoint -> Jsonb,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -1034,7 +943,6 @@ diesel::table! {
         disabled_at -> Nullable<Timestamp>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
@@ -1092,20 +1000,6 @@ diesel::table! {
         #[max_length = 32]
         terminal_reason -> Nullable<Varchar>,
         discovery_metadata -> Nullable<Jsonb>,
-        logical_identity -> Nullable<Jsonb>,
-        receipt_generation -> Nullable<Uuid>,
-        receipt_incarnation -> Nullable<Uuid>,
-        receipt_created_revision -> Nullable<Int8>,
-        receipt_protection_deadline -> Nullable<Timestamp>,
-        receipt_checkpoint -> Nullable<Text>,
-        receipt_legacy -> Bool,
-        admission_event -> Nullable<Jsonb>,
-        retention_policy_revision -> Nullable<Int8>,
-        detail_expires_at -> Nullable<Timestamp>,
-        details_purge_pending -> Bool,
-        recovery_unavailable -> Bool,
-        task_checkpoint -> Nullable<Text>,
-        wait_token -> Nullable<Uuid>,
     }
 }
 
@@ -1170,13 +1064,9 @@ diesel::table! {
         created_at -> Timestamp,
         updated_at -> Timestamp,
         anonymized_at -> Nullable<Timestamp>,
-        logical_identity -> Nullable<Jsonb>,
     }
 }
 
-diesel::joinable!(artifact_attempts -> artifact_destinations (destination_id));
-diesel::joinable!(artifact_chunks -> artifact_attempts (artifact_id));
-diesel::joinable!(artifact_task_owners -> artifact_attempts (artifact_id));
 diesel::joinable!(auth_sessions -> users (principal_id));
 diesel::joinable!(backup_task_outputs -> tasks (task_id));
 diesel::joinable!(class_computation_state -> hubuumclass (class_id));
@@ -1246,10 +1136,6 @@ diesel::joinable!(token_scopes -> tokens (token_id));
 diesel::joinable!(tokens -> principals (principal_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
-    artifact_attempts,
-    artifact_chunks,
-    artifact_destinations,
-    artifact_task_owners,
     auth_sessions,
     backup_task_outputs,
     class_computation_state,

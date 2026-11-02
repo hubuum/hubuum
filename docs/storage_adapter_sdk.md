@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.17`.
+Status: accepted; current experimental release train is `0.6`.
 
 ## Supported Crate Graph
 
@@ -16,7 +16,7 @@ The statically linked storage adapter SDK consists of these crates:
 | `hubuum-regex` | Bounded portable regex language, compiler interface, and conformance cases | Default only |
 | `hubuum-query` | Bounded, backend-neutral query parsing and values | Default only |
 | `hubuum-task-core` | Task identity, idempotency, validated execution limits and cooperative stop contexts | Default only |
-| `hubuum-storage-core` | Complete capability traits, DTOs, errors, transactions, and aggregate | Default; `openapi` |
+| `hubuum-storage-core` | Complete capability traits, DTOs, errors, transactions, and aggregate | Default only |
 | `hubuum-storage-conformance` | Reusable behavioral certification for complete adapters | Default only |
 
 The diagnostic crate is independently usable and has no Hubuum dependencies.
@@ -39,8 +39,6 @@ hubuum-storage-core
     +---------------------------------- hubuum-computed-fields
 
 hubuum-storage-core --> hubuum-budget
-hubuum-storage-conformance --> hubuum-events-core
-hubuum-storage-conformance --> hubuum-query
 hubuum-domain --> hubuum-schema-diagnostics
 hubuum-query --> hubuum-regex
 ```
@@ -91,14 +89,13 @@ Raising the MSRV requires an incompatible coordinated release and migration
 notice during `0.x`; after `1.0.0`, it follows the project's documented major
 release policy unless a future policy explicitly establishes an MSRV window.
 
-The optional schema features are additive:
+The two optional features are additive:
 
-- `hubuum-domain/openapi` adds Utoipa schema implementations;
-- `hubuum-storage-core/openapi` adds schemas for task policy and accounting values; and
+- `hubuum-domain/openapi` adds Utoipa schema implementations; and
 - `hubuum-events-core/schema` adds Utoipa schema implementations and enables
   `hubuum-domain/openapi`.
 
-Default behavior must not change when optional features are disabled. Removing or
+Default behavior must not change when either feature is disabled. Removing or
 renaming a feature, making it mandatory, or changing a feature so it removes
 an API is incompatible. New additive features are compatible when existing
 feature combinations keep their behavior.
@@ -117,7 +114,7 @@ closed set is:
 
 - `hubuum-computed-fields`: `DefinitionError`, `FieldErrorCode`, `Operation`, and
   `ResultType`;
-- `hubuum-domain`: `EventDeliveryStatus`, `IdentityReference`, `JsonPatchErrorKind`,
+- `hubuum-domain`: `EventDeliveryStatus`, `JsonPatchErrorKind`,
   `JsonSchemaErrorKind`, `MaintenanceState`, `PrincipalKind`,
   `ResourceRevisionError`, and `StorageJsonValidationError`;
 - `hubuum-schema-diagnostics`: `SchemaActualValue`, `SchemaDiagnosticInspection`,
@@ -196,18 +193,6 @@ CI builds rustdoc with warnings denied and all features enabled. It runs
 maintainer-controlled operation because crates.io versions cannot be replaced.
 
 ## Adapter Upgrade Process
-
-### Deletion authority foundation: 0.9 to 0.10
-
-Update all ten supported SDK crates together to 0.10.0. The complete operational
-family now requires `DeletionControlStorage`. Implement privileged, bounded
-capture and atomic exact-predecessor transitions for `DeletionControlState`.
-Keep its records outside logical application replacement. Retained decisions
-must prevent restored exposure until restriction reapplication is implemented;
-the initial adapters conservatively reject replacement whenever intents exist.
-See [deletion recovery](deletion_recovery.md) for the independent repository
-contract and the remaining activation gates. This is a breaking Rust SDK change;
-it does not enable a deletion endpoint or promise permanent-erasure completion.
 
 Adapter authors should upgrade `hubuum-storage-core` and
 `hubuum-storage-conformance` to the same exact SDK version, update every direct
@@ -431,299 +416,3 @@ The PostgreSQL adapter requires migration
 `2026-10-25-000002_schema_profiling`. Drain old workers before submitting the new
 task kind. The server uses `json-schema-profiler` 0.0.1; the SDK does not depend
 on it and retains its Rust 1.88 minimum version.
-
-## Upgrading from 0.6 to 0.7
-
-Upgrade all ten SDK crates together. `QueryStorage` now requires
-`LogicalIdentityStorage`; every selectable adapter must implement the complete
-contract. Resolve `StorageIdentityTarget` to `StorageIdentityEvidence` inside a
-consistent backend view, preserving typed resource, principal, task and version
-identities across projections and backup replay. Assign new identities at writes,
-keep historical versions immutable on interval closure, and capture reference
-identities before integer IDs can be reused. Return `NotFound` for absent targets.
-
-`HistoryStorage::resolve_history_principal_names` now accepts
-`Vec<PrincipalIdentity>` and returns names keyed by that identity. Preserve the
-identity evidence in history and task-event projections. Resolve actor and
-initiator names only from captured, known UUIDs. Unresolved legacy attribution
-must remain unnamed even if a current principal has the same integer ID.
-
-`StorageRestoreReplayApply::at_restore_boundary` takes a
-`StorageRestoreIdentityContext` obtained from the confirmed artifact job. It
-prepares a `StorageIdentityReplay` before entering the adapter's fenced restore
-transaction. Preserve that proof until replay. Format 11 requires identity
-metadata; formats 6–10 undergo a quarantined upgrade with a stable per-stage
-cohort. Restore existing identities, mint fresh versions only for synthesized
-history baselines, and keep retained control-plane requester evidence across
-application replacement. The context does not replace the adapter's transaction,
-maintenance ownership, or execution fences.
-
-Use `verify_collection_version_identity` with an isolated collection, its read
-capabilities and mutation capability. `BackupRestoreFixture::restore` now returns
-the confirmed `StorageRestoreIdentityContext`, allowing conformance checks to
-verify synthesized baseline identities against the actual restore stage. See the full
-[identity coverage and acceptance matrix](logical_identity.md) for retained
-relationships, schema dependencies, task outcomes, migration and restore tests.
-
-## Upgrading from 0.7 to 0.8
-
-This is a breaking coordinated SDK release. Advance all ten SDK dependencies
-and implement the required `TaskCapacityStorage` capability in every complete
-adapter. Policy initialization is atomic and first-writer-wins; later startup
-configuration cannot replace a committed revision. Explicit policy updates use
-`TaskPolicyRevision` as a compare-and-replace token.
-
-`StorageTaskCreateRequestBuilder::try_build()` no longer accepts a caller-chosen
-active-task limit. Remove that argument and initialize the shared
-`TaskAdmissionPolicy` instead. Enforce outstanding work, execution occupancy and
-resident bytes transactionally against the committed policy. Keep cumulative
-work owned by immutable task identities outside logical application restore.
-Follow the [task accounting contract](task_admission.md) for restoration,
-internal repair admission and administrative diagnostics.
-
-Preserve `StorageError::task_capacity_rejection()` when translating adapter
-errors. `into_parts()` now returns the optional structured capacity reason as
-its fourth element; update error destructuring and preserve that reason across
-adapter boundaries. Only application code translates the bounded rejection
-into HTTP.
-
-## Upgrading from 0.8 to 0.9
-
-Update all ten SDK dependencies together. `StorageBackend` now requires
-`artifacts::TaskArtifactStore`: implement immutable staged chunks, independent
-read-back verification, task-incarnation ownership, atomic reference publication,
-resident-byte admission, and idempotent cleanup. The memory and PostgreSQL
-adapters implement the complete contract. The standalone `ArtifactStore` trait
-remains usable without task execution or an archive provider.
-Local producers must stop within `LOCAL_SPOOL_CLEANUP_GRACE` after ownership
-loss. Keep their reservation through that interval after fencing an abandoned
-attempt; a cleanup call returning zero can still have deferred physical work.
-
-Export and backup completion can carry `VerifiedArtifact` rather than complete
-values. Preserve the proof through the completion transaction and fence the
-claim, cancellation, output retention and attempt state before publishing it.
-`StorageBackupOutput::document()` is optional; use its artifact reference for new
-outputs. Continue supporting the inline variants for retained legacy outputs.
-
-Backups use format 12 and include `history.export_artifacts` as bounded manifest
-and block frames. Restore these into fresh physical identities, independently
-verify destination bytes, and remap output references. Retain prior cleanup
-obligations and shared capacity policy across restore. Format 11 identities remain
-native; formats 6–10 still require the quarantined legacy identity upgrade.
-
-## Upgrading from 0.10 to 0.11
-
-This is a breaking coordinated SDK release. Upgrade all ten SDK dependencies
-and handle `MaintenanceState::RecoveryQuarantine` in exhaustive matches. It
-restricts exposure independently of restore draining; restore status endpoints
-must not bypass this restriction. Return this state from maintenance and readiness
-checks while any deletion intent remains, including completed intents. Block
-new task/event claims and retention work under the same restriction.
-
-`DeletionControlStorage::read_deletion_control()` provides minimal authority
-without physical backup coordinates. Its default implementation uses capture;
-adapters with privileged capture must override it with a read-only runtime
-capability. `DeletionControlState::recover_from()` constructs an exact-predecessor
-transition that preserves newer local decisions and rejects conflicting histories.
-Adapters must accept validated recovery transitions that advance several revisions
-under the same exact-predecessor transaction, rather than requiring an increment
-of exactly one.
-Only trusted services holding authenticated latest evidence may use it for recovery.
-See the [recovery procedure](deletion_recovery.md) for the offline boundary.
-
-## Upgrading from 0.11 to 0.12
-
-This is a breaking coordinated SDK release. Upgrade all ten SDK crates and
-implement the four new `DeletionControlStorage` operations: `register_runtime`,
-`unregister_runtime`, `prepare_hot_object_history_deletion`, and
-`cleanup_hot_object_history`.
-
-Runtime registration is atomic against deletion authority and bounded to 1,024
-owners. Return the non-cloneable `RuntimeRegistration` capability only after
-commit; remove a registration only with its matching ownership token. Dropping a
-token, heartbeat age, process failure, and logical restore must not remove a
-registration. Keep ownership tokens out of logs and public reports.
-
-Prepare and cleanup lock authority before other rows, compare the exact expected
-state, and require every protected registration to be absent in that same
-transaction. A racing startup must either register first and block cleanup or
-observe the retained intent and refuse startup. Preserve registrations outside
-application replacement independently of ordinary restore coordinator heartbeats.
-
-The managed-copy request names one resource/version UUID pair and one explicitly
-bound hot object-history copy. Reject open, unresolved, mismatched or ambiguous
-history. Delete the exact copy and record its outcome atomically. A retained
-`Removed` outcome still requires checking physical presence on retry: an older
-application restore can reintroduce that row. Never authorize cleanup from reused
-integers or infer a binding for an existing opaque obligation.
-
-`DeletionCheckpointIdentity` validates a content address; it is not evidence of
-independent publication or durability. Only the trusted administrator service
-holding the authenticated repository session may invoke managed cleanup. Final
-completion requires independent publication and readback covering the adapter's
-receipt. Keep application exposure quarantined afterward.
-
-Control format 2 adds explicit copy bindings and receipts. Continue decoding and
-encoding format 1 byte-for-byte: checkpoint authentication depends on its original
-canonical representation. Unknown legacy copies remain unexecutable and retain
-their original outcomes. See [managed cleanup](deletion_recovery.md#offline-managed-copy-cleanup).
-
-## Upgrading from 0.12 to 0.13
-
-Upgrade all ten SDK crates together. Every complete adapter now implements
-application-incarnation fencing, runtime-owner binding, exact drain
-acknowledgements, transactional decision reapplication, and exposure release.
-`ExecutionStorage` exposes the current scope and synchronous scope execution for
-streaming response polling; nested scopes preserve the outer application permit.
-`StorageTaskLease` carries the captured application fence. Adapters persist and
-verify the task claim's original fence before productive transitions, even when
-another caller supplies a freshly admitted execution scope.
-
-Logical replacement preserves authority and runtime registrations, rotates the
-application incarnation, and quarantines retained obligations until independently
-protected reapplication completes. A checkpoint's optional reapplication receipt
-never imports local release permission. An explicitly unbound adapter remains
-available for privileged administration and focused tests; production composition
-binds every capability port and provider to its registered owner and rejects
-missing, different-owner, stale, or revoked permits.
-
-See [deletion recovery](deletion_recovery.md) for the coordinated offline upgrade,
-process-isolation contract, checkpoint ordering, and conservative failure states.
-
-## Upgrading from 0.13 to 0.14
-
-Upgrade all ten SDK crates together to `0.14.0` for the required protected audit
-contract and expanded lifecycle event vocabulary.
-
-`DeletionControlStorage::observe_deletion_checkpoint` commits an independently
-verified checkpoint observation, its required canonical event and minimum protected
-evidence atomically. Use the adapter's recording clock. Audited intent and copy
-removal capabilities must preserve original event UUIDs, exact membership and
-recording times; failure to persist required audit rolls back their state changes.
-Format 3 retains this minimum evidence without erased payloads. Ordinary event
-expiry must not remove it. Lifecycle audit is initially system-only and cannot
-enter notification subscription, preview or delivery paths.
-
-Completion evidence may advance an already recorded physical reapplication receipt
-only through `ApplicationControlState::with_completed_audit`, which rejects changed
-decisions, bindings or copy outcomes. Protect the updated receipt and audit facts
-before release; do not redo physical cleanup or infer a new drain acknowledgement
-from an audit-only revision. Missing required completion audit blocks exposure.
-
-## Upgrading from 0.14 to 0.15
-
-Update all ten exact-version SDK dependencies to `=0.15.0` together.
-`TaskExecutionStorage::claim_next_task` now accepts `StorageTaskClaimRequest`,
-which carries a stable per-slot `TaskWorkerId`, supported `TaskWorkerKinds`,
-and the validated lease duration. Generate the identity once per worker loop,
-not once per poll. Preserve the complete policy's required `scheduling` field
-and provide `TaskSchedulingSnapshot` when constructing capacity diagnostics.
-
-Adapters must persist weighted rotation, principal service history and promotion
-spacing atomically with claims, maintain worker availability with backend time,
-and fence/reset worker leases during restore while preserving service history.
-Execution caps and small-pool reservation fallback are part of the complete
-contract; see [shared scheduling](task_scheduling.md). Rerun conformance and
-production-adapter transaction/concurrency tests before deployment.
-
-## Upgrading from 0.15 to 0.16
-
-Upgrade all ten SDK crates together to 0.16.0. This is a breaking adapter change.
-Implement the complete `TaskRetentionStorage` contract, protected submission
-lookup and activation, and the typed `StorageTaskSubmissionOutcome` creation
-result. Preserve stable principal/task identities, original request fingerprints,
-terminal-anchored windows and exact admission tickets across adapter boundaries.
-
-Preserve `StorageErrorKind::IdempotencyConflict` across adapter error conversion
-for changed protected request fingerprints and task kinds. The application maps
-it to HTTP 409 with a bounded reason; do not collapse it into a generic conflict
-whose meaning a consumer would have to recover from prose.
-
-`TaskRetentionPolicyChange` compares a `TaskRetentionPolicyRevision`, independently
-of the task-control revision. Under the adapter's control lock, reject a competing
-policy revision and apply the replacement to the latest authority state, preserving
-concurrent receipt changes. Receipt settlement alone must not invalidate the edit.
-
-Receipt retirement uses `ReceiptExpirySelection::MAX_RECEIPTS` (1,000 bounded
-metadata references), independently of the 64-task physical purge manifest.
-Both the selector and `ReceiptExpiryBatch` enforce this limit. Preserve exact
-terminal-anchor protection and the published expiry floor for the whole batch.
-
-Construct `TaskHoldChange` from the captured `TaskControlState` and desired hold.
-It retains the prior decision for that hold ID, not a global task revision.
-Compare that exact record under the control lock before applying to fresh state;
-receipt activity and other holds cannot invalidate it. Conflicting decisions for
-the same hold still fail, and release still advances the protected purge fence.
-Generic `commit_task_control` must reject hold changes in every adapter.
-
-Export and backup artifact `into_parts` now accepts an adapter-owned readiness
-clock and returns a fallible result. `StorageOutputAvailability` preserves either
-an existing fixed deadline or a validated post-ready lifetime. Resolve it inside
-atomic completion and update physical artifact ownership to the same resulting
-deadline. Restore keeps its recorded deadline and must not start a new lifetime.
-
-Checkpoint capture now combines independent deletion and task authority through
-`ControlCheckpointCapture`. Exposure release takes `ApplicationExposureProof`;
-protected task authority requires an exact current-incarnation task reapplication
-proof. Retain historical reconciliation proofs during ordinary task revision
-changes, but require exact current revisions at exposure-release CAS.
-
-Implement both task-detail and expired-output purge scopes, aggregate row/byte
-budgets, child-write fencing, output/hold/dependency blockers, terminal expiry
-protection and recovery of retained decisions. Preserve audit provenance after
-parent deletion and grandfather legacy detail-retention anchors. No empty or
-unsupported fallback satisfies these required methods. Run the shared protected
-admission verifier and adapter-native transaction, locking, migration, recovery
-and bounded-purge tests. See [task retention](task_retention.md) for operational
-activation and client-visible retry behavior.
-
-Published task-owned artifact chunks, manifests and reservations are part of the
-bounded purge contract. Their verification proof fences ordinary physical
-cleanup, including while already marked deleting. Abandoned unpublished staging
-retains lease-fenced cleanup with current holds pinned, preserving retry capacity.
-Recheck holds and immutable task ownership even when its catalog row is
-absent, preserve producer grace, and acknowledge completion only after all
-physical obligations in the selected scope have been retired.
-
-## Upgrading from 0.16 to 0.17
-
-Advance all ten SDK dependencies together. Every complete adapter implements
-`TaskExecutionStorage::wait_task` and `resume_task`; there is no unsupported
-default. Handle the new closed variants `StorageTaskStatus::Waiting`,
-`StorageTaskCancellationChange::CancelledWaiting`, and `Action::Waiting`.
-`StorageTaskResumeOutcome` distinguishes newly queued work, stopped work, and an
-unchanged notification. Nonterminal operational counts now include a fourth
-`waiting` argument after `running` in `StorageOperationalTaskActiveCounts::try_new`.
-
-Carry `StorageTaskCheckpoint` intact through task projections and claims. Its
-validated format/version/object representation is bounded to 64 KiB. Persist a
-fresh opaque `StorageTaskWaitToken` atomically with the checkpoint and removal
-of the execution lease. Accept waiting only for uncommitted export/backup work
-with a pinned deadline. Preserve request bytes, original deadline, start time,
-progress, outstanding admission, and cumulative charges. Account for checkpoint
-bytes as resident input and charge them with the request on a subsequent claim.
-
-Compare a resume token atomically with the current waiting task. The winner
-queues the same logical task and consumes the token; ordinary queue claiming
-grants the next execution lease. Missing, stale, or repeated notifications
-return `Unchanged` without mutation or an event. Settle stop/deadline evidence
-before maintenance blocks an otherwise valid resume. Cancellation, principal
-disablement, and bounded deadline recovery must finalize waiting work without
-an execution lease, clear the checkpoint, and release its resident bytes.
-
-Waiting is nonterminal but not active execution. It must not be treated as an
-expired execution lease. Retain waiting tasks during ordinary draining; logical
-backups still export terminal tasks only, so restore must not recreate a wait
-token or allow it to target a reused integer ID. Preserve earlier cumulative
-charges through restore reconciliation as required by 0.8.
-
-This release provides a dormant foundation. Current built-in producers do not
-enter waiting, and existing executors reject checkpointed work before ordinary
-execution. Provider obligations, bounded polling, shared physical retrieval
-accounting, and activation remain subsequent work under #516. See the complete
-[waiting and downgrade contract](task_admission.md#durable-waiting-foundation)
-and run `hubuum_storage_conformance::verify_task_wait_resume` against isolated,
-admitted export and backup fixtures for each adapter. The shared `task_waiting`
-scenarios add cancellation, deadlines, concurrency, private projections, and
-capacity evidence; backend-native tests retain transactional accounting and
-rollback coverage.

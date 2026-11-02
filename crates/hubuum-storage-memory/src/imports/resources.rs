@@ -230,7 +230,7 @@ impl MemoryStorage {
         let current = self
             .state
             .read()
-            .await?
+            .await
             .objects
             .get(&object_id.id())
             .cloned()
@@ -301,7 +301,7 @@ impl MemoryStorage {
                 }
             }
         };
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let existing = state
             .computed_fields
             .values()
@@ -368,7 +368,7 @@ impl MemoryStorage {
             )),
             StorageComputedFieldProvenance::new(Some(actor_id), Some(actor_id)),
         );
-        state.store_computed_field(id.id(), definition);
+        state.computed_fields.insert(id.id(), definition);
         if visibility == StorageComputedFieldVisibility::Shared {
             state.record_computed_history(class_id)?;
         }

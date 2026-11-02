@@ -19,19 +19,13 @@ from pathlib import Path
 
 IDENTIFIER = r"[a-z_][a-z_0-9]*"
 TABLE = rf"(?:public\.)?{IDENTIFIER}"
-OFFLINE_TABLE = rf"(?:(?:public|hubuum_control)\.)?{IDENTIFIER}"
 ALTER = re.compile(rf"^\s*ALTER\s+TABLE\s+({TABLE})\s+([^;]+);", re.I | re.M)
-CREATE = re.compile(rf"^\s*CREATE\s+TABLE\s+({TABLE})\s*\(([^;]+)\)\s*;", re.I | re.M)
-DROP = re.compile(rf"^\s*DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?({TABLE})(?:\s+(?:CASCADE|RESTRICT))?\s*;", re.I | re.M)
 ADD = re.compile(rf"ADD\s+CONSTRAINT\s+({IDENTIFIER})\s+(.+)", re.I | re.S)
-LITERAL_CHECK = (
+CHECK = re.compile(
     rf"CHECK\s*\(\s*({IDENTIFIER})\s+IN\s*\(\s*"
     r"('[a-z_0-9-]+'(?:\s*,\s*'[a-z_0-9-]+')*)\s*\)\s*\)"
-)
-CHECK = re.compile(LITERAL_CHECK + r"(?:\s+NOT\s+VALID)?\s*", re.I)
-INLINE_CHECK = re.compile(
-    rf"(?:^|,)\s*({IDENTIFIER})\s+(?:TEXT|VARCHAR)(?:\s+NOT\s+NULL)?\s+"
-    rf"({LITERAL_CHECK})(?=\s*(?:,|$))", re.I,
+    r"(?:\s+NOT\s+VALID)?\s*",
+    re.I,
 )
 REPLACEMENT = re.compile(
     rf"^\s*ALTER\s+TABLE\s+({TABLE})\s+DROP\s+CONSTRAINT\s+({IDENTIFIER});"
@@ -54,26 +48,8 @@ def approved_replacements(baseline_documents, candidate):
     constraints = {}
     for document in baseline_documents:
         document = re.sub(r"--[^\n]*|/\*.*?\*/", "", document, flags=re.S)
-        operations = sorted(
-            (match.start(), kind, match)
-            for kind, pattern in (("create", CREATE), ("alter", ALTER), ("drop", DROP))
-            for match in pattern.finditer(document)
-        )
-        for _, kind, match in operations:
-            table = match[1].lower().removeprefix("public.")
-            if kind != "alter":
-                constraints = {key: value for key, value in constraints.items() if key[0] != table}
-                if kind == "create":
-                    for column in INLINE_CHECK.finditer(match[2]):
-                        name = f"{table}_{column[1].lower()}_check"
-                        check = enum_check(column[2])
-                        # PostgreSQL may truncate or suffix generated names. Only
-                        # accept an unambiguous, short default column CHECK name.
-                        if (len(name) <= 63 and check[0] == column[1].lower()
-                                and not re.search(rf"\bCONSTRAINT\s+{name}\b", match[2], re.I)):
-                            constraints[(table, name)] = check
-                continue
-            operation = match[2]
+        for table, operation in ALTER.findall(document):
+            table = table.lower().removeprefix("public.")
             for name in re.findall(
                 rf"\b(?:ADD|DROP|RENAME|ALTER)\s+CONSTRAINT\s+({IDENTIFIER})", operation, re.I
             ):
@@ -98,7 +74,7 @@ def approved_replacements(baseline_documents, candidate):
 
 
 def approved_offline_drops(reviews, candidate_path, candidate):
-    """Permit declared constraint drops and function renames in an offline upgrade.
+    """Permit only exact, declared constraint drops in a reviewed offline upgrade.
 
     These are explicitly NOT rolling-compatible migrations. The hash pins the
     review to its SQL; any later edit needs a fresh review in the same PR.
@@ -115,14 +91,9 @@ def approved_offline_drops(reviews, candidate_path, candidate):
             raise ValueError("Offline migration SQL changed; review its new content and hash")
         for table, names in review["drop_constraints"].items():
             for name in names:
-                if not re.fullmatch(OFFLINE_TABLE, table) or not re.fullmatch(IDENTIFIER, name):
+                if not re.fullmatch(IDENTIFIER, table) or not re.fullmatch(IDENTIFIER, name):
                     raise ValueError("Offline review contains an invalid constraint identifier")
-                table_identity = table.removeprefix("public.")
-                approved.add(f"OFFLINE:{table_identity}:{name}".upper())
-        for source, destination in review.get("rename_functions", {}).items():
-            if not re.fullmatch(IDENTIFIER, source) or not re.fullmatch(IDENTIFIER, destination):
-                raise ValueError("Offline review contains an invalid function identifier")
-            approved.add(f"OFFLINE_FUNCTION_RENAME:{source}:{destination}".upper())
+                approved.add(f"OFFLINE:{table}:{name}".upper())
     return approved
 
 

@@ -1,4 +1,3 @@
-mod api_admission;
 mod event_deliveries;
 mod event_subscriptions;
 mod events;

@@ -1,10 +1,8 @@
 use crate::config::get_config;
 use crate::errors::ApiError;
 use crate::models::{ExportContentType, ExportMissingDataPolicy, ExportTemplate, ExportWarning};
-pub(crate) use hubuum_templates::template_workers_idle;
 use hubuum_templates::{
-    MissingDataPolicy, TemplateAutoEscape, TemplateError, TemplateExecution, TemplateLimits,
-    prepare_template,
+    MissingDataPolicy, TemplateAutoEscape, TemplateExecution, TemplateLimits, prepare_template,
 };
 use std::collections::HashMap;
 
@@ -123,7 +121,15 @@ pub async fn render_template(
     .max_output_bytes(max_output_bytes)
     .render(context)
     .await
-    .map_err(|error| template_render_error(error, max_output_bytes))?
+    .map_err(|error| {
+        if error.to_string().contains("output limit") {
+            ApiError::PayloadTooLarge(format!(
+                "Rendered export exceeded max_output_bytes (> {max_output_bytes})"
+            ))
+        } else {
+            ApiError::BadRequest(format!("Template render failed: {error}"))
+        }
+    })?
     .into_parts();
     let warnings = missing
         .into_iter()
@@ -138,52 +144,6 @@ pub async fn render_template(
         .collect();
     Ok((rendered, warnings))
 }
-/// The output file and replay input are pinned through subprocess termination.
-pub(crate) async fn render_template_spooled(
-    template: &ExportTemplate,
-    collection_templates: &[ExportTemplate],
-    context: &serde_json::Value,
-    rows: std::sync::Arc<hubuum_templates::TemplateRows>,
-    missing_data_policy: ExportMissingDataPolicy,
-    max_output_bytes: usize,
-) -> Result<hubuum_templates::RenderedSpool, ApiError> {
-    let (recursion_limit, fuel) = template_limits_from_config();
-    let sources = build_collection_template_map(
-        template.collection_id,
-        &template.name,
-        &template.template,
-        collection_templates,
-    )
-    .into_iter()
-    .collect::<Vec<_>>();
-    TemplateExecution::new(
-        &template.name,
-        &template.template,
-        TemplateLimits::new(recursion_limit, fuel),
-    )
-    .sources(&sources)
-    .auto_escape(template_auto_escape(template.content_type))
-    .missing_data(match missing_data_policy {
-        ExportMissingDataPolicy::Strict => MissingDataPolicy::Strict,
-        ExportMissingDataPolicy::Omit => MissingDataPolicy::Omit,
-        ExportMissingDataPolicy::Null => MissingDataPolicy::Null,
-    })
-    .max_output_bytes(max_output_bytes)
-    .render_spooled(context, rows)
-    .await
-    .map_err(|error| template_render_error(error, max_output_bytes))
-}
-
-fn template_render_error(error: TemplateError, max_output_bytes: usize) -> ApiError {
-    if error.to_string().contains("output limit") {
-        ApiError::PayloadTooLarge(format!(
-            "Rendered export exceeded max_output_bytes (> {max_output_bytes})"
-        ))
-    } else {
-        ApiError::BadRequest(format!("Template render failed: {error}"))
-    }
-}
-
 fn template_auto_escape(content_type: ExportContentType) -> TemplateAutoEscape {
     if content_type == ExportContentType::TextHtml {
         TemplateAutoEscape::Html

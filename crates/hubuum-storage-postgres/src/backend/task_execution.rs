@@ -1,12 +1,10 @@
 use crate::operations::task_control as postgres_task_control;
 use crate::operations::task_execution as postgres_task_execution;
 use async_trait::async_trait;
-use hubuum_storage_core::StorageTaskClaimRequest;
 use hubuum_storage_core::{
     StorageSchemaProfileArtifact, StorageTaskCancellationOutcome, StorageTaskCancellationRequest,
     StorageTaskExecutionAdmission, StorageTaskExecutionObservation, StorageTaskOutputLookup,
-    StorageTaskRemoteDispatch, StorageTaskResumeOutcome, StorageTaskResumeRequest, StorageTaskWait,
-    StorageTaskWaitRequest,
+    StorageTaskRemoteDispatch,
 };
 
 use hubuum_storage_core::{
@@ -19,24 +17,6 @@ use super::PostgresStorage;
 
 #[async_trait]
 impl TaskExecutionStorage for PostgresStorage {
-    async fn wait_task(
-        &self,
-        request: StorageTaskWaitRequest,
-    ) -> Result<StorageTaskWait, StorageError> {
-        postgres_task_control::wait_task(self.runtime(), request)
-            .await
-            .map_err(StorageError::from)
-    }
-
-    async fn resume_task(
-        &self,
-        request: StorageTaskResumeRequest,
-    ) -> Result<StorageTaskResumeOutcome, StorageError> {
-        postgres_task_control::resume_task(self.runtime(), request)
-            .await
-            .map_err(StorageError::from)
-    }
-
     async fn get_schema_profile_output(
         &self,
         task_id: hubuum_domain::TaskId,
@@ -98,9 +78,9 @@ impl TaskExecutionStorage for PostgresStorage {
 
     async fn claim_next_task(
         &self,
-        request: StorageTaskClaimRequest,
+        lease_duration: StorageTaskLeaseDuration,
     ) -> Result<Option<StorageTaskClaim>, StorageError> {
-        postgres_task_execution::claim_next_task(self.runtime(), request)
+        postgres_task_execution::claim_next_task(self.runtime(), lease_duration)
             .await
             .map_err(StorageError::from)
     }

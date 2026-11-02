@@ -1,6 +1,5 @@
 //! Share expensive JSON filtering between an exact count and a cursor page.
 
-use diesel::Selectable;
 use diesel::dsl::sql;
 use diesel::pg::Pg;
 use diesel::prelude::QueryDsl;
@@ -86,7 +85,7 @@ pub(super) async fn load_page(
     );
     let rows = SharedObjectPage {
         matches: filtered.select(hubuumobject::id),
-        page: page.select(<ObjectRow as Selectable<Pg>>::construct_selection()),
+        page: page.select(hubuumobject::all_columns),
         order,
     }
     .load::<(Option<ObjectRow>, i64)>(connection)
@@ -112,11 +111,8 @@ struct SharedObjectPage<Matches, Page> {
     order: String,
 }
 
-impl<Matches, Page> Query for SharedObjectPage<Matches, Page>
-where
-    Page: Query,
-{
-    type SqlType = (Nullable<Page::SqlType>, BigInt);
+impl<Matches, Page> Query for SharedObjectPage<Matches, Page> {
+    type SqlType = (Nullable<hubuumobject::SqlType>, BigInt);
 }
 
 impl<Matches, Page> QueryId for SharedObjectPage<Matches, Page> {

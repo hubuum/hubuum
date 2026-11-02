@@ -96,9 +96,9 @@ dependencies = [
 
 [[package]]
 name = "actix-server"
-version = "2.10.0"
+version = "2.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e296908c4d6f3a191e6b9873dbdfec8023350a89129d2b470f61d17233931ee"
+checksum = "c5c8e46e9b40172e4cc67adcd172bd42e932a5a0aa7f603eee88e60f70452f22"
 dependencies = [
  "actix-rt",
  "actix-service",
@@ -2079,7 +2079,6 @@ dependencies = [
  "futures-util",
  "gungraun",
  "hmac 0.13.0",
- "hubuum-artifacts",
  "hubuum-auth-core",
  "hubuum-auth-ldap",
  "hubuum-budget",
@@ -2135,18 +2134,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hubuum-artifacts"
-version = "0.0.1"
-dependencies = [
- "async-trait",
- "hubuum-budget",
- "hubuum-storage-core",
- "rstest",
- "sha2 0.11.1",
- "tokio",
-]
-
-[[package]]
 name = "hubuum-auth-core"
 version = "0.0.1"
 dependencies = [
@@ -2175,14 +2162,14 @@ dependencies = [
 
 [[package]]
 name = "hubuum-budget"
-version = "0.17.0"
+version = "0.6.0"
 dependencies = [
  "rstest",
 ]
 
 [[package]]
 name = "hubuum-computed-fields"
-version = "0.17.0"
+version = "0.6.0"
 dependencies = [
  "bigdecimal",
  "rstest",
@@ -2193,7 +2180,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-domain"
-version = "0.17.0"
+version = "0.6.0"
 dependencies = [
  "bigdecimal",
  "chrono",
@@ -2206,7 +2193,6 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "utoipa",
- "uuid",
 ]
 
 [[package]]
@@ -2297,7 +2283,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-events-core"
-version = "0.17.0"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "hubuum-domain",
@@ -2324,7 +2310,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-query"
-version = "0.17.0"
+version = "0.6.0"
 dependencies = [
  "base64 0.23.1",
  "bigdecimal",
@@ -2339,7 +2325,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-regex"
-version = "0.17.0"
+version = "0.6.0"
 dependencies = [
  "regex-syntax",
  "rstest",
@@ -2351,16 +2337,13 @@ version = "0.0.1"
 dependencies = [
  "clap",
  "futures-util",
- "hubuum-domain",
  "hubuum-scale-core",
- "hubuum-storage-core",
  "hubuum-storage-postgres",
  "libc",
  "reqwest",
  "rstest",
  "serde",
  "serde_json",
- "sha2 0.11.1",
  "sysinfo",
  "tokio",
 ]
@@ -2379,7 +2362,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-schema-diagnostics"
-version = "0.17.0"
+version = "0.6.0"
 dependencies = [
  "jsonschema 0.59.0",
  "rstest",
@@ -2400,18 +2383,17 @@ dependencies = [
 
 [[package]]
 name = "hubuum-storage-conformance"
-version = "0.17.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "hubuum-domain",
  "hubuum-events-core",
- "hubuum-query",
  "hubuum-storage-core",
 ]
 
 [[package]]
 name = "hubuum-storage-core"
-version = "0.17.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -2427,7 +2409,6 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "tempfile",
- "utoipa",
  "uuid",
 ]
 
@@ -2443,14 +2424,11 @@ dependencies = [
  "hubuum-events-core",
  "hubuum-query",
  "hubuum-regex",
- "hubuum-storage-conformance",
  "hubuum-storage-core",
- "hubuum-task-core",
  "ipnet",
  "json-patch",
  "regex",
  "rstest",
- "serde",
  "serde_json",
  "tokio",
  "uuid",
@@ -2467,15 +2445,12 @@ dependencies = [
  "diesel-async",
  "diesel_migrations",
  "futures-util",
- "hubuum-artifacts",
- "hubuum-budget",
  "hubuum-computed-fields",
  "hubuum-domain",
  "hubuum-events-core",
  "hubuum-query",
  "hubuum-regex",
  "hubuum-scale-core",
- "hubuum-storage-conformance",
  "hubuum-storage-core",
  "hubuum-storage-memory",
  "hubuum-task-core",
@@ -2499,7 +2474,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-task-core"
-version = "0.17.0"
+version = "0.6.0"
 
 [[package]]
 name = "hubuum-templates"

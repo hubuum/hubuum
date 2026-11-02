@@ -1,14 +1,11 @@
 mod maintenance;
 pub(crate) mod replay;
 use hubuum_storage_core::{
-    DeletionControlStorage, StorageBackupReplay, StorageRestoreArtifact, StorageRestoreArtifactJob,
-    StorageRestoreIdentityContext, StorageRestoreReplayApply, StorageRestoreStageArtifact,
+    StorageBackupReplay, StorageRestoreArtifact, StorageRestoreArtifactJob,
+    StorageRestoreReplayApply, StorageRestoreStageArtifact,
 };
 pub use maintenance::MaintenanceActivityGuard;
-pub(crate) use maintenance::{
-    active_maintenance_work, application_work_is_settled, track_application_completion,
-    with_application_work,
-};
+use maintenance::active_maintenance_work;
 
 use hubuum_domain::{JsonSchemaLimits, PrincipalId};
 use std::collections::BTreeMap;
@@ -22,14 +19,13 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::config::ControlRecoveryOptions;
 use crate::errors::ApiError;
 use crate::lifecycle::spawn_background_worker;
 use crate::models::retention::FutureRetention;
 use crate::models::{
-    BACKUP_MANIFEST_EXCLUSIONS, BackupDocument, HISTORICAL_BACKUP_MANIFEST_EXCLUSIONS,
-    MaintenanceState, RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreJobID,
-    RestoreJobStatus, RestoreStageRequest, RestoreStageResponse,
+    BACKUP_MANIFEST_EXCLUSIONS, BackupDocument, MaintenanceState, RESTORE_CONFIRMATION_PHRASE,
+    RestoreConfirmRequest, RestoreJobID, RestoreJobStatus, RestoreStageRequest,
+    RestoreStageResponse,
 };
 use crate::services::identity::resolve_identity_scope_name as load_identity_scope_name;
 use crate::storage::storage_handle;
@@ -291,7 +287,6 @@ fn serialized_sha256(value: &impl Serialize) -> Result<String, ApiError> {
 }
 
 fn validate_manifest_counts(
-    backup_version: i32,
     manifest: &crate::models::BackupManifest,
     counts: &BTreeMap<String, i64>,
 ) -> Result<(), ApiError> {
@@ -306,25 +301,14 @@ fn validate_manifest_counts(
             "Full backup manifest count for section '{mismatched_section}' does not match the document"
         )));
     }
-    let matches = |expected: &[&str]| {
-        manifest
-            .exclusions
-            .iter()
-            .map(String::as_str)
-            .eq(expected.iter().copied())
-    };
-    let valid_exclusions = match backup_version {
-        6..=10 => matches(HISTORICAL_BACKUP_MANIFEST_EXCLUSIONS),
-        // Formats 11 and 12 shipped before protected authority was added.
-        11 | 12 => {
-            matches(HISTORICAL_BACKUP_MANIFEST_EXCLUSIONS) || matches(BACKUP_MANIFEST_EXCLUSIONS)
-        }
-        _ => false,
-    };
-    if !valid_exclusions {
-        return Err(ApiError::BadRequest(format!(
-            "Full backup manifest exclusions do not match backup version {backup_version}"
-        )));
+    let exclusions = BACKUP_MANIFEST_EXCLUSIONS
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect::<Vec<_>>();
+    if manifest.exclusions != exclusions {
+        return Err(ApiError::BadRequest(
+            "Full backup manifest exclusions do not match backup version 5".to_string(),
+        ));
     }
     Ok(())
 }
@@ -523,11 +507,12 @@ pub async fn restore_status(
 
 async fn apply_restore(
     pool: &impl crate::storage::StorageContext,
-    context: StorageRestoreIdentityContext,
+    job_id: RestoreJobID,
     metadata: StorageRestoreDocumentMetadata,
     snapshot: StorageBackupReplay,
 ) -> Result<StorageRestoreCompletion, ApiError> {
-    let request = StorageRestoreReplayApply::at_restore_boundary(context, metadata, snapshot)?;
+    let request =
+        StorageRestoreReplayApply::at_restore_boundary(job_id, metadata, snapshot, Utc::now())?;
     storage_handle(pool)
         .apply_restore_replay(request)
         .await
@@ -673,8 +658,7 @@ pub async fn reconcile_interrupted_restore(
     let snapshot = storage_handle(pool)
         .get_restore_coordinator_snapshot()
         .await?;
-    let recovery = configured_recovery_options();
-    reconcile_restore_from_snapshot(pool, snapshot, true, &recovery)
+    reconcile_restore_from_snapshot(pool, snapshot, true)
         .await
         .map(|_| ())
 }
@@ -685,30 +669,16 @@ pub async fn reconcile_interrupted_restore(
 pub async fn execute_confirmed_restore(
     pool: &impl crate::storage::StorageContext,
 ) -> Result<bool, ApiError> {
-    execute_confirmed_restore_with_recovery(pool, &configured_recovery_options()).await
-}
-
-pub(crate) async fn execute_confirmed_restore_with_recovery(
-    pool: &impl StorageContext,
-    recovery: &ControlRecoveryOptions,
-) -> Result<bool, ApiError> {
     let snapshot = storage_handle(pool)
         .get_restore_coordinator_snapshot()
         .await?;
-    reconcile_restore_from_snapshot(pool, snapshot, false, recovery).await
-}
-
-fn configured_recovery_options() -> ControlRecoveryOptions {
-    crate::config::get_config()
-        .map(|config| config.control_recovery.clone())
-        .unwrap_or_default()
+    reconcile_restore_from_snapshot(pool, snapshot, false).await
 }
 
 async fn reconcile_restore_from_snapshot(
     pool: &impl crate::storage::StorageContext,
     snapshot: StorageRestoreCoordinatorSnapshot,
     require_stale_confirmation: bool,
-    recovery: &ControlRecoveryOptions,
 ) -> Result<bool, ApiError> {
     let maintenance_state = snapshot.maintenance_state();
     if maintenance_state.is_normal() {
@@ -729,27 +699,18 @@ async fn reconcile_restore_from_snapshot(
         return Err(error);
     };
     let job = match storage_handle(pool).get_restore_artifact(job_id).await {
-        Ok(job) => job,
+        Ok(job) => restore_job_from_storage(job),
         Err(error) => {
             let error = ApiError::from(error);
             fail_restore_and_resume(pool, job_id, &error).await?;
             return Err(error);
         }
     };
-    let identity_context = job.identity_context();
-    let job = restore_job_from_storage(job);
     let RestoreJobData {
         summary: job,
         document: document_bytes,
         capability_hash: _,
     } = job;
-    if job.status == RestoreJobStatus::Succeeded {
-        // A committed replay can remain draining until retained decisions and
-        // their exact reapplication receipt are independently protected. Retry
-        // that phase without replaying or marking the successful restore failed.
-        reapply_after_restore(pool, recovery).await?;
-        return Ok(true);
-    }
     if matches!(
         job.status,
         RestoreJobStatus::Failed | RestoreJobStatus::Expired
@@ -765,8 +726,6 @@ async fn reconcile_restore_from_snapshot(
         fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     }
-    let identity_context =
-        identity_context.map_err(|error| ApiError::Conflict(error.to_string()))?;
     let Some(confirmed_at) = job.confirmed_at else {
         let error = ApiError::Conflict(format!(
             "Confirmed restore stage {job_id} has no confirmation timestamp"
@@ -809,32 +768,11 @@ async fn reconcile_restore_from_snapshot(
         fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     }
-    if let Err(error) = apply_restore(pool, identity_context, metadata, snapshot).await {
+    if let Err(error) = apply_restore(pool, job_id, metadata, snapshot).await {
         fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     }
-    reapply_after_restore(pool, recovery).await?;
     Ok(true)
-}
-
-async fn reapply_after_restore(
-    pool: &impl StorageContext,
-    recovery: &ControlRecoveryOptions,
-) -> Result<(), ApiError> {
-    let storage = storage_handle(pool);
-    let authority = storage.read_deletion_control().await?;
-    let application = storage.read_application_control().await?;
-    if application.is_released_for(&authority) {
-        return Ok(());
-    }
-    let (directory, key_file) = recovery.paths()?.ok_or_else(|| {
-        ApiError::ServiceUnavailable(
-            "Restore committed but retained deletion decisions require the independent recovery repository; application remains quarantined".into(),
-        )
-    })?;
-    crate::services::deletion_recovery::reapply(pool, directory, key_file)
-        .await
-        .map(|_| ())
 }
 
 async fn heartbeat_instance(
@@ -842,7 +780,7 @@ async fn heartbeat_instance(
     instance_id: Uuid,
     expire_validated_jobs: bool,
 ) -> Result<StorageRestoreCoordinatorSnapshot, ApiError> {
-    let local_work_is_idle = maintenance::local_work_is_settled;
+    let local_work_is_idle = || active_maintenance_work() == 0;
     storage_handle(pool)
         .tick_restore_coordinator(instance_id, &local_work_is_idle, expire_validated_jobs)
         .await

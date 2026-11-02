@@ -6,15 +6,12 @@ use actix_web::{
     web::Data,
     web::JsonConfig,
 };
-use hubuum_storage_core::{DeletionControlStorage, RuntimeRegistration, TaskCapacityStorage};
 #[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::SwaggerUi;
 
-use std::future::Future;
-use std::io;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tracing::{error, info, warn};
 
 use crate::api::openapi::openapi_json as openapi_json_handler;
@@ -38,31 +35,23 @@ use crate::events::{
     ensure_event_retention_worker_running,
 };
 use crate::lifecycle::{
-    ShutdownReport, background_worker_count, shutdown_background_workers,
-    wait_for_background_worker_exit,
+    background_worker_count, shutdown_background_workers, wait_for_background_worker_exit,
 };
-use crate::middlewares::maintenance::http_work_is_settled;
 use crate::middlewares::rate_limit::{
     LoginRateLimitStoreSettings, initialize_login_rate_limit_store,
 };
 use crate::permissions::{AppContext, build_permission_backend};
-use crate::restores::{
-    RestoreSettings, active_maintenance_work, application_work_is_settled,
-    ensure_restore_coordinator_running,
-};
+use crate::restores::{RestoreSettings, ensure_restore_coordinator_running};
 use crate::secrets::DatabaseCredential;
-use crate::services::deletion_recovery::{RuntimeRecoveryLifetime, require_runtime_permit};
 use crate::services::event_administration::count_enabled_event_sinks;
 use crate::storage::{
     OperationalStateStorage, StorageBackendKind, StorageDatabaseRole, StorageDatabaseRoleNames,
-    StorageError, StorageSettings, initialize_storage, inspect_storage_database_privileges,
+    StorageSettings, initialize_storage, inspect_storage_database_privileges,
 };
 use crate::tasks::{ensure_task_worker_running_with_settings, initialize_task_worker_settings};
 use crate::token_retention::ensure_token_retention_worker_running;
 use crate::utilities::is_valid_log_level;
 use crate::{api, logger, middlewares, observability, tls, utilities};
-
-const HTTP_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Build and run the configured Hubuum process until it shuts down.
 ///
@@ -74,8 +63,6 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         app_context,
         backup_settings,
         restore_settings,
-        _recovery,
-        registration,
     } = initialize_services(&mut config).await;
     let storage_backend = app_context.storage_backend_descriptor();
     if config.metrics_enabled {
@@ -110,28 +97,8 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
     } else {
         run_worker_role(&config, &app_context, &backup_settings, active_event_sinks).await
     };
-    let workers = shutdown_background_workers(Duration::from_secs(30)).await;
-    let templates = hubuum_templates::shutdown_template_workers()
-        .await
-        .map_err(|error| io::Error::other(error.to_string()));
-    let result = RuntimeShutdown {
-        role: result,
-        workers,
-        templates,
-        active_work: active_maintenance_work(),
-        http_settled: http_work_is_settled(),
-        application_settled: application_work_is_settled(),
-    }
-    .finish(app_context.backend().unregister_runtime(registration))
-    .await;
-    if let Err(error) = &result {
-        error!(
-            message = "Runtime shutdown or registration removal could not be confirmed; protected registrations continue to gate offline cleanup",
-            reason = %error,
-        );
-    } else {
-        _recovery.release();
-    }
+    shutdown_background_workers(Duration::from_secs(30)).await;
+    hubuum_templates::shutdown_template_workers().await;
     drop(app_context);
     if let Err(error) = trace_runtime.shutdown().await {
         warn!(
@@ -140,48 +107,6 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         );
     }
     result
-}
-
-struct RuntimeShutdown {
-    role: io::Result<()>,
-    workers: ShutdownReport,
-    templates: io::Result<()>,
-    active_work: usize,
-    http_settled: bool,
-    application_settled: bool,
-}
-
-impl RuntimeShutdown {
-    async fn finish(
-        self,
-        unregister: impl Future<Output = Result<(), StorageError>>,
-    ) -> io::Result<()> {
-        self.role?;
-        if !self.workers.panicked.is_empty() || !self.workers.timed_out.is_empty() {
-            return Err(io::Error::other(
-                "Background work did not settle; retaining protected runtime registration",
-            ));
-        }
-        self.templates?;
-        if self.active_work != 0 {
-            return Err(io::Error::other(
-                "Request or worker activity remains; retaining protected runtime registration",
-            ));
-        }
-        if !self.http_settled {
-            return Err(io::Error::other(
-                "HTTP work did not settle; retaining protected runtime registration",
-            ));
-        }
-        if !self.application_settled {
-            return Err(io::Error::other(
-                "Application work did not settle; retaining protected runtime registration",
-            ));
-        }
-        unregister
-            .await
-            .map_err(|error| io::Error::other(error.to_string()))
-    }
 }
 
 async fn initialize_runtime() -> (AppConfig, observability::tracing::TraceRuntime) {
@@ -279,8 +204,6 @@ async fn initialize_runtime() -> (AppConfig, observability::tracing::TraceRuntim
 }
 
 struct RuntimeServices {
-    _recovery: RuntimeRecoveryLifetime,
-    registration: RuntimeRegistration,
     app_context: AppContext,
     backup_settings: BackupSettings,
     restore_settings: RestoreSettings,
@@ -334,44 +257,6 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
             EXIT_CODE_DATABASE_ERROR,
         );
     }
-    let recovery = require_runtime_permit(&storage, &config.control_recovery)
-        .await
-        .unwrap_or_else(|error| {
-            fatal_error(
-                &format!("Recovery startup gate: {error}"),
-                EXIT_CODE_DATABASE_ERROR,
-            )
-        });
-    // Register under the authority lock before bootstrap writes, services,
-    // workers or listeners can start. Failed initialization deliberately leaves
-    // this durable membership blocking offline cleanup.
-    let registration = storage
-        .register_runtime_isolated(recovery.isolation_domain())
-        .await
-        .unwrap_or_else(|error| {
-            fatal_error(
-                &format!("Protected runtime registration failed: {error}"),
-                EXIT_CODE_DATABASE_ERROR,
-            )
-        });
-    let recovery = recovery.into_runtime_lifetime();
-    let storage = storage.with_runtime_owner(registration.owner());
-    let initial_policy = config
-        .initial_task_admission_policy()
-        .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
-    let task_policy = storage
-        .initialize_task_policy(initial_policy)
-        .await
-        .unwrap_or_else(|error| {
-            fatal_error(
-                &format!("Failed to initialize shared task policy: {error}"),
-                EXIT_CODE_DATABASE_ERROR,
-            )
-        });
-    info!(
-        task_policy_revision = task_policy.revision().get(),
-        "Shared task admission policy loaded"
-    );
     if config.storage_backend == StorageBackendKind::Postgres
         && config.database_role_mode.uses_split_roles()
     {
@@ -440,6 +325,7 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
 
     let backup_settings = BackupSettings::new(
         config.backup_output_retention_hours,
+        config.backup_max_active_tasks_per_user,
         config
             .backup_budget()
             .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR)),
@@ -487,21 +373,8 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
             )
         });
     storage.start_query_observation_control();
-    let task_receipts = crate::services::deletion_recovery::TaskReceiptService::configured(
-        &config.control_recovery,
-    )
-    .await
-    .unwrap_or_else(|error| {
-        fatal_error(
-            &format!("Task receipt configuration: {error}"),
-            EXIT_CODE_CONFIG_ERROR,
-        )
-    });
-    let app_context =
-        AppContext::new(storage, permission_backend).with_task_receipts(task_receipts);
+    let app_context = AppContext::new(storage, permission_backend);
     RuntimeServices {
-        _recovery: recovery,
-        registration,
         app_context,
         backup_settings,
         restore_settings,
@@ -671,47 +544,20 @@ async fn run_http_role(
         active_event_sinks,
     );
 
-    // Own the signal path so every successful exit follows an explicit graceful
-    // stop. Actix's built-in forced signal path does not wait for its workers.
-    let server = server
-        .disable_signals()
-        .shutdown_timeout(HTTP_SHUTDOWN_TIMEOUT.as_secs())
-        .workers(config.actix_workers)
-        .run();
-    supervise_http_server(server, wait_for_runtime_shutdown()).await
-}
-
-async fn supervise_http_server(
-    mut server: Server,
-    shutdown: impl Future<Output = io::Result<()>>,
-) -> io::Result<()> {
-    let handle = server.handle();
-    let outcome = tokio::select! {
-        result = &mut server => return result.and(Err(io::Error::other(
-            "HTTP server stopped without an explicit shutdown",
-        ))),
-        outcome = shutdown => outcome,
-    };
-    // Continue polling the server while its stop command drains workers. Merely
-    // dropping the Server future does not establish that its listener stopped.
-    let started = Instant::now();
-    let ((), stopped) = tokio::join!(handle.stop(true), server);
-    stopped?;
-    // Actix discards the worker's graceful/forced completion flag. A stop that
-    // reaches its grace deadline cannot establish clean runtime settlement.
-    if started.elapsed() >= HTTP_SHUTDOWN_TIMEOUT {
-        return Err(io::Error::other("HTTP shutdown reached its grace deadline"));
-    }
-    outcome
-}
-
-async fn wait_for_runtime_shutdown() -> io::Result<()> {
-    if background_worker_count() == 0 {
-        return wait_for_shutdown_signal().await;
-    }
-    tokio::select! {
-        shutdown = wait_for_shutdown_signal() => shutdown,
-        error = wait_for_background_worker_failure() => Err(error),
+    let server = server.workers(config.actix_workers).run();
+    if background_worker_count() > 0 {
+        tokio::select! {
+            result = server => result,
+            error = wait_for_background_worker_failure() => {
+                error!(
+                    message = "Background worker supervision failed",
+                    reason = %error,
+                );
+                Err(error)
+            }
+        }
+    } else {
+        server.await
     }
 }
 
@@ -729,7 +575,7 @@ async fn wait_for_background_worker_failure() -> std::io::Error {
 }
 
 async fn supervise_worker_process(metrics_server: Option<Server>) -> std::io::Result<()> {
-    let Some(mut metrics_server) = metrics_server else {
+    let Some(metrics_server) = metrics_server else {
         return tokio::select! {
             shutdown = wait_for_shutdown_signal() => shutdown,
             error = wait_for_background_worker_failure() => Err(error),
@@ -740,15 +586,14 @@ async fn supervise_worker_process(metrics_server: Option<Server>) -> std::io::Re
     let result = tokio::select! {
         shutdown = wait_for_shutdown_signal() => shutdown,
         error = wait_for_background_worker_failure() => Err(error),
-        result = &mut metrics_server => return match result {
+        result = metrics_server => match result {
             Ok(()) => Err(std::io::Error::other(
                 "Worker metrics HTTP server stopped unexpectedly",
             )),
             Err(error) => Err(error),
         },
     };
-    let ((), stopped) = tokio::join!(metrics_server_handle.stop(true), metrics_server);
-    stopped?;
+    metrics_server_handle.stop(true).await;
     result
 }
 
@@ -862,9 +707,6 @@ async fn wait_for_shutdown_signal() -> std::io::Result<()> {
 async fn wait_for_shutdown_signal() -> std::io::Result<()> {
     tokio::signal::ctrl_c().await
 }
-
-#[cfg(test)]
-mod runtime_shutdown_tests;
 
 #[cfg(test)]
 mod tests {

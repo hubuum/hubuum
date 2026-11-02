@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use async_trait::async_trait;
 use hubuum_storage_core::{
     BackupSnapshotStorage, StorageBackupBudget, StorageBackupHistorySection, StorageBackupReplay,
-    StorageBackupSnapshot, StorageErrorKind, StorageIdentityUpgrade, StorageRestoreIdentityContext,
+    StorageBackupSnapshot, StorageErrorKind,
 };
 
 use crate::FixtureError;
@@ -28,10 +28,7 @@ pub async fn verify_backup_budget_rejected(
 #[async_trait]
 pub trait BackupRestoreFixture: Send + Sync {
     async fn capture(&self, include_history: bool) -> Result<StorageBackupSnapshot, FixtureError>;
-    async fn restore(
-        &self,
-        snapshot: StorageBackupSnapshot,
-    ) -> Result<StorageRestoreIdentityContext, FixtureError>;
+    async fn restore(&self, snapshot: StorageBackupSnapshot) -> Result<(), FixtureError>;
     async fn mutate(&self) -> Result<(), FixtureError>;
     /// Attempt apply with an adapter-native failure after replacement begins.
     /// Resume maintenance before returning the apply error.
@@ -49,17 +46,17 @@ pub async fn verify_backup_restore_contract(
     let source = fixture.capture(include_source_history).await?;
     fixture.mutate().await?;
     require_changed(&source, &fixture.capture(false).await?)?;
-    let context = fixture.restore(source.clone()).await?;
+    fixture.restore(source.clone()).await?;
     let restored = fixture.capture(true).await?;
-    require_restored(&source, &restored, context)?;
+    require_restored(&source, &restored)?;
 
     fixture.mutate().await?;
     let second = fixture.capture(true).await?;
     require_changed(&restored, &second)?;
     fixture.mutate().await?;
     require_changed(&second, &fixture.capture(false).await?)?;
-    let context = fixture.restore(second.clone()).await?;
-    require_restored(&second, &fixture.capture(true).await?, context)
+    fixture.restore(second.clone()).await?;
+    require_restored(&second, &fixture.capture(true).await?)
 }
 
 fn canonical(snapshot: &StorageBackupSnapshot) -> StorageBackupSnapshot {
@@ -89,11 +86,10 @@ fn require_changed(
 fn require_restored(
     source: &StorageBackupSnapshot,
     restored: &StorageBackupSnapshot,
-    context: StorageRestoreIdentityContext,
 ) -> Result<(), FixtureError> {
     let (source_state, source_history) = canonical(source).into_parts();
     let (restored_state, restored_history) = canonical(restored).into_parts();
-    if source_history.is_some() && source_state != restored_state {
+    if source_state != restored_state {
         return Err(std::io::Error::other(
             "Restore changed authoritative resource state or revisions",
         )
@@ -140,17 +136,23 @@ fn require_restored(
             }
         }
     } else {
+        let boundary = restored_history[&StorageBackupHistorySection::CollectionHistory]
+            .first()
+            .and_then(|row| row.get("valid_from"))
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| {
+                std::io::Error::other("Restored root collection has no temporal baseline")
+            })?
+            .parse()?;
         let expected = StorageBackupReplay::from_snapshot(
             StorageBackupSnapshot::try_new(source_state, None)?,
             StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000)?,
         )?
-        .upgrade_logical_identities(StorageIdentityUpgrade::Native)?
-        .at_restore_boundary(context)?
-        .into_replay()
+        .at_restore_boundary(boundary)?
         .materialize()?;
-        // Baselines retain resource identities while assigning new version
-        // identities in the confirmed stage's retry-stable namespace.
-        require_restored(&expected, restored, context)?;
+        // This also requires empty old task/delivery history and system-owned
+        // baselines with unchanged resource fields for all temporal types.
+        require_restored(&expected, restored)?;
         let source_history_flag = restored_history[&StorageBackupHistorySection::AuditEvents][0]
             .get("metadata")
             .and_then(|metadata| metadata.get("includes_history"))

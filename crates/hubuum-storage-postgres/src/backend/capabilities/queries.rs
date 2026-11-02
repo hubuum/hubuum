@@ -1,5 +1,4 @@
 use super::super::*;
-use hubuum_domain::PrincipalIdentity;
 
 #[async_trait]
 impl HistoryStorage for PostgresStorage {
@@ -41,7 +40,7 @@ impl HistoryStorage for PostgresStorage {
 
     async fn resolve_history_principal_names(
         &self,
-        principal_ids: Vec<PrincipalIdentity>,
+        principal_ids: Vec<PrincipalId>,
     ) -> Result<Vec<StorageHistoryPrincipalName>, StorageError> {
         crate::operations::history::resolve_principal_names(self.runtime(), principal_ids)
             .await

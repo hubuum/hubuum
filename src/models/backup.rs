@@ -14,17 +14,7 @@ use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
 
 use super::principal::Principal;
 
-pub const CURRENT_BACKUP_VERSION: i32 = 12;
-// Formats 6–12 originally used this exact manifest.
-// Keep it independent of the current writer's exclusions for compatibility.
-pub(crate) const HISTORICAL_BACKUP_MANIFEST_EXCLUSIONS: &[&str] = &[
-    "backup_task_outputs (backup artifacts never recursively contain prior backups)",
-    "authentication tokens and token scopes (credentials must be reissued after restore)",
-    "class reachability cache (rebuilt by database triggers during restore)",
-    "computed-field class state and materialized object cache (rebuilt after restore)",
-    "active tasks and non-terminal event deliveries",
-    "restore control-plane tables and server instance heartbeats",
-];
+pub const CURRENT_BACKUP_VERSION: i32 = 10;
 pub(crate) const BACKUP_MANIFEST_EXCLUSIONS: &[&str] = &[
     "backup_task_outputs (backup artifacts never recursively contain prior backups)",
     "authentication tokens and token scopes (credentials must be reissued after restore)",
@@ -32,7 +22,6 @@ pub(crate) const BACKUP_MANIFEST_EXCLUSIONS: &[&str] = &[
     "computed-field class state and materialized object cache (rebuilt after restore)",
     "active tasks and non-terminal event deliveries",
     "restore control-plane tables and server instance heartbeats",
-    "protected deletion authority and runtime registrations (retained independently of logical restore)",
 ];
 
 /// Immutable identity snapshot recorded with a restore stage and its provenance event.
@@ -230,17 +219,6 @@ impl fmt::Debug for BackupDocument {
 
 impl BackupDocument {
     pub fn validate_version(&self) -> Result<(), ApiError> {
-        if self.backup_version >= 12
-            && self.history.as_ref().is_some_and(|history| {
-                !history.sections.contains_key(
-                    &hubuum_storage_core::StorageBackupHistorySection::ExportArtifacts,
-                )
-            })
-        {
-            return Err(ApiError::BadRequest(
-                "Backup version 12 requires export_artifacts when history is included".into(),
-            ));
-        }
         if self.backup_version >= 10
             && self.history.as_ref().is_some_and(|history| {
                 !history.sections.contains_key(
@@ -261,7 +239,7 @@ impl BackupDocument {
                 "Backup version 9 requires query_usage_declarations".into(),
             ));
         }
-        if ![6, 7, 8, 9, 10, 11, CURRENT_BACKUP_VERSION].contains(&self.backup_version) {
+        if ![6, 7, 8, 9, CURRENT_BACKUP_VERSION].contains(&self.backup_version) {
             return Err(ApiError::BadRequest(format!(
                 "Unsupported backup version '{}'; expected 6, 7, 8, 9 or {}",
                 self.backup_version, CURRENT_BACKUP_VERSION
@@ -394,12 +372,6 @@ pub struct RestoreValidationSummary {
     pub source_version: String,
     pub includes_history: bool,
     pub total_items: i64,
-    /// Legacy formats are upgraded in an isolated cohort before replacement.
-    #[serde(default)]
-    pub identity_quarantine: bool,
-    /// References whose correspondence cannot be established from the backup.
-    #[serde(default)]
-    pub unresolved_identity_references: u64,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -554,8 +526,6 @@ mod sensitive_debug_tests {
                 source_version: "test".to_string(),
                 includes_history: true,
                 total_items: 1,
-                identity_quarantine: false,
-                unresolved_identity_references: 0,
             },
             restore_capability: Some("restore-capability-secret".to_string()),
         };

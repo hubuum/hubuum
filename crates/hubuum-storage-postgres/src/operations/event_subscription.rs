@@ -366,7 +366,6 @@ pub async fn list_event_sinks(
                 )
             );
             let rows = records
-                .select(EventSinkRow::as_select())
                 .load::<EventSinkRow>(connection)
                 .await?
                 .into_iter()
@@ -407,7 +406,7 @@ pub async fn create_event_sink(
 
                 let created = diesel::insert_into(event_sinks)
                     .values(row)
-                    .returning(EventSinkRow::as_select()).get_result::<EventSinkRow>(connection)
+                    .get_result::<EventSinkRow>(connection)
                     .await?;
                 let audit = append_sink_audit(
                     connection,
@@ -452,7 +451,7 @@ pub async fn update_event_sink(
                 let before = event_sinks
                     .filter(id.eq(sink_id))
                     .for_no_key_update()
-                    .select(EventSinkRow::as_select()).first::<EventSinkRow>(connection)
+                    .first::<EventSinkRow>(connection)
                     .await?;
                 assert_locked_revision_precondition(
                     connection,
@@ -467,7 +466,7 @@ pub async fn update_event_sink(
                 }
                 let updated = diesel::update(event_sinks.filter(id.eq(sink_id)))
                     .set(changes)
-                    .returning(EventSinkRow::as_select()).get_result::<EventSinkRow>(connection)
+                    .get_result::<EventSinkRow>(connection)
                     .await?;
                 if before.delivery_policy != updated.delivery_policy {
                     super::event_delivery::reconcile_sink_delivery_policy(
@@ -508,7 +507,6 @@ pub async fn delete_event_sink(
                 let before = event_sinks
                     .filter(id.eq(sink_id))
                     .for_update()
-                    .select(EventSinkRow::as_select())
                     .first::<EventSinkRow>(connection)
                     .await?;
                 assert_locked_revision_precondition(
@@ -575,7 +573,6 @@ pub async fn list_event_subscriptions(
                 )
             );
             let rows = records
-                .select(EventSubscriptionRow::as_select())
                 .load::<EventSubscriptionRow>(connection)
                 .await?
                 .into_iter()
@@ -631,7 +628,6 @@ pub async fn create_event_subscription(
                 .await?;
                 let created = diesel::insert_into(event_subscriptions)
                     .values(row)
-                    .returning(EventSubscriptionRow::as_select())
                     .get_result::<EventSubscriptionRow>(connection)
                     .await?;
                 let audit = append_subscription_audit(
@@ -702,7 +698,6 @@ pub async fn update_event_subscription(
                     .filter(id.eq(subscription_id))
                     .filter(collection_id.is_not_distinct_from(collection_id_value))
                     .for_update()
-                    .select(EventSubscriptionRow::as_select())
                     .first::<EventSubscriptionRow>(connection)
                     .await?;
                 if request.sink_id_value().is_none() && before.sink_id != target_sink.id() {
@@ -721,7 +716,6 @@ pub async fn update_event_subscription(
                 }
                 let updated = diesel::update(event_subscriptions.filter(id.eq(subscription_id)))
                     .set(changes)
-                    .returning(EventSubscriptionRow::as_select())
                     .get_result::<EventSubscriptionRow>(connection)
                     .await?;
                 let audit = append_subscription_audit(
@@ -758,7 +752,6 @@ pub async fn delete_event_subscription(
                     .filter(id.eq(subscription_id))
                     .filter(collection_id.is_not_distinct_from(collection_id_value))
                     .for_update()
-                    .select(EventSubscriptionRow::as_select())
                     .first::<EventSubscriptionRow>(connection)
                     .await?;
                 assert_locked_revision_precondition(
@@ -792,7 +785,6 @@ async fn load_event_sink_row(
 
     event_sinks
         .filter(id.eq(sink_id))
-        .select(EventSinkRow::as_select())
         .first::<EventSinkRow>(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -808,7 +800,6 @@ async fn load_scoped_subscription_row(
     event_subscriptions
         .filter(id.eq(subscription_id))
         .filter(collection_id.is_not_distinct_from(collection))
-        .select(EventSubscriptionRow::as_select())
         .first::<EventSubscriptionRow>(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -1112,7 +1103,7 @@ pub(crate) async fn enqueue_event_notification_test(
         use crate::schema::event_deliveries;
         let input = notification_on_connection(connection, selection).await?;
         let row = diesel::insert_into(event_deliveries::table).values((event_deliveries::event_id.eq(input.event().id().get()), event_deliveries::subscription_id.eq(selection.subscription_id().id()), event_deliveries::purpose.eq("test")))
-            .returning(super::event_delivery::AdministrationDeliveryRow::as_select()).get_result::<super::event_delivery::AdministrationDeliveryRow>(connection).await?;
+            .get_result::<super::event_delivery::AdministrationDeliveryRow>(connection).await?;
         let delivery: StorageEventDelivery = row.try_into()?;
         let document = AuditDocument::try_new("Event sink test requested", None, None, json!({"delivery_id":delivery.id().id(), "subscription_id":selection.subscription_id().id(), "source_event_id":selection.event_id(), "purpose":"test"}))?;
         let event = NewEvent::from_document(EntityType::EventSink, Action::Invoked, context.actor_kind(), document).map_err(|e| PostgresStorageError::invalid_input(e.to_string()))?.with_context(&context).with_entity_id(hubuum_events_core::EventEntityId::new(selection.sink_id().id())?);

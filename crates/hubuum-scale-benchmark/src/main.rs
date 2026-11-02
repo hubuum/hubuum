@@ -3,9 +3,6 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use hubuum_scale_core::lifecycle::{
-    LifecycleBenchmarkBackend, LifecycleFixture, LifecycleWorkload,
-};
 use hubuum_scale_core::{
     BackendComparisonReport, DatasetManifest, LimitMode, LoadReport, ProfileName, ScaleAssessment,
     ScaleAxis, ScaleBenchmarkBackend, ScaleBenchmarkReport, ScaleImpactReport, ScaleProfile,
@@ -16,10 +13,6 @@ use hubuum_storage_postgres::scale_benchmark::PostgresScaleBackend;
 mod lifecycle_process;
 mod metrics;
 mod runner;
-mod task_retention;
-mod task_retention_observe;
-mod task_retention_probes;
-mod task_retention_safety;
 
 use runner::{LifecycleOptions, MeasureOptions, measure_scale_benchmark, run_lifecycle};
 
@@ -35,18 +28,6 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Measure real task claims against a fresh disposable lifecycle queue.
-    Scheduling(SchedulingArgs),
-    /// Measure protected submissions through running production API replicas.
-    TaskRetention(task_retention::TaskRetentionArgs),
-    /// Observe real task expiry through physical cleanup and verified checkpoints.
-    TaskRetentionObserve(task_retention_observe::ObserveArgs),
-    /// Check real remote effects across duplicate admission, purge, and recovery.
-    TaskRetentionProbe(task_retention_probes::ProbeArgs),
-    /// Verify live holds, dependencies and bounded cleanup around an interrupted effect
-    TaskRetentionSafety(task_retention_safety::SafetyArgs),
-    /// Load a fresh synthetic lifecycle fixture and report logical/physical growth.
-    LifecycleInventory(LifecycleInventoryArgs),
     /// Write the deterministic semantic manifest without loading a backend.
     Manifest(ManifestArgs),
     /// Verify the loaded fixture and measure only its backup/restore lifecycle.
@@ -67,48 +48,6 @@ enum Command {
     SummarizeSensitivity(SummarizeSensitivityArgs),
     /// Render matching reports from each selected storage backend side by side.
     CompareBackends(CompareBackendsArgs),
-}
-
-#[derive(Debug, Args)]
-struct SchedulingArgs {
-    #[arg(long)]
-    database_url: String,
-    /// Load the complete lifecycle dataset before adding the queued workload.
-    #[arg(long)]
-    profile_spec: Option<PathBuf>,
-    #[arg(long)]
-    workload_spec: Option<PathBuf>,
-    #[arg(long, default_value_t = 1)]
-    slots: u16,
-    #[arg(long, default_value_t = 10000)]
-    samples: u32,
-    #[arg(long)]
-    timed_seconds: Option<u64>,
-    /// Shrink and restore the shared pool through the production policy API.
-    #[arg(long, requires = "timed_seconds", conflicts_with = "prepare_only")]
-    capacity_cycle: bool,
-    #[arg(long)]
-    overdue: bool,
-    /// Prepare a disposable database without starting any workers.
-    #[arg(long, conflicts_with = "worker_process_slots")]
-    prepare_only: bool,
-    /// Run this many slots against a matching prepared fixture.
-    #[arg(long, conflicts_with = "prepare_only")]
-    worker_process_slots: Option<u16>,
-    #[arg(long)]
-    output: PathBuf,
-}
-
-#[derive(Debug, Args)]
-struct LifecycleInventoryArgs {
-    #[arg(long)]
-    database_url: String,
-    #[arg(long, default_value = "scale-benchmarks/lifecycle/dataset-v1.toml")]
-    profile_spec: PathBuf,
-    #[arg(long)]
-    workload_spec: Option<PathBuf>,
-    #[arg(long)]
-    output: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -301,12 +240,6 @@ struct CompareBackendsArgs {
 #[tokio::main]
 async fn main() -> Result<()> {
     match Cli::parse().command {
-        Command::Scheduling(args) => scheduling(args).await,
-        Command::TaskRetention(args) => task_retention::run(args).await,
-        Command::TaskRetentionObserve(args) => task_retention_observe::run(args).await,
-        Command::TaskRetentionProbe(args) => task_retention_probes::run(args).await,
-        Command::TaskRetentionSafety(args) => task_retention_safety::run(args).await,
-        Command::LifecycleInventory(args) => lifecycle_inventory(args).await,
         Command::Manifest(args) => manifest(args),
         Command::Lifecycle(args) => lifecycle(args).await,
         Command::Load(args) => load(args).await,
@@ -318,54 +251,6 @@ async fn main() -> Result<()> {
         Command::SummarizeSensitivity(args) => summarize_sensitivity(args),
         Command::CompareBackends(args) => compare_backends(args),
     }
-}
-
-async fn lifecycle_inventory(args: LifecycleInventoryArgs) -> Result<()> {
-    let profile = ScaleProfile::read(&args.profile_spec)?;
-    let workload = match args.workload_spec {
-        Some(path) => LifecycleWorkload::parse(&fs::read_to_string(path)?)?,
-        None => LifecycleWorkload::bundled()?,
-    };
-    let fixture = LifecycleFixture::new(profile, workload)?;
-    let profile = fixture.profile();
-    let backend = postgres_backend(&args.database_url, profile)?;
-    let started = std::time::Instant::now();
-    let baseline = backend.begin_resource_measurement().await?;
-    let before = backend.load_lifecycle_fixture(&fixture).await?;
-    let after = backend.lifecycle_inventory().await?;
-    let resources = backend.finish_resource_measurement(baseline).await?;
-    let preparation = backend.prepare_measurement().await?;
-    write_json(
-        &args.output,
-        &serde_json::json!({
-            "schema_version": 1,
-            "measurement": "synthetic_lifecycle_storage_inventory",
-            "profile": profile,
-            "workload": fixture.workload(),
-            "base_manifest": profile.manifest()?,
-            "backend": preparation.identity,
-            "elapsed_ms": started.elapsed().as_millis(),
-            "resources": {
-                "database_bytes": resources.storage_bytes,
-                "cluster_wal_delta_bytes": resources.write_ahead_bytes,
-            },
-            "before": before,
-            "after": after,
-            "limitations": [
-                "Logical bytes are UTF-8 PostgreSQL to_jsonb(row)::text, including metadata; bytea is hex encoded.",
-                "Table allocation includes TOAST and auxiliary forks; indexes are separate. No VACUUM compaction is implied.",
-                "Task durations are synthetic fixture inputs, not observed scheduling latency.",
-                "WAL is a cluster-wide delta; concurrent writers contaminate it.",
-                "Host-wide PostgreSQL CPU/RSS samples are omitted because they cannot identify the selected instance.",
-                "No archive, claim, streaming, expiry or cleanup acceptance result is asserted."
-            ],
-        }),
-    )?;
-    println!(
-        "Wrote synthetic lifecycle inventory to {}",
-        args.output.display()
-    );
-    Ok(())
 }
 
 fn manifest(args: ManifestArgs) -> Result<()> {
@@ -705,36 +590,4 @@ fn io_error(message: impl Into<String>) -> Error {
         std::io::ErrorKind::InvalidData,
         message.into(),
     ))
-}
-
-async fn scheduling(args: SchedulingArgs) -> Result<()> {
-    use hubuum_storage_postgres::scale_benchmark::SchedulingBenchmarkOptions;
-    let workload = match args.workload_spec {
-        Some(path) => LifecycleWorkload::parse(&fs::read_to_string(path)?)?,
-        None => LifecycleWorkload::bundled()?,
-    };
-    let options = SchedulingBenchmarkOptions::new(workload)
-        .with_slots(args.slots)?
-        .with_samples(args.samples)?
-        .with_timed_window(args.timed_seconds)?
-        .with_capacity_cycle(args.capacity_cycle)?
-        .with_overdue(args.overdue);
-    let options = match args.profile_spec {
-        Some(path) => options.with_fixture(LifecycleFixture::new(
-            ScaleProfile::read(&path)?,
-            LifecycleWorkload::bundled()?,
-        )?)?,
-        None => options,
-    };
-    let options = if args.prepare_only {
-        options.prepare_only()
-    } else if let Some(slots) = args.worker_process_slots {
-        options.with_worker_process_slots(slots)?
-    } else {
-        options
-    };
-    let backend = PostgresScaleBackend::connect(&args.database_url, 8)?;
-    let report = backend.benchmark_task_scheduling(options).await?;
-    write_json(&args.output, &report)?;
-    Ok(())
 }

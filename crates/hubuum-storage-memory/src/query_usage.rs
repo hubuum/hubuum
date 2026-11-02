@@ -119,14 +119,14 @@ impl QueryUsageStorage for MemoryStorage {
     async fn query_observation_control(
         &self,
     ) -> Result<StorageQueryObservationControl, StorageError> {
-        Ok(self.state.read().await?.query_observation_control)
+        Ok(self.state.read().await.query_observation_control)
     }
 
     async fn set_query_observation_control(
         &self,
         control: StorageQueryObservationControl,
     ) -> Result<(), StorageError> {
-        self.state.write().await?.query_observation_control = control;
+        self.state.write().await.query_observation_control = control;
         Ok(())
     }
 
@@ -134,7 +134,7 @@ impl QueryUsageStorage for MemoryStorage {
         &self,
         scope: StorageQueryUsageScope,
     ) -> Result<Vec<StorageQueryUsageDeclaration>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read().await;
         check_scope(&state, scope)?;
         Ok(state
             .query_usage
@@ -148,7 +148,7 @@ impl QueryUsageStorage for MemoryStorage {
         &self,
         request: StorageQueryUsageCreate,
     ) -> Result<StorageMutationOutcome<StorageQueryUsageDeclaration>, StorageError> {
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         check_scope(&state, request.scope())?;
         check_pattern(&state, request.scope(), request.pattern(), None)?;
         let id = ResourceId::new(state.next_query_usage_id)
@@ -167,7 +167,6 @@ impl QueryUsageStorage for MemoryStorage {
             request.context().actor_user_id(),
             request.context().actor_user_id(),
         );
-        let record = state.store_query_usage(record);
         let receipt = record_event(
             &mut state,
             request.scope(),
@@ -176,6 +175,7 @@ impl QueryUsageStorage for MemoryStorage {
             Some(&record),
         )?;
         state.next_query_usage_id = next_id;
+        state.query_usage.insert(id.id(), record.clone());
         Ok(StorageMutationOutcome::committed(record, receipt))
     }
 
@@ -183,7 +183,7 @@ impl QueryUsageStorage for MemoryStorage {
         &self,
         request: StorageQueryUsageReplace,
     ) -> Result<StorageMutationOutcome<StorageQueryUsageDeclaration>, StorageError> {
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let before = current(
             &state,
             request.scope(),
@@ -217,7 +217,6 @@ impl QueryUsageStorage for MemoryStorage {
             before.created_by(),
             request.context().actor_user_id(),
         );
-        let after = state.store_query_usage(after);
         let receipt = record_event(
             &mut state,
             request.scope(),
@@ -225,6 +224,7 @@ impl QueryUsageStorage for MemoryStorage {
             Some(&before),
             Some(&after),
         )?;
+        state.query_usage.insert(request.id().id(), after.clone());
         Ok(StorageMutationOutcome::committed(after, receipt))
     }
 
@@ -232,7 +232,7 @@ impl QueryUsageStorage for MemoryStorage {
         &self,
         request: StorageQueryUsageDelete,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write().await;
         let before = current(
             &state,
             request.scope(),
