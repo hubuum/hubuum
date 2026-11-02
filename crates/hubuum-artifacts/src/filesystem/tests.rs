@@ -527,8 +527,8 @@ async fn interrupted_cleanup_retains_fence(#[case] after: isize) {
 
 #[test]
 fn process_loss_recovers_renamed_block_and_releases_lock() {
-    const CHILD_ROOT: &str = "HUBUUM_FILESYSTEM_ARTIFACT_CRASH_ROOT";
-    const CHILD_ID: &str = "HUBUUM_FILESYSTEM_ARTIFACT_CRASH_ID";
+    const CHILD_ROOT: &str = "ARTIFACT_FILESYSTEM_TEST_CRASH_ROOT";
+    const CHILD_ID: &str = "ARTIFACT_FILESYSTEM_TEST_CRASH_ID";
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
