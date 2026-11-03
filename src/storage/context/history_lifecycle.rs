@@ -2,11 +2,44 @@ use super::*;
 use hubuum_storage_core::{
     HistoryLifecycleControlChange, HistoryLifecycleRecovery, HistoryLifecycleScan,
     HistoryLifecycleScanResult, HistoryLifecycleSnapshot, HistoryLifecycleStorage,
+    HistoryPublicationKind, HistoryPublicationOwner, HistoryPublicationSettlement,
     RuntimeIsolationDomain, RuntimeRegistration,
 };
 
 #[async_trait]
 impl HistoryLifecycleStorage for StorageHandle {
+    async fn admit_history_publication(
+        &self,
+        kind: HistoryPublicationKind,
+    ) -> Result<HistoryPublicationOwner, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::History,
+            "admit_history_publication",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .admit_history_publication(kind)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn settle_history_publication(
+        &self,
+        settlement: HistoryPublicationSettlement,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::History,
+            "settle_history_publication",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .settle_history_publication(settlement)
+                    .await)
+            },
+        )
+        .await
+    }
     async fn register_history_runtime(
         &self,
         isolation: Option<RuntimeIsolationDomain>,

@@ -1459,6 +1459,7 @@ impl RestoreStorage for MemoryStorage {
         )?;
         replacement.credential_approvals = state.credential_approvals.clone();
         replacement.api_requests = state.api_requests.clone();
+        replacement.history_publications = state.history_publications.clone();
         replacement.deletion_control = state.deletion_control.clone();
         replacement.history_lifecycle = state.history_lifecycle.clone();
         replacement.task_control = state.task_control.clone();

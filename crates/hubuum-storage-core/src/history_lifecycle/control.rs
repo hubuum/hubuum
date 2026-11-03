@@ -1,9 +1,14 @@
+use std::io::{self, Write};
+
 use async_trait::async_trait;
 use hubuum_domain::PrincipalIdentity;
 use uuid::Uuid;
 
 use super::*;
-use crate::{RuntimeIsolationDomain, RuntimeRegistration, StorageError};
+use crate::{
+    ApplicationFence, DeletionCheckpointIdentity, RuntimeIsolationDomain, RuntimeRegistration,
+    StorageError, StorageIdentityEvidence,
+};
 
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -353,6 +358,18 @@ impl HistoryLifecycleSnapshot {
 /// application; previews alone require no recovery checkpoint.
 #[async_trait]
 pub trait HistoryLifecycleStorage: Send + Sync {
+    /// Admit only from the original registered application scope. Nested
+    /// producers inherit their context and may not refresh an older epoch.
+    async fn admit_history_publication(
+        &self,
+        kind: HistoryPublicationKind,
+    ) -> Result<HistoryPublicationOwner, StorageError>;
+    /// Exact-owner settlement after positive producer/driver completion, outside
+    /// productive authority transactions and without reacquiring API ownership.
+    async fn settle_history_publication(
+        &self,
+        settlement: HistoryPublicationSettlement,
+    ) -> Result<(), StorageError>;
     /// Declare complete history read/publication fencing before starting any
     /// listeners or producers. Caller still owns positive shutdown/isolation;
     /// this capability is not a heartbeat or permission to activate expiry.
@@ -373,6 +390,125 @@ pub trait HistoryLifecycleStorage: Send + Sync {
         &self,
         change: HistoryLifecycleControlChange,
     ) -> Result<HistoryLifecycleSnapshot, StorageError>;
+}
+
+/// Correlation carried from the trusted service's authenticated independent
+/// checkpoint read-back into the final native exposure CAS. Construction does
+/// not authenticate a primary capture or replace repository verification.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HistoryExposureProtection {
+    authority: HistoryLifecycleAuthority,
+    fence: ApplicationFence,
+    checkpoint: DeletionCheckpointIdentity,
+}
+impl HistoryExposureProtection {
+    pub fn new(
+        authority: HistoryLifecycleAuthority,
+        fence: ApplicationFence,
+        checkpoint: DeletionCheckpointIdentity,
+    ) -> Self {
+        Self {
+            authority,
+            fence,
+            checkpoint,
+        }
+    }
+    pub const fn authority(&self) -> &HistoryLifecycleAuthority {
+        &self.authority
+    }
+    pub const fn fence(&self) -> ApplicationFence {
+        self.fence
+    }
+    pub const fn checkpoint(&self) -> &DeletionCheckpointIdentity {
+        &self.checkpoint
+    }
+    pub fn matches(
+        &self,
+        authority: &HistoryLifecycleAuthority,
+        fence: ApplicationFence,
+        checkpoint: &DeletionCheckpointIdentity,
+    ) -> bool {
+        &self.authority == authority && self.fence == fence && &self.checkpoint == checkpoint
+    }
+}
+
+/// A bounded exposure check must fail closed on incomplete coverage. These
+/// limits bound metadata observation; they are not scale/liveness qualification
+/// and do not authorize removal or turn a partial scan into a recovery proof.
+#[derive(Default)]
+pub struct HistoryRecoveryExposureBudget {
+    rows: u32,
+    bytes: usize,
+}
+impl HistoryRecoveryExposureBudget {
+    pub const MAX_ROWS: u32 = 1000;
+    pub const MAX_BYTES: usize = 1024 * 1024;
+    pub const MAX_STATEMENT_MILLISECONDS: u32 = 5000;
+
+    pub fn remaining_rows(&self) -> u32 {
+        Self::MAX_ROWS - self.rows
+    }
+    pub fn remaining_bytes(&self) -> usize {
+        Self::MAX_BYTES - self.bytes
+    }
+    pub fn observe(&mut self, bytes: usize) -> Result<(), StorageValidationError> {
+        if self.rows == Self::MAX_ROWS || bytes > self.remaining_bytes() {
+            return Err(invalid(
+                "History recovery exposure coverage exceeds its bounded check; keep quarantine",
+            ));
+        }
+        self.rows += 1;
+        self.bytes += bytes;
+        Ok(())
+    }
+    pub fn observe_evidence(
+        &mut self,
+        evidence: &StorageIdentityEvidence,
+    ) -> Result<(), StorageValidationError> {
+        let bytes = self.encoded_bytes(evidence)?;
+        self.observe(bytes)
+    }
+    pub fn observe_json(
+        &mut self,
+        evidence: &serde_json::Value,
+    ) -> Result<(), StorageValidationError> {
+        let bytes = self.encoded_bytes(evidence)?;
+        self.observe(bytes)
+    }
+    fn encoded_bytes<T: Serialize>(&self, evidence: &T) -> Result<usize, StorageValidationError> {
+        if self.remaining_rows() == 0 {
+            return Err(invalid(
+                "History recovery exposure row bound exhausted; keep quarantine",
+            ));
+        }
+        struct Counter {
+            bytes: usize,
+            remaining: usize,
+        }
+        impl Write for Counter {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                if bytes.len() > self.remaining {
+                    return Err(io::Error::other(
+                        "Exposure identity exceeds remaining bytes",
+                    ));
+                }
+                self.bytes += bytes.len();
+                self.remaining -= bytes.len();
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut counter = Counter {
+            bytes: 0,
+            remaining: self.remaining_bytes(),
+        };
+        serde_json::to_writer(&mut counter, evidence).map_err(|_| {
+            invalid("History recovery exposure identity exceeds its bounded check; keep quarantine")
+        })?;
+        Ok(counter.bytes)
+    }
 }
 
 /// Recovery is privileged and quarantine-only. It may add authenticated retained

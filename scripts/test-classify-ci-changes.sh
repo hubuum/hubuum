@@ -95,6 +95,7 @@ for policy_input in src/models/history_lifecycle.rs src/api/v1/handlers/history_
 done
 
 for policy_storage_input in crates/hubuum-storage-postgres/tests/history_lifecycle.rs \
+  crates/hubuum-storage-postgres/src/runtime/history_publication.rs \
   crates/hubuum-storage-postgres/migrations/2026-11-03-000003_history_lifecycle/up.sql \
   crates/hubuum-storage-postgres/migrations/2026-11-03-000003_history_lifecycle/down.sql; do
   policy_storage_output="$(bash "$classifier" "$policy_storage_input")"

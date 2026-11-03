@@ -1,7 +1,53 @@
 use super::*;
+use serde_json::Value;
 
 #[async_trait]
 impl HistoryLifecycleStorage for MemoryStorage {
+    async fn admit_history_publication(
+        &self,
+        kind: HistoryPublicationKind,
+    ) -> Result<HistoryPublicationOwner, StorageError> {
+        let scope = self.current_execution_scope();
+        if scope.history_read_override().is_some() {
+            return Err(StorageError::conflict(
+                "Nested work must inherit its original history publication owner",
+            ));
+        }
+        let application = scope
+            .application_access_override()
+            .cloned()
+            .ok_or_else(|| {
+                StorageError::unavailable("Publication requires captured application admission")
+            })?;
+        let mut state = self.state.write_history_admission().await?;
+        state.ensure_application_permit(&application)?;
+        if !application
+            .owner()
+            .and_then(|owner| state.runtime_registrations.get(&owner.id()))
+            .is_some_and(|runtime| runtime.history_protocol.supports_online())
+        {
+            return Err(StorageError::unavailable(
+                "Publication requires a history-aware registered runtime",
+            ));
+        }
+        let epoch = HistoryReadEpoch::new(
+            application,
+            state.history_lifecycle_snapshot()?.fence(),
+            state.history_publications.generation(),
+        )
+        .map_err(invalid_contract_value)?;
+        state.history_publications.admit(kind, epoch)
+    }
+    async fn settle_history_publication(
+        &self,
+        settlement: HistoryPublicationSettlement,
+    ) -> Result<(), StorageError> {
+        self.state
+            .write_control()
+            .await
+            .history_publications
+            .settle(settlement)
+    }
     async fn register_history_runtime(
         &self,
         isolation: Option<RuntimeIsolationDomain>,
@@ -53,7 +99,15 @@ impl HistoryLifecycleStorage for MemoryStorage {
         &self,
         change: HistoryLifecycleControlChange,
     ) -> Result<HistoryLifecycleSnapshot, StorageError> {
-        let mut state = self.state.write_control().await;
+        let fallback = StorageExecutionPermit::new(
+            None,
+            ApplicationFence::new(
+                change.fence().incarnation(),
+                change.fence().deletion_revision().value() as i64,
+            )
+            .map_err(invalid_contract_value)?,
+        );
+        let mut state = self.state.write_history_control(&fallback).await?;
         let current = state.history_lifecycle_snapshot()?;
         if current.control() != change.expected() || current.fence() != change.fence() {
             return Err(StorageError::conflict(
@@ -119,7 +173,10 @@ impl MemoryState {
                 "Retained expiry requires history-aware producers; roll forward",
             ));
         }
-        let registration = RuntimeRegistration::generate();
+        let registration = match history_protocol {
+            HistoryRuntimeProtocol::Legacy => RuntimeRegistration::generate(),
+            HistoryRuntimeProtocol::OnlineV1 => RuntimeRegistration::generate_history_aware(),
+        };
         self.runtime_registrations.insert(
             registration.id(),
             MemoryRuntimeRegistration {
@@ -159,6 +216,307 @@ impl MemoryState {
     pub(super) fn history_entry_visible(&self, entry: &MemoryHistoryEntry) -> bool {
         self.history_identity_visible(entry.family(), Some(&entry.logical_identity))
     }
+    /// Never equate history-query filtering with restored-image exposure proof.
+    /// Call under the state write lock; no current/open copy is removed here.
+    fn check_history_exposure_copy(
+        journal: &HistoryExpiryJournal,
+        budget: &mut HistoryRecoveryExposureBudget,
+        family: StorageIdentityHistoryKind,
+        evidence: &StorageIdentityEvidence,
+    ) -> Result<(), StorageError> {
+        budget
+            .observe_evidence(evidence)
+            .map_err(|error| StorageError::unavailable(error.to_string()))?;
+        if journal.excludes_evidence(family, Some(evidence)) {
+            return Err(StorageError::unavailable(
+                "Current or protected-open copy carries expired or unresolved history ancestry; keep quarantine for explicit reconciliation",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn require_history_exposure_safe(&self) -> Result<(), StorageError> {
+        if self.history_publications.active() != 0 {
+            return Err(StorageError::unavailable(
+                "History publication drivers or producers lack positive retirement; keep quarantine",
+            ));
+        }
+        let journal = self.history_lifecycle.authority().expiry();
+        if journal.intents().is_empty() {
+            return Ok(());
+        }
+        let families = journal
+            .intents()
+            .iter()
+            .flat_map(|intent| intent.manifest().members())
+            .map(HistoryExpiryMember::family)
+            .collect::<BTreeSet<_>>();
+        let mut budget = HistoryRecoveryExposureBudget::default();
+        use StorageIdentityHistoryKind as Family;
+        for family in &families {
+            let (kind, ids): (
+                StorageIdentityResourceKind,
+                Box<dyn Iterator<Item = i32> + '_>,
+            ) = match family {
+                Family::Collection => (
+                    StorageIdentityResourceKind::Collection,
+                    Box::new(self.collections.keys().copied()),
+                ),
+                Family::Class => (
+                    StorageIdentityResourceKind::Class,
+                    Box::new(self.classes.keys().copied()),
+                ),
+                Family::Object => (
+                    StorageIdentityResourceKind::Object,
+                    Box::new(self.objects.keys().copied()),
+                ),
+                Family::ClassRelation => (
+                    StorageIdentityResourceKind::ClassRelation,
+                    Box::new(self.class_relations.keys().copied()),
+                ),
+                Family::ObjectRelation => (
+                    StorageIdentityResourceKind::ObjectRelation,
+                    Box::new(self.object_relations.keys().copied()),
+                ),
+                Family::ExportTemplate => (
+                    StorageIdentityResourceKind::ExportTemplate,
+                    Box::new(self.export_templates.keys().copied()),
+                ),
+                Family::RemoteTarget => (
+                    StorageIdentityResourceKind::RemoteTarget,
+                    Box::new(self.remote_targets.keys().copied()),
+                ),
+                Family::ComputedDefinitions | Family::ClassSchema => continue,
+            };
+            for id in ids {
+                let evidence =
+                    self.logical_identities
+                        .record_ref(StorageIdentityTarget::Resource {
+                            kind,
+                            id: ResourceId::new(id).map_err(|error| {
+                                StorageError::backend_failure(error.to_string())
+                            })?,
+                        })?;
+                Self::check_history_exposure_copy(journal, &mut budget, *family, evidence)?;
+            }
+        }
+        for entry in &self.history {
+            if families.contains(&entry.family())
+                && entry.valid_to.is_none()
+                && entry.operation != StorageHistoryOperation::Delete
+            {
+                Self::check_history_exposure_copy(
+                    journal,
+                    &mut budget,
+                    entry.family(),
+                    &entry.logical_identity,
+                )?;
+            }
+        }
+        for (section, family) in [
+            (
+                StorageBackupHistorySection::ClassRelationHistory,
+                Family::ClassRelation,
+            ),
+            (
+                StorageBackupHistorySection::ObjectRelationHistory,
+                Family::ObjectRelation,
+            ),
+        ] {
+            if !families.contains(&family) {
+                continue;
+            }
+            for row in self.relation_history.get(&section).into_iter().flatten() {
+                let until = row.get("valid_to").ok_or_else(|| {
+                    StorageError::unavailable("Missing open-copy interval; keep quarantine")
+                })?;
+                let operation = row
+                    .get("operation")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        StorageError::unavailable("Missing open-copy operation; keep quarantine")
+                    })?;
+                if !matches!(operation, "create" | "update" | "delete") {
+                    return Err(StorageError::unavailable(
+                        "Unknown open-copy operation; keep quarantine",
+                    ));
+                }
+                if !until.is_null() || operation == "delete" {
+                    continue;
+                }
+                let raw = row.get("logical_identity").ok_or_else(|| {
+                    StorageError::unavailable("Missing open-copy correspondence; keep quarantine")
+                })?;
+                budget
+                    .observe_json(raw)
+                    .map_err(|error| StorageError::unavailable(error.to_string()))?;
+                let evidence: StorageIdentityEvidence = serde_json::from_value(raw.clone())
+                    .map_err(|_| {
+                        StorageError::unavailable(
+                            "Invalid open-copy correspondence; keep quarantine",
+                        )
+                    })?;
+                if journal.excludes_evidence(family, Some(&evidence)) {
+                    return Err(StorageError::unavailable(
+                        "Protected-open copy carries expired or unresolved history ancestry; keep quarantine for explicit reconciliation",
+                    ));
+                }
+            }
+        }
+        if families.contains(&Family::ComputedDefinitions) {
+            for entry in &self.computed_history {
+                if entry.valid_to().is_none() {
+                    let evidence = entry.logical_identity().ok_or_else(|| {
+                        StorageError::unavailable(
+                            "Missing current computed correspondence; keep quarantine",
+                        )
+                    })?;
+                    Self::check_history_exposure_copy(
+                        journal,
+                        &mut budget,
+                        Family::ComputedDefinitions,
+                        evidence,
+                    )?;
+                }
+            }
+        }
+        if families.contains(&Family::ClassSchema) {
+            for &(class_id, revision) in self.schema_revisions.keys() {
+                let evidence =
+                    self.logical_identities
+                        .record_ref(StorageIdentityTarget::SchemaRevision {
+                            class_id: ClassId::new(class_id).map_err(|error| {
+                                StorageError::backend_failure(error.to_string())
+                            })?,
+                            revision: SchemaRevision::new(revision).map_err(|error| {
+                                StorageError::backend_failure(error.to_string())
+                            })?,
+                        })?;
+                Self::check_history_exposure_copy(
+                    journal,
+                    &mut budget,
+                    Family::ClassSchema,
+                    evidence,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn require_proven_empty_history(
+        &self,
+        family: StorageIdentityHistoryKind,
+        entity_id: ResourceId,
+        expected: Option<ResourceIdentity>,
+        at: DateTime<Utc>,
+    ) -> Result<(), StorageError> {
+        let Some(expected) = expected else {
+            return Ok(());
+        };
+        let (kind, created) = match family {
+            StorageIdentityHistoryKind::Collection => (
+                StorageIdentityResourceKind::Collection,
+                self.collections
+                    .get(&entity_id.id())
+                    .map(|value| value.created_at()),
+            ),
+            StorageIdentityHistoryKind::Object => (
+                StorageIdentityResourceKind::Object,
+                self.objects
+                    .get(&entity_id.id())
+                    .map(|value| value.created_at()),
+            ),
+            StorageIdentityHistoryKind::Class => (
+                StorageIdentityResourceKind::Class,
+                self.classes
+                    .get(&entity_id.id())
+                    .map(|value| value.created_at()),
+            ),
+            StorageIdentityHistoryKind::ExportTemplate => (
+                StorageIdentityResourceKind::ExportTemplate,
+                self.export_templates
+                    .get(&entity_id.id())
+                    .map(|value| value.metadata().created_at()),
+            ),
+            StorageIdentityHistoryKind::RemoteTarget => (
+                StorageIdentityResourceKind::RemoteTarget,
+                self.remote_targets
+                    .get(&entity_id.id())
+                    .map(|value| value.metadata().created_at()),
+            ),
+            _ => {
+                return Err(StorageError::unavailable(
+                    "Unsupported canonical empty-history proof",
+                ));
+            }
+        };
+        if !created.is_some_and(|created| at < created) {
+            return Err(StorageError::unavailable(
+                "Historical coverage for the original resource is unavailable",
+            ));
+        }
+        let canonical = self
+            .logical_identities
+            .record(StorageIdentityTarget::Resource {
+                kind,
+                id: entity_id,
+            })?;
+        if canonical
+            .subject()
+            .and_then(StorageIdentitySubject::record_identity)
+            .is_none_or(|identity| identity.resource() != expected)
+        {
+            return Err(StorageError::unavailable(
+                "Original canonical resource correspondence changed",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn require_history_resource_binding(
+        &self,
+        family: StorageIdentityHistoryKind,
+        expected: Option<ResourceIdentity>,
+        at: DateTime<Utc>,
+        selected: Option<&MemoryHistoryEntry>,
+    ) -> Result<(), StorageError> {
+        if expected.is_none()
+            && MEMORY_EXECUTION_SCOPE
+                .try_with(|scope| scope.history_read_override().is_some())
+                .unwrap_or(false)
+        {
+            return Err(StorageError::unavailable(
+                "Online history reads require the original logical resource identity",
+            ));
+        }
+        let Some(expected) = expected else {
+            return Ok(());
+        };
+        if let Some(selected) = selected {
+            let actual = selected
+                .logical_identity
+                .subject()
+                .and_then(StorageIdentitySubject::record_identity)
+                .ok_or_else(|| {
+                    StorageError::unavailable("Historical resource correspondence is unresolved")
+                })?;
+            if selected.family() != family || actual.resource() != expected {
+                return Err(StorageError::not_found(
+                    "Historical version differs from the original resource",
+                ));
+            }
+        } else if self
+            .history_lifecycle
+            .authority()
+            .expiry()
+            .restriction_as_of(family, expected, at, None)
+            .is_some()
+        {
+            return Err(StorageError::not_found("Historical version is expired"));
+        }
+        Ok(())
+    }
+
     pub(super) fn require_history_as_of(
         &self,
         family: StorageIdentityHistoryKind,
@@ -181,7 +539,9 @@ impl MemoryState {
         }
         Ok(())
     }
-    fn history_lifecycle_snapshot(&self) -> Result<HistoryLifecycleSnapshot, StorageError> {
+    pub(super) fn history_lifecycle_snapshot(
+        &self,
+    ) -> Result<HistoryLifecycleSnapshot, StorageError> {
         HistoryLifecycleSnapshot::new(
             self.history_lifecycle.clone(),
             self.application_control.fence().incarnation(),
@@ -196,6 +556,112 @@ impl MemoryState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[rstest::rstest]
+    #[case(false)]
+    #[case(true)]
+    #[tokio::test]
+    async fn publication_registry_requires_original_owner_for_productive_entry(
+        #[case] bind_handle: bool,
+    ) {
+        let storage = MemoryStorage::new();
+        let registration = storage.register_history_runtime(None).await.unwrap();
+        let permit = storage
+            .capture_application_execution(Some(registration.owner()))
+            .await
+            .unwrap();
+        let storage = if bind_handle {
+            storage.with_runtime_owner(registration.owner())
+        } else {
+            storage
+        };
+        let scope = StorageExecutionScope::default().with_application_access(permit);
+        let result = storage
+            .run_in_scope(scope, storage.get_collection(CollectionId::new(1).unwrap()))
+            .await;
+        storage.unregister_runtime(registration).await.unwrap();
+        assert!(
+            result.is_err(),
+            "Aware scopes require their publication owner"
+        );
+    }
+
+    #[tokio::test]
+    async fn publication_registry_unretired_owner_blocks_exposure_without_expiry() {
+        let storage = MemoryStorage::new();
+        let registration = storage.register_history_runtime(None).await.unwrap();
+        let permit = storage
+            .capture_application_execution(Some(registration.owner()))
+            .await
+            .unwrap();
+        let owner = storage
+            .run_in_scope(
+                StorageExecutionScope::default().with_application_access(permit),
+                storage.admit_history_publication(HistoryPublicationKind::Backup),
+            )
+            .await
+            .unwrap();
+        let blocked = storage
+            .state
+            .read_control()
+            .await
+            .require_history_exposure_safe();
+        // Logical registry fixture only: no external producer exists.
+        let settlement = owner
+            .after_drained(std::future::ready(Ok(())), std::future::ready(Ok(())))
+            .await
+            .unwrap();
+        storage
+            .settle_history_publication(settlement)
+            .await
+            .unwrap();
+        let cleared = storage
+            .state
+            .read_control()
+            .await
+            .require_history_exposure_safe();
+        storage.unregister_runtime(registration).await.unwrap();
+        assert!(blocked.is_err());
+        assert!(cleared.is_ok());
+    }
+
+    #[tokio::test]
+    async fn publication_registry_round_trip_rejects_retired_scope() {
+        let storage = MemoryStorage::new();
+        let registration = storage.register_history_runtime(None).await.unwrap();
+        let storage = storage.with_runtime_owner(registration.owner());
+        let permit = storage
+            .capture_application_execution(Some(registration.owner()))
+            .await
+            .unwrap();
+        let scope = StorageExecutionScope::default().with_application_access(permit);
+        let owner = storage
+            .run_in_scope(
+                scope.clone(),
+                storage.admit_history_publication(HistoryPublicationKind::TaskOutput),
+            )
+            .await
+            .unwrap();
+        let productive = scope.with_history_read(owner.context());
+        let root = CollectionId::new(1).unwrap();
+        storage
+            .run_in_scope(productive.clone(), storage.get_collection(root))
+            .await
+            .unwrap();
+        let settlement = owner
+            .after_drained(std::future::ready(Ok(())), std::future::ready(Ok(())))
+            .await
+            .unwrap();
+        storage
+            .settle_history_publication(settlement)
+            .await
+            .unwrap();
+        let retired = storage
+            .run_in_scope(productive, storage.get_collection(root))
+            .await;
+        storage.unregister_runtime(registration).await.unwrap();
+        assert!(retired.is_err());
+    }
     use hubuum_domain::PrincipalIdentity;
 
     fn proposal() -> HistoryPolicyChange {
@@ -449,33 +915,40 @@ impl MemoryState {
         let mut input_bytes = 0;
         let mut candidates = Vec::new();
         let mut exhausted = false;
-        let mut consider =
-            |evidence: Option<&StorageIdentityEvidence>, anchor| -> Result<bool, StorageError> {
-                if scanned == scan.limit() {
+        let mut consider = |evidence: Option<&StorageIdentityEvidence>,
+                            anchor,
+                            from,
+                            until|
+         -> Result<bool, StorageError> {
+            if scanned == scan.limit() {
+                exhausted = true;
+                return Ok(false);
+            }
+            if let Some(evidence) = evidence {
+                input_bytes += serde_json::to_vec(evidence)
+                    .map_err(|_| StorageError::internal("Cannot size historical identity"))?
+                    .len();
+                if input_bytes > HistoryLifecycleScan::MAX_INPUT_BYTES {
                     exhausted = true;
                     return Ok(false);
                 }
-                if let Some(evidence) = evidence {
-                    input_bytes += serde_json::to_vec(evidence)
-                        .map_err(|_| StorageError::internal("Cannot size historical identity"))?
-                        .len();
-                    if input_bytes > HistoryLifecycleScan::MAX_INPUT_BYTES {
-                        exhausted = true;
-                        return Ok(false);
-                    }
-                    match HistoryExpiryCandidate::from_evidence(family, evidence, anchor, false)
-                        .map_err(invalid_contract_value)?
-                    {
-                        Some(candidate) if scan.includes(&candidate) => candidates.push(candidate),
-                        Some(_) => {}
-                        None => unresolved += 1,
-                    }
-                } else {
-                    unresolved += 1;
+                match HistoryExpiryCandidate::from_evidence(family, evidence, anchor, false)
+                    .map_err(invalid_contract_value)?
+                {
+                    Some(candidate) if scan.includes(&candidate) => candidates.push(
+                        candidate
+                            .with_native_interval(from, until)
+                            .map_err(invalid_contract_value)?,
+                    ),
+                    Some(_) => {}
+                    None => unresolved += 1,
                 }
-                scanned += 1;
-                Ok(true)
-            };
+            } else {
+                unresolved += 1;
+            }
+            scanned += 1;
+            Ok(true)
+        };
         match family {
             StorageIdentityHistoryKind::ClassSchema => {
                 for row in &self.schema_history {
@@ -496,7 +969,10 @@ impl MemoryState {
                             StorageError::backend_failure("Invalid schema history anchor")
                         })?
                         .map(HistoryRetentionAnchor::SchemaEvent);
-                    if !consider(evidence.as_ref(), anchor)? {
+                    let from = anchor.map(HistoryRetentionAnchor::at).ok_or_else(|| {
+                        StorageError::backend_failure("Missing schema history occurrence clock")
+                    })?;
+                    if !consider(evidence.as_ref(), anchor, from, None)? {
                         break;
                     }
                 }
@@ -506,6 +982,8 @@ impl MemoryState {
                     if !consider(
                         row.logical_identity(),
                         row.valid_to().map(HistoryRetentionAnchor::Closed),
+                        row.valid_from(),
+                        row.valid_to(),
                     )? {
                         break;
                     }
@@ -547,7 +1025,27 @@ impl MemoryState {
                                 HistoryRetentionAnchor::Closed(at)
                             }
                         });
-                    if !consider(evidence.as_ref(), anchor)? {
+                    let from = row
+                        .get("valid_from")
+                        .cloned()
+                        .map(serde_json::from_value::<DateTime<Utc>>)
+                        .transpose()
+                        .map_err(|_| {
+                            StorageError::backend_failure("Invalid relation history start")
+                        })?
+                        .ok_or_else(|| {
+                            StorageError::backend_failure("Missing relation history start")
+                        })?;
+                    let until = row
+                        .get("valid_to")
+                        .filter(|value| !value.is_null())
+                        .cloned()
+                        .map(serde_json::from_value::<DateTime<Utc>>)
+                        .transpose()
+                        .map_err(|_| {
+                            StorageError::backend_failure("Invalid relation history end")
+                        })?;
+                    if !consider(evidence.as_ref(), anchor, from, until)? {
                         break;
                     }
                 }
@@ -573,7 +1071,12 @@ impl MemoryState {
                     } else {
                         row.valid_to.map(HistoryRetentionAnchor::Closed)
                     };
-                    if !consider(Some(&row.logical_identity), anchor)? {
+                    if !consider(
+                        Some(&row.logical_identity),
+                        anchor,
+                        row.valid_from,
+                        row.valid_to,
+                    )? {
                         break;
                     }
                 }
@@ -796,6 +1299,212 @@ mod online_read_tests {
         storage.commit_history_lifecycle(change).await.unwrap();
         (storage, entry, registration)
     }
+    #[rstest::rstest]
+    #[case::current_collision("current", true)]
+    #[case::protected_open_collision("open", true)]
+    #[case::clean_descendant("clean", false)]
+    #[case::unknown_ancestry("unknown", true)]
+    #[tokio::test]
+    async fn exposure_gate_retains_quarantine_without_modifying_copies(
+        #[case] mode: &str,
+        #[case] blocked: bool,
+    ) {
+        let (storage, closed, registration) = fixture().await;
+        let MemoryHistoryValue::Object(record) = &closed.value else {
+            unreachable!()
+        };
+        let derived = || {
+            let mut bytes = *VersionIdentity::generate().as_bytes();
+            bytes[6] = (bytes[6] & 0x0f) | 0x80;
+            VersionIdentity::from_bytes(bytes).unwrap()
+        };
+        {
+            let mut state = storage.state.write_control().await;
+            let live = state.objects[&record.id().id()].clone();
+            let original = state
+                .logical_identities
+                .record(StorageIdentityTarget::Resource {
+                    kind: StorageIdentityResourceKind::Object,
+                    id: ResourceId::new(record.id().id()).unwrap(),
+                })
+                .unwrap();
+            let clean = original.at_restore_baseline(derived()).unwrap();
+            let collision = closed
+                .logical_identity
+                .clone()
+                .at_restore_baseline(derived())
+                .unwrap();
+            let current = match mode {
+                "current" => collision.clone(),
+                "unknown" => {
+                    StorageIdentityEvidence::try_new(clean.subject(), Default::default()).unwrap()
+                }
+                _ => clean.clone(),
+            };
+            // Model restored correspondence only, not a full restore or protected
+            // admission. Native replay/exposure evidence remains independently required.
+            state
+                .logical_identities
+                .restore_record(&live, current.clone());
+            let open = state
+                .history
+                .iter_mut()
+                .find(|entry| {
+                    entry.value.entity_id() == record.id().id()
+                        && matches!(entry.value, MemoryHistoryValue::Object(_))
+                        && entry.valid_to.is_none()
+                })
+                .unwrap();
+            open.logical_identity = if mode == "open" { collision } else { clean };
+            state.application_control =
+                ApplicationControlState::quarantined(state.application_control.fence());
+            let retained = state.history_lifecycle.clone();
+            let copies = state
+                .history
+                .iter()
+                .map(|entry| {
+                    (
+                        entry.logical_identity.clone(),
+                        entry.valid_from,
+                        entry.valid_to,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let result = state.require_history_exposure_safe();
+            assert_eq!(result.is_err(), blocked);
+            assert!(
+                !state
+                    .application_control
+                    .is_released_for(&state.deletion_control)
+            );
+            assert_eq!(state.history_lifecycle, retained);
+            assert_eq!(
+                state
+                    .history
+                    .iter()
+                    .map(|entry| (
+                        entry.logical_identity.clone(),
+                        entry.valid_from,
+                        entry.valid_to
+                    ))
+                    .collect::<Vec<_>>(),
+                copies
+            );
+            assert_eq!(
+                state
+                    .logical_identities
+                    .record(StorageIdentityTarget::Resource {
+                        kind: StorageIdentityResourceKind::Object,
+                        id: ResourceId::new(record.id().id()).unwrap(),
+                    })
+                    .unwrap(),
+                current
+            );
+        }
+        storage.unregister_runtime(registration).await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[case::before_creation(false, true, true)]
+    #[case::changed_uuid(true, true, false)]
+    #[case::unproved_gap(false, false, false)]
+    #[tokio::test]
+    async fn original_canonical_creation_is_required_for_empty_history(
+        #[case] changed: bool,
+        #[case] before: bool,
+        #[case] empty: bool,
+    ) {
+        let storage = MemoryStorage::new();
+        let id = ResourceId::new(1).unwrap();
+        let original = storage
+            .resolve_logical_identity(StorageIdentityTarget::Resource {
+                kind: StorageIdentityResourceKind::Collection,
+                id,
+            })
+            .await
+            .unwrap()
+            .subject()
+            .unwrap()
+            .record_identity()
+            .unwrap()
+            .resource();
+        let created = storage
+            .get_collection(CollectionId::new(1).unwrap())
+            .await
+            .unwrap()
+            .created_at();
+        // Deliberately model missing coverage, not a protected removal. This
+        // does not qualify native physical expiry or a publisher drain.
+        storage.state.write_control().await.history.clear();
+        let requested = if changed {
+            ResourceIdentity::generate()
+        } else {
+            original
+        };
+        let at = created
+            + if before {
+                -Duration::microseconds(1)
+            } else {
+                Duration::microseconds(1)
+            };
+        let result = storage
+            .get_collection_history_as_of(
+                StorageHistoryAsOfQuery::new(id, at).for_resource(requested),
+            )
+            .await;
+        if empty {
+            assert!(matches!(result, Ok(None)));
+        } else {
+            let Err(error) = result else {
+                panic!("Unproved coverage cannot produce a complete empty result");
+            };
+            assert_eq!(error.kind(), StorageErrorKind::Unavailable);
+        }
+    }
+
+    #[rstest::rstest]
+    #[case::before(-1, false, false)]
+    #[case::inclusive_start(0, false, true)]
+    #[case::exclusive_end(1, false, false)]
+    #[case::other_resource(0, true, false)]
+    #[tokio::test]
+    async fn missing_copy_uses_original_uuid_and_interval(
+        #[case] boundary: i32,
+        #[case] unrelated: bool,
+        #[case] expired: bool,
+    ) {
+        let (storage, entry, registration) = fixture().await;
+        let original = entry
+            .logical_identity
+            .subject()
+            .unwrap()
+            .record_identity()
+            .unwrap()
+            .resource();
+        let resource = if unrelated {
+            ResourceIdentity::generate()
+        } else {
+            original
+        };
+        let at = match boundary {
+            -1 => entry.valid_from - Duration::microseconds(1),
+            0 => entry.valid_from,
+            _ => entry.valid_to.unwrap(),
+        };
+        let result = storage
+            .state
+            .read_control()
+            .await
+            .require_history_resource_binding(
+                StorageIdentityHistoryKind::Object,
+                Some(resource),
+                at,
+                None,
+            );
+        storage.unregister_runtime(registration).await.unwrap();
+        assert_eq!(result.is_err(), expired);
+    }
+
     #[tokio::test]
     async fn expired_copy_is_omitted_from_object_history_list() {
         let (storage, entry, registration) = fixture().await;
@@ -879,6 +1588,49 @@ mod online_read_tests {
         assert_eq!(error.kind(), StorageErrorKind::NotFound);
         storage.unregister_runtime(registration).await.unwrap();
     }
+    #[rstest::rstest]
+    #[case::expired_removed(true, StorageErrorKind::NotFound)]
+    #[case::unproved_gap(false, StorageErrorKind::Unavailable)]
+    #[tokio::test]
+    async fn original_object_binding_rejects_missing_payload_as_ordinary_absence(
+        #[case] retained: bool,
+        #[case] expected_error: StorageErrorKind,
+    ) {
+        let (storage, entry, registration, change) = prepared_fixture().await;
+        if retained {
+            storage.commit_history_lifecycle(change).await.unwrap();
+        }
+        let original = entry
+            .logical_identity
+            .subject()
+            .unwrap()
+            .record_identity()
+            .unwrap()
+            .resource();
+        let MemoryHistoryValue::Object(record) = &entry.value else {
+            unreachable!()
+        };
+        // Missing-payload fixture only, not physical expiry/drain qualification.
+        storage
+            .state
+            .write_control()
+            .await
+            .history
+            .retain(|copy| copy.logical_identity != entry.logical_identity);
+        let result = storage
+            .get_object_history_as_of(
+                StorageObjectHistoryAsOfQuery::new(
+                    record.id(),
+                    record.class_id(),
+                    entry.valid_from,
+                )
+                .for_resource(original),
+            )
+            .await;
+        storage.unregister_runtime(registration).await.unwrap();
+        assert!(matches!(result, Err(error) if error.kind() == expected_error));
+    }
+
     #[tokio::test]
     async fn registered_runtime_keeps_the_newer_as_of_version_readable() {
         let (storage, entry, registration) = fixture().await;

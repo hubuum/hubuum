@@ -840,3 +840,93 @@ fn decoded_authority_reserves_a_terminal_revision_for_every_created_hold() {
     encoded["revision"] = serde_json::json!(count.to_string());
     assert!(serde_json::from_value::<HistoryLifecycleAuthority>(encoded).is_err());
 }
+
+#[rstest]
+#[case::exact(HistoryRecoveryExposureBudget::MAX_BYTES-2,true)]
+#[case::oversized(HistoryRecoveryExposureBudget::MAX_BYTES-1,false)]
+fn recovery_identity_encoding_is_bounded_without_partial_budget_advance(
+    #[case] characters: usize,
+    #[case] accepted: bool,
+) {
+    let mut budget = HistoryRecoveryExposureBudget::default();
+    let json = serde_json::Value::String("x".repeat(characters));
+    let result = budget.observe_json(&json);
+    assert_eq!(result.is_ok(), accepted);
+    if !accepted {
+        assert_eq!(
+            budget.remaining_bytes(),
+            HistoryRecoveryExposureBudget::MAX_BYTES
+        );
+        assert_eq!(
+            budget.remaining_rows(),
+            HistoryRecoveryExposureBudget::MAX_ROWS
+        );
+    }
+}
+
+#[test]
+fn recovery_row_exhaustion_is_not_complete_coverage() {
+    let mut budget = HistoryRecoveryExposureBudget::default();
+    for _ in 0..HistoryRecoveryExposureBudget::MAX_ROWS {
+        budget.observe(0).unwrap();
+    }
+    assert!(budget.observe(0).is_err());
+}
+
+#[rstest]
+#[case::same_fence(0, true)]
+#[case::other_incarnation(1, false)]
+#[case::other_revision(2, false)]
+fn exposure_history_binding_requires_the_same_application_fence(
+    #[case] mode: u8,
+    #[case] accepted: bool,
+) {
+    use crate::{
+        ApplicationExposureProof, ApplicationFence, ApplicationReapplication,
+        DeletionCheckpointIdentity,
+    };
+    let fence = ApplicationFence::new(Uuid::new_v4(), 1).unwrap();
+    let bound = match mode {
+        1 => ApplicationFence::new(Uuid::new_v4(), 1).unwrap(),
+        2 => ApplicationFence::new(fence.incarnation(), 2).unwrap(),
+        _ => fence,
+    };
+    let history = HistoryExposureProtection::new(
+        HistoryLifecycleAuthority::empty(),
+        bound,
+        DeletionCheckpointIdentity::new("a".repeat(64)).unwrap(),
+    );
+    let result = ApplicationExposureProof::new(ApplicationReapplication::new(fence), None)
+        .unwrap()
+        .with_history_protection(history);
+    assert_eq!(result.is_ok(), accepted);
+}
+
+#[test]
+fn exposure_protection_compares_exact_history_facts_not_revision_alone() {
+    use crate::{ApplicationFence, DeletionCheckpointIdentity};
+    let key = HistoryPolicyKey::new(
+        StorageIdentityHistoryKind::Object,
+        HistoryPolicyScope::Deployment,
+    )
+    .unwrap();
+    let principal = PrincipalIdentity::generate();
+    let hold = || HistoryRetentionHold::new(Uuid::new_v4(), key, at(100), None, principal).unwrap();
+    let original = HistoryLifecycleAuthority::empty()
+        .create_hold(hold())
+        .unwrap();
+    let divergent = HistoryLifecycleAuthority::empty()
+        .create_hold(hold())
+        .unwrap();
+    assert_eq!(original.revision(), divergent.revision());
+    let fence = ApplicationFence::new(Uuid::new_v4(), 0).unwrap();
+    let checkpoint = DeletionCheckpointIdentity::new("a".repeat(64)).unwrap();
+    let proof = HistoryExposureProtection::new(original.clone(), fence, checkpoint.clone());
+    assert!(proof.matches(&original, fence, &checkpoint));
+    assert!(!proof.matches(&divergent, fence, &checkpoint));
+    assert!(!proof.matches(
+        &original,
+        fence,
+        &DeletionCheckpointIdentity::new("b".repeat(64)).unwrap()
+    ));
+}

@@ -87,6 +87,7 @@ impl MemoryState {
             .expect("generated control identities");
         let mut state = Self {
             history_lifecycle: HistoryLifecycleControl::empty(),
+            history_publications: HistoryPublicationRegistry::default(),
             task_control: TaskControlState::initial(
                 deletion_control.lineage(),
                 deletion_control.epoch(),

@@ -13,6 +13,8 @@ mod online_intent;
 pub use online_intent::*;
 mod online;
 pub use online::*;
+mod publication;
+pub use publication::*;
 mod audit;
 mod scan;
 pub use scan::*;
@@ -82,6 +84,7 @@ decimal!(HistoryDeletionRevision, i64::MAX as u64);
 // Bounds keep addition representable for ordinary supported UTC history clocks.
 decimal!(HistoryRetentionSeconds, 315_360_000);
 decimal!(HistoryLogicalBytes, i64::MAX as u64);
+decimal!(HistoryPublicationGeneration, i64::MAX as u64);
 
 /// Stable scope, independent of replaceable integer compatibility IDs.
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]

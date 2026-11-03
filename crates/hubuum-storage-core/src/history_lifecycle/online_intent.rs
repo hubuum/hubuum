@@ -6,6 +6,36 @@ use uuid::Uuid;
 use super::*;
 use crate::{DeletionCheckpointIdentity, StorageRecordIdentity};
 
+/// Adapter-validated result of one exact native DELETE, before publishing its
+/// transaction outcome. No serialization or absent-copy path can create this
+/// fact. Authority, holds and protection must already be checked in that same
+/// transaction; this row-count proof does not replace those checks.
+#[derive(Debug)]
+pub struct HistoryExpiryExactDeletion {
+    target: StorageRecordIdentity,
+    checkpoint: DeletionCheckpointIdentity,
+    removed_at: DateTime<Utc>,
+}
+impl HistoryExpiryExactDeletion {
+    pub fn from_affected_rows(
+        target: StorageRecordIdentity,
+        checkpoint: DeletionCheckpointIdentity,
+        removed_at: DateTime<Utc>,
+        affected_rows: u64,
+    ) -> Result<Self, StorageValidationError> {
+        if affected_rows != 1 {
+            return Err(invalid(
+                "A removal receipt requires exactly one deleted copy; absence does not establish a first-removal clock",
+            ));
+        }
+        Ok(Self {
+            target,
+            checkpoint,
+            removed_at,
+        })
+    }
+}
+
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -152,15 +182,19 @@ impl HistoryExpiryIntent {
         }
         Ok(next)
     }
-    /// Called only as part of the adapter transaction that removes or verifies
-    /// absence of the exact copy under independently protected intent authority.
-    /// Reapplication preserves the first outcome, checkpoint and occurrence time.
+    /// Called only in the adapter transaction that deletes the exact copy under
+    /// independently protected intent authority. Observing an absent copy cannot
+    /// synthesize this result; missing independent completion evidence stays
+    /// unresolved. Reapplication preserves the original receipt and clock.
     pub fn record_removed(
         &self,
-        target: StorageRecordIdentity,
-        checkpoint: DeletionCheckpointIdentity,
-        at: DateTime<Utc>,
+        deletion: HistoryExpiryExactDeletion,
     ) -> Result<Self, StorageValidationError> {
+        let HistoryExpiryExactDeletion {
+            target,
+            checkpoint,
+            removed_at: at,
+        } = deletion;
         if !self
             .manifest
             .members()

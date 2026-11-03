@@ -155,6 +155,7 @@ impl DeletionControlStorage for MemoryStorage {
             ));
         }
         state.require_runtime_drain()?;
+        state.require_history_exposure_safe()?;
         let mut next = expected.clone();
         let mut removals = BTreeSet::new();
         for (intent_id, intent) in expected.intents() {
@@ -225,7 +226,22 @@ impl DeletionControlStorage for MemoryStorage {
     ) -> Result<(), StorageError> {
         let mut guard = self.state.write_control().await;
         let mut state = guard.clone();
+        state.require_history_exposure_safe()?;
         let receipt = proof.deletion();
+        let history_required = !state.history_lifecycle.authority().expiry().is_empty();
+        if (history_required && proof.history().is_none())
+            || proof.history().is_some_and(|protected| {
+                !protected.matches(
+                    state.history_lifecycle.authority(),
+                    receipt.fence(),
+                    &checkpoint,
+                )
+            })
+        {
+            return Err(StorageError::conflict(
+                "Protected history authority does not cover this exact exposure release",
+            ));
+        }
         let task_proof_required = !matches!(
             state.task_control.activation(),
             TaskReceiptActivation::Disabled

@@ -53,6 +53,12 @@ fn merge_memory_execution_scope(
     child: &StorageExecutionScope,
 ) -> StorageExecutionScope {
     let mut merged = StorageExecutionScope::default();
+    if let Some(context) = parent
+        .history_read_override()
+        .or_else(|| child.history_read_override())
+    {
+        merged = merged.with_history_read(context.clone());
+    }
     if let Some(permit) = parent
         .api_request_override()
         .or_else(|| child.api_request_override())

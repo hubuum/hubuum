@@ -27,12 +27,129 @@ REVOKE ALL ON hubuum_control.history_expiry_members FROM PUBLIC;
 
 ALTER TABLE hubuum_control.runtime_registrations ADD COLUMN history_protocol SMALLINT NOT NULL DEFAULT 0 CHECK (history_protocol IN (0,1));
 
+CREATE TABLE hubuum_control.history_publication_control (
+    id SMALLINT PRIMARY KEY CHECK (id=1),
+    generation BIGINT NOT NULL DEFAULT 0 CHECK (generation>=0),
+    admission_revision BIGINT NOT NULL DEFAULT 0 CHECK (admission_revision>=0)
+);
+INSERT INTO hubuum_control.history_publication_control(id) VALUES(1);
+CREATE TABLE hubuum_control.history_publication_owners (
+    id UUID PRIMARY KEY,
+    ownership_token UUID NOT NULL,
+    runtime_id UUID NOT NULL,
+    incarnation UUID NOT NULL,
+    deletion_revision BIGINT NOT NULL CHECK (deletion_revision>=0),
+    history_revision BIGINT NOT NULL CHECK (history_revision>=0),
+    generation BIGINT NOT NULL CHECK (generation>=0),
+    kind TEXT NOT NULL CHECK (kind IN ('http_response','task_output','backup','export')),
+    admitted_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX history_publication_runtime ON hubuum_control.history_publication_owners(runtime_id);
+CREATE INDEX history_publication_generation ON hubuum_control.history_publication_owners(generation);
+REVOKE ALL ON hubuum_control.history_publication_control,hubuum_control.history_publication_owners FROM PUBLIC;
+
+-- Productive entry takes this gate AFTER application/deletion authority and
+-- BEFORE API-owner validation. Owner validation follows the API-owner gate.
+CREATE FUNCTION public.hubuum_history_read_authority(runtime UUID, ownership UUID, write_mode BOOLEAN)
+RETURNS SMALLINT LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog AS $function$
+DECLARE material JSONB; protocol SMALLINT;
+BEGIN
+    IF write_mode IS TRUE THEN
+        SELECT c.material INTO material FROM hubuum_control.history_lifecycle_control c WHERE id=1 FOR UPDATE;
+    ELSE
+        SELECT c.material INTO material FROM hubuum_control.history_lifecycle_control c WHERE id=1 FOR SHARE;
+    END IF;
+    IF NOT FOUND THEN RAISE EXCEPTION 'History authority is unavailable'; END IF;
+    IF runtime IS NULL AND ownership IS NULL THEN
+        IF coalesce(material #> '{authority,expiry}','[]'::JSONB)<>'[]'::JSONB
+            OR EXISTS(SELECT 1 FROM hubuum_control.history_expiry_members) THEN
+            RAISE EXCEPTION 'Retained history requires an owned publication scope';
+        END IF;
+        RETURN 0;
+    END IF;
+    SELECT r.history_protocol INTO protocol FROM hubuum_control.runtime_registrations r
+        WHERE r.id=runtime AND r.ownership_token=ownership;
+    IF NOT FOUND OR protocol NOT IN (0,1) THEN RAISE EXCEPTION 'History runtime ownership is unavailable'; END IF;
+    IF protocol=0 AND (coalesce(material #> '{authority,expiry}','[]'::JSONB)<>'[]'::JSONB
+        OR EXISTS(SELECT 1 FROM hubuum_control.history_expiry_members)) THEN
+        RAISE EXCEPTION 'Legacy history producer is fenced by retained expiry';
+    END IF;
+    RETURN protocol;
+END
+$function$;
+REVOKE ALL ON FUNCTION public.hubuum_history_read_authority(UUID,UUID,BOOLEAN) FROM PUBLIC;
+
+CREATE FUNCTION public.hubuum_history_publication_generation() RETURNS BIGINT
+LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path=pg_catalog AS $function$
+    SELECT generation FROM hubuum_control.history_publication_control WHERE id=1
+$function$;
+REVOKE ALL ON FUNCTION public.hubuum_history_publication_generation() FROM PUBLIC;
+
+CREATE FUNCTION public.hubuum_history_publication_admit(identity UUID, ownership UUID, producer_kind TEXT,
+    runtime UUID, runtime_ownership UUID, incarnation UUID, deletion_revision BIGINT,
+    history_revision BIGINT, expected_generation BIGINT)
+RETURNS BOOLEAN LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog AS $function$
+BEGIN
+    IF identity IS NULL OR ownership IS NULL OR producer_kind IS NULL
+        OR producer_kind NOT IN ('http_response','task_output','backup','export') THEN RETURN FALSE; END IF;
+    IF public.hubuum_application_execution_allowed(runtime,runtime_ownership,incarnation,deletion_revision) IS NOT TRUE THEN RETURN FALSE; END IF;
+    IF public.hubuum_history_read_authority(runtime,runtime_ownership,FALSE) IS DISTINCT FROM 1 THEN RETURN FALSE; END IF;
+    IF (SELECT (material #>> '{authority,revision}')::BIGINT FROM hubuum_control.history_lifecycle_control WHERE id=1) IS DISTINCT FROM history_revision THEN RETURN FALSE; END IF;
+    -- Touching this tuple serializes capacity and rejects retained RR snapshots.
+    UPDATE hubuum_control.history_publication_control SET admission_revision=admission_revision+1
+        WHERE id=1 AND generation=expected_generation;
+    IF NOT FOUND OR (SELECT count(*) FROM hubuum_control.history_publication_owners)>=256
+        OR (SELECT count(*) FROM hubuum_control.history_publication_owners WHERE runtime_id=runtime)>=64 THEN RETURN FALSE; END IF;
+    INSERT INTO hubuum_control.history_publication_owners(id,ownership_token,runtime_id,incarnation,deletion_revision,history_revision,generation,kind)
+        VALUES(identity,ownership,runtime,incarnation,deletion_revision,history_revision,expected_generation,producer_kind);
+    RETURN TRUE;
+END
+$function$;
+REVOKE ALL ON FUNCTION public.hubuum_history_publication_admit(UUID,UUID,TEXT,UUID,UUID,UUID,BIGINT,BIGINT,BIGINT) FROM PUBLIC;
+
+CREATE FUNCTION public.hubuum_history_publication_execution(identity UUID, ownership UUID,
+    expected_incarnation UUID, expected_deletion BIGINT, expected_history BIGINT, expected_generation BIGINT)
+RETURNS BOOLEAN LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog AS $function$
+BEGIN
+    -- Authority is already held by the specialized entry. Do not acquire it
+    -- after API ownership: doing so would invert the productive lock order.
+    IF (SELECT generation FROM hubuum_control.history_publication_control WHERE id=1) IS DISTINCT FROM expected_generation
+        OR (SELECT (material #>> '{authority,revision}')::BIGINT FROM hubuum_control.history_lifecycle_control WHERE id=1) IS DISTINCT FROM expected_history THEN RETURN FALSE; END IF;
+    PERFORM 1 FROM hubuum_control.history_publication_owners p
+        WHERE p.id=identity AND p.ownership_token=ownership AND p.incarnation=expected_incarnation
+        AND p.deletion_revision=expected_deletion AND p.history_revision=expected_history
+        AND p.generation=expected_generation FOR SHARE;
+    RETURN FOUND;
+END
+$function$;
+REVOKE ALL ON FUNCTION public.hubuum_history_publication_execution(UUID,UUID,UUID,BIGINT,BIGINT,BIGINT) FROM PUBLIC;
+
+CREATE FUNCTION public.hubuum_history_publication_settle(identity UUID, ownership UUID)
+RETURNS BOOLEAN LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog AS $function$
+BEGIN
+    -- Exact-owner-only: waits its productive SHARE holders, never reacquires
+    -- application/history/API-owner locks, and has no timer/reaper path.
+    DELETE FROM hubuum_control.history_publication_owners p WHERE p.id=identity AND p.ownership_token=ownership;
+    RETURN FOUND;
+END
+$function$;
+REVOKE ALL ON FUNCTION public.hubuum_history_publication_settle(UUID,UUID) FROM PUBLIC;
+
 -- Producer declarations are durable registrations, never heartbeats. Serialize
 -- registration with first intent admission through application/history tuples.
 CREATE FUNCTION public.hubuum_history_runtime_register(registration UUID, ownership UUID, isolation_domain JSONB, protocol SMALLINT)
 RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $function$
+DECLARE archive_requires_legacy BOOLEAN;
 BEGIN
     IF protocol IS NULL OR protocol NOT IN (0,1) THEN RAISE EXCEPTION 'Unsupported history producer protocol'; END IF;
+    -- An independently installed archive reader may deliberately support only
+    -- Legacy registration. Never advertise the combined producer as OnlineV1
+    -- until its real read/publication gate replaces that restriction. The fixed
+    -- optional SQL hook avoids an unlanded SDK or archive implementation join.
+    IF protocol=1 AND to_regprocedure('public.hubuum_archive_history_requires_legacy_runtime()') IS NOT NULL THEN
+        EXECUTE 'SELECT public.hubuum_archive_history_requires_legacy_runtime()' INTO archive_requires_legacy;
+        IF archive_requires_legacy IS DISTINCT FROM FALSE THEN RETURN FALSE; END IF;
+    END IF;
     PERFORM 1 FROM hubuum_control.deletion_authority WHERE id=1 FOR SHARE;
     IF NOT FOUND THEN RAISE EXCEPTION 'Deletion authority is unavailable; runtime startup denied'; END IF;
     UPDATE hubuum_control.application_control SET incarnation=incarnation WHERE id=1;
@@ -121,6 +238,18 @@ RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog 
 $function$;
 REVOKE ALL ON FUNCTION public.hubuum_history_as_of_visible(TEXT,JSONB,TIMESTAMPTZ,TIMESTAMPTZ) FROM PUBLIC;
 
+-- A physically missing payload cannot supply its own resource identity. Use
+-- only the original request binding; never infer it from a different version.
+CREATE FUNCTION public.hubuum_history_requested_as_of_visible(history_family TEXT, resource UUID, at_time TIMESTAMPTZ)
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $function$
+    SELECT resource IS NOT NULL AND at_time IS NOT NULL
+       AND history_family IN ('collection','class','object','class_relation','object_relation','export_template','remote_target','computed_definitions','class_schema')
+       AND NOT EXISTS(SELECT 1 FROM hubuum_control.history_expiry_members
+        WHERE family=history_family AND resource_uuid=resource
+          AND valid_from<=at_time AND (valid_to IS NULL OR at_time<valid_to))
+$function$;
+REVOKE ALL ON FUNCTION public.hubuum_history_requested_as_of_visible(TEXT,UUID,TIMESTAMPTZ) FROM PUBLIC;
+
 CREATE FUNCTION public.hubuum_history_expiry_sync() RETURNS VOID
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog AS $function$
 BEGIN
@@ -176,12 +305,14 @@ BEGIN
     SELECT material INTO current_material FROM hubuum_control.history_lifecycle_control WHERE id=1 FOR UPDATE;
     IF current_material IS DISTINCT FROM expected THEN RETURN FALSE; END IF;
     IF replacement=current_material THEN RETURN TRUE; END IF;
+    -- Generic policy/hold CAS preserves retained expiry byte-for-byte. Native
+    -- intent/outcome admission needs its separate protected executor boundary.
     IF replacement #> '{authority,expiry}' IS DISTINCT FROM current_material #> '{authority,expiry}'
-       AND public.hubuum_history_producers_fenced(expected_incarnation,expected_deletion) IS NOT TRUE THEN RETURN FALSE; END IF;
+       THEN RETURN FALSE; END IF;
     IF jsonb_typeof(replacement) IS DISTINCT FROM 'object'
        OR replacement - ARRAY['authority','previews'] <> '{}'::jsonb
        OR jsonb_typeof(replacement->'authority') IS DISTINCT FROM 'object'
-       OR (replacement->'authority') - ARRAY['revision','policies','holds'] <> '{}'::jsonb
+       OR (replacement->'authority') - ARRAY['revision','policies','holds','expiry'] <> '{}'::jsonb
        OR jsonb_typeof(replacement #> '{authority,policies}') IS DISTINCT FROM 'array'
        OR jsonb_typeof(replacement #> '{authority,holds}') IS DISTINCT FROM 'array'
        OR jsonb_typeof(replacement->'previews') IS DISTINCT FROM 'array'
@@ -208,7 +339,7 @@ BEGIN
     additions := next_count-previous_count;
     IF additions NOT IN (0,1) OR jsonb_typeof(new_authority->'revision') IS DISTINCT FROM 'string'
        OR new_authority->>'revision' !~ '^(0|[1-9][0-9]*)$'
-       OR (new_authority->>'revision')::BIGINT<>next_count THEN RETURN FALSE; END IF;
+       OR (new_authority->>'revision')::BIGINT<>(old_authority->>'revision')::BIGINT+additions THEN RETURN FALSE; END IF;
     IF additions=0 AND new_authority<>old_authority THEN RETURN FALSE; END IF;
     IF additions=1 AND replacement->'previews'<>current_material->'previews' THEN RETURN FALSE; END IF;
     IF jsonb_array_length(new_authority->'policies')>jsonb_array_length(old_authority->'policies') THEN

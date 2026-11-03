@@ -387,6 +387,7 @@ struct MemoryState {
     next_task_purge_attempt: u64,
     deletion_control: DeletionControlState,
     history_lifecycle: HistoryLifecycleControl,
+    history_publications: HistoryPublicationRegistry,
     application_control: ApplicationControlState,
     pending_restore: bool,
     runtime_registrations: BTreeMap<Uuid, MemoryRuntimeRegistration>,

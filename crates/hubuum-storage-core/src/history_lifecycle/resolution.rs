@@ -408,6 +408,36 @@ impl HistoryExpiryCandidate {
         self.read_span = Some(span);
         Ok(self)
     }
+    /// Preserve the native interval before payload removal. Open versions remain
+    /// unclaimable; validation never supplies a replacement closure clock.
+    pub fn with_native_interval(
+        self,
+        from: DateTime<Utc>,
+        until: Option<DateTime<Utc>>,
+    ) -> Result<Self, StorageValidationError> {
+        let span = match self.anchor {
+            None if until.is_none() => return Ok(self),
+            None => return Err(invalid("An open version cannot carry a closure interval")),
+            Some(HistoryRetentionAnchor::Closed(at)) => {
+                if until != Some(at) {
+                    return Err(invalid("Native closure differs from its retention anchor"));
+                }
+                HistoryExpiryReadSpan::closed(from, at)?
+            }
+            Some(HistoryRetentionAnchor::Deleted(_)) => {
+                if until.is_some() {
+                    return Err(invalid(
+                        "A bounded tombstone requires explicit deletion interval support",
+                    ));
+                }
+                HistoryExpiryReadSpan::deleted(from)
+            }
+            Some(HistoryRetentionAnchor::SchemaEvent(_)) => {
+                HistoryExpiryReadSpan::schema(from, until)?
+            }
+        };
+        self.with_read_span(span)
+    }
     pub const fn read_span(&self) -> Option<&HistoryExpiryReadSpan> {
         self.read_span.as_ref()
     }

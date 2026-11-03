@@ -2,6 +2,8 @@ use std::fmt;
 
 use hubuum_domain::MaintenanceState;
 
+use crate::HistoryRuntimeProtocol;
+
 use super::*;
 
 /// Identity of the stable, owner-controlled process-exclusion file. This value
@@ -57,13 +59,19 @@ impl TryFrom<IsolationInput> for RuntimeIsolationDomain {
 pub struct RuntimeOwner {
     id: Uuid,
     ownership_token: Uuid,
+    history_protocol: HistoryRuntimeProtocol,
 }
 
 impl RuntimeOwner {
-    pub(super) const fn new(id: Uuid, ownership_token: Uuid) -> Self {
+    pub(super) const fn new(
+        id: Uuid,
+        ownership_token: Uuid,
+        history_protocol: HistoryRuntimeProtocol,
+    ) -> Self {
         Self {
             id,
             ownership_token,
+            history_protocol,
         }
     }
     pub const fn id(&self) -> Uuid {
@@ -72,6 +80,11 @@ impl RuntimeOwner {
     /// Adapter comparison material; never log it or expose it in responses.
     pub const fn ownership_token(&self) -> Uuid {
         self.ownership_token
+    }
+
+    /// Validated by the owning adapter's registration path, never request data.
+    pub const fn history_protocol(&self) -> HistoryRuntimeProtocol {
+        self.history_protocol
     }
 }
 

@@ -33,6 +33,18 @@ struct CompleteExternalAdapter;
 
 #[async_trait]
 impl HistoryLifecycleStorage for CompleteExternalAdapter {
+    async fn admit_history_publication(
+        &self,
+        kind: HistoryPublicationKind,
+    ) -> Result<HistoryPublicationOwner, StorageError> {
+        fixture_result()
+    }
+    async fn settle_history_publication(
+        &self,
+        settlement: HistoryPublicationSettlement,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
     async fn register_history_runtime(
         &self,
         isolation: Option<RuntimeIsolationDomain>,

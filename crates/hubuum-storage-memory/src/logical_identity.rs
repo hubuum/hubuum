@@ -933,9 +933,16 @@ impl MemoryLogicalIdentities {
     }
 
     pub(super) fn record(&self, target: Target) -> Result<StorageIdentityEvidence, StorageError> {
+        self.record_ref(target).cloned()
+    }
+
+    pub(super) fn record_ref(
+        &self,
+        target: Target,
+    ) -> Result<&StorageIdentityEvidence, StorageError> {
         self.entries
             .get(&target)
-            .map(|entry| entry.evidence.clone())
+            .map(|entry| &entry.evidence)
             .ok_or_else(|| StorageError::backend_failure("Stored record is missing its identity"))
     }
 

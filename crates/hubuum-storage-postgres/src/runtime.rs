@@ -13,7 +13,7 @@ use diesel::sql_types::{BigInt, Bool, Integer, Text};
 use diesel_async::{AsyncConnection, RunQueryDsl};
 use hubuum_events_core::{EventContext, MutationProvenance, TraceLink};
 use hubuum_storage_core::{
-    RuntimeOwner, StorageApiRequestPermit, StorageCallSite, StorageErrorKind,
+    HistoryReadContext, RuntimeOwner, StorageApiRequestPermit, StorageCallSite, StorageErrorKind,
     StorageExecutionPermit, StorageExecutionScope, StorageQueryBudget, StorageRevisionPrecondition,
 };
 use hubuum_task_core::{TaskExecutionContext, TaskStopReason};
@@ -21,6 +21,9 @@ use tracing::{debug, warn};
 
 use crate::revision::revision_owner_key;
 use crate::{PostgresConnection, PostgresPool, PostgresPooledConnection, PostgresStorageError};
+
+mod history_publication;
+use history_publication::HistoryEntryMode;
 
 /// Latest migration required by this adapter.
 pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = env!("PACKAGED_POSTGRES_MIGRATION_VERSION");
@@ -678,8 +681,10 @@ impl PostgresRuntime {
         } else if context.task_execution.is_some() {
             require_deletion_execution(connection).await?;
         }
-        // Applicable history authority gates belong before the owner validator.
+        let history = self.require_history_authority(connection, context).await?;
         self.require_api_request_execution(connection, context)
+            .await?;
+        self.require_history_publication(connection, context, history)
             .await
     }
 
@@ -792,6 +797,9 @@ pub(crate) async fn with_application_access<F: Future>(
 
 pub(crate) fn current_execution_scope() -> StorageExecutionScope {
     let mut scope = StorageExecutionScope::default().with_call_site(ambient_storage_call_site());
+    if let Ok(Some(context)) = AMBIENT_HISTORY_READ.try_with(Clone::clone) {
+        scope = scope.with_history_read(context);
+    }
     if let Ok(Some(permit)) = AMBIENT_API_REQUEST.try_with(Clone::clone) {
         scope = scope.with_api_request(permit);
     }
@@ -872,10 +880,34 @@ pub(crate) fn run_in_scope_sync<F: FnOnce() -> R, R>(
         .try_with(Clone::clone)
         .unwrap_or(None)
         .or_else(|| scope.api_request_override().cloned());
-    AMBIENT_API_REQUEST.sync_scope(request, || match application {
-        Some(permit) => AMBIENT_APPLICATION_ACCESS.sync_scope(permit, inner),
-        None => inner(),
+    let history = AMBIENT_HISTORY_READ
+        .try_with(Clone::clone)
+        .unwrap_or(None)
+        .or_else(|| scope.history_read_override().cloned());
+    AMBIENT_HISTORY_READ.sync_scope(history, || {
+        AMBIENT_API_REQUEST.sync_scope(request, || match application {
+            Some(permit) => AMBIENT_APPLICATION_ACCESS.sync_scope(permit, inner),
+            None => inner(),
+        })
     })
+}
+
+tokio::task_local! {
+    static AMBIENT_HISTORY_READ: Option<HistoryReadContext>;
+}
+
+pub(crate) async fn with_history_read<F: Future>(
+    context: HistoryReadContext,
+    future: F,
+) -> F::Output {
+    if AMBIENT_HISTORY_READ
+        .try_with(|current| current.is_some())
+        .unwrap_or(false)
+    {
+        future.await
+    } else {
+        AMBIENT_HISTORY_READ.scope(Some(context), future).await
+    }
 }
 
 tokio::task_local! {
@@ -1095,6 +1127,8 @@ async fn require_deletion_exposure(
 }
 
 struct TransactionLocalContext {
+    history_mode: HistoryEntryMode,
+    history_read: Option<HistoryReadContext>,
     api_request: Option<StorageApiRequestPermit>,
     application_access: Option<StorageExecutionPermit>,
     exempt: bool,
@@ -1107,6 +1141,8 @@ struct TransactionLocalContext {
 impl TransactionLocalContext {
     fn control() -> Self {
         Self {
+            history_mode: HistoryEntryMode::Read,
+            history_read: None,
             api_request: None,
             application_access: None,
             exempt: true,
@@ -1121,6 +1157,8 @@ impl TransactionLocalContext {
 
     fn read_only() -> Self {
         Self {
+            history_mode: HistoryEntryMode::Read,
+            history_read: AMBIENT_HISTORY_READ.try_with(Clone::clone).unwrap_or(None),
             api_request: AMBIENT_API_REQUEST.try_with(Clone::clone).unwrap_or(None),
             application_access: ambient_application_access(),
             exempt: false,
@@ -1137,6 +1175,8 @@ impl TransactionLocalContext {
 
     fn ambient() -> Self {
         Self {
+            history_mode: HistoryEntryMode::Read,
+            history_read: AMBIENT_HISTORY_READ.try_with(Clone::clone).unwrap_or(None),
             api_request: AMBIENT_API_REQUEST.try_with(Clone::clone).unwrap_or(None),
             application_access: ambient_application_access(),
             exempt: false,
@@ -1156,7 +1196,9 @@ impl TransactionLocalContext {
     }
 
     fn is_empty(&self) -> bool {
-        self.api_request.is_none()
+        self.history_mode == HistoryEntryMode::Read
+            && self.history_read.is_none()
+            && self.api_request.is_none()
             && self.application_access.is_none()
             && self.query_budget.is_none()
             && self.task_execution.is_none()

@@ -4,8 +4,16 @@ BEGIN
     IF to_regclass('hubuum_control.history_expiry_members') IS NOT NULL THEN
         EXECUTE 'SELECT EXISTS(SELECT 1 FROM hubuum_control.history_expiry_members)' INTO retained_members;
     END IF;
-    IF EXISTS(SELECT 1 FROM hubuum_control.history_lifecycle_control WHERE material #>> '{authority,revision}'<>'0')
-       OR retained_members THEN
+    -- Revision alone is insufficient: an issued review can exist at revision
+    -- zero. Normalize only the documented absent expiry default, preserving
+    -- every policy, hold, preview, receipt and unknown future field.
+    IF EXISTS(SELECT 1 FROM hubuum_control.history_lifecycle_control
+        WHERE jsonb_set(material, '{authority,expiry}',
+            coalesce(material #> '{authority,expiry}', '[]'::JSONB)) IS DISTINCT FROM
+            '{"authority":{"revision":"0","policies":[],"holds":[],"expiry":[]},"previews":[]}'::JSONB)
+       OR retained_members
+       OR EXISTS(SELECT 1 FROM hubuum_control.history_publication_owners)
+       OR EXISTS(SELECT 1 FROM hubuum_control.history_publication_control WHERE generation<>0) THEN
         RAISE EXCEPTION 'Retained history lifecycle authority prevents rollback; preserve independent control recovery and roll forward';
     END IF;
 END
@@ -61,6 +69,7 @@ DROP FUNCTION IF EXISTS public.hubuum_register_history_runtime(UUID,UUID,JSONB);
 DROP FUNCTION IF EXISTS public.hubuum_history_runtime_register(UUID,UUID,JSONB,SMALLINT);
 ALTER TABLE hubuum_control.runtime_registrations DROP COLUMN IF EXISTS history_protocol;
 
+DROP FUNCTION IF EXISTS public.hubuum_history_requested_as_of_visible(TEXT,UUID,TIMESTAMPTZ);
 DROP FUNCTION IF EXISTS public.hubuum_history_as_of_visible(TEXT,JSONB,TIMESTAMPTZ,TIMESTAMPTZ);
 DROP FUNCTION IF EXISTS public.hubuum_history_version_visible(TEXT,JSONB);
 DROP FUNCTION IF EXISTS public.hubuum_history_expiry_sync();
@@ -69,4 +78,11 @@ DROP TABLE IF EXISTS hubuum_control.history_expiry_members;
 DROP FUNCTION public.hubuum_history_lifecycle_commit(JSONB,JSONB,UUID,BIGINT);
 DROP FUNCTION public.hubuum_history_lifecycle_capture();
 DROP FUNCTION IF EXISTS public.hubuum_history_producers_fenced(UUID,BIGINT);
+DROP FUNCTION public.hubuum_history_read_authority(UUID,UUID,BOOLEAN);
+DROP FUNCTION public.hubuum_history_publication_generation();
+DROP FUNCTION public.hubuum_history_publication_admit(UUID,UUID,TEXT,UUID,UUID,UUID,BIGINT,BIGINT,BIGINT);
+DROP FUNCTION public.hubuum_history_publication_execution(UUID,UUID,UUID,BIGINT,BIGINT,BIGINT);
+DROP FUNCTION public.hubuum_history_publication_settle(UUID,UUID);
+DROP TABLE hubuum_control.history_publication_owners;
+DROP TABLE hubuum_control.history_publication_control;
 DROP TABLE hubuum_control.history_lifecycle_control;

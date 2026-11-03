@@ -5,7 +5,10 @@ pub(crate) mod navigation;
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use hubuum_storage_core::StorageIdentityEvidence;
+use hubuum_storage_core::{
+    LogicalIdentityStorage, StorageIdentityEvidence, StorageIdentityResourceKind,
+    StorageIdentitySubject, StorageIdentityTarget,
+};
 
 mod name;
 mod relations;
@@ -21,11 +24,11 @@ use crate::models::{
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::storage::{
-    HistoryStorage, StorageClassHistoryRecord, StorageCollectionHistoryRecord, StorageContext,
-    StorageExportTemplateHistoryRecord, StorageHistoryAsOfQuery, StorageHistoryCollectionScope,
-    StorageHistoryListQuery, StorageHistoryMetadata, StorageHistoryOperation,
-    StorageObjectHistoryAsOfQuery, StorageObjectHistoryRecord, StorageRemoteTargetHistoryRecord,
-    storage_handle,
+    ExecutionStorage, HistoryStorage, StorageClassHistoryRecord, StorageCollectionHistoryRecord,
+    StorageContext, StorageExportTemplateHistoryRecord, StorageHistoryAsOfQuery,
+    StorageHistoryCollectionScope, StorageHistoryListQuery, StorageHistoryMetadata,
+    StorageHistoryOperation, StorageObjectHistoryAsOfQuery, StorageObjectHistoryRecord,
+    StorageRemoteTargetHistoryRecord, storage_handle,
 };
 
 /// Collection visibility applied before history rows are counted or paged.
@@ -320,8 +323,43 @@ pub(crate) async fn resolve_principal_names(
     ))
 }
 
+async fn original_as_of_query(
+    backend: &impl StorageContext,
+    kind: StorageIdentityResourceKind,
+    entity_id: ResourceId,
+    at: DateTime<Utc>,
+) -> Result<StorageHistoryAsOfQuery, ApiError> {
+    let query = StorageHistoryAsOfQuery::new(entity_id, at);
+    let storage = storage_handle(backend);
+    if storage
+        .current_execution_scope()
+        .history_read_override()
+        .is_none()
+    {
+        return Ok(query);
+    }
+    // Resolve once under the original publication epoch, before history I/O.
+    // A deleted/unresolved canonical subject cannot be replaced with another
+    // historical row's identity. Native selection checks this binding again.
+    let evidence = storage
+        .resolve_logical_identity(StorageIdentityTarget::Resource {
+            kind,
+            id: entity_id,
+        })
+        .await?;
+    let original = evidence
+        .subject()
+        .and_then(StorageIdentitySubject::record_identity)
+        .ok_or_else(|| {
+            ApiError::ServiceUnavailable(
+                "Original history resource correspondence is unresolved".into(),
+            )
+        })?;
+    Ok(query.for_resource(original.resource()))
+}
+
 macro_rules! history_service {
-    ($list:ident, $as_of:ident, $storage_list:ident, $storage_as_of:ident, $from:ident, $ty:ty) => {
+    ($list:ident, $as_of:ident, $storage_list:ident, $storage_as_of:ident, $from:ident, $ty:ty, $kind:ident) => {
         pub async fn $list(
             entity_id: i32,
             backend: &impl StorageContext,
@@ -347,11 +385,15 @@ macro_rules! history_service {
             at: DateTime<Utc>,
             backend: &impl StorageContext,
         ) -> Result<Option<$ty>, ApiError> {
+            let query = original_as_of_query(
+                backend,
+                StorageIdentityResourceKind::$kind,
+                ResourceId::new(entity_id)?,
+                at,
+            )
+            .await?;
             storage_handle(backend)
-                .$storage_as_of(StorageHistoryAsOfQuery::new(
-                    ResourceId::new(entity_id)?,
-                    at,
-                ))
+                .$storage_as_of(query)
                 .await?
                 .map($from)
                 .transpose()
@@ -365,15 +407,23 @@ history_service!(
     list_collection_history,
     get_collection_history_as_of,
     collection_from_storage,
-    CollectionHistory
+    CollectionHistory,
+    Collection
 );
 pub async fn class_as_of(
     class_id: i32,
     at: DateTime<Utc>,
     backend: &impl StorageContext,
 ) -> Result<Option<HubuumClassHistory>, ApiError> {
+    let query = original_as_of_query(
+        backend,
+        StorageIdentityResourceKind::Class,
+        ResourceId::new(class_id)?,
+        at,
+    )
+    .await?;
     storage_handle(backend)
-        .get_class_history_as_of(StorageHistoryAsOfQuery::new(ResourceId::new(class_id)?, at))
+        .get_class_history_as_of(query)
         .await?
         .map(class_from_storage)
         .transpose()
@@ -385,7 +435,8 @@ history_service!(
     list_export_template_history,
     get_export_template_history_as_of,
     export_template_from_storage,
-    ExportTemplateHistory
+    ExportTemplateHistory,
+    ExportTemplate
 );
 history_service!(
     remote_target_history_paginated_with_total_count,
@@ -393,7 +444,8 @@ history_service!(
     list_remote_target_history,
     get_remote_target_history_as_of,
     remote_target_from_storage,
-    RemoteTargetHistory
+    RemoteTargetHistory,
+    RemoteTarget
 );
 
 pub async fn object_as_of(
@@ -402,12 +454,21 @@ pub async fn object_as_of(
     at: DateTime<Utc>,
     backend: &impl StorageContext,
 ) -> Result<Option<HubuumObjectHistory>, ApiError> {
+    let original = original_as_of_query(
+        backend,
+        StorageIdentityResourceKind::Object,
+        ResourceId::new(object_id)?,
+        at,
+    )
+    .await?
+    .expected_resource();
+    let mut query =
+        StorageObjectHistoryAsOfQuery::new(ObjectId::new(object_id)?, ClassId::new(class_id)?, at);
+    if let Some(original) = original {
+        query = query.for_resource(original);
+    }
     storage_handle(backend)
-        .get_object_history_as_of(StorageObjectHistoryAsOfQuery::new(
-            ObjectId::new(object_id)?,
-            ClassId::new(class_id)?,
-            at,
-        ))
+        .get_object_history_as_of(query)
         .await?
         .map(object_from_storage)
         .transpose()

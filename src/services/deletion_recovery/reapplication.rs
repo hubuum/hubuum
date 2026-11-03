@@ -2,10 +2,10 @@ use std::path::Path;
 
 use hubuum_storage_core::{
     ApplicationExposureProof, ControlCheckpointCapture, DeletionAuditProtection,
-    DeletionCheckpointIdentity, DeletionControlStorage, HistoryLifecycleRecovery,
-    HistoryLifecycleStorage, ProtectedTaskReapplication, TaskControlCheckpoint,
-    TaskControlReapplication, TaskReapplicationProgress, TaskReceiptActivation,
-    TaskRetentionStorage,
+    DeletionCheckpointIdentity, DeletionControlStorage, HistoryExposureProtection,
+    HistoryLifecycleRecovery, HistoryLifecycleStorage, ProtectedTaskReapplication,
+    TaskControlCheckpoint, TaskControlReapplication, TaskReapplicationProgress,
+    TaskReceiptActivation, TaskRetentionStorage,
 };
 
 use super::cleanup::protect_audit;
@@ -110,11 +110,25 @@ pub(crate) async fn reapply(
             })?;
     }
     // The session owns publication exclusion across this exact release CAS.
+    // Bind history to the authenticated independent read-back, not a fresh
+    // primary capture which could have advanced after the protected checkpoint.
+    let checkpoint = identity(&session)?;
+    let history_protection = session
+        .checkpoint()
+        .history_lifecycle()
+        .cloned()
+        .map(|authority| {
+            HistoryExposureProtection::new(authority, receipt.fence(), checkpoint.clone())
+        });
+    let mut exposure =
+        ApplicationExposureProof::new(receipt, task_receipt).map_err(invalid_control)?;
+    if let Some(protection) = history_protection {
+        exposure = exposure
+            .with_history_protection(protection)
+            .map_err(invalid_control)?;
+    }
     storage
-        .release_application_exposure(
-            ApplicationExposureProof::new(receipt, task_receipt).map_err(invalid_control)?,
-            identity(&session)?,
-        )
+        .release_application_exposure(exposure, checkpoint)
         .await?;
     let current = storage.read_deletion_control().await?;
     let application = storage.read_application_control().await?;

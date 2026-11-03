@@ -587,6 +587,68 @@ mod tests {
             None => candidate,
         }
     }
+    #[rstest::rstest]
+    #[case::missing_copy(0, false)]
+    #[case::exact_copy(1, true)]
+    #[case::multiple_copies(2, false)]
+    fn removal_clock_requires_an_exact_delete(#[case] affected_rows: u64, #[case] accepted: bool) {
+        let target = candidate(Some(HistoryRetentionAnchor::Closed(at(110)))).target();
+        let proof = HistoryExpiryExactDeletion::from_affected_rows(
+            target,
+            checkpoint('a'),
+            at(210),
+            affected_rows,
+        );
+        assert_eq!(proof.is_ok(), accepted);
+    }
+
+    #[rstest::rstest]
+    #[case::closed(
+        Some(HistoryRetentionAnchor::Closed(at(110))),
+        at(100),
+        Some(at(110)),
+        true
+    )]
+    #[case::changed_closure(
+        Some(HistoryRetentionAnchor::Closed(at(110))),
+        at(100),
+        Some(at(111)),
+        false
+    )]
+    #[case::zero_interval(
+        Some(HistoryRetentionAnchor::Closed(at(110))),
+        at(110),
+        Some(at(110)),
+        false
+    )]
+    #[case::deleted(Some(HistoryRetentionAnchor::Deleted(at(110))), at(110), None, true)]
+    #[case::changed_deletion(Some(HistoryRetentionAnchor::Deleted(at(110))), at(111), None, false)]
+    #[case::bounded_tombstone(
+        Some(HistoryRetentionAnchor::Deleted(at(110))),
+        at(110),
+        Some(at(120)),
+        false
+    )]
+    #[case::open(None, at(100), None, true)]
+    #[case::invented_closure(None, at(100), Some(at(110)), false)]
+    fn native_interval_preserves_original_clocks(
+        #[case] anchor: Option<HistoryRetentionAnchor>,
+        #[case] from: DateTime<Utc>,
+        #[case] until: Option<DateTime<Utc>>,
+        #[case] accepted: bool,
+    ) {
+        let result = candidate(anchor).with_native_interval(from, until);
+        assert_eq!(result.is_ok(), accepted);
+        if anchor.is_none()
+            && let Ok(candidate) = result
+        {
+            assert!(
+                candidate.read_span().is_none(),
+                "Open versions have no expiry interval"
+            );
+        }
+    }
+
     #[test]
     fn selection_preserves_exact_identity_original_anchor_and_authority_fence() {
         let snapshot = snapshot();
@@ -800,10 +862,16 @@ mod tests {
         let intent = intent();
         let target = intent.manifest().members()[0].target();
         let removed = intent
-            .record_removed(target, checkpoint('a'), at(210))
+            .record_removed(
+                HistoryExpiryExactDeletion::from_affected_rows(target, checkpoint('a'), at(210), 1)
+                    .unwrap(),
+            )
             .unwrap();
         let replayed = removed
-            .record_removed(target, checkpoint('b'), at(220))
+            .record_removed(
+                HistoryExpiryExactDeletion::from_affected_rows(target, checkpoint('b'), at(220), 1)
+                    .unwrap(),
+            )
             .unwrap();
         assert_eq!(replayed.removals(), removed.removals());
         assert!(replayed.excludes(StorageIdentityHistoryKind::Object, target));
@@ -814,10 +882,16 @@ mod tests {
         let first = intent.manifest().members()[0].target();
         let second = intent.manifest().members()[1].target();
         let local = intent
-            .record_removed(first, checkpoint('a'), at(210))
+            .record_removed(
+                HistoryExpiryExactDeletion::from_affected_rows(first, checkpoint('a'), at(210), 1)
+                    .unwrap(),
+            )
             .unwrap();
         let required = intent
-            .record_removed(second, checkpoint('b'), at(220))
+            .record_removed(
+                HistoryExpiryExactDeletion::from_affected_rows(second, checkpoint('b'), at(220), 1)
+                    .unwrap(),
+            )
             .unwrap();
         let merged = local.merge(&required).unwrap();
         assert!(merged.covers(&local));
@@ -831,10 +905,16 @@ mod tests {
         let intent = intent();
         let target = intent.manifest().members()[0].target();
         let local = intent
-            .record_removed(target, checkpoint('a'), at(210))
+            .record_removed(
+                HistoryExpiryExactDeletion::from_affected_rows(target, checkpoint('a'), at(210), 1)
+                    .unwrap(),
+            )
             .unwrap();
         let contradictory = intent
-            .record_removed(target, checkpoint('b'), at(220))
+            .record_removed(
+                HistoryExpiryExactDeletion::from_affected_rows(target, checkpoint('b'), at(220), 1)
+                    .unwrap(),
+            )
             .unwrap();
         assert!(local.merge(&contradictory).is_err());
     }
@@ -860,7 +940,10 @@ mod tests {
         let original = intent();
         let target = original.manifest().members()[0].target();
         let retained = original
-            .record_removed(target, checkpoint('a'), at(210))
+            .record_removed(
+                HistoryExpiryExactDeletion::from_affected_rows(target, checkpoint('a'), at(210), 1)
+                    .unwrap(),
+            )
             .unwrap()
             .request_cancellation(PrincipalIdentity::generate(), at(220))
             .unwrap();
@@ -875,7 +958,10 @@ mod tests {
         let original = intent();
         let target = original.manifest().members()[0].target();
         let retained = original
-            .record_removed(target, checkpoint('a'), at(210))
+            .record_removed(
+                HistoryExpiryExactDeletion::from_affected_rows(target, checkpoint('a'), at(210), 1)
+                    .unwrap(),
+            )
             .unwrap();
         let mut encoded = serde_json::to_value(retained).unwrap();
         let receipt = encoded["removals"][0].clone();
@@ -888,7 +974,15 @@ mod tests {
         let target = intent.manifest().members()[0].target();
         let local = HistoryExpiryJournal::new(vec![
             intent
-                .record_removed(target, checkpoint('a'), at(210))
+                .record_removed(
+                    HistoryExpiryExactDeletion::from_affected_rows(
+                        target,
+                        checkpoint('a'),
+                        at(210),
+                        1,
+                    )
+                    .unwrap(),
+                )
                 .unwrap(),
         ])
         .unwrap();
@@ -910,7 +1004,15 @@ mod tests {
         let target = intent.manifest().members()[0].target();
         let journal = HistoryExpiryJournal::new(vec![
             intent
-                .record_removed(target, checkpoint('a'), at(210))
+                .record_removed(
+                    HistoryExpiryExactDeletion::from_affected_rows(
+                        target,
+                        checkpoint('a'),
+                        at(210),
+                        1,
+                    )
+                    .unwrap(),
+                )
                 .unwrap(),
         ])
         .unwrap();
@@ -930,7 +1032,10 @@ mod tests {
         let original = intent();
         let target = original.manifest().members()[0].target();
         let original = original
-            .record_removed(target, checkpoint('a'), at(210))
+            .record_removed(
+                HistoryExpiryExactDeletion::from_affected_rows(target, checkpoint('a'), at(210), 1)
+                    .unwrap(),
+            )
             .unwrap();
         let journal = HistoryExpiryJournal::new(vec![original]).unwrap();
         let events = journal

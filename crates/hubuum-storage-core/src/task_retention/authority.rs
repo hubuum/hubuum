@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use hubuum_domain::TaskIdentity;
 
 use super::*;
-use crate::{ApplicationReapplication, DeletionControlCapture};
+use crate::{ApplicationReapplication, DeletionControlCapture, HistoryExposureProtection};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(try_from = "StateInput")]
@@ -732,6 +732,7 @@ impl ControlCheckpointCapture {
 pub struct ApplicationExposureProof {
     deletion: ApplicationReapplication,
     tasks: Option<TaskControlReapplication>,
+    history: Option<HistoryExposureProtection>,
 }
 impl ApplicationExposureProof {
     pub fn new(
@@ -746,7 +747,26 @@ impl ApplicationExposureProof {
                 "Exposure proofs refer to different application incarnations",
             ));
         }
-        Ok(Self { deletion, tasks })
+        Ok(Self {
+            deletion,
+            tasks,
+            history: None,
+        })
+    }
+    pub fn with_history_protection(
+        mut self,
+        history: HistoryExposureProtection,
+    ) -> Result<Self, StorageValidationError> {
+        if history.fence() != self.deletion.fence() {
+            return Err(invalid(
+                "History exposure proof refers to a different application fence",
+            ));
+        }
+        self.history = Some(history);
+        Ok(self)
+    }
+    pub const fn history(&self) -> Option<&HistoryExposureProtection> {
+        self.history.as_ref()
     }
     pub const fn deletion(&self) -> &ApplicationReapplication {
         &self.deletion

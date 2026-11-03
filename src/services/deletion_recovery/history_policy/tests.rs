@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use chrono::{Duration, Utc};
 use hubuum_storage_core::{
-    HistoryLifecycleAuthority, HistoryLifecycleStorage, HistoryPolicyApplication,
-    HistoryPolicyBinding, HistoryPolicyKey, HistoryPolicyRevision, HistoryPolicyScope,
-    StorageIdentityHistoryKind,
+    HistoryExpiryExactDeletion, HistoryLifecycleAuthority, HistoryLifecycleStorage,
+    HistoryPolicyApplication, HistoryPolicyBinding, HistoryPolicyKey, HistoryPolicyRevision,
+    HistoryPolicyScope, StorageIdentityHistoryKind,
 };
 use uuid::Uuid;
 
@@ -462,9 +462,13 @@ fn online_expiry_metadata_matches_the_reviewed_audit_schema() {
         .request_cancellation(principal, at(210))
         .unwrap()
         .record_removed(
-            target,
-            DeletionCheckpointIdentity::new("a".repeat(64)).unwrap(),
-            at(220),
+            HistoryExpiryExactDeletion::from_affected_rows(
+                target,
+                DeletionCheckpointIdentity::new("a".repeat(64)).unwrap(),
+                at(220),
+                1,
+            )
+            .unwrap(),
         )
         .unwrap();
     let journal = journal.retain(intent).unwrap();
