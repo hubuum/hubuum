@@ -6702,6 +6702,60 @@
       "dynamic_prefix": false
     },
     {
+      "name": "HUBUUM_TEST_S3_CA",
+      "owner": "operations",
+      "exposure": "sensitive_metadata",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TEST_S3_CONTROL",
+      "owner": "operations",
+      "exposure": "sensitive_metadata",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TEST_S3_ENDPOINT",
+      "owner": "operations",
+      "exposure": "sensitive_metadata",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
       "name": "HUBUUM_TLS_BACKEND",
       "owner": "server",
       "exposure": "public",

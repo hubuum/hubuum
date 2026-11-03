@@ -4,6 +4,8 @@ Exports and backups use bounded producers, PostgreSQL chunks, independent
 read-back, and atomic task publication. This implements
 [#508](https://github.com/hubuum/hubuum/issues/508) using the identities and
 lifecycle from [#503](https://github.com/hubuum/hubuum/issues/503).
+The optional [S3 byte-store capability](artifact_s3.md) has a separate delivery
+boundary and qualification guide; production task routing remains PostgreSQL.
 The [resource contracts](performance/lifecycle_budgets.md) distinguish acceptance
 profiles from production configuration.
 
