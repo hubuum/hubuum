@@ -268,10 +268,15 @@ impl RelationTables {
         // Two tuple bounds keep the endpoint in the ordering key. A scalar
         // endpoint equality lets PostgreSQL choose the global history-ID index
         // and filter arbitrarily many rows belonging to other endpoints.
+        // Keep the retained-visibility gate before LIMIT without folding its
+        // correlated selectivity into the ordered candidate access path. The
+        // OFFSET boundary prevents flattening into a broad validity bitmap scan.
         let branch = |endpoint| {
             format!(
             "(SELECT id, {from} AS from_id, {to} AS to_id, {projection}, created_at, updated_at, {metadata}
-             FROM {table} WHERE {validity} AND ({visibility})
+             FROM {table}
+             CROSS JOIN LATERAL (SELECT 1 WHERE ({visibility}) OFFSET 0) history_gate
+             WHERE {validity}
              AND ({endpoint}, history_id) {lower_comparison} ($1, {lower})
              AND ({endpoint}, history_id) {upper_comparison} ($1, {upper})
              ORDER BY {endpoint} {order}, history_id {order} LIMIT $4)",
