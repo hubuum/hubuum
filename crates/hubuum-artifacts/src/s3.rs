@@ -388,14 +388,10 @@ impl S3ArtifactStore {
     async fn upload(&self, identity: &ArtifactIdentity, bytes: &[u8]) -> ArtifactResult<Block> {
         let upload_identity = Uuid::new_v4().to_string();
         let key = format!("{}{}", self.data_prefix(identity), upload_identity);
+        let intent = format!("{}{}", self.intent_prefix(identity), upload_identity);
         // Intent precedes provider I/O, including a possibly lost create reply.
         // Exact-key listing also works on MinIO's restricted multipart API.
-        self.put_control(
-            &format!("{}{}", self.intent_prefix(identity), upload_identity),
-            Vec::new(),
-            None,
-        )
-        .await?;
+        self.put_control(&intent, Vec::new(), None).await?;
         let started = self
             .client
             .create_multipart_upload()
@@ -406,6 +402,14 @@ impl S3ArtifactStore {
             .map_err(boundary)?;
         let upload = started.upload_id().ok_or_else(conflict)?;
         let result = async {
+            if upload.is_empty() || upload.len() > 4096 {
+                return Err(ArtifactError::Backend(
+                    "S3 upload identity exceeds supported bounds".into(),
+                ));
+            }
+            let (_, etag) = self.get_bytes(&intent, None, 4096).await?;
+            self.put_control(&intent, upload.as_bytes().to_vec(), Some(&etag))
+                .await?;
             // Each object is one protocol block. A single final multipart part
             // may be smaller than S3's 5 MiB non-final minimum.
             let part = self
@@ -495,6 +499,51 @@ impl S3ArtifactStore {
         }
     }
 
+    async fn abort_upload(&self, key: &str, upload: &str) -> ArtifactResult<bool> {
+        let removed = match self
+            .client
+            .abort_multipart_upload()
+            .bucket(&self.config.bucket)
+            .key(key)
+            .upload_id(upload)
+            .send()
+            .await
+        {
+            Ok(_) => true,
+            Err(error)
+                if error.as_service_error().and_then(|error| error.code())
+                    == Some("NoSuchUpload") =>
+            {
+                false
+            }
+            Err(error) => return Err(boundary(error)),
+        };
+        match self
+            .client
+            .list_parts()
+            .bucket(&self.config.bucket)
+            .key(key)
+            .upload_id(upload)
+            .max_parts(1)
+            .send()
+            .await
+        {
+            Ok(parts) if parts.parts().is_empty() && parts.is_truncated() != Some(true) => {
+                Ok(removed)
+            }
+            Err(error)
+                if error.as_service_error().and_then(|error| error.code())
+                    == Some("NoSuchUpload") =>
+            {
+                Ok(removed)
+            }
+            Err(error) => Err(boundary(error)),
+            Ok(_) => Err(ArtifactError::Backend(
+                "S3 multipart parts remain after abort; obligation retained".into(),
+            )),
+        }
+    }
+
     async fn reconcile(&self, state: &mut State, etag: &str) -> ArtifactResult<u32> {
         if matches!(state.phase, Phase::Staging | Phase::Sealed) {
             return Ok(0);
@@ -526,36 +575,36 @@ impl S3ArtifactStore {
             let suffix = intent.strip_prefix(&intent_prefix).ok_or_else(conflict)?;
             Uuid::parse_str(suffix).map_err(|_| conflict())?;
             let expected_key = format!("{prefix}{suffix}");
+            let (known_upload, _) = self.get_bytes(intent, None, 4096).await?;
+            let known_upload = String::from_utf8(known_upload).map_err(|_| conflict())?;
+            let mut ids = Vec::new();
+            if !known_upload.is_empty() {
+                ids.push(known_upload);
+            }
             let uploads = self
                 .client
                 .list_multipart_uploads()
                 .bucket(&self.config.bucket)
                 .prefix(&expected_key)
-                .max_uploads(16)
+                .max_uploads(16 - ids.len() as i32)
                 .send()
                 .await
                 .map_err(boundary)?;
             for upload in uploads.uploads() {
-                let key = upload
+                upload
                     .key()
                     .filter(|key| *key == expected_key)
                     .ok_or_else(conflict)?;
                 let id = upload.upload_id().ok_or_else(conflict)?;
-                let result = self
-                    .client
-                    .abort_multipart_upload()
-                    .bucket(&self.config.bucket)
-                    .key(key)
-                    .upload_id(id)
-                    .send()
-                    .await;
-                if let Err(error) = result
-                    && error.as_service_error().and_then(|error| error.code())
-                        != Some("NoSuchUpload")
-                {
-                    return Err(boundary(error));
+                if id.is_empty() || id.len() > 4096 {
+                    return Err(conflict());
                 }
-                removed += 1;
+                if !ids.iter().any(|known| known == id) {
+                    ids.push(id.to_owned());
+                }
+            }
+            for id in ids {
+                removed += u32::from(self.abort_upload(&expected_key, &id).await?);
             }
             if uploads.is_truncated() != Some(true) {
                 state.cleanup_after = Some(intent.to_owned());

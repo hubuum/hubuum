@@ -59,7 +59,7 @@ complete namespace and all its control versions while it is in use.
 | `attempts/<attempt UUID>` | Permanent canonical identity ownership record. |
 | `versions/<object-version UUID>` | Permanent canonical identity ownership record. |
 | `states/<artifact UUID>` | Current JSON control record, changed only with conditional ETag PUT. |
-| `intents/<artifact>/<attempt>/<object-version>/<random UUID>` | Permanent empty upload-key intent, written before multipart initiation. |
+| `intents/<artifact>/<attempt>/<object-version>/<random UUID>` | Permanent upload intent: empty before initiation, then the bounded provider upload ID. |
 | `data/<artifact>/<attempt>/<object-version>/<random UUID>` | One immutable protocol block at an exact S3 version. |
 
 `hubuum-artifacts-v1/names/<name>` permanently binds a name to its destination
@@ -92,6 +92,10 @@ Each upload's durable intent identifies its exact data key even if initiation's
 response is lost. The pinned MinIO implementation supports multipart listing for
 an exact object key, rather than general prefix discovery; recovery uses these
 intents instead of assuming prefix discovery is complete.
+Returned upload IDs (at most 4 KiB) are persisted before sending parts. Cleanup
+retries those IDs even when a provider omits them from its multipart listing,
+and verifies `ListParts` is empty or the upload no longer exists after abort.
+Remaining parts or an ambiguous verification failure keep the cursor pending.
 
 The shared `verify`/`verify_and_publish` protocol independently reads every exact
 version, checks manifest identity and ordered bounded blocks, full-stream digest

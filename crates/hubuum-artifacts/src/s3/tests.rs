@@ -468,9 +468,12 @@ async fn live_corrupt_uploaded_bytes_cannot_create_a_verification_proof() {
     ));
 }
 
+#[rstest]
+#[case(false)]
+#[case(true)]
 #[tokio::test]
 #[ignore = "requires pinned TLS S3 fixture"]
-async fn live_cleanup_aborts_interrupted_multipart_uploads() {
+async fn live_cleanup_aborts_interrupted_multipart_uploads(#[case] persist_upload_id: bool) {
     let store = fixture().await;
     let identity = ArtifactIdentity::new(store.destination().id());
     store.stage(&identity, limits()).await.unwrap();
@@ -492,6 +495,18 @@ async fn live_cleanup_aborts_interrupted_multipart_uploads() {
         .send()
         .await
         .unwrap();
+    if persist_upload_id {
+        let intent = format!("{}{}", store.intent_prefix(&identity), upload_identity);
+        let (_, etag) = store.get_bytes(&intent, None, 4096).await.unwrap();
+        store
+            .put_control(
+                &intent,
+                upload.upload_id().unwrap().as_bytes().to_vec(),
+                Some(&etag),
+            )
+            .await
+            .unwrap();
+    }
     store
         .client
         .upload_part()
