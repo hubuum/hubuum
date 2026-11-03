@@ -50,7 +50,7 @@ CREATE TABLE hubuum_control.history_archive_captures (
     CHECK((material->>'id')::uuid=id AND (material->>'principal')::uuid=principal),
     CHECK((material->>'reserved_read_bytes')::bigint BETWEEN 0 AND 67108864)
 );
-CREATE INDEX history_archive_capture_expiry ON hubuum_control.history_archive_captures(expires_at,id);
+CREATE INDEX history_archive_capture_expiry ON hubuum_control.history_archive_captures(expires_at,id); -- hubuum-compat: bounded-transactional-index
 REVOKE ALL ON hubuum_control.history_archive_catalogs, hubuum_control.history_archive_captures,
     hubuum_control.history_archive_capture_capacity FROM PUBLIC;
 

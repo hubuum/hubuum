@@ -64,7 +64,10 @@ impl RestoreContractFixture {
                 self.collection_id,
                 crate::storage::StorageCollectionUpdate::new(
                     None,
-                    Some("closed archive source".into()),
+                    Some(format!(
+                        "closed archive source {}",
+                        self.mutation.fetch_add(1, Ordering::SeqCst)
+                    )),
                 ),
                 &EventContext::system(),
             )

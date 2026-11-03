@@ -7,11 +7,13 @@ use hubuum_domain::PrincipalIdentity;
 use hubuum_storage_core::artifacts::{ArtifactIdentity, ArtifactStore, Destination, DestinationId};
 
 #[rstest]
-#[case::catalog(false)]
-#[case::old_input(true)]
+#[case::catalog(false, false)]
+#[case::old_input(true, false)]
+#[case::older_open_hot(false, true)]
 #[tokio::test]
 async fn logical_restore_preserves_catalog_and_invalidates_old_captures(
     #[case] old_input: bool,
+    #[case] older_open_hot: bool,
     #[values(StorageBackendKind::Postgres, StorageBackendKind::Memory)] kind: StorageBackendKind,
 ) {
     super::task_capacity::with_fixture(kind, async |fixture| {
@@ -21,7 +23,7 @@ async fn logical_restore_preserves_catalog_and_invalidates_old_captures(
             .await
             .unwrap();
         let collection = class.collection_id();
-        let identity = storage
+        let mut identity = storage
             .resolve_logical_identity(StorageIdentityTarget::Resource {
                 kind: StorageIdentityResourceKind::Collection,
                 id: collection.into(),
@@ -44,8 +46,26 @@ async fn logical_restore_preserves_catalog_and_invalidates_old_captures(
             StorageIdentitySubject::Principal { identity } => identity.known_identity().unwrap(),
             _ => panic!("principal evidence"),
         };
+        let original = source;
         fixture.close_collection_history().await.unwrap();
-        let source = fixture.capture(true).await.unwrap();
+        if older_open_hot {
+            identity = storage
+                .resolve_logical_identity(StorageIdentityTarget::Resource {
+                    kind: StorageIdentityResourceKind::Collection,
+                    id: collection.into(),
+                })
+                .await
+                .unwrap()
+                .subject()
+                .and_then(StorageIdentitySubject::record_identity)
+                .unwrap();
+            fixture.close_collection_history().await.unwrap();
+        }
+        let source = if older_open_hot {
+            original
+        } else {
+            fixture.capture(true).await.unwrap()
+        };
         let registration = storage.register_runtime().await.unwrap();
         let permit = storage
             .capture_application_execution(Some(registration.owner()))
@@ -73,7 +93,11 @@ async fn logical_restore_preserves_catalog_and_invalidates_old_captures(
             let row = captured
                 .hot()
                 .ok_or_else(|| StorageError::not_found("Closed fixture version unavailable"))?;
-            let destination = Destination::new(DestinationId::generate(), "restore-history")?;
+            let destination_id = DestinationId::generate();
+            let destination = Destination::new(
+                destination_id,
+                format!("restore-history-{}", String::from(destination_id)),
+            )?;
             storage.register_destination(&destination).await?;
             let scope = SegmentScope::new(
                 StorageBackupHistorySection::CollectionHistory,
@@ -119,11 +143,43 @@ async fn logical_restore_preserves_catalog_and_invalidates_old_captures(
         let catalog = storage
             .history_archive_catalog(identity.resource(), &new_permit)
             .await;
+        let restored_capture = if older_open_hot {
+            let selection = HistoryArchiveSelection::new(
+                StorageBackupHistorySection::CollectionHistory,
+                identity.resource(),
+                HistoryArchivePoint::AsOf {
+                    at: captured.hot().unwrap().valid_from(),
+                },
+            );
+            Some(
+                storage
+                    .capture_history_archive(
+                        HistoryArchiveCaptureRequest::new(
+                            principal,
+                            selection,
+                            published.generation(),
+                            Utc::now() + TimeDelta::hours(1),
+                        ),
+                        &new_permit,
+                    )
+                    .await,
+            )
+        } else {
+            None
+        };
         let old = storage
             .history_archive_capture(captured.id(), principal, &new_permit)
             .await;
         storage.unregister_runtime(new_registration).await.unwrap();
-        if old_input {
+        if older_open_hot {
+            let restored = restored_capture.unwrap().unwrap();
+            assert_eq!(restored.selection().resource(), identity.resource());
+            assert_eq!(restored.generation(), published.generation());
+            assert_eq!(
+                restored.coverage(Utc::now()),
+                HistoryArchiveCoverageState::Unavailable
+            );
+        } else if old_input {
             assert!(old.is_err());
         } else {
             assert_eq!(catalog.unwrap(), published);

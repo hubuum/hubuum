@@ -416,7 +416,10 @@ impl RetainedHistorySegment {
                 "History index omits record bytes".into(),
             ));
         }
-        validate_entries(&entries)?;
+        validate_entries(&entries).map_err(|error| match error {
+            ArtifactError::Invalid(message) => ArtifactError::Corrupt(message),
+            other => other,
+        })?;
         let mut segment = Self {
             manifest,
             scope,

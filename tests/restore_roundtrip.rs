@@ -26,6 +26,7 @@ use hubuum::schema::{
     system_maintenance, tasks,
 };
 use hubuum::storage::with_mutation_provenance;
+use hubuum::test_support::RESTORE_TEST_LOCK;
 use hubuum::test_support::capture_backup_document;
 use hubuum::test_support::{create_audit_event, postgres_test_pool_with_timeout};
 use hubuum::tests::TestScope;
@@ -34,13 +35,9 @@ use hubuum_storage_core::{RestoreStorage, StorageBackupBudget, StorageRestoreArt
 use hubuum_storage_postgres::diesel_async_prelude::*;
 use hubuum_storage_postgres::{PostgresStorage, with_connection, with_transaction};
 use rstest::rstest;
-use tokio::sync::Mutex;
 use tokio::time::timeout;
 use tracing::instrument::WithSubscriber;
 use uuid::Uuid;
-
-// These tests replace the whole runner-owned database, so they must not overlap.
-static RESTORE_TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
 fn database_url() -> String {
     std::env::var("HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL")

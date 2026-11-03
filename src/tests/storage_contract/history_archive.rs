@@ -6,16 +6,61 @@ use crate::services::archive::{
     HistoryArchiveAdmission, HistoryArchiveQuery, HistoryArchiveRequest,
 };
 use crate::services::history::segments::{
-    HistorySegment, SegmentRecord, SegmentScope, VersionInterval,
+    HistorySegment, RetainedHistorySegment, SegmentRecord, SegmentScope, VersionInterval,
 };
 use crate::storage::storage_handle;
 use chrono::{Duration as TimeDelta, Utc};
-use hubuum_artifacts::{ArtifactIdentity, ArtifactReference, Destination, DestinationId};
+use hubuum_artifacts::{
+    ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactReference, ArtifactWriter,
+    Destination, DestinationId,
+};
+use hubuum_budget::ByteLimit;
 use hubuum_domain::{PrincipalIdentity, ResourceIdentity, VersionIdentity};
 use hubuum_storage_core::*;
 use rstest::rstest;
 use serde_json::json;
 use std::panic::{AssertUnwindSafe, resume_unwind};
+
+// Deliberately oversized rows must never enter the shared application database:
+// unrelated full-backup contracts enforce a smaller per-row limit. Cargo runs
+// integration binaries after this library binary; only these two library cases
+// use the runner's separately provisioned restore database.
+#[cfg(feature = "integration-test-support")]
+async fn with_overflow_backend(test: impl for<'a> AsyncFn(&'a mut TestContext)) {
+    let _guard = crate::test_support::RESTORE_TEST_LOCK.lock().await;
+    for kind in [StorageBackendKind::Memory, StorageBackendKind::Postgres] {
+        let owner_url = std::env::var("HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL")
+            .expect("runner-provisioned isolated restore authority");
+        let owner_pool = crate::test_support::postgres_test_pool_with_timeout(
+            &owner_url,
+            8,
+            crate::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS,
+        );
+        let fixture = crate::test_support::RestoreContractFixture::new(kind, owner_pool)
+            .await
+            .unwrap();
+        let backend = match kind {
+            StorageBackendKind::Memory => fixture.storage().clone(),
+            StorageBackendKind::Postgres => {
+                let runtime_url = std::env::var("HUBUUM_RESTORE_TEST_DATABASE_URL")
+                    .expect("runner-provisioned isolated runtime authority");
+                let pool = crate::test_support::postgres_test_pool_with_timeout(
+                    &runtime_url,
+                    8,
+                    crate::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS,
+                );
+                crate::storage::StorageHandle::postgres(pool)
+            }
+        };
+        let result = AssertUnwindSafe(TestContext::run(backend, async |ctx| test(ctx).await))
+            .catch_unwind()
+            .await;
+        fixture.restore_original().await.unwrap();
+        if let Err(panic) = result {
+            resume_unwind(panic);
+        }
+    }
+}
 
 struct TestContext {
     storage: StorageHandle,
@@ -180,8 +225,12 @@ impl TestContext {
         dependencies: Vec<VersionIdentity>,
     ) -> HistoryArchiveDescriptor {
         let store = self.storage.artifact_store();
-        let destination =
-            Destination::new(DestinationId::generate(), "history-archive-test").unwrap();
+        let destination_id = DestinationId::generate();
+        let destination = Destination::new(
+            destination_id,
+            format!("history-archive-{}", String::from(destination_id)),
+        )
+        .unwrap();
         store.register_destination(&destination).await.unwrap();
         let scope = SegmentScope::new(
             StorageBackupHistorySection::CollectionHistory,
@@ -218,6 +267,112 @@ impl TestContext {
         let reference = store.publish(segment.proof()).await.unwrap();
         HistoryArchiveDescriptor::new(row, dependencies, 1, reference).unwrap()
     }
+    async fn malformed_descriptor(
+        &self,
+        row: &HistoryArchiveRow,
+        overlap: bool,
+    ) -> HistoryArchiveDescriptor {
+        let store = self.storage.artifact_store();
+        let destination_id = DestinationId::generate();
+        let destination = Destination::new(
+            destination_id,
+            format!("malformed-index-{}", String::from(destination_id)),
+        )
+        .unwrap();
+        store.register_destination(&destination).await.unwrap();
+        let scope = SegmentScope::new(
+            StorageBackupHistorySection::CollectionHistory,
+            self.resource,
+        );
+        let end = row.valid_to().unwrap();
+        let records = vec![
+            SegmentRecord::new(
+                scope.clone(),
+                VersionInterval::new(
+                    self.resource,
+                    row.identity().version(),
+                    row.valid_from(),
+                    end,
+                )
+                .unwrap(),
+                row.payload().clone(),
+            ),
+            SegmentRecord::new(
+                scope.clone(),
+                VersionInterval::new(
+                    self.resource,
+                    VersionIdentity::generate(),
+                    end,
+                    end + TimeDelta::seconds(1),
+                )
+                .unwrap(),
+                row.payload().clone(),
+            ),
+        ];
+        let segment = HistorySegment::stage(
+            store.as_ref(),
+            ArtifactIdentity::new(destination.id()),
+            scope,
+            records,
+        )
+        .await
+        .unwrap();
+        let manifest = segment.proof().manifest();
+        // Only this tiny synthetic fixture is materialized, never production data.
+        assert!(manifest.byte_size() < 64 * 1024);
+        let mut bytes = Vec::new();
+        for ordinal in 0..manifest.block_count() {
+            bytes.extend_from_slice(
+                &store
+                    .block(manifest.identity(), ordinal)
+                    .await
+                    .unwrap()
+                    .unwrap(),
+            );
+        }
+        store.abort(manifest.identity()).await.unwrap();
+        let footer = bytes.len() - 9;
+        let index_length =
+            u32::from_le_bytes(bytes[footer..footer + 4].try_into().unwrap()) as usize;
+        let index_start = footer - index_length;
+        let mut index: serde_json::Value =
+            serde_json::from_slice(&bytes[index_start..footer]).unwrap();
+        let field = if overlap { "valid_from" } else { "version" };
+        let replacement = index[0]["interval"][field].clone();
+        index[1]["interval"][field] = replacement;
+        let index = serde_json::to_vec(&index).unwrap();
+        bytes.truncate(index_start);
+        bytes.extend_from_slice(&index);
+        bytes.extend_from_slice(&(index.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(b"HUBI\x01");
+        let limits = ArtifactLimits::builder()
+            .block_bytes(512 * 1024)
+            .build()
+            .unwrap();
+        let mut writer = ArtifactWriter::new(
+            store.as_ref(),
+            ArtifactIdentity::new(destination.id()),
+            limits,
+        )
+        .await
+        .unwrap();
+        writer.write(&bytes).await.unwrap();
+        let reference = writer.finish().await.unwrap();
+        let malformed = RetainedHistorySegment::open(
+            store.as_ref(),
+            &reference,
+            &mut ByteLimit::new(16 * 1024 * 1024).start(),
+        )
+        .await;
+        let reason = if overlap {
+            "Overlapping history validity intervals"
+        } else {
+            "Duplicate history version identity"
+        };
+        assert!(matches!(malformed,Err(ArtifactError::Corrupt(message)) if message==reason));
+        HistoryArchiveDescriptor::new(row, vec![], 1, reference).unwrap()
+    }
+
     async fn publish(&self, descriptor: HistoryArchiveDescriptor) -> HistoryArchiveCatalog {
         let catalog = self
             .storage
@@ -651,39 +806,141 @@ async fn unsupported_family_is_not_complete_empty() {
     }
 }
 
+#[cfg(feature = "integration-test-support")]
 #[actix_web::test]
 async fn capture_overflow_has_a_typed_bounded_admission_outcome() {
+    with_overflow_backend(async |ctx| {
+        ctx.storage
+            .collection_store()
+            .update_collection(
+                ctx.fixture.collection.id(),
+                StorageCollectionUpdate::new(
+                    None,
+                    Some("\n".repeat(HISTORY_ARCHIVE_ROW_BYTES / 2)),
+                ),
+                &EventContext::system(),
+            )
+            .await
+            .unwrap()
+            .into_value();
+        let result = HistoryArchiveQuery::capture(
+            &ctx.context,
+            &ctx.subject,
+            None,
+            HistoryArchiveRequest::collection(
+                ctx.fixture.collection.id(),
+                HistoryArchivePoint::AsOf { at: Utc::now() },
+                Utc::now() + TimeDelta::hours(1),
+            ),
+        )
+        .await
+        .unwrap();
+        let HistoryArchiveAdmission::Captured(query) = result else {
+            panic!("bounded metadata capture")
+        };
+        let result = query
+            .execute(&ctx.context, &ctx.subject, None)
+            .await
+            .unwrap();
+        let view = result
+            .access(&ctx.context, &ctx.subject, None)
+            .await
+            .unwrap();
+        assert_eq!(view.coverage(), HistoryArchiveCoverageState::BudgetLimited);
+        assert!(view.row().is_none());
+    })
+    .await;
+}
+
+#[cfg(feature = "integration-test-support")]
+#[actix_web::test]
+async fn overflow_coverage_requires_historical_snapshot_authorization() {
+    with_overflow_backend(async |ctx| {
+        ctx.storage
+            .collection_store()
+            .update_collection(
+                ctx.fixture.collection.id(),
+                StorageCollectionUpdate::new(
+                    None,
+                    Some("\n".repeat(HISTORY_ARCHIVE_ROW_BYTES / 2)),
+                ),
+                &EventContext::system(),
+            )
+            .await
+            .unwrap()
+            .into_value();
+        let identity = ctx
+            .storage
+            .resolve_logical_identity(StorageIdentityTarget::Resource {
+                kind: StorageIdentityResourceKind::Collection,
+                id: ctx.fixture.collection.id().into(),
+            })
+            .await
+            .unwrap()
+            .subject()
+            .and_then(StorageIdentitySubject::record_identity)
+            .unwrap();
+        let name = prefix("visible_current_name");
+        ctx.storage
+            .collection_store()
+            .update_collection(
+                ctx.fixture.collection.id(),
+                StorageCollectionUpdate::new(
+                    Some(name.clone()),
+                    Some("small current payload".into()),
+                ),
+                &EventContext::system(),
+            )
+            .await
+            .unwrap()
+            .into_value();
+        let policy = Arc::new(MockTreetopBackend::new());
+        policy.add_rule(MockAllowRule {
+            group_id: ctx.fixture.owned_group.as_ref().unwrap().id().id(),
+            action: crate::models::Permissions::ReadCollection,
+            resource_kind: ResourceKind::Collection,
+            resource_id: None,
+            attrs: ResourceFields {
+                collection_id: Some(ctx.fixture.collection.id().id()),
+                name: Some(name),
+                ..Default::default()
+            },
+        });
+        let context = AppContext::new(storage_handle(&ctx.context), policy);
+        let result = HistoryArchiveQuery::capture(
+            &context,
+            &ctx.subject,
+            None,
+            HistoryArchiveRequest::collection(
+                ctx.fixture.collection.id(),
+                HistoryArchivePoint::Exact {
+                    version: identity.version(),
+                },
+                Utc::now() + TimeDelta::hours(1),
+            ),
+        )
+        .await;
+        assert!(result.is_err());
+    })
+    .await;
+}
+
+#[rstest]
+#[case::duplicate_version(false)]
+#[case::overlapping_intervals(true)]
+#[actix_web::test]
+async fn published_malformed_indexes_have_corrupt_coverage(#[case] overlap: bool) {
     let _permit = postgres_permit().await;
     for backend in available_backends() {
         TestContext::run(backend, async |ctx| {
-            ctx.storage
-                .collection_store()
-                .update_collection(
-                    ctx.fixture.collection.id(),
-                    StorageCollectionUpdate::new(
-                        None,
-                        Some("\n".repeat(HISTORY_ARCHIVE_ROW_BYTES / 2)),
-                    ),
-                    &EventContext::system(),
-                )
-                .await
-                .unwrap()
-                .into_value();
-            let result = HistoryArchiveQuery::capture(
-                &ctx.context,
-                &ctx.subject,
-                None,
-                HistoryArchiveRequest::collection(
-                    ctx.fixture.collection.id(),
-                    HistoryArchivePoint::AsOf { at: Utc::now() },
-                    Utc::now() + TimeDelta::hours(1),
-                ),
-            )
-            .await
-            .unwrap();
-            let HistoryArchiveAdmission::Captured(query) = result else {
-                panic!("bounded metadata capture")
-            };
+            let row = ctx.closed().await;
+            ctx.publish(ctx.malformed_descriptor(&row, overlap).await)
+                .await;
+            let query = ctx
+                .query(HistoryArchivePoint::Exact {
+                    version: row.identity().version(),
+                })
+                .await;
             let result = query
                 .execute(&ctx.context, &ctx.subject, None)
                 .await
@@ -692,83 +949,8 @@ async fn capture_overflow_has_a_typed_bounded_admission_outcome() {
                 .access(&ctx.context, &ctx.subject, None)
                 .await
                 .unwrap();
-            assert_eq!(view.coverage(), HistoryArchiveCoverageState::BudgetLimited);
+            assert_eq!(view.coverage(), HistoryArchiveCoverageState::Corrupt);
             assert!(view.row().is_none());
-        })
-        .await;
-    }
-}
-
-#[actix_web::test]
-async fn overflow_coverage_requires_historical_snapshot_authorization() {
-    let _permit = postgres_permit().await;
-    for backend in available_backends() {
-        TestContext::run(backend, async |ctx| {
-            ctx.storage
-                .collection_store()
-                .update_collection(
-                    ctx.fixture.collection.id(),
-                    StorageCollectionUpdate::new(
-                        None,
-                        Some("\n".repeat(HISTORY_ARCHIVE_ROW_BYTES / 2)),
-                    ),
-                    &EventContext::system(),
-                )
-                .await
-                .unwrap()
-                .into_value();
-            let identity = ctx
-                .storage
-                .resolve_logical_identity(StorageIdentityTarget::Resource {
-                    kind: StorageIdentityResourceKind::Collection,
-                    id: ctx.fixture.collection.id().into(),
-                })
-                .await
-                .unwrap()
-                .subject()
-                .and_then(StorageIdentitySubject::record_identity)
-                .unwrap();
-            let name = prefix("visible_current_name");
-            ctx.storage
-                .collection_store()
-                .update_collection(
-                    ctx.fixture.collection.id(),
-                    StorageCollectionUpdate::new(
-                        Some(name.clone()),
-                        Some("small current payload".into()),
-                    ),
-                    &EventContext::system(),
-                )
-                .await
-                .unwrap()
-                .into_value();
-            let policy = Arc::new(MockTreetopBackend::new());
-            policy.add_rule(MockAllowRule {
-                group_id: ctx.fixture.owned_group.as_ref().unwrap().id().id(),
-                action: crate::models::Permissions::ReadCollection,
-                resource_kind: ResourceKind::Collection,
-                resource_id: None,
-                attrs: ResourceFields {
-                    collection_id: Some(ctx.fixture.collection.id().id()),
-                    name: Some(name),
-                    ..Default::default()
-                },
-            });
-            let context = AppContext::new(storage_handle(&ctx.context), policy);
-            let result = HistoryArchiveQuery::capture(
-                &context,
-                &ctx.subject,
-                None,
-                HistoryArchiveRequest::collection(
-                    ctx.fixture.collection.id(),
-                    HistoryArchivePoint::Exact {
-                        version: identity.version(),
-                    },
-                    Utc::now() + TimeDelta::hours(1),
-                ),
-            )
-            .await;
-            assert!(result.is_err());
         })
         .await;
     }

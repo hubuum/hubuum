@@ -601,3 +601,8 @@ fn restore_contract_storage(
 
 mod recovery;
 pub use recovery::{RestoreContractFixture, capture_backup_document};
+
+/// Serialize all consumers of the runner-owned destructive restore database.
+/// Cargo runs test binaries sequentially; callers within each binary share this
+/// lock for the complete setup, assertion, and restoration interval.
+pub static RESTORE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

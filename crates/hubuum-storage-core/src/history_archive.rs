@@ -673,16 +673,36 @@ impl HistoryArchiveCapture {
         {
             return Err(invalid("Captured input differs from selection"));
         }
-        let archive = catalog
-            .versions
-            .iter()
-            .find(|v| hot.as_ref().is_some_and(|row| row.identity == v.identity))
+        // Resolve retained coverage from the immutable request, never from a
+        // possibly older hot version supplied by a logical restore.
+        let mut candidates =
+            catalog
+                .versions
+                .iter()
+                .filter(|entry| match request.selection.point {
+                    HistoryArchivePoint::Exact { version } => entry.identity.version() == version,
+                    HistoryArchivePoint::AsOf { at } => {
+                        entry.valid_from <= at && at < entry.valid_to
+                    }
+                });
+        let candidate = candidates.next();
+        let ambiguous = candidates.next().is_some();
+        let missing_primary = candidate.is_some_and(|entry| {
+            hot.as_ref()
+                .is_none_or(|row| row.identity != entry.identity)
+        });
+        let archive = candidate
+            .filter(|_| !ambiguous && !missing_primary)
             .cloned();
         let coverage = if request.selection.family != StorageBackupHistorySection::CollectionHistory
         {
             HistoryArchiveCoverageState::Unsupported
         } else if source_coverage != HistoryArchiveCoverageState::Complete {
             source_coverage
+        } else if ambiguous {
+            HistoryArchiveCoverageState::Corrupt
+        } else if missing_primary {
+            HistoryArchiveCoverageState::Unavailable
         } else if archive.as_ref().is_some_and(|entry| {
             hot.as_ref()
                 .is_none_or(|row| !entry.matches_row(row).unwrap_or(false))
