@@ -53,6 +53,12 @@ fn merge_memory_execution_scope(
     child: &StorageExecutionScope,
 ) -> StorageExecutionScope {
     let mut merged = StorageExecutionScope::default();
+    if let Some(permit) = parent
+        .api_request_override()
+        .or_else(|| child.api_request_override())
+    {
+        merged = merged.with_api_request(permit.clone());
+    }
     // Once a producer captures authority, nested calls cannot silently refresh
     // it to a newer generation after deletion or application replacement.
     if let Some(permit) = parent

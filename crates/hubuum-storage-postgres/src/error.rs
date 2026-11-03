@@ -5,8 +5,8 @@ use diesel_async::pooled_connection::bb8::RunError as PoolError;
 use hubuum_domain::{JsonSchemaError, JsonSchemaErrorKind, PositiveIdError, ResourceRevision};
 use hubuum_events_core::{AuditDocumentError, EventIdentifierError};
 use hubuum_storage_core::{
-    StorageCandidatePage, StorageCandidatePageLimit, StorageError, StorageErrorKind, StoragePage,
-    StorageValidationError, TaskCapacityRejection,
+    ApiRequestRejection, StorageCandidatePage, StorageCandidatePageLimit, StorageError,
+    StorageErrorKind, StoragePage, StorageValidationError, TaskCapacityRejection,
 };
 use hubuum_task_core::TaskStopReason;
 use tracing::{debug, error};
@@ -25,6 +25,7 @@ pub struct PostgresStorageError {
     message: String,
     current_revision: Option<ResourceRevision>,
     task_capacity: Option<TaskCapacityRejection>,
+    api_request: Option<ApiRequestRejection>,
 }
 
 impl PostgresStorageError {
@@ -53,6 +54,7 @@ impl PostgresStorageError {
             message: message.into(),
             current_revision,
             task_capacity: None,
+            api_request: None,
         }
     }
 
@@ -238,6 +240,11 @@ impl std::error::Error for PostgresStorageError {}
 
 impl From<StorageError> for PostgresStorageError {
     fn from(error: StorageError) -> Self {
+        if let Some(reason) = error.api_request_rejection() {
+            let mut converted = Self::new(error.kind(), reason.as_str(), None);
+            converted.api_request = Some(reason);
+            return converted;
+        }
         let (kind, message, current_revision, task_capacity) = error.into_parts();
         if let Some(reason) = task_capacity {
             let mut converted = Self::new(kind, message, current_revision);
@@ -365,6 +372,9 @@ impl From<DieselError> for PostgresStorageError {
             }
             DieselError::DatabaseError(DatabaseErrorKind::Unknown, ref info) => {
                 let message = info.message();
+                if let Some(reason) = ApiRequestRejection::from_persisted(message) {
+                    return Self::from(StorageError::api_request(reason));
+                }
                 if let Some(reason) = TaskCapacityRejection::from_persisted(message) {
                     return Self::from(StorageError::task_capacity(reason));
                 }
@@ -417,6 +427,9 @@ impl From<DieselError> for PostgresStorageError {
 
 impl From<PostgresStorageError> for StorageError {
     fn from(error: PostgresStorageError) -> Self {
+        if let Some(reason) = error.api_request {
+            return Self::api_request(reason);
+        }
         if let Some(reason) = error.task_capacity {
             return Self::task_capacity(reason);
         }

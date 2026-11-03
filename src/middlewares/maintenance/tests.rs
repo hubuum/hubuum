@@ -19,6 +19,27 @@ use crate::storage::StorageHandle;
 
 use super::*;
 
+#[test]
+fn supervised_work_retains_the_http_barrier_after_wait_is_dropped() {
+    let (state, guard) = HttpWorkGuard::isolated();
+    let request = actix_web::test::TestRequest::default().to_srv_request();
+    let waiting_guard = guard.transferable(&request);
+    let supervised = take_supervised_http_work(&request).unwrap();
+    drop(waiting_guard);
+    drop(request);
+    assert!(!state.is_settled());
+    supervised.complete();
+    assert!(state.is_settled());
+}
+
+#[test]
+fn an_unclaimed_transfer_completes_with_the_response() {
+    let (state, guard) = HttpWorkGuard::isolated();
+    let request = actix_web::test::TestRequest::default().to_srv_request();
+    guard.transferable(&request).complete();
+    assert!(state.is_settled());
+}
+
 fn response() -> ServiceResponse<BoxBody> {
     actix_test::TestRequest::default().to_srv_response(HttpResponse::Ok().body("response"))
 }

@@ -27,7 +27,7 @@ and semantics. Group keys such as `domain_lifecycle` and `catalog_queries` are
 not operation-trait keys or metric labels. `hubuum_storage_core::capabilities`
 exposes broader discovery modules for resources, identity, queries, workflows,
 events, and operational capabilities;
-the 23 detailed groups below are not a one-to-one module map. Neither form
+the detailed groups below are not a one-to-one module map. Neither form
 represents separately versioned or negotiable runtime features.
 
 Each discovery module reexports one method-free family bound with the matching
@@ -71,6 +71,7 @@ StorageBackend
 |   |-- computed-field lifecycle
 |   |-- task queue
 |   |-- task capacity
+|   |-- synchronous request admission
 |   |-- task execution
 |   |-- backup snapshots
 |   |-- restores
@@ -418,6 +419,23 @@ admission resumes. Unknown identity or incomplete reconciliation fails closed.
 The application supplies administrator authorization and common observations;
 adapter errors retain a bounded capacity rejection reason. See
 [task admission](../task_admission.md) for ownership and reconciliation rules.
+
+### `api_request_admission`
+
+Required trait: `ApiRequestAdmissionStorage`.
+
+Owns authoritative revision-bound request policy, atomic deployment/principal
+occupancy and exact-owner settlement. Every physical HTTP attempt is charged
+independently of durable task idempotency. `StorageApiRequestPermit` snapshots
+finite limits and accompanies productive storage execution; nested scopes retain
+the original owner. Settlement fences new work and waits for issued work before
+releasing occupancy. Expired unsettled owners remain charged. Policy reductions
+drain admitted requests; logical restore preserves policy/cumulative charges and
+fences obsolete application incarnations.
+
+This is the partial occupancy/fencing slice of #521. Request-wide H5
+candidate/source-byte accounting and hard-heap acceptance remain required.
+See [expensive request admission](../api_request_admission.md).
 
 ### `task_execution`
 

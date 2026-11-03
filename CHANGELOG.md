@@ -9,6 +9,20 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- **Breaking storage SDK 0.18:** all ten SDK crates advance together. Complete
+  external adapters must implement `ApiRequestAdmissionStorage`, carry the
+  admitted request owner through productive execution scopes, and fence/settle
+  issued work before releasing occupancy. Update exact SDK dependencies together;
+  see `docs/storage_adapter_sdk.md` for the 0.17 to 0.18 upgrade contract.
+
+- Shared admission occupancy for selected expensive authenticated API requests,
+  with principal/deployment ceilings, fenced cancellation settlement, finite
+  ingress/execution/publication allowances and administrator policy revision
+  updates. This is a partial slice of #521; H5 scan/candidate and hard-heap
+  acceptance and automatic crashed-owner reconciliation remain open. Lost owners
+  remain charged until fenced operator recovery. Deploy the admission migration and refresh
+  runtime grants before upgrading. See `docs/api_request_admission.md`.
+
 - Preserve exact offline deletion membership and original lifecycle audit facts
   in independent recovery evidence. Required audit failure prevents the transition
   or completion acknowledgement; unchanged retries retain their original event IDs.

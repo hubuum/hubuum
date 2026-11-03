@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::future::Future;
 use std::pin::Pin;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::task::{Context, Poll};
@@ -9,7 +11,7 @@ use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::http::Method;
 use actix_web::middleware::Next;
 use actix_web::web::{Bytes, Data};
-use actix_web::{Error, ResponseError};
+use actix_web::{Error, HttpMessage, ResponseError};
 
 use crate::config::DEFAULT_METRICS_PATH;
 use crate::config::running::RunningConfig;
@@ -42,8 +44,17 @@ pub(crate) fn http_work_is_settled() -> bool {
 
 /// Cancellation can drop an HTTP future while an issued storage operation is
 /// still resolving. A dropped activity count alone cannot prove offline safety.
-struct HttpWorkGuard {
+pub(super) struct HttpWorkGuard {
     state: Option<Arc<HttpWorkState>>,
+    transfer: Option<Rc<RefCell<Option<HttpWorkGuard>>>>,
+}
+
+#[derive(Clone)]
+struct HttpWorkTransfer(Rc<RefCell<Option<HttpWorkGuard>>>);
+
+pub(super) fn take_supervised_http_work(req: &ServiceRequest) -> Option<HttpWorkGuard> {
+    let transfer = req.extensions().get::<HttpWorkTransfer>().cloned()?;
+    transfer.0.borrow_mut().take()
 }
 
 impl HttpWorkGuard {
@@ -53,10 +64,28 @@ impl HttpWorkGuard {
 
     fn begin_with_state(state: Arc<HttpWorkState>) -> Self {
         state.active.fetch_add(1, Ordering::AcqRel);
-        Self { state: Some(state) }
+        Self {
+            state: Some(state),
+            transfer: None,
+        }
     }
 
-    fn complete(mut self) {
+    fn transferable(self, req: &ServiceRequest) -> Self {
+        let transfer = Rc::new(RefCell::new(Some(self)));
+        req.extensions_mut()
+            .insert(HttpWorkTransfer(transfer.clone()));
+        Self {
+            state: None,
+            transfer: Some(transfer),
+        }
+    }
+
+    pub(super) fn complete(mut self) {
+        if let Some(transfer) = self.transfer.take()
+            && let Some(guard) = transfer.borrow_mut().take()
+        {
+            guard.complete();
+        }
         if let Some(state) = self.state.take() {
             state.active.fetch_sub(1, Ordering::AcqRel);
         }
@@ -250,7 +279,10 @@ async fn reject_with_activity(
             // Health and numeric operational telemetry do not expose resource
             // payloads. Polling them must not prevent the application barrier.
             http_work.complete();
-            HttpWorkGuard { state: None }
+            HttpWorkGuard {
+                state: None,
+                transfer: None,
+            }
         };
         let scope = if requires_admission {
             match work_storage.admit_application_work().await {
@@ -268,6 +300,14 @@ async fn reject_with_activity(
         } else {
             None
         };
+        let http_work =
+            if super::api_request_admission::operation(req.method(), req.match_info().as_str())
+                .is_some()
+            {
+                http_work.transferable(&req)
+            } else {
+                http_work
+            };
         let response = protect_response(activity, http_work, async move {
             // Restore status remains available during restore draining, but must
             // not bypass deletion recovery quarantine.

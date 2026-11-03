@@ -76,6 +76,7 @@ pub(super) fn sanitize_error_for_storage(err: &ApiError) -> String {
 
     match err {
         ApiError::ReauthenticationRequired
+        | ApiError::ApiRequestAdmission(_)
         | ApiError::TaskCapacity(_)
         | ApiError::TaskDetailsExpired(_)
         | ApiError::IdempotencyConflict

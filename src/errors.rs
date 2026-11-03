@@ -17,8 +17,9 @@ use hubuum_events_core::{EventCatalogError, EventIdentifierError};
 
 use crate::models::{TaskDetailsExpiredResponse, TokenPolicyError};
 use crate::observability::metrics;
-use crate::storage::{StorageError, StorageErrorKind};
-use hubuum_storage_core::TaskCapacityRejection;
+use crate::permissions::AppContext;
+use crate::storage::{ExecutionStorage, StorageError, StorageErrorKind};
+use hubuum_storage_core::{ApiRequestRejection, TaskCapacityRejection};
 
 const PUBLIC_INTERNAL_ERROR: &str = "An internal error occurred";
 const PUBLIC_SERVICE_UNAVAILABLE: &str = "Service temporarily unavailable";
@@ -68,6 +69,7 @@ pub fn fatal_error(message: &str, exit_code: i32) -> ! {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub enum ApiError {
+    ApiRequestAdmission(ApiRequestRejection),
     TaskCapacity(TaskCapacityRejection),
     TaskDetailsExpired(TaskDetailsExpiredResponse),
     IdempotencyConflict,
@@ -101,6 +103,7 @@ pub enum ApiError {
 impl ApiError {
     pub fn class(&self) -> &'static str {
         match self {
+            ApiError::ApiRequestAdmission(reason) => reason.as_str(),
             ApiError::TaskCapacity(reason) => reason.as_str(),
             ApiError::TaskDetailsExpired(_) => "task_details_expired",
             ApiError::IdempotencyConflict => "idempotency_key_conflict",
@@ -156,6 +159,12 @@ impl ApiError {
     /// bodies and streaming events.
     pub fn public_message(&self) -> &str {
         match self {
+            ApiError::ApiRequestAdmission(reason) if reason.is_retryable() => {
+                "Expensive request admission is temporarily unavailable; retry after capacity or control state recovers"
+            }
+            ApiError::ApiRequestAdmission(_) => {
+                "The request exceeds its execution or size allowance; reduce the request before retrying"
+            }
             ApiError::TaskDetailsExpired(receipt) => receipt.public_message(),
             ApiError::IdempotencyConflict => {
                 "The idempotency key identifies a different protected request; no new work was created"
@@ -208,6 +217,9 @@ impl ApiError {
 
 impl From<StorageError> for ApiError {
     fn from(error: StorageError) -> Self {
+        if let Some(reason) = error.api_request_rejection() {
+            return Self::ApiRequestAdmission(reason);
+        }
         let (kind, message, current_revision, task_capacity) = error.into_parts();
         if let Some(reason) = task_capacity {
             return Self::TaskCapacity(reason);
@@ -297,6 +309,7 @@ impl fmt::Display for ApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ApiError::TaskStopped(_)
+            | ApiError::ApiRequestAdmission(_)
             | ApiError::TaskCapacity(_)
             | ApiError::TaskDetailsExpired(_)
             | ApiError::IdempotencyConflict
@@ -332,6 +345,9 @@ impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
         metrics::api_error(self.class());
         match self {
+            ApiError::ApiRequestAdmission(reason) => HttpResponse::build(self.status_code())
+                .insert_header(("Cache-Control", "no-store"))
+                .json(json!({"error":"API Request Admission", "reason":reason.as_str(), "retryable":reason.is_retryable(), "message":self.public_message()})),
             ApiError::TaskDetailsExpired(receipt) => HttpResponse::Gone()
                 .insert_header(("Cache-Control", "no-store"))
                 .json(receipt),
@@ -422,6 +438,17 @@ impl ResponseError for ApiError {
 
     fn status_code(&self) -> StatusCode {
         match self {
+            ApiError::ApiRequestAdmission(reason) => match reason {
+                ApiRequestRejection::Deployment | ApiRequestRejection::Principal => {
+                    StatusCode::TOO_MANY_REQUESTS
+                }
+                ApiRequestRejection::InputBytes | ApiRequestRejection::OutputBytes => {
+                    StatusCode::PAYLOAD_TOO_LARGE
+                }
+                ApiRequestRejection::DeadlineExceeded => StatusCode::UNPROCESSABLE_ENTITY,
+                ApiRequestRejection::IdentityUnavailable
+                | ApiRequestRejection::ReconciliationRequired => StatusCode::SERVICE_UNAVAILABLE,
+            },
             ApiError::TaskStopped(_)
             | ApiError::LegacyTaskRequestUnverifiable
             | ApiError::IdempotencyConflict => StatusCode::CONFLICT,
@@ -486,8 +513,22 @@ impl From<ParseIntError> for ApiError {
 
 /// Ensure that json deserialization errors are exported as a bad request and
 /// that the error itself is returned as json.
-pub fn json_error_handler(err: JsonPayloadError, _: &HttpRequest) -> actix_web::Error {
+pub fn json_error_handler(err: JsonPayloadError, req: &HttpRequest) -> actix_web::Error {
     metrics::extraction_failure("json");
+    if matches!(
+        err,
+        JsonPayloadError::Overflow { .. }
+            | JsonPayloadError::OverflowKnownLength { .. }
+            | JsonPayloadError::Payload(actix_web::error::PayloadError::Overflow)
+    ) && AppContext::from_http_request(req).is_ok_and(|context| {
+        context
+            .backend()
+            .current_execution_scope()
+            .api_request_override()
+            .is_some()
+    }) {
+        return ApiError::ApiRequestAdmission(ApiRequestRejection::InputBytes).into();
+    }
     let error_message = format!("Json deserialize error: {err}");
     ApiError::BadRequest(error_message).into()
 }
@@ -530,6 +571,48 @@ impl From<TemplateAliasError> for ApiError {
 mod tests {
     use super::*;
     use crate::operational_contracts::metric_label_value_is_allowed;
+
+    #[rstest::rstest]
+    #[case(ApiRequestRejection::Deployment, StatusCode::TOO_MANY_REQUESTS)]
+    #[case(ApiRequestRejection::Principal, StatusCode::TOO_MANY_REQUESTS)]
+    #[case(ApiRequestRejection::InputBytes, StatusCode::PAYLOAD_TOO_LARGE)]
+    #[case(ApiRequestRejection::OutputBytes, StatusCode::PAYLOAD_TOO_LARGE)]
+    #[case(
+        ApiRequestRejection::DeadlineExceeded,
+        StatusCode::UNPROCESSABLE_ENTITY
+    )]
+    #[case(
+        ApiRequestRejection::IdentityUnavailable,
+        StatusCode::SERVICE_UNAVAILABLE
+    )]
+    #[case(
+        ApiRequestRejection::ReconciliationRequired,
+        StatusCode::SERVICE_UNAVAILABLE
+    )]
+    #[actix_web::test]
+    async fn api_request_admission_errors_have_stable_private_safe_contract(
+        #[case] reason: ApiRequestRejection,
+        #[case] status: StatusCode,
+    ) {
+        let error = ApiError::from(StorageError::api_request(reason));
+        let response = error.error_response();
+        assert_eq!(response.status(), status);
+        assert_eq!(response.headers().get("Cache-Control").unwrap(), "no-store");
+        assert!(!response.headers().contains_key("Retry-After"));
+        let bytes = actix_web::body::to_bytes(response.into_body())
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({"error":"API Request Admission","reason":reason.as_str(),"retryable":reason.is_retryable(),"message":error.public_message()})
+        );
+        assert!(metric_label_value_is_allowed(
+            "hubuum_api_errors_total",
+            "class",
+            reason.as_str()
+        ));
+    }
 
     #[rstest::rstest]
     #[case::changed_request(ApiError::IdempotencyConflict)]

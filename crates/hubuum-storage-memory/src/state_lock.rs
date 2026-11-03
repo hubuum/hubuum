@@ -74,6 +74,13 @@ impl MemoryStateLock {
     }
 
     fn require_application_access(&self, state: &MemoryState) -> Result<(), StorageError> {
+        if let Ok(Some(permit)) =
+            MEMORY_EXECUTION_SCOPE.try_with(|scope| scope.api_request_override().cloned())
+        {
+            state
+                .api_requests
+                .check(&permit, state.application_control.fence().incarnation())?;
+        }
         let permit = MEMORY_EXECUTION_SCOPE
             .try_with(|scope| scope.application_access_override().cloned())
             .ok()

@@ -57,7 +57,12 @@
     "hubuum_task_purge_prepare",
     "hubuum_task_purges_pending",
     "hubuum_task_purge_execute",
-    "hubuum_task_receipt_settlement_pending"
+    "hubuum_task_receipt_settlement_pending",
+    "hubuum_api_request_policy_read",
+    "hubuum_api_request_policy_replace",
+    "hubuum_api_request_admit",
+    "hubuum_api_request_execution",
+    "hubuum_api_request_settle"
   ],
   "runtime_function_policy": "all_security_invoker_plus_allowlisted_security_definer",
   "restore": "isolated_migrator_executor",
