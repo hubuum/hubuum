@@ -124,7 +124,12 @@ async fn get_request_with_headers_and_context(
     for (name, value) in headers {
         request = request.insert_header((name, value));
     }
-    request.send_request(&app).await.map_into_boxed_body()
+    // Shared HTTP helpers also run under plain Tokio tests. Supervised Actix
+    // middleware needs a local task runtime even when no socket server runs.
+    tokio::task::LocalSet::new()
+        .run_until(request.send_request(&app))
+        .await
+        .map_into_boxed_body()
 }
 
 pub async fn get_request(
@@ -180,8 +185,8 @@ where
         req = req.insert_header((name, value));
     }
 
-    req.set_json(&content)
-        .send_request(&app)
+    tokio::task::LocalSet::new()
+        .run_until(req.set_json(&content).send_request(&app))
         .await
         .map_into_boxed_body()
 }
@@ -225,11 +230,14 @@ where
     )
     .await;
 
-    test::TestRequest::post()
-        .insert_header(create_token_header(token))
-        .uri(endpoint)
-        .set_json(&content)
-        .send_request(&app)
+    tokio::task::LocalSet::new()
+        .run_until(
+            test::TestRequest::post()
+                .insert_header(create_token_header(token))
+                .uri(endpoint)
+                .set_json(&content)
+                .send_request(&app),
+        )
         .await
         .map_into_boxed_body()
 }
