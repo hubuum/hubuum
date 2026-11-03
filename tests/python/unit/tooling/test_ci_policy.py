@@ -276,7 +276,8 @@ class PublicationGateTests(unittest.TestCase):
 
         block = job("task-system").split("      - name: Verify task-system evidence\n", 1)[1]
         script = textwrap.dedent(block.split("        run: |\n", 1)[1].split("      - name:", 1)[0])
-        for invalid in (None, "cleanup", "workload", "measurement", "monitor"):
+        for invalid in (None, "cleanup", "workload", "measurement", "monitor",
+                        "api_policy", "api_concurrency", "api_readback", "missing_api_policy"):
             with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory) / "task-system-evidence/run-1"
                 root.mkdir(parents=True)
@@ -285,6 +286,14 @@ class PublicationGateTests(unittest.TestCase):
                     "workload_completed": invalid != "workload", "measurement_valid": invalid != "measurement",
                     "monitor_errors": ["missing process"] if invalid == "monitor" else [],
                 }))
+                (root / "admission.json").write_text(json.dumps({"concurrency": 32}))
+                if invalid != "missing_api_policy":
+                    (root / "api-request-policy.json").write_text(json.dumps({
+                        "verified": invalid != "api_policy",
+                        "declared_concurrency": 31 if invalid == "api_concurrency" else 32,
+                        "committed": {"revision": 1},
+                        "readback": {"revision": 2 if invalid == "api_readback" else 1},
+                    }))
                 result = subprocess.run(["bash", "-euo", "pipefail", "-c", script], cwd=directory,
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode == 0, invalid is None, result.stderr)
