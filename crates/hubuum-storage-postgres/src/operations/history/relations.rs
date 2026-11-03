@@ -89,6 +89,35 @@ struct RelationRow {
     metadata: MetadataRow,
 }
 
+/// A left-joined page always carries the complete as-of gap verdict, including
+/// when the requested cursor has no rows. Missing payload cannot erase the flag.
+#[derive(QueryableByName)]
+struct RelationPageRow {
+    #[diesel(sql_type = Bool)]
+    history_expired: bool,
+    #[diesel(sql_type = Bool)]
+    has_record: bool,
+    #[diesel(embed)]
+    record: Option<RelationRow>,
+}
+
+impl RelationPageRow {
+    fn into_record(self) -> Result<Option<RelationRow>, PostgresStorageError> {
+        if self.history_expired {
+            return Err(PostgresStorageError::not_found(
+                "Historical relation version is expired",
+            ));
+        }
+        if self.has_record != self.record.is_some() {
+            return Err(PostgresStorageError::invalid_persisted_value(
+                "historical relationship page",
+                "partial selected row",
+            ));
+        }
+        Ok(self.record)
+    }
+}
+
 impl RelationRow {
     fn project(self) -> Result<StorageRelationHistoryRecord, PostgresStorageError> {
         let metadata = record_metadata(
@@ -291,6 +320,27 @@ impl RelationTables {
         )
     }
 
+    fn page_with_gap_sql(&self, descending: bool, has_cursor: bool) -> String {
+        format!(
+            "WITH history_expiry_gap AS MATERIALIZED (
+                SELECT EXISTS(SELECT 1 FROM {table}
+                    WHERE ({from}=$1 OR {to}=$1) AND {validity} AND NOT ({visibility})) AS expired
+             )
+             SELECT history_expiry_gap.expired AS history_expired, page.id IS NOT NULL AS has_record, page.*
+             FROM history_expiry_gap
+             LEFT JOIN LATERAL (
+                 SELECT candidate_page.* FROM ({page}) candidate_page
+                 WHERE NOT history_expiry_gap.expired
+             ) page ON TRUE",
+            table = self.edges,
+            from = self.from,
+            to = self.to,
+            validity = VALIDITY,
+            visibility = self.visibility_sql(),
+            page = self.page_sql(descending, has_cursor),
+        )
+    }
+
     fn endpoint_sql(&self) -> String {
         // Seek the latest version first, including tombstones. Checking validity
         // afterward preserves gaps without scanning thousands of older versions.
@@ -336,25 +386,28 @@ pub(crate) async fn list_relation_history(
     runtime.with_read_only_snapshot(async |connection| {
         #[derive(QueryableByName)]
         struct Count { #[diesel(sql_type = BigInt)] count: i64 }
-        if at.is_some() {
-            #[derive(QueryableByName)]
-            struct Expired { #[diesel(sql_type = Bool)] expired: bool }
-            let expired = sql_query(format!("SELECT EXISTS(SELECT 1 FROM {} WHERE ({} = $1 OR {} = $1) AND {VALIDITY} AND NOT ({})) AS expired", tables.edges, tables.from, tables.to, tables.visibility_sql()))
-                .bind::<Integer, _>(root).bind::<Nullable<Timestamptz>, _>(at)
-                .get_result::<Expired>(connection).await?.expired;
-            if expired {
-                return Err(PostgresStorageError::not_found("Historical relation version is expired"));
-            }
-        }
+        let descending = options.sort()[0].descending;
+        let records: Vec<RelationRow> = if at.is_some() {
+            let page = sql_query(tables.page_with_gap_sql(descending,boundary.is_some()))
+                .bind::<Integer,_>(root).bind::<Nullable<Timestamptz>,_>(at)
+                .bind::<Nullable<BigInt>,_>(boundary).bind::<BigInt,_>(limit)
+                .load::<RelationPageRow>(connection).await?;
+            page.into_iter().map(RelationPageRow::into_record)
+                .collect::<Result<Vec<_>,_>>()?.into_iter().flatten().collect()
+        } else {
+            sql_query(tables.page_sql(descending,boundary.is_some()))
+                .bind::<Integer,_>(root).bind::<Nullable<Timestamptz>,_>(at)
+                .bind::<Nullable<BigInt>,_>(boundary).bind::<BigInt,_>(limit)
+                .load::<RelationRow>(connection).await?
+        };
+        let records = records.into_iter().map(RelationRow::project).collect::<Result<Vec<_>,_>>()?;
+        // Decide the complete gap flag before optional COUNT or endpoint work;
+        // the flag and bounded page share one productive snapshot/query.
         let total = if options.include_total() {
             Some(sql_query(format!("SELECT count(*) AS count FROM {} WHERE ({} = $1 OR {} = $1) AND {VALIDITY} AND ({})", tables.edges, tables.from, tables.to, tables.visibility_sql()))
                 .bind::<Integer, _>(root).bind::<Nullable<Timestamptz>, _>(at)
                 .get_result::<Count>(connection).await?.count)
         } else { None };
-        let records = sql_query(tables.page_sql(options.sort()[0].descending, boundary.is_some()))
-            .bind::<Integer, _>(root).bind::<Nullable<Timestamptz>, _>(at)
-            .bind::<Nullable<BigInt>, _>(boundary).bind::<BigInt, _>(limit)
-            .load::<RelationRow>(connection).await?.into_iter().map(RelationRow::project).collect::<Result<Vec<_>, _>>()?;
         let mut ids = Vec::with_capacity(2 * records.len());
         let mut times = Vec::with_capacity(2 * records.len());
         let mut identities = Vec::with_capacity(2 * records.len());

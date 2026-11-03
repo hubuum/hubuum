@@ -29,6 +29,8 @@ bootstrap_and_provider_reconciliation = [
 workflow_state_machine = [
     "ApiRequestAdmissionStorage::admit_api_request",
     "ApiRequestAdmissionStorage::settle_api_request",
+    "HistoryLifecycleStorage::admit_history_publication",
+    "HistoryLifecycleStorage::settle_history_publication",
     "ArtifactStore::register_destination",
     "ArtifactStore::stage",
     "ArtifactStore::append",
@@ -631,7 +633,9 @@ native_scenarios = ["crates/hubuum-storage-postgres/tests/task_retention.rs::par
 
 [traits.HistoryLifecycleStorage]
 source = "crates/hubuum-storage-core/src/history_lifecycle/control.rs"
-methods = ["register_history_runtime", "scan_history_lifecycle", "recover_history_lifecycle", "capture_history_lifecycle", "commit_history_lifecycle"]
-effects = { candidate_read = ["scan_history_lifecycle"], point_read = ["capture_history_lifecycle"], workflow_mutation = ["register_history_runtime", "commit_history_lifecycle", "recover_history_lifecycle"] }
-shared_scenarios = ["crates/hubuum-storage-memory/src/history_lifecycle.rs::history_registration_preserves_isolation_and_protocol", "crates/hubuum-storage-memory/src/history_lifecycle.rs::mixed_protocol_fleet_blocks_admission_until_legacy_owner_unregisters", "crates/hubuum-storage-memory/src/history_lifecycle.rs::empty_source_reports_complete_bounded_inspection", "crates/hubuum-storage-memory/src/history_lifecycle.rs::released_application_rejects_history_authority_recovery", "crates/hubuum-storage-memory/src/history_lifecycle.rs::issued_review_applies_exact_policy_once", "crates/hubuum-storage-memory/src/history_lifecycle.rs::concurrent_control_writers_cannot_overwrite_each_other", "crates/hubuum-storage-memory/src/history_lifecycle.rs::audit_sequence_failure_rolls_back_new_hold_authority", "src/services/deletion_recovery/history_policy/tests.rs::authenticated_http_preview_apply_protects_the_reviewed_policy"]
-native_scenarios = ["crates/hubuum-storage-postgres/tests/history_lifecycle.rs::runtime_applies_only_an_issued_revision_bound_review", "crates/hubuum-storage-postgres/tests/history_lifecycle.rs::required_audit_failure_rolls_back_policy_authority", "crates/hubuum-storage-postgres/tests/history_lifecycle.rs::competing_hold_changes_preserve_the_winner"]
+methods = ["admit_history_publication", "settle_history_publication", "register_history_runtime", "scan_history_lifecycle", "recover_history_lifecycle", "capture_history_lifecycle", "commit_history_lifecycle"]
+effects = { candidate_read = ["scan_history_lifecycle"], point_read = ["capture_history_lifecycle"], workflow_mutation = ["admit_history_publication", "settle_history_publication", "register_history_runtime", "commit_history_lifecycle", "recover_history_lifecycle"] }
+# Publication scenarios cover ledger ownership and read-scope fencing only;
+# production transport/producer drain, executor and H4 acceptance remain gated.
+shared_scenarios = ["crates/hubuum-storage-memory/src/history_lifecycle.rs::publication_registry_round_trip_rejects_retired_scope", "crates/hubuum-storage-memory/src/history_lifecycle.rs::publication_registry_requires_original_owner_for_productive_entry", "crates/hubuum-storage-memory/src/history_lifecycle.rs::history_registration_preserves_isolation_and_protocol", "crates/hubuum-storage-memory/src/history_lifecycle.rs::mixed_protocol_fleet_blocks_admission_until_legacy_owner_unregisters", "crates/hubuum-storage-memory/src/history_lifecycle.rs::empty_source_reports_complete_bounded_inspection", "crates/hubuum-storage-memory/src/history_lifecycle.rs::released_application_rejects_history_authority_recovery", "crates/hubuum-storage-memory/src/history_lifecycle.rs::issued_review_applies_exact_policy_once", "crates/hubuum-storage-memory/src/history_lifecycle.rs::concurrent_control_writers_cannot_overwrite_each_other", "crates/hubuum-storage-memory/src/history_lifecycle.rs::audit_sequence_failure_rolls_back_new_hold_authority", "src/services/deletion_recovery/history_policy/tests.rs::authenticated_http_preview_apply_protects_the_reviewed_policy"]
+native_scenarios = ["crates/hubuum-storage-postgres/tests/history_lifecycle.rs::publication_registry_round_trip_rejects_retired_scope", "crates/hubuum-storage-postgres/tests/history_lifecycle.rs::runtime_applies_only_an_issued_revision_bound_review", "crates/hubuum-storage-postgres/tests/history_lifecycle.rs::required_audit_failure_rolls_back_policy_authority", "crates/hubuum-storage-postgres/tests/history_lifecycle.rs::competing_hold_changes_preserve_the_winner"]

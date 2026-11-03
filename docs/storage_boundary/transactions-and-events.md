@@ -190,6 +190,14 @@ for an exception.
   `TaskExecutionStorage::purge_expired_schema_profile_outputs`,
   `TaskExecutionStorage::purge_expired_export_outputs`, and
   `TaskExecutionStorage::purge_expired_backup_outputs`.
+- History publication coordination:
+  `HistoryLifecycleStorage::admit_history_publication` reserves bounded durable
+  ownership under the original registered application and history fences.
+  `HistoryLifecycleStorage::settle_history_publication` removes only that exact
+  owner after positive producer and driver completion. These registry writes
+  do not create retention policy, expiry or removal audit events. Ledger and
+  read-scope tests cover this capability; production transport integration,
+  protected expiry execution and H4 resource acceptance remain separate gates.
 - Event coordination:
   `EventDeliveryAdministrationStorage::release_event_delivery_for_retry` and
   `EventDeliveryAdministrationStorage::mark_event_delivery_dead` are explicit
