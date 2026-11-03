@@ -52,6 +52,7 @@ const STORAGE_OPERATION_SOURCES: &[&str] = &[
     include_str!("storage/context/api.rs"),
     include_str!("storage/context/computed_fields.rs"),
     include_str!("storage/context/events.rs"),
+    include_str!("storage/context/history_lifecycle.rs"),
     include_str!("storage/context/execution.rs"),
     include_str!("storage/context/identity.rs"),
     include_str!("storage/context/identity_queries.rs"),

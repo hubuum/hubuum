@@ -552,6 +552,41 @@ enum SnapshotFilter {
 
 impl SnapshotFilter {
     fn sql(self, table: &str) -> Result<Option<&'static str>, PostgresStorageError> {
+        if matches!(self, Self::All) {
+            let history = match table {
+                "collections_history" => Some(
+                    "public.hubuum_history_version_visible('collection',snapshot_row.logical_identity)",
+                ),
+                "hubuumclass_history" => Some(
+                    "public.hubuum_history_version_visible('class',snapshot_row.logical_identity)",
+                ),
+                "hubuumobject_history" => Some(
+                    "public.hubuum_history_version_visible('object',snapshot_row.logical_identity)",
+                ),
+                "hubuumclass_relation_history" => Some(
+                    "public.hubuum_history_version_visible('class_relation',snapshot_row.logical_identity)",
+                ),
+                "hubuumobject_relation_history" => Some(
+                    "public.hubuum_history_version_visible('object_relation',snapshot_row.logical_identity)",
+                ),
+                "export_templates_history" => Some(
+                    "public.hubuum_history_version_visible('export_template',snapshot_row.logical_identity)",
+                ),
+                "remote_targets_history" => Some(
+                    "public.hubuum_history_version_visible('remote_target',snapshot_row.logical_identity)",
+                ),
+                "computed_field_history" => Some(
+                    "public.hubuum_history_version_visible('computed_definitions',snapshot_row.logical_identity)",
+                ),
+                "class_schema_history" => Some(
+                    "public.hubuum_history_version_visible('class_schema',snapshot_row.logical_identity)",
+                ),
+                _ => None,
+            };
+            if history.is_some() {
+                return Ok(history);
+            }
+        }
         match self {
             Self::All => Ok(None),
             Self::TerminalTasks if table == "tasks" => Ok(Some(

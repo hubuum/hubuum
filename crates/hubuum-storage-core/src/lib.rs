@@ -34,6 +34,8 @@ mod export_query;
 mod export_template_lifecycle;
 mod families;
 mod history;
+mod history_lifecycle;
+pub use history_lifecycle::*;
 mod identity;
 mod identity_operations;
 mod identity_resources;

@@ -7,7 +7,23 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+- **Breaking:** history-aware producer registration requires complete adapters to
+  implement the online fencing protocol. Upgrade all API, backup and publication
+  producers before enabling expiry. Retained expiry refuses legacy startup;
+  preserve recovery evidence and roll forward rather than downgrading.
+
 ### Added
+
+- Scoped history policy revisions, bounded deadline inspection and issued
+  preview/application with independent recovery protection; administrator holds
+  preserve original creation and expiry clocks. Policy and hold transitions
+  retain canonical audit facts. Physical history-expiry execution remains under
+  development; see [scoped history retention](docs/history_retention.md).
+  **Breaking Rust SDK change:** complete adapters must implement
+  `HistoryLifecycleStorage` and its atomic audit, fencing and restore-isolation
+  contract; upgrade all exact SDK dependencies together. Composite checkpoint
+  format 3 adds history authority. Keep independent recovery material and roll
+  forward after publishing this format; older binaries cannot authorize it.
 
 - Preserve exact offline deletion membership and original lifecycle audit facts
   in independent recovery evidence. Required audit failure prevents the transition
@@ -243,6 +259,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   [0.7 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-06-to-07).
 
 ### Fixed
+
+- Keep query-usage analysis available when a PostgreSQL index disappears during
+  catalog inspection; omit vanished indexes from native resource coverage.
 
 - Task cleanup reports retain their exact verified checkpoint instead of
   reacquiring a contended repository or mixing it with newer database state.

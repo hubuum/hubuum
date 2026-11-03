@@ -92,3 +92,5 @@ pub mod auth_session;
 pub mod credential_activity;
 
 pub mod schema_profiling;
+
+pub mod history_lifecycle;

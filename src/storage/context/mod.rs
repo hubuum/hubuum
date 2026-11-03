@@ -244,6 +244,7 @@ mod computed_fields;
 mod events;
 mod execution;
 pub(crate) use execution::ApplicationAdmission;
+mod history_lifecycle;
 mod identity;
 mod identity_queries;
 mod operational;

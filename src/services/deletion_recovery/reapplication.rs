@@ -2,9 +2,10 @@ use std::path::Path;
 
 use hubuum_storage_core::{
     ApplicationExposureProof, ControlCheckpointCapture, DeletionAuditProtection,
-    DeletionCheckpointIdentity, DeletionControlStorage, ProtectedTaskReapplication,
-    TaskControlCheckpoint, TaskControlReapplication, TaskReapplicationProgress,
-    TaskReceiptActivation, TaskRetentionStorage,
+    DeletionCheckpointIdentity, DeletionControlStorage, HistoryLifecycleRecovery,
+    HistoryLifecycleStorage, ProtectedTaskReapplication, TaskControlCheckpoint,
+    TaskControlReapplication, TaskReapplicationProgress, TaskReceiptActivation,
+    TaskRetentionStorage,
 };
 
 use super::cleanup::protect_audit;
@@ -52,6 +53,15 @@ pub(crate) async fn reapply(
             "Primary authority is behind independent recovery evidence; run --recover-control before reapplication",
         ));
     }
+    let history = storage.capture_history_lifecycle().await?;
+    if history.control().authority().revision().value() != 0 {
+        let required = history.control().authority().clone();
+        storage
+            .recover_history_lifecycle(
+                HistoryLifecycleRecovery::new(history, required).map_err(invalid_control)?,
+            )
+            .await?;
+    }
     // Protect every retained decision before touching its recovered copy.
     let expected = capture.deletion().state().clone();
     // Rotation clears completion proofs without changing retained authority.
@@ -59,6 +69,7 @@ pub(crate) async fn reapply(
     // publishing cleared proofs at the old vector would correctly be rejected.
     let session = if session.checkpoint().state() == &expected
         && session.checkpoint().task_control() == Some(capture.task_control())
+        && session.checkpoint().history_lifecycle() == capture.history_lifecycle()
     {
         session
     } else {

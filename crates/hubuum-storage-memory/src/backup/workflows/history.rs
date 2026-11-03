@@ -2,6 +2,41 @@ use super::*;
 
 mod tasks;
 
+impl MemoryHistoryEntry {
+    pub(crate) fn backup_history_row(
+        &self,
+    ) -> Result<(StorageBackupHistorySection, StorageBackupRow), StorageError> {
+        let entry = self;
+        let (section, snapshot) = match &entry.value {
+            MemoryHistoryValue::Collection(v) => (
+                StorageBackupHistorySection::CollectionHistory,
+                resources::collections(v)?,
+            ),
+            MemoryHistoryValue::Class(v) => (
+                StorageBackupHistorySection::ClassHistory,
+                resources::classes(v)?,
+            ),
+            MemoryHistoryValue::Object(v) => (
+                StorageBackupHistorySection::ObjectHistory,
+                resources::objects(v)?,
+            ),
+            MemoryHistoryValue::ExportTemplate(v) => (
+                StorageBackupHistorySection::ExportTemplateHistory,
+                resources::export_templates(v)?,
+            ),
+            MemoryHistoryValue::RemoteTarget(v) => (
+                StorageBackupHistorySection::RemoteTargetHistory,
+                resources::remote_targets(v)?,
+            ),
+        };
+        let mut fields = snapshot.fields().clone();
+        fields.extend(json!({"logical_identity": entry.logical_identity, "history_entry_id": entry.id.id(), "operation": entry.operation.as_str(),
+            "valid_from": entry.valid_from, "valid_to": entry.valid_to, "actor_principal_id": entry.actor_id.map(PrincipalId::id),
+            "actor_kind": entry.actor_kind, "initiator_principal_id": entry.initiator_principal_id.map(PrincipalId::id), "task_id": entry.task_id.map(TaskId::id)}).as_object().expect("literal object").clone());
+        Ok((section, row(Value::Object(fields))?))
+    }
+}
+
 fn advance_retained_sequence(
     next: &mut i32,
     rows: &[StorageBackupRow],
@@ -32,7 +67,13 @@ pub(in crate::backup) fn capture_history(
         state
             .schema_history
             .iter()
-            .map(|row| capture_row(progress, Ok(row.clone())))
+            .filter_map(|row| {
+                match state.raw_history_visible(StorageIdentityHistoryKind::ClassSchema, row) {
+                    Ok(true) => Some(capture_row(progress, Ok(row.clone()))),
+                    Ok(false) => None,
+                    Err(error) => Some(Err(error)),
+                }
+            })
             .collect::<Result<_, _>>()?,
     );
     sections.insert(
@@ -40,6 +81,12 @@ pub(in crate::backup) fn capture_history(
         state
             .computed_history
             .iter()
+            .filter(|record| {
+                state.history_identity_visible(
+                    StorageIdentityHistoryKind::ComputedDefinitions,
+                    record.logical_identity(),
+                )
+            })
             .map(|record| {
                 capture_row(
                     progress,
@@ -51,42 +98,37 @@ pub(in crate::backup) fn capture_history(
             .collect::<Result<_, _>>()?,
     );
     for entry in &state.history {
-        let (section, snapshot) = match &entry.value {
-            MemoryHistoryValue::Collection(v) => (
-                StorageBackupHistorySection::CollectionHistory,
-                resources::collections(v)?,
-            ),
-            MemoryHistoryValue::Class(v) => (
-                StorageBackupHistorySection::ClassHistory,
-                resources::classes(v)?,
-            ),
-            MemoryHistoryValue::Object(v) => (
-                StorageBackupHistorySection::ObjectHistory,
-                resources::objects(v)?,
-            ),
-            MemoryHistoryValue::ExportTemplate(v) => (
-                StorageBackupHistorySection::ExportTemplateHistory,
-                resources::export_templates(v)?,
-            ),
-            MemoryHistoryValue::RemoteTarget(v) => (
-                StorageBackupHistorySection::RemoteTargetHistory,
-                resources::remote_targets(v)?,
-            ),
-        };
-        let mut fields = snapshot.fields().clone();
-        fields.extend(json!({"logical_identity": entry.logical_identity, "history_entry_id": entry.id.id(), "operation": entry.operation.as_str(),
-            "valid_from": entry.valid_from, "valid_to": entry.valid_to, "actor_principal_id": entry.actor_id.map(PrincipalId::id),
-            "actor_kind": entry.actor_kind, "initiator_principal_id": entry.initiator_principal_id.map(PrincipalId::id), "task_id": entry.task_id.map(TaskId::id)}).as_object().expect("literal object").clone());
+        if !state.history_entry_visible(entry) {
+            continue;
+        }
+        let (section, row) = entry.backup_history_row()?;
         sections
             .get_mut(&section)
             .expect("complete sections")
-            .push(capture_row(progress, row(Value::Object(fields)))?);
+            .push(capture_row(progress, Ok(row))?);
     }
     for (&section, rows) in &state.relation_history {
+        let family = match section {
+            StorageBackupHistorySection::ClassRelationHistory => {
+                StorageIdentityHistoryKind::ClassRelation
+            }
+            StorageBackupHistorySection::ObjectRelationHistory => {
+                StorageIdentityHistoryKind::ObjectRelation
+            }
+            _ => {
+                return Err(StorageError::backend_failure(
+                    "Invalid relation history section",
+                ));
+            }
+        };
         sections.insert(
             section,
             rows.iter()
-                .map(|row| capture_row(progress, Ok(row.clone())))
+                .filter_map(|row| match state.raw_history_visible(family, row) {
+                    Ok(true) => Some(capture_row(progress, Ok(row.clone()))),
+                    Ok(false) => None,
+                    Err(error) => Some(Err(error)),
+                })
                 .collect::<Result<_, _>>()?,
         );
     }

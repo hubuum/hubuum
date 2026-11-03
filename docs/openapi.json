@@ -443,6 +443,475 @@
         ]
       }
     },
+    "/api/v1/admin/history-lifecycle/holds": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Post Api V1 Admin History Lifecycle Holds",
+        "description": "Auto-generated documentation for POST /api/v1/admin/history-lifecycle/holds.",
+        "operationId": "postApiV1AdminHistoryLifecycleHolds",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HistoryRetentionHoldRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Independently protected hold, preserving original creation and expiry clocks on retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryRetentionHold"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid hold",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Changed authority or reused hold identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Independent recovery protection unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/history-lifecycle/holds/{hold_id}/release": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Post Api V1 Admin History Lifecycle Holds By Hold Id Release",
+        "description": "Auto-generated documentation for POST /api/v1/admin/history-lifecycle/holds/{hold_id}/release.",
+        "operationId": "postApiV1AdminHistoryLifecycleHoldsByHoldIdRelease",
+        "parameters": [
+          {
+            "name": "hold_id",
+            "in": "path",
+            "description": "Stable hold UUID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HistoryRetentionHoldReleaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Independently protected hold release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryRetentionHold"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Hold not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Changed authority",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Independent recovery protection unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/history-lifecycle/inspect": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Post Api V1 Admin History Lifecycle Inspect",
+        "description": "Auto-generated documentation for POST /api/v1/admin/history-lifecycle/inspect.",
+        "operationId": "postApiV1AdminHistoryLifecycleInspect",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HistoryLifecycleInspectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Bounded effective sources, original anchors, deadlines and blockers; samples contain no retained payloads",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryLifecycleInspection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid scope or limits",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/history-lifecycle/operations/{operation_id}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Api V1 Admin History Lifecycle Operations By Operation Id",
+        "description": "Auto-generated documentation for GET /api/v1/admin/history-lifecycle/operations/{operation_id}.",
+        "operationId": "getApiV1AdminHistoryLifecycleOperationsByOperationId",
+        "parameters": [
+          {
+            "name": "operation_id",
+            "in": "path",
+            "description": "Exact lifecycle audit operation/receipt UUID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Retained policy, hold or review evidence with original scope and clocks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryLifecycleOperationEvidence"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Operation evidence unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/history-lifecycle/policies": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Api V1 Admin History Lifecycle Policies",
+        "description": "Auto-generated documentation for GET /api/v1/admin/history-lifecycle/policies.",
+        "operationId": "getApiV1AdminHistoryLifecyclePolicies",
+        "responses": {
+          "200": {
+            "description": "Bounded immutable policy revisions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryPolicyPage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Put Api V1 Admin History Lifecycle Policies",
+        "description": "Auto-generated documentation for PUT /api/v1/admin/history-lifecycle/policies.",
+        "operationId": "putApiV1AdminHistoryLifecyclePolicies",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HistoryPolicyApplicationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Exact immutable applied policy, independently protected; physical expiry is a separate operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryPolicyRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed change or missing retrospective review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown or inaccessible review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "stale_preview, preview_expired or preview_mismatch; inspect current authority before reviewing again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Independent recovery protection unavailable; application may be committed and pending protection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/history-lifecycle/policy-previews": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Post Api V1 Admin History Lifecycle Policy Previews",
+        "description": "Auto-generated documentation for POST /api/v1/admin/history-lifecycle/policy-previews.",
+        "operationId": "postApiV1AdminHistoryLifecyclePolicyPreviews",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HistoryPolicyPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Issued principal/revision-bound review with fixed expiry and bounded impact coverage; reserves no execution capacity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryPolicyPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid proposed policy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy or protection authority changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/admin/query-observations": {
       "get": {
         "tags": [
@@ -30031,12 +30500,695 @@
           }
         ]
       },
+      "HistoryAgeRule": {
+        "type": "object",
+        "required": [
+          "age_seconds"
+        ],
+        "properties": {
+          "age_seconds": {
+            "$ref": "#/components/schemas/HistoryRetentionSeconds"
+          },
+          "deleted_age_seconds": {
+            "$ref": "#/components/schemas/HistoryRetentionSeconds"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryAuthorityProtection": {
+        "type": "string",
+        "enum": [
+          "protected",
+          "pending",
+          "recovery_required",
+          "unconfigured",
+          "unavailable"
+        ]
+      },
+      "HistoryAuthorityRevision": {
+        "type": "string",
+        "pattern": "^(0|[1-9][0-9]*)$"
+      },
+      "HistoryDeletionRevision": {
+        "type": "string",
+        "pattern": "^(0|[1-9][0-9]*)$"
+      },
       "HistoryDirection": {
         "type": "string",
         "enum": [
           "older",
           "newer"
         ]
+      },
+      "HistoryEffectivePolicy": {
+        "type": "object",
+        "required": [
+          "inherited",
+          "binding"
+        ],
+        "properties": {
+          "binding": {
+            "$ref": "#/components/schemas/HistoryPolicyBinding"
+          },
+          "inherited": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryPolicyReference"
+            }
+          },
+          "source": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HistoryPolicyReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryEndpointDecision": {
+        "type": "object",
+        "required": [
+          "policy"
+        ],
+        "properties": {
+          "blocker": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HistoryExpiryBlocker"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deadline": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "minimum_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/HistoryEffectivePolicy"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryExpiryBlocker": {
+        "type": "string",
+        "enum": [
+          "open_version",
+          "unknown_attribution",
+          "retained_dependency",
+          "hold",
+          "expiry_disabled",
+          "indefinite_retention",
+          "protected_minimum",
+          "accounting_unavailable",
+          "trigger_not_reached"
+        ]
+      },
+      "HistoryExpiryCancellation": {
+        "type": "object",
+        "required": [
+          "principal",
+          "requested_at"
+        ],
+        "properties": {
+          "principal": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryExpiryDecision": {
+        "type": "object",
+        "required": [
+          "target",
+          "endpoints"
+        ],
+        "properties": {
+          "anchor": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HistoryRetentionAnchor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "blocker": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HistoryExpiryBlocker"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryEndpointDecision"
+            }
+          },
+          "target": {
+            "$ref": "#/components/schemas/StorageRecordIdentity"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryExpiryInputBytes": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Complete native encoded input size for one selected historical row, including\npayload and metadata. Preview identity-byte samples cannot establish it.",
+        "minimum": 0
+      },
+      "HistoryExpiryIntent": {
+        "type": "object",
+        "description": "Retain membership after cancellation, changed policy, holds and physical\ncompletion. Restored descendants remain excluded by immutable UUIDs.",
+        "required": [
+          "manifest",
+          "removals"
+        ],
+        "properties": {
+          "cancellation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HistoryExpiryCancellation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/HistoryExpiryManifest"
+          },
+          "removals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryExpiryRemovalReceipt"
+            }
+          }
+        }
+      },
+      "HistoryExpiryManifest": {
+        "type": "object",
+        "description": "Finite membership, not a timestamp/allocated-ID progress watermark. No new\ncandidate may join this batch after the adapter admits its protected intent.",
+        "required": [
+          "identity",
+          "run",
+          "origin",
+          "key",
+          "fence",
+          "selected_at",
+          "input_bytes",
+          "members"
+        ],
+        "properties": {
+          "fence": {
+            "$ref": "#/components/schemas/HistoryReviewFence"
+          },
+          "identity": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "input_bytes": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "key": {
+            "$ref": "#/components/schemas/HistoryPolicyKey"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryExpiryMember"
+            }
+          },
+          "origin": {
+            "$ref": "#/components/schemas/HistoryExpiryOrigin"
+          },
+          "run": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "selected_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "HistoryExpiryMember": {
+        "type": "object",
+        "required": [
+          "family",
+          "target",
+          "anchor",
+          "read_span",
+          "attributions",
+          "policies",
+          "input_bytes"
+        ],
+        "properties": {
+          "anchor": {
+            "$ref": "#/components/schemas/HistoryRetentionAnchor"
+          },
+          "attributions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryScopeAttribution"
+            }
+          },
+          "family": {
+            "$ref": "#/components/schemas/StorageIdentityHistoryKind"
+          },
+          "input_bytes": {
+            "$ref": "#/components/schemas/HistoryExpiryInputBytes"
+          },
+          "policies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryPolicyReference"
+            }
+          },
+          "read_span": {
+            "$ref": "#/components/schemas/HistoryExpiryReadSpan"
+          },
+          "target": {
+            "$ref": "#/components/schemas/StorageRecordIdentity"
+          }
+        }
+      },
+      "HistoryExpiryOrigin": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "principal",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "manual"
+                ]
+              },
+              "principal": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "initiator": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "scheduled"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Stable root initiation, retained independently of task and principal rows.\nBatch execution may be performed by a worker without changing this origin."
+      },
+      "HistoryExpiryReadSpan": {
+        "type": "object",
+        "description": "Minimum temporal evidence retained after payload removal. It prevents\nas-of selection from silently falling back across an expired interval.",
+        "required": [
+          "kind",
+          "valid_from"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/HistoryExpiryReadSpanKind"
+          },
+          "valid_from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "HistoryExpiryReadSpanKind": {
+        "type": "string",
+        "enum": [
+          "closed",
+          "schema",
+          "deleted"
+        ]
+      },
+      "HistoryExpiryRemovalReceipt": {
+        "type": "object",
+        "required": [
+          "target",
+          "checkpoint",
+          "removed_at"
+        ],
+        "properties": {
+          "checkpoint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "removed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "target": {
+            "$ref": "#/components/schemas/StorageRecordIdentity"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryExpiryTrigger": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "age_seconds",
+              "kind"
+            ],
+            "properties": {
+              "age_seconds": {
+                "$ref": "#/components/schemas/HistoryRetentionSeconds"
+              },
+              "deleted_age_seconds": {
+                "$ref": "#/components/schemas/HistoryRetentionSeconds"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "age"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "upper_logical_bytes",
+              "lower_logical_bytes",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "logical_size"
+                ]
+              },
+              "lower_logical_bytes": {
+                "$ref": "#/components/schemas/HistoryLogicalBytes"
+              },
+              "upper_logical_bytes": {
+                "$ref": "#/components/schemas/HistoryLogicalBytes"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "age",
+              "size",
+              "kind"
+            ],
+            "properties": {
+              "age": {
+                "$ref": "#/components/schemas/HistoryAgeRule"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "age_or_size"
+                ]
+              },
+              "size": {
+                "$ref": "#/components/schemas/HistorySizeRule"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "age",
+              "size",
+              "kind"
+            ],
+            "properties": {
+              "age": {
+                "$ref": "#/components/schemas/HistoryAgeRule"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "age_and_size"
+                ]
+              },
+              "size": {
+                "$ref": "#/components/schemas/HistorySizeRule"
+              }
+            }
+          }
+        ]
+      },
+      "HistoryHoldRevision": {
+        "type": "object",
+        "description": "Holds retain their creation/release evidence as an append-only sequence.",
+        "required": [
+          "operation",
+          "revision",
+          "hold",
+          "transition",
+          "recorded_at"
+        ],
+        "properties": {
+          "actor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "hold": {
+            "$ref": "#/components/schemas/HistoryRetentionHold"
+          },
+          "operation": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/HistoryAuthorityRevision"
+          },
+          "transition": {
+            "$ref": "#/components/schemas/HistoryHoldTransition"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryHoldTransition": {
+        "type": "string",
+        "enum": [
+          "created",
+          "released",
+          "expired"
+        ]
+      },
+      "HistoryLifecycleInspection": {
+        "type": "object",
+        "required": [
+          "inspected_at",
+          "authority_revision",
+          "coverage",
+          "scanned",
+          "unresolved_identities",
+          "eligible_observed",
+          "samples"
+        ],
+        "properties": {
+          "authority_revision": {
+            "$ref": "#/components/schemas/HistoryAuthorityRevision"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/HistoryPreviewCoverage"
+          },
+          "eligible_observed": {
+            "type": "string"
+          },
+          "inspected_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "samples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryExpiryDecision"
+            }
+          },
+          "scanned": {
+            "type": "string"
+          },
+          "unresolved_identities": {
+            "type": "string"
+          }
+        }
+      },
+      "HistoryLifecycleInspectionRequest": {
+        "type": "object",
+        "required": [
+          "family",
+          "scope",
+          "limit"
+        ],
+        "properties": {
+          "family": {
+            "$ref": "#/components/schemas/StorageIdentityHistoryKind"
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "scope": {
+            "$ref": "#/components/schemas/HistoryPolicyScopeRequest"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryLifecycleOperationEvidence": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "record",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "policy"
+                ]
+              },
+              "record": {
+                "$ref": "#/components/schemas/HistoryPolicyRecord"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "record",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "hold"
+                ]
+              },
+              "record": {
+                "$ref": "#/components/schemas/HistoryHoldRevision"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "record",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "expiry_intent"
+                ]
+              },
+              "record": {
+                "$ref": "#/components/schemas/HistoryExpiryIntent"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "record",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "review"
+                ]
+              },
+              "record": {
+                "type": "object",
+                "required": [
+                  "proposal",
+                  "review"
+                ],
+                "properties": {
+                  "proposal": {
+                    "$ref": "#/components/schemas/HistoryPolicyChange"
+                  },
+                  "review": {
+                    "$ref": "#/components/schemas/HistoryPolicyReviewEvidence"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "description": "Bounded administrator evidence for one exact lifecycle operation. Applied\nreview proof remains available through its policy record after preview expiry."
+      },
+      "HistoryLogicalBytes": {
+        "type": "string",
+        "pattern": "^(0|[1-9][0-9]*)$"
       },
       "HistoryMarker": {
         "type": "object",
@@ -30116,6 +31268,569 @@
               "null"
             ],
             "format": "date-time"
+          }
+        }
+      },
+      "HistoryPolicyAction": {
+        "type": "string",
+        "enum": [
+          "replace_policy"
+        ]
+      },
+      "HistoryPolicyApplication": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "prospective"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "closed_through",
+              "kind"
+            ],
+            "properties": {
+              "closed_through": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "retrospective"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "HistoryPolicyApplicationRequest": {
+        "type": "object",
+        "required": [
+          "proposal"
+        ],
+        "properties": {
+          "proposal": {
+            "$ref": "#/components/schemas/HistoryPolicyChangeRequest"
+          },
+          "review": {
+            "$ref": "#/components/schemas/HistoryPolicyReviewReference"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryPolicyBinding": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "inherit"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "disabled_expiry"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "indefinite"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "trigger",
+              "minimum_age_seconds",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "expire"
+                ]
+              },
+              "minimum_age_seconds": {
+                "$ref": "#/components/schemas/HistoryRetentionSeconds"
+              },
+              "trigger": {
+                "$ref": "#/components/schemas/HistoryExpiryTrigger"
+              }
+            }
+          }
+        ]
+      },
+      "HistoryPolicyChange": {
+        "type": "object",
+        "description": "Strict wire proposal. Deserialization performs semantic validation as well as\nrejecting unknown nested write fields. Stateful cutoffs are checked at issue/apply.",
+        "required": [
+          "action",
+          "family",
+          "scope",
+          "expected_policy_revision",
+          "binding",
+          "application"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/HistoryPolicyAction"
+          },
+          "application": {
+            "$ref": "#/components/schemas/HistoryPolicyApplication"
+          },
+          "binding": {
+            "$ref": "#/components/schemas/HistoryPolicyBinding"
+          },
+          "expected_policy_revision": {
+            "$ref": "#/components/schemas/HistoryPolicyRevision"
+          },
+          "family": {
+            "$ref": "#/components/schemas/StorageIdentityHistoryKind"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/HistoryPolicyScope"
+          }
+        }
+      },
+      "HistoryPolicyChangeRequest": {
+        "type": "object",
+        "required": [
+          "action",
+          "family",
+          "scope",
+          "expected_policy_revision",
+          "binding",
+          "application"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/HistoryPolicyAction"
+          },
+          "application": {
+            "$ref": "#/components/schemas/HistoryPolicyApplication"
+          },
+          "binding": {
+            "$ref": "#/components/schemas/HistoryPolicyBinding"
+          },
+          "expected_policy_revision": {
+            "$ref": "#/components/schemas/HistoryPolicyRevision"
+          },
+          "family": {
+            "$ref": "#/components/schemas/StorageIdentityHistoryKind"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/HistoryPolicyScopeRequest"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryPolicyKey": {
+        "type": "object",
+        "required": [
+          "family",
+          "scope"
+        ],
+        "properties": {
+          "family": {
+            "$ref": "#/components/schemas/StorageIdentityHistoryKind"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/HistoryPolicyScope"
+          }
+        }
+      },
+      "HistoryPolicyPage": {
+        "type": "object",
+        "required": [
+          "authority_revision",
+          "protection",
+          "records"
+        ],
+        "properties": {
+          "authority_revision": {
+            "$ref": "#/components/schemas/HistoryAuthorityRevision"
+          },
+          "next_revision": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HistoryPolicyRevision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "protected_authority_revision": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HistoryAuthorityRevision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "protection": {
+            "$ref": "#/components/schemas/HistoryAuthorityProtection"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryPolicyRecord"
+            }
+          }
+        }
+      },
+      "HistoryPolicyPreview": {
+        "type": "object",
+        "description": "Only a stored issuance record is proof. A caller-supplied digest is insufficient.",
+        "required": [
+          "reference",
+          "principal",
+          "proposal",
+          "fence",
+          "issued_at",
+          "expires_at",
+          "impact"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "fence": {
+            "$ref": "#/components/schemas/HistoryReviewFence"
+          },
+          "impact": {
+            "$ref": "#/components/schemas/HistoryPreviewImpact"
+          },
+          "issued_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "principal": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "proposal": {
+            "$ref": "#/components/schemas/HistoryPolicyChange"
+          },
+          "reference": {
+            "$ref": "#/components/schemas/HistoryPolicyReviewReference"
+          }
+        }
+      },
+      "HistoryPolicyPreviewRequest": {
+        "type": "object",
+        "required": [
+          "change"
+        ],
+        "properties": {
+          "change": {
+            "$ref": "#/components/schemas/HistoryPolicyChangeRequest"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryPolicyRecord": {
+        "type": "object",
+        "description": "Exact immutable policy revision and its governing principal.",
+        "required": [
+          "operation",
+          "revision",
+          "proposal",
+          "applied_at",
+          "principal"
+        ],
+        "properties": {
+          "applied_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "operation": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "principal": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "proposal": {
+            "$ref": "#/components/schemas/HistoryPolicyChange"
+          },
+          "review": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HistoryPolicyReviewEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "$ref": "#/components/schemas/HistoryPolicyRevision"
+          }
+        }
+      },
+      "HistoryPolicyReference": {
+        "type": "object",
+        "required": [
+          "key",
+          "revision"
+        ],
+        "properties": {
+          "key": {
+            "$ref": "#/components/schemas/HistoryPolicyKey"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/HistoryPolicyRevision"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryPolicyReviewEvidence": {
+        "type": "object",
+        "description": "The proof metadata retained with an applied policy. Samples remain transient;\nissuance clocks, principal, proposal fingerprint and relevant fence survive recovery.",
+        "required": [
+          "reference",
+          "principal",
+          "fence",
+          "issued_at",
+          "expires_at",
+          "coverage"
+        ],
+        "properties": {
+          "coverage": {
+            "$ref": "#/components/schemas/HistoryPreviewCoverage"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "fence": {
+            "$ref": "#/components/schemas/HistoryReviewFence"
+          },
+          "issued_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "principal": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reference": {
+            "$ref": "#/components/schemas/HistoryPolicyReviewReference"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryPolicyReviewReference": {
+        "type": "object",
+        "required": [
+          "preview_id",
+          "proposal_fingerprint"
+        ],
+        "properties": {
+          "preview_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "proposal_fingerprint": {
+            "type": "string"
+          }
+        }
+      },
+      "HistoryPolicyRevision": {
+        "type": "string",
+        "pattern": "^(0|[1-9][0-9]*)$"
+      },
+      "HistoryPolicyScope": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "deployment"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "identity",
+              "kind"
+            ],
+            "properties": {
+              "identity": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "collection"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "identity",
+              "kind"
+            ],
+            "properties": {
+              "identity": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "class"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Stable scope, independent of replaceable integer compatibility IDs."
+      },
+      "HistoryPolicyScopeRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "deployment"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "identity",
+              "kind"
+            ],
+            "properties": {
+              "current_id": {
+                "$ref": "#/components/schemas/ResourceID"
+              },
+              "identity": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "collection"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "identity",
+              "kind"
+            ],
+            "properties": {
+              "current_id": {
+                "$ref": "#/components/schemas/ResourceID"
+              },
+              "identity": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "class"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "HistoryPreviewCoverage": {
+        "type": "string",
+        "enum": [
+          "complete",
+          "bounded"
+        ]
+      },
+      "HistoryPreviewImpact": {
+        "type": "object",
+        "required": [
+          "coverage",
+          "scanned",
+          "eligible_observed",
+          "samples"
+        ],
+        "properties": {
+          "coverage": {
+            "$ref": "#/components/schemas/HistoryPreviewCoverage"
+          },
+          "eligible_observed": {
+            "type": "string"
+          },
+          "samples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryExpiryDecision"
+            }
+          },
+          "scanned": {
+            "type": "string"
           }
         }
       },
@@ -30958,6 +32673,177 @@
           }
         ],
         "description": "A serialized history row plus the resolved username of its actor (if any)."
+      },
+      "HistoryRetentionAnchor": {
+        "type": "object",
+        "required": [
+          "kind",
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "closed",
+              "deleted",
+              "schema_event"
+            ]
+          }
+        }
+      },
+      "HistoryRetentionHold": {
+        "type": "object",
+        "description": "Bounded immutable hold transitions. Expiry is interpreted from its original\ndeadline; recording expiry never starts a new retention window.",
+        "required": [
+          "identity",
+          "family",
+          "scope",
+          "created_at",
+          "principal"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "family": {
+            "$ref": "#/components/schemas/StorageIdentityHistoryKind"
+          },
+          "identity": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "principal": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "released_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/HistoryPolicyScope"
+          }
+        }
+      },
+      "HistoryRetentionHoldReleaseRequest": {
+        "type": "object",
+        "required": [
+          "expected_authority_revision"
+        ],
+        "properties": {
+          "expected_authority_revision": {
+            "$ref": "#/components/schemas/HistoryAuthorityRevision"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryRetentionHoldRequest": {
+        "type": "object",
+        "required": [
+          "identity",
+          "family",
+          "scope",
+          "expected_authority_revision"
+        ],
+        "properties": {
+          "expected_authority_revision": {
+            "$ref": "#/components/schemas/HistoryAuthorityRevision"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "family": {
+            "$ref": "#/components/schemas/StorageIdentityHistoryKind"
+          },
+          "identity": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/HistoryPolicyScopeRequest"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryRetentionSeconds": {
+        "type": "string",
+        "pattern": "^(0|[1-9][0-9]*)$"
+      },
+      "HistoryReviewFence": {
+        "type": "object",
+        "description": "Application incarnation invalidates reviews after logical or physical recovery.\nDeletion authority is separate from ordinary receipt settlement/task activity.",
+        "required": [
+          "incarnation",
+          "authority_revision",
+          "deletion_revision"
+        ],
+        "properties": {
+          "authority_revision": {
+            "$ref": "#/components/schemas/HistoryAuthorityRevision"
+          },
+          "deletion_revision": {
+            "$ref": "#/components/schemas/HistoryDeletionRevision"
+          },
+          "incarnation": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "HistoryScopeAttribution": {
+        "type": "object",
+        "description": "Attribution captured with the historical version. Relations have two of\nthese; unresolved attribution is represented separately, never guessed.",
+        "required": [
+          "collection"
+        ],
+        "properties": {
+          "class": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "collection": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistorySizeRule": {
+        "type": "object",
+        "required": [
+          "upper_logical_bytes",
+          "lower_logical_bytes"
+        ],
+        "properties": {
+          "lower_logical_bytes": {
+            "$ref": "#/components/schemas/HistoryLogicalBytes"
+          },
+          "upper_logical_bytes": {
+            "$ref": "#/components/schemas/HistoryLogicalBytes"
+          }
+        }
       },
       "HubuumClass": {
         "type": "object",
@@ -38783,6 +40669,40 @@
             }
           }
         }
+      },
+      "StorageIdentityHistoryKind": {
+        "type": "string",
+        "description": "Families retaining immutable historical versions.",
+        "enum": [
+          "collection",
+          "class",
+          "object",
+          "class_relation",
+          "object_relation",
+          "export_template",
+          "remote_target",
+          "computed_definitions",
+          "class_schema"
+        ]
+      },
+      "StorageRecordIdentity": {
+        "type": "object",
+        "description": "Stable identity of a stored resource and its represented version.\n\nInteger IDs and revision counters may repeat after restoring an older\napplication timeline. This pair is preserved by restore; subsequent writes\npreserve the resource identity and mint a fresh version identity.",
+        "required": [
+          "resource",
+          "version"
+        ],
+        "properties": {
+          "resource": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
       },
       "StorageTaskCapacitySnapshot": {
         "type": "object",

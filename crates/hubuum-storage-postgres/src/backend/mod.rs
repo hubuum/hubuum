@@ -29,6 +29,7 @@ mod computed_fields;
 pub(crate) mod deletion_control;
 pub(crate) use deletion_control::acknowledge_coordinator_drain_on;
 mod export_templates;
+mod history_lifecycle;
 mod imports;
 mod logical_identity;
 mod notifications;

@@ -32,6 +32,7 @@ pub enum StorageIdentityResourceKind {
 }
 
 /// Families retaining immutable historical versions.
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StorageIdentityHistoryKind {

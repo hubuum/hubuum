@@ -1533,8 +1533,15 @@ impl HistoryStorage for MemoryStorage {
             .find(|record| {
                 record.class_id() == query.class_id() && record.is_effective_at(query.at())
             })
-            .cloned()
-            .map(|record| record.select(query).map_err(invalid_contract_value))
+            .map(|record| {
+                state.require_history_as_of(
+                    StorageIdentityHistoryKind::ComputedDefinitions,
+                    record.logical_identity(),
+                    query.at(),
+                    record.valid_from(),
+                )?;
+                record.clone().select(query).map_err(invalid_contract_value)
+            })
             .transpose()
     }
 
@@ -1555,6 +1562,7 @@ impl HistoryStorage for MemoryStorage {
         let mut entries = state
             .history
             .iter()
+            .filter(|entry| state.history_entry_visible(entry))
             .filter(|entry| {
                 history_matches_resource(entry, query.resource())
                     && history_scope_allows(query.scope(), entry.value.collection_id())
@@ -1613,6 +1621,7 @@ impl HistoryStorage for MemoryStorage {
         state
             .history
             .iter()
+            .filter(|entry| state.history_entry_visible(entry))
             .find(|entry| {
                 entry.id == query.history_id() && history_matches_resource(entry, query.resource())
             })
@@ -1664,6 +1673,7 @@ impl HistoryStorage for MemoryStorage {
         let mut entries = state
             .history
             .iter()
+            .filter(|entry| state.history_entry_visible(entry))
             .filter(|entry| {
                 entry.value.entity_id() == entity_id.id()
                     && matches!(entry.value, MemoryHistoryValue::Collection(_))
@@ -1694,10 +1704,17 @@ impl HistoryStorage for MemoryStorage {
             entry.value.entity_id() == entity_id.id()
                 && matches!(entry.value, MemoryHistoryValue::Collection(_))
                 && entry.valid_from <= at
+                && entry.valid_to.is_none_or(|until| at < until)
         });
         let Some(entry) = entry else {
             return Ok(None);
         };
+        state.require_history_as_of(
+            entry.family(),
+            Some(&entry.logical_identity),
+            at,
+            entry.valid_from,
+        )?;
         if entry.operation == StorageHistoryOperation::Delete {
             return Ok(None);
         }
@@ -1720,6 +1737,7 @@ impl HistoryStorage for MemoryStorage {
         let mut entries = state
             .history
             .iter()
+            .filter(|entry| state.history_entry_visible(entry))
             .filter(|entry| {
                 entry.value.entity_id() == entity_id.id()
                     && matches!(entry.value, MemoryHistoryValue::Class(_))
@@ -1750,10 +1768,17 @@ impl HistoryStorage for MemoryStorage {
             entry.value.entity_id() == entity_id.id()
                 && matches!(entry.value, MemoryHistoryValue::Class(_))
                 && entry.valid_from <= at
+                && entry.valid_to.is_none_or(|until| at < until)
         });
         let Some(entry) = entry else {
             return Ok(None);
         };
+        state.require_history_as_of(
+            entry.family(),
+            Some(&entry.logical_identity),
+            at,
+            entry.valid_from,
+        )?;
         if entry.operation == StorageHistoryOperation::Delete {
             return Ok(None);
         }
@@ -1776,6 +1801,7 @@ impl HistoryStorage for MemoryStorage {
         let mut entries = state
             .history
             .iter()
+            .filter(|entry| state.history_entry_visible(entry))
             .filter(|entry| match &entry.value {
                 MemoryHistoryValue::Object(record) => {
                     record.id() == object_id
@@ -1836,6 +1862,9 @@ impl HistoryStorage for MemoryStorage {
         let mut selected = BinaryHeap::new();
         let mut total = 0;
         for (index, entry) in state.history.iter().enumerate() {
+            if !state.history_entry_visible(entry) {
+                continue;
+            }
             let MemoryHistoryValue::Object(record) = &entry.value else {
                 continue;
             };
@@ -1953,6 +1982,12 @@ impl HistoryStorage for MemoryStorage {
             if !visible {
                 continue;
             }
+            state.require_history_as_of(
+                entry.family(),
+                Some(&entry.logical_identity),
+                query.at(),
+                entry.valid_from,
+            )?;
             total += 1;
             let key = sorts
                 .iter()
@@ -2001,13 +2036,22 @@ impl HistoryStorage for MemoryStorage {
         let state = self.state.read().await?;
         let entry = state.history.iter().rev().find(|entry| match &entry.value {
             MemoryHistoryValue::Object(record) => {
-                record.id() == object_id && record.class_id() == class_id && entry.valid_from <= at
+                record.id() == object_id
+                    && record.class_id() == class_id
+                    && entry.valid_from <= at
+                    && entry.valid_to.is_none_or(|until| at < until)
             }
             _ => false,
         });
         let Some(entry) = entry else {
             return Ok(None);
         };
+        state.require_history_as_of(
+            entry.family(),
+            Some(&entry.logical_identity),
+            at,
+            entry.valid_from,
+        )?;
         if entry.operation == StorageHistoryOperation::Delete {
             return Ok(None);
         }
@@ -2030,6 +2074,7 @@ impl HistoryStorage for MemoryStorage {
         let mut entries = state
             .history
             .iter()
+            .filter(|entry| state.history_entry_visible(entry))
             .filter(|entry| {
                 entry.value.entity_id() == entity_id.id()
                     && matches!(entry.value, MemoryHistoryValue::ExportTemplate(_))
@@ -2060,10 +2105,17 @@ impl HistoryStorage for MemoryStorage {
             entry.value.entity_id() == entity_id.id()
                 && matches!(entry.value, MemoryHistoryValue::ExportTemplate(_))
                 && entry.valid_from <= at
+                && entry.valid_to.is_none_or(|until| at < until)
         });
         let Some(entry) = entry else {
             return Ok(None);
         };
+        state.require_history_as_of(
+            entry.family(),
+            Some(&entry.logical_identity),
+            at,
+            entry.valid_from,
+        )?;
         if entry.operation == StorageHistoryOperation::Delete {
             return Ok(None);
         }
@@ -2086,6 +2138,7 @@ impl HistoryStorage for MemoryStorage {
         let mut entries = state
             .history
             .iter()
+            .filter(|entry| state.history_entry_visible(entry))
             .filter(|entry| {
                 entry.value.entity_id() == entity_id.id()
                     && matches!(entry.value, MemoryHistoryValue::RemoteTarget(_))
@@ -2116,10 +2169,17 @@ impl HistoryStorage for MemoryStorage {
             entry.value.entity_id() == entity_id.id()
                 && matches!(entry.value, MemoryHistoryValue::RemoteTarget(_))
                 && entry.valid_from <= at
+                && entry.valid_to.is_none_or(|until| at < until)
         });
         let Some(entry) = entry else {
             return Ok(None);
         };
+        state.require_history_as_of(
+            entry.family(),
+            Some(&entry.logical_identity),
+            at,
+            entry.valid_from,
+        )?;
         if entry.operation == StorageHistoryOperation::Delete {
             return Ok(None);
         }

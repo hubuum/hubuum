@@ -75,6 +75,7 @@ pub(super) fn sanitize_error_for_storage(err: &ApiError) -> String {
     debug!(message = "Detailed error for import execution", error = %err);
 
     match err {
+        ApiError::HistoryPolicyReview(_) => err.public_message().to_owned(),
         ApiError::ReauthenticationRequired
         | ApiError::TaskCapacity(_)
         | ApiError::TaskDetailsExpired(_)

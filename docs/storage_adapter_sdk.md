@@ -727,3 +727,42 @@ admitted export and backup fixtures for each adapter. The shared `task_waiting`
 scenarios add cancellation, deadlines, concurrency, private projections, and
 capacity evidence; backend-native tests retain transactional accounting and
 rollback coverage.
+
+## History lifecycle policy capability (unreleased)
+
+`HistoryLifecycleStorage` is a required operational capability. Complete adapters
+must implement `register_history_runtime`, `capture_history_lifecycle`,
+`scan_history_lifecycle`,
+`commit_history_lifecycle` and `recover_history_lifecycle`. Capture returns the
+adapter clock with application incarnation and history/deletion revision fences.
+Scanning covers all nine history families using captured UUID ownership and
+original closure/deletion/schema-event anchors, without reading payloads. Missing
+captured identity or ownership remains unresolved; never infer it from a current
+integer owner. Enforce the 1000-row/1-MiB source limits and explicit bounded
+coverage, including when a limit happens to coincide with the final row.
+
+Commit compares the exact predecessor and fences, preserves immutable policy and
+hold prefixes, validates retained preview identity/principal/proposal/deadline,
+and appends required canonical audit in the same transaction. Keep space for a
+terminal transition of every created hold. Recovery only adds compatible retained
+authority while quarantined, clears transient previews, and replays original audit
+identities and clocks. Logical restore preserves control authority and rotates
+the application incarnation. Composite checkpoint capture must include history
+authority in the same consistent snapshot as deletion and task authority.
+
+This required capability is an incompatible SDK change. Advance all ten exact
+SDK dependencies together to the next coordinated minor selected from the actual
+integration tip; the release number is not reserved by this draft. Existing
+adapters must implement the complete contract before upgrading. Physical expiry
+and its runtime safety boundary remain separate activation gates; see
+[history retention](history_retention.md).
+
+History-aware producer registration declares `OnlineV1`; existing registration
+remains `Legacy`. Implement ownership/isolation/capacity/exposure checks and
+serialize registration with online intent admission. Admission refuses a mixed
+fleet, and retained expiry refuses subsequent legacy startup. A registration or
+API-owner row is not a shutdown proof; retain uncertain registrations until
+positive producer stop/isolation. Upgrade every API/backup/publication producer
+before enabling expiry, and roll forward after retained expiry is published.
+Production must not advertise the new protocol until all read/publication fences
+are implemented. These are incompatible SDK and deployment requirements.

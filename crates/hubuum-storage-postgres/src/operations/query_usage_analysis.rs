@@ -34,8 +34,8 @@ struct IndexRow {
     pattern: Option<i32>,
     #[diesel(sql_type=Bool)]
     usable: bool,
-    #[diesel(sql_type=BigInt)]
-    bytes: i64,
+    #[diesel(sql_type=Nullable<BigInt>)]
+    bytes: Option<i64>,
     #[diesel(sql_type=Nullable<BigInt>)]
     scans: Option<i64>,
 }
@@ -88,6 +88,11 @@ pub(crate) async fn native_resources(
         .take(CATALOG_LIMIT as usize)
         .filter(|row| row.usable)
     {
+        // Catalog snapshots can retain an index after concurrent DROP INDEX.
+        // Missing live metadata is not evidence of usable native coverage.
+        let Some(bytes) = row.bytes else {
+            continue;
+        };
         let Some(index) = row
             .pattern
             .and_then(|index| usize::try_from(index - 1).ok())
@@ -101,7 +106,7 @@ pub(crate) async fn native_resources(
         };
         let resource = StorageQueryUsageResource::external(
             format!("postgresql:{}", row.oid),
-            u64::try_from(row.bytes).unwrap_or(0),
+            u64::try_from(bytes).unwrap_or(0),
             row.scans.and_then(|value| u64::try_from(value).ok()),
         );
         resources.entry(pattern.clone()).or_default().push(resource);
@@ -200,4 +205,94 @@ async fn managed_resources(
         EXISTS(SELECT 1 FROM pg_class idx JOIN pg_namespace ns ON ns.oid=idx.relnamespace WHERE idx.oid=r.index_oid AND ns.nspname='public' AND idx.relname='hubuum_usage_' || r.id::text AND obj_description(idx.oid,'pg_class')='hubuum-query-usage:' || r.identity::text) AS verified
         FROM query_usage_resources r ORDER BY id LIMIT 8")
         .bind::<Integer,_>(class).load::<ManagedResource>(connection).await?)
+}
+
+#[cfg(all(test, feature = "integration-test-support"))]
+mod tests {
+    use super::*;
+    use crate::test_support::{
+        database_role_tests_enabled, integration_test_database_roles,
+        integration_test_migration_pool,
+    };
+    use diesel_async::SimpleAsyncConnection;
+    use rstest::rstest;
+    use uuid::Uuid;
+
+    #[derive(QueryableByName)]
+    struct CatalogState {
+        #[diesel(sql_type = Oid)]
+        oid: u32,
+        #[diesel(sql_type = Nullable<BigInt>)]
+        bytes: Option<i64>,
+        #[diesel(sql_type = Nullable<Text>)]
+        definition: Option<String>,
+    }
+
+    #[rstest]
+    #[case::retained(false)]
+    #[case::disappeared(true)]
+    #[tokio::test]
+    async fn native_resources_handles_index_disappearance(#[case] disappear: bool) {
+        let pool = integration_test_migration_pool(2);
+        let mut reader = pool.get().await.unwrap();
+        let mut writer = pool.get().await.unwrap();
+        if database_role_tests_enabled() {
+            let roles = integration_test_database_roles();
+            let role = format!("SET ROLE \"{}\"", roles.owner().as_str());
+            reader.batch_execute(&role).await.unwrap();
+            writer.batch_execute(&role).await.unwrap();
+        }
+        let name = format!("catalog_race_{}", Uuid::new_v4().simple());
+        let path = format!("catalog_path_{}", Uuid::new_v4().simple());
+        let pattern = format!("((data #>> '{{{path}}}'::text[]))");
+        writer.batch_execute(&format!(
+            "CREATE INDEX {name} ON public.hubuumobject USING btree ((data #>> '{{{path}}}'::text[]))"
+        )).await.unwrap();
+
+        // Read only catalog rows to establish the snapshot without holding an
+        // index relation lock that would prevent the second connection's DROP.
+        reader
+            .batch_execute(
+                "BEGIN ISOLATION LEVEL REPEATABLE READ; SET LOCAL statement_timeout = '5s'",
+            )
+            .await
+            .unwrap();
+        let oid = diesel::sql_query("SELECT indexrelid AS oid, NULL::bigint AS bytes, NULL::text AS definition FROM pg_index WHERE indexrelid=to_regclass($1)")
+            .bind::<Text, _>(format!("public.{name}"))
+            .get_result::<CatalogState>(&mut reader).await.unwrap().oid;
+        if disappear {
+            writer
+                .batch_execute(&format!(
+                    "SET statement_timeout = '5s'; DROP INDEX public.{name}"
+                ))
+                .await
+                .unwrap();
+        }
+        let state = diesel::sql_query("SELECT indexrelid AS oid, pg_relation_size(indexrelid) AS bytes, pg_get_indexdef(indexrelid,1,false) AS definition FROM pg_index WHERE indexrelid=$1")
+            .bind::<Oid, _>(oid).get_result::<CatalogState>(&mut reader).await.unwrap();
+        let result = native_resources(&mut reader, std::slice::from_ref(&pattern)).await;
+        reader.batch_execute("ROLLBACK").await.unwrap();
+        writer
+            .batch_execute(&format!("DROP INDEX IF EXISTS public.{name}"))
+            .await
+            .unwrap();
+
+        // The catalog row survives either way; live metadata only survives when
+        // the index does. Assert after cleanup so a regression leaves no index.
+        assert_eq!(state.oid, oid);
+        assert_eq!(state.bytes.is_none(), disappear);
+        assert_eq!(state.definition.is_none(), disappear);
+        let (resources, truncated) = result.unwrap();
+        assert!(!truncated);
+        if disappear {
+            assert!(resources.is_empty());
+        } else {
+            let resources = resources.get(&pattern).unwrap();
+            assert_eq!(resources.len(), 1);
+            assert_eq!(resources[0].reference(), format!("postgresql:{oid}"));
+            let resource = serde_json::to_value(&resources[0]).unwrap();
+            assert_eq!(resource["bytes"], state.bytes.unwrap());
+            assert_eq!(state.definition.as_deref(), Some(pattern.as_str()));
+        }
+    }
 }

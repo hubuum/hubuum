@@ -470,3 +470,24 @@ instead of ordinary domain mutation event contexts:
 Their immutable manifests, receipt generations, policy revisions, holds and
 independently authenticated checkpoints provide recovery provenance. Normal
 domain mutations retain their existing event-context requirements.
+
+## History lifecycle control
+
+History policy/hold/review transitions are context-free workflow mutations with
+mandatory canonical audit derived from their private typed receipts. Principal,
+operation identity, original clock, proposal and review evidence are validated
+before commit. `HistoryLifecycleStorage::commit_history_lifecycle` compares the
+exact predecessor and application/deletion/history fences and appends these facts
+atomically with protected control state. An audit failure rolls back authority.
+`HistoryLifecycleStorage::recover_history_lifecycle` is quarantine-only and replays stable original facts;
+it cannot discard newer compatible local authority. These operations grant no
+physical deletion authority and do not enable a runtime expiry path.
+
+`HistoryLifecycleStorage::register_history_runtime` is a startup ownership
+transition declaring the complete online history protocol. It preserves runtime
+ownership, isolation, capacity and application exposure checks. Registrations
+never expire from a timer; disappearance of an API request owner is not evidence
+of publication quiescence. Legacy registration is refused once retained expiry
+requires the new protocol. Admission must serialize its mixed-fleet check with
+registration before recording an intent; native race qualification remains
+required.

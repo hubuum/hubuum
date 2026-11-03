@@ -106,6 +106,7 @@ pub mod events {
 pub mod operational {
     pub use crate::deletion_control::*;
     pub use crate::execution::*;
+    pub use crate::history_lifecycle::*;
     pub use crate::metrics::*;
     pub use crate::operational::{
         OperationalStateStorage, StorageEventDeliveryHealthSnapshot,

@@ -1,4 +1,4 @@
-use diesel::sql_types::{Integer, Jsonb, Timestamptz};
+use diesel::sql_types::{Bool, Integer, Jsonb, Timestamptz};
 use diesel::{OptionalExtension, QueryableByName, sql_query};
 use diesel_async::RunQueryDsl;
 use hubuum_storage_core::{
@@ -14,6 +14,14 @@ struct HistoryRow {
     snapshot: Value,
 }
 
+#[derive(QueryableByName)]
+struct VisibleHistoryRow {
+    #[diesel(embed)]
+    history: HistoryRow,
+    #[diesel(sql_type = Bool)]
+    visible: bool,
+}
+
 pub(crate) async fn get_computed_field_history(
     runtime: &PostgresRuntime,
     query: StorageComputedFieldHistoryQuery,
@@ -24,24 +32,25 @@ pub(crate) async fn get_computed_field_history(
             // selected interval afterward so gaps cannot force an unbounded scan.
             let row = sql_query(
                 "SELECT (to_jsonb(h) - 'history_id') || jsonb_build_object(\
-            'history_entry_id', h.history_id) AS snapshot FROM computed_field_history h \
+            'history_entry_id', h.history_id) AS snapshot, public.hubuum_history_as_of_visible('computed_definitions',h.logical_identity,$2,h.valid_from) AS visible FROM computed_field_history h \
             WHERE class_id = $1 AND valid_from <= $2 ORDER BY valid_from DESC LIMIT 1",
             )
             .bind::<Integer, _>(query.class_id().id())
             .bind::<Timestamptz, _>(query.at())
-            .get_result::<HistoryRow>(connection)
+            .get_result::<VisibleHistoryRow>(connection)
             .await
             .optional()?;
             let Some(row) = row else {
                 return Ok(None);
             };
-            let record: StorageComputedFieldHistory = serde_json::from_value(row.snapshot)
+            let record: StorageComputedFieldHistory = serde_json::from_value(row.history.snapshot)
                 .map_err(|error| {
                     PostgresStorageError::invalid_persisted_value("computed history", error)
                 })?;
             if !record.is_effective_at(query.at()) {
                 return Ok(None);
             }
+            if !row.visible { return Err(PostgresStorageError::not_found("Historical computed version is expired")); }
             record.select(query).map(Some).map_err(|error| {
                 PostgresStorageError::invalid_persisted_value("computed history selection", error)
             })

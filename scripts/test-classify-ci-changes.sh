@@ -85,6 +85,29 @@ for authorization_path in src/tests/permissions/candidate_paging.rs \
   assert_flag "$authorization_output" treetop_conformance true
 done
 
+for policy_input in src/models/history_lifecycle.rs src/api/v1/handlers/history_lifecycle.rs \
+  crates/hubuum-storage-core/src/history_lifecycle.rs crates/hubuum-storage-core/src/history_lifecycle/policy.rs \
+  crates/hubuum-storage-core/src/record_identity.rs crates/hubuum-storage-core/src/logical_identity.rs; do
+  policy_output="$(bash "$classifier" "$policy_input")"
+  assert_flag "$policy_output" code true
+  assert_flag "$policy_output" rust true
+  assert_flag "$policy_output" openapi true
+done
+
+for policy_storage_input in crates/hubuum-storage-postgres/tests/history_lifecycle.rs \
+  crates/hubuum-storage-postgres/migrations/2026-11-03-000001_history_lifecycle/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-03-000001_history_lifecycle/down.sql; do
+  policy_storage_output="$(bash "$classifier" "$policy_storage_input")"
+  assert_flag "$policy_storage_output" code true
+  assert_flag "$policy_storage_output" rust true
+done
+
+# The history capability is embedded in the finite operational metrics catalog.
+history_catalog_output="$(bash "$classifier" src/storage/context/history_lifecycle.rs)"
+assert_flag "$history_catalog_output" code true
+assert_flag "$history_catalog_output" rust true
+assert_flag "$history_catalog_output" operational_contract true
+
 for history_handler in src/models/history/computed.rs src/api/v1/handlers/classes/history_computed.rs src/api/v1/handlers/classes/history_population.rs src/api/v1/handlers/classes/history_relations.rs; do
   history_output="$(bash "$classifier" "$history_handler")"
   assert_flag "$history_output" openapi true

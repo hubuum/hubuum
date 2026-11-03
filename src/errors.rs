@@ -18,7 +18,7 @@ use hubuum_events_core::{EventCatalogError, EventIdentifierError};
 use crate::models::{TaskDetailsExpiredResponse, TokenPolicyError};
 use crate::observability::metrics;
 use crate::storage::{StorageError, StorageErrorKind};
-use hubuum_storage_core::TaskCapacityRejection;
+use hubuum_storage_core::{HistoryPolicyReviewConflict, TaskCapacityRejection};
 
 const PUBLIC_INTERNAL_ERROR: &str = "An internal error occurred";
 const PUBLIC_SERVICE_UNAVAILABLE: &str = "Service temporarily unavailable";
@@ -68,6 +68,7 @@ pub fn fatal_error(message: &str, exit_code: i32) -> ! {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub enum ApiError {
+    HistoryPolicyReview(HistoryPolicyReviewConflict),
     TaskCapacity(TaskCapacityRejection),
     TaskDetailsExpired(TaskDetailsExpiredResponse),
     IdempotencyConflict,
@@ -101,6 +102,7 @@ pub enum ApiError {
 impl ApiError {
     pub fn class(&self) -> &'static str {
         match self {
+            ApiError::HistoryPolicyReview(reason) => reason.as_str(),
             ApiError::TaskCapacity(reason) => reason.as_str(),
             ApiError::TaskDetailsExpired(_) => "task_details_expired",
             ApiError::IdempotencyConflict => "idempotency_key_conflict",
@@ -156,6 +158,9 @@ impl ApiError {
     /// bodies and streaming events.
     pub fn public_message(&self) -> &str {
         match self {
+            ApiError::HistoryPolicyReview(_) => {
+                "The policy review cannot be applied; inspect current authority and obtain a new review"
+            }
             ApiError::TaskDetailsExpired(receipt) => receipt.public_message(),
             ApiError::IdempotencyConflict => {
                 "The idempotency key identifies a different protected request; no new work was created"
@@ -296,7 +301,8 @@ impl From<PositiveIdError> for ApiError {
 impl fmt::Display for ApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ApiError::TaskStopped(_)
+            ApiError::HistoryPolicyReview(_)
+            | ApiError::TaskStopped(_)
             | ApiError::TaskCapacity(_)
             | ApiError::TaskDetailsExpired(_)
             | ApiError::IdempotencyConflict
@@ -332,6 +338,9 @@ impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
         metrics::api_error(self.class());
         match self {
+            ApiError::HistoryPolicyReview(reason) => HttpResponse::build(self.status_code())
+                .insert_header(("Cache-Control", "no-store"))
+                .json(json!({"error":if matches!(reason, HistoryPolicyReviewConflict::InaccessiblePreview) { "Not Found" } else { "Conflict" }, "reason":reason.as_str(), "message":self.public_message()})),
             ApiError::TaskDetailsExpired(receipt) => HttpResponse::Gone()
                 .insert_header(("Cache-Control", "no-store"))
                 .json(receipt),
@@ -422,6 +431,10 @@ impl ResponseError for ApiError {
 
     fn status_code(&self) -> StatusCode {
         match self {
+            ApiError::HistoryPolicyReview(HistoryPolicyReviewConflict::InaccessiblePreview) => {
+                StatusCode::NOT_FOUND
+            }
+            ApiError::HistoryPolicyReview(_) => StatusCode::CONFLICT,
             ApiError::TaskStopped(_)
             | ApiError::LegacyTaskRequestUnverifiable
             | ApiError::IdempotencyConflict => StatusCode::CONFLICT,

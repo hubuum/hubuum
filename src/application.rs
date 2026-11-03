@@ -497,8 +497,9 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
             EXIT_CODE_CONFIG_ERROR,
         )
     });
-    let app_context =
-        AppContext::new(storage, permission_backend).with_task_receipts(task_receipts);
+    let app_context = AppContext::new(storage, permission_backend)
+        .with_task_receipts(task_receipts)
+        .with_history_retention(config.control_recovery.clone());
     RuntimeServices {
         _recovery: recovery,
         registration,

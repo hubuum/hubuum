@@ -5,6 +5,7 @@
 //! narrower restrictions; importing authority never releases those restrictions.
 
 mod cleanup;
+pub(crate) mod history_policy;
 mod reapplication;
 mod repository;
 mod status;
@@ -18,6 +19,7 @@ pub(crate) use task_receipts::{TaskReceiptService, TaskRetentionSweep};
 
 pub(crate) use cleanup::cleanup_object_history;
 
+use hubuum_storage_core::HistoryLifecycleStorage;
 use std::path::Path;
 
 use hubuum_storage_core::{
@@ -193,6 +195,12 @@ pub(crate) async fn recover(
             "Recovered authority read-back did not cover the checkpoint; keep the deployment quarantined",
         ));
     }
+    if let Some(history) = required.checkpoint().history_lifecycle() {
+        let snapshot = storage.capture_history_lifecycle().await?;
+        let recovery = hubuum_storage_core::HistoryLifecycleRecovery::new(snapshot, history.clone())
+            .map_err(|_| unavailable("History retention recovery conflicts with local authority; keep the deployment quarantined"))?;
+        storage.recover_history_lifecycle(recovery).await?;
+    }
     if let Some(tasks) = required.checkpoint().task_control() {
         let current = storage.read_task_control().await?;
         let change = TaskControlRecovery::new(current, tasks.clone()).map_err(|_| unavailable(
@@ -257,7 +265,11 @@ fn covers_checkpoint(
     current: &ControlCheckpointCapture,
     required: &repository::DurableCheckpoint,
 ) -> bool {
-    current.deletion().state().covers(required.state())
+    required.history_lifecycle().is_none_or(|history| {
+        current
+            .history_lifecycle()
+            .is_some_and(|current| current.covers(history))
+    }) && current.deletion().state().covers(required.state())
         && required
             .task_control()
             .is_none_or(|tasks| current.task_control().covers(tasks))

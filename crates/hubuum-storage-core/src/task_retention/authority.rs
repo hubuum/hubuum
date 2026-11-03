@@ -667,6 +667,7 @@ impl TryFrom<ReapplicationInput> for TaskControlReapplication {
 
 #[derive(Clone, Debug)]
 pub struct ControlCheckpointCapture {
+    history_lifecycle: Option<crate::HistoryLifecycleAuthority>,
     deletion: DeletionControlCapture,
     task_control: TaskControlState,
     task_reapplication: Option<TaskControlReapplication>,
@@ -684,6 +685,7 @@ impl ControlCheckpointCapture {
         Ok(Self {
             deletion,
             task_control,
+            history_lifecycle: None,
             task_reapplication: None,
         })
     }
@@ -703,6 +705,17 @@ impl ControlCheckpointCapture {
         }
         self.task_reapplication = Some(proof);
         Ok(self)
+    }
+    pub fn with_history_lifecycle(mut self, authority: crate::HistoryLifecycleAuthority) -> Self {
+        // No decision exists at revision zero. Keep inactive history absent so
+        // existing deletion/task-only checkpoint producers remain compatible.
+        // Every acknowledged policy, hold or expiry decision is nonzero and
+        // must remain in all subsequent protected composite captures.
+        self.history_lifecycle = (!authority.is_pristine()).then_some(authority);
+        self
+    }
+    pub const fn history_lifecycle(&self) -> Option<&crate::HistoryLifecycleAuthority> {
+        self.history_lifecycle.as_ref()
     }
     pub const fn deletion(&self) -> &DeletionControlCapture {
         &self.deletion

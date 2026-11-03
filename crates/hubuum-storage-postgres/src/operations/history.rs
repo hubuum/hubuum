@@ -4,7 +4,10 @@ pub(crate) mod relations;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::SelectableHelper;
+use diesel::dsl::sql;
+use diesel::expression::SqlLiteral;
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, OptionalExtension, QueryDsl};
+use diesel::sql_types::{Bool, Timestamptz};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{
     ClassId, CollectionId, HistoryRecordId, PrincipalId, PrincipalIdentity, ResourceRevision,
@@ -426,6 +429,13 @@ pub async fn resolve_principal_names(
         .await
 }
 
+fn history_version_visible(table: &'static str, family: &'static str) -> SqlLiteral<Bool> {
+    // Both identifiers are supplied only by the adapter's static family map.
+    sql::<Bool>(&format!(
+        "public.hubuum_history_version_visible('{family}',{table}.logical_identity)"
+    ))
+}
+
 fn history_cursor_fields(
     options: &QueryOptions,
     table: &'static str,
@@ -484,6 +494,7 @@ macro_rules! history_operations {
         $as_of_fn:ident,
         $table:ident,
         $table_name:literal,
+        $family:literal,
         $row:ty,
         $record:ty,
         $visibility_column:ident
@@ -502,7 +513,8 @@ macro_rules! history_operations {
 
                     let mut count_query = crate::schema::$table::table
                         .into_boxed()
-                        .filter(id.eq(entity_id.id()));
+                        .filter(id.eq(entity_id.id()))
+                        .filter(history_version_visible($table_name, $family));
                     if let Some(collection_ids) = &visible_collection_ids {
                         count_query = count_query.filter($visibility_column.eq_any(collection_ids));
                     }
@@ -517,7 +529,8 @@ macro_rules! history_operations {
 
                     let mut records = crate::schema::$table::table
                         .into_boxed()
-                        .filter(id.eq(entity_id.id()));
+                        .filter(id.eq(entity_id.id()))
+                        .filter(history_version_visible($table_name, $family));
                     if let Some(collection_ids) = &visible_collection_ids {
                         records = records.filter($visibility_column.eq_any(collection_ids));
                     }
@@ -555,17 +568,30 @@ macro_rules! history_operations {
                 .with_connection(async |connection| {
                     use crate::schema::$table::dsl::*;
 
+                    let visible = sql::<Bool>(&format!(
+                        "public.hubuum_history_as_of_visible('{}',{}.logical_identity,",
+                        $family, $table_name
+                    ))
+                    .bind::<Timestamptz, _>(at)
+                    .sql(&format!(",{}.valid_from)", $table_name));
                     crate::schema::$table::table
                         .filter(id.eq(entity_id.id()))
                         .filter(valid_from.le(at))
                         .filter(valid_to.is_null().or(valid_to.gt(at)))
                         .order(history_id.desc())
-                        .select(<$row>::as_select())
-                        .first::<$row>(connection)
+                        .select((<$row>::as_select(), visible))
+                        .first::<($row, bool)>(connection)
                         .await
                         .optional()
                         .map_err(PostgresStorageError::from)?
-                        .map(<$record>::try_from)
+                        .map(|(row, visible)| {
+                            if !visible {
+                                return Err(PostgresStorageError::not_found(
+                                    "Historical version is expired",
+                                ));
+                            }
+                            <$record>::try_from(row)
+                        })
                         .transpose()
                 })
                 .await
@@ -578,6 +604,7 @@ history_operations!(
     get_collection_history_as_of,
     collections_history,
     "collections_history",
+    "collection",
     CollectionHistoryRow,
     StorageCollectionHistoryRecord,
     id
@@ -588,6 +615,7 @@ history_operations!(
     get_class_history_as_of,
     hubuumclass_history,
     "hubuumclass_history",
+    "class",
     ClassHistoryRow,
     StorageClassHistoryRecord,
     collection_id
@@ -598,6 +626,7 @@ history_operations!(
     get_export_template_history_as_of,
     export_templates_history,
     "export_templates_history",
+    "export_template",
     ExportTemplateHistoryRow,
     StorageExportTemplateHistoryRecord,
     collection_id
@@ -608,6 +637,7 @@ history_operations!(
     get_remote_target_history_as_of,
     remote_targets_history,
     "remote_targets_history",
+    "remote_target",
     RemoteTargetHistoryRow,
     StorageRemoteTargetHistoryRecord,
     collection_id
@@ -628,7 +658,8 @@ pub async fn list_object_history(
             let mut count_query = history::hubuumobject_history
                 .into_boxed()
                 .filter(history::id.eq(object_id.id()))
-                .filter(history::hubuum_class_id.eq(class_id.id()));
+                .filter(history::hubuum_class_id.eq(class_id.id()))
+                .filter(history_version_visible("hubuumobject_history", "object"));
             if let Some(collection_ids) = &visible_collection_ids {
                 count_query = count_query.filter(history::collection_id.eq_any(collection_ids));
             }
@@ -644,7 +675,8 @@ pub async fn list_object_history(
             let mut records = history::hubuumobject_history
                 .into_boxed()
                 .filter(history::id.eq(object_id.id()))
-                .filter(history::hubuum_class_id.eq(class_id.id()));
+                .filter(history::hubuum_class_id.eq(class_id.id()))
+                .filter(history_version_visible("hubuumobject_history", "object"));
             if let Some(collection_ids) = &visible_collection_ids {
                 records = records.filter(history::collection_id.eq_any(collection_ids));
             }
@@ -684,7 +716,8 @@ fn object_name_history_query(
     let mut records = history::hubuumobject_history
         .into_boxed()
         .filter(history::hubuum_class_id.eq(query.class_id().id()))
-        .filter(history::name.eq(query.name().to_owned()));
+        .filter(history::name.eq(query.name().to_owned()))
+        .filter(history_version_visible("hubuumobject_history", "object"));
     let current_ids = live::hubuumobject.select(live::id);
     if let Some(collection_ids) = visible_collection_ids(query.collection_scope()) {
         let readable_ids = current_ids.filter(live::collection_id.eq_any(collection_ids.clone()));
@@ -831,18 +864,23 @@ pub async fn get_object_history_as_of(
         .with_connection(async |connection| {
             use crate::schema::hubuumobject_history::dsl as history;
 
+            let visible = sql::<Bool>("public.hubuum_history_as_of_visible('object',hubuumobject_history.logical_identity,")
+                .bind::<Timestamptz,_>(at).sql(",hubuumobject_history.valid_from)");
             history::hubuumobject_history
                 .filter(history::id.eq(object_id.id()))
                 .filter(history::hubuum_class_id.eq(class_id.id()))
                 .filter(history::valid_from.le(at))
                 .filter(history::valid_to.is_null().or(history::valid_to.gt(at)))
                 .order(history::history_id.desc())
-                .select(ObjectHistoryRow::as_select())
-                .first::<ObjectHistoryRow>(connection)
+                .select((ObjectHistoryRow::as_select(), visible))
+                .first::<(ObjectHistoryRow,bool)>(connection)
                 .await
                 .optional()
                 .map_err(PostgresStorageError::from)?
-                .map(StorageObjectHistoryRecord::try_from)
+                .map(|(row, visible)| {
+                    if !visible { return Err(PostgresStorageError::not_found("Historical version is expired")); }
+                    StorageObjectHistoryRecord::try_from(row)
+                })
                 .transpose()
         })
         .await

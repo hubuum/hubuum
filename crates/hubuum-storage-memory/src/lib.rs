@@ -234,6 +234,15 @@ macro_rules! append_memory_scoped_simple_event {
 }
 
 impl MemoryHistoryEntry {
+    fn family(&self) -> StorageIdentityHistoryKind {
+        match self.value {
+            MemoryHistoryValue::Collection(_) => StorageIdentityHistoryKind::Collection,
+            MemoryHistoryValue::Class(_) => StorageIdentityHistoryKind::Class,
+            MemoryHistoryValue::Object(_) => StorageIdentityHistoryKind::Object,
+            MemoryHistoryValue::ExportTemplate(_) => StorageIdentityHistoryKind::ExportTemplate,
+            MemoryHistoryValue::RemoteTarget(_) => StorageIdentityHistoryKind::RemoteTarget,
+        }
+    }
     fn metadata(&self) -> Result<StorageHistoryMetadata, StorageError> {
         StorageHistoryMetadata::try_new(
             self.operation,
@@ -361,6 +370,7 @@ impl MemoryTokenRecord {
 
 #[derive(Clone)]
 struct MemoryRuntimeRegistration {
+    history_protocol: HistoryRuntimeProtocol,
     ownership_token: Uuid,
     isolation: Option<RuntimeIsolationDomain>,
     drained: Option<ApplicationFence>,
@@ -375,6 +385,7 @@ struct MemoryState {
     task_purge_attempts: BTreeMap<TaskPurgeBatchId, u64>,
     next_task_purge_attempt: u64,
     deletion_control: DeletionControlState,
+    history_lifecycle: HistoryLifecycleControl,
     application_control: ApplicationControlState,
     pending_restore: bool,
     runtime_registrations: BTreeMap<Uuid, MemoryRuntimeRegistration>,
@@ -889,6 +900,7 @@ mod credential_approval;
 mod deletion_control;
 mod events;
 mod execution;
+mod history_lifecycle;
 mod identity;
 mod imports;
 mod logical_identity;

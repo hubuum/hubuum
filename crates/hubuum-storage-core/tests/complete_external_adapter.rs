@@ -32,6 +32,37 @@ use uuid::Uuid;
 struct CompleteExternalAdapter;
 
 #[async_trait]
+impl HistoryLifecycleStorage for CompleteExternalAdapter {
+    async fn register_history_runtime(
+        &self,
+        isolation: Option<RuntimeIsolationDomain>,
+    ) -> Result<RuntimeRegistration, StorageError> {
+        fixture_result()
+    }
+    async fn scan_history_lifecycle(
+        &self,
+        scan: HistoryLifecycleScan,
+    ) -> Result<HistoryLifecycleScanResult, StorageError> {
+        fixture_result()
+    }
+    async fn recover_history_lifecycle(
+        &self,
+        recovery: HistoryLifecycleRecovery,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn capture_history_lifecycle(&self) -> Result<HistoryLifecycleSnapshot, StorageError> {
+        fixture_result()
+    }
+    async fn commit_history_lifecycle(
+        &self,
+        change: HistoryLifecycleControlChange,
+    ) -> Result<HistoryLifecycleSnapshot, StorageError> {
+        fixture_result()
+    }
+}
+
+#[async_trait]
 impl DeletionControlStorage for CompleteExternalAdapter {
     async fn observe_deletion_checkpoint(
         &self,
