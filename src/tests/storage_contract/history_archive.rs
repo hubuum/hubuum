@@ -34,6 +34,11 @@ async fn with_overflow_backend(test: impl for<'a> AsyncFn(&'a mut TestContext)) 
     let _guard = crate::test_support::RESTORE_TEST_LOCK.lock().await;
     for kind in [StorageBackendKind::Memory, StorageBackendKind::Postgres] {
         let owner_url = crate::test_support::restore_test_migration_database_url();
+        let target = hubuum_storage_postgres::test_support::IsolatedRestoreTarget::new(
+            &owner_url,
+            &hubuum_storage_postgres::test_support::integration_test_database_url(),
+        )
+        .unwrap();
         let owner_pool = crate::test_support::postgres_test_pool_with_timeout(
             &owner_url,
             8,
@@ -59,7 +64,7 @@ async fn with_overflow_backend(test: impl for<'a> AsyncFn(&'a mut TestContext)) 
                 let outcome = AssertUnwindSafe(test(ctx)).catch_unwind().await;
                 if kind == StorageBackendKind::Postgres {
                     hubuum_storage_postgres::test_support::delete_isolated_history_archive_captures(
-                    &owner_pool, ctx.permit.owner().unwrap().id(), ctx.resource,
+                    &owner_pool, &target, ctx.permit.owner().unwrap().id(), ctx.resource,
                 ).await.unwrap();
                 }
                 if let Err(panic) = outcome {
