@@ -1732,6 +1732,7 @@ mod tests {
             "/api/v1/admin/config",
             "/api/v1/admin/query-observations",
             "/api/v1/admin/task-capacity",
+            "/api/v1/admin/api-request-capacity",
             "/api/v1/iam/credential-approvals",
             "/api/v1/iam/credential-approvals/{approval_id}",
             "/api/v1/iam/users",

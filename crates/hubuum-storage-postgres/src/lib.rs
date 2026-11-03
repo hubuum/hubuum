@@ -112,7 +112,9 @@ pub use pool::{
     build_postgres_pool,
 };
 #[cfg(feature = "query-capture")]
-pub use query_capture::{QueryCaptureSnapshot, capture_queries, configure_connection};
+pub use query_capture::{
+    QueryCaptureContext, QueryCaptureSnapshot, capture_queries, configure_connection,
+};
 #[cfg(feature = "integration-test-support")]
 #[doc(hidden)]
 pub use revision::PostgresRevision;

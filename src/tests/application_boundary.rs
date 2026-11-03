@@ -236,6 +236,7 @@ const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
     "TaskQueueStorage",
     "TaskRetentionStorage",
     "TaskCapacityStorage",
+    "ApiRequestAdmissionStorage",
     "TaskExecutionStorage",
     "ArtifactStore",
     "TaskArtifactStore",

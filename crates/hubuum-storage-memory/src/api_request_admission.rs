@@ -111,9 +111,15 @@ impl ApiRequestAdmissionStorage for MemoryStorage {
                 ApiRequestRejection::ReconciliationRequired,
             ));
         }
+        if !state.principals.contains_key(&principal.id()) {
+            return Err(StorageError::api_request(
+                ApiRequestRejection::IdentityUnavailable,
+            ));
+        }
         let identity = state
             .logical_identities
-            .record(StorageIdentityTarget::Principal(principal))?
+            .record(StorageIdentityTarget::Principal(principal))
+            .map_err(|_| StorageError::api_request(ApiRequestRejection::IdentityUnavailable))?
             .subject()
             .and_then(|subject| match subject {
                 StorageIdentitySubject::Principal { identity } => identity.known_identity(),

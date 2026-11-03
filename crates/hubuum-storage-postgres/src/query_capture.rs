@@ -20,6 +20,24 @@ tokio::task_local! {
 
 static NEXT_QUERY_CAPTURE_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Explicit opt-in propagation across a supervised task boundary. Independent
+/// background tasks continue to start without query capture.
+#[derive(Clone, Copy)]
+pub struct QueryCaptureContext(Option<u64>);
+
+impl QueryCaptureContext {
+    pub fn current() -> Self {
+        Self(active_capture_id())
+    }
+
+    pub async fn run<T>(self, future: impl Future<Output = T>) -> T {
+        match self.0 {
+            Some(id) => ACTIVE_QUERY_CAPTURE_ID.scope(id, future).await,
+            None => future.await,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct QueryCaptureSnapshot {
     total_queries: usize,

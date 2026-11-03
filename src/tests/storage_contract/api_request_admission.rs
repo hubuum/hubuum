@@ -6,6 +6,23 @@ use hubuum_storage_core::{
 
 struct DelayedAdmissionResponse;
 
+#[actix_web::test]
+async fn missing_principal_identity_has_the_same_admission_reason_on_every_backend() {
+    for backend in available_backends() {
+        let user = create_backend_user(&backend, &prefix("api_missing_identity")).await;
+        let principal = user.principal_id;
+        delete_backend_user(&backend, user).await;
+        let error = backend
+            .admit_api_request(principal, ApiRequestClass::History, 0)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.api_request_rejection(),
+            Some(ApiRequestRejection::IdentityUnavailable)
+        );
+    }
+}
+
 impl crate::storage::StorageObserver for DelayedAdmissionResponse {
     fn operation_finished(&self, observation: &crate::storage::StorageObservation) {
         if observation.operation() == "admit_api_request" {

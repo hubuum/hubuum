@@ -12,6 +12,7 @@ use futures::{Stream, StreamExt};
 use hubuum_domain::PrincipalId;
 use hubuum_storage_core::{ApiRequestAdmissionStorage, ApiRequestClass, ApiRequestRejection};
 use hubuum_task_core::{TaskExecutionContext, TaskStopHandle, TaskStopReason};
+use tracing::{Instrument, instrument::WithSubscriber};
 
 use crate::errors::ApiError;
 use crate::permissions::AppContext;
@@ -140,7 +141,11 @@ pub(super) async fn run(
     let http_work = super::maintenance::take_supervised_http_work(&req);
     // Dropping the caller's JoinHandle does not abort this supervisor. Cleanup
     // waits for the database owner lock even if a timeout drops handler work.
-    let work = actix_web::rt::spawn(async move {
+    #[cfg(any(test, feature = "integration-test-support", feature = "query-capture"))]
+    let query_capture = hubuum_storage_postgres::QueryCaptureContext::current();
+    #[cfg(test)]
+    let candidate_capture = crate::permissions::visibility::CandidateFetchCapture::current();
+    let work = async move {
         let response = storage.run_in_scope(scope, async move {
             let response = next.call(req).await?.map_into_boxed_body();
             if completion.check() == Err(TaskStopReason::DeadlineExceeded) {
@@ -183,7 +188,14 @@ pub(super) async fn run(
             http_work.complete();
         }
         result
-    });
+    }
+    .in_current_span()
+    .with_current_subscriber();
+    #[cfg(any(test, feature = "integration-test-support", feature = "query-capture"))]
+    let work = query_capture.run(work);
+    #[cfg(test)]
+    let work = candidate_capture.run(work);
+    let work = actix_web::rt::spawn(work);
     let result = work.await.unwrap_or_else(|_| {
         Err(ApiError::ApiRequestAdmission(ApiRequestRejection::ReconciliationRequired).into())
     });
