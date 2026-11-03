@@ -1,6 +1,6 @@
 # `hubuum-computed-fields` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.17` release train.
+Status: experimental public API in the storage SDK `0.18` release train.
 
 ## Purpose and Callers
 

@@ -65,6 +65,7 @@ pub mod queries {
 
 /// Long-running and application workflow capabilities.
 pub mod workflows {
+    pub use crate::api_request_admission::*;
     pub use crate::backup_snapshot::*;
     pub use crate::computed_fields::*;
     pub use crate::export_query::*;

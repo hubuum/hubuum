@@ -1,6 +1,7 @@
 use crate::storage::storage_handle;
 use actix_web::{Responder, get, http::StatusCode, put, web};
 use hubuum_storage_core::{
+    ApiRequestAdmissionStorage, StorageApiRequestPolicy, StorageApiRequestPolicyUpdate,
     StorageTaskCapacitySnapshot, StorageTaskPolicy, StorageTaskPolicyUpdate, TaskCapacityStorage,
 };
 
@@ -142,5 +143,46 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(get_query_observations)
         .service(set_query_observations)
         .service(get_task_capacity)
-        .service(set_task_capacity);
+        .service(set_task_capacity)
+        .service(get_api_request_capacity)
+        .service(set_api_request_capacity);
+}
+
+#[utoipa::path(get, path = "/api/v1/admin/api-request-capacity", tag = "admin",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Authoritative expensive-request policy. Lost/crashed owners remain charged until fenced operator recovery; automatic crash reconciliation is not available in this partial slice.", body = StorageApiRequestPolicy),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse)))]
+#[get("/api-request-capacity")]
+pub async fn get_api_request_capacity(
+    context: AppContext,
+    _admin: AdminAccess,
+) -> Result<impl Responder, ApiError> {
+    Ok(ApiResponse::ok(
+        storage_handle(&context).api_request_policy().await?,
+    ))
+}
+
+#[utoipa::path(put, path = "/api/v1/admin/api-request-capacity", tag = "admin",
+    security(("bearer_auth" = [])), request_body = StorageApiRequestPolicyUpdate,
+    responses((status = 200, description = "Policy committed; reductions drain existing requests", body = StorageApiRequestPolicy),
+        (status = 400, description = "Invalid policy", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse),
+        (status = 409, description = "Policy revision changed; refetch before updating", body = ApiErrorResponse)))]
+#[put("/api-request-capacity")]
+pub async fn set_api_request_capacity(
+    context: AppContext,
+    admin: AdminAccess,
+    request: web::Json<StorageApiRequestPolicyUpdate>,
+) -> Result<impl Responder, ApiError> {
+    let policy = storage_handle(&context)
+        .replace_api_request_policy(request.into_inner())
+        .await?;
+    tracing::info!(
+        actor_id = admin.user.id,
+        api_request_policy_revision = policy.revision().get(),
+        "Shared API request admission policy updated"
+    );
+    Ok(ApiResponse::ok(policy))
 }

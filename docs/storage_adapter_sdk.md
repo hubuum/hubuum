@@ -1,8 +1,51 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.17`.
+Status: accepted; current experimental release train is `0.18`.
+
+## Upgrading from 0.17 to 0.18
+
+This is a breaking coordinated release of all ten storage SDK crates.
+`WorkflowStorage` now requires `ApiRequestAdmissionStorage`, so every complete
+adapter must implement authoritative policy read/compare-and-replace,
+`admit_api_request`, and `settle_api_request`. Update exact dependencies together.
+
+Reserve deployment and stable-principal occupancy atomically. Snapshot the
+committed revision and finite policy in `StorageApiRequestPermit`; its validated
+owner UUID is distinct from a task identity and cannot come from HTTP payloads.
+Preserve the inherited permit through synchronous, asynchronous and spawned
+execution scopes. Check the exact owner and application incarnation at every
+productive persistence boundary. A nested call cannot refresh an older producer
+by substituting a newer permit.
+
+Settlement must fence new work and await already-issued work before freeing
+occupancy. Expiry or a disconnected caller alone is insufficient. This partial
+slice does not automatically reconcile crashed owners: lost owners remain
+charged until demonstrated fenced recovery, potentially exhausting capacity.
+Follow the stop/isolate-and-settle operator procedure in the request admission
+guide before restarting producers. Cleanup is
+idempotent and must not remove a replacement owner. Policy reductions drain
+existing owners under their original allowances. Preserve authoritative policy
+and cumulative physical-attempt charges across logical restore, fence older
+application incarnations, and never resolve old ownership using reused integers.
+
+Preserve `StorageError::api_request_rejection()` through adapter conversions.
+Read this accessor **before** consuming an error with `into_parts()`: that existing
+four-element tuple is unchanged and does not carry request admission reasons.
+`ApiRequestClass` and `ApiRequestRejection` are closed SDK vocabularies; consumers
+must review their semantics when advancing to this train. HTTP consumers should
+still accept unknown future reason strings using status and retryability.
+
+This train delivers the partial occupancy/fencing slice of #521. It does not
+establish H5 candidate/source-byte or hard-heap acceptance. Run shared request
+concurrency, retirement, policy-draining and deadline contracts, plus native
+transaction/disconnect/restore tests. See the
+[request admission contract](api_request_admission.md) for coverage and remaining
+resource gates; keep those gates open when integrating this slice.
 
 ## Supported Crate Graph
+
+The 0.18 train adds mandatory synchronous request admission. See the
+[0.17 to 0.18 upgrade](#upgrading-from-017-to-018) before updating adapters.
 
 The statically linked storage adapter SDK consists of these crates:
 

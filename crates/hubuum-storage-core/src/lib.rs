@@ -62,6 +62,12 @@ mod resource_lifecycle;
 mod restore;
 mod restore_artifact;
 pub use restore_artifact::{StorageRestoreArtifact, StorageRestoreArtifactBuilder};
+mod api_request_admission;
+pub use api_request_admission::{
+    ApiRequestAdmissionStorage, ApiRequestClass, ApiRequestDuration, ApiRequestPolicy,
+    ApiRequestRejection, StorageApiRequestPermit, StorageApiRequestPolicy,
+    StorageApiRequestPolicyUpdate,
+};
 mod task_capacity;
 mod task_scheduling;
 pub use task_scheduling::{
@@ -490,9 +496,33 @@ pub struct StorageError {
     message: String,
     current_revision: Option<ResourceRevision>,
     task_capacity: Option<TaskCapacityRejection>,
+    api_request: Option<ApiRequestRejection>,
 }
 
 impl StorageError {
+    #[must_use]
+    pub fn api_request(reason: ApiRequestRejection) -> Self {
+        let kind = match reason {
+            ApiRequestRejection::Deployment | ApiRequestRejection::Principal => {
+                StorageErrorKind::RateLimited
+            }
+            ApiRequestRejection::InputBytes | ApiRequestRejection::OutputBytes => {
+                StorageErrorKind::InputTooLarge
+            }
+            ApiRequestRejection::DeadlineExceeded => StorageErrorKind::InvalidInput,
+            ApiRequestRejection::IdentityUnavailable
+            | ApiRequestRejection::ReconciliationRequired => StorageErrorKind::Unavailable,
+        };
+        let mut error = Self::new(kind, reason.as_str(), None);
+        error.api_request = Some(reason);
+        error
+    }
+
+    #[must_use]
+    pub const fn api_request_rejection(&self) -> Option<ApiRequestRejection> {
+        self.api_request
+    }
+
     #[must_use]
     pub fn task_capacity(reason: TaskCapacityRejection) -> Self {
         let kind = if reason.is_unavailable() {
@@ -627,6 +657,7 @@ impl StorageError {
             message: message.into(),
             current_revision,
             task_capacity: None,
+            api_request: None,
         }
     }
 

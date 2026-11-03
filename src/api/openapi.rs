@@ -84,13 +84,14 @@ use hubuum_events_core::{
     EventSubject, EventSubscriptionFilter, Provenance, ProvenanceActor, ProvenancePrincipal,
 };
 use serde::Serialize;
+use utoipa::openapi::Content;
 use utoipa::openapi::OpenApi as OpenApiDoc;
 use utoipa::openapi::header::Header;
 use utoipa::openapi::path::{Operation, Parameter, ParameterBuilder, ParameterIn, PathItem};
 use utoipa::openapi::response::Response;
-use utoipa::openapi::schema::{ObjectBuilder, Schema};
+use utoipa::openapi::schema::{AnyOfBuilder, ObjectBuilder, Schema};
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, Http, HttpAuthScheme, SecurityScheme};
-use utoipa::openapi::{Object, RefOr, Required, Type};
+use utoipa::openapi::{Object, Ref, RefOr, Required, Type};
 use utoipa::{Modify, OpenApi, ToSchema};
 
 #[derive(OpenApi)]
@@ -108,6 +109,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
         runtime_config::get_running_config,
         runtime_config::get_task_capacity,
         runtime_config::set_task_capacity,
+        runtime_config::get_api_request_capacity,
+        runtime_config::set_api_request_capacity,
         runtime_config::get_query_observations,
         runtime_config::set_query_observations,
         meta::get_db_state,
@@ -369,6 +372,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
     components(
         schemas(
             ApiErrorResponse,
+            ApiRequestAdmissionErrorResponse,
             MessageResponse,
             probes::ProbeResponse,
             LoginResponse,
@@ -664,6 +668,14 @@ pub struct ApiErrorResponse {
 }
 
 #[derive(Serialize, ToSchema)]
+pub struct ApiRequestAdmissionErrorResponse {
+    pub error: String,
+    pub reason: hubuum_storage_core::ApiRequestRejection,
+    pub retryable: bool,
+    pub message: String,
+}
+
+#[derive(Serialize, ToSchema)]
 #[schema(example = message_response_example)]
 pub struct MessageResponse {
     message: String,
@@ -809,6 +821,56 @@ impl Modify for OperationDefaults {
 
                 if is_etagged_operation(path, method) {
                     add_etag_response_docs(operation);
+                }
+                if actix_web::http::Method::from_bytes(method.to_ascii_uppercase().as_bytes())
+                    .ok()
+                    .and_then(|method| {
+                        crate::middlewares::api_request_admission::operation(&method, path)
+                    })
+                    .is_some()
+                {
+                    for (status, description) in [
+                        (
+                            "413",
+                            "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+                        ),
+                        (
+                            "422",
+                            "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+                        ),
+                        (
+                            "429",
+                            "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+                        ),
+                        (
+                            "503",
+                            "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+                        ),
+                    ] {
+                        let response = operation
+                            .responses
+                            .responses
+                            .entry(status.to_owned())
+                            .or_insert_with(|| RefOr::T(Response::new(description)));
+                        if let RefOr::T(response) = response {
+                            if !response.description.contains(description) {
+                                response.description.push(' ');
+                                response.description.push_str(description);
+                            }
+                            response.content.insert(
+                                "application/json".to_owned(),
+                                Content::new(Some(Schema::AnyOf(
+                                    AnyOfBuilder::new()
+                                        .item(Ref::from_schema_name("ApiErrorResponse"))
+                                        .item(Ref::from_schema_name(
+                                            "ApiRequestAdmissionErrorResponse",
+                                        ))
+                                        .build(),
+                                )))
+                                .into(),
+                            );
+                        }
+                    }
                 }
             });
         }

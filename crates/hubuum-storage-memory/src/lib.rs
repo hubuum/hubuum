@@ -368,6 +368,7 @@ struct MemoryRuntimeRegistration {
 
 #[derive(Clone)]
 struct MemoryState {
+    api_requests: api_request_admission::MemoryApiRequests,
     artifacts: artifacts::Artifacts,
     task_control: TaskControlState,
     task_reapplication: Option<TaskControlReapplication>,
@@ -880,6 +881,7 @@ pub mod regex_compiler;
 mod support;
 use support::*;
 
+mod api_request_admission;
 mod artifacts;
 mod auth_sessions;
 mod backup;

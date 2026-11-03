@@ -1,6 +1,6 @@
 # `hubuum-storage-core` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.17` release train.
+Status: experimental public API in the storage SDK `0.18` release train.
 
 ## Purpose and Callers
 
@@ -15,6 +15,13 @@ no runtime contract version handshake.
 The normative semantics of that Rust surface are documented in the
 [storage contract](../storage_boundary/contract.md). The Rust declarations,
 semantic coverage inventory, and contract documentation must change together.
+
+SDK 0.18 adds required `ApiRequestAdmissionStorage` to `WorkflowStorage`.
+Implement atomic shared policy/admission, private-field request permits,
+productive-boundary fencing and settlement before upgrading. Preserve structured
+`ApiRequestRejection` through adapter errors and inherit admitted owners through
+`StorageExecutionScope`. See the
+[0.17 to 0.18 upgrade](../storage_adapter_sdk.md#upgrading-from-017-to-018).
 
 The 0.9 train adds mandatory `artifacts::TaskArtifactStore`, including
 `ArtifactStore`, to the complete backend. Verified task completion carries a

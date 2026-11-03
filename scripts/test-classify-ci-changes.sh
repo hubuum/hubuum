@@ -85,7 +85,7 @@ for authorization_path in src/tests/permissions/candidate_paging.rs \
   assert_flag "$authorization_output" treetop_conformance true
 done
 
-for history_handler in src/models/history/computed.rs src/api/v1/handlers/classes/history_computed.rs src/api/v1/handlers/classes/history_population.rs src/api/v1/handlers/classes/history_relations.rs; do
+for history_handler in src/models/history/computed.rs src/api/v1/handlers/classes/history_computed.rs src/api/v1/handlers/classes/history_population.rs src/api/v1/handlers/classes/history_relations.rs crates/hubuum-storage-core/src/api_request_admission.rs src/middlewares/api_request_admission.rs; do
   history_output="$(bash "$classifier" "$history_handler")"
   assert_flag "$history_output" openapi true
 done
@@ -1055,6 +1055,17 @@ done
 wait_contract_output="$(bash "$classifier" src/tests/storage_contract/task_waiting.rs)"
 assert_flag "$wait_contract_output" rust true
 assert_flag "$wait_contract_output" container false
+
+for request_input in crates/hubuum-storage-postgres/migrations/2026-11-03-000002_api_request_admission/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-03-000002_api_request_admission/down.sql \
+  crates/hubuum-storage-postgres/src/backend/api_request_admission/tests.rs; do
+  request_output="$(bash "$classifier" "$request_input")"
+  assert_flag "$request_output" rust true
+  assert_flag "$request_output" container true
+done
+request_contract_output="$(bash "$classifier" src/tests/storage_contract/api_request_admission.rs)"
+assert_flag "$request_contract_output" rust true
+assert_flag "$request_contract_output" container false
 
 for session_input in src/services/auth_sessions.rs src/services/credential_activity.rs \
   src/tests/storage_contract/auth_sessions.rs tests/api_identity_suite/sessions.rs \

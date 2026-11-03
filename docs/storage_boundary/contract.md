@@ -68,8 +68,16 @@ adapter error -> StorageError -> application or API error
 
 ## Complete Backend Contract
 
+SDK 0.18 adds required `ApiRequestAdmissionStorage` to `WorkflowStorage`.
+Adapters atomically reserve deployment and stable-principal request occupancy,
+preserve the admitted owner in productive execution scopes, and fence/settle
+issued work before releasing capacity. Restore preserves shared policy and
+cumulative charges while invalidating obsolete application incarnations. This
+partial #521 slice does not establish H5 source-work or hard-heap acceptance;
+see [request admission](../api_request_admission.md) for the remaining gates.
+
 `StorageBackend` is indivisible for application selection. Its traits are
-organized into 20 documented semantic capability groups covering:
+organized into documented semantic capability groups covering:
 
 - resource lifecycle and atomic transaction composition;
 - identity, authentication, groups, principals, and authorization facts;

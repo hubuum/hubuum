@@ -7,6 +7,7 @@ use actix_service::{Service, Transform};
 use actix_web::{
     Error, HttpMessage,
     dev::{ServiceRequest, ServiceResponse},
+    error::InternalError,
     http::header::{HeaderName, HeaderValue},
 };
 use futures_util::future::{self, LocalBoxFuture, Ready};
@@ -15,6 +16,7 @@ use tracing::{Dispatch, instrument::WithSubscriber};
 use tracing::{Instrument, Level, Span, debug, error, field, info, span, warn};
 use uuid::Uuid;
 
+use crate::errors::ApiError;
 use crate::events::{CorrelationId, RequestProvenance};
 use crate::observability::{metrics, tracing as telemetry};
 
@@ -237,6 +239,28 @@ where
                                 elapsed_ms,
                                 error = %err,
                             );
+                        }
+                        if matches!(
+                            err.as_error::<ApiError>(),
+                            Some(ApiError::ApiRequestAdmission(_))
+                        ) {
+                            let mut response = err.error_response();
+                            response.headers_mut().insert(
+                                REQUEST_ID,
+                                request_id_s
+                                    .parse()
+                                    .expect("UUID request ID is a valid header"),
+                            );
+                            if let Some(correlation_id) = correlation_id {
+                                response.headers_mut().insert(
+                                    CORRELATION_ID,
+                                    correlation_id
+                                        .as_str()
+                                        .parse()
+                                        .expect("validated correlation ID is a valid header"),
+                                );
+                            }
+                            return Err(InternalError::from_response(err, response).into());
                         }
                         return Err(err);
                     }
