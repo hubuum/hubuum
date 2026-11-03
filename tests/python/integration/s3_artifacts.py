@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import platform
 import shutil
+import signal
 import socket
 import ssl
 import subprocess
@@ -141,7 +142,7 @@ class Fixture:
     def run(self, command):
         env = dict(os.environ, HUBUUM_TEST_S3_ENDPOINT=self.endpoint,
                    HUBUUM_TEST_S3_CA=str(self.directory / "ca.crt"), HUBUUM_TEST_S3_CONTROL=str(self.directory))
-        process = subprocess.Popen(command, cwd=ROOT, env=env)
+        process = subprocess.Popen(command, cwd=ROOT, env=env, start_new_session=True)
         try:
             deadline = time.monotonic() + 1800
             while process.poll() is None:
@@ -162,8 +163,12 @@ class Fixture:
             if process.returncode:
                 raise RuntimeError(f"S3 acceptance command failed with exit {process.returncode}")
         finally:
-            if process.poll() is None:
-                process.kill()
+            # Cargo may exit before its compiler/test descendants. Stop the
+            # entire owned process group before provider teardown, even then.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
             process.wait()
 
 
