@@ -868,6 +868,9 @@ async fn wait_for_shutdown_signal() -> std::io::Result<()> {
 mod runtime_shutdown_tests;
 
 #[cfg(test)]
+mod history_publication_tests;
+
+#[cfg(test)]
 mod tests {
     use std::sync::Arc;
 

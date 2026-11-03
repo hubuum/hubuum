@@ -205,6 +205,14 @@ The confirmed #521 helper split is an integration boundary, not an unmerged
 compile dependency. No broader CI labels or deployment activation follow from
 this plan. The final combined tree must revalidate entry modes, lock cycles and
 publication settlement after API occupancy has already settled.
+Native socket probes cover plain HTTP/1, Rustls and OpenSSL body completion and
+backpressure. They retain a connection-data witness beyond body EOF and require
+a same-worker deferred dispatcher-release signal after requesting socket abort.
+These probes are development evidence for a transport mechanism, not production
+publication retirement: upgrade rejection, producer ownership, pipelining,
+cancellation/crash behavior and measured resource/liveness gates remain open.
+The embedded TLS certificate and key are public loopback test fixtures, never
+deployment credentials or production trust material.
 History-aware registration retains the existing deletion SHARE/application UPDATE
 capacity ordering, then takes history-authority SHARE before checking retained
 journal/index state. That locking read is required for stale repeatable-read

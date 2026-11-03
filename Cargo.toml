@@ -51,6 +51,7 @@ members = [
 [dependencies]
 actix-rt = "2"
 actix-service = "2"
+actix-tls = { version = "3", default-features = false }
 actix-web = { version = "4", default-features = false, features = [
     "macros",
     "compress-brotli",
@@ -167,8 +168,8 @@ default = ["swagger-ui", "login-rate-limit-valkey"]
 amqp = ["dep:hubuum-event-sink-amqp"]
 email = ["dep:hubuum-event-sink-email"]
 swagger-ui = ["dep:utoipa-swagger-ui"]
-tls-rustls = ["actix-web/rustls-0_23"]
-tls-openssl = ["dep:openssl", "actix-web/openssl"]
+tls-rustls = ["actix-web/rustls-0_23", "actix-tls/accept", "actix-tls/rustls-0_23"]
+tls-openssl = ["dep:openssl", "actix-web/openssl", "actix-tls/accept", "actix-tls/openssl"]
 login-rate-limit-valkey = ["dep:redis"]
 valkey = ["dep:hubuum-event-sink-valkey", "login-rate-limit-valkey"]
 permissions-treetop = ["dep:treetop-client"]

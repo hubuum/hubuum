@@ -2447,6 +2447,7 @@ dependencies = [
  "actix-http",
  "actix-rt",
  "actix-service",
+ "actix-tls",
  "actix-web",
  "argon2",
  "async-trait",
