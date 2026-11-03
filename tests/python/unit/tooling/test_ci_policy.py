@@ -251,6 +251,7 @@ class PublicationGateTests(unittest.TestCase):
         self.assertIn('--test task_retention', tasks)
         self.assertIn('--count 100 --profile local --runs 1', tasks)
         self.assertIn('--safety-probes --recovery-probes --physical-recovery-probes', tasks)
+        self.assertIn('task-system-evidence/run-*/api-request-policy.json', tasks)
         self.assertNotIn('--output-probe', tasks)
         self.assertNotIn('--steady-seconds', tasks)
         self.assertIn('      - task-system\n', job("ci-gate"))
