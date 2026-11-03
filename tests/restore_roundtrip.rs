@@ -40,13 +40,11 @@ use tracing::instrument::WithSubscriber;
 use uuid::Uuid;
 
 fn database_url() -> String {
-    std::env::var("HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL")
-        .expect("The test runner must provide isolated destructive restore authority")
+    hubuum::test_support::restore_test_migration_database_url()
 }
 
 fn runtime_database_url() -> String {
-    std::env::var("HUBUUM_RESTORE_TEST_DATABASE_URL")
-        .expect("The test runner must provide isolated runtime restore-coordination authority")
+    hubuum::test_support::restore_test_runtime_database_url()
 }
 
 #[tokio::test]

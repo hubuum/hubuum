@@ -29,8 +29,7 @@ use std::panic::{AssertUnwindSafe, resume_unwind};
 async fn with_overflow_backend(test: impl for<'a> AsyncFn(&'a mut TestContext)) {
     let _guard = crate::test_support::RESTORE_TEST_LOCK.lock().await;
     for kind in [StorageBackendKind::Memory, StorageBackendKind::Postgres] {
-        let owner_url = std::env::var("HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL")
-            .expect("runner-provisioned isolated restore authority");
+        let owner_url = crate::test_support::restore_test_migration_database_url();
         let owner_pool = crate::test_support::postgres_test_pool_with_timeout(
             &owner_url,
             8,
@@ -42,8 +41,7 @@ async fn with_overflow_backend(test: impl for<'a> AsyncFn(&'a mut TestContext)) 
         let backend = match kind {
             StorageBackendKind::Memory => fixture.storage().clone(),
             StorageBackendKind::Postgres => {
-                let runtime_url = std::env::var("HUBUUM_RESTORE_TEST_DATABASE_URL")
-                    .expect("runner-provisioned isolated runtime authority");
+                let runtime_url = crate::test_support::restore_test_runtime_database_url();
                 let pool = crate::test_support::postgres_test_pool_with_timeout(
                     &runtime_url,
                     8,
@@ -75,6 +73,9 @@ struct TestContext {
 }
 impl TestContext {
     async fn run(storage: StorageHandle, test: impl for<'a> AsyncFnOnce(&'a mut Self)) {
+        // Exercise the finite operation-label contract even in focused runs,
+        // independently of whether another test initialized global metrics.
+        crate::observability::metrics::init().unwrap();
         let fixture =
             create_backend_object_fixture(&storage, &prefix("history_archive"), vec![]).await;
         let user = owner_user(&storage, &fixture).await;

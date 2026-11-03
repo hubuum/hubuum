@@ -606,3 +606,15 @@ pub use recovery::{RestoreContractFixture, capture_backup_document};
 /// Cargo runs test binaries sequentially; callers within each binary share this
 /// lock for the complete setup, assertion, and restoration interval.
 pub static RESTORE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Runner-provisioned destructive restore authority; never use the shared test database.
+pub fn restore_test_migration_database_url() -> String {
+    std::env::var("HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL")
+        .expect("The test runner must provide isolated destructive restore authority")
+}
+
+/// Runner-provisioned runtime role for the isolated restore database.
+pub fn restore_test_runtime_database_url() -> String {
+    std::env::var("HUBUUM_RESTORE_TEST_DATABASE_URL")
+        .expect("The test runner must provide isolated runtime restore authority")
+}
