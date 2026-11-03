@@ -1,6 +1,7 @@
 pub(crate) mod access;
 pub(crate) mod computed;
 pub(crate) mod navigation;
+pub mod segments;
 
 use std::collections::BTreeMap;
 

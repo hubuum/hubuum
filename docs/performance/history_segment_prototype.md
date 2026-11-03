@@ -2,8 +2,9 @@
 
 The first implementation slice of [#514](https://github.com/hubuum/hubuum/issues/514)
 exercises a retained segment format and bounded exact/as-of record lookups. It
-lives under `benchmark_support::history_segments`, outside the storage SDK and
-HTTP API. It does not complete #514 or enable source retirement.
+lives under `services::history::segments`, with the existing
+`benchmark_support::history_segments` import retained for diagnostics. It remains
+outside the storage SDK and HTTP API. It does not complete #514 or enable source retirement.
 
 ## Format and limits
 
@@ -42,6 +43,26 @@ the [lifecycle budgets](lifecycle_budgets.md), including H4's smaller capture
 batches, task-level H5 limits, or production admission/accounting. The producer
 receives one record at a time; the caller still owns input capture and payload
 allocation bounds.
+
+## Published-reference reader foundation
+
+`RetainedHistorySegment::open` accepts the existing trusted catalog
+`ArtifactReference`, resolves durable publication, checks its exact immutable
+location and manifest digest, and reconstructs the index from verified blocks.
+It does not need the producer's in-memory verification proof. Serialized reference
+roundtrips exercise exact and half-open as-of reads for both retained block sizes.
+Unpublished attempts, changed locations and wrong manifest digests fail closed.
+
+The reader conservatively charges the artifact contract's full 4 MiB retained
+manifest envelope before external I/O, then charges every fetched index/data
+block to the same cumulative budget. History decoding still requires a manifest
+within 256 KiB and a segment within 64 MiB. This conservative charge is explicit;
+it does not establish P2 acceptance for the complete query pipeline.
+
+This foundation provides segment-local inclusion only. Persisted query catalogs,
+capture, generation-checked pins, live authorization and retained expiry gates,
+result lifetime and typed query coverage remain pending. It cannot establish a
+complete empty result or authorize exposure of any record.
 
 ## Reproduction
 
