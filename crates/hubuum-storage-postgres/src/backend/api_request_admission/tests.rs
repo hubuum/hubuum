@@ -74,6 +74,29 @@ async fn expired_unsettled_transaction_retains_capacity_until_fenced_settlement(
         error.api_request_rejection(),
         Some(ApiRequestRejection::Principal)
     );
+    let authority_entered = Arc::new(Notify::new());
+    let authority_release = Arc::new(Notify::new());
+    let writer_entered = authority_entered.clone();
+    let writer_release = authority_release.clone();
+    let authority = tokio::spawn(async move {
+        crate::with_transaction(
+            &integration_test_migration_pool(1),
+            async move |connection| {
+                diesel::sql_query(
+                    "SELECT id FROM hubuum_control.deletion_authority WHERE id=1 FOR UPDATE",
+                )
+                .execute(connection)
+                .await?;
+                writer_entered.notify_one();
+                writer_release.notified().await;
+                Ok::<_, PostgresStorageError>(())
+            },
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(5), authority_entered.notified())
+        .await
+        .unwrap();
     let settle_backend = backend.clone();
     let mut settlement =
         tokio::spawn(async move { settle_backend.settle_api_request(permit).await });
@@ -89,6 +112,10 @@ async fn expired_unsettled_transaction_retains_capacity_until_fenced_settlement(
         .unwrap()
         .unwrap()
         .unwrap();
+    // Settlement completed while global authority was still exclusively held:
+    // cleanup waited only for its exact productive owner, never global gates.
+    authority_release.notify_one();
+    authority.await.unwrap().unwrap();
     backend.settle_api_request(second).await.unwrap();
     backend
         .delete_user(StorageUserDelete::new(user.id(), EventContext::system()))

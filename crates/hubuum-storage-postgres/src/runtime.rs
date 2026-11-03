@@ -644,27 +644,6 @@ impl PostgresRuntime {
         if context.exempt {
             return Ok(());
         }
-        if let Some(permit) = &context.api_request {
-            use diesel::sql_types::Uuid as SqlUuid;
-            let remaining = diesel::select(
-                diesel::dsl::sql::<BigInt>("public.hubuum_api_request_execution(")
-                    .bind::<SqlUuid, _>(permit.owner())
-                    .sql(")"),
-            )
-            .get_result::<i64>(connection)
-            .await?;
-            let mut remaining = context.query_budget.map_or(remaining as u64, |budget| {
-                (remaining as u64).min(budget.as_millis())
-            });
-            if let Some(execution) = &context.task_execution {
-                remaining = remaining
-                    .min(execution.remaining().as_millis().clamp(1, i32::MAX as u128) as u64);
-            }
-            diesel::sql_query("SELECT set_config('statement_timeout',$1,true)")
-                .bind::<Text, _>(remaining.to_string())
-                .execute(connection)
-                .await?;
-        }
         if let Some(owner) = &self.runtime_owner
             && context
                 .application_access
@@ -698,6 +677,37 @@ impl PostgresRuntime {
             }
         } else if context.task_execution.is_some() {
             require_deletion_execution(connection).await?;
+        }
+        // Applicable history authority gates belong before the owner validator.
+        self.require_api_request_execution(connection, context)
+            .await
+    }
+
+    async fn require_api_request_execution(
+        &self,
+        connection: &mut PostgresConnection,
+        context: &TransactionLocalContext,
+    ) -> Result<(), PostgresStorageError> {
+        if let Some(permit) = &context.api_request {
+            use diesel::sql_types::Uuid as SqlUuid;
+            let remaining = diesel::select(
+                diesel::dsl::sql::<BigInt>("public.hubuum_api_request_execution(")
+                    .bind::<SqlUuid, _>(permit.owner())
+                    .sql(")"),
+            )
+            .get_result::<i64>(connection)
+            .await?;
+            let mut remaining = context.query_budget.map_or(remaining as u64, |budget| {
+                (remaining as u64).min(budget.as_millis())
+            });
+            if let Some(execution) = &context.task_execution {
+                remaining = remaining
+                    .min(execution.remaining().as_millis().clamp(1, i32::MAX as u128) as u64);
+            }
+            diesel::sql_query("SELECT set_config('statement_timeout',$1,true)")
+                .bind::<Text, _>(remaining.to_string())
+                .execute(connection)
+                .await?;
         }
         Ok(())
     }

@@ -245,10 +245,11 @@ for an exception.
   The service retains the authenticated repository session and independently
   protects required audit evidence before cleanup or completion acknowledgement.
 - Synchronous request accounting: `ApiRequestAdmissionStorage::admit_api_request`
-  and `settle_api_request` acquire/fence/release occupancy for an exact request
+  and `ApiRequestAdmissionStorage::settle_api_request` acquire/fence/release occupancy for an exact request
   owner without ordinary resource mutations. Physical-attempt time charges are
   monotonic and survive settlement and logical restore. Explicit administrator
-  policy replacement uses `replace_api_request_policy` with a required revision;
+  policy replacement uses `ApiRequestAdmissionStorage::replace_api_request_policy`
+  with a required revision;
   the application records its actor/revision through common diagnostics. These
   operations do not publish domain payloads or create durable tasks.
 - Task policy maintenance: `TaskCapacityStorage::initialize_task_policy`

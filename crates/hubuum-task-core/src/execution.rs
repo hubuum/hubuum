@@ -131,6 +131,14 @@ pub struct TaskStopHandle {
 }
 
 impl TaskExecutionContext {
+    /// Narrow a context without renewing its deadline or replacing its shared
+    /// cancellation signal. Useful when policy is resolved after work begins.
+    pub fn with_earlier_deadline(&self, deadline: Instant) -> Self {
+        Self {
+            signal: self.signal.clone(),
+            deadline: self.deadline.min(deadline),
+        }
+    }
     /// Convert the remaining duration of a persisted deadline once at admission.
     /// A zero duration is valid for a deadline that has already expired.
     pub fn new(remaining: Duration) -> Result<(Self, TaskStopHandle), TaskControlError> {
@@ -198,6 +206,15 @@ impl std::error::Error for TaskControlError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn narrowing_does_not_renew_or_replace_cancellation_ownership() {
+        let (original, stop) = TaskExecutionContext::new(Duration::from_secs(10)).unwrap();
+        let narrowed = original.with_earlier_deadline(Instant::now() + Duration::from_secs(20));
+        assert_eq!(narrowed, original);
+        stop.request_stop(TaskStopReason::Cancelled);
+        assert_eq!(narrowed.check(), Err(TaskStopReason::Cancelled));
+    }
 
     #[test]
     fn cancellation_reason_debug_does_not_disclose_content() {

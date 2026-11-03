@@ -110,89 +110,137 @@ pub(super) async fn run(
     let input_bytes = req
         .headers()
         .get("Content-Length")
-        .and_then(|header| header.to_str().ok())
-        .and_then(|value| value.parse().ok())
+        .and_then(|h| h.to_str().ok())
+        .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    let admission_started = Instant::now();
-    let permit = match storage
-        .admit_api_request(principal, class, input_bytes)
-        .await
-    {
-        Ok(permit) => permit,
-        Err(error) => {
-            return Ok(req
-                .into_response(ApiError::from(error).error_response())
-                .map_into_boxed_body());
-        }
-    };
-    bound_payload(&mut req, permit.policy().input_bytes().bytes());
-    let duration = Duration::from_millis(permit.policy().duration().milliseconds())
-        .saturating_sub(admission_started.elapsed());
-    let output_limit =
-        usize::try_from(permit.policy().output_bytes().bytes()).unwrap_or(usize::MAX);
-    let (execution, stop) = TaskExecutionContext::new(duration)
-        .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
-    let completion = execution.clone();
-    let scope = storage
+    let started = Instant::now();
+    let (initial, stop) = TaskExecutionContext::new(Duration::from_millis(
+        hubuum_storage_core::ApiRequestDuration::MAX_MILLISECONDS,
+    ))
+    .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
+    let parent_scope = storage
         .current_execution_scope()
-        .with_api_request(permit.clone())
-        .with_task_execution(Some(execution));
+        .with_task_execution(Some(initial.clone()));
     let disconnect = DisconnectStop(stop);
-    let http_work = super::maintenance::take_supervised_http_work(&req);
-    // Dropping the caller's JoinHandle does not abort this supervisor. Cleanup
-    // waits for the database owner lock even if a timeout drops handler work.
-    #[cfg(any(test, feature = "integration-test-support", feature = "query-capture"))]
-    let query_capture = hubuum_storage_postgres::QueryCaptureContext::current();
+    let mut http_work = super::maintenance::take_supervised_http_work(&req);
     #[cfg(test)]
     let candidate_capture = crate::permissions::visibility::CandidateFetchCapture::current();
+    let work_storage = storage.clone();
+    // Supervision owns admission itself as well as handler execution: dropping
+    // the HTTP wait must not abandon an admission that is committing.
     let work = async move {
-        let response = storage.run_in_scope(scope, async move {
-            let response = next.call(req).await?.map_into_boxed_body();
-            if completion.check() == Err(TaskStopReason::DeadlineExceeded) {
-                return Err(
-                    ApiError::ApiRequestAdmission(ApiRequestRejection::DeadlineExceeded).into(),
-                );
-            }
-            let (request, response) = response.into_parts();
-            let (head, body) = response.into_parts();
-            let bytes = to_bytes_limited(body, output_limit)
+        storage
+            .run_in_scope(parent_scope, async move {
+                let permit = match work_storage
+                    .admit_api_request(principal, class, input_bytes)
+                    .await
+                {
+                    Ok(permit) => permit,
+                    Err(error) => {
+                        if (error.api_request_rejection().is_some()
+                            || matches!(
+                                error.kind(),
+                                crate::storage::StorageErrorKind::TaskCancelled
+                                    | crate::storage::StorageErrorKind::TaskDeadlineExceeded
+                            ))
+                            && let Some(guard) = http_work.take()
+                        {
+                            guard.complete();
+                        }
+                        let error = match error.kind() {
+                            crate::storage::StorageErrorKind::TaskDeadlineExceeded => {
+                                ApiError::ApiRequestAdmission(ApiRequestRejection::DeadlineExceeded)
+                            }
+                            crate::storage::StorageErrorKind::TaskCancelled => {
+                                ApiError::ApiRequestAdmission(
+                                    ApiRequestRejection::ReconciliationRequired,
+                                )
+                            }
+                            _ => ApiError::from(error),
+                        };
+                        return Ok(req
+                            .into_response(error.error_response())
+                            .map_into_boxed_body());
+                    }
+                };
+                bound_payload(&mut req, permit.policy().input_bytes().bytes());
+                let deadline =
+                    started + Duration::from_millis(permit.policy().duration().milliseconds());
+                let execution = initial.with_earlier_deadline(deadline);
+                let active = execution.clone();
+                let output_limit =
+                    usize::try_from(permit.policy().output_bytes().bytes()).unwrap_or(usize::MAX);
+                let scope = work_storage
+                    .current_execution_scope()
+                    .with_api_request(permit.clone())
+                    .with_task_execution(Some(execution));
+                let response = work_storage.run_in_scope(scope, async move {
+                    if active.check() == Err(TaskStopReason::Cancelled) {
+                        return Err(ApiError::ApiRequestAdmission(
+                            ApiRequestRejection::ReconciliationRequired,
+                        )
+                        .into());
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(ApiError::ApiRequestAdmission(
+                            ApiRequestRejection::DeadlineExceeded,
+                        )
+                        .into());
+                    }
+                    let response = next.call(req).await?.map_into_boxed_body();
+                    if Instant::now() >= deadline {
+                        return Err(ApiError::ApiRequestAdmission(
+                            ApiRequestRejection::DeadlineExceeded,
+                        )
+                        .into());
+                    }
+                    let (request, response) = response.into_parts();
+                    let (head, body) = response.into_parts();
+                    let bytes = to_bytes_limited(body, output_limit)
+                        .await
+                        .map_err(|_| {
+                            ApiError::ApiRequestAdmission(ApiRequestRejection::OutputBytes)
+                        })?
+                        .map_err(Error::from)?;
+                    if Instant::now() >= deadline {
+                        return Err(ApiError::ApiRequestAdmission(
+                            ApiRequestRejection::DeadlineExceeded,
+                        )
+                        .into());
+                    }
+                    Ok::<_, Error>(ServiceResponse::new(
+                        request,
+                        head.set_body(bytes).map_into_boxed_body(),
+                    ))
+                });
+                let result = match tokio::time::timeout_at(
+                    tokio::time::Instant::from_std(deadline),
+                    response,
+                )
                 .await
-                .map_err(|_| ApiError::ApiRequestAdmission(ApiRequestRejection::OutputBytes))?
-                .map_err(Error::from)?;
-            if completion.check() == Err(TaskStopReason::DeadlineExceeded) {
-                return Err(
-                    ApiError::ApiRequestAdmission(ApiRequestRejection::DeadlineExceeded).into(),
-                );
-            }
-            Ok::<_, Error>(ServiceResponse::new(
-                request,
-                head.set_body(bytes).map_into_boxed_body(),
-            ))
-        });
-        let result = if duration.is_zero() {
-            drop(response);
-            Err(ApiError::ApiRequestAdmission(ApiRequestRejection::DeadlineExceeded).into())
-        } else {
-            match tokio::time::timeout(duration, response).await {
-                Ok(result) => result,
-                Err(_) => {
-                    Err(ApiError::ApiRequestAdmission(ApiRequestRejection::DeadlineExceeded).into())
+                {
+                    Ok(result) => result,
+                    Err(_) => Err(ApiError::ApiRequestAdmission(
+                        ApiRequestRejection::DeadlineExceeded,
+                    )
+                    .into()),
+                };
+                work_storage
+                    .settle_api_request(permit)
+                    .await
+                    .map_err(|error| {
+                        tracing::warn!(%error,"API request settlement failed");
+                        ApiError::ApiRequestAdmission(ApiRequestRejection::ReconciliationRequired)
+                    })?;
+                if let Some(guard) = http_work {
+                    guard.complete();
                 }
-            }
-        };
-        storage.settle_api_request(permit).await.map_err(|error| {
-            tracing::warn!(%error, "API request settlement failed");
-            ApiError::ApiRequestAdmission(ApiRequestRejection::ReconciliationRequired)
-        })?;
-        if let Some(http_work) = http_work {
-            http_work.complete();
-        }
-        result
-    }
-    .in_current_span()
-    .with_current_subscriber();
-    #[cfg(any(test, feature = "integration-test-support", feature = "query-capture"))]
-    let work = query_capture.run(work);
+                result
+            })
+            .await
+    };
+    let work = work.in_current_span().with_current_subscriber();
+    let work = crate::storage::SpawnObservationContext::current().run(work);
     #[cfg(test)]
     let work = candidate_capture.run(work);
     let work = actix_web::rt::spawn(work);

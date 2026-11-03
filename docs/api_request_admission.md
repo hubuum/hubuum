@@ -70,9 +70,10 @@ stopped. The supervisor settles the exact owner after work ends.
 Late work cannot resume through the retired tuple, including an older
 repeatable-read snapshot.
 
-A supervisor retains cleanup ownership when the HTTP wait is dropped. Its local
+A supervisor owns admission itself as well as handler/body execution, retaining
+cleanup ownership when the HTTP wait is dropped. Its local
 deadline starts before admission, so policy waits and response/network latency
-cannot refresh the allowance. It signals
+and task scheduling cannot refresh the absolute allowance. It signals
 cooperative cancellation, carries the original deadline into PostgreSQL query
 cancellation, and settles occupancy after the handler/body boundary. Timeout does
 not prove an import/export task was never committed. Clients should retain their
