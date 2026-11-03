@@ -565,3 +565,129 @@ async fn request_admission_retains_blocking_preparation_until_completion() {
     backend.settle_api_request(replacement).await.unwrap();
     delete_backend_user(&backend, user).await;
 }
+
+#[rstest::rstest]
+#[case::import("/api/v1/imports", ApiRequestClass::ImportSubmission)]
+#[case::export("/api/v1/exports", ApiRequestClass::ExportSubmission)]
+#[actix_web::test]
+async fn stalled_submission_body_releases_capacity_before_client_close(
+    #[case] endpoint: &'static str,
+    #[case] class: ApiRequestClass,
+) {
+    use actix_web::{HttpResponse, HttpServer, middleware::from_fn, web};
+    use serde_json::Value;
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+    use uuid::Uuid;
+
+    let backend = StorageHandle::from_registered_backend(MemoryStorage::new());
+    let user = create_backend_user(&backend, &prefix("api_stalled_body")).await;
+    let initial = backend.api_request_policy().await.unwrap();
+    backend
+        .replace_api_request_policy(StorageApiRequestPolicyUpdate::new(
+            initial.revision(),
+            initial
+                .policy()
+                .clone()
+                .with_principal(TaskCapacityLimit::new(1).unwrap())
+                .with_duration(ApiRequestDuration::new(100).unwrap()),
+        ))
+        .await
+        .unwrap();
+    let context = Data::new(AppContext::new(
+        backend.clone(),
+        Arc::new(LocalPermissionBackend::new(backend.clone(), "admin".into())),
+    ));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let route_calls = calls.clone();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = HttpServer::new(move || {
+        let calls = route_calls.clone();
+        App::new()
+            .app_data(context.clone())
+            .app_data(web::JsonConfig::default().error_handler(crate::errors::json_error_handler))
+            .wrap(from_fn(crate::middlewares::actor_context))
+            .wrap(from_fn(
+                crate::middlewares::maintenance::reject_during_maintenance,
+            ))
+            .wrap(crate::middlewares::TracingMiddleware::new())
+            .route(
+                endpoint,
+                web::post().to(move |_body: web::Json<Value>| {
+                    let calls = calls.clone();
+                    async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        HttpResponse::Ok().finish()
+                    }
+                }),
+            )
+    })
+    .disable_signals()
+    .workers(1)
+    .listen(listener)
+    .unwrap()
+    .run();
+    let handle = server.handle();
+    let server = actix_web::rt::spawn(server);
+    let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
+    socket.write_all(format!("POST {endpoint} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: 100\r\nX-Correlation-ID: stalled-submission\r\n\r\n{{\"data\":",user.raw_token).as_bytes()).await.unwrap();
+    // The client deliberately sends neither the remaining bytes nor EOF.
+    let received = tokio::time::timeout(Duration::from_secs(3), async {
+        let mut reader = BufReader::new(&mut socket);
+        let mut headers = String::new();
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line).await? == 0 {
+                return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof));
+            }
+            headers.push_str(&line);
+            if line == "\r\n" {
+                break;
+            }
+        }
+        let length = headers
+            .lines()
+            .filter_map(|line| line.split_once(':'))
+            .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+            .expect("JSON error response must have a known body length")
+            .1
+            .trim()
+            .parse::<usize>()
+            .unwrap();
+        let mut body = vec![0; length];
+        reader.read_exact(&mut body).await?;
+        Ok::<_, std::io::Error>((headers, body))
+    })
+    .await;
+    // Check recovery while the original client is still open, even if reading
+    // failed, then close it for cleanup before reporting any assertion failure.
+    let replacement = backend.admit_api_request(user.principal_id, class, 0).await;
+    drop(socket);
+    handle.stop(true).await;
+    server.await.unwrap().unwrap();
+    backend
+        .settle_api_request(replacement.expect("capacity must recover before client close"))
+        .await
+        .unwrap();
+    delete_backend_user(&backend, user).await;
+    let (headers, body) = received
+        .expect("stalled body must receive its deadline response")
+        .unwrap();
+    assert!(headers.starts_with("HTTP/1.1 422 "), "{headers}");
+    let header = |wanted: &str| {
+        headers
+            .lines()
+            .filter_map(|line| line.split_once(':'))
+            .find(|(name, _)| name.eq_ignore_ascii_case(wanted))
+            .map(|(_, value)| value.trim().to_owned())
+    };
+    assert_eq!(
+        header("x-correlation-id").as_deref(),
+        Some("stalled-submission")
+    );
+    Uuid::parse_str(&header("x-request-id").expect("request ID must survive deadline response"))
+        .unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["reason"], "api_capacity_deadline_exceeded");
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}

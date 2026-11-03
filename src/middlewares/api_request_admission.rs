@@ -71,21 +71,39 @@ impl Drop for DisconnectStop {
     }
 }
 
-fn bound_payload(req: &mut ServiceRequest, limit: u64) {
+async fn wait_for_request_stop(execution: &TaskExecutionContext) -> TaskStopReason {
+    loop {
+        if let Err(reason) = execution.check() {
+            return reason;
+        }
+        tokio::time::sleep(execution.remaining().min(Duration::from_millis(10))).await;
+    }
+}
+
+fn bound_payload(req: &mut ServiceRequest, limit: u64, execution: TaskExecutionContext) {
     let payload = req.take_payload();
     let stream = futures::stream::unfold(
-        (payload, 0_u64, false),
-        move |(mut payload, used, stopped)| async move {
+        (payload, 0_u64, false, execution),
+        move |(mut payload, used, stopped, execution)| async move {
             if stopped {
                 return None;
             }
-            let item = payload.next().await?;
+            let item = tokio::select! {
+                biased;
+                _ = wait_for_request_stop(&execution) => Err(PayloadError::Incomplete(None)),
+                item = payload.next() => item?,
+            };
             match item {
                 Ok(bytes) => match used.checked_add(bytes.len() as u64) {
-                    Some(total) if total <= limit => Some((Ok(bytes), (payload, total, false))),
-                    _ => Some((Err(PayloadError::Overflow), (payload, used, true))),
+                    Some(total) if total <= limit => {
+                        Some((Ok(bytes), (payload, total, false, execution)))
+                    }
+                    _ => Some((
+                        Err(PayloadError::Overflow),
+                        (payload, used, true, execution),
+                    )),
                 },
-                Err(error) => Some((Err(error), (payload, used, true))),
+                Err(error) => Some((Err(error), (payload, used, true, execution))),
             }
         },
     );
@@ -165,10 +183,14 @@ pub(super) async fn run(
                             .map_into_boxed_body());
                     }
                 };
-                bound_payload(&mut req, permit.policy().input_bytes().bytes());
                 let deadline =
                     started + Duration::from_millis(permit.policy().duration().milliseconds());
                 let execution = initial.with_earlier_deadline(deadline);
+                bound_payload(
+                    &mut req,
+                    permit.policy().input_bytes().bytes(),
+                    execution.clone(),
+                );
                 let active = execution.clone();
                 let output_limit =
                     usize::try_from(permit.policy().output_bytes().bytes()).unwrap_or(usize::MAX);

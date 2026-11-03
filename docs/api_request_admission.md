@@ -74,8 +74,8 @@ A supervisor owns admission itself as well as handler/body execution, retaining
 cleanup ownership when the HTTP wait is dropped. Its local
 deadline starts before admission, so policy waits and response/network latency
 and task scheduling cannot refresh the absolute allowance. It signals
-cooperative cancellation, carries the original deadline into PostgreSQL query
-cancellation, and retains the handler/body future through issued preparation
+cooperative cancellation, terminates stalled ingress reads on that original
+deadline or cancellation, carries the deadline into PostgreSQL query cancellation, and retains the handler/body future through issued preparation
 completion before settling occupancy. A deadline response can be delayed while
 a non-cooperative template or blocking publication job drains; this work remains
 charged throughout. The supervisor does not drop its awaited child/blocking jobs
