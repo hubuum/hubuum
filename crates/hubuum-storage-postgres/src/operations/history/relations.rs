@@ -1,6 +1,6 @@
 use diesel::{
     QueryableByName, sql_query,
-    sql_types::{Array, BigInt, Integer, Jsonb, Nullable, Text, Timestamp, Timestamptz},
+    sql_types::{Array, BigInt, Bool, Integer, Jsonb, Nullable, Text, Timestamp, Timestamptz},
 };
 use hubuum_domain::{ClassRelationId, ObjectId};
 use hubuum_query::CursorValue;
@@ -146,6 +146,8 @@ impl RelationRow {
 
 #[derive(QueryableByName)]
 struct EndpointRow {
+    #[diesel(sql_type = Bool)]
+    history_visible: bool,
     #[diesel(sql_type = BigInt)]
     ordinal: i64,
     #[diesel(sql_type = Integer)]
@@ -162,6 +164,11 @@ struct EndpointRow {
 
 impl EndpointRow {
     fn project(self) -> Result<(usize, StorageHistoryEndpointSnapshot), PostgresStorageError> {
+        if !self.history_visible {
+            return Err(PostgresStorageError::not_found(
+                "Historical endpoint version is expired",
+            ));
+        }
         let resource = match self.class_id {
             Some(class_id) => StorageHistoryResource::Object {
                 class_id: ClassId::new(class_id)?,
@@ -187,7 +194,9 @@ impl EndpointRow {
 
 struct RelationTables {
     edges: &'static str,
+    family: &'static str,
     endpoints: &'static str,
+    endpoint_family: &'static str,
     from: &'static str,
     to: &'static str,
     edge_projection: &'static str,
@@ -200,7 +209,9 @@ impl RelationTables {
             StorageRelationHistoryResource::Class(id) => (
                 Self {
                     edges: "hubuumclass_relation_history",
+                    family: "class_relation",
                     endpoints: "hubuumclass_history",
+                    endpoint_family: "class",
                     from: "from_hubuum_class_id",
                     to: "to_hubuum_class_id",
                     edge_projection: "NULL::int4 AS class_relation_id, forward_label, reverse_label, forward_template_alias, reverse_template_alias, from_max_relations, to_max_relations",
@@ -211,7 +222,9 @@ impl RelationTables {
             StorageRelationHistoryResource::Object(id) => (
                 Self {
                     edges: "hubuumobject_relation_history",
+                    family: "object_relation",
                     endpoints: "hubuumobject_history",
+                    endpoint_family: "object",
                     from: "from_hubuum_object_id",
                     to: "to_hubuum_object_id",
                     edge_projection: "class_relation_id, NULL::text AS forward_label, NULL::text AS reverse_label, NULL::text AS forward_template_alias, NULL::text AS reverse_template_alias, NULL::int4 AS from_max_relations, NULL::int4 AS to_max_relations",
@@ -220,6 +233,14 @@ impl RelationTables {
                 id.id(),
             ),
         }
+    }
+
+    fn visibility_sql(&self) -> String {
+        format!(
+            "public.hubuum_history_version_visible('{family}',logical_identity) AND \
+             ($2::timestamptz IS NULL OR public.hubuum_history_as_of_visible('{family}',logical_identity,$2,valid_from))",
+            family = self.family,
+        )
     }
 
     fn page_sql(&self, descending: bool, has_cursor: bool) -> String {
@@ -250,12 +271,12 @@ impl RelationTables {
         let branch = |endpoint| {
             format!(
             "(SELECT id, {from} AS from_id, {to} AS to_id, {projection}, created_at, updated_at, {metadata}
-             FROM {table} WHERE {validity}
+             FROM {table} WHERE {validity} AND ({visibility})
              AND ({endpoint}, history_id) {lower_comparison} ($1, {lower})
              AND ({endpoint}, history_id) {upper_comparison} ($1, {upper})
              ORDER BY {endpoint} {order}, history_id {order} LIMIT $4)",
             from=self.from, to=self.to, projection=self.edge_projection, metadata=METADATA,
-            table=self.edges, validity=VALIDITY,
+            table=self.edges, validity=VALIDITY, visibility=self.visibility_sql(),
         )
         };
         format!(
@@ -269,13 +290,14 @@ impl RelationTables {
         // Seek the latest version first, including tombstones. Checking validity
         // afterward preserves gaps without scanning thousands of older versions.
         format!(
-            "SELECT requested.ordinal, endpoint.* FROM unnest($1::int4[], $2::timestamptz[], $3::text[]) WITH ORDINALITY AS requested(id, at, identity, ordinal)
+            "SELECT requested.ordinal, endpoint.*, public.hubuum_history_as_of_visible('{family}',endpoint.logical_identity,requested.at,endpoint.valid_from) AS history_visible
+             FROM unnest($1::int4[], $2::timestamptz[], $3::text[]) WITH ORDINALITY AS requested(id, at, identity, ordinal)
              CROSS JOIN LATERAL (SELECT id, {class}, collection_id, name, {metadata} FROM {table}
                WHERE id = requested.id AND valid_from <= requested.at AND logical_identity #>> '{{subject,identity,identity}}' = requested.identity
                ORDER BY valid_from DESC, history_id DESC LIMIT 1) endpoint
              WHERE endpoint.op <> 'D' AND (endpoint.valid_to IS NULL OR requested.at < endpoint.valid_to)
              ORDER BY requested.ordinal",
-            class=self.class_projection, metadata=METADATA, table=self.endpoints,
+            class=self.class_projection, metadata=METADATA, table=self.endpoints, family=self.endpoint_family,
         )
     }
 }
@@ -309,8 +331,18 @@ pub(crate) async fn list_relation_history(
     runtime.with_read_only_snapshot(async |connection| {
         #[derive(QueryableByName)]
         struct Count { #[diesel(sql_type = BigInt)] count: i64 }
+        if at.is_some() {
+            #[derive(QueryableByName)]
+            struct Expired { #[diesel(sql_type = Bool)] expired: bool }
+            let expired = sql_query(format!("SELECT EXISTS(SELECT 1 FROM {} WHERE ({} = $1 OR {} = $1) AND {VALIDITY} AND NOT ({})) AS expired", tables.edges, tables.from, tables.to, tables.visibility_sql()))
+                .bind::<Integer, _>(root).bind::<Nullable<Timestamptz>, _>(at)
+                .get_result::<Expired>(connection).await?.expired;
+            if expired {
+                return Err(PostgresStorageError::not_found("Historical relation version is expired"));
+            }
+        }
         let total = if options.include_total() {
-            Some(sql_query(format!("SELECT count(*) AS count FROM {} WHERE ({} = $1 OR {} = $1) AND {VALIDITY}", tables.edges, tables.from, tables.to))
+            Some(sql_query(format!("SELECT count(*) AS count FROM {} WHERE ({} = $1 OR {} = $1) AND {VALIDITY} AND ({})", tables.edges, tables.from, tables.to, tables.visibility_sql()))
                 .bind::<Integer, _>(root).bind::<Nullable<Timestamptz>, _>(at)
                 .get_result::<Count>(connection).await?.count)
         } else { None };

@@ -4,7 +4,7 @@ pub(crate) mod relations;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::SelectableHelper;
-use diesel::dsl::sql;
+use diesel::dsl::{not, sql};
 use diesel::expression::SqlLiteral;
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::sql_types::{Bool, Timestamptz};
@@ -822,6 +822,19 @@ pub async fn list_class_objects_as_of(
     let fields = history_cursor_fields(options, "hubuumobject_history")?;
     runtime
         .with_read_only_snapshot(async |connection| {
+            let visible = sql::<Bool>("public.hubuum_history_as_of_visible('object',hubuumobject_history.logical_identity,")
+                .bind::<Timestamptz, _>(query.at())
+                .sql(",hubuumobject_history.valid_from)");
+            let expired = diesel::select(diesel::dsl::exists(
+                class_objects_as_of_query(&query)?.filter(not(visible)),
+            ))
+            .get_result::<bool>(connection)
+            .await?;
+            if expired {
+                return Err(PostgresStorageError::not_found(
+                    "Historical object population contains an expired version",
+                ));
+            }
             let total = if options.include_total() {
                 Some(
                     class_objects_as_of_query(&query)?

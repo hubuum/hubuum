@@ -144,3 +144,72 @@ async fn endpoint_hydration_seeks_the_selected_version_in_long_history(#[case] o
         Ok::<_, PostgresStorageError>(())
     }).await.unwrap();
 }
+
+#[rstest]
+#[case::class(false)]
+#[case::object(true)]
+#[tokio::test]
+async fn endpoint_expiry_preserves_native_selection(#[case] objects: bool) {
+    use crate::test_support::{
+        database_role_tests_enabled, integration_test_database_roles,
+        integration_test_migration_pool,
+    };
+    use diesel::sql_types::Uuid as SqlUuid;
+    use hubuum_domain::{IdentityReference, ResourceIdentity, VersionIdentity};
+    use hubuum_storage_core::StorageIdentitySubject;
+    use uuid::Uuid;
+
+    let pool = integration_test_migration_pool(1);
+    let resource = if objects {
+        StorageRelationHistoryResource::Object(ObjectId::new(42).unwrap())
+    } else {
+        StorageRelationHistoryResource::Class(ClassId::new(42).unwrap())
+    };
+    let (tables, _) = RelationTables::for_resource(resource);
+    let identity = ResourceIdentity::generate();
+    let versions = [
+        VersionIdentity::generate(),
+        VersionIdentity::generate(),
+        VersionIdentity::generate(),
+    ];
+    let intent = Uuid::new_v4();
+    with_transaction(&pool, async |connection| {
+        if database_role_tests_enabled() {
+            sql_query("SELECT set_config('role',$1,true)")
+                .bind::<Text, _>(integration_test_database_roles().owner().as_str())
+                .execute(connection).await?;
+        }
+        sql_query(format!("CREATE TEMP TABLE {} (LIKE public.{} INCLUDING INDEXES) ON COMMIT DROP", tables.endpoints, tables.endpoints)).execute(connection).await?;
+        let (columns, values) = if objects { ("hubuum_class_id, data", "1, '{}'::jsonb") } else { ("validate_schema", "false") };
+        for (index, version) in versions.into_iter().enumerate() {
+            let evidence = StorageIdentityEvidence::try_new(
+                Some(StorageIdentitySubject::Resource { identity: IdentityReference::Known { identity }, version }),
+                Default::default(),
+            ).unwrap();
+            sql_query(format!("INSERT INTO {} (id,name,collection_id,description,created_at,updated_at,op,valid_from,valid_to,history_id,revision,logical_identity,{columns})
+                VALUES (42,'selected',1,'','2000-01-01','2000-01-01','U',
+                '2000-01-01'::timestamptz + $1 * interval '1 day',
+                CASE WHEN $1=2 THEN NULL ELSE '2000-01-01'::timestamptz + ($1+1) * interval '1 day' END,$1+1,$1+1,$2,{values})", tables.endpoints))
+                .bind::<Integer, _>(index as i32)
+                .bind::<Jsonb, _>(serde_json::to_value(evidence).unwrap()).execute(connection).await?;
+        }
+        // Owner-only predicate fixture. This grants no executable expiry authority.
+        sql_query("INSERT INTO hubuum_control.history_expiry_members(family,resource_uuid,version_uuid,intent_uuid,valid_from,valid_to) VALUES($1,$2,$3,$4,'2000-01-02','2000-01-03')")
+            .bind::<Text, _>(tables.endpoint_family)
+            .bind::<SqlUuid, _>(Uuid::from_bytes(*identity.as_bytes()))
+            .bind::<SqlUuid, _>(Uuid::from_bytes(*versions[1].as_bytes()))
+            .bind::<SqlUuid, _>(intent).execute(connection).await?;
+        let at = ["2000-01-01T00:00:00Z", "2000-01-02T00:00:00Z", "2000-01-03T00:00:00Z"]
+            .into_iter().map(|value| DateTime::parse_from_rfc3339(value).unwrap().to_utc()).collect::<Vec<_>>();
+        let rows = sql_query(tables.endpoint_sql())
+            .bind::<Array<Integer>, _>(vec![42; 3])
+            .bind::<Array<Timestamptz>, _>(at)
+            .bind::<Array<Nullable<Text>>, _>(vec![Some(identity.to_string()); 3])
+            .load::<EndpointRow>(connection).await?;
+        assert_eq!(rows.iter().map(|row| row.metadata.history_id).collect::<Vec<_>>(), [1, 2, 3]);
+        assert_eq!(rows.into_iter().map(|row| row.project().is_ok()).collect::<Vec<_>>(), [true, false, true]);
+        sql_query("DELETE FROM hubuum_control.history_expiry_members WHERE intent_uuid=$1")
+            .bind::<SqlUuid, _>(intent).execute(connection).await?;
+        Ok::<_, PostgresStorageError>(())
+    }).await.unwrap();
+}
