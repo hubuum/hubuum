@@ -53,9 +53,10 @@ It does not need the producer's in-memory verification proof. Serialized referen
 roundtrips exercise exact and half-open as-of reads for both retained block sizes.
 Unpublished attempts, changed locations and wrong manifest digests fail closed.
 
-The reader conservatively charges the artifact contract's full 4 MiB retained
-manifest envelope before external I/O, then charges every fetched index/data
-block to the same cumulative budget. History decoding still requires a manifest
+Before external I/O, the reader requires the artifact contract's full 4 MiB
+retained manifest envelope to fit the remaining budget. Successful fetches charge
+actual manifest bytes; failed fetches charge the full envelope. Every fetched
+index/data block also charges the same cumulative budget. History decoding still requires a manifest
 within 256 KiB and a segment within 64 MiB. This conservative charge is explicit;
 it does not establish P2 acceptance for the complete query pipeline.
 

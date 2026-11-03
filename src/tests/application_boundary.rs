@@ -225,6 +225,7 @@ const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
     "EventHealthStorage",
     "EventRetentionStorage",
     "HistoryStorage",
+    "HistoryArchiveStorage",
     "LogicalIdentityStorage",
     "InventoryStorage",
     "MetricsStorage",

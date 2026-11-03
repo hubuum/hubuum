@@ -56,6 +56,23 @@ impl RestoreContractFixture {
         &self.storage
     }
 
+    /// Close the fixture collection through the ordinary observed mutation boundary.
+    pub async fn close_collection_history(&self) -> Result<(), ApiError> {
+        self.storage
+            .collection_store()
+            .update_collection(
+                self.collection_id,
+                crate::storage::StorageCollectionUpdate::new(
+                    None,
+                    Some("closed archive source".into()),
+                ),
+                &EventContext::system(),
+            )
+            .await?
+            .into_value();
+        Ok(())
+    }
+
     pub async fn create_class(&self, name: &str) -> Result<StorageClass, ApiError> {
         Ok(self
             .storage

@@ -52,6 +52,7 @@ pub mod queries {
     pub use crate::catalog::*;
     pub use crate::computed_objects::*;
     pub use crate::history::*;
+    pub use crate::history_archive::*;
     pub use crate::inventory::*;
     pub use crate::logical_identity::*;
     pub use crate::object_aggregate::*;

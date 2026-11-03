@@ -478,3 +478,18 @@ instead of ordinary domain mutation event contexts:
 Their immutable manifests, receipt generations, policy revisions, holds and
 independently authenticated checkpoints provide recovery provenance. Normal
 domain mutations retain their existing event-context requirements.
+
+## History archive catalog and captured query control
+
+`HistoryArchiveStorage::publish_history_archive` installs immutable descriptors
+under a catalog generation check after confirming retained primary versions.
+`HistoryArchiveStorage::capture_history_archive` persists bounded hot input and
+selected-location pins under the same catalog scope lock. Both use short
+transactions after original application/deletion and registered Legacy-owner
+validation. Catalogs and captures remain outside logical application replacement.
+
+`HistoryArchiveStorage::reserve_history_archive_read` reserves cumulative work
+against the principal-owned capture before external segment reads. These are
+control/workflow mutations, without ordinary resource events or source deletion.
+Every access retains the original owner, fence, identities and deadline; external
+I/O never holds a transaction. Service authorization remains configured and live.

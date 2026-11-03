@@ -11,6 +11,7 @@ mod catalog_filters;
 mod credential_approvals;
 mod event_delivery;
 mod history_access;
+mod history_archive;
 mod history_computed;
 mod history_fixtures;
 mod history_name;

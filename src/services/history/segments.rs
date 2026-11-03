@@ -90,6 +90,12 @@ impl VersionInterval {
             valid_to,
         })
     }
+    pub const fn valid_from(&self) -> DateTime<Utc> {
+        self.valid_from
+    }
+    pub const fn valid_to(&self) -> DateTime<Utc> {
+        self.valid_to
+    }
     pub fn resource(&self) -> ResourceIdentity {
         self.resource
     }
@@ -304,12 +310,26 @@ impl RetainedHistorySegment {
         reference: &ArtifactReference,
         budget: &mut ByteBudget,
     ) -> ArtifactResult<Self> {
-        // Reserve the finite manifest envelope before external I/O. Refund is
-        // deliberately absent: failed/repeated attempts still consume work.
+        // The adapter contract bounds one manifest call. Require its complete
+        // envelope to fit before I/O, then account successful bytes exactly.
+        let ceiling = ArtifactLimits::format_ceiling().manifest_bytes() as usize;
+        if budget.remaining() < ceiling {
+            return Err(ArtifactError::Limit(
+                "History manifest exceeds read budget".into(),
+            ));
+        }
+        let bytes = match store.published_manifest(reference).await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                budget
+                    .consume(ceiling)
+                    .map_err(|_| ArtifactError::Limit("History read budget exhausted".into()))?;
+                return Err(error);
+            }
+        };
         budget
-            .consume(ArtifactLimits::format_ceiling().manifest_bytes() as usize)
+            .consume(bytes.len())
             .map_err(|_| ArtifactError::Limit("History manifest exceeds read budget".into()))?;
-        let bytes = store.published_manifest(reference).await?;
         let manifest = ArtifactManifest::decode(
             &bytes,
             reference.identity(),

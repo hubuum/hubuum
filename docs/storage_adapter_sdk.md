@@ -1,6 +1,35 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.18`.
+Status: accepted; current experimental release train is `0.19`.
+
+## Upgrading from 0.18 to 0.19
+
+**Breaking:** update exact dependencies for all ten SDK crates together.
+`QueryStorage` now requires `HistoryArchiveStorage`. Every complete adapter and
+downstream compile fixture must implement persisted catalog reads/publication,
+bounded hot-input capture, immutable query pins, principal-bound capture access,
+and cumulative read-work reservation. There is no optional unsupported adapter.
+The first query service supports collection history only; unsupported families,
+formats and dependency shapes report typed incomplete coverage.
+
+Implement the original application/deletion permit and registered Legacy owner
+checks at every catalog, capture, execution and result-access entry. Preserve
+captured identities, intervals, generation, owner and deadline. Never refresh an
+old permit after external work. Catalog replacement must not rebind existing
+pins. Keep capture/catalog allocations and cumulative physical work bounded.
+
+Deploy migration `2026-11-03-000004_history_archive_reads` and refresh runtime
+function grants before running this server. It installs a protected fixed-true
+`hubuum_archive_history_requires_legacy_runtime()` hook. A combined runtime must
+refuse OnlineV1 registration while this hook is true; this archive slice cannot
+participate in retained online expiry until a later reviewed migration integrates
+and qualifies the actual lifecycle read/publication/restore gate. Do not toggle
+or remove the hook to activate expiry. Catalogs and pins survive logical restore;
+old application fences invalidate access. Rollback refuses retained catalog/pins.
+
+Public archive tasks/API routes and primary-copy retirement remain disabled.
+Broader families, durable task activation and full #514 performance qualification
+remain open. See [collection archive reads](history_archive_reads.md).
 
 ## Upgrading from 0.17 to 0.18
 
@@ -44,8 +73,8 @@ resource gates; keep those gates open when integrating this slice.
 
 ## Supported Crate Graph
 
-The 0.18 train adds mandatory synchronous request admission. See the
-[0.17 to 0.18 upgrade](#upgrading-from-017-to-018) before updating adapters.
+The 0.19 train adds mandatory persisted history catalog and query capture. See
+the [0.18 to 0.19 upgrade](#upgrading-from-018-to-019) before updating adapters.
 
 The statically linked storage adapter SDK consists of these crates:
 

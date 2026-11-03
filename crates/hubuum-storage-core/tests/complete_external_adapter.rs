@@ -2690,3 +2690,46 @@ impl TaskArtifactStore for CompleteExternalAdapter {
         ))
     }
 }
+
+#[async_trait]
+impl HistoryArchiveStorage for CompleteExternalAdapter {
+    async fn history_archive_catalog(
+        &self,
+        resource: ResourceIdentity,
+        permit: &StorageExecutionPermit,
+    ) -> Result<HistoryArchiveCatalog, StorageError> {
+        fixture_result()
+    }
+    async fn publish_history_archive(
+        &self,
+        expected: HistoryArchiveCatalogGeneration,
+        descriptors: Vec<HistoryArchiveDescriptor>,
+        permit: &StorageExecutionPermit,
+    ) -> Result<HistoryArchiveCatalog, StorageError> {
+        fixture_result()
+    }
+    async fn capture_history_archive(
+        &self,
+        request: HistoryArchiveCaptureRequest,
+        permit: &StorageExecutionPermit,
+    ) -> Result<HistoryArchiveCapture, StorageError> {
+        fixture_result()
+    }
+    async fn history_archive_capture(
+        &self,
+        id: Uuid,
+        principal: PrincipalIdentity,
+        permit: &StorageExecutionPermit,
+    ) -> Result<Option<HistoryArchiveCapture>, StorageError> {
+        fixture_result()
+    }
+    async fn reserve_history_archive_read(
+        &self,
+        id: Uuid,
+        principal: PrincipalIdentity,
+        bytes: u64,
+        permit: &StorageExecutionPermit,
+    ) -> Result<HistoryArchiveCapture, StorageError> {
+        fixture_result()
+    }
+}

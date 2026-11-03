@@ -1,4 +1,5 @@
 pub(crate) mod access;
+pub mod archive;
 pub(crate) mod computed;
 pub(crate) mod navigation;
 pub mod segments;
