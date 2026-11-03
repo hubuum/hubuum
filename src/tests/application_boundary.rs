@@ -3366,6 +3366,7 @@ fn h2_has_data_frame_fix(version: &str) -> bool {
     matches!(parts, Ok(parts) if parts.len() == 3 && (parts[0], parts[1], parts[2]) >= (0, 4, 16))
 }
 
+#[cfg(test)]
 #[rstest]
 #[case("0.3.27", false)]
 #[case("0.4.15", false)]
