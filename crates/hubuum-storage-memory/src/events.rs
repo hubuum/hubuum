@@ -1983,6 +1983,7 @@ impl HistoryStorage for MemoryStorage {
             })
             .transpose()?;
         let state = self.state.read().await?;
+        state.require_population_class_binding(&query)?;
         let limit = options.limit().unwrap_or(usize::MAX);
         let mut selected = BinaryHeap::new();
         let mut total = 0;

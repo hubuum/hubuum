@@ -2,6 +2,7 @@ use super::*;
 use diesel::QueryableByName;
 use diesel::sql_types::Json;
 use hubuum_query::{CursorValue, SortParam, encode_cursor_values};
+use hubuum_storage_core::StorageErrorKind;
 use rstest::rstest;
 
 use crate::test_support::integration_test_pool;
@@ -91,5 +92,46 @@ async fn historical_population_indexes_sparse_validity_intervals() {
         assert_eq!(index["Actual Rows"].as_f64().unwrap(), 1.0, "{plan:#}");
         assert_eq!(scan["Actual Rows"].as_f64().unwrap(), 1.0, "{plan:#}");
         Ok::<_, PostgresStorageError>(())
+    }).await.unwrap();
+}
+
+#[rstest]
+#[case::original(false, false, None)]
+#[case::stale(true, false, Some(StorageErrorKind::Unavailable))]
+#[case::missing(false, true, Some(StorageErrorKind::Unavailable))]
+#[tokio::test]
+async fn population_class_binding_precedes_page_selection(
+    #[case] stale: bool,
+    #[case] missing: bool,
+    #[case] expected_error: Option<StorageErrorKind>,
+) {
+    use diesel::sql_types::{Integer, Jsonb, Text};
+    use diesel_async::SimpleAsyncConnection;
+    #[derive(QueryableByName)]
+    struct Canonical {
+        #[diesel(sql_type=Integer)]
+        id: i32,
+        #[diesel(sql_type=Jsonb)]
+        logical_identity: Value,
+    }
+    // Ordinary runtime login creates and reads its rollback-only fixture.
+    let pool = integration_test_pool(1);
+    with_transaction(&pool, async |connection| {
+        connection.batch_execute("SAVEPOINT population_class_binding").await?;
+        let class = diesel::sql_query("INSERT INTO public.hubuumclass(name,description,collection_id)
+            SELECT $1,'population class fence',id FROM public.collections WHERE parent_collection_id IS NULL
+            RETURNING id,logical_identity")
+            .bind::<Text,_>(format!("population_class_{}",Uuid::new_v4().simple()))
+            .get_result::<Canonical>(connection).await?;
+        let original:StorageIdentityEvidence=serde_json::from_value(class.logical_identity).unwrap();
+        let original=original.subject().unwrap().record_identity().unwrap().resource();
+        let at=Utc::now();
+        let query=StorageClassObjectsAsOfQuery::try_new(ClassId::new(if missing { i32::MAX } else { class.id }).unwrap(),at,
+            QueryOptions::new(vec![],vec![],Some(2),None,false).unwrap()).unwrap()
+            .for_resource(if stale { ResourceIdentity::generate() } else { original });
+        let result=require_population_class_binding(connection,&query).await;
+        connection.batch_execute("ROLLBACK TO SAVEPOINT population_class_binding").await?;
+        assert_eq!(result.err().map(|error|error.kind()),expected_error);
+        Ok::<_,PostgresStorageError>(())
     }).await.unwrap();
 }

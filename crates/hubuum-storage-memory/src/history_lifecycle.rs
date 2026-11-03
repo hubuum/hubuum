@@ -473,6 +473,42 @@ impl MemoryState {
         Ok(())
     }
 
+    pub(super) fn require_population_class_binding(
+        &self,
+        query: &StorageClassObjectsAsOfQuery,
+    ) -> Result<(), StorageError> {
+        let Some(expected) = query.expected_resource() else {
+            return self.require_history_resource_binding(
+                StorageIdentityHistoryKind::Class,
+                None,
+                query.at(),
+                None,
+            );
+        };
+        if !self.classes.contains_key(&query.class_id().id()) {
+            return Err(StorageError::unavailable(
+                "Original population class correspondence changed",
+            ));
+        }
+        let canonical = self
+            .logical_identities
+            .record(StorageIdentityTarget::Resource {
+                kind: StorageIdentityResourceKind::Class,
+                id: ResourceId::new(query.class_id().id())
+                    .map_err(|error| StorageError::backend_failure(error.to_string()))?,
+            })?;
+        if canonical
+            .subject()
+            .and_then(StorageIdentitySubject::record_identity)
+            .is_none_or(|identity| identity.resource() != expected)
+        {
+            return Err(StorageError::unavailable(
+                "Original population class correspondence changed",
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn require_history_resource_binding(
         &self,
         family: StorageIdentityHistoryKind,
@@ -1629,6 +1665,60 @@ mod online_read_tests {
             .await;
         storage.unregister_runtime(registration).await.unwrap();
         assert!(matches!(result, Err(error) if error.kind() == expected_error));
+    }
+
+    #[rstest::rstest]
+    #[case::original(false, false)]
+    #[case::stale(true, false)]
+    #[case::missing(false, true)]
+    #[tokio::test]
+    async fn population_rechecks_original_class_before_selecting_rows(
+        #[case] stale: bool,
+        #[case] missing: bool,
+    ) {
+        let (storage, entry, registration, _) = prepared_fixture().await;
+        let MemoryHistoryValue::Object(record) = &entry.value else {
+            unreachable!()
+        };
+        let original = storage
+            .state
+            .read()
+            .await
+            .unwrap()
+            .logical_identities
+            .record(StorageIdentityTarget::Resource {
+                kind: StorageIdentityResourceKind::Class,
+                id: ResourceId::new(record.class_id().id()).unwrap(),
+            })
+            .unwrap()
+            .subject()
+            .unwrap()
+            .record_identity()
+            .unwrap()
+            .resource();
+        let query = StorageClassObjectsAsOfQuery::try_new(
+            if missing {
+                ClassId::new(i32::MAX).unwrap()
+            } else {
+                record.class_id()
+            },
+            entry.valid_from,
+            QueryOptions::new(vec![], vec![], Some(10), None, false).unwrap(),
+        )
+        .unwrap()
+        .for_resource(if stale {
+            ResourceIdentity::generate()
+        } else {
+            original
+        })
+        .visibility(StorageHistoryCollectionScope::All, true);
+        let result = storage.list_class_objects_as_of(query).await;
+        storage.unregister_runtime(registration).await.unwrap();
+        if stale || missing {
+            assert_eq!(result.err().unwrap().kind(), StorageErrorKind::Unavailable);
+        } else {
+            assert!(!result.unwrap().into_parts().0.is_empty());
+        }
     }
 
     #[tokio::test]

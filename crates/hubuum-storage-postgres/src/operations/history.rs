@@ -880,6 +880,38 @@ fn class_objects_as_of_query(
     Ok(records)
 }
 
+async fn require_population_class_binding(
+    connection: &mut crate::PostgresConnection,
+    query: &StorageClassObjectsAsOfQuery,
+) -> Result<(), PostgresStorageError> {
+    let Some(expected) = query.expected_resource() else {
+        if crate::runtime::current_execution_scope()
+            .history_read_override()
+            .is_some()
+        {
+            return Err(PostgresStorageError::unavailable(
+                "Online populations require the original logical class identity",
+            ));
+        }
+        return Ok(());
+    };
+    let expected = Uuid::from_bytes(*expected.as_bytes());
+    let canonical = sql::<Bool>("EXISTS(SELECT 1 FROM public.hubuumclass WHERE id=")
+        .bind::<diesel::sql_types::Integer, _>(query.class_id().id())
+        .sql(" AND (logical_identity #>> '{subject,identity,identity}')::UUID=")
+        .bind::<SqlUuid, _>(expected)
+        .sql(")");
+    let canonical = diesel::select(canonical)
+        .get_result::<bool>(connection)
+        .await?;
+    if !canonical {
+        return Err(PostgresStorageError::unavailable(
+            "Original population class correspondence changed",
+        ));
+    }
+    Ok(())
+}
+
 pub async fn list_class_objects_as_of(
     runtime: &PostgresRuntime,
     query: StorageClassObjectsAsOfQuery,
@@ -888,6 +920,7 @@ pub async fn list_class_objects_as_of(
     let fields = history_cursor_fields(options, "hubuumobject_history")?;
     runtime
         .with_read_only_snapshot(async |connection| {
+            require_population_class_binding(connection, &query).await?;
             let visible = sql::<Bool>("public.hubuum_history_as_of_visible('object',hubuumobject_history.logical_identity,")
                 .bind::<Timestamptz, _>(query.at())
                 .sql(",hubuumobject_history.valid_from)");

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use hubuum_domain::ResourceId;
+use hubuum_storage_core::StorageIdentityResourceKind;
 
 use crate::errors::ApiError;
 use crate::models::{
@@ -20,7 +21,7 @@ use crate::storage::{
 use crate::traits::{AuthzSubject, scope_allows};
 
 use super::access::{HistoryAccess, HistoryIdentity};
-use super::{history_total, object_from_storage};
+use super::{history_total, object_from_storage, original_as_of_query};
 
 #[derive(Clone)]
 enum ObjectHistoryQuery {
@@ -35,6 +36,26 @@ impl ObjectHistoryQuery {
             Self::Population(query) => query.options(),
         }
     }
+    async fn bind_original(self, context: &AppContext) -> Result<Self, ApiError> {
+        Ok(match self {
+            Self::Name(query) => Self::Name(query),
+            Self::Population(query) => {
+                let original = original_as_of_query(
+                    context,
+                    StorageIdentityResourceKind::Class,
+                    ResourceId::new(query.class_id().id())?,
+                    query.at(),
+                )
+                .await?
+                .expected_resource();
+                Self::Population(match original {
+                    Some(original) => query.for_resource(original),
+                    None => query,
+                })
+            }
+        })
+    }
+
     fn visibility(self, scope: StorageHistoryCollectionScope, include_deleted: bool) -> Self {
         match self {
             Self::Name(query) => Self::Name(query.visibility(scope, include_deleted)),
@@ -100,7 +121,10 @@ async fn authorized_object_history(
     let collections = access
         .candidate_collections(Permissions::ReadObject)
         .await?;
-    let query = query.visibility(collections, include_deleted);
+    let query = query
+        .bind_original(context)
+        .await?
+        .visibility(collections, include_deleted);
     let storage = storage_handle(context);
     if access.uses_storage_visibility() {
         // The adapter can enforce both collection checks in the same snapshot
