@@ -9,10 +9,13 @@ use crate::middlewares::tracing::TracingMiddleware;
 use crate::permissions::{AppContext, LocalPermissionBackend, PermissionBackend};
 use crate::restores::RestoreSettings;
 use crate::storage::StorageHandle;
+use actix_web::body::to_bytes;
+use actix_web::dev::ServiceResponse;
 use actix_web::{App, http, test, web::Data};
 use hubuum_storage_core::StorageBackupBudget;
 use hubuum_storage_postgres::{PostgresPool, PostgresPoolSettings};
 use serde::Serialize;
+use std::future::Future;
 use std::sync::Arc;
 
 pub fn app_context(pool: &PostgresPool) -> Data<AppContext> {
@@ -124,7 +127,25 @@ async fn get_request_with_headers_and_context(
     for (name, value) in headers {
         request = request.insert_header((name, value));
     }
-    request.send_request(&app).await.map_into_boxed_body()
+    complete_local_http_response(request.send_request(&app)).await
+}
+
+// These convenience helpers model the complete HTTP exchange. Plain Tokio
+// callers need the local executor through body EOF, including artifact streams.
+// Explicit service/socket tests own their executor when inspecting body lifetime.
+async fn complete_local_http_response(
+    future: impl Future<Output = ServiceResponse>,
+) -> ServiceResponse {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (request, response) = future.await.into_parts();
+            let (head, body) = response.into_parts();
+            let bytes = to_bytes(body)
+                .await
+                .expect("shared HTTP helper response body must complete");
+            ServiceResponse::new(request, head.set_body(bytes).map_into_boxed_body())
+        })
+        .await
 }
 
 pub async fn get_request(
@@ -180,10 +201,7 @@ where
         req = req.insert_header((name, value));
     }
 
-    req.set_json(&content)
-        .send_request(&app)
-        .await
-        .map_into_boxed_body()
+    complete_local_http_response(req.set_json(&content).send_request(&app)).await
 }
 
 pub async fn post_request<T>(
@@ -225,13 +243,14 @@ where
     )
     .await;
 
-    test::TestRequest::post()
-        .insert_header(create_token_header(token))
-        .uri(endpoint)
-        .set_json(&content)
-        .send_request(&app)
-        .await
-        .map_into_boxed_body()
+    complete_local_http_response(
+        test::TestRequest::post()
+            .insert_header(create_token_header(token))
+            .uri(endpoint)
+            .set_json(&content)
+            .send_request(&app),
+    )
+    .await
 }
 
 pub async fn delete_request(

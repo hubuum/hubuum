@@ -95,8 +95,8 @@ for policy_input in src/models/history_lifecycle.rs src/api/v1/handlers/history_
 done
 
 for policy_storage_input in crates/hubuum-storage-postgres/tests/history_lifecycle.rs \
-  crates/hubuum-storage-postgres/migrations/2026-11-03-000001_history_lifecycle/up.sql \
-  crates/hubuum-storage-postgres/migrations/2026-11-03-000001_history_lifecycle/down.sql; do
+  crates/hubuum-storage-postgres/migrations/2026-11-03-000003_history_lifecycle/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-03-000003_history_lifecycle/down.sql; do
   policy_storage_output="$(bash "$classifier" "$policy_storage_input")"
   assert_flag "$policy_storage_output" code true
   assert_flag "$policy_storage_output" rust true
@@ -108,7 +108,7 @@ assert_flag "$history_catalog_output" code true
 assert_flag "$history_catalog_output" rust true
 assert_flag "$history_catalog_output" operational_contract true
 
-for history_handler in src/models/history/computed.rs src/api/v1/handlers/classes/history_computed.rs src/api/v1/handlers/classes/history_population.rs src/api/v1/handlers/classes/history_relations.rs; do
+for history_handler in src/models/history/computed.rs src/api/v1/handlers/classes/history_computed.rs src/api/v1/handlers/classes/history_population.rs src/api/v1/handlers/classes/history_relations.rs crates/hubuum-storage-core/src/api_request_admission.rs src/middlewares/api_request_admission.rs; do
   history_output="$(bash "$classifier" "$history_handler")"
   assert_flag "$history_output" openapi true
 done
@@ -1086,6 +1086,17 @@ done
 wait_contract_output="$(bash "$classifier" src/tests/storage_contract/task_waiting.rs)"
 assert_flag "$wait_contract_output" rust true
 assert_flag "$wait_contract_output" container false
+
+for request_input in crates/hubuum-storage-postgres/migrations/2026-11-03-000002_api_request_admission/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-03-000002_api_request_admission/down.sql \
+  crates/hubuum-storage-postgres/src/backend/api_request_admission/tests.rs; do
+  request_output="$(bash "$classifier" "$request_input")"
+  assert_flag "$request_output" rust true
+  assert_flag "$request_output" container true
+done
+request_contract_output="$(bash "$classifier" src/tests/storage_contract/api_request_admission.rs)"
+assert_flag "$request_contract_output" rust true
+assert_flag "$request_contract_output" container false
 
 for session_input in src/services/auth_sessions.rs src/services/credential_activity.rs \
   src/tests/storage_contract/auth_sessions.rs tests/api_identity_suite/sessions.rs \

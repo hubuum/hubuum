@@ -478,6 +478,10 @@ impl PostgresAdapterFactory {
         let notification_listener_pool = build_postgres_pool(&notification_listener_pool_settings)
             .map_err(Self::initialization_error)?;
         let backend = compose_postgres(pool)
+            .with_api_request_execution_slots(
+                std::num::NonZeroUsize::new(settings.max_size().saturating_sub(1).max(1) as usize)
+                    .expect("request execution capacity is positive"),
+            )
             .with_schema_limits(schema_limits)
             .with_task_lease_pool(task_lease_pool)
             .with_notification_listener_pool(notification_listener_pool);

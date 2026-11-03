@@ -45,6 +45,7 @@ const BACKGROUND_BUCKETS_SECONDS: &[f64] = &[
     1800.0, 3600.0,
 ];
 const STORAGE_OPERATION_SOURCES: &[&str] = &[
+    include_str!("storage/context/api_request_admission.rs"),
     include_str!("storage/observed.rs"),
     include_str!("storage/context/artifacts.rs"),
     include_str!("storage/context/schema_evolution.rs"),
@@ -1477,6 +1478,10 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
                 "validation_error",
             ]);
             values.extend(TaskCapacityRejection::ALL.map(|reason| reason.as_str().to_owned()));
+            values.extend(
+                hubuum_storage_core::ApiRequestRejection::ALL
+                    .map(|reason| reason.as_str().to_owned()),
+            );
             values
         }
         ("hubuum_client_allowlist_rejections_total", "reason") => {

@@ -396,6 +396,128 @@
         ]
       }
     },
+    "/api/v1/admin/api-request-capacity": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Api V1 Admin Api Request Capacity",
+        "description": "Auto-generated documentation for GET /api/v1/admin/api-request-capacity.",
+        "operationId": "getApiV1AdminApiRequestCapacity",
+        "responses": {
+          "200": {
+            "description": "Authoritative expensive-request policy. Lost/crashed owners remain charged until fenced operator recovery; automatic crash reconciliation is not available in this partial slice.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageApiRequestPolicy"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Put Api V1 Admin Api Request Capacity",
+        "description": "Auto-generated documentation for PUT /api/v1/admin/api-request-capacity.",
+        "operationId": "putApiV1AdminApiRequestCapacity",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageApiRequestPolicyUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Policy committed; reductions drain existing requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageApiRequestPolicy"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid policy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Policy revision changed; refetch before updating",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/admin/config": {
       "get": {
         "tags": [
@@ -2469,11 +2591,62 @@
             }
           },
           "413": {
-            "description": "An aggregate value is too large for a replay-safe cursor, or source snapshots or externally authorized intermediate aggregates exceed their memory bounds",
+            "description": "An aggregate value is too large for a replay-safe cursor, or source snapshots or externally authorized intermediate aggregates exceed their memory bounds Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -5202,6 +5375,74 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
           }
         },
         "security": [
@@ -5442,6 +5683,74 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
           }
         },
         "security": [
@@ -5527,6 +5836,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -5616,6 +5993,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -5797,6 +6242,74 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
           }
         },
         "security": [
@@ -5904,11 +6417,62 @@
             }
           },
           "413": {
-            "description": "An aggregate value is too large for a replay-safe cursor, or source snapshots or externally authorized intermediate aggregates exceed their memory bounds",
+            "description": "An aggregate value is too large for a replay-safe cursor, or source snapshots or externally authorized intermediate aggregates exceed their memory bounds Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -6059,6 +6623,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -6216,6 +6848,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -7704,6 +8404,74 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
           }
         },
         "security": [
@@ -7848,6 +8616,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -10381,6 +11217,74 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
           }
         },
         "security": [
@@ -10522,6 +11426,74 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
           }
         },
         "security": [
@@ -10617,6 +11589,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -10718,6 +11758,74 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
           }
         },
         "security": [
@@ -10814,6 +11922,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -11005,6 +12181,74 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
           }
         },
         "security": [
@@ -11150,6 +12394,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -11307,6 +12619,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -12960,6 +14340,74 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
           }
         },
         "security": [
@@ -13221,6 +14669,74 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
           }
         },
         "security": [
@@ -13306,6 +14822,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -15875,6 +17459,74 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
           }
         },
         "security": [
@@ -16530,6 +18182,74 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
           }
         },
         "security": [
@@ -16806,6 +18526,74 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
           }
         },
         "security": [
@@ -16891,6 +18679,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -16998,8 +18854,42 @@
               }
             }
           },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
           "429": {
-            "description": "Shared task admission or byte capacity exhausted",
+            "description": "Shared task admission or byte capacity exhausted Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
             "content": {
               "application/json": {
                 "schema": {
@@ -17009,7 +18899,7 @@
             }
           },
           "503": {
-            "description": "Task identity or control reconciliation unavailable",
+            "description": "Task identity or control reconciliation unavailable Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
             "content": {
               "application/json": {
                 "schema": {
@@ -17948,6 +19838,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -21855,6 +23813,74 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
           }
         },
         "security": [
@@ -21973,8 +23999,42 @@
               }
             }
           },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
           "429": {
-            "description": "Shared task admission or byte capacity exhausted",
+            "description": "Shared task admission or byte capacity exhausted Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
             "content": {
               "application/json": {
                 "schema": {
@@ -21984,7 +24044,7 @@
             }
           },
           "503": {
-            "description": "Task identity or control reconciliation unavailable",
+            "description": "Task identity or control reconciliation unavailable Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23283,6 +25343,74 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
           }
         },
         "security": [
@@ -23368,6 +25496,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -23829,6 +26025,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -26033,12 +28297,91 @@
               "null"
             ],
             "description": "Machine-readable reason for errors with a client recovery flow."
+          },
+          "retryable": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether an admission rejection can be retried after capacity or control recovers."
           }
         },
         "example": {
           "error": "Unauthorized",
           "message": "Authentication failure"
         }
+      },
+      "ApiRequestAdmissionErrorResponse": {
+        "type": "object",
+        "required": [
+          "error",
+          "reason",
+          "retryable",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ApiRequestRejection"
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ApiRequestDuration": {
+        "type": "integer",
+        "format": "int64",
+        "description": "Finite whole-request execution allowance, rather than a renewed per-query\ntimeout. Expiry fences execution but does not establish producer termination.",
+        "maximum": 60000,
+        "minimum": 1
+      },
+      "ApiRequestPolicy": {
+        "type": "object",
+        "description": "A persisted deployment policy shared by every replica. Operational requests\nand task control do not use this capacity. Reductions drain existing owners.",
+        "required": [
+          "deployment",
+          "principal",
+          "duration",
+          "input_bytes",
+          "output_bytes"
+        ],
+        "properties": {
+          "deployment": {
+            "$ref": "#/components/schemas/TaskCapacityLimit"
+          },
+          "duration": {
+            "$ref": "#/components/schemas/ApiRequestDuration"
+          },
+          "input_bytes": {
+            "$ref": "#/components/schemas/TaskByteLimit"
+          },
+          "output_bytes": {
+            "$ref": "#/components/schemas/TaskByteLimit"
+          },
+          "principal": {
+            "$ref": "#/components/schemas/TaskCapacityLimit"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ApiRequestRejection": {
+        "type": "string",
+        "description": "Public outcomes carry no scope counts or other principals' workload.\nA terminal request-size/work failure must not advertise Retry-After.",
+        "enum": [
+          "api_capacity_deployment",
+          "api_capacity_principal",
+          "api_capacity_input_bytes",
+          "api_capacity_output_bytes",
+          "api_capacity_deadline_exceeded",
+          "api_capacity_identity_unavailable",
+          "api_capacity_reconciliation_required"
+        ]
       },
       "ArtifactOptions": {
         "type": "object",
@@ -40669,6 +43012,40 @@
             }
           }
         }
+      },
+      "StorageApiRequestPolicy": {
+        "type": "object",
+        "description": "Authoritative policy and its compare-and-replace token.",
+        "required": [
+          "revision",
+          "policy"
+        ],
+        "properties": {
+          "policy": {
+            "$ref": "#/components/schemas/ApiRequestPolicy"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/TaskPolicyRevision"
+          }
+        },
+        "additionalProperties": false
+      },
+      "StorageApiRequestPolicyUpdate": {
+        "type": "object",
+        "description": "Prospective replacement. Existing reservations retain their admitted limits.",
+        "required": [
+          "expected_revision",
+          "policy"
+        ],
+        "properties": {
+          "expected_revision": {
+            "$ref": "#/components/schemas/TaskPolicyRevision"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/ApiRequestPolicy"
+          }
+        },
+        "additionalProperties": false
       },
       "StorageIdentityHistoryKind": {
         "type": "string",

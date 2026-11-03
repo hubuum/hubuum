@@ -6,13 +6,14 @@
 
 use crate::artifacts::{ArtifactStore, TaskArtifactStore};
 use crate::{
-    AuditEventStorage, AuthenticationStorage, AuthorizationDataStorage, BackupSnapshotStorage,
-    CatalogStorage, ClassRelationStorage, ClassStorage, CollectionAuthorizationQueryStorage,
-    CollectionStorage, ComputedFieldStorage, ComputedObjectStorage, DeletionControlStorage,
-    EventConfigurationStorage, EventDeliveryAdministrationStorage, EventDeliveryWorkerStorage,
-    EventFanoutStorage, EventHealthStorage, EventRetentionStorage, ExecutionStorage,
-    ExportTemplateStorage, ExternalIdentityStorage, GroupMembershipStorage, GroupStorage,
-    HistoryLifecycleStorage, HistoryStorage, IdentityScopeStorage, ImportStorage, InventoryStorage,
+    ApiRequestAdmissionStorage, AuditEventStorage, AuthenticationStorage, AuthorizationDataStorage,
+    BackupSnapshotStorage, CatalogStorage, ClassRelationStorage, ClassStorage,
+    CollectionAuthorizationQueryStorage, CollectionStorage, ComputedFieldStorage,
+    ComputedObjectStorage, DeletionControlStorage, EventConfigurationStorage,
+    EventDeliveryAdministrationStorage, EventDeliveryWorkerStorage, EventFanoutStorage,
+    EventHealthStorage, EventRetentionStorage, ExecutionStorage, ExportTemplateStorage,
+    ExternalIdentityStorage, GroupMembershipStorage, GroupStorage, HistoryLifecycleStorage,
+    HistoryStorage, IdentityScopeStorage, ImportStorage, InventoryStorage,
     LocalIdentityCredentialStorage, LogicalIdentityStorage, MetricsStorage, ObjectAggregateStorage,
     ObjectRelationStorage, ObjectStorage, OperationalStateStorage, PrincipalStorage,
     QueryUsageStorage, RelationQueryStorage, RemoteTargetStorage, RestoreStorage,
@@ -112,6 +113,7 @@ pub trait WorkflowStorage:
     + TaskQueueStorage
     + TaskRetentionStorage
     + TaskCapacityStorage
+    + ApiRequestAdmissionStorage
     + ArtifactStore
     + TaskArtifactStore
     + TaskExecutionStorage
@@ -130,6 +132,7 @@ impl<T> WorkflowStorage for T where
         + TaskQueueStorage
         + TaskRetentionStorage
         + TaskCapacityStorage
+        + ApiRequestAdmissionStorage
         + ArtifactStore
         + TaskArtifactStore
         + TaskExecutionStorage

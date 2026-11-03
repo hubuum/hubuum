@@ -10,7 +10,7 @@ use hubuum_domain::{
 use hubuum_events_core::MutationProvenance;
 use hubuum_task_core::TaskExecutionContext;
 
-use crate::{StorageExecutionPermit, StorageQueryBudget};
+use crate::{StorageApiRequestPermit, StorageExecutionPermit, StorageQueryBudget};
 
 /// Bounded attribution for storage work initiated by one application
 /// subsystem.
@@ -133,6 +133,7 @@ pub struct StorageRevisionPrecondition {
 /// without accidentally resetting each other.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StorageExecutionScope {
+    api_request: Option<StorageApiRequestPermit>,
     application_access: Option<StorageExecutionPermit>,
     call_site: Option<StorageCallSite>,
     mutation_provenance: Option<Option<MutationProvenance>>,
@@ -142,6 +143,17 @@ pub struct StorageExecutionScope {
 }
 
 impl StorageExecutionScope {
+    #[must_use]
+    pub fn with_api_request(mut self, permit: StorageApiRequestPermit) -> Self {
+        self.api_request = Some(permit);
+        self
+    }
+
+    #[must_use]
+    pub const fn api_request_override(&self) -> Option<&StorageApiRequestPermit> {
+        self.api_request.as_ref()
+    }
+
     #[must_use]
     pub fn with_application_access(mut self, permit: StorageExecutionPermit) -> Self {
         self.application_access = Some(permit);

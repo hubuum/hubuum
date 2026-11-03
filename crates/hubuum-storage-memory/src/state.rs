@@ -98,6 +98,7 @@ impl MemoryState {
             task_purge_attempts: BTreeMap::new(),
             next_task_purge_attempt: 1,
             task_capacity: Default::default(),
+            api_requests: Default::default(),
             artifacts: Default::default(),
             application_control: ApplicationControlState::initial(&deletion_control),
             pending_restore: false,

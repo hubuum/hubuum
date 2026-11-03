@@ -9,6 +9,7 @@ import signal
 import socket
 import ssl
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
@@ -94,6 +95,12 @@ class Fixture:
     def endpoint(self):
         return f"https://localhost:{self.port}"
 
+    def _startup_error(self, message):
+        self.log.flush()
+        diagnostic = (self.directory / "minio.log").read_text(errors="replace")[-4000:]
+        return RuntimeError((f"{message}; MinIO startup log:\n{diagnostic}")
+                            .replace("hubuum-fixture-secret", "[redacted]"))
+
     def start(self):
         if self.process is not None:
             raise RuntimeError("MinIO already started")
@@ -105,18 +112,31 @@ class Fixture:
         ], env=env, stdout=self.log, stderr=subprocess.STDOUT)
         deadline = time.monotonic() + 30
         last_error = None
-        while time.monotonic() < deadline:
+        while (remaining := deadline - time.monotonic()) > 0:
             if self.process.poll() is not None:
-                raise RuntimeError("MinIO exited before TLS readiness")
+                raise self._startup_error("MinIO exited before cluster write readiness")
             try:
-                with urllib.request.urlopen(self.endpoint + "/minio/health/live", context=self.tls, timeout=1):
+                # Liveness/readiness can return 200 before object storage is
+                # initialized. Cluster health also requires write quorum.
+                with urllib.request.urlopen(self.endpoint + "/minio/health/cluster", context=self.tls,
+                                            timeout=min(1, remaining)):
                     return
+            except urllib.error.HTTPError as error:
+                with error:
+                    headers = {name: error.headers[name] for name in (
+                        "Content-Type", "Server", "Retry-After", "X-Minio-Server-Status", "X-Amz-Request-Id",
+                    ) if error.headers.get(name)}
+                    body = error.read(4096).decode(errors="replace")
+                last_error = f"HTTP {error.code}; headers={headers}; body={body}"
+                if error.code != 503:
+                    raise self._startup_error(f"Unexpected cluster health response: {last_error}") from error
+                print("MinIO cluster health returned 503; waiting within the original startup deadline", file=sys.stderr)
             except (urllib.error.URLError, TimeoutError) as error:
+                if isinstance(error, urllib.error.URLError) and isinstance(error.reason, ssl.SSLError):
+                    raise self._startup_error(f"MinIO TLS readiness failed: {error.reason}") from error
                 last_error = error
-                time.sleep(0.1)
-        self.log.flush()
-        raise RuntimeError(f"MinIO TLS readiness deadline exceeded: {last_error}; "
-                           + (self.directory / "minio.log").read_text()[-4000:])
+            time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+        raise self._startup_error(f"MinIO cluster write-readiness deadline exceeded: {last_error}")
 
     def stop(self):
         if self.process is not None:

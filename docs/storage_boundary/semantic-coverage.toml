@@ -27,6 +27,8 @@ bootstrap_and_provider_reconciliation = [
     "ExternalIdentityStorage::sync_external_user",
 ]
 workflow_state_machine = [
+    "ApiRequestAdmissionStorage::admit_api_request",
+    "ApiRequestAdmissionStorage::settle_api_request",
     "ArtifactStore::register_destination",
     "ArtifactStore::stage",
     "ArtifactStore::append",
@@ -72,6 +74,7 @@ event_coordination = [
 ]
 retention = ["TokenRetentionStorage::purge_expired_tokens", "AuthenticationStorage::purge_credential_sources", "AuthenticationStorage::purge_auth_sessions"]
 maintenance = [
+    "ApiRequestAdmissionStorage::replace_api_request_policy",
     "TaskRetentionStorage::prepare_expired_task_outputs",
     "TaskRetentionStorage::commit_task_control",
     "TaskRetentionStorage::recover_task_control",
@@ -416,6 +419,13 @@ methods = ["initialize_task_policy", "task_policy", "task_capacity_snapshot", "r
 effects = { point_read = ["task_policy", "task_capacity_snapshot"], workflow_mutation = ["initialize_task_policy", "replace_task_policy"] }
 shared_scenarios = ["tests/restore_contract/task_capacity.rs::replicas_atomically_enforce_each_admission_boundary", "tests/restore_contract/task_capacity.rs::stale_policy_revision_cannot_replace_a_committed_change", "tests/restore_contract/task_capacity.rs::older_restore_preserves_policy_and_work_for_absent_owners"]
 native_scenarios = ["tests/restore_contract/task_capacity.rs::runtime_role_cannot_read_protected_capacity_owners", "tests/restore_contract/task_capacity.rs::missing_capacity_backfill_blocks_initialization_until_reconciled_once"]
+
+[traits.ApiRequestAdmissionStorage]
+source = "crates/hubuum-storage-core/src/api_request_admission.rs"
+methods = ["api_request_policy", "replace_api_request_policy", "admit_api_request", "settle_api_request"]
+effects = { point_read = ["api_request_policy"], workflow_mutation = ["replace_api_request_policy", "admit_api_request", "settle_api_request"] }
+shared_scenarios = ["src/tests/storage_contract/api_request_admission.rs::concurrent_requests_share_one_principal_ceiling", "src/tests/storage_contract/api_request_admission.rs::settled_owner_cannot_execute_under_a_new_reservation", "src/tests/storage_contract/api_request_admission.rs::policy_reduction_drains_existing_owners", "src/tests/storage_contract/api_request_admission.rs::expired_owner_fails_before_storage_work"]
+native_scenarios = ["crates/hubuum-storage-postgres/src/backend/api_request_admission/tests.rs::expired_unsettled_transaction_retains_capacity_until_fenced_settlement"]
 
 [traits.TaskQueueStorage]
 source = "crates/hubuum-storage-core/src/task_queue.rs"

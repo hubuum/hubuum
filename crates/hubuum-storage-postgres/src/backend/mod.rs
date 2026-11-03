@@ -1,5 +1,6 @@
 //! Complete PostgreSQL implementation of the backend-neutral storage contract.
 
+mod api_request_admission;
 mod artifacts;
 use hubuum_domain::JsonSchemaLimits;
 use std::future::Future;
@@ -80,6 +81,12 @@ impl PostgresStorage {
     #[must_use]
     pub fn with_runtime_owner(mut self, owner: RuntimeOwner) -> Self {
         self.runtime = self.runtime.with_runtime_owner(owner);
+        self
+    }
+
+    #[must_use]
+    pub fn with_api_request_execution_slots(mut self, slots: NonZeroUsize) -> Self {
+        self.runtime = self.runtime.with_api_request_execution_slots(slots);
         self
     }
 

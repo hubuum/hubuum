@@ -464,7 +464,24 @@ fn record_candidate_fetch(rows: usize) {
 
 #[cfg(test)]
 tokio::task_local! {
-    static CANDIDATE_FETCHES: std::cell::RefCell<Vec<usize>>;
+    static CANDIDATE_FETCHES: std::rc::Rc<std::cell::RefCell<Vec<usize>>>;
+}
+
+#[cfg(test)]
+pub(crate) struct CandidateFetchCapture(Option<std::rc::Rc<std::cell::RefCell<Vec<usize>>>>);
+
+#[cfg(test)]
+impl CandidateFetchCapture {
+    pub(crate) fn current() -> Self {
+        Self(CANDIDATE_FETCHES.try_with(Clone::clone).ok())
+    }
+
+    pub(crate) async fn run<T>(self, future: impl Future<Output = T>) -> T {
+        match self.0 {
+            Some(capture) => CANDIDATE_FETCHES.scope(capture, future).await,
+            None => future.await,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -472,13 +489,16 @@ pub(crate) async fn capture_candidate_fetches<T>(
     future: impl Future<Output = T>,
 ) -> (T, Vec<usize>) {
     CANDIDATE_FETCHES
-        .scope(std::cell::RefCell::new(Vec::new()), async {
-            let result = future.await;
-            (
-                result,
-                CANDIDATE_FETCHES.with(|fetches| fetches.borrow().clone()),
-            )
-        })
+        .scope(
+            std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            async {
+                let result = future.await;
+                (
+                    result,
+                    CANDIDATE_FETCHES.with(|fetches| fetches.borrow().clone()),
+                )
+            },
+        )
         .await
 }
 

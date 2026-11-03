@@ -13,8 +13,8 @@ use diesel::sql_types::{BigInt, Bool, Integer, Text};
 use diesel_async::{AsyncConnection, RunQueryDsl};
 use hubuum_events_core::{EventContext, MutationProvenance, TraceLink};
 use hubuum_storage_core::{
-    RuntimeOwner, StorageCallSite, StorageErrorKind, StorageExecutionPermit, StorageExecutionScope,
-    StorageQueryBudget, StorageRevisionPrecondition,
+    RuntimeOwner, StorageApiRequestPermit, StorageCallSite, StorageErrorKind,
+    StorageExecutionPermit, StorageExecutionScope, StorageQueryBudget, StorageRevisionPrecondition,
 };
 use hubuum_task_core::{TaskExecutionContext, TaskStopReason};
 use tracing::{debug, warn};
@@ -90,6 +90,7 @@ impl PostgresObserver for NoopPostgresObserver {}
 /// Runtime dependencies shared by PostgreSQL operations.
 #[derive(Clone)]
 pub struct PostgresRuntime {
+    api_request_slots: Arc<tokio::sync::Semaphore>,
     schema_limits: JsonSchemaLimits,
     pool: PostgresPool,
     task_lease_pool: PostgresPool,
@@ -117,6 +118,7 @@ impl PostgresRuntime {
     #[must_use]
     pub fn new(pool: PostgresPool, observer: Arc<dyn PostgresObserver>) -> Self {
         Self {
+            api_request_slots: Arc::new(tokio::sync::Semaphore::new(1)),
             schema_limits: JsonSchemaLimits::default(),
             task_lease_pool: pool.clone(),
             computed_reindex_batch_size: DEFAULT_COMPUTED_REINDEX_BATCH_SIZE,
@@ -130,6 +132,42 @@ impl PostgresRuntime {
     pub fn with_runtime_owner(mut self, owner: RuntimeOwner) -> Self {
         self.runtime_owner = Some(owner);
         self
+    }
+
+    #[must_use]
+    pub fn with_api_request_execution_slots(mut self, slots: NonZeroUsize) -> Self {
+        self.api_request_slots = Arc::new(tokio::sync::Semaphore::new(slots.get()));
+        self
+    }
+
+    async fn acquire_api_request_slot(
+        &self,
+        context: &TransactionLocalContext,
+    ) -> Result<Option<tokio::sync::OwnedSemaphorePermit>, PostgresStorageError> {
+        let Some(permit) = context.api_request.as_ref().filter(|_| !context.exempt) else {
+            return Ok(None);
+        };
+        let wait = self.api_request_slots.clone().acquire_owned();
+        let bounded = tokio::time::timeout(
+            Duration::from_millis(permit.policy().duration().milliseconds()),
+            wait,
+        );
+        let result = if let Some(execution) = &context.task_execution {
+            tokio::select! {
+                result = bounded => result,
+                reason = wait_for_task_stop(execution) => return Err(PostgresStorageError::task_stopped(reason)),
+            }
+        } else {
+            bounded.await
+        };
+        result
+            .map_err(|_| {
+                PostgresStorageError::from(hubuum_storage_core::StorageError::api_request(
+                    hubuum_storage_core::ApiRequestRejection::DeadlineExceeded,
+                ))
+            })?
+            .map(Some)
+            .map_err(|_| PostgresStorageError::unavailable("Request execution capacity closed"))
     }
 
     pub(crate) fn runtime_owner(&self) -> Option<&RuntimeOwner> {
@@ -312,6 +350,7 @@ impl PostgresRuntime {
         E: Send,
         PostgresStorageError: From<E>,
     {
+        let _request_slot = self.acquire_api_request_slot(&context).await?;
         let mut connection = if context.exempt {
             self.acquire_connection_from(&self.pool).await?
         } else {
@@ -489,6 +528,7 @@ impl PostgresRuntime {
         E: Send,
         PostgresStorageError: From<E>,
     {
+        let _request_slot = self.acquire_api_request_slot(&context).await?;
         let mut connection = if context.exempt {
             self.acquire_connection_from(&self.pool).await?
         } else {
@@ -575,6 +615,7 @@ impl PostgresRuntime {
         E: Send,
         PostgresStorageError: From<E>,
     {
+        let _request_slot = self.acquire_api_request_slot(&context).await?;
         let mut connection = if context.exempt {
             self.acquire_connection_from(&self.pool).await?
         } else {
@@ -636,6 +677,37 @@ impl PostgresRuntime {
             }
         } else if context.task_execution.is_some() {
             require_deletion_execution(connection).await?;
+        }
+        // Applicable history authority gates belong before the owner validator.
+        self.require_api_request_execution(connection, context)
+            .await
+    }
+
+    async fn require_api_request_execution(
+        &self,
+        connection: &mut PostgresConnection,
+        context: &TransactionLocalContext,
+    ) -> Result<(), PostgresStorageError> {
+        if let Some(permit) = &context.api_request {
+            use diesel::sql_types::Uuid as SqlUuid;
+            let remaining = diesel::select(
+                diesel::dsl::sql::<BigInt>("public.hubuum_api_request_execution(")
+                    .bind::<SqlUuid, _>(permit.owner())
+                    .sql(")"),
+            )
+            .get_result::<i64>(connection)
+            .await?;
+            let mut remaining = context.query_budget.map_or(remaining as u64, |budget| {
+                (remaining as u64).min(budget.as_millis())
+            });
+            if let Some(execution) = &context.task_execution {
+                remaining = remaining
+                    .min(execution.remaining().as_millis().clamp(1, i32::MAX as u128) as u64);
+            }
+            diesel::sql_query("SELECT set_config('statement_timeout',$1,true)")
+                .bind::<Text, _>(remaining.to_string())
+                .execute(connection)
+                .await?;
         }
         Ok(())
     }
@@ -720,6 +792,9 @@ pub(crate) async fn with_application_access<F: Future>(
 
 pub(crate) fn current_execution_scope() -> StorageExecutionScope {
     let mut scope = StorageExecutionScope::default().with_call_site(ambient_storage_call_site());
+    if let Ok(Some(permit)) = AMBIENT_API_REQUEST.try_with(Clone::clone) {
+        scope = scope.with_api_request(permit);
+    }
     if let Some(permit) = ambient_application_access() {
         scope = scope.with_application_access(permit);
     }
@@ -793,9 +868,31 @@ pub(crate) fn run_in_scope_sync<F: FnOnce() -> R, R>(
             },
         )
     };
-    match application {
+    let request = AMBIENT_API_REQUEST
+        .try_with(Clone::clone)
+        .unwrap_or(None)
+        .or_else(|| scope.api_request_override().cloned());
+    AMBIENT_API_REQUEST.sync_scope(request, || match application {
         Some(permit) => AMBIENT_APPLICATION_ACCESS.sync_scope(permit, inner),
         None => inner(),
+    })
+}
+
+tokio::task_local! {
+    static AMBIENT_API_REQUEST: Option<StorageApiRequestPermit>;
+}
+
+pub(crate) async fn with_api_request<F: Future>(
+    permit: StorageApiRequestPermit,
+    future: F,
+) -> F::Output {
+    if AMBIENT_API_REQUEST
+        .try_with(|current| current.is_some())
+        .unwrap_or(false)
+    {
+        future.await
+    } else {
+        AMBIENT_API_REQUEST.scope(Some(permit), future).await
     }
 }
 
@@ -998,6 +1095,7 @@ async fn require_deletion_exposure(
 }
 
 struct TransactionLocalContext {
+    api_request: Option<StorageApiRequestPermit>,
     application_access: Option<StorageExecutionPermit>,
     exempt: bool,
     task_execution: Option<TaskExecutionContext>,
@@ -1009,6 +1107,7 @@ struct TransactionLocalContext {
 impl TransactionLocalContext {
     fn control() -> Self {
         Self {
+            api_request: None,
             application_access: None,
             exempt: true,
             task_execution: None,
@@ -1022,6 +1121,7 @@ impl TransactionLocalContext {
 
     fn read_only() -> Self {
         Self {
+            api_request: AMBIENT_API_REQUEST.try_with(Clone::clone).unwrap_or(None),
             application_access: ambient_application_access(),
             exempt: false,
             task_execution: AMBIENT_TASK_EXECUTION
@@ -1037,6 +1137,7 @@ impl TransactionLocalContext {
 
     fn ambient() -> Self {
         Self {
+            api_request: AMBIENT_API_REQUEST.try_with(Clone::clone).unwrap_or(None),
             application_access: ambient_application_access(),
             exempt: false,
             task_execution: AMBIENT_TASK_EXECUTION
@@ -1055,7 +1156,8 @@ impl TransactionLocalContext {
     }
 
     fn is_empty(&self) -> bool {
-        self.application_access.is_none()
+        self.api_request.is_none()
+            && self.application_access.is_none()
             && self.query_budget.is_none()
             && self.task_execution.is_none()
             && self.provenance.is_none()
