@@ -499,9 +499,24 @@ pub struct StorageError {
     current_revision: Option<ResourceRevision>,
     task_capacity: Option<TaskCapacityRejection>,
     api_request: Option<ApiRequestRejection>,
+    history_archive_budget: Option<Box<HistoryArchiveBudgetEvidence>>,
 }
 
 impl StorageError {
+    /// Constructed only with prepared, bounded source evidence. Consumers must
+    /// authorize it before projecting any budget outcome; it is never serialized.
+    #[must_use]
+    pub fn history_archive_capacity(evidence: HistoryArchiveBudgetEvidence) -> Self {
+        let mut error = Self::input_too_large("History capture staging capacity exhausted");
+        error.history_archive_budget = Some(Box::new(evidence));
+        error
+    }
+
+    #[must_use]
+    pub fn history_archive_budget_evidence(&self) -> Option<&HistoryArchiveBudgetEvidence> {
+        self.history_archive_budget.as_deref()
+    }
+
     #[must_use]
     pub fn api_request(reason: ApiRequestRejection) -> Self {
         let kind = match reason {
@@ -660,6 +675,7 @@ impl StorageError {
             current_revision,
             task_capacity: None,
             api_request: None,
+            history_archive_budget: None,
         }
     }
 

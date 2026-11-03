@@ -118,7 +118,10 @@ BEGIN
         (SELECT id FROM hubuum_control.history_archive_captures WHERE expires_at<=clock_timestamp() ORDER BY expires_at,id LIMIT 16 FOR UPDATE) RETURNING bytes LOOP
         counter.captures := counter.captures-1; counter.bytes := counter.bytes-expired.bytes;
     END LOOP;
-    IF encoded>5242880 OR counter.captures>=1024 OR counter.bytes+encoded>1073741824 THEN RETURN FALSE; END IF;
+    IF encoded>5242880 OR counter.captures>=1024 OR counter.bytes+encoded>1073741824 THEN
+        UPDATE hubuum_control.history_archive_capture_capacity SET captures=counter.captures,bytes=counter.bytes WHERE id=1;
+        RETURN FALSE;
+    END IF;
     INSERT INTO hubuum_control.history_archive_captures(id,principal,expires_at,material,bytes)
         VALUES(target,(replacement->>'principal')::uuid,(replacement->>'available_until')::timestamptz,replacement,encoded);
     UPDATE hubuum_control.history_archive_capture_capacity SET captures=counter.captures+1,bytes=counter.bytes+encoded WHERE id=1;

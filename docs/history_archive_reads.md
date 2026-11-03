@@ -120,3 +120,12 @@ bounds are distinct from H1 RSS and H2 deployment accounting qualification or
 P1/P2 performance acceptance. Full 10k/100k catalog allocation, worker RSS,
 constrained profiles, complete pipeline amplification and subset-rewrite costs
 remain unqualified. No cold-provider or source-retirement acceptance is claimed.
+
+Capture staging exhaustion preserves at most 4 KiB of encoded historical
+authorization facts plus fixed original request/fence/lifetime metadata in a
+private validated error proof. Both adapters preserve this proof across their
+error boundary. The service checks its bindings, configured historical policy
+and fresh Legacy authority before exposing budget-limited admission; bare size
+errors do not establish authorized coverage. Error display/debug and transport
+serialization omit these facts. This does not establish a publication fence or
+activate the service alongside retained online expiry.

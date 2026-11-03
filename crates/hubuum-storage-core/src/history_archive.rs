@@ -476,7 +476,7 @@ impl HistoryArchiveCatalog {
 
 /// Bounded historical facts usable for configured authorization even when the
 /// payload cannot fit capture. This is not an authorization decision.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(try_from = "AuthorizationInput")]
 pub struct HistoryArchiveAuthorization {
     collection: CollectionId,
@@ -558,6 +558,56 @@ impl HistoryArchiveCaptureRequest {
     }
     pub const fn generation(&self) -> HistoryArchiveCatalogGeneration {
         self.generation
+    }
+}
+
+/// Bounded source facts retained after preparation when capture persistence
+/// exhausts capacity. This is neither authorization nor a persisted query pin.
+/// Construction is private to a validated capture; it has no wire format.
+#[derive(Clone, Eq, PartialEq)]
+pub struct HistoryArchiveBudgetEvidence {
+    principal: PrincipalIdentity,
+    selection: HistoryArchiveSelection,
+    generation: HistoryArchiveCatalogGeneration,
+    fence: ApplicationFence,
+    runtime: Uuid,
+    captured_at: DateTime<Utc>,
+    available_until: DateTime<Utc>,
+    authorization: Option<HistoryArchiveAuthorization>,
+}
+impl std::fmt::Debug for HistoryArchiveBudgetEvidence {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("HistoryArchiveBudgetEvidence([redacted])")
+    }
+}
+impl HistoryArchiveBudgetEvidence {
+    pub fn authorization(&self) -> Option<&HistoryArchiveAuthorization> {
+        self.authorization.as_ref()
+    }
+    /// Recheck immutable request bindings and the original lifetime. The caller
+    /// must separately recheck live authority and configured authorization.
+    pub fn validate_request(
+        &self,
+        request: &HistoryArchiveCaptureRequest,
+        permit: &StorageExecutionPermit,
+        now: DateTime<Utc>,
+    ) -> Result<(), StorageError> {
+        if self.principal != request.principal
+            || self.selection != request.selection
+            || self.generation != request.generation
+            || self.available_until != request.available_until
+            || self.fence != permit.fence()
+            || permit
+                .owner()
+                .is_none_or(|owner| owner.id() != self.runtime)
+            || now < self.captured_at
+            || now >= self.available_until
+        {
+            return Err(StorageError::unavailable(
+                "Archive budget evidence unavailable",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -764,6 +814,19 @@ impl HistoryArchiveCapture {
         };
         capture.validate()?;
         Ok(capture)
+    }
+    /// Retain only bounded authorization facts, never the hot payload or location.
+    pub fn staging_budget_error(&self) -> StorageError {
+        StorageError::history_archive_capacity(HistoryArchiveBudgetEvidence {
+            principal: self.principal,
+            selection: self.selection.clone(),
+            generation: self.generation,
+            fence: self.fence,
+            runtime: self.runtime,
+            captured_at: self.captured_at,
+            available_until: self.available_until,
+            authorization: self.authorization.clone(),
+        })
     }
     pub const fn id(&self) -> Uuid {
         self.id

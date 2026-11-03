@@ -20,6 +20,10 @@ use hubuum_storage_core::*;
 use rstest::rstest;
 use serde_json::json;
 use std::panic::{AssertUnwindSafe, resume_unwind};
+use std::sync::LazyLock;
+
+static ARCHIVE_METRICS: LazyLock<()> =
+    LazyLock::new(|| crate::observability::metrics::init().unwrap());
 
 // Deliberately oversized rows must never enter the shared application database:
 // unrelated full-backup contracts enforce a smaller per-row limit. Cargo runs
@@ -35,7 +39,7 @@ async fn with_overflow_backend(test: impl for<'a> AsyncFn(&'a mut TestContext)) 
             8,
             crate::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS,
         );
-        let fixture = crate::test_support::RestoreContractFixture::new(kind, owner_pool)
+        let fixture = crate::test_support::RestoreContractFixture::new(kind, owner_pool.clone())
             .await
             .unwrap();
         let backend = match kind {
@@ -50,7 +54,18 @@ async fn with_overflow_backend(test: impl for<'a> AsyncFn(&'a mut TestContext)) 
                 crate::storage::StorageHandle::postgres(pool)
             }
         };
-        let result = AssertUnwindSafe(TestContext::run(backend, async |ctx| test(ctx).await))
+        let result =
+            AssertUnwindSafe(TestContext::run(backend, async |ctx| {
+                let outcome = AssertUnwindSafe(test(ctx)).catch_unwind().await;
+                if kind == StorageBackendKind::Postgres {
+                    hubuum_storage_postgres::test_support::delete_isolated_history_archive_captures(
+                    &owner_pool, ctx.permit.owner().unwrap().id(), ctx.resource,
+                ).await.unwrap();
+                }
+                if let Err(panic) = outcome {
+                    resume_unwind(panic);
+                }
+            }))
             .catch_unwind()
             .await;
         fixture.restore_original().await.unwrap();
@@ -75,7 +90,7 @@ impl TestContext {
     async fn run(storage: StorageHandle, test: impl for<'a> AsyncFnOnce(&'a mut Self)) {
         // Exercise the finite operation-label contract even in focused runs,
         // independently of whether another test initialized global metrics.
-        crate::observability::metrics::init().unwrap();
+        LazyLock::force(&ARCHIVE_METRICS);
         let fixture =
             create_backend_object_fixture(&storage, &prefix("history_archive"), vec![]).await;
         let user = owner_user(&storage, &fixture).await;
@@ -956,4 +971,126 @@ async fn published_malformed_indexes_have_corrupt_coverage(#[case] overlap: bool
         })
         .await;
     }
+}
+
+#[cfg(feature = "integration-test-support")]
+#[rstest]
+#[case::authorized(0)]
+#[case::historical_denied(1)]
+#[case::revoked_policy(2)]
+#[case::retired_owner(3)]
+#[actix_web::test]
+async fn staging_exhaustion_requires_original_historical_authority(#[case] scenario: u8) {
+    with_overflow_backend(async |ctx| {
+        let identity = ctx
+            .storage
+            .resolve_logical_identity(StorageIdentityTarget::Resource {
+                kind: StorageIdentityResourceKind::Collection,
+                id: ctx.fixture.collection.id().into(),
+            })
+            .await
+            .unwrap()
+            .subject()
+            .and_then(StorageIdentitySubject::record_identity)
+            .unwrap();
+        let current_name = prefix("exhaustion_current");
+        ctx.storage
+            .collection_store()
+            .update_collection(
+                ctx.fixture.collection.id(),
+                StorageCollectionUpdate::new(Some(current_name.clone()), None),
+                &EventContext::system(),
+            )
+            .await
+            .unwrap()
+            .into_value();
+        let selection = HistoryArchiveSelection::new(
+            StorageBackupHistorySection::CollectionHistory,
+            ctx.resource,
+            HistoryArchivePoint::Exact {
+                version: identity.version(),
+            },
+        );
+        let available_until = Utc::now() + TimeDelta::hours(1);
+        let request = HistoryArchiveCaptureRequest::new(
+            ctx.principal,
+            selection.clone(),
+            HistoryArchiveCatalogGeneration::default(),
+            available_until,
+        );
+        // Exhaust the actual fixed count budget, without a test-only lower limit.
+        for _ in 0..HISTORY_ARCHIVE_MAX_CAPTURES {
+            ctx.storage
+                .capture_history_archive(request.clone(), &ctx.permit)
+                .await
+                .unwrap();
+        }
+        let error = ctx
+            .storage
+            .capture_history_archive(request.clone(), &ctx.permit)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), StorageErrorKind::InputTooLarge);
+        error
+            .history_archive_budget_evidence()
+            .expect("post-preparation evidence")
+            .validate_request(&request, &ctx.permit, Utc::now())
+            .unwrap();
+        assert!(!format!("{error:?}").contains(ctx.fixture.collection.name()));
+
+        let policy = Arc::new(MockTreetopBackend::new());
+        policy.add_rule(MockAllowRule {
+            group_id: ctx.fixture.owned_group.as_ref().unwrap().id().id(),
+            action: crate::models::Permissions::ReadCollection,
+            resource_kind: ResourceKind::Collection,
+            resource_id: None,
+            attrs: ResourceFields {
+                collection_id: Some(ctx.fixture.collection.id().id()),
+                name: (scenario == 1).then_some(current_name),
+                ..Default::default()
+            },
+        });
+        let hook_ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        if scenario == 2 {
+            let changed = policy.clone();
+            let observed = hook_ran.clone();
+            policy.set_authorization_hook_after_calls(1, move || async move {
+                changed.revoke_all_rules();
+                observed.store(true, std::sync::atomic::Ordering::SeqCst);
+            });
+        } else if scenario == 3 {
+            let storage = ctx.storage.clone();
+            let registration = ctx.registration.take().unwrap();
+            let observed = hook_ran.clone();
+            policy.set_authorization_hook_after_calls(2, move || async move {
+                storage.unregister_runtime(registration).await.unwrap();
+                observed.store(true, std::sync::atomic::Ordering::SeqCst);
+            });
+        }
+        let context = AppContext::new(storage_handle(&ctx.context), policy);
+        let outcome = HistoryArchiveQuery::capture(
+            &context,
+            &ctx.subject,
+            None,
+            HistoryArchiveRequest::collection(
+                ctx.fixture.collection.id(),
+                selection.point().clone(),
+                available_until,
+            ),
+        )
+        .await;
+        match scenario {
+            0 => assert!(matches!(
+                outcome,
+                Ok(HistoryArchiveAdmission::BudgetLimited)
+            )),
+            1 | 2 => assert!(matches!(outcome, Err(ApiError::Forbidden(_)))),
+            3 => assert!(outcome.is_err()),
+            _ => unreachable!(),
+        }
+        if scenario >= 2 {
+            assert!(hook_ran.load(std::sync::atomic::Ordering::SeqCst));
+        }
+    })
+    .await;
 }

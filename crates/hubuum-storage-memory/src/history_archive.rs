@@ -243,9 +243,7 @@ impl HistoryArchiveStorage for MemoryStorage {
         if state.history_archive.captures.len() >= HISTORY_ARCHIVE_MAX_CAPTURES
             || bytes + capture_bytes > HISTORY_ARCHIVE_STAGING_BYTES
         {
-            return Err(StorageError::input_too_large(
-                "History capture staging capacity exhausted",
-            ));
+            return Err(capture.staging_budget_error());
         }
         state.history_archive.staging_bytes += capture_bytes;
         state

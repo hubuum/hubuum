@@ -1461,3 +1461,34 @@ pub async fn cancel_pending_tasks_for_principal(
     )
     .await
 }
+
+/// Remove only pins owned by one completed isolated archive fixture and balance
+/// their exact capacity charges. Never available in normal production builds.
+pub async fn delete_isolated_history_archive_captures(
+    pool: &PostgresPool,
+    runtime: uuid::Uuid,
+    resource: hubuum_domain::ResourceIdentity,
+) -> Result<(), PostgresStorageError> {
+    #[derive(QueryableByName)]
+    struct Database {
+        #[diesel(sql_type = Text)]
+        name: String,
+    }
+    crate::with_transaction(pool, async |connection| {
+        let database = diesel::sql_query("SELECT current_database() AS name")
+            .get_result::<Database>(connection).await?;
+        if !database.name.ends_with("_restore") {
+            return Err(PostgresStorageError::invalid_input("Archive fixture cleanup requires the isolated restore database"));
+        }
+        if database_role_tests_enabled() {
+            let roles = integration_test_database_roles();
+            diesel::sql_query("SELECT set_config('role', $1, true)")
+                .bind::<Text, _>(roles.owner().as_str()).execute(connection).await?;
+        }
+        diesel::sql_query("WITH removed AS (DELETE FROM hubuum_control.history_archive_captures WHERE material->>'runtime'=$1 AND material #>> '{selection,resource}'=$2 RETURNING bytes) UPDATE hubuum_control.history_archive_capture_capacity SET captures=captures-(SELECT count(*)::integer FROM removed), bytes=bytes-(SELECT COALESCE(sum(bytes),0) FROM removed) WHERE id=1")
+            .bind::<Text, _>(runtime.to_string())
+            .bind::<Text, _>(uuid::Uuid::from_bytes(*resource.as_bytes()).to_string())
+            .execute(connection).await?;
+        Ok::<_, PostgresStorageError>(())
+    }).await
+}

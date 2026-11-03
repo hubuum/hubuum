@@ -4,6 +4,15 @@ Status: accepted; current experimental release train is `0.19`.
 
 ## Upgrading from 0.18 to 0.19
 
+Capture persistence exhaustion must carry the bounded, request-bound
+`HistoryArchiveBudgetEvidence` obtained from a prepared capture's
+`staging_budget_error()`. Preserve it through adapter error conversions with
+`history_archive_budget_evidence()` and `StorageError::history_archive_capacity`.
+It is not configured authorization or a query pin: authorize its historical
+facts and recheck the original owner, fence, generation, principal and deadline
+before projecting a budget outcome. Bare `InputTooLarge` remains an error.
+The proof contains no payload, has redacted debug output and no serialization.
+
 **Breaking:** update exact dependencies for all ten SDK crates together.
 `QueryStorage` now requires `HistoryArchiveStorage`. Every complete adapter and
 downstream compile fixture must implement persisted catalog reads/publication,

@@ -136,3 +136,75 @@ fn cumulative_work_is_persisted_and_cannot_wrap() {
         .unwrap();
     assert!(restored.reserve(u64::MAX, at(60)).is_err());
 }
+
+#[test]
+fn staging_budget_evidence_is_bounded_and_redacted() {
+    let (capture, permit) = capture();
+    let request = HistoryArchiveCaptureRequest::new(
+        capture.principal(),
+        capture.selection().clone(),
+        capture.generation(),
+        capture.available_until(),
+    );
+    let error = capture.staging_budget_error();
+    assert_eq!(error.kind(), crate::StorageErrorKind::InputTooLarge);
+    let evidence = error.history_archive_budget_evidence().unwrap();
+    evidence
+        .validate_request(&request, &permit, at(60))
+        .unwrap();
+    let text = format!("{error:?} {error}");
+    assert!(!text.contains(capture.authorization().unwrap().name()));
+    assert!(!text.contains(&capture.runtime.to_string()));
+    assert!(!text.contains(&capture.principal().to_string()));
+    assert!(std::mem::size_of::<HistoryArchiveBudgetEvidence>() + 4096 <= 8192);
+}
+
+#[rstest]
+#[case::principal("principal")]
+#[case::selection("selection")]
+#[case::generation("generation")]
+#[case::deadline("deadline")]
+#[case::owner("owner")]
+#[case::fence("fence")]
+#[case::expired("expired")]
+#[case::clock_regression("clock")]
+#[test]
+fn staging_budget_evidence_rejects_changed_bindings(#[case] changed: &str) {
+    let (capture, mut permit) = capture();
+    let error = capture.staging_budget_error();
+    let mut request = HistoryArchiveCaptureRequest::new(
+        capture.principal(),
+        capture.selection().clone(),
+        capture.generation(),
+        capture.available_until(),
+    );
+    let mut now = at(60);
+    match changed {
+        "principal" => request.principal = PrincipalIdentity::generate(),
+        "selection" => request.selection.resource = ResourceIdentity::generate(),
+        "generation" => request.generation = HistoryArchiveCatalogGeneration(1),
+        "deadline" => request.available_until = at(101),
+        "owner" => {
+            permit = StorageExecutionPermit::new(
+                Some(RuntimeRegistration::generate().owner()),
+                permit.fence(),
+            )
+        }
+        "fence" => {
+            permit = StorageExecutionPermit::new(
+                permit.owner().cloned(),
+                ApplicationFence::new(Uuid::new_v4(), 0).unwrap(),
+            )
+        }
+        "expired" => now = at(100),
+        "clock" => now = at(49),
+        _ => unreachable!(),
+    }
+    assert!(
+        error
+            .history_archive_budget_evidence()
+            .unwrap()
+            .validate_request(&request, &permit, now)
+            .is_err()
+    );
+}

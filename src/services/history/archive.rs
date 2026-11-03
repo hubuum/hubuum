@@ -183,20 +183,40 @@ impl HistoryArchiveQuery {
                 let catalog = storage.history_archive_catalog(resource, &permit).await?;
                 let selection =
                     HistoryArchiveSelection::new(request.family, resource, request.point);
+                let capture_request = HistoryArchiveCaptureRequest::new(
+                    principal,
+                    selection,
+                    catalog.generation(),
+                    request.available_until,
+                );
                 let capture = match storage
-                    .capture_history_archive(
-                        HistoryArchiveCaptureRequest::new(
-                            principal,
-                            selection,
-                            catalog.generation(),
-                            request.available_until,
-                        ),
-                        &permit,
-                    )
+                    .capture_history_archive(capture_request.clone(), &permit)
                     .await
                 {
                     Ok(capture) => capture,
                     Err(error) if error.kind() == StorageErrorKind::InputTooLarge => {
+                        let Some(evidence) = error.history_archive_budget_evidence() else {
+                            return Err(error.into());
+                        };
+                        evidence.validate_request(&capture_request, &permit, Utc::now())?;
+                        authorize(
+                            context,
+                            subject,
+                            scopes,
+                            request.collection,
+                            resource,
+                            evidence.authorization(),
+                        )
+                        .await?;
+                        // Configured authorization can perform external work. Recheck
+                        // the same live owner/fence and original generation afterwards.
+                        let current = storage.history_archive_catalog(resource, &permit).await?;
+                        if current.generation() != capture_request.generation()
+                            || self::principal(context, subject).await? != principal
+                        {
+                            return Err(ApiError::NotFound("History request unavailable".into()));
+                        }
+                        evidence.validate_request(&capture_request, &permit, Utc::now())?;
                         return Ok(HistoryArchiveAdmission::BudgetLimited);
                     }
                     Err(error) => return Err(error.into()),

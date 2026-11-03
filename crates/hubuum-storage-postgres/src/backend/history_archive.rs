@@ -182,9 +182,7 @@ async fn save_on(
     .get_result::<Allowed>(connection)
     .await?;
     if !saved.allowed {
-        return Err(PostgresStorageError::from(StorageError::input_too_large(
-            "Capture generation or bounded staging capacity unavailable",
-        )));
+        return Err(PostgresStorageError::from(capture.staging_budget_error()));
     }
     Ok(())
 }
