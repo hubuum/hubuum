@@ -92,6 +92,8 @@ for cursor_input in crates/hubuum-storage-postgres/src/cursor/query_plan_tests.r
 done
 
 for artifact_input in crates/hubuum-artifacts/Cargo.toml \
+  crates/hubuum-artifacts/src/s3.rs crates/hubuum-artifacts/src/s3/config.rs \
+  crates/hubuum-artifacts/src/s3/tests.rs \
   src/benchmark_support/history_segments.rs src/benchmark_support/history_segments/tests.rs \
   examples/history_segments.rs \
   crates/hubuum-storage-core/src/artifacts/manifest.rs crates/hubuum-artifacts/tests/protocol.rs \
@@ -113,6 +115,12 @@ for artifact_input in crates/hubuum-artifacts/Cargo.toml \
   assert_flag "$artifact_output" container true
   assert_flag "$artifact_output" artifacts true
 done
+
+s3_benchmark_output="$(bash "$classifier" crates/hubuum-artifacts/benches/s3_artifact_storage_criterion.rs)"
+assert_flag "$s3_benchmark_output" benchmarks true
+s3_fixture_output="$(bash "$classifier" tests/python/integration/s3_artifacts.py)"
+assert_flag "$s3_fixture_output" code true
+assert_flag "$s3_fixture_output" container true
 
 artifact_restore_output="$(bash "$classifier" src/tests/storage_contract/artifacts.rs tests/restore_contract/artifacts.rs)"
 assert_flag "$artifact_restore_output" code true

@@ -938,6 +938,10 @@ jobs:
           save-if: ${{ github.event_name != 'pull_request' }}
       - name: Test production transports against pinned TLS fixtures
         run: python3 tests/python/run.py integration event-transports
+      - name: Lint S3 artifact capability
+        run: cargo clippy -p hubuum-artifacts --features s3 --all-targets -- -D warnings
+      - name: Test S3 artifacts against pinned private TLS MinIO
+        run: python3 -I -S tests/python/run.py integration s3-artifacts
 
   treetop-authorization-conformance:
     name: Treetop authorization conformance

@@ -31,6 +31,7 @@ INTEGRATION = {
     "scheduling-benchmark": "integration.scheduling_benchmark",
     "schema-budget": "integration.schema_budget",
     "artifact-pipeline": "integration.artifact_pipeline",
+    "s3-artifacts": "integration.s3_artifacts",
     "rust-tests": "integration.rust_tests",
     "class-field-discovery": "integration.class_field_discovery",
     "treetop-server": "support.treetop_server",
