@@ -347,6 +347,7 @@ impl TestContext {
         bytes.extend_from_slice(b"HUBI\x01");
         let limits = ArtifactLimits::builder()
             .block_bytes(512 * 1024)
+            .artifact_bytes(64 * 1024)
             .build()
             .unwrap();
         let mut writer = ArtifactWriter::new(

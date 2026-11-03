@@ -691,8 +691,25 @@ impl HistoryArchiveCapture {
             hot.as_ref()
                 .is_none_or(|row| row.identity != entry.identity)
         });
+        // A restored open primary can outlive its own retained closure even
+        // when no descriptor covers the requested instant. That gap cannot
+        // be filled by the older primary's payload.
+        let hot_descriptor = hot.as_ref().and_then(|row| {
+            catalog
+                .versions
+                .iter()
+                .find(|entry| entry.identity == row.identity)
+        });
+        let retained_closure_gap = hot_descriptor.is_some_and(|entry| {
+            matches!(request.selection.point, HistoryArchivePoint::AsOf { at }
+                if at < entry.valid_from || at >= entry.valid_to)
+        });
+        let hot_content_changed = hot_descriptor.is_some_and(|entry| {
+            hot.as_ref()
+                .is_some_and(|row| !entry.matches_row(row).unwrap_or(false))
+        });
         let archive = candidate
-            .filter(|_| !ambiguous && !missing_primary)
+            .filter(|_| !ambiguous && !missing_primary && !retained_closure_gap)
             .cloned();
         let coverage = if request.selection.family != StorageBackupHistorySection::CollectionHistory
         {
@@ -701,12 +718,9 @@ impl HistoryArchiveCapture {
             source_coverage
         } else if ambiguous {
             HistoryArchiveCoverageState::Corrupt
-        } else if missing_primary {
+        } else if missing_primary || retained_closure_gap {
             HistoryArchiveCoverageState::Unavailable
-        } else if archive.as_ref().is_some_and(|entry| {
-            hot.as_ref()
-                .is_none_or(|row| !entry.matches_row(row).unwrap_or(false))
-        }) {
+        } else if hot_content_changed {
             HistoryArchiveCoverageState::Corrupt
         } else if archive
             .as_ref()
