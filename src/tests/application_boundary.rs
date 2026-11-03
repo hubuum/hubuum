@@ -1,6 +1,8 @@
 //! Compile-time-adjacent guards for the application/storage boundary.
 
 #[cfg(test)]
+use rstest::rstest;
+#[cfg(test)]
 use std::collections::BTreeSet;
 #[cfg(test)]
 use std::fs;
@@ -3333,8 +3335,8 @@ fn actix_http2_stays_disabled_until_its_h2_dependency_is_fixed() {
         );
     }
 
-    // TLS features previously enabled HTTP/2 indirectly. Check the resolved
-    // dependency graph as well as the direct feature selection above.
+    // TLS features previously enabled vulnerable h2 indirectly. The outbound
+    // S3 connector may use the fixed 0.4 line; inbound Actix HTTP/2 stays off.
     let lockfile_path = repository_root().join("Cargo.lock");
     let lockfile_source = read_source(&lockfile_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", lockfile_path.display()));
@@ -3347,7 +3349,31 @@ fn actix_http2_stays_disabled_until_its_h2_dependency_is_fixed() {
     assert!(
         packages
             .iter()
-            .all(|package| package.get("name").and_then(toml::Value::as_str) != Some("h2")),
-        "h2 must remain absent, including dependencies enabled indirectly by TLS features"
+            .filter(|package| package.get("name").and_then(toml::Value::as_str) == Some("h2"))
+            .all(|package| package
+                .get("version")
+                .and_then(toml::Value::as_str)
+                .is_some_and(h2_has_data_frame_fix)),
+        "all h2 dependencies must include RUSTSEC-2026-0258's fix (>=0.4.16), including outbound TLS clients"
     );
+}
+
+#[cfg(test)]
+fn h2_has_data_frame_fix(version: &str) -> bool {
+    let parts = version
+        .split('.')
+        .map(str::parse::<u64>)
+        .collect::<Result<Vec<_>, _>>();
+    matches!(parts, Ok(parts) if parts.len() == 3 && (parts[0], parts[1], parts[2]) >= (0, 4, 16))
+}
+
+#[cfg(test)]
+#[rstest]
+#[case("0.3.27", false)]
+#[case("0.4.15", false)]
+#[case("0.4.16", true)]
+#[case("0.4.20", true)]
+#[case("0.4.16-rc.1", false)]
+fn h2_security_guard_requires_the_patched_release(#[case] version: &str, #[case] expected: bool) {
+    assert_eq!(h2_has_data_frame_fix(version), expected);
 }

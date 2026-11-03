@@ -663,6 +663,9 @@ pub struct ApiErrorResponse {
     /// Machine-readable reason for errors with a client recovery flow.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Whether an admission rejection can be retried after capacity or control recovers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
     pub error: String,
     pub message: String,
 }
@@ -723,6 +726,7 @@ pub struct CountsResponse {
 fn api_error_response_example() -> ApiErrorResponse {
     ApiErrorResponse {
         reason: None,
+        retryable: None,
         error: "Unauthorized".to_string(),
         message: "Authentication failure".to_string(),
     }
@@ -857,18 +861,22 @@ impl Modify for OperationDefaults {
                                 response.description.push(' ');
                                 response.description.push_str(description);
                             }
-                            response.content.insert(
-                                "application/json".to_owned(),
-                                Content::new(Some(Schema::AnyOf(
-                                    AnyOfBuilder::new()
-                                        .item(Ref::from_schema_name("ApiErrorResponse"))
-                                        .item(Ref::from_schema_name(
-                                            "ApiRequestAdmissionErrorResponse",
-                                        ))
-                                        .build(),
-                                )))
-                                .into(),
-                            );
+                            // Keep existing client error envelopes compatible; only new
+                            // responses need the admission-specific schema alternative.
+                            response
+                                .content
+                                .entry("application/json".to_owned())
+                                .or_insert_with(|| {
+                                    Content::new(Some(Schema::AnyOf(
+                                        AnyOfBuilder::new()
+                                            .item(Ref::from_schema_name("ApiErrorResponse"))
+                                            .item(Ref::from_schema_name(
+                                                "ApiRequestAdmissionErrorResponse",
+                                            ))
+                                            .build(),
+                                    )))
+                                    .into()
+                                });
                         }
                     }
                 }
@@ -1581,6 +1589,59 @@ mod tests {
 
     fn openapi_json() -> Value {
         serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI should serialize to JSON")
+    }
+
+    #[rstest]
+    #[case("/api/v1/classes/{class_id}/object-aggregates", "get", "413")]
+    #[case("/api/v1/classes/by-name/{class_name}/object-aggregates", "get", "413")]
+    #[case("/api/v1/imports", "post", "429")]
+    #[case("/api/v1/exports", "post", "429")]
+    fn admission_preserves_existing_error_response_schema(
+        #[case] path: &str,
+        #[case] method: &str,
+        #[case] status: &str,
+    ) {
+        let json = openapi_json();
+        let response = &json["paths"][path][method]["responses"][status];
+        assert_eq!(
+            response["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/ApiErrorResponse"
+        );
+        let envelope = &json["components"]["schemas"]["ApiErrorResponse"];
+        assert_eq!(envelope["type"], "object");
+        assert_eq!(
+            envelope["required"],
+            serde_json::json!(["error", "message"])
+        );
+        assert!(envelope["properties"]["retryable"].is_object());
+        assert!(
+            response["description"]
+                .as_str()
+                .unwrap()
+                .contains("no-store")
+        );
+    }
+
+    #[test]
+    fn admission_adds_bounded_schema_to_new_responses() {
+        let json = openapi_json();
+        let schema = &json["paths"]["/api/v1/imports"]["post"]["responses"]["422"]["content"]["application/json"]
+            ["schema"];
+        assert_eq!(
+            schema["anyOf"][1]["$ref"],
+            "#/components/schemas/ApiRequestAdmissionErrorResponse"
+        );
+        let admission = &json["components"]["schemas"]["ApiRequestAdmissionErrorResponse"];
+        assert_eq!(
+            admission["properties"]["reason"]["$ref"],
+            "#/components/schemas/ApiRequestRejection"
+        );
+        assert!(
+            admission["required"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("retryable"))
+        );
     }
 
     #[test]

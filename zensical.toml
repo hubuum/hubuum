@@ -126,6 +126,7 @@ nav = [
     { "Documentation review & roadmap" = "contributing/documentation-review.md" },
     { "Architecture" = [
       { "Artifact staging foundation" = "artifact_staging.md" },
+      { "S3 artifact byte store" = "artifact_s3.md" },
       { "Application & storage boundary" = "storage_boundary.md" },
       { "Lifecycle delivery plan" = "lifecycle_delivery_plan.md" },
       { "Lifecycle audit contract proposal" = "lifecycle_audit_contract.md" },

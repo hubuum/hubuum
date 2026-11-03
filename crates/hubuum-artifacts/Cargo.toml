@@ -14,21 +14,36 @@ rust-api = "workspace-internal"
 [dependencies]
 hubuum-storage-core = { path = "../hubuum-storage-core" }
 hubuum-budget = { path = "../hubuum-budget" }
-tokio = { version = "1", features = ["rt", "sync"] }
+tokio = { version = "1", features = ["rt", "sync", "time"] }
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+aws-sdk-s3 = { version = "=1.122.0", default-features = false, features = ["rt-tokio"], optional = true }
+aws-smithy-http-client = { version = "=1.1.9", features = ["rustls-aws-lc"], optional = true }
+sha2 = { version = "0.11", optional = true }
+url = { version = "2", optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
+rustls-pki-types = { version = "1", optional = true }
+rustls = { version = "0.23", default-features = false, features = ["std"], optional = true }
+
+[features]
+s3 = ["dep:aws-sdk-s3", "dep:aws-smithy-http-client", "dep:sha2", "dep:url", "dep:uuid", "dep:rustls-pki-types", "dep:rustls"]
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["fs", "process"] }
 
 [dev-dependencies]
-criterion = "0.8.2"
-tempfile = "3"
 sha2 = "0.11"
 rstest = "0.28"
 tokio = { version = "1", features = ["macros", "rt", "time"] }
+criterion = "0.8.2"
+tempfile = "3"
 
 [[bench]]
 name = "filesystem_artifact_storage_criterion"
 harness = false
+
+[[bench]]
+name = "s3_artifact_storage_criterion"
+harness = false
+required-features = ["s3"]

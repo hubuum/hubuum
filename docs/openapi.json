@@ -2126,14 +2126,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/ApiErrorResponse"
-                    },
-                    {
-                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
-                    }
-                  ]
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             }
@@ -5959,14 +5952,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/ApiErrorResponse"
-                    },
-                    {
-                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
-                    }
-                  ]
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             }
@@ -18438,14 +18424,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/ApiErrorResponse"
-                    },
-                    {
-                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
-                    }
-                  ]
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             }
@@ -18455,14 +18434,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/ApiErrorResponse"
-                    },
-                    {
-                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
-                    }
-                  ]
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             }
@@ -23597,14 +23569,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/ApiErrorResponse"
-                    },
-                    {
-                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
-                    }
-                  ]
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             }
@@ -23614,14 +23579,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/ApiErrorResponse"
-                    },
-                    {
-                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
-                    }
-                  ]
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             }
@@ -27870,6 +27828,13 @@
               "null"
             ],
             "description": "Machine-readable reason for errors with a client recovery flow."
+          },
+          "retryable": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether an admission rejection can be retried after capacity or control recovers."
           }
         },
         "example": {
