@@ -16,7 +16,7 @@ hubuum-storage-core = { path = "../hubuum-storage-core" }
 hubuum-budget = { path = "../hubuum-budget" }
 tokio = { version = "1", features = ["rt", "sync", "time"] }
 async-trait = "0.1"
-aws-sdk-s3 = { version = "=1.122.0", default-features = false, features = ["rt-tokio", "rustls", "default-https-client"], optional = true }
+aws-sdk-s3 = { version = "=1.122.0", default-features = false, features = ["rt-tokio"], optional = true }
 aws-smithy-http-client = { version = "=1.1.9", features = ["rustls-aws-lc"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }

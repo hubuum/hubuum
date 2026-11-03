@@ -62,6 +62,14 @@ fn corrupted_control_limits_cannot_enlarge_provider_reads() {
     assert!(State::decode(&serde_json::to_vec(&state).unwrap()).is_err());
 }
 
+#[rstest]
+#[case(vec![String::new()])]
+#[case(vec!["x".repeat(4097)])]
+#[case((0..17).map(|id| id.to_string()).collect())]
+fn upload_intent_rejects_invalid_id_sets(#[case] ids: Vec<String>) {
+    assert!(UploadIds::decode(&serde_json::to_vec(&ids).unwrap()).is_err());
+}
+
 fn fixture_config(destination: Destination, bucket: &str, trust_ca: bool) -> S3Config {
     let mut builder = S3Config::builder(destination)
         .bucket(bucket)
@@ -501,7 +509,7 @@ async fn live_cleanup_aborts_interrupted_multipart_uploads(#[case] persist_uploa
         store
             .put_control(
                 &intent,
-                upload.upload_id().unwrap().as_bytes().to_vec(),
+                serde_json::to_vec(&[upload.upload_id().unwrap()]).unwrap(),
                 Some(&etag),
             )
             .await

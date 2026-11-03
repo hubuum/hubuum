@@ -20,6 +20,11 @@ adapter errors never include SDK request/response Debug or provider messages.
 Resolve production secrets through the existing secret provider before building
 configuration. There are no new production environment settings or API selectors.
 
+The SDK connector uses the patched `h2` 0.4 line. The dependency guard requires
+the [RUSTSEC-2026-0258 fix](https://rustsec.org/advisories/RUSTSEC-2026-0258)
+(`>=0.4.16`); vulnerable 0.3 and earlier 0.4 versions remain forbidden.
+Actix's inbound HTTP/2 feature stays disabled in every TLS configuration.
+
 `S3ArtifactStore::connect` requires an existing version-enabled private bucket.
 It checks versioning, ACL and public-policy status; a missing policy is allowed
 with a private ACL. Unknown/denied policy inspection fails closed. Bucket policy,
@@ -59,7 +64,7 @@ complete namespace and all its control versions while it is in use.
 | `attempts/<attempt UUID>` | Permanent canonical identity ownership record. |
 | `versions/<object-version UUID>` | Permanent canonical identity ownership record. |
 | `states/<artifact UUID>` | Current JSON control record, changed only with conditional ETag PUT. |
-| `intents/<artifact>/<attempt>/<object-version>/<random UUID>` | Permanent upload intent: empty before initiation, then the bounded provider upload ID. |
+| `intents/<artifact>/<attempt>/<object-version>/<random UUID>` | Permanent upload intent: empty before initiation, then JSON containing the bounded provider upload IDs. |
 | `data/<artifact>/<attempt>/<object-version>/<random UUID>` | One immutable protocol block at an exact S3 version. |
 
 `hubuum-artifacts-v1/names/<name>` permanently binds a name to its destination
@@ -93,8 +98,14 @@ response is lost. The pinned MinIO implementation supports multipart listing for
 an exact object key, rather than general prefix discovery; recovery uses these
 intents instead of assuming prefix discovery is complete.
 Returned upload IDs (at most 4 KiB) are persisted before sending parts. Cleanup
+also saves discovered IDs before aborting, retaining at most 16 IDs per intent
+in a record bounded to 1 MiB. Unsupported excess identities fail with an explicit
+limit outcome; they cannot silently turn into acknowledged cleanup. Cleanup
 retries those IDs even when a provider omits them from its multipart listing,
 and verifies `ListParts` is empty or the upload no longer exists after abort.
+An initial `ListParts` distinguishes a live upload from an already-completed ID;
+the fixture's successful idempotent abort response alone cannot count reclaimed
+work. IDs remain durable through failed post-abort verification.
 Remaining parts or an ambiguous verification failure keep the cursor pending.
 
 The shared `verify`/`verify_and_publish` protocol independently reads every exact

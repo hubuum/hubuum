@@ -24,7 +24,46 @@ use crate::{
 
 const CONTROL_BYTES: usize = 8 * 1024 * 1024;
 const MAX_BLOCKS: u32 = 1024;
+const INTENT_BYTES: usize = 1024 * 1024;
 const ROOT: &str = "hubuum-artifacts-v1";
+
+#[derive(Default)]
+struct UploadIds(Vec<String>);
+impl UploadIds {
+    fn decode(bytes: &[u8]) -> ArtifactResult<Self> {
+        let raw: Vec<String> = if bytes.is_empty() {
+            Vec::new()
+        } else {
+            serde_json::from_slice(bytes)
+                .map_err(|_| ArtifactError::Corrupt("Invalid S3 upload intent".into()))?
+        };
+        let mut ids = Self::default();
+        for id in raw {
+            ids.insert(&id)?;
+        }
+        Ok(ids)
+    }
+    fn insert(&mut self, id: &str) -> ArtifactResult<bool> {
+        if id.is_empty() || id.len() > 4096 {
+            return Err(ArtifactError::Limit(
+                "S3 upload ID exceeds its bound".into(),
+            ));
+        }
+        if self.0.iter().any(|old| old == id) {
+            return Ok(false);
+        }
+        if self.0.len() == 16 {
+            return Err(ArtifactError::Limit(
+                "Too many S3 upload IDs for one transfer intent".into(),
+            ));
+        }
+        self.0.push(id.to_owned());
+        Ok(true)
+    }
+    fn encode(&self) -> ArtifactResult<Vec<u8>> {
+        serde_json::to_vec(&self.0).map_err(|_| conflict())
+    }
+}
 
 /// Immutable configuration and client are shared; attempt state is always read
 /// from S3. The local cursor only bounds maintenance scan work, not correctness.
@@ -402,13 +441,10 @@ impl S3ArtifactStore {
             .map_err(boundary)?;
         let upload = started.upload_id().ok_or_else(conflict)?;
         let result = async {
-            if upload.is_empty() || upload.len() > 4096 {
-                return Err(ArtifactError::Backend(
-                    "S3 upload identity exceeds supported bounds".into(),
-                ));
-            }
-            let (_, etag) = self.get_bytes(&intent, None, 4096).await?;
-            self.put_control(&intent, upload.as_bytes().to_vec(), Some(&etag))
+            let (intent_bytes, etag) = self.get_bytes(&intent, None, INTENT_BYTES).await?;
+            let mut ids = UploadIds::decode(&intent_bytes)?;
+            ids.insert(upload)?;
+            self.put_control(&intent, ids.encode()?, Some(&etag))
                 .await?;
             // Each object is one protocol block. A single final multipart part
             // may be smaller than S3's 5 MiB non-final minimum.
@@ -500,6 +536,27 @@ impl S3ArtifactStore {
     }
 
     async fn abort_upload(&self, key: &str, upload: &str) -> ArtifactResult<bool> {
+        // MinIO may return successful abort for an already completed/missing
+        // upload. Establish existence before counting reclaimed work.
+        match self
+            .client
+            .list_parts()
+            .bucket(&self.config.bucket)
+            .key(key)
+            .upload_id(upload)
+            .max_parts(1)
+            .send()
+            .await
+        {
+            Ok(_) => (),
+            Err(error)
+                if error.as_service_error().and_then(|error| error.code())
+                    == Some("NoSuchUpload") =>
+            {
+                return Ok(false);
+            }
+            Err(error) => return Err(boundary(error)),
+        }
         let removed = match self
             .client
             .abort_multipart_upload()
@@ -575,18 +632,15 @@ impl S3ArtifactStore {
             let suffix = intent.strip_prefix(&intent_prefix).ok_or_else(conflict)?;
             Uuid::parse_str(suffix).map_err(|_| conflict())?;
             let expected_key = format!("{prefix}{suffix}");
-            let (known_upload, _) = self.get_bytes(intent, None, 4096).await?;
-            let known_upload = String::from_utf8(known_upload).map_err(|_| conflict())?;
-            let mut ids = Vec::new();
-            if !known_upload.is_empty() {
-                ids.push(known_upload);
-            }
+            let (bytes, intent_etag) = self.get_bytes(intent, None, INTENT_BYTES).await?;
+            let mut ids = UploadIds::decode(&bytes)?;
+            let mut changed = false;
             let uploads = self
                 .client
                 .list_multipart_uploads()
                 .bucket(&self.config.bucket)
                 .prefix(&expected_key)
-                .max_uploads(16 - ids.len() as i32)
+                .max_uploads(16)
                 .send()
                 .await
                 .map_err(boundary)?;
@@ -596,14 +650,13 @@ impl S3ArtifactStore {
                     .filter(|key| *key == expected_key)
                     .ok_or_else(conflict)?;
                 let id = upload.upload_id().ok_or_else(conflict)?;
-                if id.is_empty() || id.len() > 4096 {
-                    return Err(conflict());
-                }
-                if !ids.iter().any(|known| known == id) {
-                    ids.push(id.to_owned());
-                }
+                changed |= ids.insert(id)?;
             }
-            for id in ids {
+            if changed {
+                self.put_control(intent, ids.encode()?, Some(&intent_etag))
+                    .await?;
+            }
+            for id in ids.0 {
                 removed += u32::from(self.abort_upload(&expected_key, &id).await?);
             }
             if uploads.is_truncated() != Some(true) {
