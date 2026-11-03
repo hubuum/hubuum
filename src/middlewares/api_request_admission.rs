@@ -98,7 +98,8 @@ pub(super) async fn run(
     next: Next<impl MessageBody + 'static>,
     actor: Option<PrincipalId>,
 ) -> Result<ServiceResponse<BoxBody>, Error> {
-    let Some((class, principal)) = operation(req.method(), req.path()).zip(actor) else {
+    let Some((class, principal)) = operation(req.method(), req.match_info().as_str()).zip(actor)
+    else {
         return next
             .call(req)
             .await
@@ -121,6 +122,7 @@ pub(super) async fn run(
     let parent_scope = storage
         .current_execution_scope()
         .with_task_execution(Some(initial.clone()));
+    let work_stop = stop.clone();
     let disconnect = DisconnectStop(stop);
     let mut http_work = super::maintenance::take_supervised_http_work(&req);
     #[cfg(test)]
@@ -213,17 +215,25 @@ pub(super) async fn run(
                         head.set_body(bytes).map_into_boxed_body(),
                     ))
                 });
+                tokio::pin!(response);
                 let result = match tokio::time::timeout_at(
                     tokio::time::Instant::from_std(deadline),
-                    response,
+                    &mut response,
                 )
                 .await
                 {
                     Ok(result) => result,
-                    Err(_) => Err(ApiError::ApiRequestAdmission(
-                        ApiRequestRejection::DeadlineExceeded,
-                    )
-                    .into()),
+                    Err(_) => {
+                        // Dropping a handler can detach template supervision or
+                        // blocking checkpoint publication. Stop further work,
+                        // but retain its awaits until issued preparation ends.
+                        work_stop.request_stop(TaskStopReason::DeadlineExceeded);
+                        let _ = response.await;
+                        Err(
+                            ApiError::ApiRequestAdmission(ApiRequestRejection::DeadlineExceeded)
+                                .into(),
+                        )
+                    }
                 };
                 work_storage
                     .settle_api_request(permit)

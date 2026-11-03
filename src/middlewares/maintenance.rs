@@ -301,7 +301,9 @@ async fn reject_with_activity(
             None
         };
         let http_work =
-            if super::api_request_admission::operation(req.method(), req.path()).is_some() {
+            if super::api_request_admission::operation(req.method(), req.match_info().as_str())
+                .is_some()
+            {
                 http_work.transferable(&req)
             } else {
                 http_work

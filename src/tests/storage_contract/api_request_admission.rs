@@ -164,11 +164,18 @@ async fn disconnected_socket_does_not_leak_request_occupancy() {
             .wrap(from_fn(crate::middlewares::actor_context))
             .route(
                 "/api/v1/classes/42/object-aggregates",
-                web::get().to(move || {
+                web::get().to(move |context: Data<AppContext>| {
                     let entered = entered.clone();
                     async move {
+                        let scope = context.backend().current_execution_scope();
+                        let execution = scope
+                            .task_execution_override()
+                            .and_then(Option::as_ref)
+                            .expect("request execution context must reach the handler");
                         entered.notify_one();
-                        tokio::time::sleep(Duration::from_secs(30)).await;
+                        while execution.check().is_ok() {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                        }
                         HttpResponse::Ok().finish()
                     }
                 }),
@@ -354,4 +361,207 @@ async fn expired_owner_fails_before_storage_work() {
         Some(ApiRequestRejection::DeadlineExceeded)
     );
     backend.settle_api_request(permit).await.unwrap();
+}
+
+#[rstest::rstest]
+#[case::aggregate(
+    "GET",
+    "/api/v1/classes/42/object-aggregates",
+    "/api/v1/classes/42/%6Fbject-aggregates"
+)]
+#[case::import("POST", "/api/v1/imports", "/api/v1/%69mports")]
+#[actix_web::test]
+async fn request_admission_uses_the_router_path(
+    #[case] method: &str,
+    #[case] route: &'static str,
+    #[case] encoded: &str,
+) {
+    use actix_web::{HttpResponse, HttpServer, middleware::from_fn, web};
+
+    let backend = StorageHandle::from_registered_backend(MemoryStorage::new());
+    let user = create_backend_user(&backend, &prefix("api_encoded_route")).await;
+    let initial = backend.api_request_policy().await.unwrap();
+    backend
+        .replace_api_request_policy(StorageApiRequestPolicyUpdate::new(
+            initial.revision(),
+            initial
+                .policy()
+                .clone()
+                .with_principal(TaskCapacityLimit::new(1).unwrap()),
+        ))
+        .await
+        .unwrap();
+    let occupied = backend
+        .admit_api_request(user.principal_id, ApiRequestClass::Aggregate, 0)
+        .await
+        .unwrap();
+    let context = Data::new(AppContext::new(
+        backend.clone(),
+        Arc::new(LocalPermissionBackend::new(backend.clone(), "admin".into())),
+    ));
+    let method: http::Method = method.parse().unwrap();
+    let server_method = method.clone();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let route_calls = calls.clone();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = HttpServer::new(move || {
+        let calls = route_calls.clone();
+        App::new()
+            .app_data(context.clone())
+            .wrap(from_fn(crate::middlewares::actor_context))
+            .wrap(from_fn(
+                crate::middlewares::maintenance::reject_during_maintenance,
+            ))
+            .route(
+                route,
+                web::route().method(server_method.clone()).to(move || {
+                    let calls = calls.clone();
+                    async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        HttpResponse::Ok().finish()
+                    }
+                }),
+            )
+    })
+    .disable_signals()
+    .workers(1)
+    .listen(listener)
+    .unwrap()
+    .run();
+    let handle = server.handle();
+    let server = actix_web::rt::spawn(server);
+    let response = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap()
+        .request(
+            reqwest::Method::from_bytes(method.as_str().as_bytes()).unwrap(),
+            format!("http://{address}{encoded}"),
+        )
+        .bearer_auth(&user.raw_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::TOO_MANY_REQUESTS);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["reason"], "api_capacity_principal");
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    handle.stop(true).await;
+    server.await.unwrap().unwrap();
+    backend.settle_api_request(occupied).await.unwrap();
+    delete_backend_user(&backend, user).await;
+}
+
+#[actix_web::test]
+async fn request_admission_retains_blocking_preparation_until_completion() {
+    use actix_web::{HttpResponse, middleware::from_fn, web};
+    use hubuum_task_core::TaskStopReason;
+
+    let backend = StorageHandle::from_registered_backend(MemoryStorage::new());
+    let user = create_backend_user(&backend, &prefix("api_blocking_preparation")).await;
+    let initial = backend.api_request_policy().await.unwrap();
+    backend
+        .replace_api_request_policy(StorageApiRequestPolicyUpdate::new(
+            initial.revision(),
+            initial
+                .policy()
+                .clone()
+                .with_principal(TaskCapacityLimit::new(1).unwrap())
+                .with_duration(ApiRequestDuration::new(50).unwrap()),
+        ))
+        .await
+        .unwrap();
+    let context = Data::new(AppContext::new(
+        backend.clone(),
+        Arc::new(LocalPermissionBackend::new(backend.clone(), "admin".into())),
+    ));
+    let entered = Arc::new(Notify::new());
+    let route_entered = entered.clone();
+    let release = Arc::new(std::sync::Barrier::new(2));
+    let route_release = release.clone();
+    let finished = Arc::new(AtomicUsize::new(0));
+    let route_finished = finished.clone();
+    let app = test::init_service(
+        App::new()
+            .app_data(context)
+            .wrap(from_fn(crate::middlewares::actor_context))
+            .wrap(from_fn(
+                crate::middlewares::maintenance::reject_during_maintenance,
+            ))
+            .route(
+                "/api/v1/imports",
+                web::post().to(move |context: Data<AppContext>| {
+                    let entered = route_entered.clone();
+                    let release = route_release.clone();
+                    let finished = route_finished.clone();
+                    async move {
+                        let execution = context
+                            .backend()
+                            .current_execution_scope()
+                            .task_execution_override()
+                            .and_then(Option::as_ref)
+                            .unwrap()
+                            .clone();
+                        let result = tokio::task::spawn_blocking(move || {
+                            entered.notify_one();
+                            release.wait();
+                            // The original request stop reaches issued preparation.
+                            let stopped = execution.check();
+                            finished.fetch_add(1, Ordering::SeqCst);
+                            stopped
+                        })
+                        .await
+                        .unwrap();
+                        assert_eq!(result, Err(TaskStopReason::DeadlineExceeded));
+                        HttpResponse::Ok().finish()
+                    }
+                }),
+            ),
+    )
+    .await;
+    let request = test::TestRequest::post()
+        .uri("/api/v1/imports")
+        .insert_header(("Authorization", format!("Bearer {}", user.raw_token)))
+        .to_request();
+    let waiting = actix_web::rt::spawn(async move { test::try_call_service(&app, request).await });
+    tokio::time::timeout(Duration::from_secs(5), entered.notified())
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let replacement = backend
+        .admit_api_request(user.principal_id, ApiRequestClass::ImportSubmission, 0)
+        .await;
+    let completed_early = waiting.is_finished();
+    let finished_early = finished.load(Ordering::SeqCst);
+    // Always unblock the independently running job before asserting, so a
+    // regression cannot strand a blocking worker and hang runtime teardown.
+    tokio::task::spawn_blocking(move || release.wait())
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(5), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        !completed_early,
+        "deadline must retain the awaiting handler"
+    );
+    assert_eq!(finished_early, 0);
+    assert_eq!(
+        replacement.unwrap_err().api_request_rejection(),
+        Some(ApiRequestRejection::Principal)
+    );
+    assert_eq!(
+        result.unwrap_err().error_response().status(),
+        http::StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(finished.load(Ordering::SeqCst), 1);
+    let replacement = backend
+        .admit_api_request(user.principal_id, ApiRequestClass::ImportSubmission, 0)
+        .await
+        .unwrap();
+    backend.settle_api_request(replacement).await.unwrap();
+    delete_backend_user(&backend, user).await;
 }

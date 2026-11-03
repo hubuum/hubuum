@@ -75,7 +75,11 @@ cleanup ownership when the HTTP wait is dropped. Its local
 deadline starts before admission, so policy waits and response/network latency
 and task scheduling cannot refresh the absolute allowance. It signals
 cooperative cancellation, carries the original deadline into PostgreSQL query
-cancellation, and settles occupancy after the handler/body boundary. Timeout does
+cancellation, and retains the handler/body future through issued preparation
+completion before settling occupancy. A deadline response can be delayed while
+a non-cooperative template or blocking publication job drains; this work remains
+charged throughout. The supervisor does not drop its awaited child/blocking jobs
+as a substitute for observing completion. Timeout does
 not prove an import/export task was never committed. Clients should retain their
 idempotency key and inspect/retry the same submission under its existing receipt
 contract after an ambiguous connection failure. Deadlines cannot preempt a
