@@ -32,6 +32,36 @@ use uuid::Uuid;
 struct CompleteExternalAdapter;
 
 #[async_trait]
+impl ApiRequestAdmissionStorage for CompleteExternalAdapter {
+    async fn api_request_policy(&self) -> Result<StorageApiRequestPolicy, StorageError> {
+        fixture_result()
+    }
+
+    async fn replace_api_request_policy(
+        &self,
+        update: StorageApiRequestPolicyUpdate,
+    ) -> Result<StorageApiRequestPolicy, StorageError> {
+        fixture_result()
+    }
+
+    async fn admit_api_request(
+        &self,
+        principal: PrincipalId,
+        class: ApiRequestClass,
+        input_bytes: u64,
+    ) -> Result<StorageApiRequestPermit, StorageError> {
+        fixture_result()
+    }
+
+    async fn settle_api_request(
+        &self,
+        permit: StorageApiRequestPermit,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+}
+
+#[async_trait]
 impl DeletionControlStorage for CompleteExternalAdapter {
     async fn observe_deletion_checkpoint(
         &self,
