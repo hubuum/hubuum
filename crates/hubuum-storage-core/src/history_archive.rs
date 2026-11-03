@@ -694,11 +694,21 @@ impl HistoryArchiveCapture {
         // A restored open primary can outlive its own retained closure even
         // when no descriptor covers the requested instant. That gap cannot
         // be filled by the older primary's payload.
-        let hot_descriptor = hot.as_ref().and_then(|row| {
-            catalog
-                .versions
-                .iter()
-                .find(|entry| entry.identity == row.identity)
+        let (hot_descriptor, retained_overlap) = hot.as_ref().map_or((None, false), |row| {
+            let mut own = None;
+            let mut overlap = false;
+            // A second bounded catalog pass checks the source's whole original
+            // interval, including newer retained intervals that already ended.
+            for entry in &catalog.versions {
+                if entry.identity == row.identity {
+                    own = Some(entry);
+                } else if row.valid_from < entry.valid_to
+                    && row.valid_to.is_none_or(|end| entry.valid_from < end)
+                {
+                    overlap = true;
+                }
+            }
+            (own, overlap)
         });
         let retained_closure_gap = hot_descriptor.is_some_and(|entry| {
             matches!(request.selection.point, HistoryArchivePoint::AsOf { at }
@@ -709,7 +719,9 @@ impl HistoryArchiveCapture {
                 .is_some_and(|row| !entry.matches_row(row).unwrap_or(false))
         });
         let archive = candidate
-            .filter(|_| !ambiguous && !missing_primary && !retained_closure_gap)
+            .filter(|_| {
+                !ambiguous && !missing_primary && !retained_closure_gap && !retained_overlap
+            })
             .cloned();
         let coverage = if request.selection.family != StorageBackupHistorySection::CollectionHistory
         {
@@ -718,7 +730,7 @@ impl HistoryArchiveCapture {
             source_coverage
         } else if ambiguous {
             HistoryArchiveCoverageState::Corrupt
-        } else if missing_primary || retained_closure_gap {
+        } else if missing_primary || retained_closure_gap || retained_overlap {
             HistoryArchiveCoverageState::Unavailable
         } else if hot_content_changed {
             HistoryArchiveCoverageState::Corrupt

@@ -12,6 +12,7 @@ use hubuum_storage_core::artifacts::{ArtifactIdentity, ArtifactStore, Destinatio
 #[case::older_open_hot(false, true, None)]
 #[case::at_retained_closure(false, false, Some(0))]
 #[case::after_retained_closure(false, false, Some(1))]
+#[case::after_newer_retained_closure(false, true, Some(1))]
 #[tokio::test]
 async fn logical_restore_preserves_catalog_and_invalidates_old_captures(
     #[case] old_input: bool,
@@ -217,10 +218,7 @@ async fn logical_restore_preserves_catalog_and_invalidates_old_captures(
                 HistoryArchiveCoverageState::Complete
             );
             assert_eq!(compatible.hot().unwrap().identity(), identity);
-            assert_eq!(
-                compatible.archive(),
-                captured.archive().or_else(|| published.versions().first())
-            );
+            assert_eq!(compatible.archive(), published.versions().first());
             assert_eq!(catalog.unwrap(), published);
         }
     })
