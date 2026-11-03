@@ -4,15 +4,135 @@ import os
 from pathlib import Path
 import signal
 import socket
+import ssl
 import sys
 import tempfile
 import unittest
+import urllib.error
 from unittest import mock
 
 from integration import s3_artifacts as fixture
 
 
 class S3FixtureTests(unittest.TestCase):
+    def readiness_fixture(self, directory):
+        instance = object.__new__(fixture.Fixture)
+        instance.directory = directory
+        instance.binary = directory / "minio"
+        instance.certs = directory / "certs"
+        instance.port = 443
+        instance.tls = object()
+        instance.process = None
+        instance.log = io.StringIO()
+        self.addCleanup(instance.log.close)
+        (directory / "minio.log").write_text("provider startup diagnostic")
+        return instance
+
+    def test_cluster_readiness_precedes_single_shot_bucket_provisioning(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            instance = self.readiness_fixture(Path(temporary))
+            process = mock.Mock()
+            process.poll.return_value = None
+            actions = []
+
+            def health(url, *, context, timeout):
+                self.assertEqual(url, instance.endpoint + "/minio/health/cluster")
+                self.assertIs(context, instance.tls)
+                actions.append("health")
+                if len(actions) == 1:
+                    raise urllib.error.HTTPError(url, 503, "initializing", {}, io.BytesIO(b"offline"))
+                return mock.MagicMock()
+
+            with mock.patch.object(fixture.subprocess, "Popen", return_value=process), \
+                    mock.patch.object(fixture.urllib.request, "urlopen", side_effect=health), \
+                    mock.patch.object(fixture.time, "monotonic", side_effect=[0, 0, 0.01, 0.1]), \
+                    mock.patch.object(fixture.time, "sleep"), \
+                    mock.patch.object(fixture.sys, "stderr", io.StringIO()), \
+                    mock.patch.object(fixture.subprocess, "run", side_effect=lambda *a, **kw: actions.append("put")) as run:
+                instance.start()
+                instance.provision_benchmark_bucket()
+            self.assertEqual(actions, ["health", "health", "put", "put"])
+            self.assertEqual(run.call_count, 2)
+            self.assertTrue(all(call.kwargs["check"] for call in run.call_args_list))
+
+    def test_persistent_503_uses_original_deadline_and_sanitized_diagnostics(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            instance = self.readiness_fixture(Path(temporary))
+            (instance.directory / "minio.log").write_text("booting hubuum-fixture-secret")
+            process = mock.Mock()
+            process.poll.return_value = None
+            error = urllib.error.HTTPError(instance.endpoint, 503, "initializing", {
+                "X-Minio-Server-Status": "offline", "Authorization": "unexpected-header-secret",
+            }, io.BytesIO(b"not initialized hubuum-fixture-secret"))
+            with mock.patch.object(fixture.subprocess, "Popen", return_value=process), \
+                    mock.patch.object(fixture.urllib.request, "urlopen", side_effect=error) as request, \
+                    mock.patch.object(fixture.time, "monotonic", side_effect=[0, 29.75, 29.9, 30]), \
+                    mock.patch.object(fixture.time, "sleep") as sleep, \
+                    mock.patch.object(fixture.sys, "stderr", io.StringIO()), \
+                    self.assertRaisesRegex(RuntimeError, "cluster write-readiness deadline exceeded") as raised:
+                instance.start()
+            request.assert_called_once_with(instance.endpoint + "/minio/health/cluster", context=instance.tls, timeout=0.25)
+            sleep.assert_called_once_with(0.1)
+            diagnostic = str(raised.exception)
+            self.assertIn("HTTP 503", diagnostic)
+            self.assertIn("offline", diagnostic)
+            self.assertIn("not initialized [redacted]", diagnostic)
+            self.assertIn("booting [redacted]", diagnostic)
+            self.assertNotIn("hubuum-fixture-secret", diagnostic)
+            self.assertNotIn("unexpected-header-secret", diagnostic)
+
+    def test_unexpected_health_error_fails_without_retry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            instance = self.readiness_fixture(Path(temporary))
+            process = mock.Mock()
+            process.poll.return_value = None
+            error = urllib.error.HTTPError(instance.endpoint, 403, "denied", {}, io.BytesIO(b"access denied"))
+            with mock.patch.object(fixture.subprocess, "Popen", return_value=process), \
+                    mock.patch.object(fixture.urllib.request, "urlopen", side_effect=error) as request, \
+                    mock.patch.object(fixture.time, "sleep") as sleep, \
+                    self.assertRaisesRegex(RuntimeError, "Unexpected cluster health response: HTTP 403"):
+                instance.start()
+            self.assertEqual(request.call_count, 1)
+            sleep.assert_not_called()
+
+    def test_tls_verification_failure_fails_without_retry_or_fallback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            instance = self.readiness_fixture(Path(temporary))
+            process = mock.Mock()
+            process.poll.return_value = None
+            error = urllib.error.URLError(ssl.SSLCertVerificationError(1, "certificate verify failed"))
+            with mock.patch.object(fixture.subprocess, "Popen", return_value=process), \
+                    mock.patch.object(fixture.urllib.request, "urlopen", side_effect=error) as request, \
+                    mock.patch.object(fixture.time, "sleep") as sleep, \
+                    self.assertRaisesRegex(RuntimeError, "MinIO TLS readiness failed"):
+                instance.start()
+            self.assertEqual(request.call_count, 1)
+            self.assertIs(request.call_args.kwargs["context"], instance.tls)
+            sleep.assert_not_called()
+
+    def test_exited_provider_fails_before_health_request(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            instance = self.readiness_fixture(Path(temporary))
+            process = mock.Mock()
+            process.poll.return_value = 7
+            with mock.patch.object(fixture.subprocess, "Popen", return_value=process), \
+                    mock.patch.object(fixture.urllib.request, "urlopen") as request, \
+                    self.assertRaisesRegex(RuntimeError, "MinIO exited before cluster write readiness"):
+                instance.start()
+            request.assert_not_called()
+
+    def test_readiness_failure_closes_fixture_before_provisioning_or_measurement(self):
+        instance = mock.Mock()
+        instance.start.side_effect = RuntimeError("cluster write-readiness deadline exceeded")
+        with mock.patch.object(fixture, "verified_binary"), \
+                mock.patch.object(fixture, "Fixture", return_value=instance), \
+                mock.patch.object(fixture.shutil, "which", return_value="openssl"), \
+                self.assertRaisesRegex(RuntimeError, "cluster write-readiness deadline exceeded"):
+            fixture.main(["--benchmark-executable", sys.executable])
+        instance.provision_benchmark_bucket.assert_not_called()
+        instance.run.assert_not_called()
+        instance.close.assert_called_once_with()
+
     def test_supported_platforms_have_fixed_release_digests(self):
         for system, machine in fixture.DIGESTS:
             with self.subTest(system=system, machine=machine):
