@@ -3,6 +3,9 @@
 
 use std::fmt;
 
+mod remapping;
+pub use remapping::*;
+
 use hubuum_domain::{ClassId, CollectionId, ObjectId, ResourceRevision, VersionIdentity};
 
 use super::*;
@@ -279,6 +282,8 @@ pub struct HistoryObjectPopulationGap {
     class: ResourceIdentity,
     at: DateTime<Utc>,
     epoch: HistoryReadEpoch,
+    selected_class: ClassId,
+    remapping: Option<HistoryObjectAuthorizationRemapping>,
 }
 
 impl HistoryObjectPopulationGap {
@@ -308,10 +313,7 @@ impl HistoryObjectPopulationGap {
                 let facts = member.object_authorization().ok_or_else(|| {
                     invalid("Retained object interval lacks original population facts")
                 })?;
-                if facts.attribution().class() != Some(class)
-                    || matches!(query.collection_scope(), crate::StorageHistoryCollectionScope::Visible(ids)
-                        if !ids.contains(&facts.collection_id()))
-                {
+                if facts.attribution().class() != Some(class) {
                     continue;
                 }
                 let next_bytes = bytes + facts.encoded_bytes().value() as usize;
@@ -320,11 +322,12 @@ impl HistoryObjectPopulationGap {
                         "Retained population candidates exceed the read bound",
                     ));
                 }
-                gaps.push(Self::from_retained_member(
+                gaps.push(Self::from_selection(
                     intent,
                     member.target(),
                     query,
                     epoch.clone(),
+                    true,
                 )?);
                 bytes = next_bytes;
             }
@@ -340,6 +343,16 @@ impl HistoryObjectPopulationGap {
         target: StorageRecordIdentity,
         query: &crate::StorageClassObjectsAsOfQuery,
         epoch: HistoryReadEpoch,
+    ) -> Result<Self, StorageValidationError> {
+        Self::from_selection(intent, target, query, epoch, false)
+    }
+
+    fn from_selection(
+        intent: &HistoryExpiryIntent,
+        target: StorageRecordIdentity,
+        query: &crate::StorageClassObjectsAsOfQuery,
+        epoch: HistoryReadEpoch,
+        resolve_coordinates: bool,
     ) -> Result<Self, StorageValidationError> {
         let class = query.expected_resource().ok_or_else(|| {
             invalid("Population gap requires the original logical class identity")
@@ -362,10 +375,11 @@ impl HistoryObjectPopulationGap {
         })?;
         if facts.kind() != HistoryObjectAuthorizationKind::ClosedValue
             || facts.attribution().class() != Some(class)
-            || facts.class_id() != query.class_id()
             || !facts.read_span().contains(query.at())
-            || matches!(query.collection_scope(), crate::StorageHistoryCollectionScope::Visible(ids)
-                if !ids.contains(&facts.collection_id()))
+            || (!resolve_coordinates
+                && (facts.class_id() != query.class_id()
+                    || matches!(query.collection_scope(), crate::StorageHistoryCollectionScope::Visible(ids)
+                    if !ids.contains(&facts.collection_id()))))
         {
             return Err(invalid(
                 "Retained population gap differs from the original selection",
@@ -377,16 +391,42 @@ impl HistoryObjectPopulationGap {
             class,
             at: query.at(),
             epoch,
+            selected_class: query.class_id(),
+            remapping: None,
         })
     }
 
     pub fn matches_query(&self, query: &crate::StorageClassObjectsAsOfQuery) -> bool {
         query.expected_resource() == Some(self.class)
-            && query.class_id() == self.facts.class_id()
+            && query.class_id() == self.selected_class
+            && self.remapping.as_ref().map_or_else(
+                || self.selected_class == self.facts.class_id(),
+                |proof| {
+                    proof.class_id() == self.selected_class
+                        && proof.matches(&self.facts, &self.epoch)
+                },
+            )
             && query.at() == self.at
             && query.options().filters().is_empty()
             && !matches!(query.collection_scope(), crate::StorageHistoryCollectionScope::Visible(ids)
-                if !ids.contains(&self.facts.collection_id()))
+                if !ids.contains(&self.remapping.as_ref().map_or(self.facts.collection_id(), |proof| proof.collection_id())))
+    }
+
+    /// Attach only adapter-validated correspondence from the same productive snapshot.
+    pub fn with_remapping(
+        mut self,
+        proof: HistoryObjectAuthorizationRemapping,
+    ) -> Result<Self, StorageValidationError> {
+        if !proof.matches(&self.facts, &self.epoch) || proof.class_id() != self.selected_class {
+            return Err(invalid(
+                "Population remapping differs from the original selection",
+            ));
+        }
+        self.remapping = Some(proof);
+        Ok(self)
+    }
+    pub const fn remapping(&self) -> Option<&HistoryObjectAuthorizationRemapping> {
+        self.remapping.as_ref()
     }
 
     pub const fn intent(&self) -> uuid::Uuid {

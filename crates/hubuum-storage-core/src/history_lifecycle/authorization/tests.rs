@@ -662,3 +662,128 @@ fn population_gap_refuses_coverage_beyond_retained_read_bounds(#[case] large_nam
     let exceeded = HistoryExpiryJournal::new(manifests).unwrap();
     assert!(HistoryObjectPopulationGap::for_population(&exceeded, &query, epoch).is_err());
 }
+
+#[rstest]
+#[case::valid("valid", true)]
+#[case::object_uuid("object", false)]
+#[case::collection_uuid("collection", false)]
+#[case::class_uuid("class", false)]
+#[case::object_collection("object_collection", false)]
+#[case::object_class("object_class", false)]
+#[case::class_collection("class_collection", false)]
+#[case::coordinates("coordinates", false)]
+#[case::unknown_provenance("unknown", false)]
+fn remapping_requires_original_uuid_tuple_and_relationships(
+    #[case] change: &str,
+    #[case] accepted: bool,
+) {
+    let fixture = Fixture::new();
+    let facts = HistoryObjectAuthorizationFacts::capture(fixture.row(7, "protected_original_name"))
+        .unwrap();
+    let collection = facts.attribution().collection();
+    let class = facts.attribution().class().unwrap();
+    let reference = |kind, identity| StorageCapturedIdentity::Resource {
+        family: kind,
+        reference: IdentityReference::Known { identity },
+    };
+    let evidence = |identity, references| {
+        StorageIdentityEvidence::try_new(
+            Some(StorageIdentitySubject::Resource {
+                identity: IdentityReference::Known { identity },
+                version: VersionIdentity::generate(),
+            }),
+            references,
+        )
+        .unwrap()
+    };
+    let mut object_evidence = evidence(
+        if change == "object" {
+            ResourceIdentity::generate()
+        } else {
+            facts.target().resource()
+        },
+        BTreeMap::from([
+            (
+                "/collection_id".into(),
+                reference(
+                    StorageIdentityResourceKind::Collection,
+                    if change == "object_collection" {
+                        ResourceIdentity::generate()
+                    } else {
+                        collection
+                    },
+                ),
+            ),
+            (
+                "/class_id".into(),
+                reference(
+                    StorageIdentityResourceKind::Class,
+                    if change == "object_class" {
+                        ResourceIdentity::generate()
+                    } else {
+                        class
+                    },
+                ),
+            ),
+        ]),
+    );
+    if change == "unknown" {
+        let mut value = serde_json::to_value(object_evidence).unwrap();
+        value["subject"]["version"] = json!(derived());
+        object_evidence = serde_json::from_value(value).unwrap();
+    }
+    let epoch = population_gap_fixture().3;
+    let result = HistoryObjectAuthorizationRemapping::new(
+        &facts,
+        epoch.clone(),
+        HistoryAuthorizationResource::object(
+            ObjectId::new(70).unwrap(),
+            CollectionId::new(80).unwrap(),
+            ClassId::new(if change == "coordinates" { 91 } else { 90 }).unwrap(),
+            object_evidence,
+        ),
+        HistoryAuthorizationResource::collection(
+            CollectionId::new(80).unwrap(),
+            evidence(
+                if change == "collection" {
+                    ResourceIdentity::generate()
+                } else {
+                    collection
+                },
+                BTreeMap::new(),
+            ),
+        ),
+        HistoryAuthorizationResource::class(
+            ClassId::new(90).unwrap(),
+            CollectionId::new(80).unwrap(),
+            evidence(
+                if change == "class" {
+                    ResourceIdentity::generate()
+                } else {
+                    class
+                },
+                BTreeMap::from([(
+                    "/collection_id".into(),
+                    reference(
+                        StorageIdentityResourceKind::Collection,
+                        if change == "class_collection" {
+                            ResourceIdentity::generate()
+                        } else {
+                            collection
+                        },
+                    ),
+                )]),
+            ),
+        ),
+    );
+    assert_eq!(result.is_ok(), accepted);
+    if let Ok(proof) = result {
+        assert_eq!(proof.object_id(), ObjectId::new(70).unwrap());
+        assert!(proof.matches(&facts, &epoch));
+        let mut changed = serde_json::to_value(&facts).unwrap();
+        changed["name"] = json!("different_original_name");
+        let changed = serde_json::from_value(changed).unwrap();
+        assert!(!proof.matches(&changed, &epoch));
+        assert!(!format!("{proof:?}").contains("protected_original_name"));
+    }
+}

@@ -348,3 +348,32 @@ fn invalid_control(error: StorageValidationError) -> ApiError {
 
 #[cfg(all(test, unix))]
 mod tests;
+
+/// Integration-only authority fixture. It exercises the real checkpoint,
+/// exclusive isolation, recovery and reapplication paths without enabling
+/// generic online intent admission or representing executor/removal evidence.
+#[cfg(feature = "integration-test-support")]
+pub(crate) async fn prepare_history_read_fixture(
+    storage: &impl StorageContext,
+    required: hubuum_storage_core::HistoryLifecycleAuthority,
+    directory: &Path,
+    key: &Path,
+) -> Result<(), ApiError> {
+    // This is test-owned restriction preparation, never irreversible cleanup.
+    // Use genuine isolation/quarantine and sign the actual native capture;
+    // never override a captured component or initialize acknowledged authority.
+    let isolation = runtime_isolation(directory, key, true).await?;
+    let storage = storage_handle(storage);
+    let before = storage.read_deletion_control().await?;
+    let change = before.recover_from(&before).map_err(invalid_control)?;
+    storage
+        .recover_application_control(change, isolation.domain())
+        .await?;
+    let snapshot = storage.capture_history_lifecycle().await?;
+    let recovery = hubuum_storage_core::HistoryLifecycleRecovery::new(snapshot, required)
+        .map_err(invalid_control)?;
+    storage.recover_history_lifecycle(recovery).await?;
+    checkpoint(&storage, directory, key, false).await?;
+    reapply(&storage, directory, key).await?;
+    Ok(())
+}

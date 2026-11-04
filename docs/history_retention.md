@@ -263,3 +263,13 @@ probes are development evidence. HTTP authorization, native split-role,
 restore/concurrency, resource limits, destructive execution and relevant
 frontend/Rust/Python/CLI workflow acceptance still require final qualification.
 This foundation does not close #513, #545 or #550 or enable scheduled expiry.
+
+Same-UUID restore correspondence for retained object-population gaps is validated
+from the original object, collection and class identities and their relationships
+in one productive image. Numeric coordinates may change after supported logical
+restore; original names, intervals, class selection and read epoch remain bound.
+Configured current-object and historical authorization both run before projecting
+an expired population response, followed by correspondence revalidation in the
+original execution scope. Missing, ambiguous or conflicting identities remain
+unavailable. This read gate does not establish physical expiry, restored live-copy
+reconciliation, executor recovery or transport retirement acceptance.

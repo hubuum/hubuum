@@ -10,7 +10,7 @@ use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, OptionalExtensio
 use diesel::sql_types::{Bool, Nullable, Timestamptz, Uuid as SqlUuid};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{
-    ClassId, CollectionId, HistoryRecordId, PrincipalId, PrincipalIdentity, ResourceId,
+    ClassId, CollectionId, HistoryRecordId, ObjectId, PrincipalId, PrincipalIdentity, ResourceId,
     ResourceIdentity, ResourceRevision, TaskId,
 };
 use hubuum_query::{FilterField, QueryOptions};
@@ -918,8 +918,11 @@ async fn require_population_gap_authorization(
 ) -> Result<(), PostgresStorageError> {
     use std::collections::BTreeMap;
 
-    use diesel::sql_types::{Array, BigInt, Integer, Jsonb};
-    use hubuum_storage_core::{HistoryObjectPopulationGap, StorageError};
+    use diesel::sql_types::{Array, BigInt, Integer, Jsonb, Text};
+    use hubuum_storage_core::{
+        HistoryAuthorizationResource, HistoryObjectAuthorizationRemapping,
+        HistoryObjectPopulationGap, StorageError,
+    };
 
     let scope = crate::runtime::current_execution_scope();
     let Some(context) = scope.history_read_override() else {
@@ -947,72 +950,155 @@ async fn require_population_gap_authorization(
         return Ok(());
     }
     #[derive(diesel::QueryableByName)]
-    struct CurrentObject {
+    struct Binding {
+        #[diesel(sql_type = Text)]
+        family: String,
         #[diesel(sql_type = Integer)]
         id: i32,
-        #[diesel(sql_type = Integer)]
-        collection_id: i32,
+        #[diesel(sql_type = Nullable<Integer>)]
+        collection_id: Option<i32>,
+        #[diesel(sql_type = Nullable<Integer>)]
+        class_id: Option<i32>,
         #[diesel(sql_type = Nullable<Jsonb>)]
         logical_identity: Option<Value>,
         #[diesel(sql_type = BigInt)]
         encoded_bytes: i64,
     }
-    let ids = gaps
+    let objects = gaps
         .iter()
-        .map(|gap| gap.facts().object_id().id())
-        .collect::<Vec<_>>();
-    // Bounded by the validated candidate count. Guard metadata transfer in SQL
-    // before decoding: at most 64 KiB per identity and 1 MiB across the batch.
-    let current = diesel::sql_query(
-        "SELECT id,collection_id,encoded_bytes,
-            CASE WHEN encoded_bytes<=65536 AND
-                SUM(encoded_bytes) OVER(ORDER BY id)<=1048576
-            THEN logical_identity END AS logical_identity
-         FROM (SELECT id,collection_id,logical_identity,
-             coalesce(octet_length(logical_identity::TEXT),0)::BIGINT AS encoded_bytes
-             FROM public.hubuumobject WHERE id=ANY($1)) bounded",
+        .map(|g| g.facts().target().resource().to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    let collections = gaps
+        .iter()
+        .map(|g| g.facts().attribution().collection().to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    let classes = gaps
+        .iter()
+        .filter_map(|g| g.facts().attribution().class())
+        .map(|id| id.to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    // Three bounded indexed UUID sets, never a compatibility-ID fallback.
+    // Guard metadata before transferring it: 64KiB each and 1MiB in total.
+    let rows = diesel::sql_query(
+        "SELECT family,id,collection_id,class_id,encoded_bytes,
+          CASE WHEN encoded_bytes<=65536 AND SUM(encoded_bytes) OVER(ORDER BY family,id)<=1048576 THEN logical_identity END AS logical_identity
+         FROM (
+          SELECT 'object'::TEXT AS family,id,collection_id,hubuum_class_id AS class_id,logical_identity,coalesce(octet_length(logical_identity::TEXT),0)::BIGINT AS encoded_bytes FROM public.hubuumobject WHERE logical_identity #>> '{subject,identity,identity}'=ANY($1)
+          UNION ALL
+          SELECT 'collection',id,NULL::INTEGER,NULL::INTEGER,logical_identity,coalesce(octet_length(logical_identity::TEXT),0)::BIGINT FROM public.collections WHERE logical_identity #>> '{subject,identity,identity}'=ANY($2)
+          UNION ALL
+          SELECT 'class',id,collection_id,NULL::INTEGER,logical_identity,coalesce(octet_length(logical_identity::TEXT),0)::BIGINT FROM public.hubuumclass WHERE logical_identity #>> '{subject,identity,identity}'=ANY($3)
+         ) bounded ORDER BY family,id LIMIT 3001",
     )
-    .bind::<Array<Integer>, _>(ids)
-    .load::<CurrentObject>(connection)
-    .await?
-    .into_iter()
-    .map(|row| (row.id, row))
-    .collect::<BTreeMap<_, _>>();
-    for gap in gaps {
-        if let Some(row) = current.get(&gap.facts().object_id().id()) {
-            if visible_collection_ids(query.collection_scope())
-                .is_some_and(|ids| !ids.contains(&row.collection_id))
-            {
-                continue;
-            }
-            let Some(raw_identity) = row
-                .logical_identity
-                .as_ref()
+    .bind::<Array<Text>, _>(objects.into_iter().collect::<Vec<_>>())
+    .bind::<Array<Text>, _>(collections.into_iter().collect::<Vec<_>>())
+    .bind::<Array<Text>, _>(classes.into_iter().collect::<Vec<_>>())
+    .load::<Binding>(connection).await?;
+    if rows.len() > HistoryObjectPopulationGap::MAX_CANDIDATES * 3 {
+        return Err(PostgresStorageError::unavailable(
+            "Population correspondence exceeds its row bound",
+        ));
+    }
+    let mut bindings = BTreeMap::new();
+    for row in rows {
+        let identity: StorageIdentityEvidence = serde_json::from_value(
+            row.logical_identity
                 .filter(|_| row.encoded_bytes <= 65536)
-            else {
-                return Err(PostgresStorageError::unavailable(
-                    "Original population object correspondence is unproved or exceeds its bound",
-                ));
-            };
-            let identity: StorageIdentityEvidence = serde_json::from_value(raw_identity.clone())
-                .map_err(|error| {
-                    PostgresStorageError::invalid_persisted_value(
-                        "population object identity",
-                        error,
+                .ok_or_else(|| {
+                    PostgresStorageError::unavailable(
+                        "Population correspondence exceeds its metadata bound",
                     )
-                })?;
-            if identity
-                .subject()
-                .and_then(|subject| subject.record_identity())
-                .is_none_or(|target| target.resource() != gap.facts().target().resource())
-            {
+                })?,
+        )
+        .map_err(|error| {
+            PostgresStorageError::invalid_persisted_value("population correspondence", error)
+        })?;
+        let resource = identity
+            .subject()
+            .and_then(|s| s.record_identity())
+            .ok_or_else(|| {
+                PostgresStorageError::unavailable("Population correspondence is unresolved")
+            })?
+            .resource();
+        let coordinate_error = |_| {
+            PostgresStorageError::unavailable("Population correspondence coordinates are invalid")
+        };
+        let binding = match row.family.as_str() {
+            "object" => HistoryAuthorizationResource::object(
+                ObjectId::new(row.id).map_err(coordinate_error)?,
+                CollectionId::new(row.collection_id.ok_or_else(|| {
+                    PostgresStorageError::unavailable("Missing object collection")
+                })?)
+                .map_err(coordinate_error)?,
+                ClassId::new(
+                    row.class_id
+                        .ok_or_else(|| PostgresStorageError::unavailable("Missing object class"))?,
+                )
+                .map_err(coordinate_error)?,
+                identity,
+            ),
+            "collection" => HistoryAuthorizationResource::collection(
+                CollectionId::new(row.id).map_err(coordinate_error)?,
+                identity,
+            ),
+            "class" => HistoryAuthorizationResource::class(
+                ClassId::new(row.id).map_err(coordinate_error)?,
+                CollectionId::new(row.collection_id.ok_or_else(|| {
+                    PostgresStorageError::unavailable("Missing class collection")
+                })?)
+                .map_err(coordinate_error)?,
+                identity,
+            ),
+            _ => {
                 return Err(PostgresStorageError::unavailable(
-                    "Original population object correspondence changed",
+                    "Unexpected population correspondence family",
                 ));
             }
-        } else if !query.include_deleted() {
+        };
+        if bindings.insert((row.family, resource), binding).is_some() {
+            return Err(PostgresStorageError::unavailable(
+                "Population correspondence is ambiguous",
+            ));
+        }
+    }
+    for gap in gaps {
+        let facts = gap.facts();
+        let object = bindings.get(&("object".into(), facts.target().resource()));
+        let Some(object) = object else {
+            return Err(PostgresStorageError::unavailable(
+                "Original object UUID correspondence is missing",
+            ));
+        };
+        let collection = bindings.get(&("collection".into(), facts.attribution().collection()));
+        let class = facts
+            .attribution()
+            .class()
+            .and_then(|id| bindings.get(&("class".into(), id)));
+        let (Some(collection), Some(class)) = (collection, class) else {
+            return Err(PostgresStorageError::unavailable(
+                "Population endpoint correspondence is missing",
+            ));
+        };
+        let proof = HistoryObjectAuthorizationRemapping::new(
+            facts,
+            context.epoch().clone(),
+            object.clone(),
+            collection.clone(),
+            class.clone(),
+        )
+        .map_err(|_| {
+            PostgresStorageError::unavailable("Population correspondence or provenance differs")
+        })?;
+        if visible_collection_ids(query.collection_scope())
+            .is_some_and(|ids| !ids.contains(&proof.collection_id().id()))
+        {
             continue;
         }
+        let gap = gap.with_remapping(proof).map_err(|_| {
+            PostgresStorageError::unavailable(
+                "Population remapping differs from its original selection",
+            )
+        })?;
         return Err(StorageError::history_population_gap(gap).into());
     }
     Ok(())

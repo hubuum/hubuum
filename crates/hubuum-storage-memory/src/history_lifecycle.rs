@@ -536,42 +536,92 @@ impl MemoryState {
         })?;
         let mut bytes = 0;
         for gap in gaps {
-            if let Some(current) = self.objects.get(&gap.facts().object_id().id()) {
-                if matches!(query.collection_scope(), StorageHistoryCollectionScope::Visible(ids)
-                    if !ids.contains(&current.collection_id()))
-                {
-                    continue;
-                }
-                let identity = self
-                    .logical_identities
-                    .record(StorageIdentityTarget::Resource {
-                        kind: StorageIdentityResourceKind::Object,
-                        id: ResourceId::new(current.id().id())
-                            .map_err(|error| StorageError::backend_failure(error.to_string()))?,
-                    })?;
+            let facts = gap.facts();
+            let object_target = self.logical_identities.resource_target(
+                StorageIdentityResourceKind::Object,
+                facts.target().resource(),
+            )?;
+            let current = object_target.and_then(|target| match target {
+                StorageIdentityTarget::Resource { id, .. } => self.objects.get(&id.id()),
+                _ => None,
+            });
+            let Some(object) = current else {
+                return Err(StorageError::unavailable(
+                    "Original object UUID correspondence is missing",
+                ));
+            };
+            let class_uuid = facts.attribution().class().ok_or_else(|| {
+                StorageError::unavailable("Missing original class correspondence")
+            })?;
+            let collection_target = self.logical_identities.resource_target(
+                StorageIdentityResourceKind::Collection,
+                facts.attribution().collection(),
+            )?;
+            let class_target = self
+                .logical_identities
+                .resource_target(StorageIdentityResourceKind::Class, class_uuid)?;
+            let collection = collection_target
+                .and_then(|target| match target {
+                    StorageIdentityTarget::Resource { id, .. } => self.collections.get(&id.id()),
+                    _ => None,
+                })
+                .ok_or_else(|| {
+                    StorageError::unavailable("Original collection correspondence is missing")
+                })?;
+            let class = class_target
+                .and_then(|target| match target {
+                    StorageIdentityTarget::Resource { id, .. } => self.classes.get(&id.id()),
+                    _ => None,
+                })
+                .ok_or_else(|| {
+                    StorageError::unavailable("Original class correspondence is missing")
+                })?;
+            let mut measured = |target| -> Result<_, StorageError> {
+                let identity = self.logical_identities.record(target)?;
                 let encoded = serde_json::to_vec(&identity)
                     .map_err(|_| {
-                        StorageError::backend_failure("Cannot measure population identity")
+                        StorageError::backend_failure("Cannot measure population correspondence")
                     })?
                     .len();
                 bytes += encoded;
                 if encoded > 65536 || bytes > HistoryObjectPopulationGap::MAX_FACT_BYTES {
                     return Err(StorageError::unavailable(
-                        "Original population object correspondence exceeds its bound",
+                        "Population correspondence exceeds its metadata bound",
                     ));
                 }
-                if identity
-                    .subject()
-                    .and_then(StorageIdentitySubject::record_identity)
-                    .is_none_or(|target| target.resource() != gap.facts().target().resource())
-                {
-                    return Err(StorageError::unavailable(
-                        "Original population object correspondence changed",
-                    ));
-                }
-            } else if !query.include_deleted() {
+                Ok(identity)
+            };
+            let proof = HistoryObjectAuthorizationRemapping::new(
+                facts,
+                context.epoch().clone(),
+                HistoryAuthorizationResource::object(
+                    object.id(),
+                    object.collection_id(),
+                    object.class_id(),
+                    measured(object_target.unwrap())?,
+                ),
+                HistoryAuthorizationResource::collection(
+                    collection.id(),
+                    measured(collection_target.unwrap())?,
+                ),
+                HistoryAuthorizationResource::class(
+                    class.id(),
+                    class.collection_id(),
+                    measured(class_target.unwrap())?,
+                ),
+            )
+            .map_err(|_| {
+                StorageError::unavailable("Population correspondence or provenance differs")
+            })?;
+            if matches!(query.collection_scope(), StorageHistoryCollectionScope::Visible(ids) if !ids.contains(&proof.collection_id()))
+            {
                 continue;
             }
+            let gap = gap.with_remapping(proof).map_err(|_| {
+                StorageError::unavailable(
+                    "Population remapping differs from its original selection",
+                )
+            })?;
             return Err(StorageError::history_population_gap(gap));
         }
         Ok(())

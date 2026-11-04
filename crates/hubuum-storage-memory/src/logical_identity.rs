@@ -31,6 +31,7 @@ struct Entry {
 #[derive(Clone)]
 pub(super) struct MemoryLogicalIdentities {
     entries: BTreeMap<Target, Entry>,
+    resource_targets: BTreeMap<(Family, ResourceIdentity), BTreeSet<Target>>,
     associations: BTreeMap<Association, Entry>,
     versions: BTreeMap<(ResourceIdentity, ResourceRevision), VersionIdentity>,
     unresolved_cohort: LegacyIdentityCohort,
@@ -40,6 +41,7 @@ impl Default for MemoryLogicalIdentities {
     fn default() -> Self {
         Self {
             entries: BTreeMap::new(),
+            resource_targets: BTreeMap::new(),
             associations: BTreeMap::new(),
             versions: BTreeMap::new(),
             unresolved_cohort: LegacyIdentityCohort::generate(),
@@ -468,6 +470,61 @@ impl MemoryHistoryValue {
 }
 
 impl MemoryLogicalIdentities {
+    fn resource_key(target: Target, entry: &Entry) -> Option<(Family, ResourceIdentity)> {
+        let Target::Resource { kind, .. } = target else {
+            return None;
+        };
+        entry
+            .evidence
+            .subject()
+            .and_then(StorageIdentitySubject::record_identity)
+            .map(|record| (kind, record.resource()))
+    }
+    fn resource_index(
+        entries: &BTreeMap<Target, Entry>,
+    ) -> BTreeMap<(Family, ResourceIdentity), BTreeSet<Target>> {
+        let mut index = BTreeMap::<_, BTreeSet<_>>::new();
+        for (&target, entry) in entries {
+            if let Some(key) = Self::resource_key(target, entry) {
+                index.entry(key).or_default().insert(target);
+            }
+        }
+        index
+    }
+    fn remove_entry(&mut self, target: &Target) {
+        if let Some(entry) = self.entries.remove(target)
+            && let Some(key) = Self::resource_key(*target, &entry)
+            && let Some(targets) = self.resource_targets.get_mut(&key)
+        {
+            targets.remove(target);
+            if targets.is_empty() {
+                self.resource_targets.remove(&key);
+            }
+        }
+    }
+    fn insert_entry(&mut self, target: Target, entry: Entry) {
+        self.remove_entry(&target);
+        if let Some(key) = Self::resource_key(target, &entry) {
+            self.resource_targets.entry(key).or_default().insert(target);
+        }
+        self.entries.insert(target, entry);
+    }
+    pub(super) fn resource_target(
+        &self,
+        family: Family,
+        identity: ResourceIdentity,
+    ) -> Result<Option<Target>, StorageError> {
+        let Some(targets) = self.resource_targets.get(&(family, identity)) else {
+            return Ok(None);
+        };
+        if targets.len() != 1 {
+            return Err(StorageError::unavailable(
+                "Logical resource correspondence is ambiguous",
+            ));
+        }
+        Ok(targets.first().copied())
+    }
+
     pub(super) fn restore_requester(
         &self,
         principal: Option<PrincipalId>,
@@ -922,7 +979,7 @@ impl MemoryLogicalIdentities {
         evidence: StorageIdentityEvidence,
     ) {
         self.retain_version(&evidence, value.revision());
-        self.entries.insert(
+        self.insert_entry(
             value.target(),
             Entry {
                 evidence,
@@ -980,6 +1037,7 @@ impl MemoryLogicalIdentities {
                 })
                 .map(|(key, value)| (*key, *value))
                 .collect(),
+            resource_targets: Self::resource_index(&entries),
             entries,
             associations: BTreeMap::new(),
             unresolved_cohort: self.unresolved_cohort,
@@ -988,7 +1046,9 @@ impl MemoryLogicalIdentities {
 
     pub(super) fn merge(&mut self, other: Self) {
         self.versions.extend(other.versions);
-        self.entries.extend(other.entries);
+        for (target, entry) in other.entries {
+            self.insert_entry(target, entry);
+        }
         self.associations.extend(other.associations);
     }
 
@@ -1035,7 +1095,7 @@ impl MemoryLogicalIdentities {
             class_id: revision.reference().class_id(),
             revision: revision.reference().revision(),
         };
-        self.entries.insert(
+        self.insert_entry(
             target,
             Entry {
                 evidence: revision
@@ -1306,7 +1366,7 @@ impl MemoryLogicalIdentities {
             None => evidence,
         };
         self.retain_version(&evidence, revision);
-        self.entries.insert(
+        self.insert_entry(
             target,
             Entry {
                 evidence,
@@ -1419,7 +1479,7 @@ macro_rules! store_record {
         impl MemoryState {
             pub(super) fn $method(&mut self, id: i32, value: $type) -> Option<$type> {
                 if !self.$field.contains_key(&id) {
-                    self.logical_identities.entries.remove(&value.target());
+                    self.logical_identities.remove_entry(&value.target());
                 }
                 self.logical_identities.capture(&value);
                 self.$field.insert(id, value)
@@ -1466,7 +1526,7 @@ impl MemoryState {
         let id = value.metadata().id().id();
         let target = value.target();
         if !self.query_usage.contains_key(&id) {
-            self.logical_identities.entries.remove(&target);
+            self.logical_identities.remove_entry(&target);
         }
         self.logical_identities.capture(&value);
         let value =

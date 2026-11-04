@@ -128,9 +128,18 @@ async fn authorize_population_gap(
         ));
     }
     let facts = gap.facts();
+    let object_id = gap
+        .remapping()
+        .map_or(facts.object_id(), |proof| proof.object_id());
+    let collection_id = gap
+        .remapping()
+        .map_or(facts.collection_id(), |proof| proof.collection_id());
+    let class_id = gap
+        .remapping()
+        .map_or(facts.class_id(), |proof| proof.class_id());
     let current = storage
         .list_authorization_objects(StorageAuthorizationResourceIds::new(vec![ResourceId::new(
-            facts.object_id().id(),
+            object_id.id(),
         )?]))
         .await?
         .into_iter()
@@ -144,19 +153,15 @@ async fn authorize_population_gap(
     for (kind, id, expected) in [
         (
             StorageIdentityResourceKind::Object,
-            facts.object_id().id(),
+            object_id.id(),
             facts.target().resource(),
         ),
         (
             StorageIdentityResourceKind::Collection,
-            facts.collection_id().id(),
+            collection_id.id(),
             facts.attribution().collection(),
         ),
-        (
-            StorageIdentityResourceKind::Class,
-            facts.class_id().id(),
-            class,
-        ),
+        (StorageIdentityResourceKind::Class, class_id.id(), class),
     ] {
         let evidence = storage
             .resolve_logical_identity(StorageIdentityTarget::Resource {
@@ -181,7 +186,21 @@ async fn authorize_population_gap(
             ));
         }
     }
+    let current_shape = current.as_ref().map(|record| {
+        (
+            record.collection_id(),
+            record.class_id(),
+            record.name().to_owned(),
+        )
+    });
     if let Some(current) = current {
+        if gap.remapping().is_some()
+            && (current.collection_id() != collection_id || current.class_id() != class_id)
+        {
+            return Err(ApiError::ServiceUnavailable(
+                "Original remapped object relationships changed".into(),
+            ));
+        }
         access
             .authorize(
                 Permissions::ReadObject,
@@ -200,9 +219,9 @@ async fn authorize_population_gap(
         .authorize(
             Permissions::ReadObject,
             HistoryAuthorizationSnapshot::object(
-                facts.object_id().id(),
-                facts.collection_id().id(),
-                facts.class_id().id(),
+                object_id.id(),
+                collection_id.id(),
+                class_id.id(),
                 facts.name().to_owned(),
             )
             .into_resource(),
@@ -210,29 +229,87 @@ async fn authorize_population_gap(
         .await?;
     // Re-enter the original productive scope after external policy I/O. This
     // validates the captured app/history/API owners; it does not refresh them.
-    let final_class = storage
-        .resolve_logical_identity(StorageIdentityTarget::Resource {
-            kind: StorageIdentityResourceKind::Class,
-            id: ResourceId::new(facts.class_id().id())?,
-        })
-        .await
-        .map_err(|error| {
-            if error.kind() == StorageErrorKind::NotFound {
-                ApiError::ServiceUnavailable(
-                    "Original retained class disappeared during authorization".into(),
+    if gap.remapping().is_some() {
+        let final_shape = storage
+            .list_authorization_objects(StorageAuthorizationResourceIds::new(vec![
+                ResourceId::new(object_id.id())?,
+            ]))
+            .await?
+            .into_iter()
+            .next()
+            .map(|record| {
+                (
+                    record.collection_id(),
+                    record.class_id(),
+                    record.name().to_owned(),
                 )
-            } else {
-                error.into()
-            }
-        })?;
-    if final_class
-        .subject()
-        .and_then(|subject| subject.record_identity())
-        .is_none_or(|target| target.resource() != class)
-    {
+            });
+        if final_shape != current_shape {
+            return Err(ApiError::ServiceUnavailable(
+                "Current authorization shape changed during policy evaluation".into(),
+            ));
+        }
+        // Re-run the bounded native correspondence gate in the SAME original
+        // productive scope, after external policy I/O. Never refresh an owner.
+        let Err(error) = storage.list_class_objects_as_of(query.clone()).await else {
+            return Err(ApiError::ServiceUnavailable(
+                "Retained population correspondence changed during authorization".into(),
+            ));
+        };
+        if error.api_request_rejection().is_some() || error.task_capacity_rejection().is_some() {
+            return Err(error.into());
+        }
+        if error
+            .history_population_gap_evidence()
+            .is_some_and(|current| {
+                current.epoch() == gap.epoch()
+                    && current.facts() == gap.facts()
+                    && current.remapping() == gap.remapping()
+                    && current.matches_query(query)
+            })
+        {
+            return Ok(());
+        }
         return Err(ApiError::ServiceUnavailable(
-            "Original retained class changed during authorization".into(),
+            "Retained population correspondence changed during authorization".into(),
         ));
+    }
+    for (kind, id, expected) in [
+        (
+            StorageIdentityResourceKind::Object,
+            object_id.id(),
+            facts.target().resource(),
+        ),
+        (
+            StorageIdentityResourceKind::Collection,
+            collection_id.id(),
+            facts.attribution().collection(),
+        ),
+        (StorageIdentityResourceKind::Class, class_id.id(), class),
+    ] {
+        let evidence = storage
+            .resolve_logical_identity(StorageIdentityTarget::Resource {
+                kind,
+                id: ResourceId::new(id)?,
+            })
+            .await;
+        let deleted_object = kind == StorageIdentityResourceKind::Object
+            && access.deleted().is_some()
+            && gap.remapping().is_none();
+        match evidence {
+            Ok(evidence)
+                if !evidence.has_unknown_restore_source()
+                    && evidence
+                        .subject()
+                        .and_then(|s| s.record_identity())
+                        .is_some_and(|record| record.resource() == expected) => {}
+            Err(error) if deleted_object && error.kind() == StorageErrorKind::NotFound => {}
+            _ => {
+                return Err(ApiError::ServiceUnavailable(
+                    "Original retained correspondence changed during authorization".into(),
+                ));
+            }
+        }
     }
     Ok(())
 }
