@@ -1,6 +1,6 @@
 # `hubuum-storage-core` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.18` release train.
+Status: experimental public API in the storage SDK `0.19` release train.
 
 ## Purpose and Callers
 
@@ -16,7 +16,12 @@ The normative semantics of that Rust surface are documented in the
 [storage contract](../storage_boundary/contract.md). The Rust declarations,
 semantic coverage inventory, and contract documentation must change together.
 
-SDK 0.18 adds required `ApiRequestAdmissionStorage` to `WorkflowStorage`.
+SDK 0.19 adds required `HistoryArchiveStorage` to `QueryStorage`. Implement
+persisted collection-history catalogs, bounded captures and immutable pins under
+original registered Legacy owners. See the
+[0.18 to 0.19 upgrade](../storage_adapter_sdk.md#upgrading-from-018-to-019).
+
+SDK 0.18 added required `ApiRequestAdmissionStorage` to `WorkflowStorage`.
 Implement atomic shared policy/admission, private-field request permits,
 productive-boundary fencing and settlement before upgrading. Preserve structured
 `ApiRequestRejection` through adapter errors and inherit admitted owners through

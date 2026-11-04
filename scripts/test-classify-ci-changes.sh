@@ -111,6 +111,13 @@ for artifact_input in crates/hubuum-artifacts/Cargo.toml \
   crates/hubuum-artifacts/src/s3.rs crates/hubuum-artifacts/src/s3/config.rs \
   crates/hubuum-artifacts/src/s3/tests.rs \
   src/benchmark_support/history_segments.rs src/benchmark_support/history_segments/tests.rs \
+  src/services/history/segments.rs src/services/history/segments/tests.rs \
+  src/services/history/archive.rs \
+  crates/hubuum-storage-core/src/history_archive.rs \
+  crates/hubuum-storage-core/src/history_archive/tests.rs \
+  crates/hubuum-storage-postgres/src/backend/history_archive.rs \
+  crates/hubuum-storage-postgres/migrations/2026-11-03-000004_history_archive_reads/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-03-000004_history_archive_reads/down.sql \
   examples/history_segments.rs \
   crates/hubuum-storage-core/src/artifacts/manifest.rs crates/hubuum-artifacts/tests/protocol.rs \
   crates/hubuum-artifacts/src/producer.rs src/backups/producer.rs \
@@ -1144,3 +1151,7 @@ for scheduler_driver in tests/python/integration/scheduling_benchmark.py \
   assert_flag "$scheduler_driver_output" rust true
   assert_flag "$scheduler_driver_output" scale_benchmark true
 done
+
+archive_test_output="$(bash "$classifier" src/tests/storage_contract/history_archive.rs)"
+assert_flag "$archive_test_output" code true
+assert_flag "$archive_test_output" rust true

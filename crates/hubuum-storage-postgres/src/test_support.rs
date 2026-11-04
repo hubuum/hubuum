@@ -41,6 +41,20 @@ pub fn integration_test_database_url() -> String {
         .expect("HUBUUM_DATABASE_URL must identify the migrated integration-test database")
 }
 
+/// Runtime connection selected by the runner for isolated restore contracts.
+#[must_use]
+pub fn integration_test_restore_database_url() -> String {
+    std::env::var("HUBUUM_RESTORE_TEST_DATABASE_URL")
+        .expect("The test runner must provide isolated runtime restore authority")
+}
+
+/// Migration connection selected by the runner for isolated restore contracts.
+#[must_use]
+pub fn integration_test_restore_migration_database_url() -> String {
+    std::env::var("HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL")
+        .expect("The test runner must provide isolated destructive restore authority")
+}
+
 /// Build a pool for an adapter integration test against the migrated database
 /// selected by the repository test runner.
 ///
@@ -1460,4 +1474,119 @@ pub async fn cancel_pending_tasks_for_principal(
         principal_id.id(),
     )
     .await
+}
+
+/// Runner-configured restore database, positively distinct from the primary
+/// test database. URLs are parsed but never retained, displayed or serialized.
+pub struct IsolatedRestoreTarget {
+    database: String,
+}
+impl IsolatedRestoreTarget {
+    pub fn new(restore_url: &str, primary_url: &str) -> Result<Self, PostgresStorageError> {
+        let unavailable = || {
+            PostgresStorageError::invalid_input("Isolated restore database identity unavailable")
+        };
+        let restore: tokio_postgres::Config = restore_url.parse().map_err(|_| unavailable())?;
+        let primary: tokio_postgres::Config = primary_url.parse().map_err(|_| unavailable())?;
+        let database = restore
+            .get_dbname()
+            .filter(|name| !name.is_empty())
+            .ok_or_else(unavailable)?;
+        let primary_database = primary
+            .get_dbname()
+            .filter(|name| !name.is_empty())
+            .ok_or_else(unavailable)?;
+        if database == primary_database {
+            return Err(unavailable());
+        }
+        Ok(Self {
+            database: database.to_owned(),
+        })
+    }
+    fn validate_connected_database(&self, database: &str) -> Result<(), PostgresStorageError> {
+        if database != self.database {
+            return Err(PostgresStorageError::invalid_input(
+                "Archive fixture cleanup requires the configured isolated restore database",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Remove only pins owned by one completed isolated archive fixture and balance
+/// their exact capacity charges. Never available in normal production builds.
+pub async fn delete_isolated_history_archive_captures(
+    pool: &PostgresPool,
+    target: &IsolatedRestoreTarget,
+    runtime: uuid::Uuid,
+    resource: hubuum_domain::ResourceIdentity,
+) -> Result<(), PostgresStorageError> {
+    #[derive(QueryableByName)]
+    struct Database {
+        #[diesel(sql_type = Text)]
+        name: String,
+    }
+    crate::with_transaction(pool, async |connection| {
+        let database = diesel::sql_query("SELECT current_database() AS name")
+            .get_result::<Database>(connection).await?;
+        target.validate_connected_database(&database.name)?;
+        if database_role_tests_enabled() {
+            let roles = integration_test_database_roles();
+            diesel::sql_query("SELECT set_config('role', $1, true)")
+                .bind::<Text, _>(roles.owner().as_str()).execute(connection).await?;
+        }
+        diesel::sql_query("WITH removed AS (DELETE FROM hubuum_control.history_archive_captures WHERE material->>'runtime'=$1 AND material #>> '{selection,resource}'=$2 RETURNING bytes) UPDATE hubuum_control.history_archive_capture_capacity SET captures=captures-(SELECT count(*)::integer FROM removed), bytes=bytes-(SELECT COALESCE(sum(bytes),0) FROM removed) WHERE id=1")
+            .bind::<Text, _>(runtime.to_string())
+            .bind::<Text, _>(uuid::Uuid::from_bytes(*resource.as_bytes()).to_string())
+            .execute(connection).await?;
+        Ok::<_, PostgresStorageError>(())
+    }).await
+}
+
+#[cfg(test)]
+mod archive_fixture_target_tests {
+    use super::IsolatedRestoreTarget;
+    use rstest::rstest;
+
+    #[test]
+    fn accepts_the_exact_ci_style_restore_database() {
+        let target = IsolatedRestoreTarget::new(
+            "postgres://migrator:fixture@postgres/hubuum_test_restore_db",
+            "postgres://runtime:fixture@localhost/hubuum_test_db?application_name=main",
+        )
+        .unwrap();
+        assert!(
+            target
+                .validate_connected_database("hubuum_test_restore_db")
+                .is_ok()
+        );
+        assert!(
+            target
+                .validate_connected_database("hubuum_test_db")
+                .is_err()
+        );
+        assert!(
+            target
+                .validate_connected_database("some_other_restore")
+                .is_err()
+        );
+    }
+
+    #[rstest]
+    #[case::role_query_host_alias(
+        "postgres://owner:fixture@localhost/primary?application_name=restore"
+    )]
+    #[case::encoded_database_alias("postgres://owner:fixture@alias/%70rimary?sslmode=disable")]
+    #[case::query_database_override("postgres://owner:fixture@alias/unused?dbname=primary")]
+    #[case::unknown_database("postgres://owner:fixture@alias")]
+    #[test]
+    fn refuses_primary_or_unproved_database_identity(#[case] restore: &str) {
+        assert!(
+            IsolatedRestoreTarget::new(
+                restore,
+                "postgres://runtime:fixture@127.0.0.1/primary?application_name=main",
+            )
+            .is_err()
+        );
+    }
 }

@@ -873,6 +873,8 @@ jobs:
       - name: Test PostgreSQL adapter-native contracts
         if: matrix.feature.name == 'default' && needs.changes.outputs.run_rust_ci == 'true'
         run: >-
+          python3 tests/python/run.py integration rust-tests
+          --admin-binary "$RUNNER_TEMP/hubuum-admin-migrate" --
           cargo test -p hubuum-storage-postgres
           -F integration-test-support,scale-benchmark-support,embedded-migrations --locked --release
       - name: Test workspace package contracts
@@ -1663,6 +1665,10 @@ jobs:
           root = Path("task-system-evidence/run-1")
           cleanup = json.loads((root / "cleanup.json").read_text())
           resources = json.loads((root / "resources.json").read_text())
+          admission = json.loads((root / "admission.json").read_text())
+          api_policy = json.loads((root / "api-request-policy.json").read_text())
+          assert api_policy["verified"] and api_policy["declared_concurrency"] == admission["concurrency"], "API fixture policy was not verified for this workload"
+          assert api_policy["committed"] == api_policy["readback"], "API fixture policy readback differs"
           assert cleanup["completed"], "Task cleanup did not finish"
           assert resources["workload_completed"], "Task workload did not finish"
           assert resources["measurement_valid"] and not resources["monitor_errors"], "Invalid task measurement"
@@ -1675,6 +1681,7 @@ jobs:
           path: |
             native-task-retention.log
             task-system-evidence/run-*/admission.json
+            task-system-evidence/run-*/api-request-policy.json
             task-system-evidence/run-*/cleanup.json
             task-system-evidence/run-*/resources.json
             task-system-evidence/run-*/safety.json

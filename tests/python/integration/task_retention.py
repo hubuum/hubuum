@@ -26,6 +26,43 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
 
+def bounded_admission_concurrency(value):
+    if type(value) is not int or not 1 <= value <= 128:
+        raise ValueError("Task measurement concurrency must be an integer in 1..128")
+    return value
+
+
+def configure_api_request_policy(api, concurrency, output):
+    """Declare this fixture's bounded HTTP occupancy before task measurement."""
+    concurrency = bounded_admission_concurrency(concurrency)
+    endpoint = "/api/v1/admin/api-request-capacity"
+    before = api.get(endpoint)
+    fields = ("deployment", "principal", "duration", "input_bytes", "output_bytes")
+    if (type(before.get("revision")) is not int or before["revision"] < 0
+            or not isinstance(before.get("policy"), dict)
+            or any(type(before["policy"].get(name)) is not int
+                   or not 0 <= before["policy"][name] <= 2**64 - 1 for name in fields)):
+        raise RuntimeError("Unproved API request policy before task measurement")
+    policy = copy.deepcopy(before["policy"])
+    policy.update(deployment=concurrency, principal=concurrency)
+    committed = api.request("PUT", endpoint, {
+        "expected_revision": before["revision"], "policy": policy,
+    })[0]
+    expected = {"revision": before["revision"] + 1, "policy": policy}
+    if committed != expected:
+        raise RuntimeError("API request policy CAS response did not match the fixture policy")
+    readback = api.get(endpoint)
+    if readback != expected:
+        raise RuntimeError("API request policy readback changed before task measurement")
+    # Retain only non-secret finite policy scalars, never the API/token context.
+    def evidence(value):
+        return {"revision": value["revision"],
+                "policy": {name: value["policy"][name] for name in fields}}
+    write_json(output, {"format_version": 1, "declared_concurrency": concurrency,
+                        "before": evidence(before), "committed": evidence(committed),
+                        "readback": evidence(readback), "verified": True})
+
+
 def run_native(deployment, command, *, timeout, capture_output=False):
     try:
         return subprocess.run(deployment.host_command(command), check=True, timeout=timeout,
@@ -630,6 +667,7 @@ def replay_recovery_probe(arguments, deployment, origins, root, monitor):
 def measured_run(arguments, root, run_index):
     root.mkdir(mode=0o700)
     workload = json.loads(arguments.workload.read_text(encoding="utf-8"))
+    concurrency = bounded_admission_concurrency(workload.get("concurrency"))
     if arguments.count is not None:
         workload["count"] = arguments.count
     recipe = root / "workload.json"
@@ -660,6 +698,7 @@ def measured_run(arguments, root, run_index):
             kind["principal_outstanding"] = 20000
         capacity = api.request("PUT", "/api/v1/admin/task-capacity", {"expected_revision": current["revision"], "policy": policy})[0]
         write_json(root / "capacity-policy.json", capacity)
+        configure_api_request_policy(api, concurrency, root / "api-request-policy.json")
         tokens = root / "tokens.json"
         write_json(tokens, workload_principals(api, 1 if arguments.profile == "diagnostic" else 32))
         tokens.chmod(0o600)

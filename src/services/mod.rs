@@ -141,3 +141,5 @@ pub(crate) mod exports;
 
 pub(crate) mod deletion_recovery;
 pub(crate) mod schema_profiling;
+
+pub use history::archive;

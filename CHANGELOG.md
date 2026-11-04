@@ -9,6 +9,20 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- **Breaking storage SDK 0.19:** all ten SDK crates advance together. Complete
+  adapters must implement `HistoryArchiveStorage` with persisted catalogs,
+  bounded captured hot inputs, generation-checked pins and original registered
+  Legacy owner/application fences. Preserve bounded prepared-capture budget
+  evidence through adapter errors and reauthorize before budget projections.
+  Recheck original authority after external authorization, and retain bounded
+  expired-capture cleanup when admission is rejected for insufficient capacity.
+  Update exact SDK dependencies together; see
+  `docs/storage_adapter_sdk.md` for the 0.18 to 0.19 upgrade. Deploy migration
+  `2026-11-03-000004_history_archive_reads` and refresh runtime grants. The fixed
+  Legacy restriction prevents combining this slice with online history expiry
+  until a later qualified integration. Public archive tasks/routes and source
+  retirement remain disabled; full #514 acceptance is still open.
+
 - **Breaking storage SDK 0.18:** all ten SDK crates advance together. Complete
   external adapters must implement `ApiRequestAdmissionStorage`, carry the
   admitted request owner through productive execution scopes, and fence/settle

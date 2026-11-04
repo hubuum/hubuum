@@ -141,6 +141,7 @@ nav = [
     ] },
     { "Storage adapters" = [
       { "SDK compatibility" = "storage_adapter_sdk.md" },
+      { "Collection archive reads" = "history_archive_reads.md" },
       { "Storage contract" = "storage_boundary/contract.md" },
       { "Backend author guide" = "storage_boundary/backend-author-guide.md" },
       { "Maintainer guide" = "storage_boundary/maintainer-guide.md" },

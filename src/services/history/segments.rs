@@ -1,4 +1,4 @@
-//! Offline #514 prototype, deliberately outside the storage SDK and HTTP API.
+//! Retained history segment format and bounded block readers.
 //!
 //! A segment contains one history family and collection, length-prefixed JSON
 //! records, and a bounded index. Publication uses the existing artifact protocol.
@@ -11,8 +11,8 @@ use std::io::{self, Write};
 
 use chrono::{DateTime, Utc};
 use hubuum_artifacts::{
-    ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactManifest, ArtifactResult,
-    ArtifactStore, VerifiedArtifact, stage_producer,
+    ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactManifest, ArtifactReference,
+    ArtifactResult, ArtifactStore, VerifiedArtifact, stage_producer,
 };
 use hubuum_budget::{BudgetExceeded, ByteBudget, ByteLimit, LimitedWriter};
 use hubuum_domain::{ResourceIdentity, VersionIdentity};
@@ -89,6 +89,12 @@ impl VersionInterval {
             valid_from,
             valid_to,
         })
+    }
+    pub const fn valid_from(&self) -> DateTime<Utc> {
+        self.valid_from
+    }
+    pub const fn valid_to(&self) -> DateTime<Utc> {
+        self.valid_to
     }
     pub fn resource(&self) -> ResourceIdentity {
         self.resource
@@ -167,6 +173,13 @@ struct Entry {
 /// There is no constructor accepting an unverified external index.
 pub struct HistorySegment {
     proof: VerifiedArtifact,
+    reader: RetainedHistorySegment,
+}
+
+/// Index reconstructed from a durably published artifact and trusted catalog digest.
+/// This proves segment-local inclusion only, never authorization or query coverage.
+pub struct RetainedHistorySegment {
+    manifest: ArtifactManifest,
     scope: SegmentScope,
     entries: Vec<Entry>,
     versions: BTreeMap<VersionIdentity, usize>,
@@ -249,7 +262,95 @@ impl HistorySegment {
         proof: VerifiedArtifact,
         budget: &mut ByteBudget,
     ) -> ArtifactResult<Self> {
-        let manifest = proof.manifest();
+        let reader =
+            RetainedHistorySegment::open_manifest(store, proof.manifest().clone(), budget).await?;
+        Ok(Self { proof, reader })
+    }
+
+    pub fn proof(&self) -> &VerifiedArtifact {
+        &self.proof
+    }
+    pub fn scope(&self) -> &SegmentScope {
+        self.reader.scope()
+    }
+    pub fn record_count(&self) -> usize {
+        self.reader.record_count()
+    }
+    pub fn index_bytes(&self) -> usize {
+        self.reader.index_bytes()
+    }
+
+    pub async fn exact<S: ArtifactStore + ?Sized>(
+        &self,
+        store: &S,
+        resource: ResourceIdentity,
+        version: VersionIdentity,
+        budget: &mut ByteBudget,
+    ) -> ArtifactResult<Option<SegmentRecord>> {
+        self.reader.exact(store, resource, version, budget).await
+    }
+
+    pub async fn as_of<S: ArtifactStore + ?Sized>(
+        &self,
+        store: &S,
+        resource: ResourceIdentity,
+        instant: DateTime<Utc>,
+        budget: &mut ByteBudget,
+    ) -> ArtifactResult<Option<SegmentRecord>> {
+        self.reader.as_of(store, resource, instant, budget).await
+    }
+}
+
+impl RetainedHistorySegment {
+    /// Resolve a trusted persisted reference. Publication and manifest digest are
+    /// checked before any index bytes are interpreted. Manifest traffic and every
+    /// fetched block count against the same cumulative caller budget.
+    pub async fn open<S: ArtifactStore + ?Sized>(
+        store: &S,
+        reference: &ArtifactReference,
+        budget: &mut ByteBudget,
+    ) -> ArtifactResult<Self> {
+        // The adapter contract bounds one manifest call. Require its complete
+        // envelope to fit before I/O, then account successful bytes exactly.
+        let ceiling = ArtifactLimits::format_ceiling().manifest_bytes() as usize;
+        if budget.remaining() < ceiling {
+            return Err(ArtifactError::Limit(
+                "History manifest exceeds read budget".into(),
+            ));
+        }
+        let bytes = match store.published_manifest(reference).await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                budget
+                    .consume(ceiling)
+                    .map_err(|_| ArtifactError::Limit("History read budget exhausted".into()))?;
+                return Err(error);
+            }
+        };
+        budget
+            .consume(bytes.len())
+            .map_err(|_| ArtifactError::Limit("History manifest exceeds read budget".into()))?;
+        let manifest = ArtifactManifest::decode(
+            &bytes,
+            reference.identity(),
+            ArtifactLimits::builder()
+                .block_bytes(MAX_BLOCK_BYTES)
+                .artifact_bytes(SEGMENT_BYTES as u64)
+                .build()?,
+        )?;
+        if &manifest.manifest_digest() != reference.manifest_digest() {
+            return Err(ArtifactError::Corrupt(
+                "History catalog manifest digest mismatch".into(),
+            ));
+        }
+        Self::open_manifest(store, manifest, budget).await
+    }
+
+    async fn open_manifest<S: ArtifactStore + ?Sized>(
+        store: &S,
+        manifest: ArtifactManifest,
+        budget: &mut ByteBudget,
+    ) -> ArtifactResult<Self> {
         if manifest.byte_size() > SEGMENT_BYTES as u64
             || manifest.byte_size() < 18
             || manifest.block_bytes() > MAX_BLOCK_BYTES
@@ -258,7 +359,7 @@ impl HistorySegment {
                 "Invalid history segment size".into(),
             ));
         }
-        let header = read_range(store, manifest, 0, 9, budget).await?;
+        let header = read_range(store, &manifest, 0, 9, budget).await?;
         if &header[..5] != MAGIC {
             return Err(ArtifactError::Corrupt(
                 "Unsupported history segment format".into(),
@@ -271,10 +372,10 @@ impl HistorySegment {
                 "History scope exceeds header budget".into(),
             ));
         }
-        let scope = from_slice(&read_range(store, manifest, 9, header_length, budget).await?)
+        let scope = from_slice(&read_range(store, &manifest, 9, header_length, budget).await?)
             .map_err(|_| ArtifactError::Corrupt("Invalid history scope".into()))?;
         let footer_offset = manifest.byte_size() - 9;
-        let footer = read_range(store, manifest, footer_offset, 9, budget).await?;
+        let footer = read_range(store, &manifest, footer_offset, 9, budget).await?;
         if &footer[4..] != FOOTER {
             return Err(ArtifactError::Corrupt(
                 "Unsupported history index format".into(),
@@ -290,7 +391,7 @@ impl HistorySegment {
         let index_offset = footer_offset
             .checked_sub(index_bytes as u64)
             .ok_or_else(|| ArtifactError::Corrupt("History index lies outside segment".into()))?;
-        let index = read_range(store, manifest, index_offset, index_bytes, budget).await?;
+        let index = read_range(store, &manifest, index_offset, index_bytes, budget).await?;
         let entries: Vec<Entry> = from_slice(&index)
             .map_err(|_| ArtifactError::Corrupt("Invalid history index".into()))?;
         if entries.len() > MAX_RECORDS {
@@ -315,9 +416,12 @@ impl HistorySegment {
                 "History index omits record bytes".into(),
             ));
         }
-        validate_entries(&entries)?;
+        validate_entries(&entries).map_err(|error| match error {
+            ArtifactError::Invalid(message) => ArtifactError::Corrupt(message),
+            other => other,
+        })?;
         let mut segment = Self {
-            proof,
+            manifest,
             scope,
             entries,
             versions: BTreeMap::new(),
@@ -339,9 +443,6 @@ impl HistorySegment {
         Ok(segment)
     }
 
-    pub fn proof(&self) -> &VerifiedArtifact {
-        &self.proof
-    }
     pub fn scope(&self) -> &SegmentScope {
         &self.scope
     }
@@ -403,7 +504,7 @@ impl HistorySegment {
         entry: &Entry,
         budget: &mut ByteBudget,
     ) -> ArtifactResult<SegmentRecord> {
-        let manifest = self.proof.manifest();
+        let manifest = &self.manifest;
         let bytes =
             read_range(store, manifest, entry.offset, entry.length as usize, budget).await?;
         if bytes.len() < 4

@@ -368,6 +368,7 @@ struct MemoryRuntimeRegistration {
 
 #[derive(Clone)]
 struct MemoryState {
+    history_archive: history_archive::MemoryHistoryArchive,
     api_requests: api_request_admission::MemoryApiRequests,
     artifacts: artifacts::Artifacts,
     task_control: TaskControlState,
@@ -909,3 +910,5 @@ mod task_scheduling;
 mod task_waits;
 use state_lock::MemoryStateLock;
 mod workflows;
+
+mod history_archive;

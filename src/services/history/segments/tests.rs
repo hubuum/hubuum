@@ -457,3 +457,130 @@ async fn cross_block_reads_fit_p2_budget(
     .unwrap();
     assert_eq!(restored, Some(selected));
 }
+
+#[rstest]
+#[case::original_blocks(1024 * 1024)]
+#[case::current_blocks(BLOCK_BYTES)]
+#[tokio::test]
+async fn published_reference_roundtrip_reads_retained_bytes(#[case] block_bytes: u32) {
+    let scope = scope();
+    let resource = ResourceIdentity::generate();
+    let row = record(scope.clone(), resource, 10, 20);
+    let (store, segment) = fixture(vec![row.clone()], scope).await.unwrap();
+    let manifest = segment.proof().manifest();
+    let bytes = read_range(
+        &store,
+        manifest,
+        0,
+        manifest.byte_size() as usize,
+        &mut ByteLimit::new(SEGMENT_BYTES).start(),
+    )
+    .await
+    .unwrap();
+    drop(segment);
+    drop(store);
+    let (store, proof) = verified_bytes(&bytes, block_bytes).await;
+    let reference = store.publish(&proof).await.unwrap();
+    // Retain only the catalog representation, as a different worker would.
+    let persisted = serde_json::to_vec(&reference).unwrap();
+    drop(proof);
+    let restored: hubuum_artifacts::ArtifactReference = serde_json::from_slice(&persisted).unwrap();
+    let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
+    let reader = RetainedHistorySegment::open(&store, &restored, &mut budget)
+        .await
+        .unwrap();
+    assert_eq!(
+        reader
+            .exact(&store, resource, row.interval.version(), &mut budget)
+            .await
+            .unwrap(),
+        Some(row)
+    );
+}
+
+#[tokio::test]
+async fn retained_reader_requires_durable_publication() {
+    let (store, segment) = fixture(Vec::new(), scope()).await.unwrap();
+    assert!(
+        RetainedHistorySegment::open(
+            &store,
+            &segment.proof().reference(),
+            &mut ByteLimit::new(SEGMENT_BYTES).start()
+        )
+        .await
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn retained_reader_rejects_wrong_catalog_digest() {
+    let (store, segment) = fixture(Vec::new(), scope()).await.unwrap();
+    let reference = store.publish(segment.proof()).await.unwrap();
+    let wrong =
+        hubuum_artifacts::ArtifactReference::from_catalog(reference.identity().clone(), [0; 32]);
+    assert!(
+        RetainedHistorySegment::open(&store, &wrong, &mut ByteLimit::new(SEGMENT_BYTES).start())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn retained_reader_cannot_rebind_object_version() {
+    let (store, segment) = fixture(Vec::new(), scope()).await.unwrap();
+    let reference = store.publish(segment.proof()).await.unwrap();
+    let id = reference.identity();
+    let wrong = hubuum_artifacts::ArtifactReference::from_catalog(
+        ArtifactIdentity::from_parts(
+            id.artifact(),
+            id.attempt(),
+            id.destination(),
+            hubuum_artifacts::ObjectVersion::generate(),
+        ),
+        *reference.manifest_digest(),
+    );
+    assert!(
+        RetainedHistorySegment::open(&store, &wrong, &mut ByteLimit::new(SEGMENT_BYTES).start())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn retained_open_charges_manifest_before_external_work() {
+    let (store, segment) = fixture(Vec::new(), scope()).await.unwrap();
+    let reference = store.publish(segment.proof()).await.unwrap();
+    assert!(matches!(
+        RetainedHistorySegment::open(&store, &reference, &mut ByteLimit::new(0).start()).await,
+        Err(ArtifactError::Limit(_))
+    ));
+}
+
+#[rstest]
+#[case::before(9, false)]
+#[case::start(10, true)]
+#[case::end(20, false)]
+#[tokio::test]
+async fn published_as_of_preserves_original_half_open_interval(
+    #[case] instant: i64,
+    #[case] present: bool,
+) {
+    let scope = scope();
+    let resource = ResourceIdentity::generate();
+    let row = record(scope.clone(), resource, 10, 20);
+    let (store, segment) = fixture(vec![row], scope).await.unwrap();
+    let reference = store.publish(segment.proof()).await.unwrap();
+    drop(segment);
+    let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
+    let reader = RetainedHistorySegment::open(&store, &reference, &mut budget)
+        .await
+        .unwrap();
+    assert_eq!(
+        reader
+            .as_of(&store, resource, at(instant), &mut budget)
+            .await
+            .unwrap()
+            .is_some(),
+        present
+    );
+}

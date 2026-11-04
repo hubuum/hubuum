@@ -99,6 +99,7 @@ impl MemoryState {
             task_capacity: Default::default(),
             api_requests: Default::default(),
             artifacts: Default::default(),
+            history_archive: Default::default(),
             application_control: ApplicationControlState::initial(&deletion_control),
             pending_restore: false,
             deletion_control,

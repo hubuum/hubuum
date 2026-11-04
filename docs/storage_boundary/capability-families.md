@@ -261,7 +261,13 @@ under the `logical_identity` capability.
 
 ### `temporal_history`
 
-Required trait: `HistoryStorage`.
+Required traits: `HistoryStorage` and `HistoryArchiveStorage`.
+
+`HistoryArchiveStorage` owns the bounded persisted collection archive catalog,
+original-selection generation pins, captured hot input, and cumulative read-work
+reservations. It requires an original registered Legacy runtime and application
+permit. Source copies remain required; public archive tasks and API activation
+are disabled. See [archive read limits](../history_archive_reads.md).
 
 Owns revision-filtered pages and point-in-time reads for collections, classes,
 objects, export templates, and remote targets. Visibility applies before

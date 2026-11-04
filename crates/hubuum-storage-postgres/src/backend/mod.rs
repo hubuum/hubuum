@@ -2,6 +2,7 @@
 
 mod api_request_admission;
 mod artifacts;
+mod history_archive;
 use hubuum_domain::JsonSchemaLimits;
 use std::future::Future;
 use std::num::NonZeroUsize;

@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 import json
+import copy
 import io
 import subprocess
 import tempfile
@@ -13,6 +14,78 @@ from integration import task_retention as RETENTION
 
 
 class TaskRetentionMeasurementTests(unittest.TestCase):
+    @staticmethod
+    def api_policy():
+        return {"revision": 7, "policy": {"deployment": 16, "principal": 2,
+                "duration": 15000, "input_bytes": 16777216, "output_bytes": 16777216}}
+
+    def test_api_fixture_policy_preserves_limits_and_verifies_cas_readback(self):
+        before = self.api_policy()
+        committed = copy.deepcopy(before)
+        committed["revision"] += 1
+        committed["policy"].update(deployment=32, principal=32)
+        api = MagicMock(token="sensitive-bearer")
+        api.get.side_effect = [before, committed]
+        api.request.return_value = (committed, {})
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "api-request-policy.json"
+            RETENTION.configure_api_request_policy(api, 32, output)
+            report = json.loads(output.read_text())
+            self.assertEqual(report, {"format_version": 1, "declared_concurrency": 32,
+                                     "before": before, "committed": committed,
+                                     "readback": committed, "verified": True})
+            self.assertNotIn("sensitive-bearer", output.read_text())
+        endpoint = "/api/v1/admin/api-request-capacity"
+        api.request.assert_called_once_with("PUT", endpoint, {
+            "expected_revision": 7, "policy": committed["policy"],
+        })
+        self.assertEqual([call.args for call in api.get.call_args_list], [(endpoint,), (endpoint,)])
+        self.assertEqual(before, self.api_policy())
+
+    def test_api_fixture_policy_rejects_invalid_concurrency_before_any_request(self):
+        for value in (0, 129, True, "32", None):
+            with self.subTest(value=value):
+                api = MagicMock()
+                with self.assertRaises(ValueError):
+                    RETENTION.configure_api_request_policy(api, value, Path("unused"))
+                api.get.assert_not_called()
+                api.request.assert_not_called()
+
+    def test_api_fixture_policy_cas_refusal_is_not_retried(self):
+        api = MagicMock()
+        api.get.return_value = self.api_policy()
+        api.request.side_effect = RuntimeError("CAS refusal")
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "policy.json"
+            with self.assertRaisesRegex(RuntimeError, "CAS refusal"):
+                RETENTION.configure_api_request_policy(api, 32, output)
+            self.assertFalse(output.exists())
+        api.get.assert_called_once()
+        api.request.assert_called_once()
+
+    def test_api_fixture_policy_mismatch_fails_closed(self):
+        for mismatch in ("response_revision", "response_policy", "readback"):
+            with self.subTest(mismatch=mismatch), tempfile.TemporaryDirectory() as temporary:
+                before = self.api_policy()
+                committed = copy.deepcopy(before)
+                committed["revision"] += 1
+                committed["policy"].update(deployment=32, principal=32)
+                readback = copy.deepcopy(committed)
+                if mismatch == "response_revision":
+                    committed["revision"] += 1
+                elif mismatch == "response_policy":
+                    committed["policy"]["duration"] += 1
+                else:
+                    readback["policy"]["principal"] -= 1
+                api = MagicMock()
+                api.get.side_effect = [before, readback]
+                api.request.return_value = (committed, {})
+                output = Path(temporary) / "policy.json"
+                with self.assertRaises(RuntimeError):
+                    RETENTION.configure_api_request_policy(api, 32, output)
+                self.assertFalse(output.exists())
+                api.request.assert_called_once()
+
     def test_invalid_refill_bounds_fail_before_provisioning(self):
         for batch in ("0", "1001"):
             with self.subTest(batch=batch), patch.object(RETENTION, "measured_run") as measured, \
@@ -288,7 +361,7 @@ class TaskRetentionMeasurementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "run"
             workload = Path(temporary) / "recipe.json"
-            workload.write_text('{"count":1}', encoding="utf-8")
+            workload.write_text('{"count":1,"concurrency":1}', encoding="utf-8")
             arguments = SimpleNamespace(
                 workload=workload, count=None, image="fixture", scale_binary=Path("scale"),
                 admin_binary=Path("admin"), timeout=30, admission_only=True,
@@ -327,10 +400,12 @@ class TaskRetentionMeasurementTests(unittest.TestCase):
             monitor.errors = []
             monitor.enforcement = {}
             with patch.object(RETENTION, "RetentionDeployment", return_value=deployment), \
+                    patch.object(RETENTION, "configure_api_request_policy") as configure_policy, \
                     patch.object(RETENTION, "Monitor", return_value=monitor), \
                     patch.object(RETENTION.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "fixture")):
                 with self.assertRaisesRegex(RuntimeError, "failed"):
                     RETENTION.measured_run(arguments, root, 1)
+            configure_policy.assert_called_once_with(api, 1, root / "api-request-policy.json")
             report = json.loads((root / "resources.json").read_text(encoding="utf-8"))
             self.assertFalse(report["workload_completed"])
             self.assertFalse(report["p6_acceptance"])

@@ -93,6 +93,18 @@ class CiTierTests(unittest.TestCase):
         condition = job("treetop-authorization-conformance").split("    if: >-\n", 1)[1].split("    runs-on:", 1)[0]
         self.assertIn("needs.changes.outputs.full_requested == 'true' &&", condition)
 
+    def test_native_adapter_tests_provision_isolated_restore_authority(self):
+        step = job("feature-permutations").split(
+            "      - name: Test PostgreSQL adapter-native contracts\n", 1,
+        )[1].split("      - name:", 1)[0]
+        command = shlex.split(step.split("        run: >-\n", 1)[1])
+        self.assertEqual(command[:10], [
+            "python3", "tests/python/run.py", "integration", "rust-tests",
+            "--admin-binary", "$RUNNER_TEMP/hubuum-admin-migrate", "--",
+            "cargo", "test", "-p",
+        ])
+        self.assertEqual(command[10], "hubuum-storage-postgres")
+
     def test_fuzzing_rechecks_draft_transitions_and_waits_until_ready(self):
         workflow = (ROOT / ".github/workflows/regex-fuzz.yml").read_text()
         self.assertIn("ready_for_review, converted_to_draft", workflow)
@@ -251,6 +263,7 @@ class PublicationGateTests(unittest.TestCase):
         self.assertIn('--test task_retention', tasks)
         self.assertIn('--count 100 --profile local --runs 1', tasks)
         self.assertIn('--safety-probes --recovery-probes --physical-recovery-probes', tasks)
+        self.assertIn('task-system-evidence/run-*/api-request-policy.json', tasks)
         self.assertNotIn('--output-probe', tasks)
         self.assertNotIn('--steady-seconds', tasks)
         self.assertIn('      - task-system\n', job("ci-gate"))
@@ -275,7 +288,8 @@ class PublicationGateTests(unittest.TestCase):
 
         block = job("task-system").split("      - name: Verify task-system evidence\n", 1)[1]
         script = textwrap.dedent(block.split("        run: |\n", 1)[1].split("      - name:", 1)[0])
-        for invalid in (None, "cleanup", "workload", "measurement", "monitor"):
+        for invalid in (None, "cleanup", "workload", "measurement", "monitor",
+                        "api_policy", "api_concurrency", "api_readback", "missing_api_policy"):
             with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory) / "task-system-evidence/run-1"
                 root.mkdir(parents=True)
@@ -284,6 +298,14 @@ class PublicationGateTests(unittest.TestCase):
                     "workload_completed": invalid != "workload", "measurement_valid": invalid != "measurement",
                     "monitor_errors": ["missing process"] if invalid == "monitor" else [],
                 }))
+                (root / "admission.json").write_text(json.dumps({"concurrency": 32}))
+                if invalid != "missing_api_policy":
+                    (root / "api-request-policy.json").write_text(json.dumps({
+                        "verified": invalid != "api_policy",
+                        "declared_concurrency": 31 if invalid == "api_concurrency" else 32,
+                        "committed": {"revision": 1},
+                        "readback": {"revision": 2 if invalid == "api_readback" else 1},
+                    }))
                 result = subprocess.run(["bash", "-euo", "pipefail", "-c", script], cwd=directory,
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode == 0, invalid is None, result.stderr)

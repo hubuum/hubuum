@@ -12,14 +12,14 @@ use crate::{
     ComputedObjectStorage, DeletionControlStorage, EventConfigurationStorage,
     EventDeliveryAdministrationStorage, EventDeliveryWorkerStorage, EventFanoutStorage,
     EventHealthStorage, EventRetentionStorage, ExecutionStorage, ExportTemplateStorage,
-    ExternalIdentityStorage, GroupMembershipStorage, GroupStorage, HistoryStorage,
-    IdentityScopeStorage, ImportStorage, InventoryStorage, LocalIdentityCredentialStorage,
-    LogicalIdentityStorage, MetricsStorage, ObjectAggregateStorage, ObjectRelationStorage,
-    ObjectStorage, OperationalStateStorage, PrincipalStorage, QueryUsageStorage,
-    RelationQueryStorage, RemoteTargetStorage, RestoreStorage, SchemaEvolutionStorage,
-    ServiceAccountStorage, TaskCapacityStorage, TaskExecutionStorage, TaskQueueStorage,
-    TaskRetentionStorage, TokenRetentionStorage, TokenStorage, TransactionStorage,
-    UnifiedSearchStorage, UserStorage,
+    ExternalIdentityStorage, GroupMembershipStorage, GroupStorage, HistoryArchiveStorage,
+    HistoryStorage, IdentityScopeStorage, ImportStorage, InventoryStorage,
+    LocalIdentityCredentialStorage, LogicalIdentityStorage, MetricsStorage, ObjectAggregateStorage,
+    ObjectRelationStorage, ObjectStorage, OperationalStateStorage, PrincipalStorage,
+    QueryUsageStorage, RelationQueryStorage, RemoteTargetStorage, RestoreStorage,
+    SchemaEvolutionStorage, ServiceAccountStorage, TaskCapacityStorage, TaskExecutionStorage,
+    TaskQueueStorage, TaskRetentionStorage, TokenRetentionStorage, TokenStorage,
+    TransactionStorage, UnifiedSearchStorage, UserStorage,
 };
 
 /// Atomic domain-resource lifecycle and transaction behavior.
@@ -85,6 +85,7 @@ pub trait QueryStorage:
     + ObjectAggregateStorage
     + RelationQueryStorage
     + HistoryStorage
+    + HistoryArchiveStorage
     + LogicalIdentityStorage
     + InventoryStorage
     + UnifiedSearchStorage
@@ -97,6 +98,7 @@ impl<T> QueryStorage for T where
         + ObjectAggregateStorage
         + RelationQueryStorage
         + HistoryStorage
+        + HistoryArchiveStorage
         + LogicalIdentityStorage
         + InventoryStorage
         + UnifiedSearchStorage

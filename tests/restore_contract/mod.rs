@@ -1,4 +1,5 @@
 mod artifacts;
+mod history_archive;
 mod task_capacity;
 mod task_scheduling;
 use std::collections::BTreeSet;

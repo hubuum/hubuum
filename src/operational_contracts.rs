@@ -54,6 +54,7 @@ const STORAGE_OPERATION_SOURCES: &[&str] = &[
     include_str!("storage/context/computed_fields.rs"),
     include_str!("storage/context/events.rs"),
     include_str!("storage/context/execution.rs"),
+    include_str!("storage/context/history_archive.rs"),
     include_str!("storage/context/identity.rs"),
     include_str!("storage/context/identity_queries.rs"),
     include_str!("storage/context/operational.rs"),
@@ -3369,6 +3370,28 @@ mod tests {
             assert!(
                 setting.runtime_roles.contains(&"admin"),
                 "{name} is consumed by hubuum-admin"
+            );
+        }
+    }
+
+    #[test]
+    fn observed_context_modules_register_their_operation_vocabulary() {
+        let directory =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/storage/context");
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|extension| extension != "rs") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).unwrap();
+            let observed = first_quoted_strings_after(&source, ".observe_storage_call(")
+                .chain(first_quoted_strings_after(&source, "self.call("))
+                .next()
+                .is_some();
+            assert!(
+                !observed || STORAGE_OPERATION_SOURCES.contains(&source.as_str()),
+                "{} emits operations absent from the metrics vocabulary source inventory",
+                path.display(),
             );
         }
     }
