@@ -6843,7 +6843,7 @@
             }
           },
           "404": {
-            "description": "Class history unavailable at this instant",
+            "description": "Class history unavailable or authorized population history expired",
             "content": {
               "application/json": {
                 "schema": {
@@ -6904,18 +6904,11 @@
             }
           },
           "503": {
-            "description": "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+            "description": "Original identity or retained population coverage cannot be proved Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/ApiErrorResponse"
-                    },
-                    {
-                      "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
-                    }
-                  ]
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             }
