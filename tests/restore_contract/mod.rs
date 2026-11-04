@@ -1,4 +1,5 @@
 mod artifacts;
+#[cfg(unix)]
 mod history_remapping;
 mod task_capacity;
 mod task_scheduling;
