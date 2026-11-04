@@ -41,6 +41,20 @@ pub fn integration_test_database_url() -> String {
         .expect("HUBUUM_DATABASE_URL must identify the migrated integration-test database")
 }
 
+/// Runtime connection selected by the runner for isolated restore contracts.
+#[must_use]
+pub fn integration_test_restore_database_url() -> String {
+    std::env::var("HUBUUM_RESTORE_TEST_DATABASE_URL")
+        .expect("The test runner must provide isolated runtime restore authority")
+}
+
+/// Migration connection selected by the runner for isolated restore contracts.
+#[must_use]
+pub fn integration_test_restore_migration_database_url() -> String {
+    std::env::var("HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL")
+        .expect("The test runner must provide isolated destructive restore authority")
+}
+
 /// Build a pool for an adapter integration test against the migrated database
 /// selected by the repository test runner.
 ///

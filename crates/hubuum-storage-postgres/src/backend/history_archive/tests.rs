@@ -2,6 +2,7 @@ use super::*;
 use crate::test_support::{
     IsolatedRestoreTarget, database_role_tests_enabled, integration_test_database_roles,
     integration_test_database_url, integration_test_migration_pool, integration_test_pool,
+    integration_test_restore_database_url, integration_test_restore_migration_database_url,
 };
 use crate::{PostgresPoolSettings, build_postgres_pool};
 use diesel::sql_types::Integer;
@@ -161,13 +162,10 @@ async fn rejected_capture_preserves_expired_cleanup_accounting() {
 async fn rejected_admission_commits_cleanup_before_the_next_attempt() {
     // Only this adapter unit test uses the runner's separate restore database.
     // Other test binaries run sequentially and receive it back without our pins.
-    IsolatedRestoreTarget::new(
-        &std::env::var("HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL").unwrap(),
-        &integration_test_database_url(),
-    )
-    .unwrap();
-    let pool = |variable| {
-        let settings = PostgresPoolSettings::builder(std::env::var(variable).unwrap())
+    let migration_url = integration_test_restore_migration_database_url();
+    IsolatedRestoreTarget::new(&migration_url, &integration_test_database_url()).unwrap();
+    let pool = |database_url| {
+        let settings = PostgresPoolSettings::builder(database_url)
             .max_size(2)
             .statement_timeout_ms(10_000)
             .acquire_timeout_ms(5_000)
@@ -175,8 +173,8 @@ async fn rejected_admission_commits_cleanup_before_the_next_attempt() {
             .unwrap();
         build_postgres_pool(&settings).unwrap()
     };
-    let admin = pool("HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL");
-    let backend = PostgresStorage::unobserved(pool("HUBUUM_RESTORE_TEST_DATABASE_URL"));
+    let admin = pool(migration_url);
+    let backend = PostgresStorage::unobserved(pool(integration_test_restore_database_url()));
     let registration = backend.register_runtime().await.unwrap();
     let permit = backend
         .capture_application_execution(Some(registration.owner()))
