@@ -3,13 +3,19 @@
 use chrono::{DateTime, Utc};
 use hubuum_domain::{ResourceId, ResourceIdentity};
 use hubuum_storage_core::{
-    HistoryAuthorityRevision, HistoryExpiryDecision, HistoryLifecycleScan, HistoryPolicyAction,
+    HistoryAuthorityRevision, HistoryExpiryCancellation, HistoryExpiryDecision,
+    HistoryExpiryInputBytes, HistoryExpiryIntent, HistoryExpiryManifest, HistoryExpiryOrigin,
+    HistoryExpiryReadSpan, HistoryExpiryRemovalReceipt, HistoryHoldRevision,
+    HistoryLifecycleOperationEvidence, HistoryLifecycleScan, HistoryPolicyAction,
     HistoryPolicyApplication, HistoryPolicyApplyRequest, HistoryPolicyBinding, HistoryPolicyChange,
-    HistoryPolicyKey, HistoryPolicyRecord, HistoryPolicyReviewReference, HistoryPolicyRevision,
-    HistoryPolicyScope, HistoryPreviewCoverage, LogicalIdentityStorage, StorageIdentityHistoryKind,
-    StorageIdentityResourceKind, StorageIdentityTarget,
+    HistoryPolicyKey, HistoryPolicyRecord, HistoryPolicyReference, HistoryPolicyReviewEvidence,
+    HistoryPolicyReviewReference, HistoryPolicyRevision, HistoryPolicyScope,
+    HistoryPreviewCoverage, HistoryRetentionAnchor, HistoryReviewFence, HistoryScopeAttribution,
+    LogicalIdentityStorage, StorageIdentityHistoryKind, StorageIdentityResourceKind,
+    StorageIdentityTarget, StorageRecordIdentity,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -244,3 +250,117 @@ where
 {
     T::deserialize(deserializer).map(Some)
 }
+
+/// Public projection of administrator evidence. Original authorization facts
+/// remain outside this transport shape; protection is independently verified.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(tag = "kind", content = "record", rename_all = "snake_case")]
+pub enum HistoryLifecycleOperationResponse {
+    Policy(HistoryPolicyRecord),
+    Hold(HistoryHoldRevision),
+    ExpiryIntent(HistoryExpiryOperationRecord),
+    Review {
+        proposal: HistoryPolicyChange,
+        review: HistoryPolicyReviewEvidence,
+    },
+}
+
+/// Digest of the original complete manifest, not a durability/removal receipt.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(transparent)]
+#[schema(value_type = String, pattern = "^[0-9a-f]{64}$")]
+pub struct HistoryExpiryManifestDigest(String);
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct HistoryExpiryOperationRecord {
+    manifest: HistoryExpiryManifestResponse,
+    manifest_digest: HistoryExpiryManifestDigest,
+    cancellation: Option<HistoryExpiryCancellation>,
+    removals: Vec<HistoryExpiryRemovalReceipt>,
+}
+#[derive(Debug, Serialize, ToSchema)]
+struct HistoryExpiryManifestResponse {
+    identity: Uuid,
+    run: Uuid,
+    origin: HistoryExpiryOrigin,
+    key: HistoryPolicyKey,
+    fence: HistoryReviewFence,
+    selected_at: DateTime<Utc>,
+    input_bytes: u32,
+    members: Vec<HistoryExpiryMemberResponse>,
+}
+#[derive(Debug, Serialize, ToSchema)]
+struct HistoryExpiryMemberResponse {
+    family: StorageIdentityHistoryKind,
+    target: StorageRecordIdentity,
+    anchor: HistoryRetentionAnchor,
+    read_span: HistoryExpiryReadSpan,
+    attributions: Vec<HistoryScopeAttribution>,
+    policies: Vec<HistoryPolicyReference>,
+    input_bytes: HistoryExpiryInputBytes,
+}
+
+impl TryFrom<HistoryLifecycleOperationEvidence> for HistoryLifecycleOperationResponse {
+    type Error = ApiError;
+    fn try_from(value: HistoryLifecycleOperationEvidence) -> Result<Self, Self::Error> {
+        Ok(match value {
+            HistoryLifecycleOperationEvidence::Policy(record) => Self::Policy(record),
+            HistoryLifecycleOperationEvidence::Hold(record) => Self::Hold(record),
+            HistoryLifecycleOperationEvidence::Review { proposal, review } => {
+                Self::Review { proposal, review }
+            }
+            HistoryLifecycleOperationEvidence::ExpiryIntent(intent) => {
+                Self::ExpiryIntent(HistoryExpiryOperationRecord::from_intent(intent)?)
+            }
+        })
+    }
+}
+impl HistoryExpiryOperationRecord {
+    fn from_intent(intent: HistoryExpiryIntent) -> Result<Self, ApiError> {
+        let manifest = intent.manifest();
+        let encoded = serde_json::to_vec(manifest).map_err(|_| {
+            ApiError::InternalServerError("Cannot encode original history expiry evidence".into())
+        })?;
+        let manifest_digest = HistoryExpiryManifestDigest(
+            Sha256::digest(encoded)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+        );
+        Ok(Self {
+            manifest: HistoryExpiryManifestResponse::from_manifest(manifest),
+            manifest_digest,
+            cancellation: intent.cancellation().cloned(),
+            removals: intent.removals().to_vec(),
+        })
+    }
+}
+impl HistoryExpiryManifestResponse {
+    fn from_manifest(manifest: &HistoryExpiryManifest) -> Self {
+        Self {
+            identity: manifest.identity(),
+            run: manifest.run(),
+            origin: manifest.origin().clone(),
+            key: manifest.key(),
+            fence: manifest.fence(),
+            selected_at: manifest.selected_at(),
+            input_bytes: manifest.input_bytes(),
+            members: manifest
+                .members()
+                .iter()
+                .map(|member| HistoryExpiryMemberResponse {
+                    family: member.family(),
+                    target: member.target(),
+                    anchor: member.anchor(),
+                    read_span: member.read_span().clone(),
+                    attributions: member.attributions().to_vec(),
+                    policies: member.policies().to_vec(),
+                    input_bytes: member.input_bytes(),
+                })
+                .collect(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod operation_response_tests;

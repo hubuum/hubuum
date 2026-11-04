@@ -362,6 +362,7 @@ pub struct HistoryExpiryCandidate {
     attributions: Vec<HistoryScopeAttribution>,
     has_dependency: bool,
     read_span: Option<HistoryExpiryReadSpan>,
+    object_authorization: Option<HistoryObjectAuthorizationFacts>,
 }
 impl HistoryExpiryCandidate {
     pub fn new(
@@ -391,6 +392,7 @@ impl HistoryExpiryCandidate {
             attributions,
             has_dependency,
             read_span: None,
+            object_authorization: None,
         })
     }
     pub fn with_read_span(
@@ -403,6 +405,15 @@ impl HistoryExpiryCandidate {
         {
             return Err(invalid(
                 "Native expiry read span differs from its original anchor",
+            ));
+        }
+        if self
+            .object_authorization
+            .as_ref()
+            .is_some_and(|facts| facts.read_span() != &span)
+        {
+            return Err(invalid(
+                "Native interval cannot retarget original authorization facts",
             ));
         }
         self.read_span = Some(span);
@@ -437,6 +448,34 @@ impl HistoryExpiryCandidate {
             }
         };
         self.with_read_span(span)
+    }
+    pub fn with_object_authorization(
+        mut self,
+        facts: HistoryObjectAuthorizationFacts,
+    ) -> Result<Self, StorageValidationError> {
+        if self.family != StorageIdentityHistoryKind::Object
+            || self.target != facts.target()
+            || self.read_span.as_ref() != Some(facts.read_span())
+            || self.attributions.as_slice() != [facts.attribution()]
+        {
+            return Err(invalid(
+                "Object authorization differs from exact expiry selection",
+            ));
+        }
+        if self
+            .object_authorization
+            .as_ref()
+            .is_some_and(|original| original != &facts)
+        {
+            return Err(invalid(
+                "Original object authorization facts cannot be replaced",
+            ));
+        }
+        self.object_authorization = Some(facts);
+        Ok(self)
+    }
+    pub const fn object_authorization(&self) -> Option<&HistoryObjectAuthorizationFacts> {
+        self.object_authorization.as_ref()
     }
     pub const fn read_span(&self) -> Option<&HistoryExpiryReadSpan> {
         self.read_span.as_ref()

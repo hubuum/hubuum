@@ -87,11 +87,15 @@ done
 
 for policy_input in src/models/history_lifecycle.rs src/api/v1/handlers/history_lifecycle.rs \
   crates/hubuum-storage-core/src/history_lifecycle.rs crates/hubuum-storage-core/src/history_lifecycle/policy.rs \
+  crates/hubuum-storage-core/src/history_lifecycle/authorization.rs \
+  crates/hubuum-storage-core/src/history_lifecycle/authorization/tests.rs \
   crates/hubuum-storage-core/src/record_identity.rs crates/hubuum-storage-core/src/logical_identity.rs; do
   policy_output="$(bash "$classifier" "$policy_input")"
   assert_flag "$policy_output" code true
   assert_flag "$policy_output" rust true
   assert_flag "$policy_output" openapi true
+  assert_flag "$policy_output" operational_contract true
+  assert_flag "$policy_output" container true
 done
 
 for policy_storage_input in crates/hubuum-storage-postgres/tests/history_lifecycle.rs \
@@ -102,6 +106,11 @@ for policy_storage_input in crates/hubuum-storage-postgres/tests/history_lifecyc
   assert_flag "$policy_storage_output" code true
   assert_flag "$policy_storage_output" rust true
 done
+
+history_projection_output="$(bash "$classifier" src/models/history_lifecycle/operation_response_tests.rs)"
+assert_flag "$history_projection_output" code true
+assert_flag "$history_projection_output" rust true
+assert_flag "$history_projection_output" container true
 
 # The history capability is embedded in the finite operational metrics catalog.
 history_catalog_output="$(bash "$classifier" src/storage/context/history_lifecycle.rs)"

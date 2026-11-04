@@ -1,17 +1,15 @@
 use actix_web::{Responder, error::JsonPayloadError, get, http::StatusCode, post, put, web};
-use hubuum_storage_core::{
-    HistoryLifecycleOperationEvidence, HistoryPolicyPreview, HistoryPolicyRecord,
-    HistoryRetentionHold,
-};
+use hubuum_storage_core::{HistoryPolicyPreview, HistoryPolicyRecord, HistoryRetentionHold};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
 use crate::extractors::AdminAccess;
 use crate::models::history_lifecycle::{
-    HistoryLifecycleInspection, HistoryLifecycleInspectionRequest, HistoryPolicyApplicationRequest,
-    HistoryPolicyListRequest, HistoryPolicyPage, HistoryPolicyPreviewRequest,
-    HistoryRetentionHoldReleaseRequest, HistoryRetentionHoldRequest,
+    HistoryLifecycleInspection, HistoryLifecycleInspectionRequest,
+    HistoryLifecycleOperationResponse, HistoryPolicyApplicationRequest, HistoryPolicyListRequest,
+    HistoryPolicyPage, HistoryPolicyPreviewRequest, HistoryRetentionHoldReleaseRequest,
+    HistoryRetentionHoldRequest,
 };
 use crate::permissions::AppContext;
 use crate::services::deletion_recovery::history_policy;
@@ -117,7 +115,7 @@ pub async fn release_hold(
     ))
 }
 
-#[utoipa::path(get, path = "/api/v1/admin/history-lifecycle/operations/{operation_id}", tag = "admin", security(("bearer_auth" = [])), params(("operation_id" = String, Path, description = "Exact lifecycle audit operation/receipt UUID")), responses((status = 200, description = "Retained policy, hold or review evidence with original scope and clocks", body = HistoryLifecycleOperationEvidence), (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse), (status = 404, description = "Operation evidence unavailable", body = ApiErrorResponse)))]
+#[utoipa::path(get, path = "/api/v1/admin/history-lifecycle/operations/{operation_id}", tag = "admin", security(("bearer_auth" = [])), params(("operation_id" = String, Path, description = "Exact lifecycle audit operation/receipt UUID")), responses((status = 200, description = "Retained policy, hold or review evidence with original scope and clocks", body = HistoryLifecycleOperationResponse), (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse), (status = 404, description = "Operation evidence unavailable", body = ApiErrorResponse)))]
 #[get("/operations/{operation_id}")]
 pub async fn operation(
     context: AppContext,
@@ -125,7 +123,9 @@ pub async fn operation(
     identity: web::Path<uuid::Uuid>,
 ) -> Result<impl Responder, ApiError> {
     Ok(ApiResponse::new_no_store(
-        history_policy::operation(&context, &admin, identity.into_inner()).await?,
+        HistoryLifecycleOperationResponse::try_from(
+            history_policy::operation(&context, &admin, identity.into_inner()).await?,
+        )?,
         StatusCode::OK,
     ))
 }

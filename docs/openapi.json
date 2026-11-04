@@ -812,7 +812,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HistoryLifecycleOperationEvidence"
+                  "$ref": "#/components/schemas/HistoryLifecycleOperationResponse"
                 }
               }
             }
@@ -33025,38 +33025,13 @@
         "description": "Complete native encoded input size for one selected historical row, including\npayload and metadata. Preview identity-byte samples cannot establish it.",
         "minimum": 0
       },
-      "HistoryExpiryIntent": {
-        "type": "object",
-        "description": "Retain membership after cancellation, changed policy, holds and physical\ncompletion. Restored descendants remain excluded by immutable UUIDs.",
-        "required": [
-          "manifest",
-          "removals"
-        ],
-        "properties": {
-          "cancellation": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/HistoryExpiryCancellation"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "manifest": {
-            "$ref": "#/components/schemas/HistoryExpiryManifest"
-          },
-          "removals": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/HistoryExpiryRemovalReceipt"
-            }
-          }
-        }
+      "HistoryExpiryManifestDigest": {
+        "type": "string",
+        "description": "Digest of the original complete manifest, not a durability/removal receipt.",
+        "pattern": "^[0-9a-f]{64}$"
       },
-      "HistoryExpiryManifest": {
+      "HistoryExpiryManifestResponse": {
         "type": "object",
-        "description": "Finite membership, not a timestamp/allocated-ID progress watermark. No new\ncandidate may join this batch after the adapter admits its protected intent.",
         "required": [
           "identity",
           "run",
@@ -33086,7 +33061,7 @@
           "members": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/HistoryExpiryMember"
+              "$ref": "#/components/schemas/HistoryExpiryMemberResponse"
             }
           },
           "origin": {
@@ -33102,7 +33077,7 @@
           }
         }
       },
-      "HistoryExpiryMember": {
+      "HistoryExpiryMemberResponse": {
         "type": "object",
         "required": [
           "family",
@@ -33140,6 +33115,38 @@
           },
           "target": {
             "$ref": "#/components/schemas/StorageRecordIdentity"
+          }
+        }
+      },
+      "HistoryExpiryOperationRecord": {
+        "type": "object",
+        "required": [
+          "manifest",
+          "manifest_digest",
+          "removals"
+        ],
+        "properties": {
+          "cancellation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HistoryExpiryCancellation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/HistoryExpiryManifestResponse"
+          },
+          "manifest_digest": {
+            "$ref": "#/components/schemas/HistoryExpiryManifestDigest"
+          },
+          "removals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryExpiryRemovalReceipt"
+            }
           }
         }
       },
@@ -33440,7 +33447,7 @@
         },
         "additionalProperties": false
       },
-      "HistoryLifecycleOperationEvidence": {
+      "HistoryLifecycleOperationResponse": {
         "oneOf": [
           {
             "type": "object",
@@ -33492,7 +33499,7 @@
                 ]
               },
               "record": {
-                "$ref": "#/components/schemas/HistoryExpiryIntent"
+                "$ref": "#/components/schemas/HistoryExpiryOperationRecord"
               }
             }
           },
@@ -33527,7 +33534,7 @@
             }
           }
         ],
-        "description": "Bounded administrator evidence for one exact lifecycle operation. Applied\nreview proof remains available through its policy record after preview expiry."
+        "description": "Public projection of administrator evidence. Original authorization facts\nremain outside this transport shape; protection is independently verified."
       },
       "HistoryLogicalBytes": {
         "type": "string",

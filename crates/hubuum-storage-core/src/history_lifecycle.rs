@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{StorageIdentityHistoryKind, StorageValidationError};
 
+mod authorization;
+pub use authorization::*;
 mod online_journal;
 pub use online_journal::*;
 mod online_intent;

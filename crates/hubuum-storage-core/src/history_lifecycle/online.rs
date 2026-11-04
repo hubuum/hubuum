@@ -160,6 +160,8 @@ pub struct HistoryExpiryMember {
     attributions: Vec<HistoryScopeAttribution>,
     policies: Vec<HistoryPolicyReference>,
     input_bytes: HistoryExpiryInputBytes,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    object_authorization: Option<HistoryObjectAuthorizationFacts>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -171,6 +173,8 @@ struct MemberInput {
     attributions: Vec<HistoryScopeAttribution>,
     policies: Vec<HistoryPolicyReference>,
     input_bytes: HistoryExpiryInputBytes,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    object_authorization: Option<HistoryObjectAuthorizationFacts>,
 }
 impl TryFrom<MemberInput> for HistoryExpiryMember {
     type Error = StorageValidationError;
@@ -183,6 +187,7 @@ impl TryFrom<MemberInput> for HistoryExpiryMember {
             attributions: value.attributions,
             policies: value.policies,
             input_bytes: value.input_bytes,
+            object_authorization: value.object_authorization,
         };
         member.validate()?;
         Ok(member)
@@ -204,6 +209,16 @@ impl HistoryExpiryMember {
         {
             return Err(invalid(
                 "Retained expiry membership lacks exact anchor/endpoint evidence",
+            ));
+        }
+        if let Some(facts) = &self.object_authorization
+            && (self.family != StorageIdentityHistoryKind::Object
+                || self.target != facts.target()
+                || &self.read_span != facts.read_span()
+                || self.attributions.as_slice() != [facts.attribution()])
+        {
+            return Err(invalid(
+                "Retained object authorization differs from exact membership",
             ));
         }
         for (source, attribution) in self.policies.iter().zip(&self.attributions) {
@@ -236,6 +251,9 @@ impl HistoryExpiryMember {
     }
     pub fn policies(&self) -> &[HistoryPolicyReference] {
         &self.policies
+    }
+    pub const fn object_authorization(&self) -> Option<&HistoryObjectAuthorizationFacts> {
+        self.object_authorization.as_ref()
     }
     pub const fn input_bytes(&self) -> HistoryExpiryInputBytes {
         self.input_bytes
@@ -407,6 +425,7 @@ pub struct HistoryExpirySelection<'a> {
     scan: HistoryLifecycleScan,
     manifest: HistoryExpiryManifest,
     identities: BTreeSet<([u8; 16], [u8; 16])>,
+    retained_bytes: usize,
 }
 impl<'a> HistoryExpirySelection<'a> {
     pub fn new(
@@ -418,20 +437,30 @@ impl<'a> HistoryExpirySelection<'a> {
         if run.get_variant() != uuid::Variant::RFC4122 || run.get_version().is_none() {
             return Err(invalid("History expiry run requires an RFC UUID"));
         }
+        let manifest = HistoryExpiryManifest {
+            identity: Uuid::new_v4(),
+            run,
+            origin,
+            key: scan.key(),
+            fence: snapshot.fence(),
+            selected_at: snapshot.observed_at(),
+            input_bytes: 0,
+            members: Vec::new(),
+        };
+        let retained_bytes = serde_json::to_vec(&manifest)
+            .map_err(|_| invalid("Cannot encode expiry manifest"))?
+            .len();
+        if retained_bytes > HistoryExpiryManifest::MAX_BYTES {
+            return Err(invalid(
+                "Expiry manifest header exceeds its encoded byte bound",
+            ));
+        }
         Ok(Self {
             snapshot,
-            manifest: HistoryExpiryManifest {
-                identity: Uuid::new_v4(),
-                run,
-                origin,
-                key: scan.key(),
-                fence: snapshot.fence(),
-                selected_at: snapshot.observed_at(),
-                input_bytes: 0,
-                members: Vec::new(),
-            },
+            manifest,
             scan,
             identities: BTreeSet::new(),
+            retained_bytes,
         })
     }
 
@@ -483,9 +512,7 @@ impl<'a> HistoryExpirySelection<'a> {
                     .ok_or_else(|| invalid("Eligible expiry endpoint lacks governing policy"))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        self.identities.insert(identity);
-        self.manifest.input_bytes += input_bytes.value();
-        self.manifest.members.push(HistoryExpiryMember {
+        let member = HistoryExpiryMember {
             family: candidate.family(),
             target: candidate.target(),
             anchor,
@@ -493,7 +520,26 @@ impl<'a> HistoryExpirySelection<'a> {
             attributions: candidate.attributions().to_vec(),
             policies,
             input_bytes,
-        });
+            object_authorization: candidate.object_authorization().cloned(),
+        };
+        let next_input = self.manifest.input_bytes + input_bytes.value();
+        let member_bytes = serde_json::to_vec(&member)
+            .map_err(|_| invalid("Cannot encode exact expiry membership"))?
+            .len();
+        // Fixed manifest fields are immutable; only membership commas and the
+        // decimal input-byte total change. Count each encoded member once.
+        let next_retained = self.retained_bytes
+            + member_bytes
+            + usize::from(!self.manifest.members.is_empty())
+            + next_input.to_string().len()
+            - self.manifest.input_bytes.to_string().len();
+        if next_retained > HistoryExpiryManifest::MAX_BYTES {
+            return Ok(HistoryExpirySelectionOutcome::BudgetReached);
+        }
+        self.identities.insert(identity);
+        self.manifest.input_bytes = next_input;
+        self.retained_bytes = next_retained;
+        self.manifest.members.push(member);
         Ok(HistoryExpirySelectionOutcome::Selected)
     }
 
