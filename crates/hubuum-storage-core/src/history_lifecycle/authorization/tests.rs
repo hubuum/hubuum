@@ -462,3 +462,203 @@ fn recovery_cannot_strip_or_backfill_retained_authorization() {
     assert!(retained.merge(&legacy).is_err());
     assert!(legacy.merge(&retained).is_err());
 }
+
+fn population_gap_fixture() -> (
+    HistoryExpiryIntent,
+    StorageRecordIdentity,
+    crate::StorageClassObjectsAsOfQuery,
+    HistoryReadEpoch,
+) {
+    let fixture = Fixture::new();
+    let snapshot = fixture.snapshot();
+    let facts =
+        HistoryObjectAuthorizationFacts::capture(fixture.row(1, "original_gap_name")).unwrap();
+    let target = facts.target();
+    let mut selection = HistoryExpirySelection::new(
+        Uuid::new_v4(),
+        HistoryExpiryOrigin::Manual {
+            principal: PrincipalIdentity::generate(),
+        },
+        HistoryLifecycleScan::new(key(), 1).unwrap(),
+        &snapshot,
+    )
+    .unwrap();
+    assert!(matches!(
+        selection
+            .consider(
+                candidate(&facts).with_object_authorization(facts).unwrap(),
+                HistoryExpiryInputBytes::new(1024).unwrap(),
+                &[],
+            )
+            .unwrap(),
+        HistoryExpirySelectionOutcome::Selected
+    ));
+    let query = crate::StorageClassObjectsAsOfQuery::try_new(
+        ClassId::new(1).unwrap(),
+        at(125),
+        hubuum_query::QueryOptions::new(vec![], vec![], Some(2), None, false).unwrap(),
+    )
+    .unwrap()
+    .for_resource(fixture.scope.class().unwrap());
+    let runtime = crate::RuntimeRegistration::generate_history_aware();
+    let epoch = HistoryReadEpoch::new(
+        crate::StorageExecutionPermit::new(
+            Some(runtime.owner()),
+            crate::ApplicationFence::new(snapshot.fence().incarnation(), 0).unwrap(),
+        ),
+        snapshot.fence(),
+        HistoryPublicationGeneration::new(0).unwrap(),
+    )
+    .unwrap();
+    (
+        HistoryExpiryIntent::new(selection.finish().unwrap()),
+        target,
+        query,
+        epoch,
+    )
+}
+
+#[test]
+fn population_gap_preserves_epoch_and_original_facts_without_authorizing_absence() {
+    let (intent, target, query, epoch) = population_gap_fixture();
+    let gap =
+        HistoryObjectPopulationGap::from_retained_member(&intent, target, &query, epoch.clone())
+            .unwrap();
+    assert!(gap.matches_query(&query));
+    assert_eq!(gap.epoch(), &epoch);
+    assert_eq!(gap.facts().name(), "original_gap_name");
+    assert_eq!(gap.intent(), intent.identity());
+    let error = crate::StorageError::history_population_gap(gap);
+    assert_eq!(error.kind(), crate::StorageErrorKind::Unavailable);
+    assert!(!format!("{error:?}").contains("original_gap_name"));
+    assert!(error.history_population_gap_evidence().is_some());
+}
+
+#[rstest]
+#[case::missing_original("missing_original")]
+#[case::different_original("different_original")]
+#[case::different_integer("different_integer")]
+#[case::before_interval("before_interval")]
+#[case::closed_end("closed_end")]
+#[case::hidden_collection("hidden_collection")]
+fn population_gap_rejects_changed_original_selection(#[case] change: &str) {
+    let (intent, target, original, epoch) = population_gap_fixture();
+    let query = crate::StorageClassObjectsAsOfQuery::try_new(
+        ClassId::new(if change == "different_integer" { 2 } else { 1 }).unwrap(),
+        match change {
+            "before_interval" => at(99),
+            "closed_end" => at(150),
+            _ => at(125),
+        },
+        hubuum_query::QueryOptions::new(vec![], vec![], Some(2), None, false).unwrap(),
+    )
+    .unwrap();
+    let query = match change {
+        "missing_original" => query,
+        "different_original" => query.for_resource(ResourceIdentity::generate()),
+        _ => query.for_resource(original.expected_resource().unwrap()),
+    };
+    let query = if change == "hidden_collection" {
+        query.visibility(crate::StorageHistoryCollectionScope::Visible(vec![]), false)
+    } else {
+        query
+    };
+    assert!(
+        HistoryObjectPopulationGap::from_retained_member(&intent, target, &query, epoch).is_err()
+    );
+}
+
+#[test]
+fn population_gap_does_not_backfill_missing_retained_facts() {
+    let (intent, target, query, epoch) = population_gap_fixture();
+    let mut stored = serde_json::to_value(intent).unwrap();
+    stored["manifest"]["members"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("object_authorization");
+    let old: HistoryExpiryIntent = serde_json::from_value(stored).unwrap();
+    assert!(
+        HistoryObjectPopulationGap::from_retained_member(&old, target, &query, epoch.clone())
+            .is_err()
+    );
+    let journal = HistoryExpiryJournal::new(vec![old]).unwrap();
+    assert!(HistoryObjectPopulationGap::for_population(&journal, &query, epoch).is_err());
+}
+
+fn filled_small_population_manifest(
+    fixture: &Fixture,
+    snapshot: &HistoryLifecycleSnapshot,
+    offset: i32,
+) -> HistoryExpiryManifest {
+    let mut selection = HistoryExpirySelection::new(
+        Uuid::new_v4(),
+        HistoryExpiryOrigin::Manual {
+            principal: PrincipalIdentity::generate(),
+        },
+        HistoryLifecycleScan::new(key(), 1000).unwrap(),
+        snapshot,
+    )
+    .unwrap();
+    for index in 1..=1000 {
+        let facts =
+            HistoryObjectAuthorizationFacts::capture(fixture.row(offset + index, "n")).unwrap();
+        // Logical budget fixture only; no native full-row measurement claim.
+        match selection
+            .consider(
+                candidate(&facts).with_object_authorization(facts).unwrap(),
+                HistoryExpiryInputBytes::new(1).unwrap(),
+                &[],
+            )
+            .unwrap()
+        {
+            HistoryExpirySelectionOutcome::Selected => {}
+            HistoryExpirySelectionOutcome::BudgetReached => break,
+            HistoryExpirySelectionOutcome::Blocked(_) => panic!("Fixture must be eligible"),
+        }
+    }
+    selection.finish().unwrap()
+}
+
+#[rstest]
+#[case::fact_bytes(true)]
+#[case::candidate_rows(false)]
+fn population_gap_refuses_coverage_beyond_retained_read_bounds(#[case] large_names: bool) {
+    let fixture = Fixture::new();
+    let snapshot = fixture.snapshot();
+    let manifests = (0..2)
+        .map(|index| {
+            if large_names {
+                filled_manifest(&fixture, &snapshot, index * 1000)
+            } else {
+                filled_small_population_manifest(&fixture, &snapshot, index * 1000)
+            }
+        })
+        .map(HistoryExpiryIntent::new)
+        .collect::<Vec<_>>();
+    let query = crate::StorageClassObjectsAsOfQuery::try_new(
+        ClassId::new(1).unwrap(),
+        at(125),
+        hubuum_query::QueryOptions::new(vec![], vec![], Some(2), None, false).unwrap(),
+    )
+    .unwrap()
+    .for_resource(fixture.scope.class().unwrap());
+    let registration = crate::RuntimeRegistration::generate_history_aware();
+    let epoch = HistoryReadEpoch::new(
+        crate::StorageExecutionPermit::new(
+            Some(registration.owner()),
+            crate::ApplicationFence::new(snapshot.fence().incarnation(), 0).unwrap(),
+        ),
+        snapshot.fence(),
+        HistoryPublicationGeneration::new(0).unwrap(),
+    )
+    .unwrap();
+    let within = HistoryExpiryJournal::new(vec![manifests[0].clone()]).unwrap();
+    assert_eq!(
+        HistoryObjectPopulationGap::for_population(&within, &query, epoch.clone())
+            .unwrap()
+            .len(),
+        manifests[0].manifest().members().len()
+    );
+    let exceeded = HistoryExpiryJournal::new(manifests).unwrap();
+    assert!(HistoryObjectPopulationGap::for_population(&exceeded, &query, epoch).is_err());
+}

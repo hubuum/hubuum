@@ -1011,3 +1011,259 @@ mod read_predicates {
         assert_eq!(result.unwrap(), expected_visible);
     }
 }
+
+// Read-gate fixture only. The owner installs retained authority and removes its
+// exact closed setup row; no protected executor or first-removal proof is made.
+#[rstest::rstest]
+#[case::absent_copy("absent")]
+#[case::missing_original_facts("missing_facts")]
+#[case::stale_original_class("stale_class")]
+#[tokio::test]
+async fn native_population_gap_preserves_original_facts_after_copy_absence(
+    #[case] condition: &str,
+) {
+    use diesel::sql_types::{BigInt, Integer};
+    use hubuum_domain::{ClassId, ObjectId, ResourceIdentity};
+    use hubuum_query::QueryOptions;
+
+    #[derive(QueryableByName)]
+    struct Id {
+        #[diesel(sql_type = Integer)]
+        id: i32,
+    }
+    #[derive(QueryableByName)]
+    struct Measured {
+        #[diesel(sql_type = BigInt)]
+        bytes: i64,
+    }
+    let _guard = CONTROL_LOCK.lock().await;
+    let fixture = Fixture::new().await;
+    let registration = fixture
+        .storage
+        .register_history_runtime(None)
+        .await
+        .unwrap();
+    let permit = fixture
+        .storage
+        .capture_application_execution(Some(registration.owner()))
+        .await
+        .unwrap();
+    let scope = StorageExecutionScope::default().with_application_access(permit);
+    let original = fixture.storage.capture_history_lifecycle().await.unwrap();
+    let key = HistoryPolicyKey::new(
+        StorageIdentityHistoryKind::Object,
+        HistoryPolicyScope::Deployment,
+    )
+    .unwrap();
+    let principal = PrincipalIdentity::generate();
+    let change = original
+        .control()
+        .apply(
+            HistoryPolicyApplyRequest::new(
+                HistoryPolicyChange::new(
+                    key,
+                    HistoryPolicyRevision::new(0).unwrap(),
+                    HistoryPolicyBinding::Expire {
+                        trigger: HistoryExpiryTrigger::Age {
+                            age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+                            deleted_age_seconds: None,
+                        },
+                        minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+                    },
+                    HistoryPolicyApplication::Prospective,
+                )
+                .unwrap(),
+                None,
+            ),
+            principal,
+            original.fence(),
+            original.observed_at(),
+        )
+        .unwrap();
+    fixture
+        .storage
+        .run_in_scope(
+            scope.clone(),
+            fixture.storage.commit_history_lifecycle(change),
+        )
+        .await
+        .unwrap();
+    let (class, object) = with_transaction(&fixture.owner_pool, async |connection| {
+        owner(connection).await?;
+        let class = sql_query("INSERT INTO public.hubuumclass(name,description,collection_id) VALUES($1,'population gap fixture',1) RETURNING id")
+            .bind::<Text,_>(format!("population_gap_{}",Uuid::new_v4().simple()))
+            .get_result::<Id>(connection).await?.id;
+        let object = sql_query("INSERT INTO public.hubuumobject(name,description,collection_id,hubuum_class_id,data) VALUES('original_member','gap fixture',1,$1,'{}') RETURNING id")
+            .bind::<Integer,_>(class).get_result::<Id>(connection).await?.id;
+        Ok::<_,PostgresStorageError>((class,object))
+    }).await.unwrap();
+    // A separate committed mutation creates a real nonempty closed interval.
+    with_transaction(&fixture.owner_pool, async |connection| {
+        owner(connection).await?;
+        sql_query("UPDATE public.hubuumobject SET name='current_member' WHERE id=$1")
+            .bind::<Integer, _>(object)
+            .execute(connection)
+            .await?;
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
+    .unwrap();
+    // Unbound setup read only; the query under test below uses a live V1 owner.
+    let row = fixture
+        .storage
+        .list_object_history(StorageObjectHistoryListQuery::new(
+            ObjectId::new(object).unwrap(),
+            ClassId::new(class).unwrap(),
+            QueryOptions::new(vec![], vec![], Some(10), None, false).unwrap(),
+            StorageHistoryCollectionScope::All,
+        ))
+        .await
+        .unwrap()
+        .into_parts()
+        .0
+        .into_iter()
+        .find(|row| row.clone().into_parts().1.valid_to().is_some())
+        .unwrap();
+    let metadata = row.clone().into_parts().1;
+    let history_id = metadata.history_entry_id();
+    let at = metadata.valid_from();
+    let facts = HistoryObjectAuthorizationFacts::capture(row).unwrap();
+    let target = facts.target();
+    let selected = fixture.storage.capture_history_lifecycle().await.unwrap();
+    let candidate = HistoryExpiryCandidate::new(
+        StorageIdentityHistoryKind::Object,
+        target,
+        Some(HistoryRetentionAnchor::Closed(metadata.valid_to().unwrap())),
+        vec![facts.attribution()],
+        false,
+    )
+    .unwrap()
+    .with_read_span(facts.read_span().clone())
+    .unwrap();
+    let candidate = if condition == "missing_facts" {
+        candidate
+    } else {
+        candidate.with_object_authorization(facts.clone()).unwrap()
+    };
+    let input = with_transaction(&fixture.owner_pool, async |connection| {
+        owner(connection).await?;
+        Ok::<_,PostgresStorageError>(sql_query("SELECT octet_length(to_jsonb(h)::TEXT)::BIGINT AS bytes FROM public.hubuumobject_history h WHERE history_id=$1")
+            .bind::<BigInt,_>(history_id.id()).get_result::<Measured>(connection).await?.bytes)
+    }).await.unwrap();
+    let mut selection = HistoryExpirySelection::new(
+        Uuid::new_v4(),
+        HistoryExpiryOrigin::Manual { principal },
+        HistoryLifecycleScan::new(key, 1).unwrap(),
+        &selected,
+    )
+    .unwrap();
+    assert!(matches!(
+        selection
+            .consider(
+                candidate,
+                HistoryExpiryInputBytes::new(input as u64).unwrap(),
+                &[]
+            )
+            .unwrap(),
+        HistoryExpirySelectionOutcome::Selected
+    ));
+    let retained = selected
+        .control()
+        .admit_expiry(selection.finish().unwrap(), selected.fence())
+        .unwrap();
+    with_transaction(&fixture.owner_pool, async |connection| {
+        owner(connection).await?;
+        sql_query("UPDATE hubuum_control.history_lifecycle_control SET material=$1 WHERE id=1")
+            .bind::<Jsonb, _>(serde_json::to_value(retained.next()).unwrap())
+            .execute(connection)
+            .await?;
+        sql_query("DELETE FROM public.hubuumobject_history WHERE history_id=$1")
+            .bind::<BigInt, _>(history_id.id())
+            .execute(connection)
+            .await?;
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
+    .unwrap();
+    let publication = fixture
+        .storage
+        .run_in_scope(
+            scope.clone(),
+            fixture
+                .storage
+                .admit_history_publication(HistoryPublicationKind::TaskOutput),
+        )
+        .await
+        .unwrap();
+    let original_class = facts.attribution().class().unwrap();
+    let query = StorageClassObjectsAsOfQuery::try_new(
+        ClassId::new(class).unwrap(),
+        at,
+        QueryOptions::new(vec![], vec![], Some(2), None, false).unwrap(),
+    )
+    .unwrap()
+    .for_resource(if condition == "stale_class" {
+        ResourceIdentity::generate()
+    } else {
+        original_class
+    });
+    let result = fixture
+        .storage
+        .run_in_scope(
+            scope.with_history_read(publication.context()),
+            fixture.storage.list_class_objects_as_of(query.clone()),
+        )
+        .await;
+    let after = fixture.storage.capture_history_lifecycle().await.unwrap();
+    // Registry-only fixture: all issued SQL has returned and no publisher exists.
+    let settled = publication
+        .after_drained(std::future::ready(Ok(())), std::future::ready(Ok(())))
+        .await
+        .unwrap();
+    fixture
+        .storage
+        .settle_history_publication(settled)
+        .await
+        .unwrap();
+    fixture
+        .storage
+        .unregister_runtime(registration)
+        .await
+        .unwrap();
+    with_transaction(&fixture.owner_pool, async |connection| {
+        owner(connection).await?;
+        sql_query("DELETE FROM public.hubuumobject WHERE id=$1")
+            .bind::<Integer, _>(object)
+            .execute(connection)
+            .await?;
+        sql_query("DELETE FROM public.hubuumclass WHERE id=$1")
+            .bind::<Integer, _>(class)
+            .execute(connection)
+            .await?;
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
+    .unwrap();
+    fixture.restore().await;
+    let error = result
+        .err()
+        .expect("Incomplete population must not return success");
+    assert_eq!(error.kind(), StorageErrorKind::Unavailable);
+    if condition == "absent" {
+        let gap = error
+            .history_population_gap_evidence()
+            .expect("Exact original facts survive copy absence");
+        assert_eq!(gap.facts(), &facts);
+        assert!(gap.matches_query(&query));
+        assert!(!format!("{error:?}").contains("original_member"));
+    } else {
+        assert!(error.history_population_gap_evidence().is_none());
+    }
+    let intents = after.control().authority().expiry().intents();
+    assert_eq!(intents.len(), 1);
+    assert!(
+        intents[0].removals().is_empty(),
+        "Fixture absence cannot create a first-removal receipt or clock"
+    );
+    assert_eq!(intents[0].manifest().members()[0].target(), target);
+}

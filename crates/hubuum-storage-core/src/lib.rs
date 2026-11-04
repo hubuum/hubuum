@@ -499,9 +499,24 @@ pub struct StorageError {
     current_revision: Option<ResourceRevision>,
     task_capacity: Option<TaskCapacityRejection>,
     api_request: Option<ApiRequestRejection>,
+    history_population_gap: Option<Box<HistoryObjectPopulationGap>>,
 }
 
 impl StorageError {
+    /// Retained policy inputs must be authorized before projecting absence.
+    /// Generic error translation deliberately remains unavailable.
+    #[must_use]
+    pub fn history_population_gap(evidence: HistoryObjectPopulationGap) -> Self {
+        let mut error = Self::unavailable("Historical population requires retained authorization");
+        error.history_population_gap = Some(Box::new(evidence));
+        error
+    }
+
+    #[must_use]
+    pub fn history_population_gap_evidence(&self) -> Option<&HistoryObjectPopulationGap> {
+        self.history_population_gap.as_deref()
+    }
+
     #[must_use]
     pub fn api_request(reason: ApiRequestRejection) -> Self {
         let kind = match reason {
@@ -660,6 +675,7 @@ impl StorageError {
             current_revision,
             task_capacity: None,
             api_request: None,
+            history_population_gap: None,
         }
     }
 

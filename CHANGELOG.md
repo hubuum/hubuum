@@ -14,6 +14,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Historical population reads preserve explicitly selected logical class UUIDs.
+  Retained expiry gaps require original authorization facts and configured
+  permission checks; unproved correspondence remains unavailable.
 - Scoped history policy revisions, bounded deadline inspection and issued
   preview/application with independent recovery protection; administrator holds
   preserve original creation and expiry clocks. Policy and hold transitions

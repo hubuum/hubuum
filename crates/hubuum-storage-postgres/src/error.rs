@@ -5,8 +5,9 @@ use diesel_async::pooled_connection::bb8::RunError as PoolError;
 use hubuum_domain::{JsonSchemaError, JsonSchemaErrorKind, PositiveIdError, ResourceRevision};
 use hubuum_events_core::{AuditDocumentError, EventIdentifierError};
 use hubuum_storage_core::{
-    ApiRequestRejection, StorageCandidatePage, StorageCandidatePageLimit, StorageError,
-    StorageErrorKind, StoragePage, StorageValidationError, TaskCapacityRejection,
+    ApiRequestRejection, HistoryObjectPopulationGap, StorageCandidatePage,
+    StorageCandidatePageLimit, StorageError, StorageErrorKind, StoragePage, StorageValidationError,
+    TaskCapacityRejection,
 };
 use hubuum_task_core::TaskStopReason;
 use tracing::{debug, error};
@@ -26,6 +27,7 @@ pub struct PostgresStorageError {
     current_revision: Option<ResourceRevision>,
     task_capacity: Option<TaskCapacityRejection>,
     api_request: Option<ApiRequestRejection>,
+    history_population_gap: Option<Box<HistoryObjectPopulationGap>>,
 }
 
 impl PostgresStorageError {
@@ -55,6 +57,7 @@ impl PostgresStorageError {
             current_revision,
             task_capacity: None,
             api_request: None,
+            history_population_gap: None,
         }
     }
 
@@ -245,10 +248,16 @@ impl From<StorageError> for PostgresStorageError {
             converted.api_request = Some(reason);
             return converted;
         }
+        let gap = error.history_population_gap_evidence().cloned();
         let (kind, message, current_revision, task_capacity) = error.into_parts();
         if let Some(reason) = task_capacity {
             let mut converted = Self::new(kind, message, current_revision);
             converted.task_capacity = Some(reason);
+            return converted;
+        }
+        if let Some(proof) = gap {
+            let mut converted = Self::unavailable(message);
+            converted.history_population_gap = Some(Box::new(proof));
             return converted;
         }
         match kind {
@@ -432,6 +441,9 @@ impl From<PostgresStorageError> for StorageError {
         }
         if let Some(reason) = error.task_capacity {
             return Self::task_capacity(reason);
+        }
+        if let Some(proof) = error.history_population_gap {
+            return Self::history_population_gap(*proof);
         }
         match error.kind {
             StorageErrorKind::TaskCancelled => Self::task_stopped(TaskStopReason::Cancelled),

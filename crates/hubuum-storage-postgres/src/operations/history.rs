@@ -912,6 +912,112 @@ async fn require_population_class_binding(
     Ok(())
 }
 
+async fn require_population_gap_authorization(
+    connection: &mut crate::PostgresConnection,
+    query: &StorageClassObjectsAsOfQuery,
+) -> Result<(), PostgresStorageError> {
+    use std::collections::BTreeMap;
+
+    use diesel::sql_types::{Array, BigInt, Integer, Jsonb};
+    use hubuum_storage_core::{HistoryObjectPopulationGap, StorageError};
+
+    let scope = crate::runtime::current_execution_scope();
+    let Some(context) = scope.history_read_override() else {
+        return Ok(());
+    };
+    // Productive entry already acquired history authority before API ownership.
+    // Capture on this same snapshot; do not open an exempt control transaction.
+    let snapshot = crate::backend::capture_history_lifecycle_on(connection).await?;
+    if snapshot.fence() != context.epoch().history() {
+        return Err(PostgresStorageError::unavailable(
+            "Original population history authority changed",
+        ));
+    }
+    let gaps = HistoryObjectPopulationGap::for_population(
+        snapshot.control().authority().expiry(),
+        query,
+        context.epoch().clone(),
+    )
+    .map_err(|_| {
+        PostgresStorageError::unavailable(
+            "Retained population lacks bounded original authorization facts",
+        )
+    })?;
+    if gaps.is_empty() {
+        return Ok(());
+    }
+    #[derive(diesel::QueryableByName)]
+    struct CurrentObject {
+        #[diesel(sql_type = Integer)]
+        id: i32,
+        #[diesel(sql_type = Integer)]
+        collection_id: i32,
+        #[diesel(sql_type = Nullable<Jsonb>)]
+        logical_identity: Option<Value>,
+        #[diesel(sql_type = BigInt)]
+        encoded_bytes: i64,
+    }
+    let ids = gaps
+        .iter()
+        .map(|gap| gap.facts().object_id().id())
+        .collect::<Vec<_>>();
+    // Bounded by the validated candidate count. Guard metadata transfer in SQL
+    // before decoding: at most 64 KiB per identity and 1 MiB across the batch.
+    let current = diesel::sql_query(
+        "SELECT id,collection_id,encoded_bytes,
+            CASE WHEN encoded_bytes<=65536 AND
+                SUM(encoded_bytes) OVER(ORDER BY id)<=1048576
+            THEN logical_identity END AS logical_identity
+         FROM (SELECT id,collection_id,logical_identity,
+             coalesce(octet_length(logical_identity::TEXT),0)::BIGINT AS encoded_bytes
+             FROM public.hubuumobject WHERE id=ANY($1)) bounded",
+    )
+    .bind::<Array<Integer>, _>(ids)
+    .load::<CurrentObject>(connection)
+    .await?
+    .into_iter()
+    .map(|row| (row.id, row))
+    .collect::<BTreeMap<_, _>>();
+    for gap in gaps {
+        if let Some(row) = current.get(&gap.facts().object_id().id()) {
+            if visible_collection_ids(query.collection_scope())
+                .is_some_and(|ids| !ids.contains(&row.collection_id))
+            {
+                continue;
+            }
+            let Some(raw_identity) = row
+                .logical_identity
+                .as_ref()
+                .filter(|_| row.encoded_bytes <= 65536)
+            else {
+                return Err(PostgresStorageError::unavailable(
+                    "Original population object correspondence is unproved or exceeds its bound",
+                ));
+            };
+            let identity: StorageIdentityEvidence = serde_json::from_value(raw_identity.clone())
+                .map_err(|error| {
+                    PostgresStorageError::invalid_persisted_value(
+                        "population object identity",
+                        error,
+                    )
+                })?;
+            if identity
+                .subject()
+                .and_then(|subject| subject.record_identity())
+                .is_none_or(|target| target.resource() != gap.facts().target().resource())
+            {
+                return Err(PostgresStorageError::unavailable(
+                    "Original population object correspondence changed",
+                ));
+            }
+        } else if !query.include_deleted() {
+            continue;
+        }
+        return Err(StorageError::history_population_gap(gap).into());
+    }
+    Ok(())
+}
+
 pub async fn list_class_objects_as_of(
     runtime: &PostgresRuntime,
     query: StorageClassObjectsAsOfQuery,
@@ -921,6 +1027,7 @@ pub async fn list_class_objects_as_of(
     runtime
         .with_read_only_snapshot(async |connection| {
             require_population_class_binding(connection, &query).await?;
+            require_population_gap_authorization(connection, &query).await?;
             let visible = sql::<Bool>("public.hubuum_history_as_of_visible('object',hubuumobject_history.logical_identity,")
                 .bind::<Timestamptz, _>(query.at())
                 .sql(",hubuumobject_history.valid_from)");
@@ -930,6 +1037,14 @@ pub async fn list_class_objects_as_of(
             .get_result::<bool>(connection)
             .await?;
             if expired {
+                if crate::runtime::current_execution_scope()
+                    .history_read_override()
+                    .is_some()
+                {
+                    return Err(PostgresStorageError::unavailable(
+                        "Expired population lacks original authorization evidence",
+                    ));
+                }
                 return Err(PostgresStorageError::not_found(
                     "Historical object population contains an expired version",
                 ));

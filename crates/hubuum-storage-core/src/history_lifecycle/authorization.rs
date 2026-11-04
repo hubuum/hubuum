@@ -268,5 +268,146 @@ impl HistoryObjectAuthorizationFacts {
     }
 }
 
+/// One retained population gap, bound to the original productive read epoch.
+/// This is neither caller authorization nor permission to expose absence. The
+/// adapter must establish exact retained membership under history authority;
+/// the service must validate original correspondence and configured policy.
+#[derive(Clone, Eq, PartialEq)]
+pub struct HistoryObjectPopulationGap {
+    intent: uuid::Uuid,
+    facts: HistoryObjectAuthorizationFacts,
+    class: ResourceIdentity,
+    at: DateTime<Utc>,
+    epoch: HistoryReadEpoch,
+}
+
+impl HistoryObjectPopulationGap {
+    pub const MAX_CANDIDATES: usize = 1000;
+    pub const MAX_FACT_BYTES: usize = 1024 * 1024;
+
+    /// Bounded retained authority candidates, before current visibility and
+    /// configured authorization. Missing old facts cannot establish absence.
+    pub fn for_population(
+        journal: &HistoryExpiryJournal,
+        query: &crate::StorageClassObjectsAsOfQuery,
+        epoch: HistoryReadEpoch,
+    ) -> Result<Vec<Self>, StorageValidationError> {
+        let class = query.expected_resource().ok_or_else(|| {
+            invalid("Population gap requires the original logical class identity")
+        })?;
+        let mut gaps = Vec::new();
+        let mut bytes = 0;
+        for intent in journal.intents() {
+            for member in intent.manifest().members() {
+                if member.family() != StorageIdentityHistoryKind::Object
+                    || !matches!(member.anchor(), HistoryRetentionAnchor::Closed(_))
+                    || !member.read_span().contains(query.at())
+                {
+                    continue;
+                }
+                let facts = member.object_authorization().ok_or_else(|| {
+                    invalid("Retained object interval lacks original population facts")
+                })?;
+                if facts.attribution().class() != Some(class)
+                    || matches!(query.collection_scope(), crate::StorageHistoryCollectionScope::Visible(ids)
+                        if !ids.contains(&facts.collection_id()))
+                {
+                    continue;
+                }
+                let next_bytes = bytes + facts.encoded_bytes().value() as usize;
+                if gaps.len() == Self::MAX_CANDIDATES || next_bytes > Self::MAX_FACT_BYTES {
+                    return Err(invalid(
+                        "Retained population candidates exceed the read bound",
+                    ));
+                }
+                gaps.push(Self::from_retained_member(
+                    intent,
+                    member.target(),
+                    query,
+                    epoch.clone(),
+                )?);
+                bytes = next_bytes;
+            }
+        }
+        Ok(gaps)
+    }
+
+    /// Adapter boundary after validating the original read context, retained
+    /// authority and canonical class correspondence in the same snapshot.
+    /// Unsupported filters fail closed rather than inventing matching facts.
+    pub fn from_retained_member(
+        intent: &HistoryExpiryIntent,
+        target: StorageRecordIdentity,
+        query: &crate::StorageClassObjectsAsOfQuery,
+        epoch: HistoryReadEpoch,
+    ) -> Result<Self, StorageValidationError> {
+        let class = query.expected_resource().ok_or_else(|| {
+            invalid("Population gap requires the original logical class identity")
+        })?;
+        if !query.options().filters().is_empty() {
+            return Err(invalid(
+                "Retained population gap does not prove filtered selection",
+            ));
+        }
+        let member = intent
+            .manifest()
+            .members()
+            .iter()
+            .find(|member| {
+                member.family() == StorageIdentityHistoryKind::Object && member.target() == target
+            })
+            .ok_or_else(|| invalid("Population gap lacks exact retained membership"))?;
+        let facts = member.object_authorization().ok_or_else(|| {
+            invalid("Population gap lacks original historical authorization facts")
+        })?;
+        if facts.kind() != HistoryObjectAuthorizationKind::ClosedValue
+            || facts.attribution().class() != Some(class)
+            || facts.class_id() != query.class_id()
+            || !facts.read_span().contains(query.at())
+            || matches!(query.collection_scope(), crate::StorageHistoryCollectionScope::Visible(ids)
+                if !ids.contains(&facts.collection_id()))
+        {
+            return Err(invalid(
+                "Retained population gap differs from the original selection",
+            ));
+        }
+        Ok(Self {
+            intent: intent.identity(),
+            facts: facts.clone(),
+            class,
+            at: query.at(),
+            epoch,
+        })
+    }
+
+    pub fn matches_query(&self, query: &crate::StorageClassObjectsAsOfQuery) -> bool {
+        query.expected_resource() == Some(self.class)
+            && query.class_id() == self.facts.class_id()
+            && query.at() == self.at
+            && query.options().filters().is_empty()
+            && !matches!(query.collection_scope(), crate::StorageHistoryCollectionScope::Visible(ids)
+                if !ids.contains(&self.facts.collection_id()))
+    }
+
+    pub const fn intent(&self) -> uuid::Uuid {
+        self.intent
+    }
+    pub const fn facts(&self) -> &HistoryObjectAuthorizationFacts {
+        &self.facts
+    }
+    pub const fn epoch(&self) -> &HistoryReadEpoch {
+        &self.epoch
+    }
+}
+
+impl fmt::Debug for HistoryObjectPopulationGap {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HistoryObjectPopulationGap")
+            .field("encoded_fact_bytes", &self.facts.encoded_bytes())
+            .finish_non_exhaustive()
+    }
+}
+
 #[cfg(test)]
 mod tests;

@@ -1984,6 +1984,7 @@ impl HistoryStorage for MemoryStorage {
             .transpose()?;
         let state = self.state.read().await?;
         state.require_population_class_binding(&query)?;
+        state.require_population_gap_authorization(&query)?;
         let limit = options.limit().unwrap_or(usize::MAX);
         let mut selected = BinaryHeap::new();
         let mut total = 0;
@@ -2009,12 +2010,27 @@ impl HistoryStorage for MemoryStorage {
             if !visible {
                 continue;
             }
-            state.require_history_as_of(
-                entry.family(),
-                Some(&entry.logical_identity),
-                query.at(),
-                entry.valid_from,
-            )?;
+            state
+                .require_history_as_of(
+                    entry.family(),
+                    Some(&entry.logical_identity),
+                    query.at(),
+                    entry.valid_from,
+                )
+                .map_err(|error| {
+                    if error.kind() == StorageErrorKind::NotFound
+                        && self
+                            .current_execution_scope()
+                            .history_read_override()
+                            .is_some()
+                    {
+                        StorageError::unavailable(
+                            "Expired population lacks original authorization evidence",
+                        )
+                    } else {
+                        error
+                    }
+                })?;
             total += 1;
             let key = sorts
                 .iter()

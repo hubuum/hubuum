@@ -276,7 +276,7 @@ pub(super) async fn require_history_exposure_safe_on(
     Ok(control)
 }
 
-async fn capture_on(
+pub(crate) async fn capture_on(
     connection: &mut PostgresConnection,
 ) -> Result<HistoryLifecycleSnapshot, PostgresStorageError> {
     let row = sql_query("SELECT public.hubuum_history_lifecycle_capture() AS material")

@@ -509,6 +509,74 @@ impl MemoryState {
         Ok(())
     }
 
+    pub(super) fn require_population_gap_authorization(
+        &self,
+        query: &StorageClassObjectsAsOfQuery,
+    ) -> Result<(), StorageError> {
+        let context = MEMORY_EXECUTION_SCOPE
+            .try_with(|scope| scope.history_read_override().cloned())
+            .unwrap_or(None);
+        let Some(context) = context else {
+            return Ok(());
+        };
+        if self.history_lifecycle_snapshot()?.fence() != context.epoch().history() {
+            return Err(StorageError::unavailable(
+                "Original population history authority changed",
+            ));
+        }
+        let gaps = HistoryObjectPopulationGap::for_population(
+            self.history_lifecycle.authority().expiry(),
+            query,
+            context.epoch().clone(),
+        )
+        .map_err(|_| {
+            StorageError::unavailable(
+                "Retained population lacks bounded original authorization facts",
+            )
+        })?;
+        let mut bytes = 0;
+        for gap in gaps {
+            if let Some(current) = self.objects.get(&gap.facts().object_id().id()) {
+                if matches!(query.collection_scope(), StorageHistoryCollectionScope::Visible(ids)
+                    if !ids.contains(&current.collection_id()))
+                {
+                    continue;
+                }
+                let identity = self
+                    .logical_identities
+                    .record(StorageIdentityTarget::Resource {
+                        kind: StorageIdentityResourceKind::Object,
+                        id: ResourceId::new(current.id().id())
+                            .map_err(|error| StorageError::backend_failure(error.to_string()))?,
+                    })?;
+                let encoded = serde_json::to_vec(&identity)
+                    .map_err(|_| {
+                        StorageError::backend_failure("Cannot measure population identity")
+                    })?
+                    .len();
+                bytes += encoded;
+                if encoded > 65536 || bytes > HistoryObjectPopulationGap::MAX_FACT_BYTES {
+                    return Err(StorageError::unavailable(
+                        "Original population object correspondence exceeds its bound",
+                    ));
+                }
+                if identity
+                    .subject()
+                    .and_then(StorageIdentitySubject::record_identity)
+                    .is_none_or(|target| target.resource() != gap.facts().target().resource())
+                {
+                    return Err(StorageError::unavailable(
+                        "Original population object correspondence changed",
+                    ));
+                }
+            } else if !query.include_deleted() {
+                continue;
+            }
+            return Err(StorageError::history_population_gap(gap));
+        }
+        Ok(())
+    }
+
     pub(super) fn require_history_resource_binding(
         &self,
         family: StorageIdentityHistoryKind,
