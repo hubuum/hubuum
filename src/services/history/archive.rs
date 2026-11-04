@@ -230,14 +230,18 @@ impl HistoryArchiveQuery {
                     capture.authorization(),
                 )
                 .await?;
-                Ok(HistoryArchiveAdmission::Captured(Self {
+                let query = Self {
                     id: capture.id(),
                     principal,
                     collection: request.collection,
                     resource,
                     permit: permit.clone(),
                     storage: storage.clone(),
-                }))
+                };
+                // Configured authorization may outlive the original runtime or
+                // application fence. Never admit a handle using stale authority.
+                query.load_capture().await?;
+                Ok(HistoryArchiveAdmission::Captured(query))
             })
             .await
     }
@@ -252,11 +256,7 @@ impl HistoryArchiveQuery {
         {
             return Err(ApiError::NotFound("History request unavailable".into()));
         }
-        let capture = self
-            .storage
-            .history_archive_capture(self.id, self.principal, &self.permit)
-            .await?
-            .ok_or_else(|| ApiError::Gone("History request expired or unavailable".into()))?;
+        let capture = self.load_capture().await?;
         authorize(
             context,
             subject,
@@ -266,7 +266,15 @@ impl HistoryArchiveQuery {
             capture.authorization(),
         )
         .await?;
-        Ok(capture)
+        // Recheck the same permit after external policy work, including the
+        // adapter's current expiry observation, before exposing any projection.
+        self.load_capture().await
+    }
+    async fn load_capture(&self) -> Result<HistoryArchiveCapture, ApiError> {
+        self.storage
+            .history_archive_capture(self.id, self.principal, &self.permit)
+            .await?
+            .ok_or_else(|| ApiError::Gone("History request expired or unavailable".into()))
     }
     pub async fn execute<S: AuthzSubject + ?Sized>(
         self,

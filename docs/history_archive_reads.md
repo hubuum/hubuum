@@ -16,6 +16,8 @@ catalog generation and deadline across segment I/O. They never refresh an old
 permit. Configured permission checks apply before admission, execution and result
 access, including current and captured collection names. Changing authorization
 invalidates access without returning payloads or coverage to the rejected caller.
+The original runtime and application fence are rechecked after external
+authorization completes, before admitting a handle or returning a result.
 
 Migration `2026-11-03-000004_history_archive_reads` owns the protected, fixed-true
 `hubuum_archive_history_requires_legacy_runtime()` hook. It has no configuration
@@ -90,6 +92,8 @@ catalog changes never renew it. PostgreSQL observes expiry using its own clock.
 Expired capture staging is reaped in bounded admission work; a reaped or unknown
 handle fails access with the existing gone/unavailable operation error. This is
 not the later durable task-discovery or post-ready availability-window contract.
+PostgreSQL commits each bounded cleanup batch even when admission still lacks
+capacity, so later attempts can reclaim further expired captures.
 
 ## Bounds and remaining qualification
 

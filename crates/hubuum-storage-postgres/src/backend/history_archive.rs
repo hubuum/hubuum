@@ -170,7 +170,7 @@ async fn save_on(
     capture: &HistoryArchiveCapture,
     expected_work: Option<i64>,
     permit: &StorageExecutionPermit,
-) -> Result<(), PostgresStorageError> {
+) -> Result<bool, PostgresStorageError> {
     let saved = fenced!(
         sql_query(
             "SELECT public.hubuum_history_archive_capture_save($1,$2,$3,$4,$5,$6) AS allowed"
@@ -181,10 +181,7 @@ async fn save_on(
     )
     .get_result::<Allowed>(connection)
     .await?;
-    if !saved.allowed {
-        return Err(PostgresStorageError::from(capture.staging_budget_error()));
-    }
-    Ok(())
+    Ok(saved.allowed)
 }
 impl PostgresStorage {
     fn require_archive_owner(&self, permit: &StorageExecutionPermit) -> Result<(), StorageError> {
@@ -253,7 +250,8 @@ impl HistoryArchiveStorage for PostgresStorage {
         permit: &StorageExecutionPermit,
     ) -> Result<HistoryArchiveCapture, StorageError> {
         self.require_archive_owner(permit)?;
-        self.runtime()
+        let (capture, saved) = self
+            .runtime()
             .with_transaction(async move |connection| {
                 let catalog =
                     catalog_on(connection, request.selection().resource(), true, permit).await?;
@@ -264,11 +262,18 @@ impl HistoryArchiveStorage for PostgresStorage {
                     .recorded_at;
                 let capture =
                     HistoryArchiveCapture::capture(request, &catalog, permit, input, now)?;
-                save_on(connection, &capture, None, permit).await?;
-                Ok::<_, PostgresStorageError>(capture)
+                let saved = save_on(connection, &capture, None, permit).await?;
+                // Capacity rejection must commit the bounded expired-pin cleanup
+                // so later admissions can reclaim the next batch.
+                Ok::<_, PostgresStorageError>((capture, saved))
             })
             .await
-            .map_err(StorageError::from)
+            .map_err(StorageError::from)?;
+        if saved {
+            Ok(capture)
+        } else {
+            Err(capture.staging_budget_error())
+        }
     }
     async fn history_archive_capture(
         &self,
@@ -301,7 +306,9 @@ impl HistoryArchiveStorage for PostgresStorage {
                     })?;
                 let expected = capture.reserved_read_bytes() as i64;
                 capture.reserve(bytes, Utc::now())?;
-                save_on(connection, &capture, Some(expected), permit).await?;
+                if !save_on(connection, &capture, Some(expected), permit).await? {
+                    return Err(PostgresStorageError::from(capture.staging_budget_error()));
+                }
                 Ok::<_, PostgresStorageError>(capture)
             })
             .await

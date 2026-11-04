@@ -93,6 +93,18 @@ class CiTierTests(unittest.TestCase):
         condition = job("treetop-authorization-conformance").split("    if: >-\n", 1)[1].split("    runs-on:", 1)[0]
         self.assertIn("needs.changes.outputs.full_requested == 'true' &&", condition)
 
+    def test_native_adapter_tests_provision_isolated_restore_authority(self):
+        step = job("feature-permutations").split(
+            "      - name: Test PostgreSQL adapter-native contracts\n", 1,
+        )[1].split("      - name:", 1)[0]
+        command = shlex.split(step.split("        run: >-\n", 1)[1])
+        self.assertEqual(command[:10], [
+            "python3", "tests/python/run.py", "integration", "rust-tests",
+            "--admin-binary", "$RUNNER_TEMP/hubuum-admin-migrate", "--",
+            "cargo", "test", "-p",
+        ])
+        self.assertEqual(command[10], "hubuum-storage-postgres")
+
     def test_fuzzing_rechecks_draft_transitions_and_waits_until_ready(self):
         workflow = (ROOT / ".github/workflows/regex-fuzz.yml").read_text()
         self.assertIn("ready_for_review, converted_to_draft", workflow)

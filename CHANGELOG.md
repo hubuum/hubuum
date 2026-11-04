@@ -14,6 +14,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   bounded captured hot inputs, generation-checked pins and original registered
   Legacy owner/application fences. Preserve bounded prepared-capture budget
   evidence through adapter errors and reauthorize before budget projections.
+  Recheck original authority after external authorization, and retain bounded
+  expired-capture cleanup when admission is rejected for insufficient capacity.
   Update exact SDK dependencies together; see
   `docs/storage_adapter_sdk.md` for the 0.18 to 0.19 upgrade. Deploy migration
   `2026-11-03-000004_history_archive_reads` and refresh runtime grants. The fixed

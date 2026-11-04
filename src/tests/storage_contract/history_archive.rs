@@ -752,6 +752,101 @@ async fn cumulative_read_reservations_do_not_reset_between_attempts() {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ArchiveAccessStage {
+    Admission,
+    Execution,
+    Result,
+}
+
+#[rstest]
+#[case::admission(ArchiveAccessStage::Admission, 2)]
+#[case::execution(ArchiveAccessStage::Execution, 3)]
+#[case::result(ArchiveAccessStage::Result, 1)]
+#[actix_web::test]
+async fn runtime_retirement_during_authorization_rejects_archive_access(
+    #[case] stage: ArchiveAccessStage,
+    #[case] authorization_calls_to_skip: usize,
+) {
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        TestContext::run(backend, async |ctx| {
+            let point = HistoryArchivePoint::AsOf { at: Utc::now() };
+            let mut query = match stage {
+                ArchiveAccessStage::Admission => None,
+                _ => Some(ctx.query(point.clone()).await),
+            };
+            let result = match stage {
+                ArchiveAccessStage::Result => Some(
+                    query
+                        .take()
+                        .unwrap()
+                        .execute(&ctx.context, &ctx.subject, None)
+                        .await
+                        .unwrap(),
+                ),
+                _ => None,
+            };
+            let policy = Arc::new(MockTreetopBackend::new());
+            policy.add_rule(MockAllowRule {
+                group_id: ctx.fixture.owned_group.as_ref().unwrap().id().id(),
+                action: crate::models::Permissions::ReadCollection,
+                resource_kind: ResourceKind::Collection,
+                resource_id: None,
+                attrs: ResourceFields {
+                    collection_id: Some(ctx.fixture.collection.id().id()),
+                    ..Default::default()
+                },
+            });
+            let storage = ctx.storage.clone();
+            let registration = ctx.registration.take().unwrap();
+            let retired = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let observed = retired.clone();
+            policy.set_authorization_hook_after_calls(
+                authorization_calls_to_skip,
+                move || async move {
+                    storage.unregister_runtime(registration).await.unwrap();
+                    observed.store(true, Ordering::SeqCst);
+                },
+            );
+            let context = AppContext::new(storage_handle(&ctx.context), policy);
+            let rejected = match stage {
+                ArchiveAccessStage::Admission => HistoryArchiveQuery::capture(
+                    &context,
+                    &ctx.subject,
+                    None,
+                    HistoryArchiveRequest::collection(
+                        ctx.fixture.collection.id(),
+                        point,
+                        Utc::now() + TimeDelta::hours(1),
+                    ),
+                )
+                .await
+                .is_err(),
+                ArchiveAccessStage::Execution => query
+                    .unwrap()
+                    .execute(&context, &ctx.subject, None)
+                    .await
+                    .is_err(),
+                ArchiveAccessStage::Result => result
+                    .unwrap()
+                    .access(&context, &ctx.subject, None)
+                    .await
+                    .is_err(),
+            };
+            assert!(
+                retired.load(Ordering::SeqCst),
+                "The final policy call must retire the runtime"
+            );
+            assert!(
+                rejected,
+                "Archive access must recheck its original runtime after policy work"
+            );
+        })
+        .await;
+    }
+}
+
 #[rstest]
 #[case::no_owner(false)]
 #[case::different_owner(true)]
