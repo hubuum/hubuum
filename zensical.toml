@@ -67,6 +67,7 @@ nav = [
       { "Backup & restore" = "backup-restore.md" },
       { "Deletion recovery checkpoints" = "deletion_recovery.md" },
       { "Task retention" = "task_retention.md" },
+      { "Scoped history policies" = "history_retention.md" },
       { "Verify release artifacts" = "supply-chain-security.md" },
     ] },
     { "Identity & security" = [
