@@ -31,7 +31,6 @@ pub use manifest::{
 };
 pub use transfer::{ArtifactReader, ArtifactWriter, verify, verify_and_publish};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ArtifactError {
     Invalid(String),
     Limit(String),
@@ -39,6 +38,39 @@ pub enum ArtifactError {
     Conflict(String),
     NotFound,
     Backend(String),
+    /// Operation-local opaque causality, never authorization or durable proof.
+    /// Display and Debug intentionally do not expose the underlying evidence.
+    Source(Box<dyn std::error::Error + Send + Sync + 'static>),
+    /// Both failures remain available. The productive failure is primary;
+    /// cleanup failure does not establish physical completion or replace it.
+    AbortFailed {
+        primary: Box<ArtifactError>,
+        abort: Box<ArtifactError>,
+    },
+}
+
+impl ArtifactError {
+    pub fn abort_error(&self) -> Option<&Self> {
+        match self {
+            Self::AbortFailed { abort, .. } => Some(abort),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Debug for ArtifactError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Invalid(message) => f.debug_tuple("Invalid").field(message).finish(),
+            Self::Limit(message) => f.debug_tuple("Limit").field(message).finish(),
+            Self::Corrupt(message) => f.debug_tuple("Corrupt").field(message).finish(),
+            Self::Conflict(message) => f.debug_tuple("Conflict").field(message).finish(),
+            Self::NotFound => f.write_str("NotFound"),
+            Self::Backend(message) => f.debug_tuple("Backend").field(message).finish(),
+            Self::Source(_) => f.write_str("Source(..)"),
+            Self::AbortFailed { .. } => f.write_str("AbortFailed { primary: .., abort: .. }"),
+        }
+    }
 }
 
 impl fmt::Display for ArtifactError {
@@ -50,11 +82,26 @@ impl fmt::Display for ArtifactError {
             | Self::Conflict(message)
             | Self::Backend(message) => f.write_str(message),
             Self::NotFound => f.write_str("Artifact was not found"),
+            Self::Source(_) => f.write_str("Artifact operation failed"),
+            Self::AbortFailed { .. } => {
+                f.write_str("Artifact staging failed; abort failed; cleanup remains pending")
+            }
         }
     }
 }
 
-impl std::error::Error for ArtifactError {}
+impl std::error::Error for ArtifactError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Source(error) => Some(error.as_ref()),
+            Self::AbortFailed { primary, .. } => Some(primary.as_ref()),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod error_tests;
 
 pub type ArtifactResult<T> = Result<T, ArtifactError>;
 

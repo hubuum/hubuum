@@ -3,6 +3,7 @@ use std::sync::Arc;
 use actix_web::{FromRequest, HttpRequest, dev::Payload, web::Data};
 use futures_util::future::{Ready, ready};
 
+use crate::config::ControlRecoveryOptions;
 use crate::errors::ApiError;
 use crate::services::deletion_recovery::TaskReceiptService;
 use crate::services::{
@@ -42,6 +43,7 @@ pub struct AppContext {
     permissions: Arc<dyn PermissionBackend>,
     services: Services,
     task_receipts: TaskReceiptService,
+    history_retention: ControlRecoveryOptions,
 }
 
 impl AppContext {
@@ -52,6 +54,7 @@ impl AppContext {
             permissions,
             services,
             task_receipts: TaskReceiptService::default(),
+            history_retention: ControlRecoveryOptions::default(),
         }
     }
 
@@ -60,6 +63,13 @@ impl AppContext {
         self
     }
 
+    pub(crate) fn with_history_retention(mut self, options: ControlRecoveryOptions) -> Self {
+        self.history_retention = options;
+        self
+    }
+    pub(crate) fn history_retention(&self) -> &ControlRecoveryOptions {
+        &self.history_retention
+    }
     pub(crate) fn task_receipts(&self) -> &TaskReceiptService {
         &self.task_receipts
     }

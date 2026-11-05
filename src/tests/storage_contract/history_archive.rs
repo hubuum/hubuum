@@ -89,6 +89,8 @@ struct TestContext {
     resource: ResourceIdentity,
     principal: PrincipalIdentity,
     permit: StorageExecutionPermit,
+    archive_permit: HistoryArchiveExecutionPermit,
+    archive_work: Option<HistoryArchiveExecutionOwner>,
     registration: Option<RuntimeRegistration>,
 }
 impl TestContext {
@@ -132,6 +134,14 @@ impl TestContext {
             .capture_application_execution(Some(registration.owner()))
             .await
             .unwrap();
+        let archive_work = storage
+            .run_in_scope(
+                StorageExecutionScope::default().with_application_access(permit.clone()),
+                storage.admit_history_archive_execution(),
+            )
+            .await
+            .unwrap();
+        let archive_permit = archive_work.permit().clone();
         let bound = storage.clone().with_runtime_owner(registration.owner());
         let policy = Arc::new(MockTreetopBackend::new());
         policy.add_rule(MockAllowRule {
@@ -154,9 +164,32 @@ impl TestContext {
             resource,
             principal,
             permit,
+            archive_permit,
+            archive_work: Some(archive_work),
             registration: Some(registration),
         };
         let result = AssertUnwindSafe(test(&mut context)).catch_unwind().await;
+        if result.is_ok() {
+            // Only this fixture's direct, fully awaited operations are covered.
+            // No HTTP/transport/serialization consumer is issued here. Service
+            // query owners are independent and are NOT retired by this cleanup.
+            let work = context.archive_work.take().unwrap();
+            let completed = work
+                .after_drained(std::future::ready(Ok(())), std::future::ready(Ok(())))
+                .await
+                .unwrap();
+            context
+                .storage
+                .settle_history_producer(completed.producer())
+                .await
+                .unwrap();
+            context
+                .storage
+                .settle_history_publication(completed.into_publication())
+                .await
+                .unwrap();
+        }
+        // Panic/unknown work retains its own obligation; no registry reset.
         if let Some(registration) = context.registration.take() {
             context
                 .storage
@@ -170,28 +203,36 @@ impl TestContext {
             resume_unwind(panic);
         }
     }
+    async fn with_archive<F: std::future::Future>(&self, future: F) -> F::Output {
+        let scope = self
+            .archive_permit
+            .reenter_scope(&self.storage.current_execution_scope())
+            .expect("original fixture authority");
+        self.storage.run_in_scope(scope, future).await
+    }
     async fn capture(&self, point: HistoryArchivePoint) -> HistoryArchiveCapture {
         let catalog = self
-            .storage
-            .history_archive_catalog(self.resource, &self.permit)
-            .await
-            .unwrap();
-        self.storage
-            .capture_history_archive(
-                HistoryArchiveCaptureRequest::new(
-                    self.principal,
-                    HistoryArchiveSelection::new(
-                        StorageBackupHistorySection::CollectionHistory,
-                        self.resource,
-                        point,
-                    ),
-                    catalog.generation(),
-                    Utc::now() + TimeDelta::hours(1),
-                ),
-                &self.permit,
+            .with_archive(
+                self.storage
+                    .history_archive_catalog(self.resource, &self.archive_permit),
             )
             .await
-            .unwrap()
+            .unwrap();
+        self.with_archive(self.storage.capture_history_archive(
+            HistoryArchiveCaptureRequest::new(
+                self.principal,
+                HistoryArchiveSelection::new(
+                    StorageBackupHistorySection::CollectionHistory,
+                    self.resource,
+                    point,
+                ),
+                catalog.generation(),
+                Utc::now() + TimeDelta::hours(1),
+            ),
+            &self.archive_permit,
+        ))
+        .await
+        .unwrap()
     }
     async fn query(&self, point: HistoryArchivePoint) -> HistoryArchiveQuery {
         match HistoryArchiveQuery::capture(
@@ -207,8 +248,8 @@ impl TestContext {
         .await
         .unwrap()
         {
-            HistoryArchiveAdmission::Captured(query) => query,
-            HistoryArchiveAdmission::BudgetLimited => panic!("bounded fixture"),
+            HistoryArchiveAdmission::Captured(query) => *query,
+            HistoryArchiveAdmission::BudgetLimited(_) => panic!("bounded fixture"),
         }
     }
     async fn close(&self) {
@@ -240,6 +281,15 @@ impl TestContext {
         .clone()
     }
     async fn descriptor(
+        &self,
+        row: &HistoryArchiveRow,
+        corrupt: bool,
+        dependencies: Vec<VersionIdentity>,
+    ) -> HistoryArchiveDescriptor {
+        self.with_archive(self.descriptor_in_scope(row, corrupt, dependencies))
+            .await
+    }
+    async fn descriptor_in_scope(
         &self,
         row: &HistoryArchiveRow,
         corrupt: bool,
@@ -289,6 +339,14 @@ impl TestContext {
         HistoryArchiveDescriptor::new(row, dependencies, 1, reference).unwrap()
     }
     async fn malformed_descriptor(
+        &self,
+        row: &HistoryArchiveRow,
+        overlap: bool,
+    ) -> HistoryArchiveDescriptor {
+        self.with_archive(self.malformed_descriptor_in_scope(row, overlap))
+            .await
+    }
+    async fn malformed_descriptor_in_scope(
         &self,
         row: &HistoryArchiveRow,
         overlap: bool,
@@ -397,14 +455,19 @@ impl TestContext {
 
     async fn publish(&self, descriptor: HistoryArchiveDescriptor) -> HistoryArchiveCatalog {
         let catalog = self
-            .storage
-            .history_archive_catalog(self.resource, &self.permit)
+            .with_archive(
+                self.storage
+                    .history_archive_catalog(self.resource, &self.archive_permit),
+            )
             .await
             .unwrap();
-        self.storage
-            .publish_history_archive(catalog.generation(), vec![descriptor], &self.permit)
-            .await
-            .unwrap()
+        self.with_archive(self.storage.publish_history_archive(
+            catalog.generation(),
+            vec![descriptor],
+            &self.archive_permit,
+        ))
+        .await
+        .unwrap()
     }
 }
 
@@ -420,8 +483,10 @@ async fn catalog_persists_and_service_reads_retained_segment(#[case] as_of: bool
             let descriptor = ctx.descriptor(&row, false, vec![]).await;
             let published = ctx.publish(descriptor).await;
             let loaded = ctx
-                .storage
-                .history_archive_catalog(ctx.resource, &ctx.permit)
+                .with_archive(
+                    ctx.storage
+                        .history_archive_catalog(ctx.resource, &ctx.archive_permit),
+                )
                 .await
                 .unwrap();
             assert_eq!(loaded, published);
@@ -614,13 +679,16 @@ async fn generation_race_has_one_catalog_winner() {
             let descriptor = ctx.descriptor(&row, false, vec![]).await;
             let expected = HistoryArchiveCatalogGeneration::default();
             let (a, b) = tokio::join!(
-                ctx.storage.publish_history_archive(
+                ctx.with_archive(ctx.storage.publish_history_archive(
                     expected,
                     vec![descriptor.clone()],
-                    &ctx.permit
-                ),
-                ctx.storage
-                    .publish_history_archive(expected, vec![descriptor], &ctx.permit)
+                    &ctx.archive_permit
+                )),
+                ctx.with_archive(ctx.storage.publish_history_archive(
+                    expected,
+                    vec![descriptor],
+                    &ctx.archive_permit
+                ))
             );
             assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
         })
@@ -636,8 +704,7 @@ async fn changed_generation_rejects_capture_instead_of_refreshing() {
             let row = ctx.closed().await;
             ctx.publish(ctx.descriptor(&row, false, vec![]).await).await;
             let result = ctx
-                .storage
-                .capture_history_archive(
+                .with_archive(ctx.storage.capture_history_archive(
                     HistoryArchiveCaptureRequest::new(
                         ctx.principal,
                         HistoryArchiveSelection::new(
@@ -650,8 +717,8 @@ async fn changed_generation_rejects_capture_instead_of_refreshing() {
                         HistoryArchiveCatalogGeneration::default(),
                         Utc::now() + TimeDelta::hours(1),
                     ),
-                    &ctx.permit,
-                )
+                    &ctx.archive_permit,
+                ))
                 .await;
             assert_eq!(result.unwrap_err().kind(), StorageErrorKind::Conflict);
         })
@@ -730,18 +797,21 @@ async fn cumulative_read_reservations_do_not_reset_between_attempts() {
             let capture = ctx
                 .capture(HistoryArchivePoint::AsOf { at: Utc::now() })
                 .await;
-            ctx.storage
-                .reserve_history_archive_read(
+            ctx.with_archive(ctx.storage.reserve_history_archive_read(
+                capture.id(),
+                ctx.principal,
+                HISTORY_ARCHIVE_READ_BYTES,
+                &ctx.archive_permit,
+            ))
+            .await
+            .unwrap();
+            let rejected = ctx
+                .with_archive(ctx.storage.reserve_history_archive_read(
                     capture.id(),
                     ctx.principal,
-                    HISTORY_ARCHIVE_READ_BYTES,
-                    &ctx.permit,
-                )
-                .await
-                .unwrap();
-            let rejected = ctx
-                .storage
-                .reserve_history_archive_read(capture.id(), ctx.principal, 1, &ctx.permit)
+                    1,
+                    &ctx.archive_permit,
+                ))
                 .await;
             assert_eq!(
                 rejected.unwrap_err().kind(),
@@ -867,17 +937,31 @@ async fn empty_catalog_and_pins_require_the_original_runtime(#[case] different: 
                 registration.as_ref().map(RuntimeRegistration::owner),
                 ctx.permit.fence(),
             );
-            let rejected = if different {
-                ctx.storage
-                    .history_archive_capture(capture.id(), ctx.principal, &permit)
-                    .await
-                    .is_err()
-            } else {
-                ctx.storage
-                    .history_archive_catalog(ctx.resource, &permit)
-                    .await
-                    .is_err()
-            };
+            let scope = ctx
+                .archive_permit
+                .execution_scope()
+                .clone()
+                .with_application_access(permit);
+            let rejected = ctx
+                .storage
+                .run_in_scope(scope, async {
+                    if different {
+                        ctx.storage
+                            .history_archive_capture(
+                                capture.id(),
+                                ctx.principal,
+                                &ctx.archive_permit,
+                            )
+                            .await
+                            .is_err()
+                    } else {
+                        ctx.storage
+                            .history_archive_catalog(ctx.resource, &ctx.archive_permit)
+                            .await
+                            .is_err()
+                    }
+                })
+                .await;
             if let Some(registration) = registration {
                 ctx.storage.unregister_runtime(registration).await.unwrap();
             }
@@ -1120,14 +1204,18 @@ async fn staging_exhaustion_requires_original_historical_authority(#[case] scena
         );
         // Exhaust the actual fixed count budget, without a test-only lower limit.
         for _ in 0..HISTORY_ARCHIVE_MAX_CAPTURES {
-            ctx.storage
-                .capture_history_archive(request.clone(), &ctx.permit)
-                .await
-                .unwrap();
+            ctx.with_archive(
+                ctx.storage
+                    .capture_history_archive(request.clone(), &ctx.archive_permit),
+            )
+            .await
+            .unwrap();
         }
         let error = ctx
-            .storage
-            .capture_history_archive(request.clone(), &ctx.permit)
+            .with_archive(
+                ctx.storage
+                    .capture_history_archive(request.clone(), &ctx.archive_permit),
+            )
             .await
             .unwrap_err();
         assert_eq!(error.kind(), StorageErrorKind::InputTooLarge);
@@ -1135,6 +1223,11 @@ async fn staging_exhaustion_requires_original_historical_authority(#[case] scena
             .history_archive_budget_evidence()
             .expect("post-preparation evidence")
             .validate_request(&request, &ctx.permit, Utc::now())
+            .unwrap();
+        error
+            .history_archive_budget_evidence()
+            .unwrap()
+            .validate_execution(&ctx.archive_permit)
             .unwrap();
         assert!(!format!("{error:?}").contains(ctx.fixture.collection.name()));
 
@@ -1182,7 +1275,7 @@ async fn staging_exhaustion_requires_original_historical_authority(#[case] scena
         match scenario {
             0 => assert!(matches!(
                 outcome,
-                Ok(HistoryArchiveAdmission::BudgetLimited)
+                Ok(HistoryArchiveAdmission::BudgetLimited(_))
             )),
             1 | 2 => assert!(matches!(outcome, Err(ApiError::Forbidden(_)))),
             3 => assert!(outcome.is_err()),
@@ -1194,3 +1287,5 @@ async fn staging_exhaustion_requires_original_historical_authority(#[case] scena
     })
     .await;
 }
+
+mod supervision;

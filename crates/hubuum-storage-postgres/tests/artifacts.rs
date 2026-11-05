@@ -268,10 +268,10 @@ async fn named_destination_cannot_be_rebound() {
 #[tokio::test]
 async fn aborting_an_unknown_attempt_does_not_claim_a_durable_fence() {
     TestContext::run(async |context| {
-        assert_eq!(
+        assert!(matches!(
             context.store.abort(&context.identity()).await,
             Err(ArtifactError::NotFound)
-        );
+        ));
     })
     .await;
 }

@@ -600,7 +600,10 @@ fn restore_contract_storage(
 }
 
 mod recovery;
-pub use recovery::{RestoreContractFixture, capture_backup_document};
+pub use recovery::{
+    RestoreContractFixture, capture_backup_document, create_history_remapping_object,
+    history_application_context, history_population_as_of, prepare_history_read_fixture,
+};
 
 /// Serialize all consumers of the runner-owned destructive restore database.
 /// Cargo runs test binaries sequentially; callers within each binary share this

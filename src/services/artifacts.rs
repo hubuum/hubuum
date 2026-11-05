@@ -29,6 +29,11 @@ pub(crate) fn error(error: ArtifactError) -> ApiError {
         ArtifactError::Corrupt(message) | ArtifactError::Backend(message) => {
             ApiError::InternalServerError(message)
         }
+        error @ (ArtifactError::Source(_) | ArtifactError::AbortFailed { .. }) => {
+            // Only the private operation bridge may validate and consume its
+            // original typed admission cause. Generic artifact callers fail closed.
+            ApiError::InternalServerError(error.to_string())
+        }
     }
 }
 

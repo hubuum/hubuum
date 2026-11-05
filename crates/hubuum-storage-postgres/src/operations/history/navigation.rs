@@ -62,7 +62,7 @@ impl MarkerRow {
 
 // Each table has a statically checked projection. Large JSON fields never enter this query.
 macro_rules! marker_page {
-    ($runtime:expr, $query:expr, $table:ident, $predicate:expr) => {{
+    ($runtime:expr, $query:expr, $table:ident, $family:literal, $predicate:expr) => {{
         use crate::schema::$table::dsl as h;
         let query = $query;
         let options = query.options();
@@ -81,7 +81,10 @@ macro_rules! marker_page {
         $runtime
             .with_read_only_snapshot(async |connection| {
                 let base_query = || {
-                    let mut records = h::$table.filter($predicate).into_boxed();
+                    let mut records = h::$table
+                        .filter($predicate)
+                        .filter(super::history_version_visible(stringify!($table), $family))
+                        .into_boxed();
                     if let Some(ids) = visible_collection_ids(query.scope()) {
                         records = records.filter(h::collection_id.eq_any(ids));
                     }
@@ -190,7 +193,13 @@ pub(crate) async fn list_history_markers(
 ) -> Result<StoragePage<StorageHistoryMarker>, PostgresStorageError> {
     match query.resource() {
         StorageHistoryResource::Class(id) => {
-            marker_page!(runtime, &query, hubuumclass_history, h::id.eq(id.id()))
+            marker_page!(
+                runtime,
+                &query,
+                hubuumclass_history,
+                "class",
+                h::id.eq(id.id())
+            )
         }
         StorageHistoryResource::Object {
             class_id,
@@ -199,6 +208,7 @@ pub(crate) async fn list_history_markers(
             runtime,
             &query,
             hubuumobject_history,
+            "object",
             h::id
                 .eq(object_id.id())
                 .and(h::hubuum_class_id.eq(class_id.id()))
@@ -217,6 +227,10 @@ pub(crate) async fn get_history_entry(
                 h::hubuumclass_history
                     .filter(h::id.eq(id.id()))
                     .filter(h::history_id.eq(query.history_id().id()))
+                    .filter(super::history_version_visible(
+                        "hubuumclass_history",
+                        "class",
+                    ))
                     .select(ClassHistoryRow::as_select())
                     .first::<ClassHistoryRow>(connection)
                     .await
@@ -234,6 +248,10 @@ pub(crate) async fn get_history_entry(
                     .filter(h::id.eq(object_id.id()))
                     .filter(h::hubuum_class_id.eq(class_id.id()))
                     .filter(h::history_id.eq(query.history_id().id()))
+                    .filter(super::history_version_visible(
+                        "hubuumobject_history",
+                        "object",
+                    ))
                     .select(ObjectHistoryRow::as_select())
                     .first::<ObjectHistoryRow>(connection)
                     .await

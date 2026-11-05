@@ -1,10 +1,9 @@
 use super::*;
 use hubuum_storage_core::{
-    ApplicationReapplication, ApplicationWorkAdmission, DELETION_CONTROL_MAX_RUNTIMES,
-    DeletionAuditObservation, DeletionCheckpointIdentity, HotObjectHistoryCleanup,
-    HotObjectHistoryDeletion, RuntimeRegistration, StorageExecutionPermit,
-    StorageIdentityResourceKind, StorageIdentitySubject, StorageIdentityTarget,
-    StorageRecordIdentity,
+    ApplicationReapplication, ApplicationWorkAdmission, DeletionAuditObservation,
+    DeletionCheckpointIdentity, HotObjectHistoryCleanup, HotObjectHistoryDeletion,
+    RuntimeRegistration, StorageExecutionPermit, StorageIdentityResourceKind,
+    StorageIdentitySubject, StorageIdentityTarget, StorageRecordIdentity,
 };
 
 #[async_trait]
@@ -46,22 +45,7 @@ impl DeletionControlStorage for MemoryStorage {
         isolation: Option<RuntimeIsolationDomain>,
     ) -> Result<RuntimeRegistration, StorageError> {
         let mut state = self.state.write_control().await;
-        state.ensure_task_execution_allowed()?;
-        if state.runtime_registrations.len() >= DELETION_CONTROL_MAX_RUNTIMES {
-            return Err(StorageError::unavailable(
-                "Runtime registration capacity is exhausted; retain existing registrations",
-            ));
-        }
-        let registration = RuntimeRegistration::generate();
-        state.runtime_registrations.insert(
-            registration.id(),
-            MemoryRuntimeRegistration {
-                ownership_token: registration.ownership_token(),
-                isolation,
-                drained: None,
-            },
-        );
-        Ok(registration)
+        state.register_runtime_protocol(isolation, HistoryRuntimeProtocol::Legacy)
     }
 
     async fn capture_application_execution(
@@ -171,6 +155,7 @@ impl DeletionControlStorage for MemoryStorage {
             ));
         }
         state.require_runtime_drain()?;
+        state.require_history_exposure_safe()?;
         let mut next = expected.clone();
         let mut removals = BTreeSet::new();
         for (intent_id, intent) in expected.intents() {
@@ -241,7 +226,22 @@ impl DeletionControlStorage for MemoryStorage {
     ) -> Result<(), StorageError> {
         let mut guard = self.state.write_control().await;
         let mut state = guard.clone();
+        state.require_history_exposure_safe()?;
         let receipt = proof.deletion();
+        let history_required = !state.history_lifecycle.authority().expiry().is_empty();
+        if (history_required && proof.history().is_none())
+            || proof.history().is_some_and(|protected| {
+                !protected.matches(
+                    state.history_lifecycle.authority(),
+                    receipt.fence(),
+                    &checkpoint,
+                )
+            })
+        {
+            return Err(StorageError::conflict(
+                "Protected history authority does not cover this exact exposure release",
+            ));
+        }
         let task_proof_required = !matches!(
             state.task_control.activation(),
             TaskReceiptActivation::Disabled
@@ -497,60 +497,68 @@ impl MemoryState {
             let pending = next
                 .new_audit_events_since(&self.deletion_control)
                 .map_err(invalid_contract_value)?;
-            let mut envelopes = Vec::with_capacity(pending.len());
-            let mut sequence = self.next_event_sequence;
-            for event in pending {
-                let existing = self
-                    .events
-                    .iter()
-                    .map(|record| record.as_parts().0)
-                    .find(|record| record.event_id() == event.event_id().as_uuid());
-                let envelope = EventEnvelope::builder()
-                    .id(
-                        EventSequence::new(existing.map_or(sequence, |record| record.id().get()))
-                            .map_err(|error| StorageError::backend_failure(error.to_string()))?,
-                    )
-                    .event_id(event.event_id().as_uuid())
-                    .occurred_at(event.occurred_at().expect("protected audit occurrence"))
-                    .entity_type(event.entity_type())
-                    .action(event.action())
-                    .actor_kind(event.actor_kind())
-                    .provenance(Provenance {
-                        actor: ProvenanceActor {
-                            kind: Some("system".into()),
-                            principal: None,
-                        },
-                        initiator: None,
-                        task_id: None,
-                    })
-                    .summary(event.summary().to_owned())
-                    .metadata(event.metadata().clone())
-                    .schema_version(event.schema_version())
-                    .try_build()
-                    .map_err(|error| StorageError::backend_failure(error.to_string()))?;
-                if let Some(existing) = existing {
-                    if existing != &envelope {
-                        return Err(StorageError::backend_failure(
-                            "Retained lifecycle event conflicts with canonical history",
-                        ));
-                    }
-                    continue;
-                }
-                sequence = sequence
-                    .checked_add(1)
-                    .ok_or_else(|| StorageError::unavailable("Audit sequence exhausted"))?;
-                envelopes.push(envelope);
-            }
-            for envelope in envelopes {
-                let identity = self.logical_identities.event(&envelope, None, None);
-                self.events.push(
-                    StorageRecordedEvent::new(envelope, None, None).with_logical_identity(identity),
-                );
-            }
-            self.next_event_sequence = sequence;
+            self.append_retained_lifecycle_events(pending)?;
             self.application_control = ApplicationControlState::quarantined(fence);
             self.deletion_control = next;
         }
+        Ok(())
+    }
+
+    pub(super) fn append_retained_lifecycle_events(
+        &mut self,
+        pending: Vec<NewEvent>,
+    ) -> Result<(), StorageError> {
+        let mut envelopes = Vec::with_capacity(pending.len());
+        let mut sequence = self.next_event_sequence;
+        for event in pending {
+            let existing = self
+                .events
+                .iter()
+                .map(|record| record.as_parts().0)
+                .find(|record| record.event_id() == event.event_id().as_uuid());
+            let envelope = EventEnvelope::builder()
+                .id(
+                    EventSequence::new(existing.map_or(sequence, |record| record.id().get()))
+                        .map_err(|error| StorageError::backend_failure(error.to_string()))?,
+                )
+                .event_id(event.event_id().as_uuid())
+                .occurred_at(event.occurred_at().expect("protected audit occurrence"))
+                .entity_type(event.entity_type())
+                .action(event.action())
+                .actor_kind(event.actor_kind())
+                .provenance(Provenance {
+                    actor: ProvenanceActor {
+                        kind: Some(event.actor_kind().as_str().to_owned()),
+                        principal: None,
+                    },
+                    initiator: None,
+                    task_id: None,
+                })
+                .summary(event.summary().to_owned())
+                .metadata(event.metadata().clone())
+                .schema_version(event.schema_version())
+                .try_build()
+                .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+            if let Some(existing) = existing {
+                if existing != &envelope {
+                    return Err(StorageError::backend_failure(
+                        "Retained lifecycle event conflicts with canonical history",
+                    ));
+                }
+                continue;
+            }
+            sequence = sequence
+                .checked_add(1)
+                .ok_or_else(|| StorageError::unavailable("Audit sequence exhausted"))?;
+            envelopes.push(envelope);
+        }
+        for envelope in envelopes {
+            let identity = self.logical_identities.event(&envelope, None, None);
+            self.events.push(
+                StorageRecordedEvent::new(envelope, None, None).with_logical_identity(identity),
+            );
+        }
+        self.next_event_sequence = sequence;
         Ok(())
     }
 
@@ -652,7 +660,7 @@ impl MemoryState {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 #[cfg(test)]
 mod reapplication_tests;

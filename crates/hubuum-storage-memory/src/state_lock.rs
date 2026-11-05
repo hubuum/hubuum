@@ -4,7 +4,10 @@
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
-use hubuum_storage_core::{RuntimeOwner, StorageExecutionPermit};
+use hubuum_storage_core::{
+    HistoryArchiveExecutionPermit, HistoryProducerContext, HistoryReadEpoch, RuntimeOwner,
+    StorageExecutionPermit,
+};
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use super::{
@@ -15,6 +18,14 @@ use super::{
 pub(super) struct MemoryStateLock {
     state: Arc<RwLock<MemoryState>>,
     runtime_owner: Option<RuntimeOwner>,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum HistoryEntry<'a> {
+    Archive(&'a HistoryProducerContext),
+    Productive,
+    Admission,
+    Control,
 }
 
 impl MemoryStateLock {
@@ -44,14 +55,52 @@ impl MemoryStateLock {
     }
 
     pub(super) async fn read(&self) -> Result<RwLockReadGuard<'_, MemoryState>, StorageError> {
+        super::execution::task_execution_checkpoint()?;
         let state = self.state.read().await;
-        self.require_application_access(&state)?;
+        self.require_application_access(&state, HistoryEntry::Productive, None)?;
         Ok(state)
     }
 
-    pub(super) async fn write(&self) -> Result<MemoryStateWriteGuard<'_>, StorageError> {
+    pub(super) async fn read_history_archive(
+        &self,
+        permit: &HistoryArchiveExecutionPermit,
+    ) -> Result<RwLockReadGuard<'_, MemoryState>, StorageError> {
+        let scope = MEMORY_EXECUTION_SCOPE
+            .try_with(Clone::clone)
+            .unwrap_or_default();
+        permit.validate_scope(&scope)?;
+        let state = self.state.read().await;
+        self.require_application_access(
+            &state,
+            HistoryEntry::Archive(permit.producer()),
+            Some(permit.application()),
+        )?;
+        Ok(state)
+    }
+    pub(super) async fn write_history_archive(
+        &self,
+        permit: &HistoryArchiveExecutionPermit,
+    ) -> Result<MemoryStateWriteGuard<'_>, StorageError> {
+        let scope = MEMORY_EXECUTION_SCOPE
+            .try_with(Clone::clone)
+            .unwrap_or_default();
+        permit.validate_scope(&scope)?;
         let guard = self.state.write().await;
-        self.require_application_access(&guard)?;
+        self.require_application_access(
+            &guard,
+            HistoryEntry::Archive(permit.producer()),
+            Some(permit.application()),
+        )?;
+        Ok(MemoryStateWriteGuard {
+            guard,
+            mutated: false,
+        })
+    }
+
+    pub(super) async fn write(&self) -> Result<MemoryStateWriteGuard<'_>, StorageError> {
+        super::execution::task_execution_checkpoint()?;
+        let guard = self.state.write().await;
+        self.require_application_access(&guard, HistoryEntry::Productive, None)?;
         Ok(MemoryStateWriteGuard {
             guard,
             mutated: false,
@@ -73,18 +122,45 @@ impl MemoryStateLock {
         }
     }
 
-    fn require_application_access(&self, state: &MemoryState) -> Result<(), StorageError> {
-        if let Ok(Some(permit)) =
-            MEMORY_EXECUTION_SCOPE.try_with(|scope| scope.api_request_override().cloned())
-        {
-            state
-                .api_requests
-                .check(&permit, state.application_control.fence().incarnation())?;
-        }
+    pub(super) async fn write_history_admission(
+        &self,
+    ) -> Result<MemoryStateWriteGuard<'_>, StorageError> {
+        super::execution::task_execution_checkpoint()?;
+        let guard = self.state.write().await;
+        self.require_application_access(&guard, HistoryEntry::Admission, None)?;
+        Ok(MemoryStateWriteGuard {
+            guard,
+            mutated: false,
+        })
+    }
+
+    pub(super) async fn write_history_control(
+        &self,
+        fallback: &StorageExecutionPermit,
+    ) -> Result<MemoryStateWriteGuard<'_>, StorageError> {
+        super::execution::task_execution_checkpoint()?;
+        let guard = self.state.write().await;
+        self.require_application_access(&guard, HistoryEntry::Control, Some(fallback))?;
+        Ok(MemoryStateWriteGuard {
+            guard,
+            mutated: false,
+        })
+    }
+
+    fn require_application_access(
+        &self,
+        state: &MemoryState,
+        entry: HistoryEntry<'_>,
+        fallback: Option<&StorageExecutionPermit>,
+    ) -> Result<(), StorageError> {
+        // Productive entries retain the original cooperative stop/deadline.
+        // Exempt control settlement uses read_control/write_control instead.
+        super::execution::task_execution_checkpoint()?;
         let permit = MEMORY_EXECUTION_SCOPE
             .try_with(|scope| scope.application_access_override().cloned())
             .ok()
-            .flatten();
+            .flatten()
+            .or_else(|| fallback.cloned());
         if let Some(owner) = &self.runtime_owner {
             let matching_owner = permit
                 .as_ref()
@@ -102,6 +178,65 @@ impl MemoryStateLock {
         if let Some(permit) = &permit {
             state.ensure_application_permit(permit)?;
         }
+        let history = MEMORY_EXECUTION_SCOPE
+            .try_with(|scope| scope.history_read_override().cloned())
+            .ok()
+            .flatten();
+        if entry == HistoryEntry::Admission && history.is_some() {
+            return Err(StorageError::conflict(
+                "Nested work cannot refresh a publication owner",
+            ));
+        }
+        if entry == HistoryEntry::Productive
+            && history.is_none()
+            && self
+                .runtime_owner
+                .as_ref()
+                .or_else(|| permit.as_ref().and_then(StorageExecutionPermit::owner))
+                .and_then(|owner| state.runtime_registrations.get(&owner.id()))
+                .is_some_and(|runtime| runtime.history_protocol.supports_online())
+        {
+            return Err(StorageError::unavailable(
+                "History-aware productive work requires its original publication owner",
+            ));
+        }
+        let original_scope = MEMORY_EXECUTION_SCOPE
+            .try_with(Clone::clone)
+            .unwrap_or_default();
+        if let Some(history) = &history {
+            history.epoch().validate_scope(&original_scope)?;
+        }
+        if let Ok(Some(request)) =
+            MEMORY_EXECUTION_SCOPE.try_with(|scope| scope.api_request_override().cloned())
+        {
+            state
+                .api_requests
+                .check(&request, state.application_control.fence().incarnation())?;
+        }
+        if matches!(entry, HistoryEntry::Productive | HistoryEntry::Archive(_))
+            && let Some(history) = history
+        {
+            if permit.as_ref() != Some(history.epoch().application()) {
+                return Err(StorageError::unavailable(
+                    "History publication belongs to a different application scope",
+                ));
+            }
+            let current = HistoryReadEpoch::for_publication(
+                history.kind(),
+                history.epoch().application().clone(),
+                &state.history_lifecycle_snapshot()?,
+                state.history_publications.generation(),
+            )
+            .and_then(|epoch| epoch.bind_scope(&original_scope))
+            .map_err(super::invalid_contract_value)?;
+            if let HistoryEntry::Archive(producer) = entry {
+                state
+                    .history_publications
+                    .check_producer(producer, &current)?;
+            } else {
+                state.history_publications.check(&history, &current)?;
+            }
+        }
         Ok(())
     }
 
@@ -117,8 +252,9 @@ impl MemoryStateLock {
         mut staged: MemoryState,
         lease: &StorageTaskLease,
     ) -> Result<(), StorageError> {
+        super::execution::task_execution_checkpoint()?;
         let mut live = self.state.write().await;
-        self.require_application_access(&live)?;
+        self.require_application_access(&live, HistoryEntry::Productive, None)?;
         live.ensure_task_lease_current(lease)?;
         let task = live
             .tasks

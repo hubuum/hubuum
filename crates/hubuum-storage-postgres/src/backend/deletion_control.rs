@@ -509,6 +509,7 @@ impl DeletionControlStorage for PostgresStorage {
             let application = read_application_on(connection).await?;
             if application.fence()!=fence { return Err(PostgresStorageError::conflict("Application image changed before reapplication")); }
             require_drained(connection, fence).await?;
+            super::history_lifecycle::require_history_exposure_safe_on(connection).await?;
             let mut targets = Vec::new();
             for (intent_id,intent) in expected.intents() {
                 if intent.bindings().len()!=intent.copies().len() || intent.bindings().is_empty() {
@@ -548,8 +549,15 @@ impl DeletionControlStorage for PostgresStorage {
             if !read_authority_on(connection).await?.has_required_audit_completion() {
                 return Err(PostgresStorageError::conflict("Required deletion audit completion remains unprotected"));
             }
-            let tasks=crate::operations::task_retention::lock_on(connection).await?;
+            let history=super::history_lifecycle::require_history_exposure_safe_on(connection).await?;
             let receipt=proof.deletion();
+            let history_required=!history.authority().expiry().is_empty();
+            if (history_required && proof.history().is_none()) || proof.history().is_some_and(|protected| {
+                !protected.matches(history.authority(),receipt.fence(),&checkpoint)
+            }) {
+                return Err(PostgresStorageError::conflict("Protected history authority does not cover this exact exposure release"));
+            }
+            let tasks=crate::operations::task_retention::lock_on(connection).await?;
             if !matches!(tasks.activation,TaskReceiptActivation::Disabled) {
                 let task_proof=proof.tasks().ok_or_else(||PostgresStorageError::conflict("Task retention reconciliation is required before exposure"))?;
                 let valid=sql_query("SELECT EXISTS(SELECT 1 FROM hubuum_control.task_retention_control WHERE id=1 AND revision=$1 AND reapplied_revision=$1 AND reapplied_incarnation=$2) AS allowed")

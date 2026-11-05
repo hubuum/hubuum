@@ -51,6 +51,7 @@ fn invalid_private_ca_is_rejected(#[case] pem: &[u8]) {
 #[test]
 fn corrupted_control_limits_cannot_enlarge_provider_reads() {
     let state = State {
+        owner: None,
         identity: ArtifactIdentity::new(DestinationId::generate()),
         limits: [u64::MAX, 256, 32, 1024],
         expires: 0,
@@ -257,12 +258,12 @@ async fn live_abort_fences_a_previously_verified_proof() {
 #[ignore = "requires pinned TLS S3 fixture"]
 async fn live_abort_unknown_attempt_has_no_fence() {
     let store = fixture().await;
-    assert_eq!(
+    assert!(matches!(
         store
             .abort(&ArtifactIdentity::new(store.destination().id()))
             .await,
         Err(ArtifactError::NotFound)
-    );
+    ));
 }
 
 #[rstest]
@@ -722,4 +723,405 @@ async fn live_destination_identity_cannot_be_rebound() {
         S3ArtifactStore::connect(fixture_config(different, &store.config.bucket, true)).await,
         Err(ArtifactError::Conflict(_))
     ));
+}
+
+fn owned_intent(identity: ArtifactIdentity, operation: u8) -> ArtifactCreationIntent {
+    ArtifactCreationIntent::new(identity, limits(), [operation; 16], [1; 16], [7; 32]).unwrap()
+}
+fn owned_receipt(admission: OwnedArtifactAdmission) -> OwnedArtifact {
+    match admission {
+        OwnedArtifactAdmission::Created(artifact)
+        | OwnedArtifactAdmission::ResumedSameOwner { artifact, .. } => artifact,
+    }
+}
+async fn owned_sealed(
+    store: &S3ArtifactStore,
+) -> (ArtifactCreationIntent, OwnedArtifact, ArtifactManifest) {
+    let intent = owned_intent(ArtifactIdentity::new(store.destination().id()), 1);
+    let artifact = owned_receipt(store.create_owned(&intent).await.unwrap());
+    let session = artifact.session(store);
+    let mut writer = ArtifactWriter::new(&session, intent.identity().clone(), limits())
+        .await
+        .unwrap();
+    writer.write(b"original").await.unwrap();
+    let manifest = writer.seal().await.unwrap();
+    (intent, artifact, manifest)
+}
+#[tokio::test]
+#[ignore = "requires pinned TLS S3 fixture"]
+async fn live_owned_publication_recovers_on_reconnect() {
+    let store = fixture().await;
+    let (intent, artifact, manifest) = owned_sealed(&store).await;
+    let reference = store
+        .publish_owned(&artifact, &verify(&store, &manifest).await.unwrap())
+        .await
+        .unwrap();
+    let reopened = S3ArtifactStore::connect(fixture_config(
+        store.destination().clone(),
+        &store.config.bucket,
+        true,
+    ))
+    .await
+    .unwrap();
+    assert!(
+        matches!(reopened.resolve_owned(&intent).await.unwrap(), OwnedArtifactResolution::Established { phase: OwnedArtifactPhase::Published(found), .. } if found == reference)
+    );
+    let mut reader = ArtifactReader::open(&reopened, &reference).await.unwrap();
+    assert_eq!(reader.next_block().await.unwrap().unwrap(), b"original");
+}
+#[rstest]
+#[case("stage")]
+#[case("append")]
+#[case("seal")]
+#[case("publish")]
+#[case("abort")]
+#[tokio::test]
+#[ignore = "requires pinned TLS S3 fixture"]
+async fn live_all_legacy_mutations_reject_owned_mode(#[case] operation: &str) {
+    let store = fixture().await;
+    let intent = owned_intent(ArtifactIdentity::new(store.destination().id()), 1);
+    let artifact = owned_receipt(store.create_owned(&intent).await.unwrap());
+    let mut builder = ManifestBuilder::new(intent.identity().clone(), limits());
+    builder.push(b"original").unwrap();
+    let manifest = builder.finish().unwrap();
+    if operation == "seal" || operation == "publish" {
+        store.append_owned(&artifact, 0, b"original").await.unwrap();
+    }
+    if operation == "publish" {
+        store.seal_owned(&artifact, &manifest).await.unwrap();
+    }
+    let result = match operation {
+        "stage" => store.stage(intent.identity(), limits()).await,
+        "append" => store.append(intent.identity(), 0, b"original").await,
+        "seal" => store.seal(&manifest).await,
+        "publish" => store
+            .publish(&verify(&store, &manifest).await.unwrap())
+            .await
+            .map(|_| ()),
+        "abort" => store.abort(intent.identity()).await,
+        _ => unreachable!(),
+    };
+    assert!(result.is_err());
+}
+#[tokio::test]
+#[ignore = "requires pinned TLS S3 fixture"]
+async fn live_owned_create_cannot_adopt_legacy_attempt() {
+    let store = fixture().await;
+    let intent = owned_intent(ArtifactIdentity::new(store.destination().id()), 1);
+    store.stage(intent.identity(), limits()).await.unwrap();
+    assert!(store.create_owned(&intent).await.is_err());
+    store
+        .append(intent.identity(), 0, b"original")
+        .await
+        .unwrap();
+}
+#[rstest]
+#[case("operation")]
+#[case("incarnation")]
+#[case("request_commitment")]
+#[case("limits")]
+#[tokio::test]
+#[ignore = "requires pinned TLS S3 fixture"]
+async fn live_owned_changed_intent_cannot_take_over(#[case] changed: &str) {
+    let store = fixture().await;
+    let intent = owned_intent(ArtifactIdentity::new(store.destination().id()), 1);
+    let artifact = owned_receipt(store.create_owned(&intent).await.unwrap());
+    let other = ArtifactCreationIntent::new(
+        intent.identity().clone(),
+        if changed == "limits" {
+            ArtifactLimits::default()
+        } else {
+            limits()
+        },
+        if changed == "operation" {
+            [2; 16]
+        } else {
+            [1; 16]
+        },
+        if changed == "incarnation" {
+            [2; 16]
+        } else {
+            [1; 16]
+        },
+        if changed == "request_commitment" {
+            [8; 32]
+        } else {
+            [7; 32]
+        },
+    )
+    .unwrap();
+    assert!(store.create_owned(&other).await.is_err());
+    store.append_owned(&artifact, 0, b"original").await.unwrap();
+}
+#[tokio::test]
+#[ignore = "requires pinned TLS S3 fixture"]
+async fn live_owned_preparing_state_is_resumed_after_create_reply_loss() {
+    let store = fixture().await;
+    let intent = owned_intent(ArtifactIdentity::new(store.destination().id()), 1);
+    let l = limits();
+    // Commit only the first conditional ownership write; simulate losing its reply.
+    let state = State {
+        owner: Some(intent.clone()),
+        identity: intent.identity().clone(),
+        limits: [
+            u64::from(l.block_bytes()),
+            l.artifact_bytes(),
+            u64::from(l.blocks()),
+            u64::from(l.manifest_bytes()),
+        ],
+        expires: 0,
+        phase: Phase::Preparing,
+        blocks: Vec::new(),
+        manifest: None,
+        cleanup_after: None,
+    };
+    store.save(&state, None).await.unwrap();
+    assert!(matches!(
+        store.resolve_owned(&intent).await.unwrap(),
+        OwnedArtifactResolution::Pending
+    ));
+    assert!(
+        store
+            .create_owned(&owned_intent(intent.identity().clone(), 2))
+            .await
+            .is_err()
+    );
+    assert!(matches!(
+        store.create_owned(&intent).await.unwrap(),
+        OwnedArtifactAdmission::ResumedSameOwner {
+            phase: OwnedArtifactPhase::Staging,
+            ..
+        }
+    ));
+}
+#[tokio::test]
+#[ignore = "requires pinned TLS S3 fixture"]
+async fn live_owned_expiry_does_not_authorize_cleanup() {
+    let store = fixture().await;
+    let intent = owned_intent(ArtifactIdentity::new(store.destination().id()), 1);
+    let artifact = owned_receipt(store.create_owned(&intent).await.unwrap());
+    store.append_owned(&artifact, 0, b"original").await.unwrap();
+    store.cleanup().await.unwrap();
+    assert!(matches!(
+        store.resolve_owned(&intent).await.unwrap(),
+        OwnedArtifactResolution::Established {
+            phase: OwnedArtifactPhase::Staging,
+            ..
+        }
+    ));
+}
+#[tokio::test]
+#[ignore = "requires pinned TLS S3 fixture"]
+async fn live_owned_abort_and_publication_have_one_winner() {
+    let store = fixture().await;
+    let (_, artifact, manifest) = owned_sealed(&store).await;
+    let proof = verify(&store, &manifest).await.unwrap();
+    let (published, aborted) = tokio::join!(
+        store.publish_owned(&artifact, &proof),
+        store.abort_owned(&artifact)
+    );
+    assert_ne!(published.is_ok(), aborted.is_ok());
+}
+#[tokio::test]
+#[ignore = "requires pinned TLS S3 fixture"]
+async fn live_owned_tombstone_retains_owner_and_identity_claims() {
+    let store = fixture().await;
+    let (intent, artifact, _) = owned_sealed(&store).await;
+    store.abort_owned(&artifact).await.unwrap();
+    store.cleanup().await.unwrap();
+    assert!(matches!(
+        store.create_owned(&intent).await.unwrap(),
+        OwnedArtifactAdmission::ResumedSameOwner {
+            phase: OwnedArtifactPhase::Fenced,
+            ..
+        }
+    ));
+    assert!(
+        store
+            .create_owned(&owned_intent(intent.identity().clone(), 2))
+            .await
+            .is_err()
+    );
+}
+#[tokio::test]
+#[ignore = "requires pinned TLS S3 fixture"]
+async fn live_owned_orphan_cleanup_preserves_exact_published_version() {
+    let store = fixture().await;
+    let (_, artifact, manifest) = owned_sealed(&store).await;
+    let reference = store
+        .publish_owned(&artifact, &verify(&store, &manifest).await.unwrap())
+        .await
+        .unwrap();
+    store.upload(manifest.identity(), b"orphan").await.unwrap();
+    store.cleanup().await.unwrap();
+    let mut reader = ArtifactReader::open(&store, &reference).await.unwrap();
+    assert_eq!(reader.next_block().await.unwrap().unwrap(), b"original");
+}
+// The exact landed field set and phases are intentionally pinned here. Every
+// landed mutation/cleanup path loads this deny-unknown-fields control record.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyS3State {
+    identity: ArtifactIdentity,
+    limits: [u64; 4],
+    expires: u64,
+    phase: LegacyS3Phase,
+    blocks: Vec<Block>,
+    manifest: Option<Vec<u8>>,
+    cleanup_after: Option<String>,
+}
+#[derive(Deserialize)]
+enum LegacyS3Phase {
+    Staging,
+    Sealed,
+    Published,
+    Deleting,
+}
+impl LegacyS3State {
+    fn decode(bytes: &[u8]) -> ArtifactResult<State> {
+        let old: Self = serde_json::from_slice(bytes)
+            .map_err(|_| ArtifactError::Corrupt("legacy S3 state decode failed".into()))?;
+        let phase = match old.phase {
+            LegacyS3Phase::Staging => Phase::Staging,
+            LegacyS3Phase::Sealed => Phase::Sealed,
+            LegacyS3Phase::Published => Phase::Published,
+            LegacyS3Phase::Deleting => Phase::Deleting,
+        };
+        let state = State {
+            owner: None,
+            identity: old.identity,
+            limits: old.limits,
+            expires: old.expires,
+            phase,
+            blocks: old.blocks,
+            manifest: old.manifest,
+            cleanup_after: old.cleanup_after,
+        };
+        State::decode(&serde_json::to_vec(&state).unwrap())
+    }
+}
+#[test]
+fn owned_state_is_rejected_by_landed_s3_decoder() {
+    let identity = ArtifactIdentity::new(DestinationId::generate());
+    let intent = owned_intent(identity.clone(), 1);
+    let l = limits();
+    let state = State {
+        owner: Some(intent),
+        identity,
+        limits: [
+            u64::from(l.block_bytes()),
+            l.artifact_bytes(),
+            u64::from(l.blocks()),
+            u64::from(l.manifest_bytes()),
+        ],
+        expires: 0,
+        phase: Phase::Staging,
+        blocks: Vec::new(),
+        manifest: None,
+        cleanup_after: None,
+    };
+    let mut wire = serde_json::to_value(state).unwrap();
+    assert!(LegacyS3State::decode(&serde_json::to_vec(&wire).unwrap()).is_err());
+    wire.as_object_mut().unwrap().remove("owner");
+    assert!(LegacyS3State::decode(&serde_json::to_vec(&wire).unwrap()).is_ok());
+}
+#[rstest]
+#[case("create")]
+#[case("append")]
+#[case("seal")]
+#[case("publish")]
+#[case("abort")]
+#[tokio::test]
+#[ignore = "requires pinned TLS S3 fixture"]
+async fn live_owned_committed_state_with_lost_reply_is_recoverable(#[case] operation: &str) {
+    use std::sync::atomic::Ordering;
+    let store = fixture().await;
+    let intent = owned_intent(ArtifactIdentity::new(store.destination().id()), 1);
+    if operation == "create" {
+        store.lose_save_reply.store(true, Ordering::SeqCst);
+        assert!(store.create_owned(&intent).await.is_err());
+    }
+    let artifact = owned_receipt(store.create_owned(&intent).await.unwrap());
+    if operation == "append" {
+        store.lose_save_reply.store(true, Ordering::SeqCst);
+        assert!(store.append_owned(&artifact, 0, b"original").await.is_err());
+    }
+    store.append_owned(&artifact, 0, b"original").await.unwrap();
+    let mut builder = ManifestBuilder::new(intent.identity().clone(), limits());
+    builder.push(b"original").unwrap();
+    let manifest = builder.finish().unwrap();
+    if operation == "seal" {
+        store.lose_save_reply.store(true, Ordering::SeqCst);
+        assert!(store.seal_owned(&artifact, &manifest).await.is_err());
+    }
+    store.seal_owned(&artifact, &manifest).await.unwrap();
+    if operation == "abort" {
+        store.lose_save_reply.store(true, Ordering::SeqCst);
+        assert!(store.abort_owned(&artifact).await.is_err());
+        assert!(matches!(
+            store.resolve_owned(&intent).await.unwrap(),
+            OwnedArtifactResolution::Established {
+                phase: OwnedArtifactPhase::Fenced,
+                ..
+            }
+        ));
+    } else {
+        let proof = verify(&store, &manifest).await.unwrap();
+        if operation == "publish" {
+            store.lose_save_reply.store(true, Ordering::SeqCst);
+            assert!(store.publish_owned(&artifact, &proof).await.is_err());
+        }
+        let reference = store.publish_owned(&artifact, &proof).await.unwrap();
+        assert!(
+            matches!(store.resolve_owned(&intent).await.unwrap(), OwnedArtifactResolution::Established { phase: OwnedArtifactPhase::Published(found), .. } if found == reference)
+        );
+    }
+}
+
+#[rstest]
+#[case(true)]
+#[case(false)]
+#[tokio::test]
+#[ignore = "requires pinned TLS S3 fixture"]
+async fn live_owned_cross_artifact_identity_collision_survives_cleanup(
+    #[case] reuse_attempt: bool,
+) {
+    let store = fixture().await;
+    let (intent, artifact, _) = owned_sealed(&store).await;
+    store.abort_owned(&artifact).await.unwrap();
+    store.cleanup().await.unwrap();
+    let fresh = ArtifactIdentity::new(store.destination().id());
+    let collision = ArtifactIdentity::from_parts(
+        fresh.artifact(),
+        if reuse_attempt {
+            intent.identity().attempt()
+        } else {
+            fresh.attempt()
+        },
+        fresh.destination(),
+        if reuse_attempt {
+            fresh.version()
+        } else {
+            intent.identity().version()
+        },
+    );
+    assert!(
+        store
+            .create_owned(&owned_intent(collision, 2))
+            .await
+            .is_err()
+    );
+}
+#[tokio::test]
+#[ignore = "requires pinned TLS S3 fixture"]
+async fn live_owned_receipt_cannot_publish_corrupt_bytes() {
+    let store = fixture().await;
+    let intent = owned_intent(ArtifactIdentity::new(store.destination().id()), 1);
+    let artifact = owned_receipt(store.create_owned(&intent).await.unwrap());
+    store.append_owned(&artifact, 0, b"tampered").await.unwrap();
+    let mut builder = ManifestBuilder::new(intent.identity().clone(), limits());
+    builder.push(b"original").unwrap();
+    let manifest = builder.finish().unwrap();
+    store.seal_owned(&artifact, &manifest).await.unwrap();
+    assert!(verify(&store, &manifest).await.is_err());
 }

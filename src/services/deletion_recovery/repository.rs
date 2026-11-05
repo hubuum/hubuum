@@ -11,9 +11,9 @@ use hmac::{Hmac, KeyInit, Mac};
 use hubuum_storage_core::DeletionControlCapture;
 use hubuum_storage_core::{
     ApplicationReapplication, ControlCheckpointCapture, DELETION_CONTROL_MAX_BYTES,
-    DeletionControlState, DeletionRecoveryPosition, TASK_CONTROL_MAX_RECEIPTS_BYTES,
-    TASK_CONTROL_MAX_RETENTION_BYTES, TaskControlReapplication, TaskControlRevision,
-    TaskControlState, TaskReceiptActivation,
+    DeletionControlState, DeletionRecoveryPosition, HistoryLifecycleAuthority,
+    HistoryLifecycleControl, TASK_CONTROL_MAX_RECEIPTS_BYTES, TASK_CONTROL_MAX_RETENTION_BYTES,
+    TaskControlReapplication, TaskControlRevision, TaskControlState, TaskReceiptActivation,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -41,6 +41,7 @@ pub(crate) use runtime::RuntimeIsolationGuard;
 const MAX_FILE_BYTES: u64 = (DELETION_CONTROL_MAX_BYTES
     + TASK_CONTROL_MAX_RECEIPTS_BYTES
     + TASK_CONTROL_MAX_RETENTION_BYTES
+    + HistoryLifecycleControl::MAX_BYTES
     + 128 * 1024) as u64;
 const HEAD_ALLOWANCE_BYTES: u64 = 64 * 1024;
 const MAC_DOMAIN: &[u8] = b"hubuum.deletion-checkpoint.v1\0";
@@ -58,6 +59,8 @@ pub(super) struct CheckpointRepository {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Payload {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    history_lifecycle: Option<HistoryLifecycleAuthority>,
     state: DeletionControlState,
     position: DeletionRecoveryPosition,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -156,6 +159,10 @@ impl DurableCheckpoint {
 
     pub(super) fn identity(&self) -> &str {
         &self.sha256
+    }
+
+    pub(super) fn history_lifecycle(&self) -> Option<&HistoryLifecycleAuthority> {
+        self.payload.history_lifecycle.as_ref()
     }
 
     pub(super) fn task_control(&self) -> Option<&TaskControlState> {
@@ -334,7 +341,7 @@ impl CheckpointRepository {
             &self.root.join("HEAD"),
             false,
         )?)?)?;
-        if !matches!(head.format, 1 | 2)
+        if !matches!(head.format, 1..=3)
             || head.sha256.len() != 64
             || !head
                 .sha256
@@ -376,7 +383,8 @@ impl CheckpointRepository {
                     .task_control
                     .as_ref()
                     .map(TaskControlState::revision)
-            || (head.format == 2) != payload.task_control.is_some()
+            || (head.format >= 2) != payload.task_control.is_some()
+            || (head.format == 3) != payload.history_lifecycle.is_some()
             || payload
                 .task_control
                 .as_ref()
@@ -443,6 +451,7 @@ impl CheckpointRepository {
                 reapplication: capture.reapplication().cloned(),
                 task_control: None,
                 task_reapplication: None,
+                history_lifecycle: None,
             },
             initialize,
         )
@@ -469,6 +478,7 @@ impl CheckpointRepository {
                 reapplication: capture.deletion().reapplication().cloned(),
                 task_control: Some(capture.task_control().clone()),
                 task_reapplication: capture.task_reapplication().cloned(),
+                history_lifecycle: capture.history_lifecycle().cloned(),
             },
             initialize,
         )
@@ -494,7 +504,11 @@ impl CheckpointRepository {
         let previous = if initialize {
             // Bootstrap is explicit and restricted to a fresh, empty authority
             // and repository. Missing HEAD is never interpreted as an empty ledger.
-            if payload.state.revision() != 0
+            if payload
+                .history_lifecycle
+                .as_ref()
+                .is_some_and(|authority| authority.revision().value() != 0)
+                || payload.state.revision() != 0
                 || !payload.state.intents().is_empty()
                 || payload.task_control.as_ref().is_some_and(|tasks| {
                     tasks.revision().value() != 0
@@ -530,6 +544,16 @@ impl CheckpointRepository {
                     "Checkpoint would discard or roll back acknowledged deletion authority",
                 ));
             }
+            if current.history_lifecycle().is_some_and(|old| {
+                payload
+                    .history_lifecycle
+                    .as_ref()
+                    .is_none_or(|next| !next.covers(old))
+            }) {
+                return Err(unavailable(
+                    "Checkpoint cannot discard acknowledged history policy or hold authority",
+                ));
+            }
             match (&payload.task_control, current.task_control()) {
                 (None, Some(_)) => {
                     return Err(unavailable(
@@ -543,14 +567,22 @@ impl CheckpointRepository {
                 }
                 _ => {}
             }
-            if payload.state.revision() == current.state().revision()
+            if payload
+                .history_lifecycle
+                .as_ref()
+                .map(HistoryLifecycleAuthority::revision)
+                == current
+                    .history_lifecycle()
+                    .map(HistoryLifecycleAuthority::revision)
+                && payload.state.revision() == current.state().revision()
                 && payload
                     .task_control
                     .as_ref()
                     .map(TaskControlState::revision)
                     == current.task_control().map(TaskControlState::revision)
             {
-                if &payload.state != current.state()
+                if payload.history_lifecycle.as_ref() != current.history_lifecycle()
+                    || &payload.state != current.state()
                     || payload.reapplication.as_ref() != current.reapplication()
                     || payload.task_control.as_ref() != current.task_control()
                     || payload.task_reapplication.as_ref() != current.task_reapplication()
@@ -610,7 +642,13 @@ impl CheckpointRepository {
             return Err(unavailable("Recovery material read-back failed"));
         }
         let head = self.signed(Head {
-            format: if payload.task_control.is_some() { 2 } else { 1 },
+            format: if payload.history_lifecycle.is_some() {
+                3
+            } else if payload.task_control.is_some() {
+                2
+            } else {
+                1
+            },
             lineage: payload.state.lineage(),
             epoch: payload.state.epoch(),
             revision: payload.state.revision(),
@@ -1130,6 +1168,7 @@ mod tests {
                 reapplication: None,
                 task_control: None,
                 task_reapplication: None,
+                history_lifecycle: None,
             })
             .unwrap();
         let path = fixture

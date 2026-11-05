@@ -245,6 +245,8 @@ mod events;
 mod execution;
 pub(crate) use execution::ApplicationAdmission;
 mod api_request_admission;
+mod history_lifecycle;
+
 mod history_archive;
 mod identity;
 mod identity_queries;

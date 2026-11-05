@@ -9,6 +9,44 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- **Breaking storage SDK 0.20 error contract:** `ArtifactError` drops `Clone`,
+  `Eq` and `PartialEq` to retain an owned, non-serializable source without copying
+  private evidence. Move errors and match typed categories; producer failures
+  retain both the primary cause and failed abort, with redacted diagnostics.
+  Cleanup failure does not replace productive causality or prove removal.
+- Optional producer-owned artifact staging for filesystem and S3 stores binds
+  exact creation intent before returning a private admission receipt. Legacy
+  mutators reject owned attempts; cancellation, errors and publication fences
+  retain unresolved physical obligations. **Owned-state upgrade restriction:**
+  upgrade every writer and maintenance process before using owned staging;
+  older binaries reject its filesystem v2/S3 records. Preserve durable producer
+  intents and roll forward; do not adopt existing legacy staging as owned.
+  This does not enable the default database/memory history producer or expiry.
+- **Breaking storage SDK 0.20:** upgrade all ten exact SDK dependencies together
+  and implement the required `HistoryLifecycleStorage` control, audit, scoped read,
+  publication and recovery contracts. Deploy the new
+  `2026-11-03-000005_history_lifecycle` migration after shipped archive 000004;
+  refresh grants and preserve signed format-3 authority for roll-forward recovery.
+  Archive entries now preserve the original history publication and producer
+  owners for both supported protocols, and retained collection expiry prevents
+  archive fallback. Production remains Legacy; generic online expiry stays
+  disabled until the remaining safety gates are qualified. See the 0.19 to 0.20
+  adapter upgrade guidance.
+  Upgrade every API, backup and publication producer before enabling expiry;
+  retained expiry refuses subsequent Legacy startup.
+- Historical population reads preserve explicitly selected logical class UUIDs.
+  Retained expiry gaps require original authorization facts and configured
+  permission checks; unproved correspondence remains unavailable. Supported
+  logical restores may remap numeric object, collection and class coordinates
+  only after validating all original UUIDs, relationships and restore provenance.
+  Configured current and historical authorization still apply before any expired
+  population response; reused IDs, changed identities and stale scopes fail closed.
+- Scoped history policy revisions, bounded deadline inspection and issued
+  preview/application with independent recovery protection; administrator holds
+  preserve original creation and expiry clocks. Maintenance settles natural hold
+  expiry once and protects its original audit fact independently. Physical history-expiry execution remains under
+  development; see [scoped history retention](docs/history_retention.md).
+
 - **Breaking storage SDK 0.19:** all ten SDK crates advance together. Complete
   adapters must implement `HistoryArchiveStorage` with persisted catalogs,
   bounded captured hot inputs, generation-checked pins and original registered
@@ -271,6 +309,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   [0.7 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-06-to-07).
 
 ### Fixed
+
+- Keep query-usage analysis available when a PostgreSQL index disappears during
+  catalog inspection; omit vanished indexes from native resource coverage.
 
 - Task cleanup reports retain their exact verified checkpoint instead of
   reacquiring a contended repository or mixing it with newer database state.

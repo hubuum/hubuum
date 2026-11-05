@@ -26,10 +26,12 @@ impl ExecutionStorage for MemoryStorage {
         F: Future<Output = R> + 'a,
         R: 'a,
     {
-        let scope = MEMORY_EXECUTION_SCOPE
-            .try_with(|current| merge_memory_execution_scope(current, &scope))
-            .unwrap_or(scope);
-        Box::pin(MEMORY_EXECUTION_SCOPE.scope(scope, future))
+        Box::pin(async move {
+            let scope = MEMORY_EXECUTION_SCOPE
+                .try_with(|current| merge_memory_execution_scope(current, &scope))
+                .unwrap_or(scope);
+            MEMORY_EXECUTION_SCOPE.scope(scope, future).await
+        })
     }
 
     fn run_in_scope_send<'a, F, R>(
@@ -41,10 +43,12 @@ impl ExecutionStorage for MemoryStorage {
         F: Future<Output = R> + Send + 'a,
         R: Send + 'a,
     {
-        let scope = MEMORY_EXECUTION_SCOPE
-            .try_with(|current| merge_memory_execution_scope(current, &scope))
-            .unwrap_or(scope);
-        Box::pin(MEMORY_EXECUTION_SCOPE.scope(scope, future))
+        Box::pin(async move {
+            let scope = MEMORY_EXECUTION_SCOPE
+                .try_with(|current| merge_memory_execution_scope(current, &scope))
+                .unwrap_or(scope);
+            MEMORY_EXECUTION_SCOPE.scope(scope, future).await
+        })
     }
 }
 
@@ -53,6 +57,15 @@ fn merge_memory_execution_scope(
     child: &StorageExecutionScope,
 ) -> StorageExecutionScope {
     let mut merged = StorageExecutionScope::default();
+    if parent.storage_callback_active() || child.storage_callback_active() {
+        merged = merged.with_storage_callback();
+    }
+    if let Some(context) = parent
+        .history_read_override()
+        .or_else(|| child.history_read_override())
+    {
+        merged = merged.with_history_read(context.clone());
+    }
     if let Some(permit) = parent
         .api_request_override()
         .or_else(|| child.api_request_override())

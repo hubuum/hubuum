@@ -190,6 +190,19 @@ for an exception.
   `TaskExecutionStorage::purge_expired_schema_profile_outputs`,
   `TaskExecutionStorage::purge_expired_export_outputs`, and
   `TaskExecutionStorage::purge_expired_backup_outputs`.
+- History publication coordination:
+  `HistoryLifecycleStorage::admit_history_publication` reserves bounded durable
+  ownership under the original registered application and history fences.
+  `HistoryLifecycleStorage::settle_history_publication` removes only that exact
+  owner after positive producer and driver completion.
+  `HistoryLifecycleStorage::admit_history_archive_execution` atomically reserves
+  the archive parent and producer; `HistoryLifecycleStorage::admit_history_producer`
+  reserves a child in its original scope, and
+  `HistoryLifecycleStorage::settle_history_producer` records exact positive
+  completion without reacquiring a retired API owner. These registry writes
+  do not create retention policy, expiry or removal audit events. Ledger and
+  read-scope tests cover this capability; production transport integration,
+  protected expiry execution and H4 resource acceptance remain separate gates.
 - Event coordination:
   `EventDeliveryAdministrationStorage::release_event_delivery_for_retry` and
   `EventDeliveryAdministrationStorage::mark_event_delivery_dead` are explicit
@@ -479,6 +492,27 @@ Their immutable manifests, receipt generations, policy revisions, holds and
 independently authenticated checkpoints provide recovery provenance. Normal
 domain mutations retain their existing event-context requirements.
 
+## History lifecycle control
+
+History policy/hold/review transitions are context-free workflow mutations with
+mandatory canonical audit derived from their private typed receipts. Principal,
+operation identity, original clock, proposal and review evidence are validated
+before commit. `HistoryLifecycleStorage::commit_history_lifecycle` compares the
+exact predecessor and application/deletion/history fences and appends these facts
+atomically with protected control state. An audit failure rolls back authority.
+`HistoryLifecycleStorage::recover_history_lifecycle` is quarantine-only and replays stable original facts;
+it cannot discard newer compatible local authority. These operations grant no
+physical deletion authority and do not enable a runtime expiry path.
+
+`HistoryLifecycleStorage::register_history_runtime` is a startup ownership
+transition declaring the complete online history protocol. It preserves runtime
+ownership, isolation, capacity and application exposure checks. Registrations
+never expire from a timer; disappearance of an API request owner is not evidence
+of publication quiescence. Legacy registration is refused once retained expiry
+requires the new protocol. Admission must serialize its mixed-fleet check with
+registration before recording an intent; native race qualification remains
+required.
+
 ## History archive catalog and captured query control
 
 `HistoryArchiveStorage::publish_history_archive` installs immutable descriptors
@@ -493,3 +527,55 @@ against the principal-owned capture before external segment reads. These are
 control/workflow mutations, without ordinary resource events or source deletion.
 Every access retains the original owner, fence, identities and deadline; external
 I/O never holds a transaction. Service authorization remains configured and live.
+
+## History producer slot transactions
+
+Productive admission orders deletion/application authority, history authority,
+API-owner SHARE, then publication parent UPDATE and child INSERT. Child admission
+updates the parent directly; taking parent SHARE first would introduce a lock
+upgrade. The counter, monotonic assigned bit and single-assignment child record change
+atomically. The only child unique key is its parent; child nonce collisions
+across parents do not introduce index waits. Settlement never clears assigned.
+A retained RR snapshot conflicts rather than admitting work across retirement.
+
+Child settlement takes only exact child UPDATE followed by its matching parent
+counter UPDATE; it records a retired child without deleting unknown obligations.
+Parent retirement deletes only an exact parent with zero occupied slots and no
+unretired child, then its retired child record. Both paths are exempt from
+productive application/history/API locks. Rollback preserves the counter and
+child together; retries within the parent lifetime do not decrement twice.
+Known physical completion may settle after fencing, while drop, timeout, missing
+owner and clock expiry provide no retirement evidence. Restore and production
+transport/producer recovery remain separate qualification requirements.
+
+## Fixed archive publication claims (unpublished lifecycle contract)
+
+`HistoryArchiveStorage::claim_history_archive_publication` reloads one original
+closed-version capture and commits a single-assignment claim before returning its
+private, non-wire claim handle. It issues no artifact operation. The manifest
+retains original selection, principal, interval, absolute deadline, generation,
+execution binding and bounded input/authorization digests. It neither selects a
+replacement version nor grants authorization or physical artifact ownership.
+
+Claim admission chooses child **UPDATE NOWAIT** at the outermost productive
+validator, after deletion/application/history authority and API ownership, before
+parent SHARE and capture/claim targets. The five read entries retain child SHARE
+NOWAIT. Claim admission changes the child tuple and capture pin flag atomically
+with its parent-keyed claim insert. A retained RR settlement must conflict with
+that changed tuple rather than miss a newly inserted claim. There is no new
+claim foreign key, trigger or secondary unique key. Every same-parent admission
+already owns the same exclusive child lock before it reaches the claim index.
+
+Claimed input is excluded from bounded expired-pin cleanup through a flag on the
+capture tuple, so cleanup cannot use an old snapshot to discard a concurrent
+claim. The original capture reservation stays charged; claim metadata is bounded
+to 256 KiB plus a ledger allowance. Each claim additionally reserves a fixed
+16 MiB artifact ceiling, which the future physical producer must enforce. These
+are logical bounds, not measured RSS, spool, H4 or liveness qualification.
+
+Child and parent settlement refuse any unfinished claim, including after API
+settlement, restore or a successful application task join. No outcome/cleanup
+receipt is inferred from a task result, identity, timeout, cancellation or drop.
+The provider ownership/outcome bridge remains required before external effects;
+current claim admission cannot retire its physical obligation. Production remains
+Legacy, and generic expiry remains disabled.
