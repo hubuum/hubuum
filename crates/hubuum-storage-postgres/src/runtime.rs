@@ -921,8 +921,11 @@ tokio::task_local! {
     static AMBIENT_STORAGE_CALLBACK: bool;
 }
 
-pub(crate) async fn with_storage_callback<F: Future>(future: F) -> F::Output {
-    AMBIENT_STORAGE_CALLBACK.scope(true, future).await
+pub(crate) fn with_storage_callback<F: Future>(future: F) -> impl Future<Output = F::Output> {
+    // Transaction callbacks can contain large query futures. Keep that state
+    // behind one pointer before adding task-local supervision, so callers do
+    // not carry another inline copy through every enclosing async frame.
+    AMBIENT_STORAGE_CALLBACK.scope(true, Box::pin(future))
 }
 
 pub(crate) fn ensure_no_storage_callback() -> Result<(), PostgresStorageError> {
