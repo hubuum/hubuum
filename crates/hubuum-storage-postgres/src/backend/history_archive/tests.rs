@@ -159,8 +159,14 @@ async fn rejected_capture_preserves_expired_cleanup_accounting() {
             let authority = fenced!(sql_query("SELECT public.hubuum_archive_history_entry($1,$2,$3,$4) AS allowed"), &permit)
                 .get_result::<Allowed>(connection).await?.allowed;
             if !authority { return Err(PostgresStorageError::unavailable("Archive fixture owner unavailable")); }
-            let before = sql_query(format!("{COUNTER} FOR UPDATE"))
+            // Keep the capacity lock across both observations and the rollback
+            // check. A second transaction would admit unrelated captures before
+            // we compare counters, making this global invariant test race.
+            sql_query("SELECT id FROM hubuum_control.history_archive_capture_capacity WHERE id=1 FOR UPDATE")
+                .execute(connection).await?;
+            let before = sql_query(COUNTER)
                 .bind::<SqlUuid,_>(live.id()).get_result::<Counter>(connection).await?;
+            connection.batch_execute("SAVEPOINT archive_capture_probe").await?;
             assert!(save_on(connection, &live, None, &permit).await?);
             // Simulate an elapsed stored metadata pin, not read coverage or
             // runtime/publication-owner expiry. The registration remains live.
@@ -174,21 +180,13 @@ async fn rejected_capture_preserves_expired_cleanup_accounting() {
                     .get_result::<Counter>(connection).await?;
                 observations.push((allowed,counter));
             }
-            Ok::<_,PostgresStorageError>((before,observations))
+            connection.batch_execute("ROLLBACK TO SAVEPOINT archive_capture_probe").await?;
+            let restored = sql_query(COUNTER).bind::<SqlUuid,_>(live.id())
+                .get_result::<Counter>(connection).await?;
+            Ok::<_,PostgresStorageError>((before,observations,restored))
         }.await;
         connection.batch_execute("ROLLBACK").await?;
-        connection.batch_execute("BEGIN").await?;
-        let restored = async {
-            if database_role_tests_enabled() {
-                sql_query("SELECT set_config('role', $1, true)")
-                    .bind::<Text, _>(integration_test_database_roles().owner().as_str()).execute(connection).await?;
-            }
-            sql_query(COUNTER).bind::<SqlUuid,_>(live.id())
-                .get_result::<Counter>(connection).await.map_err(PostgresStorageError::from)
-        }.await;
-        connection.batch_execute("ROLLBACK").await?;
-        let restored = restored?;
-        result.map(|(before,observations)|(before,observations,restored))
+        result
     }).await;
     let archive = backend
         .run_in_scope(
