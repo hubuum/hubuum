@@ -809,6 +809,17 @@ mod scan_tests {
             connection.batch_execute("SELECT id FROM hubuum_control.deletion_authority WHERE id=1 FOR UPDATE;
                 SELECT id FROM hubuum_control.application_control WHERE id=1 FOR UPDATE;
                 SELECT id FROM hubuum_control.history_lifecycle_control WHERE id=1 FOR UPDATE").await?;
+            // Other parallel archive fixtures can retain publication owners
+            // between transactions. Hide those obligations only inside this
+            // rollback-only fixture, after excluding new productive admission.
+            // Otherwise the earlier undrained-owner gate masks the particular
+            // restore condition this case is intended to exercise. These rows
+            // are restored with history_exposure_fixture; no retirement or
+            // cleanup authority is issued by this test.
+            connection.batch_execute("SELECT id FROM hubuum_control.history_publication_owners ORDER BY id FOR UPDATE;
+                DELETE FROM hubuum_control.history_archive_publication_claims;
+                DELETE FROM hubuum_control.history_publication_producers;
+                DELETE FROM hubuum_control.history_publication_owners").await?;
             let created = sql_query("INSERT INTO public.collections(name,description,parent_collection_id)
                 SELECT $1,'exposure original',id FROM public.collections WHERE parent_collection_id IS NULL RETURNING id")
                 .bind::<Text,_>(format!("history_exposure_{}",Uuid::new_v4().simple())).get_result::<Created>(connection).await?;
