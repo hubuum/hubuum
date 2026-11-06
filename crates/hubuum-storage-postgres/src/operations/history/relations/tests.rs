@@ -20,6 +20,72 @@ struct Explain {
     plan: Value,
 }
 
+#[tokio::test]
+async fn relationship_validity_keeps_index_in_generic_plans() {
+    use diesel::pg::Pg;
+    use diesel::query_builder::{AstPass, QueryFragment};
+    use diesel::result::QueryResult;
+    use diesel_async::SimpleAsyncConnection;
+
+    diesel::table! {
+        relation_validity_fixture (id) {
+            id -> Integer,
+            op -> Text,
+            valid_from -> Timestamptz,
+            valid_to -> Nullable<Timestamptz>,
+        }
+    }
+
+    #[derive(diesel::QueryId)]
+    struct PrepareValidityLookup<Q>(Q);
+    impl<Q: QueryFragment<Pg>> QueryFragment<Pg> for PrepareValidityLookup<Q> {
+        fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, Pg>) -> QueryResult<()> {
+            out.push_sql("PREPARE relation_validity_lookup(TIMESTAMPTZ) AS ");
+            self.0.walk_ast(out.reborrow())
+        }
+    }
+
+    let pool = integration_test_pool(1);
+    let plan = with_transaction(&pool, async |connection| {
+        connection.batch_execute(
+            "CREATE TEMP TABLE relation_validity_fixture
+               (id INTEGER PRIMARY KEY, op TEXT NOT NULL, valid_from TIMESTAMPTZ NOT NULL, valid_to TIMESTAMPTZ) ON COMMIT DROP;
+             INSERT INTO relation_validity_fixture
+               SELECT n, 'U', '2000-01-01'::TIMESTAMPTZ + n * INTERVAL '1 day',
+                 '2000-01-01'::TIMESTAMPTZ + (n + 1) * INTERVAL '1 day'
+               FROM generate_series(1,20000) n;
+             CREATE INDEX relation_validity_fixture_validity
+               ON relation_validity_fixture USING gist (tstzrange(valid_from, valid_to, '[)'))
+               WHERE op <> 'D';
+             ANALYZE relation_validity_fixture;
+             SET LOCAL plan_cache_mode = force_generic_plan;"
+        ).await?;
+        // Exercise the production Diesel predicate, retaining the requested
+        // timestamp as a server parameter to prevent a custom plan hiding an
+        // expression-index mismatch.
+        let query = relation_validity_fixture::table
+            .filter(relation_valid_at!(relation_validity_fixture, sql::<Timestamptz>("$1")))
+            .count();
+        PrepareValidityLookup(query).execute(connection).await?;
+        let plan = sql_query(
+            "EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE relation_validity_lookup('2001-01-01 00:00:00+00')"
+        ).get_result::<Explain>(connection).await?.plan;
+        connection.batch_execute("DEALLOCATE relation_validity_lookup").await?;
+        Ok::<_, PostgresStorageError>(plan)
+    }).await.unwrap();
+    let mut nodes = Vec::new();
+    scans(&plan[0]["Plan"], &mut nodes);
+    let index = nodes
+        .iter()
+        .find(|node| node["Index Name"] == "relation_validity_fixture_validity")
+        .expect("the generic count plan must use the validity index");
+    assert_eq!(index["Actual Rows"], 1, "{plan:#}");
+    assert!(
+        index["Index Cond"].as_str().unwrap().contains("$1"),
+        "{plan:#}"
+    );
+}
+
 fn scans<'a>(node: &'a Value, found: &mut Vec<&'a Value>) {
     if node["Node Type"].as_str().is_some_and(|kind| {
         matches!(

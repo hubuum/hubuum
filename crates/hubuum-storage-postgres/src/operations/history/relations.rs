@@ -1,5 +1,8 @@
 use diesel::{
-    QueryableByName, sql_query,
+    PgRangeExpressionMethods, QueryableByName,
+    dsl::tstzrange,
+    pg::sql_types::RangeBoundEnum,
+    sql_query,
     sql_types::{Array, BigInt, Bool, Integer, Jsonb, Nullable, Text, Timestamp, Timestamptz},
 };
 use hubuum_domain::{ClassRelationId, ObjectId};
@@ -13,6 +16,21 @@ use hubuum_storage_core::{
 
 use super::*;
 use crate::PostgresConnection;
+
+// Keep the range bounds and partial-index predicate literal so PostgreSQL can
+// use the installed validity GiST indexes even with generic prepared plans.
+macro_rules! relation_valid_at {
+    ($history:ident, $at:expr) => {
+        $history::op.ne(sql::<Text>("'D'")).and(
+            tstzrange(
+                $history::valid_from.nullable(),
+                $history::valid_to,
+                sql::<RangeBoundEnum>("'[)'"),
+            )
+            .contains($at),
+        )
+    };
+}
 
 #[cfg(test)]
 mod tests;
@@ -378,16 +396,15 @@ async fn relation_history_count(
                 .filter(history_version_visible($family, history::logical_identity))
                 .into_boxed();
             if let Some(at) = at {
-                query = query
-                    .filter(history::op.ne("D"))
-                    .filter(history::valid_from.le(at))
-                    .filter(history::valid_to.is_null().or(history::valid_to.gt(at)))
-                    .filter(history_as_of_visible(
-                        $family,
-                        history::logical_identity,
-                        at,
-                        history::valid_from,
-                    ));
+                query =
+                    query
+                        .filter(relation_valid_at!(history, at))
+                        .filter(history_as_of_visible(
+                            $family,
+                            history::logical_identity,
+                            at,
+                            history::valid_from,
+                        ));
             }
             query.count().get_result::<i64>(connection).await?
         }};
