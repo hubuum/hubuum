@@ -26,14 +26,14 @@ static ARCHIVE_METRICS: LazyLock<()> =
     LazyLock::new(|| crate::observability::metrics::init().unwrap());
 
 // Deliberately oversized rows must never enter the shared application database:
-// unrelated full-backup contracts enforce a smaller per-row limit. Cargo runs
-// integration binaries after this library binary; only these two library cases
-// use the runner's separately provisioned restore database.
+// unrelated full-backup contracts enforce a smaller per-row limit. These cases
+// also retain service publication owners, so use their own disposable database
+// rather than the database later used for destructive restore certification.
 #[cfg(feature = "integration-test-support")]
 async fn with_overflow_backend(test: impl for<'a> AsyncFn(&'a mut TestContext)) {
     let _guard = crate::test_support::RESTORE_TEST_LOCK.lock().await;
     for kind in [StorageBackendKind::Memory, StorageBackendKind::Postgres] {
-        let owner_url = crate::test_support::restore_test_migration_database_url();
+        let owner_url = crate::test_support::archive_test_migration_database_url();
         let target = hubuum_storage_postgres::test_support::IsolatedRestoreTarget::new(
             &owner_url,
             &hubuum_storage_postgres::test_support::integration_test_database_url(),
@@ -50,7 +50,7 @@ async fn with_overflow_backend(test: impl for<'a> AsyncFn(&'a mut TestContext)) 
         let backend = match kind {
             StorageBackendKind::Memory => fixture.storage().clone(),
             StorageBackendKind::Postgres => {
-                let runtime_url = crate::test_support::restore_test_runtime_database_url();
+                let runtime_url = crate::test_support::archive_test_runtime_database_url();
                 let pool = crate::test_support::postgres_test_pool_with_timeout(
                     &runtime_url,
                     8,

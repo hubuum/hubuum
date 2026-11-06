@@ -240,10 +240,12 @@ for fuzz_dependency in crates/hubuum-regex/src/lib.rs \
   assert_flag "$fuzz_output" regex_fuzz true
 done
 
-# The portable CI wrapper supplies the database used by Rust restore contracts.
-restore_fixture_output="$(bash "$classifier" tests/python/integration/rust_tests.py)"
-assert_flag "$restore_fixture_output" code true
-assert_flag "$restore_fixture_output" rust true
+# Both runners supply the isolated databases used by Rust restore/archive contracts.
+for restore_fixture in run_tests.sh tests/python/integration/rust_tests.py; do
+  restore_fixture_output="$(bash "$classifier" "$restore_fixture")"
+  assert_flag "$restore_fixture_output" code true
+  assert_flag "$restore_fixture_output" rust true
+done
 
 assert_flag "$(bash "$classifier" docs/testing.md)" regex_fuzz false
 for unrelated_crate in crates/hubuum-domain/src/lib.rs \

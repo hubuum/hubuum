@@ -51,11 +51,22 @@ UNIQUE_SUFFIX="$(date +%s)_$$_${RANDOM}${RANDOM}"
 TEST_DB_NAME="${TEST_DB_PREFIX}${UNIQUE_SUFFIX}"
 SINGLE_TEST_DB_NAME="${TEST_DB_NAME}_single"
 RESTORE_TEST_DB_NAME="${TEST_DB_NAME}_restore"
+ARCHIVE_TEST_DB_NAME="${TEST_DB_NAME}_archive"
 OWNER_ROLE="hubuum_test_owner_${UNIQUE_SUFFIX}"
 MIGRATOR_ROLE="hubuum_test_migrator_${UNIQUE_SUFFIX}"
 RUNTIME_ROLE="hubuum_test_runtime_${UNIQUE_SUFFIX}"
 
 cleanup() {
+    if [ -n "${ARCHIVE_TEST_DB_NAME:-}" ]; then
+        PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$ARCHIVE_TEST_DB_NAME' AND pid <> pg_backend_pid();" \
+            > /dev/null 2>&1 || true
+        PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "DROP DATABASE IF EXISTS $ARCHIVE_TEST_DB_NAME;" \
+            > /dev/null 2>&1 || true
+    fi
     if [ -n "${RESTORE_TEST_DB_NAME:-}" ]; then
         PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" \
             -v ON_ERROR_STOP=1 \
@@ -172,14 +183,29 @@ if [ "$HUBUUM_DATABASE_ROLE_TESTS" = true ]; then
         -c "CREATE DATABASE $RESTORE_TEST_DB_NAME OWNER $OWNER_ROLE;" > /dev/null
     export HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL="postgres://$MIGRATOR_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$RESTORE_TEST_DB_NAME$SSL_MODE"
     export HUBUUM_RESTORE_TEST_DATABASE_URL="postgres://$RUNTIME_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$RESTORE_TEST_DB_NAME$SSL_MODE"
+    PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
+        -c "CREATE DATABASE $ARCHIVE_TEST_DB_NAME OWNER $OWNER_ROLE;" > /dev/null
+    export HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL="postgres://$MIGRATOR_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$ARCHIVE_TEST_DB_NAME$SSL_MODE"
+    export HUBUUM_ARCHIVE_TEST_DATABASE_URL="postgres://$RUNTIME_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$ARCHIVE_TEST_DB_NAME$SSL_MODE"
 else
     PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
         -c "CREATE DATABASE $RESTORE_TEST_DB_NAME;" > /dev/null
     export HUBUUM_RESTORE_TEST_DATABASE_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$RESTORE_TEST_DB_NAME$SSL_MODE"
     export HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL="$HUBUUM_RESTORE_TEST_DATABASE_URL"
+    PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
+        -c "CREATE DATABASE $ARCHIVE_TEST_DB_NAME;" > /dev/null
+    export HUBUUM_ARCHIVE_TEST_DATABASE_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$ARCHIVE_TEST_DB_NAME$SSL_MODE"
+    export HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL="$HUBUUM_ARCHIVE_TEST_DATABASE_URL"
 fi
 HUBUUM_DATABASE_URL="$HUBUUM_RESTORE_TEST_DATABASE_URL" \
     HUBUUM_MIGRATION_DATABASE_URL="$HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL" \
+    cargo run --quiet --features embedded-migrations --bin hubuum-admin -- \
+        --migrate > /dev/null
+
+# Archive overflow/cancellation fixtures intentionally retain publication owners.
+# Keep them outside both ordinary backup inputs and later restore certification.
+HUBUUM_DATABASE_URL="$HUBUUM_ARCHIVE_TEST_DATABASE_URL" \
+    HUBUUM_MIGRATION_DATABASE_URL="$HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL" \
     cargo run --quiet --features embedded-migrations --bin hubuum-admin -- \
         --migrate > /dev/null
 

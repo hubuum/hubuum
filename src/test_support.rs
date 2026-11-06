@@ -621,3 +621,16 @@ pub fn restore_test_runtime_database_url() -> String {
     std::env::var("HUBUUM_RESTORE_TEST_DATABASE_URL")
         .expect("The test runner must provide isolated runtime restore authority")
 }
+
+/// Separate archive fixture authority; retained publication owners must not
+/// contaminate ordinary backup inputs or destructive restore certification.
+pub fn archive_test_migration_database_url() -> String {
+    std::env::var("HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL")
+        .expect("The test runner must provide isolated archive fixture authority")
+}
+
+/// Runtime role for the isolated archive fixture database.
+pub fn archive_test_runtime_database_url() -> String {
+    std::env::var("HUBUUM_ARCHIVE_TEST_DATABASE_URL")
+        .expect("The test runner must provide isolated archive fixture storage")
+}
