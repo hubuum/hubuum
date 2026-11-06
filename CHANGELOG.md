@@ -314,6 +314,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Artifact downloads keep their reader inside the response stream and preserve
+  the original execution scope. Disconnecting drops pending reads instead of
+  detaching a producer; final-block and whole-stream verification remain required.
+
 - Keep query-usage analysis available when a PostgreSQL index disappears during
   catalog inspection; omit vanished indexes from native resource coverage.
 
