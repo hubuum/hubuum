@@ -1,11 +1,15 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use diesel::dsl::{case_when, exists, sum};
 use diesel::sql_types::{
     BigInt, Bool, Integer, Jsonb, Nullable, Text, Timestamptz, Uuid as SqlUuid,
 };
-use diesel::{QueryableByName, sql_query};
+use diesel::{
+    BoolExpressionMethods, ExpressionMethods, IntoSql, NullableExpressionMethods,
+    PgAnyJsonExpressionMethods, QueryDsl, Queryable, QueryableByName, WindowExpressionMethods,
+    sql_query,
+};
 use diesel_async::RunQueryDsl;
-use futures_util::TryStreamExt;
 use hubuum_storage_core::*;
 use serde::Deserialize;
 use serde_json::Value;
@@ -14,52 +18,91 @@ use uuid::Uuid;
 use super::PostgresStorage;
 use crate::{PostgresConnection, PostgresStorageError};
 
-fn history_scan_select(family: StorageIdentityHistoryKind) -> String {
-    let (table, columns) = match family {
-        StorageIdentityHistoryKind::Collection => (
-            "collections_history",
-            "CASE WHEN op='D' THEN valid_from ELSE valid_to END AS anchor, op='D' AS deleted",
-        ),
-        StorageIdentityHistoryKind::Class => (
-            "hubuumclass_history",
-            "CASE WHEN op='D' THEN valid_from ELSE valid_to END AS anchor, op='D' AS deleted",
-        ),
-        StorageIdentityHistoryKind::Object => (
-            "hubuumobject_history",
-            "CASE WHEN op='D' THEN valid_from ELSE valid_to END AS anchor, op='D' AS deleted",
-        ),
-        StorageIdentityHistoryKind::ClassRelation => (
-            "hubuumclass_relation_history",
-            "CASE WHEN op='D' THEN valid_from ELSE valid_to END AS anchor, op='D' AS deleted",
-        ),
-        StorageIdentityHistoryKind::ObjectRelation => (
-            "hubuumobject_relation_history",
-            "CASE WHEN op='D' THEN valid_from ELSE valid_to END AS anchor, op='D' AS deleted",
-        ),
-        StorageIdentityHistoryKind::ExportTemplate => (
-            "export_templates_history",
-            "CASE WHEN op='D' THEN valid_from ELSE valid_to END AS anchor, op='D' AS deleted",
-        ),
-        StorageIdentityHistoryKind::RemoteTarget => (
-            "remote_targets_history",
-            "CASE WHEN op='D' THEN valid_from ELSE valid_to END AS anchor, op='D' AS deleted",
-        ),
-        StorageIdentityHistoryKind::ComputedDefinitions => (
-            "computed_field_history",
-            "valid_to AS anchor, FALSE AS deleted",
-        ),
-        StorageIdentityHistoryKind::ClassSchema => (
-            "class_schema_history",
-            "occurred_at AS anchor, FALSE AS deleted",
-        ),
+#[diesel::declare_sql_function]
+extern "SQL" {
+    fn octet_length(value: Nullable<Text>) -> Nullable<Integer>;
+}
+
+// Keep table/column selection typed. Every family orders by its unique native
+// history key; the ordered SUM therefore has an unambiguous current-row bound.
+// PostgreSQL suppresses the over-budget suffix before transferring JSON to Rust.
+macro_rules! history_scan_query {
+    ($table:ident, $position:ident, $from:expr, $until:expr, $anchor:expr, $deleted:expr) => {{
+        let within_budget = || {
+            let bytes = case_when(
+                $table::logical_identity.is_null(),
+                0_i32.into_sql::<Integer>(),
+            )
+            .otherwise(
+                octet_length($table::logical_identity.cast::<Nullable<Text>>()).assume_not_null(),
+            );
+            sum(bytes)
+                .window_order($table::$position)
+                .assume_not_null()
+                .le(HistoryLifecycleScan::MAX_INPUT_BYTES as i64)
+        };
+        $table::table.order($table::$position).select((
+            $from,
+            $until,
+            case_when(within_budget(), $table::logical_identity).otherwise(None::<Value>),
+            $anchor,
+            $deleted,
+            within_budget(),
+        ))
+    }};
+    ($table:ident) => {
+        history_scan_query!(
+            $table,
+            history_id,
+            $table::valid_from,
+            $table::valid_to,
+            case_when($table::op.eq("D"), $table::valid_from.nullable())
+                .otherwise($table::valid_to),
+            $table::op.eq("D")
+        )
     };
-    // Identifiers and projections come only from the closed family vocabulary.
-    let interval = if family == StorageIdentityHistoryKind::ClassSchema {
-        "occurred_at AS valid_from, NULL::TIMESTAMPTZ AS valid_to"
-    } else {
-        "valid_from, valid_to"
+}
+
+async fn history_scan_rows(
+    connection: &mut PostgresConnection,
+    scan: &HistoryLifecycleScan,
+) -> Result<Vec<HistoryRow>, PostgresStorageError> {
+    use crate::schema::{
+        class_schema_history, collections_history, computed_field_history,
+        export_templates_history, hubuumclass_history, hubuumclass_relation_history,
+        hubuumobject_history, hubuumobject_relation_history, remote_targets_history,
     };
-    format!("SELECT logical_identity, {columns}, {interval} FROM public.{table}")
+    macro_rules! load {
+        ($($query:tt)*) => {
+            history_scan_query!($($query)*).limit(i64::from(scan.limit()))
+                .load::<HistoryRow>(connection).await?
+        };
+    }
+    Ok(match scan.key().family() {
+        StorageIdentityHistoryKind::Collection => load!(collections_history),
+        StorageIdentityHistoryKind::Class => load!(hubuumclass_history),
+        StorageIdentityHistoryKind::Object => load!(hubuumobject_history),
+        StorageIdentityHistoryKind::ClassRelation => load!(hubuumclass_relation_history),
+        StorageIdentityHistoryKind::ObjectRelation => load!(hubuumobject_relation_history),
+        StorageIdentityHistoryKind::ExportTemplate => load!(export_templates_history),
+        StorageIdentityHistoryKind::RemoteTarget => load!(remote_targets_history),
+        StorageIdentityHistoryKind::ComputedDefinitions => load!(
+            computed_field_history,
+            history_id,
+            computed_field_history::valid_from,
+            computed_field_history::valid_to,
+            computed_field_history::valid_to,
+            false.into_sql::<Bool>()
+        ),
+        StorageIdentityHistoryKind::ClassSchema => load!(
+            class_schema_history,
+            id,
+            class_schema_history::occurred_at,
+            None::<DateTime<Utc>>.into_sql::<Nullable<Timestamptz>>(),
+            class_schema_history::occurred_at.nullable(),
+            false.into_sql::<Bool>()
+        ),
+    })
 }
 
 #[derive(QueryableByName)]
@@ -77,18 +120,14 @@ struct PublicationGenerationRow {
     #[diesel(sql_type = BigInt)]
     generation: i64,
 }
-#[derive(QueryableByName)]
+#[derive(Queryable)]
 struct HistoryRow {
-    #[diesel(sql_type = Timestamptz)]
     valid_from: DateTime<Utc>,
-    #[diesel(sql_type = Nullable<Timestamptz>)]
     valid_to: Option<DateTime<Utc>>,
-    #[diesel(sql_type = Nullable<Jsonb>)]
     logical_identity: Option<Value>,
-    #[diesel(sql_type = Nullable<Timestamptz>)]
     anchor: Option<DateTime<Utc>>,
-    #[diesel(sql_type = Bool)]
     deleted: bool,
+    within_budget: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -161,119 +200,126 @@ pub(super) async fn require_history_exposure_safe_on(
     sql_query("SELECT public.hubuum_history_expiry_sync()")
         .execute(connection)
         .await?;
-    #[derive(QueryableByName)]
-    struct Identity {
-        #[diesel(sql_type=Nullable<Jsonb>)]
-        logical_identity: Option<Value>,
-        #[diesel(sql_type=BigInt)]
-        encoded_bytes: i64,
-    }
+    use crate::schema::{
+        class_schema_revisions, collections, collections_history, computed_field_history,
+        export_templates, export_templates_history, hubuumclass, hubuumclass_history,
+        hubuumclass_relation, hubuumclass_relation_history, hubuumobject, hubuumobject_history,
+        hubuumobject_relation, hubuumobject_relation_history, remote_targets,
+        remote_targets_history,
+    };
     use StorageIdentityHistoryKind as Family;
-    // Complete current/open inventory for the nine supported history families.
-    // Tombstone D records are closed deletion events, not protected live data.
-    const SOURCES: &[(Family, &str, &str)] = &[
-        (Family::Collection, "collections", "TRUE"),
-        (
-            Family::Collection,
-            "collections_history",
-            "valid_to IS NULL AND op<>'D'",
-        ),
-        (Family::Class, "hubuumclass", "TRUE"),
-        (
-            Family::Class,
-            "hubuumclass_history",
-            "valid_to IS NULL AND op<>'D'",
-        ),
-        (Family::Object, "hubuumobject", "TRUE"),
-        (
-            Family::Object,
-            "hubuumobject_history",
-            "valid_to IS NULL AND op<>'D'",
-        ),
-        (Family::ClassRelation, "hubuumclass_relation", "TRUE"),
-        (
-            Family::ClassRelation,
-            "hubuumclass_relation_history",
-            "valid_to IS NULL AND op<>'D'",
-        ),
-        (Family::ObjectRelation, "hubuumobject_relation", "TRUE"),
-        (
-            Family::ObjectRelation,
-            "hubuumobject_relation_history",
-            "valid_to IS NULL AND op<>'D'",
-        ),
-        (Family::ExportTemplate, "export_templates", "TRUE"),
-        (
-            Family::ExportTemplate,
-            "export_templates_history",
-            "valid_to IS NULL AND op<>'D'",
-        ),
-        (Family::RemoteTarget, "remote_targets", "TRUE"),
-        (
-            Family::RemoteTarget,
-            "remote_targets_history",
-            "valid_to IS NULL AND op<>'D'",
-        ),
-        (
-            Family::ComputedDefinitions,
-            "computed_field_history",
-            "valid_to IS NULL",
-        ),
-        (Family::ClassSchema, "class_schema_revisions", "TRUE"),
-    ];
     let mut budget = HistoryRecoveryExposureBudget::default();
-    for &(family, table, filter) in SOURCES {
-        if !journal.intents().iter().any(|intent| {
-            intent
-                .manifest()
-                .members()
-                .iter()
-                .any(|member| member.family() == family)
-        }) {
-            continue;
-        }
-        // Do not transfer an oversized identity into Rust just to reject it.
-        // All dynamic SQL identifiers and filters are closed constants above.
-        let query = format!(
-            "SELECT CASE WHEN SUM(encoded_bytes) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)<=$1 THEN logical_identity END AS logical_identity, encoded_bytes FROM (SELECT logical_identity,coalesce(octet_length(logical_identity::TEXT),0)::BIGINT AS encoded_bytes FROM public.{table} WHERE {filter} LIMIT $2) bounded"
-        );
-        let rows = sql_query(query)
-            .bind::<BigInt, _>(budget.remaining_bytes() as i64)
-            .bind::<BigInt, _>(i64::from(budget.remaining_rows()) + 1)
-            .load_stream::<Identity>(connection)
-            .await?;
-        futures_util::pin_mut!(rows);
-        while let Some(row) = rows.try_next().await? {
-            let bytes = usize::try_from(row.encoded_bytes).map_err(|_| {
-                PostgresStorageError::unavailable(
-                    "Invalid exposure identity length; keep quarantine",
-                )
-            })?;
-            budget
-                .observe(bytes)
-                .map_err(|error| PostgresStorageError::unavailable(error.to_string()))?;
-            let evidence = row
-                .logical_identity
-                .map(serde_json::from_value::<StorageIdentityEvidence>)
-                .transpose()
-                .map_err(|error| {
-                    PostgresStorageError::invalid_persisted_value(
-                        "current exposure identity",
-                        error,
+    macro_rules! observe {
+        ($family:ident, $table:ident, $order:expr, $filter:expr) => {
+            if journal.intents().iter().any(|intent| {
+                intent
+                    .manifest()
+                    .members()
+                    .iter()
+                    .any(|member| member.family() == Family::$family)
+            }) {
+                let bytes = || {
+                    case_when(
+                        $table::logical_identity.is_null(),
+                        0_i32.into_sql::<Integer>(),
                     )
-                })?;
-            if journal.excludes_evidence(family, evidence.as_ref()) {
-                return Err(PostgresStorageError::unavailable(
-                    "Current or protected-open copy carries expired or unresolved history ancestry; keep quarantine for explicit reconciliation",
-                ));
+                    .otherwise(
+                        octet_length($table::logical_identity.cast::<Nullable<Text>>())
+                            .assume_not_null(),
+                    )
+                };
+                let within_budget = sum(bytes())
+                    .window_order($order)
+                    .assume_not_null()
+                    .le(budget.remaining_bytes() as i64);
+                let rows = $table::table
+                    .filter($filter)
+                    .order($order)
+                    .limit(i64::from(budget.remaining_rows()) + 1)
+                    .select((
+                        case_when(within_budget, $table::logical_identity).otherwise(None::<Value>),
+                        bytes(),
+                    ))
+                    .load::<(Option<Value>, i32)>(connection)
+                    .await?;
+                observe_exposure_identities(journal, &mut budget, Family::$family, rows)?;
             }
-        }
+        };
+        ($family:ident, $current:ident, $history:ident) => {
+            observe!($family, $current, $current::id, true.into_sql::<Bool>());
+            observe!(
+                $family,
+                $history,
+                $history::history_id,
+                $history::valid_to.is_null().and($history::op.ne("D"))
+            );
+        };
     }
+    // Complete current/open inventory for all nine families. Tombstones remain
+    // closed deletion events. Each query transfers at most the remaining budget.
+    observe!(Collection, collections, collections_history);
+    observe!(Class, hubuumclass, hubuumclass_history);
+    observe!(Object, hubuumobject, hubuumobject_history);
+    observe!(
+        ClassRelation,
+        hubuumclass_relation,
+        hubuumclass_relation_history
+    );
+    observe!(
+        ObjectRelation,
+        hubuumobject_relation,
+        hubuumobject_relation_history
+    );
+    observe!(ExportTemplate, export_templates, export_templates_history);
+    observe!(RemoteTarget, remote_targets, remote_targets_history);
+    observe!(
+        ComputedDefinitions,
+        computed_field_history,
+        computed_field_history::history_id,
+        computed_field_history::valid_to.is_null()
+    );
+    observe!(
+        ClassSchema,
+        class_schema_revisions,
+        (
+            class_schema_revisions::class_id,
+            class_schema_revisions::revision
+        ),
+        true.into_sql::<Bool>()
+    );
     sql_query("SELECT set_config('statement_timeout',$1,true)")
         .bind::<Text, _>(previous)
         .execute(connection)
         .await?;
     Ok(control)
+}
+
+fn observe_exposure_identities(
+    journal: &HistoryExpiryJournal,
+    budget: &mut HistoryRecoveryExposureBudget,
+    family: StorageIdentityHistoryKind,
+    rows: Vec<(Option<Value>, i32)>,
+) -> Result<(), PostgresStorageError> {
+    for (identity, bytes) in rows {
+        let bytes = usize::try_from(bytes).map_err(|_| {
+            PostgresStorageError::unavailable("Invalid exposure identity length; keep quarantine")
+        })?;
+        budget
+            .observe(bytes)
+            .map_err(|error| PostgresStorageError::unavailable(error.to_string()))?;
+        let evidence = identity
+            .map(serde_json::from_value::<StorageIdentityEvidence>)
+            .transpose()
+            .map_err(|error| {
+                PostgresStorageError::invalid_persisted_value("current exposure identity", error)
+            })?;
+        if journal.excludes_evidence(family, evidence.as_ref()) {
+            return Err(PostgresStorageError::unavailable(
+                "Current or protected-open copy carries expired or unresolved history ancestry; keep quarantine for explicit reconciliation",
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) async fn capture_on(
@@ -556,37 +602,21 @@ impl HistoryLifecycleStorage for PostgresStorage {
         self.runtime()
             .with_connection(async move |connection| {
                 let family = scan.key().family();
-                let order = if family == StorageIdentityHistoryKind::ClassSchema {
-                    "id"
-                } else {
-                    "history_id"
-                };
-                let query = format!("{} ORDER BY {order} LIMIT $1", history_scan_select(family));
-                let rows = sql_query(query)
-                    .bind::<Integer, _>(scan.limit() as i32)
-                    .load_stream::<HistoryRow>(connection)
-                    .await?;
-                futures_util::pin_mut!(rows);
+                let rows = history_scan_rows(connection, &scan).await?;
                 let mut candidates = Vec::new();
                 let mut scanned = 0;
                 let mut unresolved = 0;
-                let mut input_bytes = 0;
                 let mut exhausted = false;
-                while let Some(row) = rows.try_next().await? {
+                for row in rows {
+                    if !row.within_budget {
+                        exhausted = true;
+                        break;
+                    }
                     let Some(value) = row.logical_identity else {
                         scanned += 1;
                         unresolved += 1;
                         continue;
                     };
-                    input_bytes += serde_json::to_vec(&value)
-                        .map_err(|_| {
-                            PostgresStorageError::database("Cannot size historical identity")
-                        })?
-                        .len();
-                    if input_bytes > HistoryLifecycleScan::MAX_INPUT_BYTES {
-                        exhausted = true;
-                        break;
-                    }
                     scanned += 1;
                     let evidence: StorageIdentityEvidence =
                         serde_json::from_value(value).map_err(|error| {
@@ -697,14 +727,43 @@ impl HistoryLifecycleStorage for PostgresStorage {
             .with_history_control_transaction(fallback, async move |connection| {
                 for scope in change.scopes_to_validate() {
                     if !change.expected().retains_scope(scope) {
-                        let (current, history, identity) = match scope {
+                        macro_rules! known_scope {
+                            ($current:ident, $history:ident, $identity:expr) => {{
+                                use crate::schema::{$current, $history};
+                                let identity = $identity.to_string();
+                                let current = $current::table.filter(
+                                    $current::logical_identity
+                                        .retrieve_by_path_as_text(vec![
+                                            "subject", "identity", "identity",
+                                        ])
+                                        .eq(&identity),
+                                );
+                                let history = $history::table.filter(
+                                    $history::logical_identity
+                                        .retrieve_by_path_as_text(vec![
+                                            "subject", "identity", "identity",
+                                        ])
+                                        .eq(&identity),
+                                );
+                                diesel::select(exists(current).or(exists(history)))
+                                    .get_result::<bool>(connection)
+                                    .await?
+                            }};
+                        }
+                        let exists = match scope {
                             HistoryPolicyScope::Deployment => continue,
-                            HistoryPolicyScope::Collection { identity } => ("collections", "collections_history", identity),
-                            HistoryPolicyScope::Class { identity } => ("hubuumclass", "hubuumclass_history", identity),
+                            HistoryPolicyScope::Collection { identity } => {
+                                known_scope!(collections, collections_history, identity)
+                            }
+                            HistoryPolicyScope::Class { identity } => {
+                                known_scope!(hubuumclass, hubuumclass_history, identity)
+                            }
                         };
-                        let query = format!("SELECT EXISTS(SELECT 1 FROM public.{current} WHERE (logical_identity #>> '{{subject,identity,identity}}')::uuid=$1 UNION ALL SELECT 1 FROM public.{history} WHERE (logical_identity #>> '{{subject,identity,identity}}')::uuid=$1) AS committed");
-                        let exists = sql_query(query).bind::<SqlUuid,_>(Uuid::from_bytes(*identity.as_bytes())).get_result::<CommittedRow>(connection).await?.committed;
-                        if !exists { return Err(PostgresStorageError::not_found("History policy scope was not found")); }
+                        if !exists {
+                            return Err(PostgresStorageError::not_found(
+                                "History policy scope was not found",
+                            ));
+                        }
                     }
                 }
                 let expected = serde_json::to_value(change.expected()).map_err(|_| {
@@ -757,6 +816,79 @@ mod scan_tests {
     struct Created {
         #[diesel(sql_type = Integer)]
         id: i32,
+    }
+
+    #[rstest::rstest]
+    #[case::single_oversized([1_048_576, 1, 1], 3, &[false, false, false])]
+    #[case::cumulative_overflow([524_288, 524_288, 1], 3, &[true, false, false])]
+    #[case::exact_byte_limit([1_048_574, 0, 0], 3, &[true, false, false])]
+    #[case::missing_identity([-1, 1_048_576, 0], 3, &[true, false, false])]
+    #[case::row_limit([1, 1, 1_048_576], 2, &[true, true])]
+    #[tokio::test]
+    async fn history_scan_suppresses_over_budget_identity_suffix(
+        #[case] widths: [i32; 3],
+        #[case] row_limit: i32,
+        #[case] expected: &[bool],
+    ) {
+        // Exercise the actual typed projection against a connection-local
+        // fixture; no persistent domain objects survive this transaction.
+        diesel::table! {
+            history_scan_fixture (history_id) {
+                history_id -> BigInt,
+                logical_identity -> Nullable<Jsonb>,
+                valid_from -> Timestamptz,
+                valid_to -> Nullable<Timestamptz>,
+                op -> Text,
+            }
+        }
+        let pool = integration_test_pool(1);
+        let rows = with_transaction(&pool, async |connection| {
+            connection
+                .batch_execute(
+                    "CREATE TEMPORARY TABLE history_scan_fixture (
+                history_id BIGINT PRIMARY KEY, logical_identity JSONB,
+                valid_from TIMESTAMPTZ NOT NULL, valid_to TIMESTAMPTZ, op TEXT NOT NULL
+            ) ON COMMIT DROP",
+                )
+                .await?;
+            for (index, width) in widths.into_iter().enumerate() {
+                diesel::insert_into(history_scan_fixture::table)
+                    .values((
+                        history_scan_fixture::history_id.eq(index as i64 + 1),
+                        history_scan_fixture::logical_identity
+                            .eq((width >= 0).then(|| Value::String("x".repeat(width as usize)))),
+                        history_scan_fixture::valid_from
+                            .eq(DateTime::from_timestamp(0, 0).unwrap()),
+                        history_scan_fixture::valid_to.eq(DateTime::from_timestamp(1, 0)),
+                        history_scan_fixture::op.eq("U"),
+                    ))
+                    .execute(connection)
+                    .await?;
+            }
+            history_scan_query!(history_scan_fixture)
+                .limit(i64::from(row_limit))
+                .load::<HistoryRow>(connection)
+                .await
+                .map_err(PostgresStorageError::from)
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            rows.iter().map(|row| row.within_budget).collect::<Vec<_>>(),
+            expected
+        );
+        for (row, width) in rows.iter().zip(widths) {
+            assert_eq!(
+                row.logical_identity.is_some(),
+                row.within_budget && width >= 0
+            );
+        }
+        let transferred: usize = rows
+            .iter()
+            .filter_map(|row| row.logical_identity.as_ref())
+            .map(|identity| serde_json::to_vec(identity).unwrap().len())
+            .sum();
+        assert!(transferred <= HistoryLifecycleScan::MAX_INPUT_BYTES);
     }
 
     #[rstest::rstest]
@@ -933,12 +1065,10 @@ mod scan_tests {
                 .bind::<Integer, _>(created.id)
                 .execute(connection)
                 .await?;
-            let query = format!(
-                "{} WHERE id=$1 AND op='D'",
-                history_scan_select(StorageIdentityHistoryKind::Collection)
-            );
-            let tombstone = sql_query(query)
-                .bind::<Integer, _>(created.id)
+            use crate::schema::collections_history;
+            let tombstone = history_scan_query!(collections_history)
+                .filter(collections_history::id.eq(created.id))
+                .filter(collections_history::op.eq("D"))
                 .get_result::<HistoryRow>(connection)
                 .await?;
             #[derive(QueryableByName)]

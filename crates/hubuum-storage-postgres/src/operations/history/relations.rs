@@ -12,6 +12,7 @@ use hubuum_storage_core::{
 };
 
 use super::*;
+use crate::PostgresConnection;
 
 #[cfg(test)]
 mod tests;
@@ -364,6 +365,51 @@ fn timestamp_floor(at: DateTime<Utc>) -> DateTime<Utc> {
     at - chrono::Duration::nanoseconds(i64::from(at.timestamp_subsec_nanos() % 1_000))
 }
 
+async fn relation_history_count(
+    connection: &mut PostgresConnection,
+    resource: StorageRelationHistoryResource,
+    at: Option<DateTime<Utc>>,
+) -> Result<i64, PostgresStorageError> {
+    macro_rules! count {
+        ($table:ident, $from:ident, $to:ident, $id:expr, $family:literal) => {{
+            use crate::schema::$table as history;
+            let mut query = history::table
+                .filter(history::$from.eq($id).or(history::$to.eq($id)))
+                .filter(history_version_visible($family, history::logical_identity))
+                .into_boxed();
+            if let Some(at) = at {
+                query = query
+                    .filter(history::op.ne("D"))
+                    .filter(history::valid_from.le(at))
+                    .filter(history::valid_to.is_null().or(history::valid_to.gt(at)))
+                    .filter(history_as_of_visible(
+                        $family,
+                        history::logical_identity,
+                        at,
+                        history::valid_from,
+                    ));
+            }
+            query.count().get_result::<i64>(connection).await?
+        }};
+    }
+    Ok(match resource {
+        StorageRelationHistoryResource::Class(id) => count!(
+            hubuumclass_relation_history,
+            from_hubuum_class_id,
+            to_hubuum_class_id,
+            id.id(),
+            "class_relation"
+        ),
+        StorageRelationHistoryResource::Object(id) => count!(
+            hubuumobject_relation_history,
+            from_hubuum_object_id,
+            to_hubuum_object_id,
+            id.id(),
+            "object_relation"
+        ),
+    })
+}
+
 pub(crate) async fn list_relation_history(
     runtime: &PostgresRuntime,
     query: StorageRelationHistoryQuery,
@@ -383,53 +429,96 @@ pub(crate) async fn list_relation_history(
         });
     let limit = i64::try_from(options.limit().expect("validated limit"))
         .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
-    runtime.with_read_only_snapshot(async |connection| {
-        #[derive(QueryableByName)]
-        struct Count { #[diesel(sql_type = BigInt)] count: i64 }
-        let descending = options.sort()[0].descending;
-        let records: Vec<RelationRow> = if at.is_some() {
-            let page = sql_query(tables.page_with_gap_sql(descending,boundary.is_some()))
-                .bind::<Integer,_>(root).bind::<Nullable<Timestamptz>,_>(at)
-                .bind::<Nullable<BigInt>,_>(boundary).bind::<BigInt,_>(limit)
-                .load::<RelationPageRow>(connection).await?;
-            page.into_iter().map(RelationPageRow::into_record)
-                .collect::<Result<Vec<_>,_>>()?.into_iter().flatten().collect()
-        } else {
-            sql_query(tables.page_sql(descending,boundary.is_some()))
-                .bind::<Integer,_>(root).bind::<Nullable<Timestamptz>,_>(at)
-                .bind::<Nullable<BigInt>,_>(boundary).bind::<BigInt,_>(limit)
-                .load::<RelationRow>(connection).await?
-        };
-        let records = records.into_iter().map(RelationRow::project).collect::<Result<Vec<_>,_>>()?;
-        // Decide the complete gap flag before optional COUNT or endpoint work;
-        // the flag and bounded page share one productive snapshot/query.
-        let total = if options.include_total() {
-            Some(sql_query(format!("SELECT count(*) AS count FROM {} WHERE ({} = $1 OR {} = $1) AND {VALIDITY} AND ({})", tables.edges, tables.from, tables.to, tables.visibility_sql()))
-                .bind::<Integer, _>(root).bind::<Nullable<Timestamptz>, _>(at)
-                .get_result::<Count>(connection).await?.count)
-        } else { None };
-        let mut ids = Vec::with_capacity(2 * records.len());
-        let mut times = Vec::with_capacity(2 * records.len());
-        let mut identities = Vec::with_capacity(2 * records.len());
-        for record in &records {
-            for (endpoint, identity) in record.relation().endpoints().into_iter().zip(record.endpoint_identities()) {
-                identities.push(identity.map(|identity| identity.to_string()));
-                ids.push(match endpoint { StorageRelationHistoryResource::Class(id) => id.id(), StorageRelationHistoryResource::Object(id) => id.id() });
-                times.push(at.unwrap_or_else(|| record.metadata().valid_from()));
+    runtime
+        .with_read_only_snapshot(async |connection| {
+            let descending = options.sort()[0].descending;
+            let records: Vec<RelationRow> = if at.is_some() {
+                let page = sql_query(tables.page_with_gap_sql(descending, boundary.is_some()))
+                    .bind::<Integer, _>(root)
+                    .bind::<Nullable<Timestamptz>, _>(at)
+                    .bind::<Nullable<BigInt>, _>(boundary)
+                    .bind::<BigInt, _>(limit)
+                    .load::<RelationPageRow>(connection)
+                    .await?;
+                page.into_iter()
+                    .map(RelationPageRow::into_record)
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect()
+            } else {
+                sql_query(tables.page_sql(descending, boundary.is_some()))
+                    .bind::<Integer, _>(root)
+                    .bind::<Nullable<Timestamptz>, _>(at)
+                    .bind::<Nullable<BigInt>, _>(boundary)
+                    .bind::<BigInt, _>(limit)
+                    .load::<RelationRow>(connection)
+                    .await?
+            };
+            let records = records
+                .into_iter()
+                .map(RelationRow::project)
+                .collect::<Result<Vec<_>, _>>()?;
+            // Decide the complete gap flag before optional COUNT or endpoint work;
+            // the flag and bounded page share one productive snapshot/query.
+            let total = if options.include_total() {
+                Some(relation_history_count(connection, query.resource(), at).await?)
+            } else {
+                None
+            };
+            let mut ids = Vec::with_capacity(2 * records.len());
+            let mut times = Vec::with_capacity(2 * records.len());
+            let mut identities = Vec::with_capacity(2 * records.len());
+            for record in &records {
+                for (endpoint, identity) in record
+                    .relation()
+                    .endpoints()
+                    .into_iter()
+                    .zip(record.endpoint_identities())
+                {
+                    identities.push(identity.map(|identity| identity.to_string()));
+                    ids.push(match endpoint {
+                        StorageRelationHistoryResource::Class(id) => id.id(),
+                        StorageRelationHistoryResource::Object(id) => id.id(),
+                    });
+                    times.push(at.unwrap_or_else(|| record.metadata().valid_from()));
+                }
             }
-        }
-        let mut endpoints = vec![None; ids.len()];
-        if !ids.is_empty() {
-            for row in sql_query(tables.endpoint_sql()).bind::<Array<Integer>, _>(ids).bind::<Array<Timestamptz>, _>(times).bind::<Array<Nullable<Text>>, _>(identities).load::<EndpointRow>(connection).await? {
-                let (ordinal, snapshot) = row.project()?;
-                let slot = endpoints.get_mut(ordinal).ok_or_else(|| PostgresStorageError::internal("Unexpected endpoint ordinal"))?;
-                *slot = Some(snapshot);
+            let mut endpoints = vec![None; ids.len()];
+            if !ids.is_empty() {
+                for row in sql_query(tables.endpoint_sql())
+                    .bind::<Array<Integer>, _>(ids)
+                    .bind::<Array<Timestamptz>, _>(times)
+                    .bind::<Array<Nullable<Text>>, _>(identities)
+                    .load::<EndpointRow>(connection)
+                    .await?
+                {
+                    let (ordinal, snapshot) = row.project()?;
+                    let slot = endpoints.get_mut(ordinal).ok_or_else(|| {
+                        PostgresStorageError::internal("Unexpected endpoint ordinal")
+                    })?;
+                    *slot = Some(snapshot);
+                }
             }
-        }
-        let rows = records.into_iter().enumerate().map(|(index, record)| {
-            StorageRelationHistoryEntry::try_new(record, query.selection(), endpoints[2 * index].take(), endpoints[2 * index + 1].take())
-                .map_err(|error| PostgresStorageError::invalid_persisted_value("historical relationship context", error))
-        }).collect::<Result<Vec<_>, _>>()?;
-        crate::persisted_page(rows, total)
-    }).await
+            let rows = records
+                .into_iter()
+                .enumerate()
+                .map(|(index, record)| {
+                    StorageRelationHistoryEntry::try_new(
+                        record,
+                        query.selection(),
+                        endpoints[2 * index].take(),
+                        endpoints[2 * index + 1].take(),
+                    )
+                    .map_err(|error| {
+                        PostgresStorageError::invalid_persisted_value(
+                            "historical relationship context",
+                            error,
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            crate::persisted_page(rows, total)
+        })
+        .await
 }

@@ -3,11 +3,10 @@ pub(crate) mod navigation;
 pub(crate) mod relations;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-use diesel::SelectableHelper;
-use diesel::dsl::{not, sql};
-use diesel::expression::SqlLiteral;
+use diesel::dsl::{exists, not, sql};
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, OptionalExtension, QueryDsl};
-use diesel::sql_types::{Bool, Nullable, Timestamptz, Uuid as SqlUuid};
+use diesel::sql_types::{Bool, Jsonb, Nullable, Text, Timestamp, Timestamptz, Uuid as SqlUuid};
+use diesel::{IntoSql, PgAnyJsonExpressionMethods, PgExpressionMethods, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{
     ClassId, CollectionId, HistoryRecordId, ObjectId, PrincipalId, PrincipalIdentity, ResourceId,
@@ -453,29 +452,35 @@ async fn require_unrestricted_history_absence(
             "Historical version is expired",
         ));
     }
-    let table = match family {
-        "collection" => "collections",
-        "class" => "hubuumclass",
-        "object" => "hubuumobject",
-        "export_template" => "export_templates",
-        "remote_target" => "remote_targets",
+    macro_rules! before_creation {
+        ($table:ident) => {{
+            use crate::schema::$table;
+            diesel::select(exists(
+                $table::table
+                    .filter($table::id.eq(entity_id.id()))
+                    .filter(
+                        $table::logical_identity
+                            .retrieve_by_path_as_text(vec!["subject", "identity", "identity"])
+                            .eq(resource.to_string()),
+                    )
+                    .filter(history_created_at("UTC", $table::created_at).gt(at)),
+            ))
+            .get_result::<bool>(connection)
+            .await?
+        }};
+    }
+    let before_creation = match family {
+        "collection" => before_creation!(collections),
+        "class" => before_creation!(hubuumclass),
+        "object" => before_creation!(hubuumobject),
+        "export_template" => before_creation!(export_templates),
+        "remote_target" => before_creation!(remote_targets),
         _ => {
             return Err(PostgresStorageError::unavailable(
                 "Unsupported canonical empty-history proof",
             ));
         }
     };
-    let before_creation = diesel::select(
-        sql::<Bool>(&format!("EXISTS(SELECT 1 FROM public.{table} WHERE id="))
-            .bind::<diesel::sql_types::Integer, _>(entity_id.id())
-            .sql(" AND (logical_identity #>> '{subject,identity,identity}')::UUID=")
-            .bind::<SqlUuid, _>(Uuid::from_bytes(*resource.as_bytes()))
-            .sql(" AND (created_at AT TIME ZONE 'UTC')>")
-            .bind::<Timestamptz, _>(at)
-            .sql(")"),
-    )
-    .get_result::<bool>(connection)
-    .await?;
     if !before_creation {
         return Err(PostgresStorageError::unavailable(
             "Historical coverage for the original resource is unavailable",
@@ -484,11 +489,21 @@ async fn require_unrestricted_history_absence(
     Ok(())
 }
 
-fn history_version_visible(table: &'static str, family: &'static str) -> SqlLiteral<Bool> {
-    // Both identifiers are supplied only by the adapter's static family map.
-    sql::<Bool>(&format!(
-        "public.hubuum_history_version_visible('{family}',{table}.logical_identity)"
-    ))
+#[diesel::declare_sql_function]
+extern "SQL" {
+    #[sql_name = "pg_catalog.timezone"]
+    fn history_created_at(timezone: Text, value: Timestamp) -> Timestamptz;
+
+    #[sql_name = "public.hubuum_history_version_visible"]
+    fn history_version_visible(family: Text, identity: Nullable<Jsonb>) -> Bool;
+
+    #[sql_name = "public.hubuum_history_as_of_visible"]
+    fn history_as_of_visible(
+        family: Text,
+        identity: Nullable<Jsonb>,
+        at: Timestamptz,
+        selected_from: Timestamptz,
+    ) -> Bool;
 }
 
 fn history_cursor_fields(
@@ -569,7 +584,7 @@ macro_rules! history_operations {
                     let mut count_query = crate::schema::$table::table
                         .into_boxed()
                         .filter(id.eq(entity_id.id()))
-                        .filter(history_version_visible($table_name, $family));
+                        .filter(history_version_visible($family, logical_identity));
                     if let Some(collection_ids) = &visible_collection_ids {
                         count_query = count_query.filter($visibility_column.eq_any(collection_ids));
                     }
@@ -585,7 +600,7 @@ macro_rules! history_operations {
                     let mut records = crate::schema::$table::table
                         .into_boxed()
                         .filter(id.eq(entity_id.id()))
-                        .filter(history_version_visible($table_name, $family));
+                        .filter(history_version_visible($family, logical_identity));
                     if let Some(collection_ids) = &visible_collection_ids {
                         records = records.filter($visibility_column.eq_any(collection_ids));
                     }
@@ -620,25 +635,26 @@ macro_rules! history_operations {
         ) -> Result<Option<$record>, PostgresStorageError> {
             let expected_resource = query.expected_resource();
             if expected_resource.is_none()
-                && crate::runtime::current_execution_scope().history_read_override().is_some()
+                && crate::runtime::current_execution_scope()
+                    .history_read_override()
+                    .is_some()
             {
-                return Err(PostgresStorageError::unavailable("Online history reads require the original logical resource identity"));
+                return Err(PostgresStorageError::unavailable(
+                    "Online history reads require the original logical resource identity",
+                ));
             }
             let (entity_id, at) = query.into_parts();
             runtime
                 .with_connection(async |connection| {
                     use crate::schema::$table::dsl::*;
 
-                    let visible = sql::<Bool>(&format!(
-                        "public.hubuum_history_as_of_visible('{}',{}.logical_identity,",
-                        $family, $table_name
-                    ))
-                    .bind::<Timestamptz, _>(at)
-                    .sql(&format!(",{}.valid_from) AND (", $table_name))
-                    .bind::<Nullable<SqlUuid>, _>(expected_resource.map(|identity| Uuid::from_bytes(*identity.as_bytes())))
-                    .sql(&format!(" IS NULL OR ({}.logical_identity #>> '{{subject,identity,identity}}')::UUID IS NOT DISTINCT FROM ", $table_name))
-                    .bind::<Nullable<SqlUuid>, _>(expected_resource.map(|identity| Uuid::from_bytes(*identity.as_bytes())))
-                    .sql(")");
+                    let expected = expected_resource.map(|identity| identity.to_string());
+                    let visible = history_as_of_visible($family, logical_identity, at, valid_from)
+                        .and(
+                            expected.is_none().into_sql::<Bool>().or(logical_identity
+                                .retrieve_by_path_as_text(vec!["subject", "identity", "identity"])
+                                .is_not_distinct_from(expected)),
+                        );
                     let selected = crate::schema::$table::table
                         .filter(id.eq(entity_id.id()))
                         .filter(valid_from.le(at))
@@ -651,12 +667,17 @@ macro_rules! history_operations {
                         .map_err(PostgresStorageError::from)?;
                     let Some((row, visible)) = selected else {
                         if let Some(resource) = expected_resource {
-                            require_unrestricted_history_absence(connection, $family, resource, entity_id, at).await?;
+                            require_unrestricted_history_absence(
+                                connection, $family, resource, entity_id, at,
+                            )
+                            .await?;
                         }
                         return Ok(None);
                     };
                     if !visible {
-                        return Err(PostgresStorageError::not_found("Historical version is expired or differs from the original resource"));
+                        return Err(PostgresStorageError::not_found(
+                            "Historical version is expired or differs from the original resource",
+                        ));
                     }
                     <$record>::try_from(row).map(Some)
                 })
@@ -725,7 +746,7 @@ pub async fn list_object_history(
                 .into_boxed()
                 .filter(history::id.eq(object_id.id()))
                 .filter(history::hubuum_class_id.eq(class_id.id()))
-                .filter(history_version_visible("hubuumobject_history", "object"));
+                .filter(history_version_visible("object", history::logical_identity));
             if let Some(collection_ids) = &visible_collection_ids {
                 count_query = count_query.filter(history::collection_id.eq_any(collection_ids));
             }
@@ -742,7 +763,7 @@ pub async fn list_object_history(
                 .into_boxed()
                 .filter(history::id.eq(object_id.id()))
                 .filter(history::hubuum_class_id.eq(class_id.id()))
-                .filter(history_version_visible("hubuumobject_history", "object"));
+                .filter(history_version_visible("object", history::logical_identity));
             if let Some(collection_ids) = &visible_collection_ids {
                 records = records.filter(history::collection_id.eq_any(collection_ids));
             }
@@ -783,7 +804,7 @@ fn object_name_history_query(
         .into_boxed()
         .filter(history::hubuum_class_id.eq(query.class_id().id()))
         .filter(history::name.eq(query.name().to_owned()))
-        .filter(history_version_visible("hubuumobject_history", "object"));
+        .filter(history_version_visible("object", history::logical_identity));
     let current_ids = live::hubuumobject.select(live::id);
     if let Some(collection_ids) = visible_collection_ids(query.collection_scope()) {
         let readable_ids = current_ids.filter(live::collection_id.eq_any(collection_ids.clone()));
