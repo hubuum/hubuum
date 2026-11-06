@@ -264,6 +264,17 @@ impl HistoryLifecycleAuthority {
                 .retain(intent.request_cancellation(principal, at)?)?,
         )
     }
+    pub(super) fn record_expiry_removal(
+        &self,
+        identity: Uuid,
+        deletion: HistoryExpiryExactDeletion,
+    ) -> Result<Self, StorageValidationError> {
+        let intent = self
+            .expiry
+            .intent(identity)
+            .ok_or_else(|| invalid("Expiry intent was not found"))?;
+        self.with_expiry(self.expiry.retain(intent.record_removed(deletion)?)?)
+    }
     fn with_expiry(&self, expiry: HistoryExpiryJournal) -> Result<Self, StorageValidationError> {
         if !expiry.covers(&self.expiry) {
             return Err(invalid("Expiry authority would lose retained evidence"));

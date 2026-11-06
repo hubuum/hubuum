@@ -117,6 +117,21 @@ impl HistoryLifecycleControl {
         next.authority = self.authority.cancel_expiry(identity, principal, at)?;
         self.change(next, fence)
     }
+    /// Retain an exact native deletion outcome in the same transaction as the
+    /// deletion. The adapter must already have checked independent protection,
+    /// publication retirement and current holds/dependencies; this transition
+    /// neither authorizes removal nor makes generic policy CAS an executor.
+    /// A repeated physical removal preserves the first receipt and audit clock.
+    pub fn record_expiry_removal(
+        &self,
+        identity: Uuid,
+        deletion: HistoryExpiryExactDeletion,
+        fence: HistoryReviewFence,
+    ) -> Result<HistoryExpiryRemovalChange, StorageValidationError> {
+        let mut next = self.clone();
+        next.authority = self.authority.record_expiry_removal(identity, deletion)?;
+        self.change(next, fence).map(HistoryExpiryRemovalChange)
+    }
     pub fn issue_preview(
         &self,
         preview: HistoryPolicyPreview,
@@ -318,6 +333,37 @@ impl HistoryLifecycleControlChange {
         self.fence
     }
 }
+
+/// Adapter-local outcome of an exact DELETE. It deliberately cannot be passed
+/// to `commit_history_lifecycle`: policy/hold CAS cannot record physical removal.
+/// The native deletion transaction persists this outcome and its audit facts
+/// atomically; the trusted service subsequently protects that completion.
+///
+/// ```compile_fail
+/// use hubuum_storage_core::{HistoryExpiryRemovalChange, HistoryLifecycleStorage};
+///
+/// async fn commit_through_policy_api(
+///     storage: &impl HistoryLifecycleStorage,
+///     removal: HistoryExpiryRemovalChange,
+/// ) {
+///     storage.commit_history_lifecycle(removal).await.unwrap();
+/// }
+/// ```
+#[derive(Debug)]
+pub struct HistoryExpiryRemovalChange(HistoryLifecycleControlChange);
+
+impl HistoryExpiryRemovalChange {
+    pub const fn expected(&self) -> &HistoryLifecycleControl {
+        self.0.expected()
+    }
+    pub const fn next(&self) -> &HistoryLifecycleControl {
+        self.0.next()
+    }
+    pub const fn fence(&self) -> HistoryReviewFence {
+        self.0.fence()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct HistoryLifecycleSnapshot {
     observed_at: DateTime<Utc>,

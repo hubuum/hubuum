@@ -1149,6 +1149,157 @@ mod tests {
                 .is_empty()
         );
     }
+    fn admitted_snapshot() -> (HistoryLifecycleSnapshot, Uuid, StorageRecordIdentity) {
+        let before = snapshot();
+        let manifest = manifest(&before);
+        let identity = manifest.identity();
+        let target = manifest.members()[0].target();
+        let admitted = before
+            .control()
+            .admit_expiry(manifest, before.fence())
+            .unwrap();
+        (
+            HistoryLifecycleSnapshot::new(
+                admitted.next().clone(),
+                before.fence().incarnation(),
+                before.fence().deletion_revision(),
+                at(210),
+            )
+            .unwrap(),
+            identity,
+            target,
+        )
+    }
+    #[test]
+    fn removal_transition_recovers_original_receipt_and_audit() {
+        let (before, identity, target) = admitted_snapshot();
+        let removed = before
+            .control()
+            .record_expiry_removal(
+                identity,
+                HistoryExpiryExactDeletion::from_affected_rows(target, checkpoint('a'), at(210), 1)
+                    .unwrap(),
+                before.fence(),
+            )
+            .unwrap();
+        assert_eq!(
+            removed.next().authority().revision().value(),
+            before.control().authority().revision().value() + 1
+        );
+        let decoded = HistoryLifecycleControl::decode(&removed.next().encode().unwrap()).unwrap();
+        let recovery =
+            HistoryLifecycleRecovery::new(before.clone(), decoded.authority().clone()).unwrap();
+        let receipt = &recovery
+            .recovered()
+            .authority()
+            .expiry()
+            .intent(identity)
+            .unwrap()
+            .removals()[0];
+        assert_eq!(receipt.target(), target);
+        assert_eq!(receipt.removed_at(), at(210));
+        assert_eq!(receipt.checkpoint(), &checkpoint('a'));
+        let events = recovery
+            .recovered()
+            .audit_events_since(before.control())
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].occurred_at(), Some(at(210)));
+        assert_eq!(
+            events[0].metadata()["lifecycle"]["name"],
+            "lifecycle.erasure.copy_removed"
+        );
+        assert_eq!(
+            events[0].event_id(),
+            removed.next().audit_events_since(before.control()).unwrap()[0].event_id()
+        );
+        assert!(
+            recovery
+                .recovered()
+                .authority()
+                .expiry()
+                .excludes(StorageIdentityHistoryKind::Object, target)
+        );
+    }
+    #[test]
+    fn repeated_removal_does_not_advance_authority_or_emit_another_audit_fact() {
+        let (before, identity, target) = admitted_snapshot();
+        let removed = before
+            .control()
+            .record_expiry_removal(
+                identity,
+                HistoryExpiryExactDeletion::from_affected_rows(target, checkpoint('a'), at(210), 1)
+                    .unwrap(),
+                before.fence(),
+            )
+            .unwrap();
+        let current = HistoryLifecycleSnapshot::new(
+            removed.next().clone(),
+            before.fence().incarnation(),
+            before.fence().deletion_revision(),
+            at(220),
+        )
+        .unwrap();
+        let retried = current
+            .control()
+            .record_expiry_removal(
+                identity,
+                HistoryExpiryExactDeletion::from_affected_rows(target, checkpoint('b'), at(220), 1)
+                    .unwrap(),
+                current.fence(),
+            )
+            .unwrap();
+        assert_eq!(retried.next(), current.control());
+        assert!(
+            retried
+                .next()
+                .audit_events_since(current.control())
+                .unwrap()
+                .is_empty()
+        );
+    }
+    #[rstest]
+    #[case::unknown_intent("intent")]
+    #[case::different_version("target")]
+    #[case::before_selection("clock")]
+    #[case::stale_authority("fence")]
+    fn removal_transition_rejects_unbound_outcomes(#[case] mismatch: &str) {
+        let (before, mut identity, mut target) = admitted_snapshot();
+        let mut removed_at = at(210);
+        let mut fence = before.fence();
+        match mismatch {
+            "intent" => identity = Uuid::new_v4(),
+            "target" => {
+                target = StorageRecordIdentity::new(target.resource(), VersionIdentity::generate())
+            }
+            "clock" => removed_at = at(199),
+            "fence" => {
+                fence = HistoryReviewFence::new(
+                    fence.incarnation(),
+                    HistoryAuthorityRevision::new(0).unwrap(),
+                    fence.deletion_revision(),
+                )
+                .unwrap()
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            before
+                .control()
+                .record_expiry_removal(
+                    identity,
+                    HistoryExpiryExactDeletion::from_affected_rows(
+                        target,
+                        checkpoint('a'),
+                        removed_at,
+                        1
+                    )
+                    .unwrap(),
+                    fence,
+                )
+                .is_err()
+        );
+    }
     #[test]
     fn a_hold_after_selection_invalidates_intent_admission() {
         let snapshot = snapshot();
