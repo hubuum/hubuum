@@ -4,8 +4,11 @@ pub(crate) mod relations;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::dsl::{exists, not, sql};
+use diesel::expression::SqlLiteral;
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, OptionalExtension, QueryDsl};
-use diesel::sql_types::{Bool, Jsonb, Nullable, Text, Timestamp, Timestamptz, Uuid as SqlUuid};
+use diesel::sql_types::{
+    Array, Bool, Jsonb, Nullable, Text, Timestamp, Timestamptz, Uuid as SqlUuid,
+};
 use diesel::{
     IntoSql, NullableExpressionMethods, PgAnyJsonExpressionMethods, PgExpressionMethods,
     SelectableHelper,
@@ -39,6 +42,12 @@ use crate::{PostgresRevision, PostgresRuntime, PostgresStorageError};
 mod name_tests;
 #[cfg(test)]
 mod population_tests;
+
+/// The fixed path must stay literal so PostgreSQL generic prepared plans can
+/// match the installed expression indexes. Resource values remain parameters.
+pub(crate) fn resource_identity_path() -> SqlLiteral<Array<Text>> {
+    sql("'{subject,identity,identity}'")
+}
 
 #[derive(diesel::Queryable, diesel::Selectable)]
 #[diesel(table_name = crate::schema::collections_history)]
@@ -413,8 +422,7 @@ pub async fn resolve_principal_names(
             use crate::schema::principals::dsl::{
                 logical_identity, name as principal_name, principals,
             };
-            let identity =
-                logical_identity.retrieve_by_path_as_text(vec!["subject", "identity", "identity"]);
+            let identity = logical_identity.retrieve_by_path_as_text(resource_identity_path());
             principals
                 .filter(identity.clone().eq_any(principal_ids))
                 .order(identity.clone().asc())
@@ -460,7 +468,7 @@ async fn require_unrestricted_history_absence(
                     .filter($table::id.eq(entity_id.id()))
                     .filter(
                         $table::logical_identity
-                            .retrieve_by_path_as_text(vec!["subject", "identity", "identity"])
+                            .retrieve_by_path_as_text(resource_identity_path())
                             .eq(resource.to_string()),
                     )
                     .filter(history_created_at("UTC", $table::created_at).gt(at)),
@@ -655,7 +663,7 @@ macro_rules! history_operations {
                     let visible = history_as_of_visible($family, logical_identity, at, valid_from)
                         .and(
                             expected.is_none().into_sql::<Bool>().or(logical_identity
-                                .retrieve_by_path_as_text(vec!["subject", "identity", "identity"])
+                                .retrieve_by_path_as_text(resource_identity_path())
                                 .is_not_distinct_from(expected)),
                         );
                     let selected = crate::schema::$table::table
@@ -1223,7 +1231,7 @@ pub async fn get_object_history_as_of(
                             .is_none()
                             .into_sql::<Bool>()
                             .or(history::logical_identity
-                                .retrieve_by_path_as_text(vec!["subject", "identity", "identity"])
+                                .retrieve_by_path_as_text(resource_identity_path())
                                 .is_not_distinct_from(expected)),
                     );
             let selected = history::hubuumobject_history

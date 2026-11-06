@@ -16,6 +16,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use super::PostgresStorage;
+use crate::operations::history::resource_identity_path;
 use crate::{PostgresConnection, PostgresStorageError};
 
 #[diesel::declare_sql_function]
@@ -733,16 +734,12 @@ impl HistoryLifecycleStorage for PostgresStorage {
                                 let identity = $identity.to_string();
                                 let current = $current::table.filter(
                                     $current::logical_identity
-                                        .retrieve_by_path_as_text(vec![
-                                            "subject", "identity", "identity",
-                                        ])
+                                        .retrieve_by_path_as_text(resource_identity_path())
                                         .eq(&identity),
                                 );
                                 let history = $history::table.filter(
                                     $history::logical_identity
-                                        .retrieve_by_path_as_text(vec![
-                                            "subject", "identity", "identity",
-                                        ])
+                                        .retrieve_by_path_as_text(resource_identity_path())
                                         .eq(&identity),
                                 );
                                 diesel::select(exists(current).or(exists(history)))
