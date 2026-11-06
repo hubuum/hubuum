@@ -167,7 +167,7 @@ mod tests {
                 panic!("retired runtime must preserve its structured admission failure");
             };
             let cause = source.downcast_ref::<StorageError>().unwrap();
-            assert_eq!(cause.kind(), StorageErrorKind::Conflict);
+            assert_eq!(cause.kind(), StorageErrorKind::Unavailable);
         } else {
             result.unwrap();
         }

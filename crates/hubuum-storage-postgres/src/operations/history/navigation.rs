@@ -1,7 +1,7 @@
 use diesel::SelectableHelper;
 use diesel::{
-    dsl::sql,
-    sql_types::{BigInt, Bool, Timestamptz},
+    pg::sql_types::Record,
+    sql_types::{BigInt, Timestamptz},
 };
 use hubuum_storage_core::{
     StorageHistoryEntry, StorageHistoryEntryQuery, StorageHistoryMarker,
@@ -59,6 +59,17 @@ impl MarkerRow {
         ))
     }
 }
+
+// Preserve a PostgreSQL row comparison so timestamp ties seek the composite
+// index without expanding the cursor into separate OR predicates.
+macro_rules! history_position {
+    ($table:ident) => {
+        ($table::valid_from, $table::history_id).into_sql::<Record<(Timestamptz, BigInt)>>()
+    };
+}
+
+#[cfg(test)]
+mod tests;
 
 // Each table has a statically checked projection. Large JSON fields never enter this query.
 macro_rules! marker_page {
@@ -126,18 +137,10 @@ macro_rules! marker_page {
                             records.filter(h::valid_from.gt(timestamp_floor(anchor.at())))
                         }
                         StorageHistorySelection::BeforeEntry(anchor) => records.filter(
-                            sql::<Bool>("(valid_from, history_id) < (")
-                                .bind::<Timestamptz, _>(anchor.at())
-                                .sql(", ")
-                                .bind::<BigInt, _>(anchor.history_id().id())
-                                .sql(")"),
+                            history_position!(h).lt((anchor.at(), anchor.history_id().id())),
                         ),
                         StorageHistorySelection::AfterEntry(anchor) => records.filter(
-                            sql::<Bool>("(valid_from, history_id) > (")
-                                .bind::<Timestamptz, _>(anchor.at())
-                                .sql(", ")
-                                .bind::<BigInt, _>(anchor.history_id().id())
-                                .sql(")"),
+                            history_position!(h).gt((anchor.at(), anchor.history_id().id())),
                         ),
                     };
                     records

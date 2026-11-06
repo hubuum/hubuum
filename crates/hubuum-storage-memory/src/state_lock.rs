@@ -24,6 +24,8 @@ pub(super) struct MemoryStateLock {
 enum HistoryEntry<'a> {
     Archive(&'a HistoryProducerContext),
     Productive,
+    Authentication,
+    ApiAdmission,
     Admission,
     Control,
 }
@@ -101,6 +103,32 @@ impl MemoryStateLock {
         super::execution::task_execution_checkpoint()?;
         let guard = self.state.write().await;
         self.require_application_access(&guard, HistoryEntry::Productive, None)?;
+        Ok(MemoryStateWriteGuard {
+            guard,
+            mutated: false,
+        })
+    }
+
+    /// Identity-only bootstrap before the request has publication ownership.
+    /// Inherited API, task and publication authority remains binding.
+    pub(super) async fn write_authentication(
+        &self,
+    ) -> Result<MemoryStateWriteGuard<'_>, StorageError> {
+        super::execution::task_execution_checkpoint()?;
+        let guard = self.state.write().await;
+        self.require_application_access(&guard, HistoryEntry::Authentication, None)?;
+        Ok(MemoryStateWriteGuard {
+            guard,
+            mutated: false,
+        })
+    }
+
+    pub(super) async fn write_api_request_admission(
+        &self,
+    ) -> Result<MemoryStateWriteGuard<'_>, StorageError> {
+        super::execution::task_execution_checkpoint()?;
+        let guard = self.state.write().await;
+        self.require_application_access(&guard, HistoryEntry::ApiAdmission, None)?;
         Ok(MemoryStateWriteGuard {
             guard,
             mutated: false,
@@ -187,7 +215,24 @@ impl MemoryStateLock {
                 "Nested work cannot refresh a publication owner",
             ));
         }
-        if entry == HistoryEntry::Productive
+        let original_scope = MEMORY_EXECUTION_SCOPE
+            .try_with(Clone::clone)
+            .unwrap_or_default();
+        let bootstrap = match entry {
+            HistoryEntry::Authentication => {
+                original_scope.api_request_override().is_none()
+                    && original_scope
+                        .task_execution_override()
+                        .is_none_or(Option::is_none)
+            }
+            // Initial API admission has a supervised deadline but no API owner.
+            HistoryEntry::ApiAdmission => original_scope.api_request_override().is_none(),
+            _ => false,
+        };
+        if matches!(
+            entry,
+            HistoryEntry::Productive | HistoryEntry::Authentication | HistoryEntry::ApiAdmission
+        ) && !bootstrap
             && history.is_none()
             && self
                 .runtime_owner
@@ -200,9 +245,6 @@ impl MemoryStateLock {
                 "History-aware productive work requires its original publication owner",
             ));
         }
-        let original_scope = MEMORY_EXECUTION_SCOPE
-            .try_with(Clone::clone)
-            .unwrap_or_default();
         if let Some(history) = &history {
             history.epoch().validate_scope(&original_scope)?;
         }
@@ -213,8 +255,13 @@ impl MemoryStateLock {
                 .api_requests
                 .check(&request, state.application_control.fence().incarnation())?;
         }
-        if matches!(entry, HistoryEntry::Productive | HistoryEntry::Archive(_))
-            && let Some(history) = history
+        if matches!(
+            entry,
+            HistoryEntry::Productive
+                | HistoryEntry::Authentication
+                | HistoryEntry::ApiAdmission
+                | HistoryEntry::Archive(_)
+        ) && let Some(history) = history
         {
             if permit.as_ref() != Some(history.epoch().application()) {
                 return Err(StorageError::unavailable(

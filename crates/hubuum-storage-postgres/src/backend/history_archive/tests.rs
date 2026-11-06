@@ -34,7 +34,9 @@ async fn archive_capture_resource_gate_respects_retained_membership(
         connection.batch_execute("BEGIN").await?;
         let result = async {
             if database_role_tests_enabled() {
-                connection.batch_execute(&format!("SET LOCAL ROLE {}", integration_test_database_roles().owner().as_str())).await?;
+                sql_query("SELECT set_config('role', $1, true)")
+                    .bind::<Text, _>(integration_test_database_roles().owner().as_str())
+                    .execute(connection).await?;
             }
             sql_query("INSERT INTO hubuum_control.history_expiry_members(family,resource_uuid,version_uuid,intent_uuid,valid_from,valid_to) VALUES($1,$2,gen_random_uuid(),gen_random_uuid(),clock_timestamp()-interval '2 hours',clock_timestamp()-interval '1 hour')")
                 .bind::<Text,_>(family).bind::<SqlUuid,_>(retained).execute(connection).await?;
@@ -72,7 +74,9 @@ async fn native_archive_entry_accepts_only_supported_protocols(
         connection.batch_execute("BEGIN").await?;
         let result=async {
             if database_role_tests_enabled() {
-                connection.batch_execute(&format!("SET LOCAL ROLE {}",integration_test_database_roles().owner().as_str())).await?;
+                sql_query("SELECT set_config('role', $1, true)")
+                    .bind::<Text, _>(integration_test_database_roles().owner().as_str())
+                    .execute(connection).await?;
             }
             // Authority first, before the temporary registration-table lock.
             sql_query("SELECT public.hubuum_deletion_execution_allowed() AS allowed").get_result::<Allowed>(connection).await?;
@@ -457,7 +461,9 @@ async fn native_publication_claim_rollback_keeps_child_pin_and_record_atomic(
         let admin = if database_role_tests_enabled() { integration_test_migration_pool(1) } else { integration_test_pool(1) };
         let observed = crate::with_transaction(&admin, async |connection| {
             if database_role_tests_enabled() {
-                connection.batch_execute(&format!("SET LOCAL ROLE {}", integration_test_database_roles().owner().as_str())).await?;
+                sql_query("SELECT set_config('role', $1, true)")
+                    .bind::<Text, _>(integration_test_database_roles().owner().as_str())
+                    .execute(connection).await?;
             }
             // Owner access inspects protected rollback state ONLY. Productive
             // claim validation above used runtime role and original full scope.

@@ -467,7 +467,12 @@ impl MemoryState {
         permit: &StorageExecutionPermit,
     ) -> Result<(), StorageError> {
         if let Some(owner) = permit.owner() {
-            self.require_runtime_owner(owner)?;
+            // Productive work cannot use a retired runtime. Keep this execution
+            // failure aligned with native admission; explicit administrative
+            // ownership comparisons still report conflicts.
+            self.require_runtime_owner(owner).map_err(|_| {
+                StorageError::unavailable("Application runtime registration is absent or retired")
+            })?;
         }
         self.application_control
             .validate_execution(&self.deletion_control, permit)

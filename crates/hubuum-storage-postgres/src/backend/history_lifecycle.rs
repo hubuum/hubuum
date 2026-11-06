@@ -805,6 +805,7 @@ impl HistoryLifecycleStorage for PostgresStorage {
 mod scan_tests {
     use diesel::sql_types::Text;
     use diesel_async::SimpleAsyncConnection;
+    use tokio::time::{Duration, sleep, timeout};
 
     use super::*;
     use crate::{test_support::integration_test_pool, with_transaction};
@@ -933,22 +934,28 @@ mod scan_tests {
                     .bind::<Text,_>(integration_test_database_roles().owner().as_str()).execute(connection).await?;
             }
             connection.batch_execute("SAVEPOINT history_exposure_fixture").await?;
-            // Same authority-first order as real reapplication. The fixture is
-            // rollback-only and neither publishes an intent nor runs erasure.
-            connection.batch_execute("SELECT id FROM hubuum_control.deletion_authority WHERE id=1 FOR UPDATE;
-                SELECT id FROM hubuum_control.application_control WHERE id=1 FOR UPDATE;
-                SELECT id FROM hubuum_control.history_lifecycle_control WHERE id=1 FOR UPDATE").await?;
-            // Other parallel archive fixtures can retain publication owners
-            // between transactions. Hide those obligations only inside this
-            // rollback-only fixture, after excluding new productive admission.
-            // Otherwise the earlier undrained-owner gate masks the particular
-            // restore condition this case is intended to exercise. These rows
-            // are restored with history_exposure_fixture; no retirement or
-            // cleanup authority is issued by this test.
-            connection.batch_execute("SELECT id FROM hubuum_control.history_publication_owners ORDER BY id FOR UPDATE;
-                DELETE FROM hubuum_control.history_archive_publication_claims;
-                DELETE FROM hubuum_control.history_publication_producers;
-                DELETE FROM hubuum_control.history_publication_owners").await?;
+            // Other parallel archive fixtures retain publications between
+            // transactions. Let them settle rather than locking/deleting their
+            // ownership rows, which can invert the producer settlement order.
+            // Release authority between attempts so productive work can finish.
+            // Once empty, retain the same authority-first locks as reapplication
+            // to exclude new admission for this rollback-only fixture.
+            timeout(Duration::from_secs(5), async {
+                loop {
+                    connection.batch_execute("SAVEPOINT history_fixture_admission;
+                        SELECT id FROM hubuum_control.deletion_authority WHERE id=1 FOR UPDATE;
+                        SELECT id FROM hubuum_control.application_control WHERE id=1 FOR UPDATE;
+                        SELECT id FROM hubuum_control.history_lifecycle_control WHERE id=1 FOR UPDATE").await?;
+                    let busy = sql_query("SELECT EXISTS(SELECT 1 FROM hubuum_control.history_publication_owners) AS committed")
+                        .get_result::<CommittedRow>(connection).await?.committed;
+                    if !busy {
+                        return Ok::<_,PostgresStorageError>(());
+                    }
+                    connection.batch_execute("ROLLBACK TO SAVEPOINT history_fixture_admission;
+                        RELEASE SAVEPOINT history_fixture_admission").await?;
+                    sleep(Duration::from_millis(5)).await;
+                }
+            }).await.expect("Parallel publication fixtures must settle before restore admission")?;
             let created = sql_query("INSERT INTO public.collections(name,description,parent_collection_id)
                 SELECT $1,'exposure original',id FROM public.collections WHERE parent_collection_id IS NULL RETURNING id")
                 .bind::<Text,_>(format!("history_exposure_{}",Uuid::new_v4().simple())).get_result::<Created>(connection).await?;
