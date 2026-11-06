@@ -1,6 +1,8 @@
 //! Native transport proof before production publication-owner integration.
 //! Body completion and a shutdown request never substitute for driver release.
 
+mod pending_write;
+
 use std::convert::Infallible;
 use std::io;
 use std::net::{Shutdown, TcpListener};
