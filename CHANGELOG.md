@@ -167,6 +167,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking HTTP compatibility:** unsupported methods on known macro-routed
+  endpoints now return HTTP 405 with an `Allow` header instead of HTTP 404.
+  Clients that treated these responses as missing resources must handle 405.
+
 - **Breaking storage SDK and operational change:** upgrade all ten SDK crates to
   `0.14.0` together; adapters must implement atomic
   `observe_deletion_checkpoint` and preserve lifecycle event identities and recording
@@ -355,6 +359,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Retained history and task-event actor names no longer attach to a different
   principal when a restore timeline reuses an integer ID. Historical relation
   endpoint hydration also requires the captured endpoint identity.
+
+### Security
+
+- Require `actix-http` 3.20.3 and `actix-web` 4.18.2 or newer to reject malformed
+  chunked request trailers and bound compressed request-body decoding, including
+  large-window Brotli streams. This addresses RUSTSEC-2026-0446, RUSTSEC-2026-0447,
+  RUSTSEC-2026-0448 and RUSTSEC-2026-0455 without advisory exceptions.
 
 ## [0.0.21] - 2026-10-26
 
