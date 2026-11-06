@@ -6,7 +6,10 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::dsl::{exists, not, sql};
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::sql_types::{Bool, Jsonb, Nullable, Text, Timestamp, Timestamptz, Uuid as SqlUuid};
-use diesel::{IntoSql, PgAnyJsonExpressionMethods, PgExpressionMethods, SelectableHelper};
+use diesel::{
+    IntoSql, NullableExpressionMethods, PgAnyJsonExpressionMethods, PgExpressionMethods,
+    SelectableHelper,
+};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{
     ClassId, CollectionId, HistoryRecordId, ObjectId, PrincipalId, PrincipalIdentity, ResourceId,
@@ -407,14 +410,15 @@ pub async fn resolve_principal_names(
         .collect::<Vec<_>>();
     runtime
         .with_connection(async |connection| {
-            use crate::schema::principals::dsl::{name as principal_name, principals};
-            use diesel::dsl::sql;
-            use diesel::sql_types::Text;
-            let identity = sql::<Text>("logical_identity #>> '{subject,identity,identity}'");
+            use crate::schema::principals::dsl::{
+                logical_identity, name as principal_name, principals,
+            };
+            let identity =
+                logical_identity.retrieve_by_path_as_text(vec!["subject", "identity", "identity"]);
             principals
                 .filter(identity.clone().eq_any(principal_ids))
                 .order(identity.clone().asc())
-                .select((identity, principal_name))
+                .select((identity.assume_not_null(), principal_name))
                 .load::<(String, String)>(connection)
                 .await?
                 .into_iter()
@@ -436,15 +440,11 @@ async fn require_unrestricted_history_absence(
     entity_id: ResourceId,
     at: DateTime<Utc>,
 ) -> Result<(), PostgresStorageError> {
-    let visible = diesel::select(
-        sql::<Bool>("public.hubuum_history_requested_as_of_visible(")
-            .bind::<diesel::sql_types::Text, _>(family)
-            .sql(",")
-            .bind::<SqlUuid, _>(Uuid::from_bytes(*resource.as_bytes()))
-            .sql(",")
-            .bind::<Timestamptz, _>(at)
-            .sql(")"),
-    )
+    let visible = diesel::select(history_requested_as_of_visible(
+        family,
+        Uuid::from_bytes(*resource.as_bytes()),
+        at,
+    ))
     .get_result::<bool>(connection)
     .await?;
     if !visible {
@@ -504,6 +504,9 @@ extern "SQL" {
         at: Timestamptz,
         selected_from: Timestamptz,
     ) -> Bool;
+
+    #[sql_name = "public.hubuum_history_requested_as_of_visible"]
+    fn history_requested_as_of_visible(family: Text, resource: SqlUuid, at: Timestamptz) -> Bool;
 }
 
 fn history_cursor_fields(
@@ -1135,9 +1138,13 @@ pub async fn list_class_objects_as_of(
         .with_read_only_snapshot(async |connection| {
             require_population_class_binding(connection, &query).await?;
             require_population_gap_authorization(connection, &query).await?;
-            let visible = sql::<Bool>("public.hubuum_history_as_of_visible('object',hubuumobject_history.logical_identity,")
-                .bind::<Timestamptz, _>(query.at())
-                .sql(",hubuumobject_history.valid_from)");
+            use crate::schema::hubuumobject_history as history;
+            let visible = history_as_of_visible(
+                "object",
+                history::logical_identity,
+                query.at(),
+                history::valid_from,
+            );
             let expired = diesel::select(diesel::dsl::exists(
                 class_objects_as_of_query(&query)?.filter(not(visible)),
             ))
@@ -1208,12 +1215,17 @@ pub async fn get_object_history_as_of(
         .with_connection(async |connection| {
             use crate::schema::hubuumobject_history::dsl as history;
 
-            let visible = sql::<Bool>("public.hubuum_history_as_of_visible('object',hubuumobject_history.logical_identity,")
-                .bind::<Timestamptz,_>(at).sql(",hubuumobject_history.valid_from) AND (")
-                .bind::<Nullable<SqlUuid>,_>(expected_resource.map(|identity|Uuid::from_bytes(*identity.as_bytes())))
-                .sql(" IS NULL OR (hubuumobject_history.logical_identity #>> '{subject,identity,identity}')::UUID IS NOT DISTINCT FROM ")
-                .bind::<Nullable<SqlUuid>,_>(expected_resource.map(|identity|Uuid::from_bytes(*identity.as_bytes())))
-                .sql(")");
+            let expected = expected_resource.map(|identity| identity.to_string());
+            let visible =
+                history_as_of_visible("object", history::logical_identity, at, history::valid_from)
+                    .and(
+                        expected
+                            .is_none()
+                            .into_sql::<Bool>()
+                            .or(history::logical_identity
+                                .retrieve_by_path_as_text(vec!["subject", "identity", "identity"])
+                                .is_not_distinct_from(expected)),
+                    );
             let selected = history::hubuumobject_history
                 .filter(history::id.eq(object_id.id()))
                 .filter(history::hubuum_class_id.eq(class_id.id()))
@@ -1221,15 +1233,20 @@ pub async fn get_object_history_as_of(
                 .filter(history::valid_to.is_null().or(history::valid_to.gt(at)))
                 .order(history::history_id.desc())
                 .select((ObjectHistoryRow::as_select(), visible))
-                .first::<(ObjectHistoryRow,bool)>(connection)
+                .first::<(ObjectHistoryRow, bool)>(connection)
                 .await
                 .optional()
                 .map_err(PostgresStorageError::from)?;
             let Some((row, visible)) = selected else {
                 if let Some(resource) = expected_resource {
                     require_unrestricted_history_absence(
-                        connection, "object", resource, ResourceId::new(object_id.id())?, at,
-                    ).await?;
+                        connection,
+                        "object",
+                        resource,
+                        ResourceId::new(object_id.id())?,
+                        at,
+                    )
+                    .await?;
                 }
                 return Ok(None);
             };
