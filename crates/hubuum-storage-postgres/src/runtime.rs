@@ -1248,8 +1248,12 @@ impl TransactionLocalContext {
     }
 
     fn is_empty(&self) -> bool {
-        self.history_mode == HistoryEntryMode::Read
-            && self.history_read.is_none()
+        matches!(
+            self.history_mode,
+            HistoryEntryMode::Read
+                | HistoryEntryMode::Authentication
+                | HistoryEntryMode::ApiAdmission
+        ) && self.history_read.is_none()
             && self.api_request.is_none()
             && self.application_access.is_none()
             && self.query_budget.is_none()

@@ -823,7 +823,7 @@ mod tests {
         let evidence = fixture.repository.recovery_evidence().unwrap();
         assert!(fixture.repository.publish(&fixture.initial, false).is_err());
         drop(evidence);
-        assert!(fixture.repository.publish(&fixture.initial, false).is_ok());
+        after_lock_release(|| fixture.repository.publish(&fixture.initial, false));
     }
 
     #[test]
@@ -840,14 +840,19 @@ mod tests {
         assert!(fixture.repository.recovery_evidence().is_err());
         let identity = session.checkpoint().identity().to_owned();
         drop(session);
+        let checkpoint = after_lock_release(|| fixture.repository.latest());
+        assert_eq!(checkpoint.identity(), identity);
+    }
+
+    fn after_lock_release<T>(mut operation: impl FnMut() -> Result<T, ApiError>) -> T {
         // A concurrent template-worker fork can briefly inherit the open file
         // description. CLOEXEC closes that copy at exec, so dropping our guard
         // promises eventual release rather than an immediate successful flock.
         // Keep the held-lock assertion above strict; retry only this transient
         // busy result after the owner has finished.
         let deadline = Instant::now() + Duration::from_secs(5);
-        let checkpoint = loop {
-            match fixture.repository.latest() {
+        loop {
+            match operation() {
                 Err(ApiError::ServiceUnavailable(message))
                     if message
                         == "Control repository is busy; retry without bypassing protection"
@@ -855,10 +860,9 @@ mod tests {
                 {
                     thread::sleep(Duration::from_millis(5));
                 }
-                result => break result.unwrap(),
+                result => return result.unwrap(),
             }
-        };
-        assert_eq!(checkpoint.identity(), identity);
+        }
     }
 
     #[test]

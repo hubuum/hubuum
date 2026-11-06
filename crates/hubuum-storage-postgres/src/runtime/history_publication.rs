@@ -8,6 +8,8 @@ use super::*;
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum HistoryEntryMode {
     Read,
+    Authentication,
+    ApiAdmission,
     Archive,
     ArchiveClaim,
     Control,
@@ -37,12 +39,22 @@ impl PostgresRuntime {
                 .as_ref()
                 .is_none_or(|permit| permit.owner().is_none())
             && context.history_read.is_none()
-            && context.history_mode == HistoryEntryMode::Read
+            && matches!(
+                context.history_mode,
+                HistoryEntryMode::Read
+                    | HistoryEntryMode::Authentication
+                    | HistoryEntryMode::ApiAdmission
+            )
         {
             return Ok(HistoryPublicationRequirement::Legacy);
         }
         if context.history_read.is_none()
-            && context.history_mode == HistoryEntryMode::Read
+            && matches!(
+                context.history_mode,
+                HistoryEntryMode::Read
+                    | HistoryEntryMode::Authentication
+                    | HistoryEntryMode::ApiAdmission
+            )
             && context
                 .application_access
                 .as_ref()
@@ -81,6 +93,28 @@ impl PostgresRuntime {
         context: &TransactionLocalContext,
         requirement: HistoryPublicationRequirement,
     ) -> Result<(), PostgresStorageError> {
+        // Bearer authentication and its credential-source observations precede
+        // API admission. These operations access identity tables only, never
+        // lifecycle-managed history. They still pass application/history and
+        // API authority validation in the usual order. An inherited publication
+        // must remain live; admitted API/task work cannot use this bootstrap path.
+        if context.history_mode == HistoryEntryMode::Authentication
+            && context.history_read.is_none()
+            && context.api_request.is_none()
+            && context.task_execution.is_none()
+        {
+            return Ok(());
+        }
+        // Initial API admission is itself supervised by a task-style deadline,
+        // but has neither an API owner nor a publication owner yet. It only
+        // charges capacity and captures identity/policy facts. Preserve any
+        // already inherited publication instead of admitting under a new epoch.
+        if context.history_mode == HistoryEntryMode::ApiAdmission
+            && context.history_read.is_none()
+            && context.api_request.is_none()
+        {
+            return Ok(());
+        }
         if context.history_mode == HistoryEntryMode::ProducerAdmission {
             if context.history_read.as_ref().is_none_or(|publication| {
                 context.application_access.as_ref() != Some(publication.epoch().application())
@@ -94,7 +128,11 @@ impl PostgresRuntime {
         }
         if !matches!(
             context.history_mode,
-            HistoryEntryMode::Read | HistoryEntryMode::Archive | HistoryEntryMode::ArchiveClaim
+            HistoryEntryMode::Read
+                | HistoryEntryMode::Authentication
+                | HistoryEntryMode::ApiAdmission
+                | HistoryEntryMode::Archive
+                | HistoryEntryMode::ArchiveClaim
         ) {
             return Ok(());
         }
@@ -170,6 +208,94 @@ impl PostgresRuntime {
             ));
         }
         Ok(())
+    }
+
+    /// Charge initial API capacity before a request publication owner exists.
+    /// History authority is acquired at entry, before API policy/owner locks.
+    pub(crate) async fn with_api_request_admission<F, R, E>(
+        &self,
+        operation: F,
+    ) -> Result<R, PostgresStorageError>
+    where
+        F: for<'connection> AsyncFnOnce(&'connection mut PostgresConnection) -> Result<R, E>
+            + for<'connection> SendAsyncFn<
+                &'connection mut PostgresConnection,
+                Result<R, E>,
+                Fut: Send,
+            > + Send,
+        R: Send,
+        E: Send,
+        PostgresStorageError: From<E>,
+    {
+        let mut context = TransactionLocalContext::ambient();
+        context.history_mode = HistoryEntryMode::ApiAdmission;
+        self.with_transaction_context(operation, context).await
+    }
+
+    /// Read current authentication facts before request publication admission.
+    /// This entry must never query lifecycle-managed data or historical rows.
+    pub(crate) async fn with_authentication_read<F, R, E>(
+        &self,
+        operation: F,
+    ) -> Result<R, PostgresStorageError>
+    where
+        F: for<'connection> AsyncFnOnce(&'connection mut PostgresConnection) -> Result<R, E>
+            + for<'connection> SendAsyncFn<
+                &'connection mut PostgresConnection,
+                Result<R, E>,
+                Fut: Send,
+            > + Send,
+        R: Send,
+        E: Send,
+        PostgresStorageError: From<E>,
+    {
+        let mut context = TransactionLocalContext::read_only();
+        context.history_mode = HistoryEntryMode::Authentication;
+        self.with_connection_context(operation, context).await
+    }
+
+    /// Update authentication bookkeeping under the original productive fences.
+    /// Restricted to credential tables; this does not admit history publication.
+    pub(crate) async fn with_authentication_connection<F, R, E>(
+        &self,
+        operation: F,
+    ) -> Result<R, PostgresStorageError>
+    where
+        F: for<'connection> AsyncFnOnce(&'connection mut PostgresConnection) -> Result<R, E>
+            + for<'connection> SendAsyncFn<
+                &'connection mut PostgresConnection,
+                Result<R, E>,
+                Fut: Send,
+            > + Send,
+        R: Send,
+        E: Send,
+        PostgresStorageError: From<E>,
+    {
+        let mut context = TransactionLocalContext::ambient();
+        context.history_mode = HistoryEntryMode::Authentication;
+        self.with_connection_context(operation, context).await
+    }
+
+    /// Atomically record credential-source observations before API admission.
+    /// No lifecycle-managed data may be accessed through this entry.
+    pub(crate) async fn with_authentication_transaction<F, R, E>(
+        &self,
+        operation: F,
+    ) -> Result<R, PostgresStorageError>
+    where
+        F: for<'connection> AsyncFnOnce(&'connection mut PostgresConnection) -> Result<R, E>
+            + for<'connection> SendAsyncFn<
+                &'connection mut PostgresConnection,
+                Result<R, E>,
+                Fut: Send,
+            > + Send,
+        R: Send,
+        E: Send,
+        PostgresStorageError: From<E>,
+    {
+        let mut context = TransactionLocalContext::ambient();
+        context.history_mode = HistoryEntryMode::Authentication;
+        self.with_transaction_context(operation, context).await
     }
 
     pub(crate) async fn with_history_archive_connection<F, R, E>(
