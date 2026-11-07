@@ -7,6 +7,27 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Administrators can change selected shared settings without restarting any
+  replica. The default page size (`pagination.default_page_limit`) and query
+  observation enablement (`query_observations.enabled`) are the first runtime
+  settings. Use `GET /api/v1/admin/runtime-settings`, then
+  `PUT /api/v1/admin/runtime-settings/{pagination,query_observations}` with an
+  `expected_revision`, or `DELETE` to return a group to deployment
+  configuration. Updates are validated against deployment ceilings,
+  revision-checked (stale revisions return `412` with `current_revision`), and
+  committed together with a durable audit record. Read the records through
+  `GET /api/v1/admin/runtime-settings/history/{group}`. Replicas apply committed
+  changes on notification or within 30 seconds. API requests resolve page
+  limits once, when they start. `GET /api/v1/admin/config` reports each group's
+  source, revision, mutability, and effective value, and whether the responding
+  replica's applied state is current or stale. `GET /api/v1/config` reports the
+  effective default page size. Runtime settings survive restores and are
+  excluded from portable backups. Startup configuration still applies until an
+  administrator adopts a value; replica startup never overwrites shared
+  settings. See [runtime settings](docs/runtime_settings.md).
+
 ### Changed
 
 - **Breaking for unreleased main builds:** workload-capacity and data-lifecycle
@@ -19,6 +40,35 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   [separation guidance](docs/development.md#separating-project-3-from-main).
 - Reject database schemas newer than the stable binary during readiness and
   reject unknown applied migrations before the migration command writes changes.
+- **Breaking:** query observation enablement is now a runtime setting.
+  `GET` and `PUT /api/v1/admin/query-observations` have been removed; use
+  `GET /api/v1/admin/runtime-settings` and
+  `PUT /api/v1/admin/runtime-settings/query_observations` with an
+  `expected_revision`. The `query_observations.runtime_override` field of
+  `GET /api/v1/admin/config` has been removed; read
+  `runtime_settings.query_observations` instead. The migration imports any
+  existing override as an audited revision. Apply it, then upgrade every API and
+  worker replica together: upgraded replicas no longer read or write the legacy
+  override, so previous-release replicas would not follow later changes.
+  Replicas no longer read the setting from storage on query paths. A replica
+  whose latest runtime settings refresh failed pauses collection until a
+  refresh succeeds.
+- **Breaking (metrics):** storage operation labels `query_observation_control`
+  and `set_query_observation_control` are replaced by `load_runtime_settings`,
+  `update_runtime_settings`, and `list_runtime_settings_changes` under the new
+  `runtime_settings` capability label. Update dashboards and alerts that filter
+  on the removed operation labels; metric names and other labels are unchanged.
+- **Breaking storage SDK changes:** adapters must implement the new
+  `RuntimeSettingsStorage` capability, now part of `OperationalStorage`. It
+  requires complete snapshots, revision-checked updates that commit their audit
+  record atomically, and bounded newest-first audit pages, all preserved across
+  logical restores and excluded from portable backups.
+  `QueryUsageStorage::query_observation_control`,
+  `QueryUsageStorage::set_query_observation_control`, and
+  `StorageQueryObservationControl` are removed. The
+  `StorageNotification::QueryObservationControl` topic is renamed to
+  `StorageNotification::RuntimeSettings`, and notification providers must
+  support it. `StorageCapability::RuntimeSettings` is a new telemetry label.
 
 ## [0.0.21] - 2026-10-26
 

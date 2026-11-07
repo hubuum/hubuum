@@ -406,7 +406,7 @@
         "operationId": "getApiV1AdminConfig",
         "responses": {
           "200": {
-            "description": "Effective redacted process configuration",
+            "description": "Effective redacted process configuration, including runtime settings applied by the responding replica",
             "content": {
               "application/json": {
                 "schema": {
@@ -443,21 +443,21 @@
         ]
       }
     },
-    "/api/v1/admin/query-observations": {
+    "/api/v1/admin/runtime-settings": {
       "get": {
         "tags": [
           "admin"
         ],
-        "summary": "Get Api V1 Admin Query Observations",
-        "description": "Auto-generated documentation for GET /api/v1/admin/query-observations.",
-        "operationId": "getApiV1AdminQueryObservations",
+        "summary": "Get Api V1 Admin Runtime Settings",
+        "description": "Auto-generated documentation for GET /api/v1/admin/runtime-settings.",
+        "operationId": "getApiV1AdminRuntimeSettings",
         "responses": {
           "200": {
-            "description": "Shared override applied to the responding replica and its effective observation settings",
+            "description": "Runtime settings applied by the responding replica after reconciling with shared storage",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/QueryObservationConfig"
+                  "$ref": "#/components/schemas/RuntimeSettingsReport"
                 }
               }
             }
@@ -488,19 +488,109 @@
             "bearer_auth": []
           }
         ]
-      },
+      }
+    },
+    "/api/v1/admin/runtime-settings/history/{group}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Api V1 Admin Runtime Settings History By Group",
+        "description": "Auto-generated documentation for GET /api/v1/admin/runtime-settings/history/{group}.",
+        "operationId": "getApiV1AdminRuntimeSettingsHistoryByGroup",
+        "parameters": [
+          {
+            "name": "group",
+            "in": "path",
+            "description": "Runtime settings group",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/RuntimeSettingsGroup"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Records to return, newest first. Defaults to 20; at most 100.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "before_revision",
+            "in": "query",
+            "description": "Return records with revisions older than this one.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ResourceRevision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Durable audit records for the group, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsHistoryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid group or paging parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/runtime-settings/pagination": {
       "put": {
         "tags": [
           "admin"
         ],
-        "summary": "Put Api V1 Admin Query Observations",
-        "description": "Auto-generated documentation for PUT /api/v1/admin/query-observations.",
-        "operationId": "putApiV1AdminQueryObservations",
+        "summary": "Put Api V1 Admin Runtime Settings Pagination",
+        "description": "Auto-generated documentation for PUT /api/v1/admin/runtime-settings/pagination.",
+        "operationId": "putApiV1AdminRuntimeSettingsPagination",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/QueryObservationUpdateRequest"
+                "$ref": "#/components/schemas/PaginationSettingsRequest"
               }
             }
           },
@@ -508,11 +598,87 @@
         },
         "responses": {
           "200": {
-            "description": "Shared override committed and broadcast; applied on this replica, other replicas reconcile asynchronously",
+            "description": "Shared value committed with an audit record; applied by the responding replica, other replicas reconcile asynchronously",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/QueryObservationConfig"
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid value or a default above the deployment max_page_limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; the response carries the current revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete Api V1 Admin Runtime Settings Pagination",
+        "description": "Auto-generated documentation for DELETE /api/v1/admin/runtime-settings/pagination.",
+        "operationId": "deleteApiV1AdminRuntimeSettingsPagination",
+        "parameters": [
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "description": "Current revision of the group.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ResourceRevision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deployment ownership committed as a new audited revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
                 }
               }
             }
@@ -539,6 +705,169 @@
           },
           "403": {
             "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; the response carries the current revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/runtime-settings/query_observations": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Put Api V1 Admin Runtime Settings Query Observations",
+        "description": "Auto-generated documentation for PUT /api/v1/admin/runtime-settings/query_observations.",
+        "operationId": "putApiV1AdminRuntimeSettingsQueryObservations",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryObservationSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Shared value committed with an audit record; applied by the responding replica, other replicas reconcile asynchronously",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; the response carries the current revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete Api V1 Admin Runtime Settings Query Observations",
+        "description": "Auto-generated documentation for DELETE /api/v1/admin/runtime-settings/query_observations.",
+        "operationId": "deleteApiV1AdminRuntimeSettingsQueryObservations",
+        "parameters": [
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "description": "Current revision of the group.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ResourceRevision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deployment ownership committed as a new audited revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; the response carries the current revision",
             "content": {
               "application/json": {
                 "schema": {
@@ -13820,7 +14149,7 @@
         "operationId": "getApiV1Config",
         "responses": {
           "200": {
-            "description": "Effective client-safe configuration",
+            "description": "Effective client-safe configuration, including runtime-managed defaults applied by the responding replica",
             "content": {
               "application/json": {
                 "schema": {
@@ -34426,6 +34755,82 @@
           }
         }
       },
+      "PaginationPolicyValue": {
+        "type": "object",
+        "required": [
+          "default_page_limit"
+        ],
+        "properties": {
+          "default_page_limit": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "PaginationSettingsReport": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RuntimeSettingsOwnership"
+          },
+          {
+            "type": "object",
+            "required": [
+              "effective",
+              "deployment",
+              "max_page_limit",
+              "constrained_by_ceiling"
+            ],
+            "properties": {
+              "constrained_by_ceiling": {
+                "type": "boolean",
+                "description": "The runtime default exceeds this replica's ceiling and is clamped to it."
+              },
+              "deployment": {
+                "$ref": "#/components/schemas/PaginationPolicyValue"
+              },
+              "effective": {
+                "$ref": "#/components/schemas/PaginationPolicyValue"
+              },
+              "max_page_limit": {
+                "type": "integer",
+                "description": "Deployment resource ceiling of this replica. It is never runtime-managed.",
+                "minimum": 0
+              },
+              "runtime": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/PaginationPolicyValue"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "PaginationSettingsRequest": {
+        "type": "object",
+        "description": "Manage the default page size for every replica sharing storage.",
+        "required": [
+          "expected_revision",
+          "default_page_limit"
+        ],
+        "properties": {
+          "default_page_limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Items returned when a request omits `limit`. Must not exceed the\nresponding replica's deployment `max_page_limit`.",
+            "minimum": 1
+          },
+          "expected_revision": {
+            "$ref": "#/components/schemas/ResourceRevision",
+            "description": "Current revision of the `pagination` group."
+          }
+        },
+        "additionalProperties": false
+      },
       "PatchOperation": {
         "oneOf": [
           {
@@ -35345,7 +35750,8 @@
         ],
         "properties": {
           "enabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Effective enablement on the responding replica. See\n`runtime_settings.query_observations` for its source and revision."
           },
           "max_patterns": {
             "type": "integer",
@@ -35364,17 +35770,21 @@
             "format": "int32",
             "minimum": 0
           },
-          "runtime_override": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "Shared runtime override; null means the process startup setting applies."
-          },
           "sample_every": {
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          }
+        }
+      },
+      "QueryObservationPolicyValue": {
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
           }
         }
       },
@@ -35416,6 +35826,61 @@
           }
         }
       },
+      "QueryObservationSettingsReport": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RuntimeSettingsOwnership"
+          },
+          {
+            "type": "object",
+            "required": [
+              "effective",
+              "deployment",
+              "collection_paused"
+            ],
+            "properties": {
+              "collection_paused": {
+                "type": "boolean",
+                "description": "Collection pauses while this replica's latest refresh has failed,\nrather than keep a possibly stale enablement."
+              },
+              "deployment": {
+                "$ref": "#/components/schemas/QueryObservationPolicyValue"
+              },
+              "effective": {
+                "$ref": "#/components/schemas/QueryObservationPolicyValue"
+              },
+              "runtime": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/QueryObservationPolicyValue"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "QueryObservationSettingsRequest": {
+        "type": "object",
+        "description": "Manage query observation enablement for every replica sharing storage.",
+        "required": [
+          "expected_revision",
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "$ref": "#/components/schemas/ResourceRevision",
+            "description": "Current revision of the `query_observations` group."
+          }
+        },
+        "additionalProperties": false
+      },
       "QueryObservationSnapshot": {
         "type": "object",
         "required": [
@@ -35453,19 +35918,6 @@
             "type": "string"
           }
         }
-      },
-      "QueryObservationUpdateRequest": {
-        "type": "object",
-        "description": "Enable or disable observation collection across replicas sharing storage.",
-        "required": [
-          "enabled"
-        ],
-        "properties": {
-          "enabled": {
-            "type": "boolean"
-          }
-        },
-        "additionalProperties": false
       },
       "QueryPatternObservation": {
         "type": "object",
@@ -36939,6 +37391,17 @@
           "restores": {
             "$ref": "#/components/schemas/RestoreConfig"
           },
+          "runtime_settings": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RuntimeSettingsReport",
+                "description": "Runtime-managed settings applied by the responding replica. Present in\nadministrator responses; startup projections omit it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "schema_validation": {
             "$ref": "#/components/schemas/SchemaValidationConfig"
           },
@@ -36953,6 +37416,295 @@
           },
           "tracing": {
             "$ref": "#/components/schemas/TracingConfig"
+          }
+        }
+      },
+      "RuntimeSettingsApplicationStatus": {
+        "type": "string",
+        "enum": [
+          "not_loaded",
+          "current",
+          "stale"
+        ]
+      },
+      "RuntimeSettingsChangeActor": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "`user`, `system` (for example a migration import), or `worker`."
+          },
+          "principal_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PrincipalID"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "RuntimeSettingsChangeResponse": {
+        "type": "object",
+        "description": "Durable audit record of one committed revision.",
+        "required": [
+          "group",
+          "revision",
+          "previous",
+          "current",
+          "changed_at",
+          "actor"
+        ],
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/RuntimeSettingsChangeActor"
+          },
+          "changed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "correlation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "current": {
+            "$ref": "#/components/schemas/RuntimeSettingsValueResponse"
+          },
+          "group": {
+            "$ref": "#/components/schemas/RuntimeSettingsGroup"
+          },
+          "previous": {
+            "$ref": "#/components/schemas/RuntimeSettingsValueResponse"
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          }
+        }
+      },
+      "RuntimeSettingsEffect": {
+        "type": "string",
+        "description": "When a changed value takes effect on a replica that has applied it.",
+        "enum": [
+          "next_request",
+          "next_query"
+        ]
+      },
+      "RuntimeSettingsGroup": {
+        "type": "string",
+        "description": "Stable key of a group of correlated runtime settings.",
+        "enum": [
+          "query_observations",
+          "pagination"
+        ]
+      },
+      "RuntimeSettingsHistoryResponse": {
+        "type": "object",
+        "description": "Newest-first audit records for one group.",
+        "required": [
+          "changes"
+        ],
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeSettingsChangeResponse"
+            }
+          },
+          "next_before_revision": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ResourceRevision",
+                "description": "Pass as `before_revision` to continue; null when no older records exist."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "RuntimeSettingsOwnership": {
+        "type": "object",
+        "description": "Ownership and revision metadata shared by every group.",
+        "required": [
+          "source",
+          "mutable",
+          "restart_required",
+          "takes_effect"
+        ],
+        "properties": {
+          "changed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "changed_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PrincipalID"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mutable": {
+            "type": "boolean",
+            "description": "Administrators can change this group without restarting processes."
+          },
+          "restart_required": {
+            "type": "boolean"
+          },
+          "revision": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ResourceRevision",
+                "description": "Revision applied by the responding replica; null before it first loads\nshared settings."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/RuntimeSettingsSource"
+          },
+          "takes_effect": {
+            "$ref": "#/components/schemas/RuntimeSettingsEffect"
+          }
+        }
+      },
+      "RuntimeSettingsReplicaStatus": {
+        "type": "object",
+        "description": "Application state of the replica that answered this request. Other\nreplicas apply committed changes independently.",
+        "required": [
+          "status",
+          "reconcile_interval_seconds"
+        ],
+        "properties": {
+          "applied_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_refresh_attempt_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_refresh_failure_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "reconcile_interval_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Interval of the reconcile poll that recovers missed notifications.",
+            "minimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/RuntimeSettingsApplicationStatus"
+          }
+        }
+      },
+      "RuntimeSettingsReport": {
+        "type": "object",
+        "description": "Runtime-managed settings as applied by the responding replica.",
+        "required": [
+          "replica",
+          "query_observations",
+          "pagination"
+        ],
+        "properties": {
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationSettingsReport"
+          },
+          "query_observations": {
+            "$ref": "#/components/schemas/QueryObservationSettingsReport"
+          },
+          "replica": {
+            "$ref": "#/components/schemas/RuntimeSettingsReplicaStatus"
+          }
+        }
+      },
+      "RuntimeSettingsSource": {
+        "type": "string",
+        "description": "Owner of a group's effective value.",
+        "enum": [
+          "deployment",
+          "runtime"
+        ]
+      },
+      "RuntimeSettingsUpdateResponse": {
+        "type": "object",
+        "description": "A committed update is not a cluster-wide acknowledgement: other replicas\napply it on notification or within the reconcile interval.",
+        "required": [
+          "group",
+          "committed_revision",
+          "changed",
+          "applied_by_responding_replica",
+          "settings"
+        ],
+        "properties": {
+          "applied_by_responding_replica": {
+            "type": "boolean",
+            "description": "Whether the responding replica applies at least `committed_revision`."
+          },
+          "changed": {
+            "type": "boolean",
+            "description": "False when the requested value was already current; no revision or\naudit record was written."
+          },
+          "committed_revision": {
+            "$ref": "#/components/schemas/ResourceRevision",
+            "description": "Revision now current in shared storage."
+          },
+          "group": {
+            "$ref": "#/components/schemas/RuntimeSettingsGroup"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/RuntimeSettingsReport"
+          }
+        }
+      },
+      "RuntimeSettingsValueResponse": {
+        "type": "object",
+        "description": "One side of an audited change.",
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/RuntimeSettingsSource"
+          },
+          "value": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Managed value; null when deployment configuration owns the group."
           }
         }
       },

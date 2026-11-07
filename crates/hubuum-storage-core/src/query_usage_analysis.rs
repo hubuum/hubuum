@@ -8,44 +8,6 @@ use chrono::{DateTime, Utc};
 use hubuum_domain::ResourceId;
 use serde::Serialize;
 
-/// Shared override of the process startup setting. Startup applies until an
-/// administrator explicitly enables or disables collection for the deployment.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum StorageQueryObservationControl {
-    #[default]
-    Startup,
-    Enabled,
-    Disabled,
-}
-
-impl StorageQueryObservationControl {
-    pub const fn from_override(enabled: Option<bool>) -> Self {
-        match enabled {
-            None => Self::Startup,
-            Some(true) => Self::Enabled,
-            Some(false) => Self::Disabled,
-        }
-    }
-
-    pub const fn override_enabled(self) -> Option<bool> {
-        match self {
-            Self::Startup => None,
-            Self::Enabled => Some(true),
-            Self::Disabled => Some(false),
-        }
-    }
-
-    pub fn resolve(
-        self,
-        startup: StorageQueryObservationSettings,
-    ) -> StorageQueryObservationSettings {
-        StorageQueryObservationSettings {
-            enabled: self.override_enabled().unwrap_or(startup.enabled()),
-            ..startup
-        }
-    }
-}
-
 /// Validated deployment bounds; class identifiers and paths are never metric labels.
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct StorageQueryObservationSettings {
@@ -99,6 +61,11 @@ impl StorageQueryObservationSettings {
     }
     pub const fn enabled(self) -> bool {
         self.enabled
+    }
+    /// Apply a shared runtime enablement while keeping deployment resource bounds.
+    #[must_use]
+    pub const fn with_enabled(self, enabled: bool) -> Self {
+        Self { enabled, ..self }
     }
     pub const fn sample_every(self) -> u32 {
         self.sample_every

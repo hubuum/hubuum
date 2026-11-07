@@ -361,18 +361,18 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
                 EXIT_CODE_PERMISSION_BACKEND_ERROR,
             )
         });
-    // Adopt the deployment setting before this process can serve or originate
-    // queries, then follow committed changes even in API-only runtime mode.
+    // Apply shared runtime settings before this process can serve requests or
+    // start background work, then follow committed changes in every role.
     storage
-        .query_observation_configuration()
+        .refresh_runtime_settings()
         .await
         .unwrap_or_else(|error| {
             fatal_error(
-                &format!("Failed to load query observation control: {error}"),
+                &format!("Failed to load runtime settings: {error}"),
                 EXIT_CODE_DATABASE_ERROR,
             )
         });
-    storage.start_query_observation_control();
+    storage.start_runtime_settings_reconciler();
     let app_context = AppContext::new(storage, permission_backend);
     RuntimeServices {
         app_context,
