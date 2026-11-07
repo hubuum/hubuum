@@ -131,6 +131,7 @@ pub mod schema_evolution;
 pub mod credential_approvals;
 
 pub mod query_usage;
+pub mod runtime_settings;
 
 pub mod auth_sessions;
 

@@ -1,4 +1,5 @@
 use crate::storage::query_observations::QueryObservations;
+use crate::storage::runtime_settings::RuntimeSettingsReplica;
 use actix_web::web::Data;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{
@@ -6,9 +7,7 @@ use hubuum_domain::{
     EventSubscriptionId, ExportTemplateId, GroupId, IdentityScopeId, JsonSchemaLimits, ObjectId,
     PrincipalId, RemoteTargetId, RestoreJobId, ServiceAccountId, TaskId, TokenId, UserId,
 };
-use hubuum_storage_core::{
-    QueryUsageAnalysisProvider, QueryUsageStorage, StorageQueryObservationSettings,
-};
+use hubuum_storage_core::{QueryUsageAnalysisProvider, StorageQueryObservationSettings};
 use hubuum_storage_core::{StorageComputedFieldHistoryQuery, StorageHistoricalComputedFields};
 use hubuum_storage_core::{
     StorageHistoryEntry, StorageHistoryEntryQuery, StorageHistoryMarker,
@@ -149,6 +148,7 @@ struct StorageHandleInner {
     observer: Arc<dyn StorageObserver>,
     query_usage_analysis: Option<Arc<dyn QueryUsageAnalysisProvider>>,
     query_observations: Arc<QueryObservations>,
+    runtime_settings: Arc<RuntimeSettingsReplica>,
     database_diagnostics: Option<Arc<dyn DatabaseDiagnosticsProvider>>,
     worker_notification_provider: Option<Arc<dyn WorkerNotificationProvider>>,
 }
@@ -234,9 +234,9 @@ mod identity;
 mod identity_queries;
 mod operational;
 mod queries;
-mod query_observation_control;
 mod query_usage;
 mod relations;
+mod runtime_settings;
 mod schema_evolution;
 mod tasks;
 mod transaction;
@@ -335,6 +335,7 @@ impl StorageHandle {
                 query_observations: Arc::new(QueryObservations::new(
                     StorageQueryObservationSettings::default(),
                 )),
+                runtime_settings: Arc::new(RuntimeSettingsReplica::new()),
                 worker_notification_provider: None,
             }),
         }
@@ -385,8 +386,7 @@ impl StorageHandle {
         class_id: Option<ClassId>,
         operation: impl Future<Output = Result<T, E>>,
     ) -> Result<T, E> {
-        // Queries without JSON predicates cannot contribute observations and
-        // should not acquire a connection just to refresh collection control.
+        // Queries without JSON predicates cannot contribute observations.
         if query.structured_filter().is_none()
             && !query
                 .filters()
@@ -398,8 +398,7 @@ impl StorageHandle {
         let enabled = self
             .inner
             .query_observations
-            .collection_enabled(self.query_observation_control())
-            .await;
+            .collection_enabled(&self.applied_runtime_settings());
         if !enabled {
             return operation.await;
         }
