@@ -211,6 +211,11 @@ a same-worker deferred dispatcher-release signal after requesting socket abort.
 These probes are development evidence for a transport mechanism, not production
 publication retirement: upgrade rejection, producer ownership, pipelining,
 cancellation/crash behavior and measured resource/liveness gates remain open.
+Controlled-I/O regressions also retain both pipelined response payloads in the
+actual dispatcher write buffer, with either both bodies at EOF or the second
+body still pending. Awaited dispatcher cancellation must positively release the
+body, I/O and deferred driver witness. This covers local dispatcher cancellation;
+production publication ownership and crash retirement remain unqualified.
 The embedded TLS certificate and key are public loopback test fixtures, never
 deployment credentials or production trust material.
 History-aware registration retains the existing deletion SHARE/application UPDATE

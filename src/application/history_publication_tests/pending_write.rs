@@ -7,7 +7,7 @@ use std::io;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 use std::thread::{self, ThreadId};
 use std::time::Duration;
@@ -16,6 +16,7 @@ use actix_http::{HttpService, Request, Response};
 use actix_service::{Service, ServiceFactory, fn_service};
 use actix_web::body::{BodySize, MessageBody};
 use bytes::Bytes;
+use rstest::rstest;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
@@ -25,7 +26,18 @@ use super::DriverWitness;
 
 struct Body {
     payload: Option<Bytes>,
-    eof: Arc<AtomicBool>,
+    progressed: Arc<AtomicUsize>,
+    observed: bool,
+    pending: bool,
+    dropped: Option<oneshot::Sender<ThreadId>>,
+}
+
+impl Drop for Body {
+    fn drop(&mut self) {
+        if let Some(dropped) = self.dropped.take() {
+            let _ = dropped.send(thread::current().id());
+        }
+    }
 }
 
 impl MessageBody for Body {
@@ -42,8 +54,15 @@ impl MessageBody for Body {
         match self.payload.take() {
             Some(bytes) => Poll::Ready(Some(Ok(bytes))),
             None => {
-                self.eof.store(true, Ordering::Release);
-                Poll::Ready(None)
+                if !self.observed {
+                    self.observed = true;
+                    self.progressed.fetch_add(1, Ordering::AcqRel);
+                }
+                if self.pending {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(None)
+                }
             }
         }
     }
@@ -51,8 +70,9 @@ impl MessageBody for Body {
 
 struct PendingWrite {
     socket: TcpStream,
-    eof: Arc<AtomicBool>,
-    pending: Option<oneshot::Sender<(usize, bool)>>,
+    progressed: Arc<AtomicUsize>,
+    responses: usize,
+    pending: Option<oneshot::Sender<Vec<u8>>>,
     dropped: Option<oneshot::Sender<ThreadId>>,
 }
 
@@ -72,11 +92,10 @@ impl AsyncWrite for PendingWrite {
         _cx: &mut Context<'_>,
         bytes: &[u8],
     ) -> Poll<io::Result<usize>> {
-        if self.eof.load(Ordering::Acquire)
+        if self.progressed.load(Ordering::Acquire) == self.responses
             && let Some(pending) = self.pending.take()
         {
-            let contains_payload = bytes.windows(8).any(|part| part == b"xxxxxxxx");
-            let _ = pending.send((bytes.len(), contains_payload));
+            let _ = pending.send(bytes.to_vec());
         }
         // Deliberately retain all writes. There is no timer or synthetic EOF
         // that can make the dispatcher or its owned payload disappear.
@@ -100,8 +119,15 @@ impl Drop for PendingWrite {
     }
 }
 
+#[rstest]
+#[case::body_eof(1, false)]
+#[case::pipelined_eof(2, false)]
+#[case::pipelined_pending_body(2, true)]
 #[actix_web::test]
-async fn body_eof_does_not_retire_pending_dispatcher_bytes() {
+async fn cancellation_retires_pending_dispatcher_and_pipelined_bodies(
+    #[case] responses: usize,
+    #[case] pending_body: bool,
+) {
     let deadline = Instant::now() + Duration::from_secs(5);
     let worker = thread::current().id();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -109,11 +135,11 @@ async fn body_eof_does_not_retire_pending_dispatcher_bytes() {
         .await
         .unwrap();
     let (socket, peer) = listener.accept().await.unwrap();
-    let eof = Arc::new(AtomicBool::new(false));
-    let body = Rc::new(RefCell::new(Some(Body {
-        payload: Some(Bytes::from_static(b"xxxxxxxx")),
-        eof: Arc::clone(&eof),
-    })));
+    let progressed = Arc::new(AtomicUsize::new(0));
+    let (body_dropped, mut body_release) = oneshot::channel();
+    let body_dropped = Rc::new(RefCell::new(Some(body_dropped)));
+    let issued = Rc::new(RefCell::new(0));
+    let body_progress = Arc::clone(&progressed);
     let (released, mut driver_release) = oneshot::channel();
     let released = RefCell::new(Some(released));
     let service = HttpService::build()
@@ -124,7 +150,19 @@ async fn body_eof_does_not_retire_pending_dispatcher_bytes() {
             });
         })
         .h1(fn_service(move |_: Request| {
-            let body = body.borrow_mut().take().unwrap();
+            let ordinal = {
+                let mut issued = issued.borrow_mut();
+                *issued += 1;
+                *issued
+            };
+            assert!(ordinal <= responses);
+            let body = Body {
+                payload: Some(Bytes::from(format!("publication-{ordinal}"))),
+                progressed: Arc::clone(&body_progress),
+                observed: false,
+                pending: pending_body && ordinal == responses,
+                dropped: (ordinal == responses).then(|| body_dropped.borrow_mut().take().unwrap()),
+            };
             async move { Ok::<_, actix_http::Error>(Response::ok().set_body(body)) }
         }))
         .new_service(())
@@ -134,19 +172,34 @@ async fn body_eof_does_not_retire_pending_dispatcher_bytes() {
     let (dropped, io_dropped) = oneshot::channel();
     let io = PendingWrite {
         socket,
-        eof,
+        progressed,
+        responses,
         pending: Some(pending),
         dropped: Some(dropped),
     };
     let dispatcher = actix_web::rt::spawn(service.call((io, Some(peer))));
-    client
-        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
-        .await
-        .unwrap();
+    // Submit the whole pipeline together so the dispatcher owns both responses
+    // while the controlled writer retains every byte from the first onward.
+    let requests = b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n".repeat(responses);
+    client.write_all(&requests).await.unwrap();
 
-    let (pending_bytes, contains_payload) =
-        timeout_at(deadline, write_pending).await.unwrap().unwrap();
-    assert!(pending_bytes > 8 && contains_payload);
+    let pending_bytes = timeout_at(deadline, write_pending).await.unwrap().unwrap();
+    for ordinal in 1..=responses {
+        let payload = format!("publication-{ordinal}");
+        assert!(
+            pending_bytes
+                .windows(payload.len())
+                .any(|part| part == payload.as_bytes()),
+            "all pipelined payloads must remain in the actual dispatcher buffer"
+        );
+    }
+    drop(pending_bytes);
+    if pending_body {
+        assert!(matches!(
+            body_release.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+    }
     assert!(matches!(
         driver_release.try_recv(),
         Err(oneshot::error::TryRecvError::Empty)
@@ -161,11 +214,15 @@ async fn body_eof_does_not_retire_pending_dispatcher_bytes() {
             .is_cancelled()
     );
     assert_eq!(
+        timeout_at(deadline, body_release).await.unwrap().unwrap(),
+        worker
+    );
+    assert_eq!(
         timeout_at(deadline, io_dropped).await.unwrap().unwrap(),
         worker
     );
-    // Abort only requests cancellation. Both positive observations are required
-    // after awaiting the dispatcher; channel loss or timeout cannot pass.
+    // Abort only requests cancellation. Body, I/O and deferred driver release
+    // must all be observed after awaiting it; channel loss or timeout cannot pass.
     assert_eq!(
         timeout_at(deadline, driver_release).await.unwrap().unwrap(),
         worker
