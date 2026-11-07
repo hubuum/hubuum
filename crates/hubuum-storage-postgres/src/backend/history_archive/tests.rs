@@ -374,6 +374,7 @@ async fn native_publication_claim_rollback_keeps_child_pin_and_record_atomic(
     use hubuum_storage_core::{
         StorageCollectionCreate, StorageCollectionUpdate, StorageGroupCreate,
     };
+    use std::time::Duration;
     let backend = PostgresStorage::unobserved(integration_test_pool(2));
     let name = format!("claim-rollback-{}", Uuid::new_v4());
     let mut group = None;
@@ -397,7 +398,7 @@ async fn native_publication_claim_rollback_keeps_child_pin_and_record_atomic(
         let execution = if matches!(case, PublicationClaimCase::UnboundedRollback) {
             None
         } else {
-            Some(hubuum_task_core::TaskExecutionContext::new(std::time::Duration::from_secs(2)).unwrap().0)
+            Some(hubuum_task_core::TaskExecutionContext::new(Duration::from_secs(2)).unwrap().0)
         };
         let mut scope = StorageExecutionScope::default().with_application_access(application);
         if let Some(execution) = &execution { scope = scope.with_task_execution(Some(execution.clone())); }
@@ -421,7 +422,22 @@ async fn native_publication_claim_rollback_keeps_child_pin_and_record_atomic(
             let mut raw_rejected = false;
             let mut clock_expired = false;
             let failed = backend.runtime().with_control_transaction(async |connection| {
-                let clock = sql_query("SELECT clock_timestamp() AS recorded_at").get_result::<Clock>(connection).await?;
+                // Task time is monotonic on the application host; the fixed
+                // manifest cutoff is checked against PostgreSQL wall time.
+                // Observe that clock directly instead of assuming the Docker
+                // fixture and host cross the same deadline simultaneously.
+                let clock = tokio::time::timeout(Duration::from_secs(5), async {
+                    loop {
+                        let clock = sql_query("SELECT clock_timestamp() AS recorded_at")
+                            .get_result::<Clock>(connection).await?;
+                        if clock.recorded_at >= request.manifest().execution_deadline() {
+                            return Ok::<_, PostgresStorageError>(clock);
+                        }
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                }).await.map_err(|_| PostgresStorageError::unavailable(
+                    "PostgreSQL fixture clock did not reach the original manifest deadline",
+                ))??;
                 clock_expired = clock.recorded_at >= request.manifest().execution_deadline();
                 if database_role_tests_enabled() {
                     let runtime = sql_query("SELECT current_user::TEXT=$1 AS allowed")

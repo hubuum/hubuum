@@ -490,6 +490,9 @@ impl StorageHandle {
                 operation,
                 "get_readiness_snapshot"
                     | "get_maintenance_state"
+                    | "settle_api_request"
+                    | "settle_history_publication"
+                    | "settle_history_producer"
                     | "poll_task_execution"
                     | "acknowledge_task_stop"
                     | "renew_task_lease"

@@ -576,10 +576,12 @@ async fn run_http_role(
     let background_worker_context = app_context.clone();
     let app_backup_settings = backup_settings.clone();
     let app_restore_settings = restore_settings.clone();
+    let owned_http_publication = server_app_context.backend().uses_online_history();
 
     let server = HttpServer::new(move || {
         let app = App::new()
             .wrap(from_fn(middlewares::actor_context))
+            .wrap(from_fn(middlewares::history_publication::transmit))
             .wrap(from_fn(middlewares::reject_during_maintenance))
             // Actix runs the last registered middleware first. Reject disallowed
             // clients before bearer-token resolution can touch the database.
@@ -614,6 +616,11 @@ async fn run_http_role(
         );
 
         app.configure(api::config)
+    })
+    .on_connect(move |io, extensions| {
+        if owned_http_publication {
+            middlewares::history_publication::on_connect(io, extensions);
+        }
     });
 
     let bind_address = format!("{}:{}", config.bind_ip, config.port);

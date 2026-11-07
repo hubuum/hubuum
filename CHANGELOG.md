@@ -314,6 +314,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- API occupancy and history publication/producer settlement validate their
+  existing ownership without acquiring a fresh application permit. Cleanup
+  remains independent of productive admission and API response buffering.
 - Artifact downloads keep their reader inside the response stream and preserve
   the original execution scope. Disconnecting drops pending reads instead of
   detaching a producer; final-block and whole-stream verification remain required.

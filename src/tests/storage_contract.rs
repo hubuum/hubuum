@@ -15,6 +15,7 @@ mod history_archive;
 mod history_authentication;
 mod history_computed;
 mod history_fixtures;
+mod history_http_publication;
 mod history_name;
 mod history_navigation;
 mod history_population;

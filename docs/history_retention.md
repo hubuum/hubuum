@@ -159,13 +159,45 @@ Their shared helpers remain private to the PostgreSQL runtime/context.
 | History publication | Separate guard survives inner response buffering and outer transmission. Inner body EOF and API occupancy settlement do not prove publication completion. |
 | Publication settlement | Does not reacquire an already retired API owner. Ambiguous or crashed producers retain their obligation until positive fencing/isolation evidence. |
 
-A typed guard can cross response rebuilding through response-head extensions,
-then transfer to the outer body wrapper. The final implementation must prove the
-handoff through inner buffering, outer EOF/drop, cancellation and streams, and
-prove lock-order behavior for each entry mode. Neither a timer nor an API-owner
-row disappearing is a publication-quiescence proof. Export/backup final
-publication and restored descendants need the same independently demonstrated
-boundary. These lifetime and native race cases remain acceptance gates.
+For history-aware registered runtimes, the HTTP application path admits a
+publication after API admission, retaining its exact application/API/task scope.
+A response extension carries its guard through bounded API buffering into the
+outer body wrapper. Producer bodies retain their original execution scope after
+the handler returns. Materialized bytes or successful stream EOF can confirm
+producer completion; a dropped or failed producer remains unresolved.
+
+API occupancy settles independently. Exact API, publication and producer
+settlement does not acquire a fresh application permit or reacquire an old API
+owner. The publication guard remains charged until both producer completion and
+positive same-worker driver release are observed. The deferred connection
+witness runs after synchronous HTTP/1 dispatcher destruction, including its I/O
+and write buffers. Lost channels, deadlines and abort requests are not release
+proofs. Failed or interrupted supervision retains durable ownership and prevents
+clean runtime shutdown acknowledgement.
+
+Each owned response closes its HTTP/1 connection; keep-alive reuse needs a
+separate connection publication barrier. HTTP upgrades, CONNECT, HTTP/2 and
+missing transport witnesses are rejected before publication admission. Selected
+API work keeps its original deadline. Ordinary owned HTTP work retains an
+inherited task deadline or receives a 60-second limit. A publication deadline
+requests socket shutdown, followed by at most 30 seconds each for driver and
+producer drain confirmation. Missing confirmation retains the obligation rather
+than treating time elapsed as retirement.
+
+Controlled-I/O tests exercise the real actor, API admission, maintenance and
+publication middleware with both complete adapters: API occupancy has settled
+while payload bytes remain buffered and the publication is still active.
+Additional cases cover lazy stream scope preservation, cancellation before EOF,
+lost completion witnesses, normal HEAD/empty-body suppression, Legacy
+compatibility and transport rejection. Native
+plain HTTP, Rustls and OpenSSL cases exercise successful delivery and positive
+retirement through the production middleware and TLS configuration.
+
+Production composition still registers Legacy, so this integration does not
+activate online expiry. Handler-local revision-precondition scope binding, export/backup final
+publication and query budgets, restored descendants, crash retirement, all-family
+native races and measured resource/liveness qualification remain acceptance gates. No timer or absent API-owner row can
+substitute for these proofs.
 
 The online model bounds selected membership to 1000 rows
 and 16 MiB measured full-row input, with a 1 MiB encoded membership envelope.

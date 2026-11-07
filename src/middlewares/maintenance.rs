@@ -27,7 +27,7 @@ static HTTP_WORK: LazyLock<Arc<HttpWorkState>> =
     LazyLock::new(|| Arc::new(HttpWorkState::default()));
 
 #[derive(Default)]
-struct HttpWorkState {
+pub(super) struct HttpWorkState {
     active: AtomicUsize,
     abandoned: AtomicBool,
 }
@@ -58,7 +58,7 @@ pub(super) fn take_supervised_http_work(req: &ServiceRequest) -> Option<HttpWork
 }
 
 impl HttpWorkGuard {
-    fn begin() -> Self {
+    pub(super) fn begin() -> Self {
         Self::begin_with_state(Arc::clone(&HTTP_WORK))
     }
 
@@ -92,7 +92,7 @@ impl HttpWorkGuard {
     }
 
     #[cfg(test)]
-    fn isolated() -> (Arc<HttpWorkState>, Self) {
+    pub(super) fn isolated() -> (Arc<HttpWorkState>, Self) {
         let state = Arc::new(HttpWorkState::default());
         let guard = Self::begin_with_state(Arc::clone(&state));
         (state, guard)
@@ -252,7 +252,7 @@ pub async fn reject_during_maintenance(
     .await
 }
 
-async fn reject_with_activity(
+pub(super) async fn reject_with_activity(
     req: ServiceRequest,
     next: Next<impl MessageBody + 'static>,
     begin_activity: impl FnOnce() -> MaintenanceActivityGuard,
