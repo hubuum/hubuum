@@ -10,7 +10,9 @@ use hubuum_domain::{
 use hubuum_events_core::MutationProvenance;
 use hubuum_task_core::TaskExecutionContext;
 
-use crate::{StorageApiRequestPermit, StorageExecutionPermit, StorageQueryBudget};
+use crate::{
+    HistoryReadContext, StorageApiRequestPermit, StorageExecutionPermit, StorageQueryBudget,
+};
 
 /// Bounded attribution for storage work initiated by one application
 /// subsystem.
@@ -133,6 +135,8 @@ pub struct StorageRevisionPrecondition {
 /// without accidentally resetting each other.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StorageExecutionScope {
+    storage_callback: bool,
+    history_read: Option<HistoryReadContext>,
     api_request: Option<StorageApiRequestPermit>,
     application_access: Option<StorageExecutionPermit>,
     call_site: Option<StorageCallSite>,
@@ -143,6 +147,67 @@ pub struct StorageExecutionScope {
 }
 
 impl StorageExecutionScope {
+    /// Restrictive marker for a DB callback or its captured descendants. Scope
+    /// layering must OR this bit; callers cannot clear an inherited marker.
+    #[must_use]
+    pub fn with_storage_callback(mut self) -> Self {
+        self.storage_callback = true;
+        self
+    }
+    pub const fn storage_callback_active(&self) -> bool {
+        self.storage_callback
+    }
+
+    pub(crate) fn resume_history_binding(&self, original: &Self) -> Self {
+        let mut value = self.clone();
+        if value.application_access.is_none() {
+            value.application_access = original.application_access.clone();
+        }
+        if value.api_request.is_none() {
+            value.api_request = original.api_request.clone();
+        }
+        if value.task_execution.is_none() {
+            value.task_execution = original.task_execution.clone();
+        }
+        if value.query_budget.is_none() {
+            value.query_budget = original.query_budget;
+        }
+        if value.mutation_provenance.is_none() {
+            value.mutation_provenance = original.mutation_provenance.clone();
+        }
+        if value.revision_precondition.is_none() {
+            value.revision_precondition = original.revision_precondition.clone();
+        }
+        value
+    }
+
+    /// Effective authority binding; diagnostic attribution and the inherited
+    /// history context do not mint productive authority. Explicitly absent
+    /// optional overrides normalize to the same effective empty value.
+    pub(crate) fn history_binding(&self) -> Self {
+        let mut value = self.clone();
+        value.storage_callback = false;
+        value.history_read = None;
+        value.call_site = None;
+        value.task_execution = Some(value.task_execution.flatten());
+        value.query_budget = Some(value.query_budget.flatten());
+        value.mutation_provenance = Some(value.mutation_provenance.flatten());
+        value.revision_precondition = Some(value.revision_precondition.flatten());
+        value
+    }
+
+    /// Retain the original publication epoch across nested and blocking work.
+    #[must_use]
+    pub fn with_history_read(mut self, context: HistoryReadContext) -> Self {
+        self.history_read = Some(context);
+        self
+    }
+
+    #[must_use]
+    pub const fn history_read_override(&self) -> Option<&HistoryReadContext> {
+        self.history_read.as_ref()
+    }
+
     #[must_use]
     pub fn with_api_request(mut self, permit: StorageApiRequestPermit) -> Self {
         self.api_request = Some(permit);

@@ -144,6 +144,7 @@ impl TaskArtifactStore for StorageHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hubuum_storage_core::StorageErrorKind;
     use rstest::rstest;
 
     #[rstest]
@@ -162,7 +163,11 @@ mod tests {
         let identity = ArtifactIdentity::new(destination.id());
         let result = bound.stage(&identity, ArtifactLimits::default()).await;
         if retire {
-            assert!(matches!(result, Err(ArtifactError::Backend(_))));
+            let Err(ArtifactError::Source(source)) = result else {
+                panic!("retired runtime must preserve its structured admission failure");
+            };
+            let cause = source.downcast_ref::<StorageError>().unwrap();
+            assert_eq!(cause.kind(), StorageErrorKind::Unavailable);
         } else {
             result.unwrap();
         }

@@ -1,10 +1,12 @@
 //! Application artifact ownership, bounded transfer and authorized-reader transport.
 use std::io;
+use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, OnceLock};
+use std::task::Poll;
 
 use actix_web::web::Bytes;
 use chrono::{DateTime, Utc};
-use futures_util::{Stream, stream};
+use futures_util::{FutureExt, Stream, stream};
 use hubuum_artifacts::{
     ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactReader, ArtifactReference,
     ArtifactReservation, Destination, DestinationId, TaskArtifactStore,
@@ -13,7 +15,10 @@ use uuid::Uuid;
 
 use crate::errors::ApiError;
 use crate::services::tasks::ClaimedTask;
-use crate::storage::{StorageContext, storage_handle};
+use crate::storage::{ExecutionStorage, StorageContext, storage_handle};
+
+#[cfg(test)]
+mod tests;
 
 const _: () = assert!(
     hubuum_templates::MAX_WORKER_EXECUTION_TIME.as_secs()
@@ -28,6 +33,11 @@ pub(crate) fn error(error: ArtifactError) -> ApiError {
         ArtifactError::NotFound => ApiError::NotFound("Artifact output is unavailable".into()),
         ArtifactError::Corrupt(message) | ArtifactError::Backend(message) => {
             ApiError::InternalServerError(message)
+        }
+        error @ (ArtifactError::Source(_) | ArtifactError::AbortFailed { .. }) => {
+            // Only the private operation bridge may validate and consume its
+            // original typed admission cause. Generic artifact callers fail closed.
+            ApiError::InternalServerError(error.to_string())
         }
     }
 }
@@ -112,37 +122,48 @@ pub(crate) fn download(
     context: &impl StorageContext,
     reference: ArtifactReference,
 ) -> impl Stream<Item = Result<Bytes, io::Error>> + 'static {
-    let store = storage_handle(context).artifact_store();
-    // The generator owns the store. Opening and all block reads happen inside
-    // the future, so the borrowed reader cannot outlive its storage handle.
-    let (sender, receiver) = tokio::sync::mpsc::channel(1);
-    let worker = actix_web::rt::spawn(async move {
-        let result = async {
-            let mut reader = ArtifactReader::open(store.as_ref(), &reference)
-                .await
-                .map_err(error)?;
-            while let Some(block) = reader.next_block().await.map_err(error)? {
-                if sender.send(Ok(Bytes::from(block))).await.is_err() {
-                    return Ok(());
+    let storage = storage_handle(context);
+    let scope = storage.current_execution_scope();
+    let store = storage.artifact_store();
+    // Poll the reader as part of the body, preserving its original scope even
+    // after the handler has returned. Dropping the body drops the reader future
+    // and its bounded queued block; no detached task can continue producing.
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+    let reader = async move {
+        let result = storage
+            .run_in_scope(scope, async {
+                let mut reader = ArtifactReader::open(store.as_ref(), &reference)
+                    .await
+                    .map_err(error)?;
+                while let Some(block) = reader.next_block().await.map_err(error)? {
+                    if sender.send(Ok(Bytes::from(block))).await.is_err() {
+                        return Ok(());
+                    }
                 }
-            }
-            Ok::<_, ApiError>(())
-        }
-        .await;
+                Ok::<_, ApiError>(())
+            })
+            .await;
         if let Err(error) = result {
             let _ = sender.send(Err(io::Error::other(error.to_string()))).await;
         }
-    });
-    stream::unfold(Some((receiver, worker)), |state| async {
-        let (mut receiver, worker) = state?;
-        if let Some(value) = receiver.recv().await {
-            Some((value, Some((receiver, worker))))
-        } else {
-            // A panicking read task must not turn a truncated stream into EOF.
-            worker
-                .await
-                .err()
-                .map(|error| (Err(io::Error::other(error)), None))
+    };
+    let mut reader = Some(Box::pin(AssertUnwindSafe(reader).catch_unwind()));
+    let mut failed = false;
+    stream::poll_fn(move |cx| {
+        if failed {
+            return Poll::Ready(None);
         }
+        if let Some(work) = &mut reader
+            && let Poll::Ready(result) = work.as_mut().poll(cx)
+        {
+            reader = None;
+            if result.is_err() {
+                // As with a failed joined task, a panic must not become EOF.
+                failed = true;
+                receiver.close();
+                return Poll::Ready(Some(Err(io::Error::other("Artifact reader panicked"))));
+            }
+        }
+        receiver.poll_recv(cx)
     })
 }

@@ -1,6 +1,42 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.19`.
+Status: accepted; current experimental release train is `0.20`.
+
+## Upgrading from 0.19 to 0.20
+
+**Breaking:** upgrade exact dependencies for all ten SDK crates together.
+`OperationalStorage` now requires `HistoryLifecycleStorage`. Complete adapters
+must implement scoped policy/hold/review control, atomic canonical audit,
+revision/action-bound issued preview/application, opaque history read/publication
+owners, mixed-protocol registration fences, and quarantine-only signed recovery.
+Preserve configured current and historical authorization, original UUIDs, names,
+intervals and read epochs through typed error evidence and restore remapping.
+Preserve both archive-budget and lifecycle-gap evidence through adapter errors;
+API request rejection reasons keep their existing priority.
+
+**Breaking error contract:** `ArtifactError` no longer implements `Clone`, `Eq`
+or `PartialEq`. Move errors rather than copying protected causes. Its neutral
+`Source` retains an owned `Error + Send + Sync` with redacted display/debug;
+`AbortFailed` retains the productive and abort failures separately. Standard
+`Error::source` exposes the primary branch only. Inspect the explicit abort
+accessor for cleanup diagnostics, never as productive authorization causality.
+The application bridge must validate its own original-scope cause before any
+API/task projection. Do not traverse arbitrary source chains, stringify causes
+for classification, or serialize raw error evidence.
+
+Deploy `2026-11-03-000005_history_lifecycle` after the landed archive migration
+000004, refresh runtime grants, and retain independent format-3 recovery material.
+Never rewrite the shipped admission/archive migrations. Once retained expiry
+exists, preserve its original authority and roll forward rather than downgrade.
+
+The new migration replaces the archive-only Legacy entry with the combined
+history publication/producer entry. Both adapters accept registered OnlineV1
+owners; Legacy archive owners remain valid only before retained expiry. Archive
+capture refuses resources with retained collection-expiry membership, including
+archive fallback. This compatibility change is not deployment activation:
+production stays Legacy and PostgreSQL generic expiry admission stays disabled
+pending physical replay, protected executor and transport retirement/resource
+evidence. No hot-source retirement is enabled by this bump.
 
 ## Upgrading from 0.18 to 0.19
 
@@ -808,3 +844,69 @@ admitted export and backup fixtures for each adapter. The shared `task_waiting`
 scenarios add cancellation, deadlines, concurrency, private projections, and
 capacity evidence; backend-native tests retain transactional accounting and
 rollback coverage.
+
+## History lifecycle policy capability (unreleased)
+
+`HistoryLifecycleStorage` is a required operational capability. Complete adapters
+must implement `admit_history_archive_execution`, `admit_history_publication`, `settle_history_publication`,
+`admit_history_producer`, `settle_history_producer`, `register_history_runtime`,
+`capture_history_lifecycle`, `scan_history_lifecycle`,
+`commit_history_lifecycle` and `recover_history_lifecycle`. Capture returns the
+adapter clock with application incarnation and history/deletion revision fences.
+Scanning covers all nine history families using captured UUID ownership and
+original closure/deletion/schema-event anchors, without reading payloads. Missing
+captured identity or ownership remains unresolved; never infer it from a current
+integer owner. Enforce the 1000-row/1-MiB source limits and explicit bounded
+coverage, including when a limit happens to coincide with the final row.
+
+Commit compares the exact predecessor and fences, preserves immutable policy and
+hold prefixes, validates retained preview identity/principal/proposal/deadline,
+and appends required canonical audit in the same transaction. Keep space for a
+terminal transition of every created hold. Recovery only adds compatible retained
+authority while quarantined, clears transient previews, and replays original audit
+identities and clocks. Logical restore preserves control authority and rotates
+the application incarnation. Composite checkpoint capture must include history
+authority in the same consistent snapshot as deletion and task authority.
+
+This required capability is an incompatible SDK change. Advance all ten exact
+SDK dependencies together to 0.20. Existing
+adapters must implement the complete contract before upgrading. Physical expiry
+and its runtime safety boundary remain separate activation gates; see
+[history retention](history_retention.md).
+
+History-aware producer registration declares `OnlineV1`; existing registration
+remains `Legacy`. Implement ownership/isolation/capacity/exposure checks and
+serialize registration with online intent admission. Admission refuses a mixed
+fleet, and retained expiry refuses subsequent legacy startup. A registration or
+API-owner row is not a shutdown proof; retain uncertain registrations until
+positive producer stop/isolation. Upgrade every API/backup/publication producer
+before enabling expiry, and roll forward after retained expiry is published.
+Production must not advertise the new protocol until all read/publication fences
+are implemented. These are incompatible SDK and deployment requirements.
+
+### Unreleased producer slot contract
+
+Admit the single-assignment producer slot before issuing external work. Its
+private context inherits the original publication epoch. A dropped, failed or
+timed-out completion retains both the child charge and parent obligation.
+`settle_history_producer` accepts only the exact positive completion capability;
+retrying it cannot decrement twice. Parent retirement requires a settled child.
+A retired child tombstone prevents reuse until parent retirement ends its retry
+lifetime. Neither settlement operation reacquires an API owner or current epoch.
+
+The `archive_read` publication class permits a registered Legacy reader only
+under the original pre-expiry snapshot; OnlineV1 readers retain their original
+publication and producer scopes. Registration alone does not qualify all
+production I/O and transport publication. The 256 global/64 per-runtime publication limits and one
+child per publication bound metadata cardinality; H4, aggregate bytes, task/FD
+limits, retained-orphan accounting and liveness remain separate evidence gates.
+
+The archive execution admission returns a coupled affine parent/producer owner
+and private, non-serializable execution permit only after both slots commit.
+Adapters must preserve original effective application, API, task/deadline, budget,
+provenance and revision bindings. The restrictive storage-callback marker is
+sticky across scope layering and captured child tasks; async inheritance happens
+when work starts polling. Archive admission/entry and history settlement must
+reject a callback descendant before acquiring another connection or state lock.
+This contract does not establish production transport integration or authorize
+physical expiry before its separate proof gates pass.

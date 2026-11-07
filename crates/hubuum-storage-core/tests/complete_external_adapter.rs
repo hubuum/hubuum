@@ -32,6 +32,66 @@ use uuid::Uuid;
 struct CompleteExternalAdapter;
 
 #[async_trait]
+impl HistoryLifecycleStorage for CompleteExternalAdapter {
+    async fn admit_history_archive_execution(
+        &self,
+    ) -> Result<HistoryArchiveExecutionOwner, StorageError> {
+        fixture_result()
+    }
+    async fn admit_history_publication(
+        &self,
+        kind: HistoryPublicationKind,
+    ) -> Result<HistoryPublicationOwner, StorageError> {
+        fixture_result()
+    }
+    async fn settle_history_publication(
+        &self,
+        settlement: HistoryPublicationSettlement,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn admit_history_producer(
+        &self,
+        context: HistoryReadContext,
+    ) -> Result<HistoryProducerOwner, StorageError> {
+        fixture_result()
+    }
+    async fn settle_history_producer(
+        &self,
+        settlement: &HistoryProducerSettlement,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn register_history_runtime(
+        &self,
+        isolation: Option<RuntimeIsolationDomain>,
+    ) -> Result<RuntimeRegistration, StorageError> {
+        fixture_result()
+    }
+    async fn scan_history_lifecycle(
+        &self,
+        scan: HistoryLifecycleScan,
+    ) -> Result<HistoryLifecycleScanResult, StorageError> {
+        fixture_result()
+    }
+    async fn recover_history_lifecycle(
+        &self,
+        recovery: HistoryLifecycleRecovery,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn capture_history_lifecycle(&self) -> Result<HistoryLifecycleSnapshot, StorageError> {
+        fixture_result()
+    }
+    async fn commit_history_lifecycle(
+        &self,
+        change: HistoryLifecycleControlChange,
+    ) -> Result<HistoryLifecycleSnapshot, StorageError> {
+        fixture_result()
+    }
+}
+
+#[async_trait]
 impl ApiRequestAdmissionStorage for CompleteExternalAdapter {
     async fn api_request_policy(&self) -> Result<StorageApiRequestPolicy, StorageError> {
         fixture_result()
@@ -2693,10 +2753,18 @@ impl TaskArtifactStore for CompleteExternalAdapter {
 
 #[async_trait]
 impl HistoryArchiveStorage for CompleteExternalAdapter {
+    async fn claim_history_archive_publication(
+        &self,
+        request: HistoryArchivePublicationRequest,
+        permit: &HistoryArchiveExecutionPermit,
+    ) -> Result<HistoryArchivePublicationClaim, StorageError> {
+        fixture_result()
+    }
+
     async fn history_archive_catalog(
         &self,
         resource: ResourceIdentity,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCatalog, StorageError> {
         fixture_result()
     }
@@ -2704,14 +2772,14 @@ impl HistoryArchiveStorage for CompleteExternalAdapter {
         &self,
         expected: HistoryArchiveCatalogGeneration,
         descriptors: Vec<HistoryArchiveDescriptor>,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCatalog, StorageError> {
         fixture_result()
     }
     async fn capture_history_archive(
         &self,
         request: HistoryArchiveCaptureRequest,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCapture, StorageError> {
         fixture_result()
     }
@@ -2719,7 +2787,7 @@ impl HistoryArchiveStorage for CompleteExternalAdapter {
         &self,
         id: Uuid,
         principal: PrincipalIdentity,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<Option<HistoryArchiveCapture>, StorageError> {
         fixture_result()
     }
@@ -2728,7 +2796,7 @@ impl HistoryArchiveStorage for CompleteExternalAdapter {
         id: Uuid,
         principal: PrincipalIdentity,
         bytes: u64,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCapture, StorageError> {
         fixture_result()
     }

@@ -28,6 +28,12 @@ impl ExecutionStorage for PostgresStorage {
         let query_budget = scope.query_budget_override();
         let task_execution = scope.task_execution_override().cloned();
         let mut scoped: Pin<Box<dyn Future<Output = R> + 'a>> = Box::pin(future);
+        if scope.storage_callback_active() {
+            scoped = Box::pin(crate::runtime::with_storage_callback(scoped));
+        }
+        if let Some(context) = scope.history_read_override().cloned() {
+            scoped = Box::pin(crate::runtime::with_history_read(context, scoped));
+        }
         if let Some(permit) = scope.api_request_override().cloned() {
             scoped = Box::pin(crate::runtime::with_api_request(permit, scoped));
         }
@@ -68,6 +74,12 @@ impl ExecutionStorage for PostgresStorage {
         let query_budget = scope.query_budget_override();
         let task_execution = scope.task_execution_override().cloned();
         let mut scoped: Pin<Box<dyn Future<Output = R> + Send + 'a>> = Box::pin(future);
+        if scope.storage_callback_active() {
+            scoped = Box::pin(crate::runtime::with_storage_callback(scoped));
+        }
+        if let Some(context) = scope.history_read_override().cloned() {
+            scoped = Box::pin(crate::runtime::with_history_read(context, scoped));
+        }
         if let Some(permit) = scope.api_request_override().cloned() {
             scoped = Box::pin(crate::runtime::with_api_request(permit, scoped));
         }

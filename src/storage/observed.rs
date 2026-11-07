@@ -32,6 +32,27 @@ mod tests {
     use crate::observability::tracing::test_support::TraceCapture;
     use crate::storage::StorageHandle;
 
+    #[test]
+    fn artifact_admission_retains_typed_cause_with_generic_diagnostics() {
+        use hubuum_storage_core::{
+            ApiRequestRejection, StorageErrorKind, artifacts::ArtifactError,
+        };
+        // Conversion proof only: this does not authorize projection of an
+        // arbitrary supplied cause as the private bridge's productive failure.
+        let error = <ArtifactError as ObservationError>::admission_error(
+            StorageError::api_request(ApiRequestRejection::DeadlineExceeded),
+        );
+        assert_eq!(error.diagnostic_kind(), StorageErrorKind::Backend);
+        let ArtifactError::Source(source) = error else {
+            panic!("actual admission cause must remain owned");
+        };
+        let original = source.downcast::<StorageError>().unwrap();
+        assert_eq!(
+            original.api_request_rejection(),
+            Some(ApiRequestRejection::DeadlineExceeded)
+        );
+    }
+
     #[rstest]
     #[case::debug("debug")]
     #[case::warn("warn")]
@@ -168,7 +189,7 @@ impl ObservationError for StorageError {
 }
 impl ObservationError for hubuum_storage_core::artifacts::ArtifactError {
     fn admission_error(error: StorageError) -> Self {
-        Self::Backend(error.to_string())
+        Self::Source(Box::new(error))
     }
     fn diagnostic_kind(&self) -> hubuum_storage_core::StorageErrorKind {
         use hubuum_storage_core::{StorageErrorKind, artifacts::ArtifactError};
@@ -177,7 +198,10 @@ impl ObservationError for hubuum_storage_core::artifacts::ArtifactError {
             ArtifactError::Limit(_) => StorageErrorKind::InputTooLarge,
             ArtifactError::Conflict(_) => StorageErrorKind::Conflict,
             ArtifactError::NotFound => StorageErrorKind::NotFound,
-            ArtifactError::Corrupt(_) | ArtifactError::Backend(_) => StorageErrorKind::Backend,
+            ArtifactError::Corrupt(_)
+            | ArtifactError::Backend(_)
+            | ArtifactError::Source(_)
+            | ArtifactError::AbortFailed { .. } => StorageErrorKind::Backend,
         }
     }
 }

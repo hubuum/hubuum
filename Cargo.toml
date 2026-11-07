@@ -51,7 +51,8 @@ members = [
 [dependencies]
 actix-rt = "2"
 actix-service = "2"
-actix-web = { version = "4", default-features = false, features = [
+actix-tls = { version = "3", default-features = false }
+actix-web = { version = "4.18.2", default-features = false, features = [
     "macros",
     "compress-brotli",
     "compress-gzip",
@@ -61,7 +62,7 @@ actix-web = { version = "4", default-features = false, features = [
     "compat",
     "ws",
 ] }
-actix-http = { version = "3", default-features = false }
+actix-http = { version = "3.20.3", default-features = false }
 argon2 = "0.6.0"
 async-trait = "0.1"
 bytes = "1"
@@ -167,8 +168,8 @@ default = ["swagger-ui", "login-rate-limit-valkey"]
 amqp = ["dep:hubuum-event-sink-amqp"]
 email = ["dep:hubuum-event-sink-email"]
 swagger-ui = ["dep:utoipa-swagger-ui"]
-tls-rustls = ["actix-web/rustls-0_23"]
-tls-openssl = ["dep:openssl", "actix-web/openssl"]
+tls-rustls = ["actix-web/rustls-0_23", "actix-tls/accept", "actix-tls/rustls-0_23"]
+tls-openssl = ["dep:openssl", "actix-web/openssl", "actix-tls/accept", "actix-tls/openssl"]
 login-rate-limit-valkey = ["dep:redis"]
 valkey = ["dep:hubuum-event-sink-valkey", "login-rate-limit-valkey"]
 permissions-treetop = ["dep:treetop-client"]

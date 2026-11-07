@@ -1459,12 +1459,16 @@ impl RestoreStorage for MemoryStorage {
         )?;
         replacement.credential_approvals = state.credential_approvals.clone();
         replacement.api_requests = state.api_requests.clone();
+        replacement.history_publications = state.history_publications.clone();
+
         replacement.history_archive = state.history_archive.clone();
         replacement.deletion_control = state.deletion_control.clone();
+        replacement.history_lifecycle = state.history_lifecycle.clone();
         replacement.task_control = state.task_control.clone();
         replacement.task_reapplication = None;
         replacement.application_control = ApplicationControlState::initial(&state.deletion_control);
-        replacement.pending_restore = !state.deletion_control.intents().is_empty()
+        replacement.pending_restore = state.history_lifecycle.authority().revision().value() != 0
+            || !state.deletion_control.intents().is_empty()
             || !matches!(
                 state.task_control.activation(),
                 TaskReceiptActivation::Disabled

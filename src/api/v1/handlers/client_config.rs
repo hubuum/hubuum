@@ -26,11 +26,34 @@ pub async fn get_client_config(
 
 #[cfg(test)]
 mod tests {
-    use actix_web::{App, http::StatusCode, test, web};
+    use actix_web::{
+        App,
+        http::{StatusCode, header::ALLOW},
+        test, web,
+    };
     use clap::Parser;
 
     use super::*;
     use crate::config::AppConfig;
+
+    #[actix_web::test]
+    async fn client_config_rejects_unsupported_methods_with_allowed_methods() {
+        let app = test::init_service(App::new().service(get_client_config)).await;
+        let response =
+            test::call_service(&app, test::TestRequest::post().uri("/config").to_request()).await;
+
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert!(
+            response
+                .headers()
+                .get(ALLOW)
+                .expect("405 response must identify allowed methods")
+                .to_str()
+                .unwrap()
+                .split(',')
+                .any(|method| method.trim() == "GET")
+        );
+    }
 
     #[actix_web::test]
     async fn client_config_exposes_effective_client_defaults_without_authentication() {

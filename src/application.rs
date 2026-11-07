@@ -497,8 +497,9 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
             EXIT_CODE_CONFIG_ERROR,
         )
     });
-    let app_context =
-        AppContext::new(storage, permission_backend).with_task_receipts(task_receipts);
+    let app_context = AppContext::new(storage, permission_backend)
+        .with_task_receipts(task_receipts)
+        .with_history_retention(config.control_recovery.clone());
     RuntimeServices {
         _recovery: recovery,
         registration,
@@ -865,6 +866,9 @@ async fn wait_for_shutdown_signal() -> std::io::Result<()> {
 
 #[cfg(test)]
 mod runtime_shutdown_tests;
+
+#[cfg(test)]
+mod history_publication_tests;
 
 #[cfg(test)]
 mod tests {

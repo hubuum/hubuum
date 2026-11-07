@@ -69,6 +69,9 @@ for path in "$@"; do
 
   case "$path" in
     src/models/task.rs | src/api/handlers/meta.rs | \
+      src/models/history_lifecycle.rs | src/api/v1/handlers/history_lifecycle.rs | \
+      crates/hubuum-storage-core/src/history_lifecycle.rs | crates/hubuum-storage-core/src/history_lifecycle/* | \
+      crates/hubuum-storage-core/src/record_identity.rs | crates/hubuum-storage-core/src/logical_identity.rs | \
       crates/hubuum-storage-core/src/api_request_admission.rs | src/middlewares/api_request_admission.rs | \
       src/models/class_fields.rs | src/models/class_fields/* | src/api/v1/handlers/classes/field_discovery.rs | \
       src/api/v1/handlers/auth.rs | src/models/auth_session.rs | src/models/credential_activity.rs | \

@@ -1,4 +1,7 @@
 mod artifacts;
+#[cfg(unix)]
+mod history_remapping;
+
 mod history_archive;
 mod task_capacity;
 mod task_scheduling;
@@ -8,6 +11,7 @@ use async_trait::async_trait;
 use hubuum::storage::StorageBackendKind;
 use hubuum::test_support::RestoreContractFixture;
 use hubuum_domain::{ResourceId, ResourceIdentity};
+use hubuum_query::QueryOptions;
 use hubuum_storage_conformance::{
     BackupRestoreFixture, FixtureError, verify_backup_restore_contract,
     verify_failed_restore_preserves_snapshot,
@@ -388,4 +392,105 @@ async fn legacy_restore_quarantines_correspondence_and_preserves_upgraded_identi
             "format 11 must preserve the quarantined import's assigned identities"
         );
     }
+}
+
+#[rstest]
+#[case::postgres(StorageBackendKind::Postgres)]
+#[case::memory(StorageBackendKind::Memory)]
+#[tokio::test]
+async fn restored_integer_reuse_cannot_refresh_original_population_binding(
+    #[case] kind: StorageBackendKind,
+) {
+    let _guard = RESTORE_TEST_LOCK.lock().await;
+    let pool = postgres_test_pool_with_timeout(&database_url(), 2, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
+    let fixture = RestoreContractFixture::new(kind, pool).await.unwrap();
+    let source = fixture.capture(true).await.unwrap();
+    let name = TestScope::new().scoped_name("original_population_binding");
+    let result = async {
+        let original = fixture.create_class(&name).await?;
+        let evidence = fixture
+            .storage()
+            .resolve_logical_identity(StorageIdentityTarget::Resource {
+                kind: StorageIdentityResourceKind::Class,
+                id: original.id().into(),
+            })
+            .await?;
+        let original_uuid = evidence
+            .subject()
+            .unwrap()
+            .record_identity()
+            .unwrap()
+            .resource();
+        let at = chrono::Utc::now();
+        let selected = StorageClassObjectsAsOfQuery::try_new(
+            original.id(),
+            at,
+            QueryOptions::new(vec![], vec![], Some(1), None, false).unwrap(),
+        )
+        .unwrap()
+        .for_resource(original_uuid);
+        fixture.restore(source).await?;
+        let replacement = fixture.create_class(&name).await?;
+        let replacement_uuid = fixture
+            .storage()
+            .resolve_logical_identity(StorageIdentityTarget::Resource {
+                kind: StorageIdentityResourceKind::Class,
+                id: replacement.id().into(),
+            })
+            .await?
+            .subject()
+            .unwrap()
+            .record_identity()
+            .unwrap()
+            .resource();
+        let rejected = fixture.storage().list_class_objects_as_of(selected).await;
+        let replacement_selection = StorageClassObjectsAsOfQuery::try_new(
+            replacement.id(),
+            at,
+            QueryOptions::new(vec![], vec![], Some(1), None, false).unwrap(),
+        )
+        .unwrap()
+        .for_resource(replacement_uuid);
+        let compatible = fixture
+            .storage()
+            .list_class_objects_as_of(replacement_selection)
+            .await;
+        Ok::<_, hubuum::errors::ApiError>((
+            original.id(),
+            replacement.id(),
+            original_uuid,
+            replacement_uuid,
+            rejected,
+            compatible,
+        ))
+    }
+    .await;
+    fixture
+        .restore_original()
+        .await
+        .expect("restore original fixture database");
+    let (original_id, replacement_id, original_uuid, replacement_uuid, rejected, compatible) =
+        result.unwrap();
+    assert_eq!(
+        original_id,
+        replacement_id,
+        "{} must exercise actual integer reuse",
+        kind.as_str()
+    );
+    assert_ne!(
+        original_uuid,
+        replacement_uuid,
+        "{} must retain distinct canonical identities",
+        kind.as_str()
+    );
+    assert!(
+        matches!(rejected, Err(error) if error.kind() == StorageErrorKind::Unavailable),
+        "{} must reject the original binding rather than project absence",
+        kind.as_str()
+    );
+    assert!(
+        compatible.is_ok(),
+        "{} must preserve the replacement identity control",
+        kind.as_str()
+    );
 }
