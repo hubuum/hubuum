@@ -685,7 +685,7 @@
             }
           },
           "400": {
-            "description": "Invalid backend selection",
+            "description": "Unsupported backend or invalid deployment configuration",
             "content": {
               "application/json": {
                 "schema": {
@@ -716,6 +716,16 @@
           },
           "412": {
             "description": "Stale expected_revision; the response carries the current revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Selected authorization backend is unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -761,7 +771,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "Invalid request or unsupported deployment backend",
             "content": {
               "application/json": {
                 "schema": {
@@ -792,6 +802,16 @@
           },
           "412": {
             "description": "Stale expected_revision; the response carries the current revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Deployment authorization backend is unavailable",
             "content": {
               "application/json": {
                 "schema": {

@@ -203,6 +203,75 @@ async fn runtime_settings_require_an_unscoped_administrator(
     );
 }
 
+#[cfg(not(feature = "permissions-treetop"))]
+#[actix_web::test]
+async fn unsupported_authorization_backend_is_not_committed() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let response = send(
+        &backend,
+        Some(&user.raw_token),
+        put(
+            "/api/v1/admin/runtime-settings/authorization",
+            json!({"expected_revision": 1, "backend": "treetop"}),
+        ),
+    )
+    .await;
+
+    assert_eq!(response.status(), http::StatusCode::BAD_REQUEST);
+    assert_eq!(
+        current_revision(&backend, StorageRuntimeSettingsGroup::Authorization).await,
+        ResourceRevision::INITIAL
+    );
+    assert_eq!(
+        history_len(&backend, StorageRuntimeSettingsGroup::Authorization).await,
+        0
+    );
+}
+
+#[cfg(not(feature = "permissions-treetop"))]
+#[actix_web::test]
+async fn stale_authorization_update_is_rejected_before_backend_preflight() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let response = send(
+        &backend,
+        Some(&user.raw_token),
+        put(
+            "/api/v1/admin/runtime-settings/authorization",
+            json!({"expected_revision": 2, "backend": "treetop"}),
+        ),
+    )
+    .await;
+
+    assert_eq!(response.status(), http::StatusCode::PRECONDITION_FAILED);
+    assert_eq!(
+        history_len(&backend, StorageRuntimeSettingsGroup::Authorization).await,
+        0
+    );
+}
+
+#[actix_web::test]
+async fn supported_authorization_backend_is_committed() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let response = send(
+        &backend,
+        Some(&user.raw_token),
+        put(
+            "/api/v1/admin/runtime-settings/authorization",
+            json!({"expected_revision": 1, "backend": "local"}),
+        ),
+    )
+    .await;
+
+    assert_eq!(response.status(), http::StatusCode::OK);
+    assert_eq!(
+        current_revision(&backend, StorageRuntimeSettingsGroup::Authorization).await,
+        revision(2)
+    );
+}
+
 #[actix_web::test]
 async fn runtime_settings_are_revisioned_and_audited() {
     let backend = StorageHandle::memory();

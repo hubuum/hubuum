@@ -64,6 +64,32 @@ pub async fn update(
     context: &AppContext,
     request: StorageRuntimeSettingsUpdate,
 ) -> Result<RuntimeSettingsUpdateResponse, ApiError> {
+    if request.group() == hubuum_storage_core::StorageRuntimeSettingsGroup::Authorization {
+        let current = storage_handle(context).load_runtime_settings().await?;
+        let revision = current.record(request.group()).revision();
+        if revision != request.expected_revision() {
+            return Err(ApiError::RevisionConflict(
+                "The authorization settings revision is stale".to_string(),
+                revision,
+            ));
+        }
+        let config = crate::config::get_config()?.clone();
+        match request.assignment().value() {
+            Some(StorageRuntimeSettingsValue::Authorization(selected)) => {
+                crate::permissions::build_permission_backend_for_runtime(
+                    &config,
+                    context.clone_backend(),
+                    *selected,
+                )
+                .await?;
+            }
+            None => {
+                crate::permissions::build_permission_backend(&config, context.clone_backend())
+                    .await?;
+            }
+            Some(_) => unreachable!("authorization group must contain authorization settings"),
+        }
+    }
     let group = RuntimeSettingsGroup::from(request.group());
     let outcome = storage_handle(context)
         .update_runtime_settings(request)
@@ -77,6 +103,10 @@ pub async fn update(
         applied_by_responding_replica: settings
             .applied_revision(group)
             .is_some_and(|applied| applied >= committed_revision)
+            && (group != RuntimeSettingsGroup::Authentication
+                || context
+                    .applied_authentication_revision()
+                    .is_some_and(|applied| applied >= committed_revision))
             && (group != RuntimeSettingsGroup::Authorization
                 || context.permission_backend_is_ready()),
         settings,

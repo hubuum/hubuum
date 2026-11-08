@@ -171,7 +171,7 @@ pub(crate) async fn protect_runtime_authentication_settings(
                     })?;
                 let envelope = crate::runtime_settings_secrets::encrypt(
                     key_ref.clone(),
-                    wrapping_key.version().as_str().to_string(),
+                    crate::runtime_settings_secrets::ALIAS_KEY_VERSION.to_string(),
                     wrapping_key.value(),
                     &format!("authentication:{name}:bind_password"),
                     &plaintext,
@@ -230,13 +230,20 @@ async fn runtime_provider_configuration(
                     "Stored LDAP bind_password envelope is invalid".to_string(),
                 )
             })?;
-        let version = SecretVersion::new(envelope.key_version().to_string()).map_err(|_| {
-            ApiError::ServiceUnavailable(
-                "Stored LDAP bind_password key version is invalid".to_string(),
-            )
-        })?;
+        let version =
+            if envelope.key_version() == crate::runtime_settings_secrets::ALIAS_KEY_VERSION {
+                None
+            } else {
+                Some(
+                    SecretVersion::new(envelope.key_version().to_string()).map_err(|_| {
+                        ApiError::ServiceUnavailable(
+                            "Stored LDAP bind_password key version is invalid".to_string(),
+                        )
+                    })?,
+                )
+            };
         let wrapping_key =
-            crate::secrets::resolve_runtime_settings_key(envelope.key_ref(), Some(&version))
+            crate::secrets::resolve_runtime_settings_key(envelope.key_ref(), version.as_ref())
                 .await
                 .map_err(|_| {
                     ApiError::ServiceUnavailable(
@@ -823,15 +830,16 @@ pub async fn ensure_configured_identity_scopes(
 
 pub(crate) async fn apply_runtime_authentication_settings(
     providers: Option<&StorageAuthenticationProviders>,
-) -> Result<(), ApiError> {
+) -> Result<bool, ApiError> {
     let registry = match providers {
         Some(providers) => AuthProviderRegistry::from_runtime_providers(providers).await?,
         None => build_auth_provider_registry()?,
     };
+    let complete = registry.unavailable.is_empty();
     *AUTH_PROVIDER_REGISTRY
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(registry));
-    Ok(())
+    Ok(complete)
 }
 
 pub(crate) async fn preflight_runtime_authentication_settings(

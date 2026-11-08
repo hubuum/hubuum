@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 const ENVELOPE_VERSION: u8 = 1;
 const KEY_BYTES: usize = 32;
 const NONCE_BYTES: usize = 12;
+pub(crate) const ALIAS_KEY_VERSION: &str = "alias-v1";
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

@@ -175,10 +175,11 @@ pub async fn preflight_authentication_settings(
     request_body = AuthorizationSettingsRequest,
     responses(
         (status = 200, description = "Authorization backend selection committed with an audit record and applied by the responding replica", body = RuntimeSettingsUpdateResponse),
-        (status = 400, description = "Invalid backend selection", body = ApiErrorResponse),
+        (status = 400, description = "Unsupported backend or invalid deployment configuration", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse),
-        (status = 412, description = "Stale expected_revision; the response carries the current revision", body = ApiErrorResponse)
+        (status = 412, description = "Stale expected_revision; the response carries the current revision", body = ApiErrorResponse),
+        (status = 503, description = "Selected authorization backend is unavailable", body = ApiErrorResponse)
     )
 )]
 #[put("/runtime-settings/authorization")]
@@ -338,10 +339,11 @@ pub async fn get_runtime_settings_history(
     params(RuntimeSettingsReleaseParams),
     responses(
         (status = 200, description = "Deployment ownership committed as a new audited revision", body = RuntimeSettingsUpdateResponse),
-        (status = 400, description = "Invalid request", body = ApiErrorResponse),
+        (status = 400, description = "Invalid request or unsupported deployment backend", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse),
-        (status = 412, description = "Stale expected_revision; the response carries the current revision", body = ApiErrorResponse)
+        (status = 412, description = "Stale expected_revision; the response carries the current revision", body = ApiErrorResponse),
+        (status = 503, description = "Deployment authorization backend is unavailable", body = ApiErrorResponse)
     )
 )]
 #[delete("/runtime-settings/authorization")]

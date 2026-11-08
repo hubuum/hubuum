@@ -132,15 +132,24 @@ existing provider of the same name preserves its encrypted password; setting it
 to `null` clears it. A supplied password is encrypted using AES-256-GCM with a
 random data key wrapped by the secret resolved from
 `HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF`. The key must resolve to exactly
-32 bytes. The envelope pins the secret reference and version used for
-encryption. Keep old key versions resolvable until the ciphertext is replaced;
-this API does not provide key rewrapping. API reports and audit responses never
-return encrypted envelopes, password values, or secret references.
+32 bytes. The envelope pins the secret reference used for encryption. Treat
+each reference as an immutable key version: use a new reference when rotating
+the key, and keep old references and their original key material resolvable
+until all dependent ciphertext is replaced. This API does not provide key
+rewrapping. API reports and audit responses never return encrypted envelopes,
+password values, or secret references.
+
+Passwords stored by earlier unreleased builds used process-local key versions.
+Re-enter those passwords through the preflight API after upgrading; preserving
+an existing envelope does not convert it to the durable reference format.
 
 Authorization updates select a backend that is already supported by the
 running binary. Backend-specific connection options, such as the Treetop URL
-and TLS settings, remain deployment configuration. If a replica cannot
-initialize the selected authorization backend, permission checks fail closed
+and TLS settings, remain deployment configuration. Before committing an
+authorization update or release, the responding replica initializes and checks
+the selected backend. Other replicas must have compatible builds and deployment
+configuration. If a replica cannot initialize the selected authorization
+backend, permission checks fail closed
 and that replica's readiness probe returns `503` until reinitialization
 succeeds.
 
@@ -180,7 +189,8 @@ successfully and applies it without a storage read on request paths.
 - **Authentication and authorization**: new requests use the newly applied
   providers or permission backend. A request already in progress keeps the
   authorization backend it started with. An invalid authentication provider is
-  reported unavailable without disabling other providers.
+  reported unavailable without disabling other providers; reconciliation
+  retries unavailable providers even when the revision has not changed.
 - **Query observations**: sampling and predicate budgets read the applied value
   for each eligible query. Capacity and retention changes apply as the next
   observation is recorded or reported; existing entries over a newly lowered
@@ -210,7 +220,8 @@ refresh for more than two reconcile intervals.
   effective, runtime, and deployment authorization backend and its readiness;
 - for each group:
   - `source`: `deployment` or `runtime`;
-  - `revision`: the revision this replica applies;
+  - `revision`: the latest revision loaded by this replica; authentication
+    providers can be individually unavailable while that revision is retried;
   - `changed_at` and `changed_by`;
   - `mutable`, `restart_required`, and `takes_effect`;
   - the `effective`, `runtime`, and `deployment` values; and

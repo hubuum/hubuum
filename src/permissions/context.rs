@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use actix_web::{FromRequest, HttpRequest, dev::Payload, web::Data};
+use actix_web::{FromRequest, HttpMessage, HttpRequest, dev::Payload, web::Data};
 use futures_util::future::{Ready, ready};
 use hubuum_domain::ResourceRevision;
 
@@ -45,6 +45,8 @@ struct PermissionBackendState {
 struct SwappablePermissionBackend {
     state: RwLock<PermissionBackendState>,
 }
+
+struct RequestPermissionSnapshot(Arc<dyn PermissionBackend>);
 
 impl SwappablePermissionBackend {
     fn new(backend: Arc<dyn PermissionBackend>) -> Self {
@@ -97,6 +99,22 @@ impl SwappablePermissionBackend {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .backend
             .is_some()
+    }
+
+    fn snapshot(&self) -> Arc<dyn PermissionBackend> {
+        let state = self
+            .state
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match &state.backend {
+            Some(backend) => backend.clone(),
+            None => Arc::new(Self {
+                state: RwLock::new(PermissionBackendState {
+                    backend: None,
+                    failure: state.failure.clone(),
+                }),
+            }),
+        }
     }
 }
 
@@ -203,6 +221,7 @@ impl PermissionBackend for SwappablePermissionBackend {
     }
 }
 
+#[derive(Clone)]
 pub struct AppContext {
     backend: StorageHandle,
     permissions: Arc<SwappablePermissionBackend>,
@@ -213,25 +232,6 @@ pub struct AppContext {
     authentication_target_revision: Arc<RwLock<Option<ResourceRevision>>>,
     settings_apply: Arc<tokio::sync::Mutex<()>>,
     services: Services,
-}
-
-impl Clone for AppContext {
-    fn clone(&self) -> Self {
-        Self {
-            backend: self.backend.clone(),
-            permissions: self.permissions.clone(),
-            request_permissions: self
-                .request_permissions
-                .clone()
-                .or_else(|| self.permissions.backend().ok()),
-            permission_revision: self.permission_revision.clone(),
-            authentication_revision: self.authentication_revision.clone(),
-            permission_target_revision: self.permission_target_revision.clone(),
-            authentication_target_revision: self.authentication_target_revision.clone(),
-            settings_apply: self.settings_apply.clone(),
-            services: self.services.clone(),
-        }
-    }
 }
 
 impl AppContext {
@@ -252,7 +252,22 @@ impl AppContext {
 
     pub(crate) fn from_http_request(req: &HttpRequest) -> Result<Self, ApiError> {
         if let Some(context) = req.app_data::<Data<Self>>() {
-            return Ok(context.get_ref().clone());
+            let mut context = context.get_ref().clone();
+            let existing = req
+                .extensions()
+                .get::<RequestPermissionSnapshot>()
+                .map(|snapshot| snapshot.0.clone());
+            let snapshot = match existing {
+                Some(snapshot) => snapshot,
+                None => {
+                    let backend = context.permissions.snapshot();
+                    req.extensions_mut()
+                        .insert(RequestPermissionSnapshot(backend.clone()));
+                    backend
+                }
+            };
+            context.request_permissions = Some(snapshot);
+            return Ok(context);
         }
 
         Err(ApiError::InternalServerError(
@@ -294,6 +309,13 @@ impl AppContext {
 
     pub(crate) fn permission_backend_is_ready(&self) -> bool {
         self.permissions.is_ready()
+    }
+
+    pub(crate) fn applied_authentication_revision(&self) -> Option<ResourceRevision> {
+        *self
+            .authentication_revision
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     pub(crate) async fn refresh_runtime_settings(
@@ -347,13 +369,14 @@ impl AppContext {
             match crate::auth::apply_runtime_authentication_settings(snapshot.authentication())
                 .await
             {
-                Ok(()) => {
+                Ok(true) => {
                     *self
                         .authentication_revision
                         .write()
                         .unwrap_or_else(|poisoned| poisoned.into_inner()) =
                         Some(authentication_revision);
                 }
+                Ok(false) => {}
                 Err(error) => {
                     tracing::warn!(
                         %error,
@@ -539,21 +562,31 @@ mod tests {
     }
 
     #[test]
-    fn cloned_request_context_keeps_its_permission_backend_snapshot() {
+    fn request_context_keeps_its_permission_backend_snapshot() {
         let storage = StorageHandle::memory();
         let first: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::new(
             storage.clone(),
             "admin".to_string(),
         ));
         let context = AppContext::new(storage.clone(), first.clone());
-        let existing_request = context.clone();
+        let app_data = Data::new(context.clone());
+        let request = actix_web::test::TestRequest::default()
+            .app_data(app_data.clone())
+            .to_http_request();
+        let existing_request = AppContext::from_http_request(&request).unwrap();
 
         let second: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::new(
             storage,
             "other-admin".to_string(),
         ));
         context.replace_permission_backend(second.clone());
-        let next_request = context.clone();
+        let same_request = AppContext::from_http_request(&request).unwrap();
+        let next_request = AppContext::from_http_request(
+            &actix_web::test::TestRequest::default()
+                .app_data(app_data)
+                .to_http_request(),
+        )
+        .unwrap();
 
         assert!(std::ptr::eq(
             existing_request.permission_backend(),
@@ -563,5 +596,29 @@ mod tests {
             next_request.permission_backend(),
             second.as_ref()
         ));
+        assert!(std::ptr::eq(
+            same_request.permission_backend(),
+            first.as_ref()
+        ));
+    }
+
+    #[test]
+    fn new_request_snapshots_unavailable_backend() {
+        let storage = StorageHandle::memory();
+        let first = Arc::new(LocalPermissionBackend::new(storage, "admin".to_string()));
+        let context = AppContext::new(StorageHandle::memory(), first.clone());
+        let app_data = Data::new(context.clone());
+        context.mark_permission_backend_unavailable("unavailable".to_string());
+        let request = actix_web::test::TestRequest::default()
+            .app_data(app_data)
+            .to_http_request();
+        let unavailable = AppContext::from_http_request(&request).unwrap();
+        context.replace_permission_backend(first);
+        assert_eq!(unavailable.permission_backend().kind(), "unavailable");
+        assert!(
+            !unavailable
+                .permission_backend()
+                .uses_local_permission_store()
+        );
     }
 }

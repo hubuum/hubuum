@@ -30,10 +30,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Administrators can select authentication providers and the authorization
   backend at runtime. LDAP provider updates are validated and connection-tested
   before persistence; bind passwords are encrypted at rest using a
-  version-pinned key from the configured secret provider. New requests use
+  key identified by an immutable secret reference. New requests use
   applied settings, and authorization initialization failures fail closed.
   Configure `HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF` and retain prior key
-  versions while stored credentials depend on them. See
+  references and key material while stored credentials depend on them. See
   [runtime settings](docs/runtime_settings.md).
 
 ### Changed

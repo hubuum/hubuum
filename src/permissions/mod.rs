@@ -174,3 +174,21 @@ async fn build_permission_backend_for_kind(
 }
 
 // Subsequent tasks add: treetop, test_support modules.
+
+#[cfg(all(test, feature = "permissions-treetop"))]
+mod tests {
+    use super::*;
+
+    #[actix_web::test]
+    async fn runtime_treetop_selection_requires_deployment_url() {
+        let mut config = crate::tests::integration_test_config().unwrap();
+        config.treetop_url = None;
+        let result = build_permission_backend_for_runtime(
+            &config,
+            StorageHandle::memory(),
+            hubuum_storage_core::StorageAuthorizationBackend::Treetop,
+        )
+        .await;
+        assert!(matches!(result, Err(ApiError::BadRequest(_))));
+    }
+}

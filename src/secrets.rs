@@ -382,6 +382,139 @@ mod tests {
         }
     }
 
+    #[test]
+    fn unavailable_authentication_provider_is_retried_at_same_revision() {
+        use crate::permissions::{AppContext, LocalPermissionBackend};
+        use crate::storage::StorageHandle;
+        use hubuum_domain::ResourceRevision;
+        use std::sync::Arc;
+
+        const CHILD: &str = "RUNTIME_SETTINGS_RETRY_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let root = std::env::temp_dir().join(format!(
+                "hubuum-runtime-auth-retry-{}",
+                uuid::Uuid::new_v4()
+            ));
+            std::fs::create_dir(&root).unwrap();
+            let run = |phase| {
+                std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "secrets::tests::unavailable_authentication_provider_is_retried_at_same_revision",
+                        "--nocapture",
+                    ])
+                    .env(CHILD, phase)
+                    .env("HUBUUM_SECRET_SOURCE", "file")
+                    .env("HUBUUM_SECRET_FILE_ROOT", &root)
+                    .env("HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF", "retry-key")
+                    .status()
+                    .unwrap()
+            };
+            let writer = run("writer");
+            let reader = if writer.success() {
+                std::fs::remove_file(root.join("runtime-settings").join("retry-key")).unwrap();
+                Some(run("reader"))
+            } else {
+                None
+            };
+            std::fs::remove_dir_all(root).unwrap();
+            assert!(writer.success());
+            assert!(reader.unwrap().success());
+            return;
+        }
+
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                use hubuum_storage_core::{
+                    RuntimeSettingsStorage, StorageAuthenticationProvider,
+                    StorageAuthenticationProviderKind, StorageAuthenticationProviders,
+                    StorageRuntimeSettingsAssignment, StorageRuntimeSettingsUpdate,
+                    StorageRuntimeSettingsValue,
+                };
+                use serde_json::json;
+
+                let root =
+                    std::path::PathBuf::from(std::env::var_os("HUBUUM_SECRET_FILE_ROOT").unwrap());
+                let key_path = root.join("runtime-settings").join("retry-key");
+                std::fs::create_dir_all(key_path.parent().unwrap()).unwrap();
+                let key = [b'k'; 32];
+                let config_path = root.join("provider.json");
+                if std::env::var(CHILD).unwrap() == "writer" {
+                    std::fs::write(&key_path, key).unwrap();
+                    let config = json!({
+                        "scope": "directory",
+                        "url": "ldap://localhost",
+                        "bind_dn": "cn=service,dc=example,dc=org",
+                        "bind_password": "bind-password",
+                        "user_base_dn": "dc=example,dc=org",
+                        "user_filter": "(uid={username})"
+                    });
+                    let providers = crate::auth::protect_runtime_authentication_settings(
+                        vec![(
+                            "directory".to_string(),
+                            StorageAuthenticationProviderKind::Ldap,
+                            config,
+                        )],
+                        None,
+                    )
+                    .await
+                    .unwrap();
+                    std::fs::write(
+                        config_path,
+                        serde_json::to_vec(providers.providers()[0].configuration()).unwrap(),
+                    )
+                    .unwrap();
+                    return;
+                }
+                let config = serde_json::from_slice(&std::fs::read(config_path).unwrap()).unwrap();
+                let providers = StorageAuthenticationProviders::try_new(vec![
+                    StorageAuthenticationProvider::try_new(
+                        "directory",
+                        StorageAuthenticationProviderKind::Ldap,
+                        config,
+                    )
+                    .unwrap(),
+                ])
+                .unwrap();
+                let storage = StorageHandle::memory();
+                let revision = storage
+                    .update_runtime_settings(StorageRuntimeSettingsUpdate::new(
+                        StorageRuntimeSettingsAssignment::Managed(
+                            StorageRuntimeSettingsValue::Authentication(providers),
+                        ),
+                        ResourceRevision::INITIAL,
+                        crate::events::EventContext::system(),
+                    ))
+                    .await
+                    .unwrap()
+                    .record()
+                    .revision();
+                let context = AppContext::new(
+                    storage.clone(),
+                    Arc::new(LocalPermissionBackend::new(storage, "admin".to_string())),
+                );
+                context.refresh_runtime_settings().await.unwrap();
+                assert_eq!(context.applied_authentication_revision(), None);
+                assert!(
+                    crate::auth::auth_provider_statuses()
+                        .unwrap()
+                        .contains(&("directory".to_string(), false))
+                );
+
+                std::fs::write(key_path, key).unwrap();
+                context.refresh_runtime_settings().await.unwrap();
+                assert_eq!(context.applied_authentication_revision(), Some(revision));
+                assert!(
+                    crate::auth::auth_provider_statuses()
+                        .unwrap()
+                        .contains(&("directory".to_string(), true))
+                );
+            });
+    }
+
     #[actix_rt::test]
     async fn file_source_keeps_consumer_namespaces_separate() {
         let directory = TestDirectory::new();
