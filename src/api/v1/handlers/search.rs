@@ -31,7 +31,7 @@ use crate::models::{
 use crate::models::{SearchHydrationRequest, SearchHydrationResponse, ValidatedSearchHydration};
 use crate::pagination::{
     NEXT_CURSOR_HEADER, PAGE_LIMIT_HEADER, TOTAL_COUNT_HEADER, effective_page_limit, finalize_page,
-    prepare_db_pagination,
+    page_limits, prepare_db_pagination, with_request_page_limits,
 };
 use crate::permissions::visibility::authorize_cursor_page_from_storage;
 use crate::permissions::{AppContext, PrincipalRef, ResourceRef};
@@ -765,7 +765,9 @@ pub async fn post_stream_search(
     let token_id = requestor.token_meta.id().id();
     let token_revision = requestor.token_meta.revision().get();
     let scopes = requestor.scope;
-    let execution = async move {
+    // The response body runs after the request middleware's settings scope ends.
+    let limits = page_limits()?;
+    let execution = with_request_page_limits(limits, async move {
         execute_structured_search(
             &context,
             &principal,
@@ -775,7 +777,7 @@ pub async fn post_stream_search(
             request,
         )
         .await
-    }
+    })
     .boxed_local();
     let stream = structured_search_event_stream(version, kind, execution);
 

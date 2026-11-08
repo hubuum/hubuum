@@ -34,6 +34,7 @@ mod operational_contracts;
 pub mod pagination;
 pub mod permissions;
 pub mod restores;
+mod runtime_settings_secrets;
 pub(crate) mod secrets;
 #[cfg(any(test, feature = "integration-test-support"))]
 #[doc(hidden)]

@@ -81,6 +81,7 @@ futures-util = "0.3"
 json-schema-profiler = "=0.0.1"
 json-patch = { version = "4.2", default-features = false }
 rand = "0.10"
+ring = "0.17.14"
 # The OpenTelemetry SDK's default BatchSpanProcessor exports on a dedicated
 # non-Tokio thread, so its custom OTLP client must use reqwest's blocking API;
 # provider construction and shutdown are moved onto blocking workers too.

@@ -225,6 +225,7 @@ const REQUIRED_STORAGE_BACKEND_TRAITS: &[&str] = &[
     "InventoryStorage",
     "MetricsStorage",
     "OperationalStateStorage",
+    "RuntimeSettingsStorage",
     "TokenRetentionStorage",
     "UnifiedSearchStorage",
     "GroupStorage",

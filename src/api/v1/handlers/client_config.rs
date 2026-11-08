@@ -1,27 +1,43 @@
-use actix_web::{Responder, get, http::StatusCode, web};
+use actix_web::{HttpRequest, Responder, get, http::StatusCode, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::config::running::{ClientConfig, RunningConfig};
 use crate::errors::ApiError;
+use crate::pagination::PageLimits;
+use crate::permissions::AppContext;
 
 #[utoipa::path(
     get,
     path = "/api/v1/config",
     tag = "config",
     responses(
-        (status = 200, description = "Effective client-safe configuration", body = ClientConfig),
+        (status = 200, description = "Effective client-safe configuration, including runtime-managed defaults applied by the responding replica", body = ClientConfig),
         (status = 500, description = "Internal server error", body = ApiErrorResponse)
     )
 )]
 #[get("/config")]
 pub async fn get_client_config(
     config: web::Data<RunningConfig>,
+    request: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    Ok(ApiResponse::new(
-        ClientConfig::from(config.get_ref()),
-        StatusCode::OK,
-    ))
+    let mut client = ClientConfig::from(config.get_ref());
+    let policy = request
+        .app_data::<web::Data<AppContext>>()
+        .and_then(|context| {
+            context
+                .backend()
+                .applied_runtime_settings()
+                .snapshot()
+                .and_then(|snapshot| snapshot.pagination())
+        });
+    let limits = PageLimits::new(
+        client.pagination.default_page_limit,
+        client.pagination.max_page_limit,
+    )?
+    .with_runtime_default(policy);
+    client.pagination.default_page_limit = limits.default_limit();
+    Ok(ApiResponse::new(client, StatusCode::OK))
 }
 
 #[cfg(test)]

@@ -11,7 +11,7 @@ use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::SwaggerUi;
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 use tracing::{error, info, warn};
 
 use crate::api::openapi::openapi_json as openapi_json_handler;
@@ -353,27 +353,52 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
         );
     }
 
-    let permission_backend = build_permission_backend(config, storage.clone())
+    // Apply shared runtime settings before this process can serve requests or
+    // start background work.
+    let applied = storage
+        .refresh_runtime_settings()
         .await
         .unwrap_or_else(|error| {
             fatal_error(
-                &format!("Failed to initialize permission backend: {error}"),
-                EXIT_CODE_PERMISSION_BACKEND_ERROR,
-            )
-        });
-    // Adopt the deployment setting before this process can serve or originate
-    // queries, then follow committed changes even in API-only runtime mode.
-    storage
-        .query_observation_configuration()
-        .await
-        .unwrap_or_else(|error| {
-            fatal_error(
-                &format!("Failed to load query observation control: {error}"),
+                &format!("Failed to load runtime settings: {error}"),
                 EXIT_CODE_DATABASE_ERROR,
             )
         });
-    storage.start_query_observation_control();
+    let permission_backend = match applied
+        .snapshot()
+        .and_then(|snapshot| snapshot.authorization())
+    {
+        Some(selected) => crate::permissions::build_permission_backend_for_runtime(
+            config,
+            storage.clone(),
+            selected,
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Arc::new(crate::permissions::LocalPermissionBackend::new(
+                storage.clone(),
+                config.admin_groupname.clone(),
+            ))
+        }),
+        None => build_permission_backend(config, storage.clone())
+            .await
+            .unwrap_or_else(|error| {
+                fatal_error(
+                    &format!("Failed to initialize permission backend: {error}"),
+                    EXIT_CODE_PERMISSION_BACKEND_ERROR,
+                )
+            }),
+    };
     let app_context = AppContext::new(storage, permission_backend);
+    app_context.apply_runtime_settings(&applied).await;
+    if let Err(error) = crate::auth::ensure_configured_identity_scopes(app_context.backend()).await
+    {
+        fatal_error(
+            &format!("Failed to initialize authentication identity scopes: {error}"),
+            EXIT_CODE_INIT_ERROR,
+        );
+    }
+    app_context.start_runtime_settings_reconciler();
     RuntimeServices {
         app_context,
         backup_settings,

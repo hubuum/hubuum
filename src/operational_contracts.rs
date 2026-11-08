@@ -56,6 +56,7 @@ const STORAGE_OPERATION_SOURCES: &[&str] = &[
     include_str!("storage/context/operational.rs"),
     include_str!("storage/context/queries.rs"),
     include_str!("storage/context/relations.rs"),
+    include_str!("storage/context/runtime_settings.rs"),
     include_str!("storage/context/tasks.rs"),
     include_str!("storage/context/transaction.rs"),
     include_str!("storage/context/workflows.rs"),
@@ -1519,6 +1520,7 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             "event_sink",
             "remote_target",
             "ldap",
+            "runtime_settings",
             "token_hash",
         ]),
         (name, "outcome") if name.starts_with("hubuum_secret_resolution") => strings(&[

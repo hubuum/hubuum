@@ -33,8 +33,9 @@ pub use identifier::{
     RemoteTargetId, ResourceId, RestoreJobId, ServiceAccountId, TaskId, TokenId, UserId,
 };
 pub use identity::{
-    EXTERNAL_MEMBERSHIP_SOURCE, LDAP_PROVIDER_KIND, LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND,
-    MANUAL_MEMBERSHIP_SOURCE, PrincipalKind, PrincipalKindParseError,
+    EXTERNAL_MEMBERSHIP_SOURCE, IdentityScopeName, IdentityScopeNameError, LDAP_PROVIDER_KIND,
+    LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND, MANUAL_MEMBERSHIP_SOURCE, PrincipalKind,
+    PrincipalKindParseError,
 };
 pub use json_patch::{
     BoundedJsonPatch, JsonPatchError, JsonPatchErrorKind, MAX_JSON_PATCH_BYTES,

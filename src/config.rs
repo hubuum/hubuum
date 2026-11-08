@@ -17,6 +17,7 @@ use crate::errors::ApiError;
 use crate::events::{EventDeliverySettings, EventFanoutSettings, EventRetentionSettings};
 use crate::models::retention::FutureRetention;
 use crate::models::{TokenIssuancePolicy, TokenRetentionSettings};
+use crate::pagination::PageLimits;
 use crate::storage::StorageBackendKind;
 use crate::tasks::TaskWorkerSettings;
 use environment::{constraints, validate_configuration_bounds};
@@ -1168,6 +1169,15 @@ pub struct AppConfig {
     #[clap(long, env = "HUBUUM_AUTH_CONFIG_PATH", default_value = None)]
     pub auth_config_path: Option<String>,
 
+    /// Secret-source name of the active key for runtime-stored credentials.
+    #[clap(
+        long,
+        env = "HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF",
+        default_value = None,
+        hide_env_values = true
+    )]
+    pub runtime_settings_encryption_key_ref: Option<String>,
+
     /// Path to the TLS certificate chain file
     #[clap(long, env = "HUBUUM_TLS_CERT_PATH", default_value = None)]
     pub tls_cert_path: Option<String>,
@@ -1736,26 +1746,13 @@ impl AppConfig {
             ));
         }
 
-        if self.default_page_limit == 0 {
-            return Err(ApiError::BadRequest(
-                "default_page_limit must be greater than 0".to_string(),
-            ));
+        if let Some(key_ref) = &self.runtime_settings_encryption_key_ref {
+            hubuum_secrets::SecretName::new(key_ref.clone()).map_err(|_| {
+                ApiError::BadRequest("runtime_settings_encryption_key_ref is invalid".to_string())
+            })?;
         }
 
-        if self.max_page_limit == 0 {
-            return Err(ApiError::BadRequest(
-                "max_page_limit must be greater than 0".to_string(),
-            ));
-        }
-
-        if !constraints::PAGE_LIMITS
-            .ordered_values_satisfy(self.default_page_limit, self.max_page_limit)
-        {
-            return Err(ApiError::BadRequest(format!(
-                "default_page_limit ({}) must be less than or equal to max_page_limit ({})",
-                self.default_page_limit, self.max_page_limit
-            )));
-        }
+        PageLimits::new(self.default_page_limit, self.max_page_limit)?;
 
         if !constraints::TREETOP_BACKEND.requirement_is_satisfied(
             self.permission_backend == PermissionBackendKind::Treetop,
@@ -2450,6 +2447,10 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         admin_groupname: env_or_default("HUBUUM_ADMIN_GROUPNAME", "admin"),
         admin_identity_scope: Some(env_or_default("HUBUUM_ADMIN_IDENTITY_SCOPE", "local")),
         auth_config_path: env_or_default_opt("HUBUUM_AUTH_CONFIG_PATH", None),
+        runtime_settings_encryption_key_ref: env_or_default_opt(
+            "HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF",
+            None,
+        ),
         tls_cert_path: env_or_default_opt("HUBUUM_TLS_CERT_PATH", None),
         tls_key_path: env_or_default_opt("HUBUUM_TLS_KEY_PATH", None),
         tls_key_passphrase: env_or_default_opt("HUBUUM_TLS_KEY_PASSPHRASE", None),
@@ -2501,7 +2502,12 @@ mod tests {
     use std::{collections::BTreeSet, env, ffi::OsString};
 
     use clap::Parser;
+    use hubuum_domain::ResourceRevision;
+    use hubuum_events_core::EventContext;
     use rstest::rstest;
+
+    use crate::models::runtime_settings::PaginationSettingsRequest;
+    use crate::pagination::PageLimits;
 
     #[cfg(feature = "login-rate-limit-valkey")]
     use super::LoginRateLimitBackendKind;
@@ -2687,6 +2693,40 @@ mod tests {
             error.to_string(),
             "default_page_limit (80) must be less than or equal to max_page_limit (40)"
         );
+    }
+
+    #[rstest]
+    #[case::minimum(1, 250, true)]
+    #[case::ceiling(250, 250, true)]
+    #[case::zero(0, 250, false)]
+    #[case::above_ceiling(251, 250, false)]
+    #[case::storage_maximum(u64::from(u32::MAX), u64::from(u32::MAX), true)]
+    #[case::above_storage_maximum(u64::from(u32::MAX) + 1, u64::from(u32::MAX) + 1, false)]
+    fn environment_and_runtime_share_pagination_validation(
+        #[case] default: u64,
+        #[case] maximum: u64,
+        #[case] accepted: bool,
+    ) {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _default_guard =
+            EnvVarGuard::set("HUBUUM_DEFAULT_PAGE_LIMIT", Some(&default.to_string()));
+        let _max_guard = EnvVarGuard::set("HUBUUM_MAX_PAGE_LIMIT", Some(&maximum.to_string()));
+        let environment = get_config_from_env()
+            .map(|_| ())
+            .map_err(|error| error.to_string());
+        let runtime = PaginationSettingsRequest {
+            expected_revision: ResourceRevision::INITIAL,
+            default_page_limit: default,
+        }
+        .into_update(
+            PageLimits::new(1, usize::try_from(maximum).unwrap()).unwrap(),
+            EventContext::system(),
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+
+        assert_eq!(environment.is_ok(), accepted);
+        assert_eq!(environment, runtime);
     }
 
     #[test]

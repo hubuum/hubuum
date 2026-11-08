@@ -274,6 +274,19 @@
         "c6a2b668b159",
         "fb31899083ff"
       ]
+    },
+    {
+      "id": "v0.0.21-runtime-settings-query-observations",
+      "baseline": "v0.0.21",
+      "expires": "2027-01-31",
+      "reason": "Revision-checked, audited runtime settings replace the legacy query-observation override endpoints. Administrator reports move ownership and revision information into runtime_settings.query_observations. The two legacy operations and the old runtime_override field are intentionally removed together.",
+      "migration": "use `GET /api/v1/admin/runtime-settings` and `PUT /api/v1/admin/runtime-settings/query_observations` with an `expected_revision`. The `query_observations.runtime_override` field of `GET /api/v1/admin/config` has been removed; read `runtime_settings.query_observations` instead.",
+      "changelog_entry": "**Breaking:** query observation settings are now runtime-managed.",
+      "fingerprints": [
+        "056c94d26eda",
+        "147e6430adda",
+        "42a9a371c838"
+      ]
     }
   ]
 }
