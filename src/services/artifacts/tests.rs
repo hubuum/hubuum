@@ -1,3 +1,4 @@
+use hubuum_storage_core::artifacts::TaskArtifactCleanup;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -81,10 +82,20 @@ async fn unconfirmed_task_work_preserves_native_owner_and_shutdown_obligation(
                 // A previously published result models an ambiguous completion.
                 // The real adapter refuses to abort visible output.
                 store.publish(&proof).await.unwrap();
+                let cleanup = TaskArtifactCleanup::new(
+                    identity.clone(),
+                    StorageTaskLease::new(
+                        hubuum_domain::TaskId::new(1).unwrap(),
+                        hubuum_storage_core::StorageTaskClaimToken::new(
+                            uuid::Uuid::new_v4().to_string(),
+                        ),
+                    ),
+                );
                 let output = TaskOutput {
                     store,
                     identity,
                     limits,
+                    cleanup,
                 };
                 output
                     .finish(
@@ -194,6 +205,10 @@ impl ArtifactStore for DownloadStore {
 
 #[async_trait]
 impl TaskArtifactStore for DownloadStore {
+    async fn abort_task(&self, _cleanup: &TaskArtifactCleanup) -> ArtifactResult<()> {
+        panic!("download must not write")
+    }
+
     async fn bind_task(
         &self,
         _: &ArtifactIdentity,

@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use super::producer::ProducerRecord;
 use super::*;
-use crate::{StorageError, StorageExecutionPermit, StorageExecutionScope};
+use crate::{RuntimeIsolationDomain, StorageError, StorageExecutionPermit, StorageExecutionScope};
 
 /// The complete producer classes supported by the online history boundary.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -22,6 +22,12 @@ pub enum HistoryPublicationKind {
     ArchiveRead,
 }
 impl HistoryPublicationKind {
+    /// Parent-process exclusion does not exclude renderer descendants. Keep
+    /// renderer-capable owners charged until that stronger proof is available.
+    pub const fn isolated_retirement_supported(self) -> bool {
+        matches!(self, Self::TaskOutput | Self::Backup | Self::ArchiveRead)
+    }
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::HttpResponse => "http_response",
@@ -312,6 +318,7 @@ pub struct HistoryPublicationRegistry {
     generation: HistoryPublicationGeneration,
     owners: BTreeMap<Uuid, HistoryReadContext>,
     producers: BTreeMap<Uuid, ProducerRecord>,
+    isolation: BTreeMap<Uuid, Option<RuntimeIsolationDomain>>,
 }
 impl Default for HistoryPublicationRegistry {
     fn default() -> Self {
@@ -319,6 +326,7 @@ impl Default for HistoryPublicationRegistry {
             generation: HistoryPublicationGeneration::new(0).expect("zero publication generation"),
             owners: BTreeMap::new(),
             producers: BTreeMap::new(),
+            isolation: BTreeMap::new(),
         }
     }
 }
@@ -336,6 +344,16 @@ impl HistoryPublicationRegistry {
         &mut self,
         kind: HistoryPublicationKind,
         epoch: HistoryReadEpoch,
+    ) -> Result<HistoryPublicationOwner, StorageError> {
+        self.admit_isolated(kind, epoch, None)
+    }
+
+    /// Retain the admitting process domain even after registration removal.
+    pub fn admit_isolated(
+        &mut self,
+        kind: HistoryPublicationKind,
+        epoch: HistoryReadEpoch,
+        isolation: Option<RuntimeIsolationDomain>,
     ) -> Result<HistoryPublicationOwner, StorageError> {
         if kind != HistoryPublicationKind::ArchiveRead
             && epoch
@@ -380,6 +398,7 @@ impl HistoryPublicationRegistry {
             ));
         }
         let owner = HistoryPublicationOwner::generate(kind, epoch);
+        self.isolation.insert(owner.0.id, isolation);
         self.owners.insert(owner.0.id, owner.context());
         Ok(owner)
     }
@@ -526,6 +545,46 @@ impl HistoryPublicationRegistry {
                 || owner.epoch.generation() <= barrier.cutoff
         })
     }
+
+    /// Trusted adapter boundary while holding actual exclusive process isolation
+    /// and the application fence. External publication claims retain their owner:
+    /// process exit does not reconcile an independently durable provider result.
+    pub fn retire_isolated(
+        &mut self,
+        domain: &RuntimeIsolationDomain,
+    ) -> Result<usize, StorageError> {
+        if self
+            .owners
+            .keys()
+            .any(|id| self.isolation.get(id).and_then(Option::as_ref) != Some(domain))
+            || self
+                .producers
+                .keys()
+                .any(|id| !self.owners.contains_key(id))
+        {
+            return Err(StorageError::unavailable(
+                "Unknown or different publication process isolation prevents recovery",
+            ));
+        }
+        let ids: Vec<_> = self
+            .owners
+            .keys()
+            .copied()
+            .filter(|id| {
+                self.owners[id].kind.isolated_retirement_supported()
+                    && self
+                        .producers
+                        .get(id)
+                        .is_none_or(|producer| !producer.publication_claimed)
+            })
+            .collect();
+        for id in &ids {
+            self.producers.remove(id);
+            self.owners.remove(id);
+            self.isolation.remove(id);
+        }
+        Ok(ids.len())
+    }
     /// Exact-owner-only settlement. No current application/history/API owner is
     /// reacquired: old producers still need to settle after fencing or restore.
     pub fn settle(&mut self, settlement: HistoryPublicationSettlement) -> Result<(), StorageError> {
@@ -546,6 +605,7 @@ impl HistoryPublicationRegistry {
         }
         self.producers.remove(&context.id);
         self.owners.remove(&context.id);
+        self.isolation.remove(&context.id);
         Ok(())
     }
 }
@@ -584,6 +644,84 @@ mod tests {
             Poll::Ready(value) => value,
             Poll::Pending => panic!("ready drain fixture unexpectedly blocked"),
         }
+    }
+
+    #[rstest]
+    #[case::known(true, false, true)]
+    #[case::unknown(false, false, false)]
+    #[case::foreign(true, true, false)]
+    fn isolated_retirement_requires_every_original_domain(
+        #[case] known: bool,
+        #[case] foreign: bool,
+        #[case] retired: bool,
+    ) {
+        let domain = RuntimeIsolationDomain::new(Uuid::new_v4(), 1, 2).unwrap();
+        let other = RuntimeIsolationDomain::new(Uuid::new_v4(), 1, 2).unwrap();
+        let runtime = RuntimeRegistration::generate_history_aware();
+        let incarnation = Uuid::new_v4();
+        let mut registry = HistoryPublicationRegistry::default();
+        // A valid owner must not be partially retired if another is unknown.
+        registry
+            .admit_isolated(
+                HistoryPublicationKind::Backup,
+                epoch(&runtime, incarnation),
+                Some(domain.clone()),
+            )
+            .unwrap();
+        let owner = registry
+            .admit_isolated(
+                HistoryPublicationKind::TaskOutput,
+                epoch(&runtime, incarnation),
+                known.then_some(if foreign { other } else { domain.clone() }),
+            )
+            .unwrap();
+        let context = owner.context();
+        registry.admit_producer(&context, context.epoch()).unwrap();
+        let result = registry.retire_isolated(&domain);
+        assert_eq!(result.is_ok(), retired);
+        assert_eq!(registry.active(), if retired { 0 } else { 2 });
+        assert_eq!(registry.active_producers(), usize::from(!retired));
+    }
+
+    #[rstest]
+    #[case::http(HistoryPublicationKind::HttpResponse)]
+    #[case::export(HistoryPublicationKind::Export)]
+    fn parent_process_isolation_cannot_retire_renderer_capable_owners(
+        #[case] kind: HistoryPublicationKind,
+    ) {
+        let domain = RuntimeIsolationDomain::new(Uuid::new_v4(), 1, 2).unwrap();
+        let runtime = RuntimeRegistration::generate_history_aware();
+        let mut registry = HistoryPublicationRegistry::default();
+        let owner = registry
+            .admit_isolated(kind, epoch(&runtime, Uuid::new_v4()), Some(domain.clone()))
+            .unwrap();
+        let context = owner.context();
+        registry.admit_producer(&context, context.epoch()).unwrap();
+        assert_eq!(registry.retire_isolated(&domain).unwrap(), 0);
+        assert_eq!(registry.active(), 1);
+        assert_eq!(registry.active_producers(), 1);
+    }
+
+    #[test]
+    fn isolated_exit_cannot_reconcile_a_claimed_provider_publication() {
+        let domain = RuntimeIsolationDomain::new(Uuid::new_v4(), 1, 2).unwrap();
+        let runtime = RuntimeRegistration::generate_history_aware();
+        let mut registry = HistoryPublicationRegistry::default();
+        let owner = registry
+            .admit_isolated(
+                HistoryPublicationKind::ArchiveRead,
+                epoch(&runtime, Uuid::new_v4()),
+                Some(domain.clone()),
+            )
+            .unwrap();
+        let context = owner.context();
+        let producer = registry.admit_producer(&context, context.epoch()).unwrap();
+        registry
+            .claim_archive_producer(producer.context(), context.epoch())
+            .unwrap();
+        assert_eq!(registry.retire_isolated(&domain).unwrap(), 0);
+        assert_eq!(registry.active(), 1);
+        assert_eq!(registry.active_producers(), 1);
     }
 
     #[rstest]

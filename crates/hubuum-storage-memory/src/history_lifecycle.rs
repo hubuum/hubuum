@@ -28,8 +28,17 @@ impl HistoryLifecycleStorage for MemoryStorage {
         )
         .and_then(|epoch| epoch.bind_scope(&scope))
         .map_err(invalid_contract_value)?;
+        let isolation = epoch
+            .application()
+            .owner()
+            .and_then(|owner| state.runtime_registrations.get(&owner.id()))
+            .and_then(|runtime| runtime.isolation.clone());
         let mut staged = state.history_publications.clone();
-        let parent = staged.admit(HistoryPublicationKind::ArchiveRead, epoch.clone())?;
+        let parent = staged.admit_isolated(
+            HistoryPublicationKind::ArchiveRead,
+            epoch.clone(),
+            isolation,
+        )?;
         let child = staged.admit_producer(&parent.context(), &epoch)?;
         let admitted = HistoryArchiveExecutionOwner::from_admitted(parent, child, scope)?;
         state.history_publications = staged;
@@ -78,7 +87,14 @@ impl HistoryLifecycleStorage for MemoryStorage {
         )
         .and_then(|epoch| epoch.bind_scope(&scope))
         .map_err(invalid_contract_value)?;
-        state.history_publications.admit(kind, epoch)
+        let isolation = epoch
+            .application()
+            .owner()
+            .and_then(|owner| state.runtime_registrations.get(&owner.id()))
+            .and_then(|runtime| runtime.isolation.clone());
+        state
+            .history_publications
+            .admit_isolated(kind, epoch, isolation)
     }
     async fn settle_history_publication(
         &self,

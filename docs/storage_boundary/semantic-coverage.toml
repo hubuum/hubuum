@@ -46,6 +46,7 @@ workflow_state_machine = [
     "ArtifactStore::abort",
     "ArtifactStore::cleanup",
     "TaskArtifactStore::bind_task",
+    "TaskArtifactStore::abort_task",
     "SchemaEvolutionStorage::process_schema_work",
     "SchemaEvolutionStorage::save_schema_repair_report",
     "ComputedFieldStorage::request_computed_field_rebuild",
@@ -628,9 +629,9 @@ native_scenarios = ["src/tests/storage_contract/artifacts.rs::artifact_publicati
 
 [traits.TaskArtifactStore]
 source = "crates/hubuum-storage-core/src/artifacts/mod.rs"
-methods = ["bind_task"]
-effects = { workflow_mutation = ["bind_task"] }
-shared_scenarios = ["src/tests/storage_contract/artifacts.rs::published_bytes_are_immutable_and_repeatedly_verifiable", "src/tests/storage_contract/artifacts.rs::admitted_artifact_cannot_be_rebound_to_another_task", "src/tests/storage_contract/artifacts.rs::replica_can_verify_and_atomically_publish_without_the_producer_spool", "src/tests/storage_contract/artifacts.rs::lost_worker_fails_without_replaying_and_reconciles_its_bytes"]
+methods = ["bind_task", "abort_task"]
+effects = { workflow_mutation = ["bind_task", "abort_task"] }
+shared_scenarios = ["src/tests/storage_contract/task_control.rs::stopped_task_cleanup_uses_only_the_exact_original_binding", "src/tests/storage_contract/artifacts.rs::published_bytes_are_immutable_and_repeatedly_verifiable", "src/tests/storage_contract/artifacts.rs::admitted_artifact_cannot_be_rebound_to_another_task", "src/tests/storage_contract/artifacts.rs::replica_can_verify_and_atomically_publish_without_the_producer_spool", "src/tests/storage_contract/artifacts.rs::lost_worker_fails_without_replaying_and_reconciles_its_bytes"]
 [traits.TaskRetentionStorage]
 source = "crates/hubuum-storage-core/src/task_retention/capability.rs"
 methods = ["prepare_expired_task_outputs", "read_task_receipt_activation", "list_pending_task_admissions", "read_task_control", "capture_control_checkpoint", "commit_task_control", "recover_task_control", "read_task_retention_policy", "replace_task_retention_policy", "change_task_hold", "select_expired_task_receipts", "expire_task_receipts", "prepare_task_details_purge", "purge_task_details_batch", "list_pending_task_purges", "reapply_task_retention", "list_legacy_task_receipts", "backfill_task_receipts"]

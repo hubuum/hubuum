@@ -2034,6 +2034,7 @@
           "values": [
             "abandon_schema_revision",
             "abort",
+            "abort_task",
             "acknowledge_runtime_drain",
             "acknowledge_task_stop",
             "activate_schema_revision",
@@ -2537,6 +2538,7 @@
           "values": [
             "abandon_schema_revision",
             "abort",
+            "abort_task",
             "acknowledge_runtime_drain",
             "acknowledge_task_stop",
             "activate_schema_revision",

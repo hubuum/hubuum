@@ -530,6 +530,26 @@ impl ArtifactStore for MemoryStorage {
 
 #[async_trait]
 impl TaskArtifactStore for MemoryStorage {
+    async fn abort_task(&self, cleanup: &TaskArtifactCleanup) -> ArtifactResult<()> {
+        if self.current_execution_scope().storage_callback_active() {
+            return Err(conflict());
+        }
+        let mut state = self.state.write_control().await;
+        let attempt = state.artifacts.attempt_mut(cleanup.identity())?;
+        if attempt.phase == Phase::Published
+            || attempt.owner.as_ref().is_none_or(|owner| {
+                owner.lease.task_id() != cleanup.lease().task_id()
+                    || owner.lease.token() != cleanup.lease().token()
+            })
+        {
+            return Err(conflict());
+        }
+        if attempt.phase != Phase::Discarded {
+            attempt.phase = Phase::Deleting;
+        }
+        Ok(())
+    }
+
     async fn bind_task(
         &self,
         identity: &ArtifactIdentity,

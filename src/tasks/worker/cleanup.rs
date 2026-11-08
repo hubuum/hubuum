@@ -76,7 +76,11 @@ async fn iteration(
         let history_changed =
             crate::services::deletion_recovery::history_policy::settle_expired_hold(context)
                 .await?;
-        let tasks_changed = maybe_cleanup_expired_task_outputs(context, tasks, artifacts).await?;
+        let tasks_changed = crate::tasks::history::run(
+            storage,
+            maybe_cleanup_expired_task_outputs(context, tasks, artifacts),
+        )
+        .await?;
         Ok(history_changed || tasks_changed)
     });
     storage

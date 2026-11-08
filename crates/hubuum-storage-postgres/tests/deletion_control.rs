@@ -1806,6 +1806,227 @@ mod managed_cleanup {
         assert_eq!(retired.unwrap_err().kind(), StorageErrorKind::Unavailable);
     }
     #[rstest]
+    #[case::parent(false)]
+    #[case::producer(true)]
+    #[tokio::test]
+    async fn isolated_recovery_does_not_wait_in_an_exact_settlement_lock_cycle(
+        #[case] child: bool,
+    ) {
+        use diesel_async::AsyncConnection;
+        use hubuum_storage_core::{
+            ExecutionStorage, HistoryLifecycleStorage, HistoryPublicationKind,
+            RuntimeIsolationDomain, StorageExecutionScope,
+        };
+        let _guard = CONTROL_TEST_LOCK.lock().await;
+        let fixture = Fixture::new(true).await;
+        let runtime = PostgresStorage::unobserved(integration_test_pool(2));
+        let domain = RuntimeIsolationDomain::new(Uuid::new_v4(), 1, 2).unwrap();
+        let registration = runtime
+            .register_history_runtime(Some(domain.clone()))
+            .await
+            .unwrap();
+        let permit = runtime
+            .capture_application_execution(Some(registration.owner()))
+            .await
+            .unwrap();
+        let scope = StorageExecutionScope::default().with_application_access(permit);
+        let owner = runtime
+            .run_in_scope(
+                scope.clone(),
+                runtime.admit_history_publication(HistoryPublicationKind::Backup),
+            )
+            .await
+            .unwrap();
+        let context = owner.context();
+        runtime
+            .run_in_scope(
+                scope.with_history_read(context.clone()),
+                runtime.admit_history_producer(context.clone()),
+            )
+            .await
+            .unwrap();
+        let expected = capture_application_fixture(&fixture.pool).await;
+        let pool = fixture.pool.clone();
+        let (locked, acquired) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let holder = async {
+            let mut connection = pool.get().await.unwrap();
+            connection.transaction::<_, PostgresStorageError, _>(async |connection| {
+                assume_owner(connection).await?;
+                let query = if child {
+                    "SELECT publication_id FROM hubuum_control.history_publication_producers WHERE publication_id=$1 FOR UPDATE"
+                } else {
+                    "SELECT id FROM hubuum_control.history_publication_owners WHERE id=$1 FOR UPDATE"
+                };
+                sql_query(query).bind::<SqlUuid,_>(context.id()).execute(connection).await?;
+                locked.send(()).unwrap();
+                released.await.unwrap();
+                Ok(())
+            }).await.unwrap();
+        };
+        let recovery = async {
+            acquired.await.unwrap();
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                fixture.storage().recover_application_control(
+                    fixture.before.recover_from(&fixture.before).unwrap(),
+                    domain.clone(),
+                ),
+            )
+            .await;
+            release.send(()).unwrap();
+            result
+        };
+        let ((), blocked) = tokio::join!(holder, recovery);
+        let unchanged = capture_application_fixture(&fixture.pool).await;
+        fixture
+            .storage()
+            .recover_application_control(
+                fixture.before.recover_from(&fixture.before).unwrap(),
+                domain,
+            )
+            .await
+            .unwrap();
+        runtime.unregister_runtime(registration).await.unwrap();
+        fixture.finish().await;
+        assert!(
+            blocked
+                .expect("recovery must refuse rather than wait for settlement")
+                .is_err()
+        );
+        assert_eq!(
+            unchanged, expected,
+            "failed isolation retirement must roll back atomically"
+        );
+    }
+
+    #[derive(Clone, Copy, Eq, PartialEq)]
+    enum RecoveryPublication {
+        Local,
+        Producer,
+        Claimed,
+        Rendered,
+    }
+
+    #[rstest]
+    #[case::registered(false, true)]
+    #[case::orphaned_known(true, true)]
+    #[case::orphaned_unknown(true, false)]
+    #[tokio::test]
+    async fn recovery_requires_original_publication_isolation_even_after_unregister(
+        #[case] unregister: bool,
+        #[case] known: bool,
+        #[values(
+            RecoveryPublication::Local,
+            RecoveryPublication::Producer,
+            RecoveryPublication::Claimed,
+            RecoveryPublication::Rendered
+        )]
+        kind: RecoveryPublication,
+    ) {
+        use hubuum_storage_core::{
+            ExecutionStorage, HistoryLifecycleStorage, HistoryPublicationKind,
+            RuntimeIsolationDomain, StorageExecutionScope,
+        };
+        let _guard = CONTROL_TEST_LOCK.lock().await;
+        let fixture = Fixture::new(true).await;
+        let runtime = PostgresStorage::unobserved(integration_test_pool(2));
+        let domain = RuntimeIsolationDomain::new(Uuid::new_v4(), 1, 2).unwrap();
+        let registration = runtime
+            .register_history_runtime(known.then_some(domain.clone()))
+            .await
+            .unwrap();
+        let permit = runtime
+            .capture_application_execution(Some(registration.owner()))
+            .await
+            .unwrap();
+        let bound = runtime.clone().with_runtime_owner(registration.owner());
+        let owner = bound
+            .run_in_scope(
+                StorageExecutionScope::default().with_application_access(permit),
+                bound.admit_history_publication(if kind == RecoveryPublication::Rendered {
+                    HistoryPublicationKind::Export
+                } else {
+                    HistoryPublicationKind::Backup
+                }),
+            )
+            .await
+            .unwrap();
+        let context = owner.context();
+        let producer = if kind != RecoveryPublication::Local {
+            Some(
+                bound
+                    .run_in_scope(
+                        StorageExecutionScope::default()
+                            .with_application_access(context.epoch().application().clone())
+                            .with_history_read(context.clone()),
+                        bound.admit_history_producer(context.clone()),
+                    )
+                    .await
+                    .unwrap(),
+            )
+        } else {
+            None
+        };
+        if kind == RecoveryPublication::Claimed {
+            with_transaction(&fixture.pool, async |connection| {
+                assume_owner(connection).await?;
+                sql_query("UPDATE hubuum_control.history_publication_producers SET publication_claimed=TRUE WHERE publication_id=$1")
+                    .bind::<SqlUuid,_>(context.id()).execute(connection).await?;
+                Ok::<_,PostgresStorageError>(())
+            }).await.unwrap();
+        }
+        if unregister {
+            runtime.unregister_runtime(registration).await.unwrap();
+        }
+        let change = fixture.before.recover_from(&fixture.before).unwrap();
+        let wrong = fixture
+            .storage()
+            .recover_application_control(
+                change.clone(),
+                RuntimeIsolationDomain::new(Uuid::new_v4(), 1, 2).unwrap(),
+            )
+            .await;
+        let result = fixture
+            .storage()
+            .recover_application_control(change, domain)
+            .await;
+        let retained = with_transaction(&fixture.pool, async |connection| {
+            assume_owner(connection).await?;
+            let retained = sql_query("SELECT EXISTS(SELECT 1 FROM hubuum_control.history_publication_owners WHERE id=$1) AS allowed")
+                .bind::<SqlUuid,_>(context.id()).get_result::<Gate>(connection).await?.allowed;
+            // No provider work exists in this fixture. Explicitly discharge its
+            // injected unknown outcome only after checking recovery retention.
+            sql_query("UPDATE hubuum_control.history_publication_producers SET publication_claimed=FALSE WHERE publication_id=$1")
+                .bind::<SqlUuid,_>(context.id()).execute(connection).await?;
+            Ok::<_,PostgresStorageError>(retained)
+        }).await.unwrap();
+        if let Some(producer) = producer {
+            let settlement = producer
+                .after_completed(std::future::ready(Ok(())))
+                .await
+                .unwrap();
+            let settled = runtime.settle_history_producer(&settlement).await;
+            assert_eq!(settled.is_ok(), retained);
+        }
+        let settlement = owner
+            .after_drained(std::future::ready(Ok(())), std::future::ready(Ok(())))
+            .await
+            .unwrap();
+        let settled = runtime.settle_history_publication(settlement).await;
+        fixture.finish().await;
+        assert!(wrong.is_err());
+        assert_eq!(result.is_ok(), known);
+        let retired = known
+            && matches!(
+                kind,
+                RecoveryPublication::Local | RecoveryPublication::Producer
+            );
+        assert_eq!(retained, !retired);
+        assert_eq!(settled.is_err(), retired);
+    }
+
+    #[rstest]
     #[case::logical_restore("restore")]
     #[case::same_authority_recovery("recover")]
     #[case::owner_retirement("unregister")]

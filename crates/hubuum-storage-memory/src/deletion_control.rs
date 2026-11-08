@@ -305,7 +305,10 @@ impl DeletionControlStorage for MemoryStorage {
         }
         let fence = ApplicationFence::new(Uuid::new_v4(), change.next().revision())
             .map_err(invalid_contract_value)?;
+        let mut publications = state.history_publications.clone();
+        publications.retire_isolated(&isolation)?;
         state.apply_deletion_authority(change.next().clone())?;
+        state.history_publications = publications;
         state.runtime_registrations.clear();
         state.application_control = ApplicationControlState::quarantined(fence);
         state.task_reapplication = None;

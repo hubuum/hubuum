@@ -120,6 +120,16 @@ impl ArtifactStore for StorageHandle {
 }
 #[async_trait]
 impl TaskArtifactStore for StorageHandle {
+    async fn abort_task(&self, cleanup: &TaskArtifactCleanup) -> ArtifactResult<()> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Artifact,
+            "abort_task",
+            async { dispatch_backend!(self, |backend| backend.abort_task(cleanup).await) },
+        )
+        .await
+    }
+
     async fn bind_task(
         &self,
         identity: &ArtifactIdentity,

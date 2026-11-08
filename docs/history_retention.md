@@ -213,8 +213,25 @@ stopped owned work cannot gain a new deadline exemption to publish output.
 An abort failure is logged without losing the primary task error. A deadline or
 worker lease loss cannot substitute for producer and driver completion.
 
+Worker queue admission, execution-control admission, terminal lookups and bounded
+output maintenance use separate awaited publication phases. They retain the
+original application permit and never extend an executing producer's deadline.
+Shutdown and lease loss request cooperative stop and await execution drain.
+Task-output abort validates the original immutable attempt, task and claim token
+without reacquiring productive admission; it cannot publish or read output.
+
+Offline recovery retains each publication's original process-isolation domain
+independently of runtime registration. After exclusive process isolation, both
+adapters retire backup, metadata and archive-read owners and unclaimed producer
+slots under the application fence. HTTP/export owners remain charged because
+renderer descendants do not inherit the parent runtime lock; their own positive
+isolation or completion proof is still required. Unknown domains and orphaned ownership block recovery. Claimed external
+publication outcomes remain charged until independently reconciled; local process
+exit cannot prove their provider outcome. PostgreSQL recovery fails rather than
+waiting in a cycle with an in-flight exact settlement.
+
 Production composition still registers Legacy, so these integrations do not
-activate online expiry. Restored descendants, crash retirement, complete worker
+activate online expiry. Restored descendants, external-claim reconciliation, complete worker
 entry/cleanup qualification, all-family native races and measured
 resource/liveness budgets remain acceptance gates. No timer or absent API-owner
 row can substitute for these proofs.

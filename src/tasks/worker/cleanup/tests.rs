@@ -1,3 +1,4 @@
+use hubuum_storage_core::artifacts::TaskArtifactCleanup;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -5,7 +6,9 @@ use hubuum_storage_core::artifacts::{
     ArtifactIdentity, ArtifactLimits, ArtifactManifest, ArtifactReference, ArtifactReservation,
     ArtifactResult, ArtifactStore, Destination, TaskArtifactStore, VerifiedArtifact,
 };
-use hubuum_storage_core::{StorageTaskLease, TaskWorkerId};
+use hubuum_storage_core::{
+    DeletionControlStorage, HistoryLifecycleStorage, StorageTaskLease, TaskWorkerId,
+};
 
 use crate::storage::StorageHandle;
 
@@ -60,6 +63,10 @@ impl ArtifactStore for PausedCleanup {
 
 #[async_trait]
 impl TaskArtifactStore for PausedCleanup {
+    async fn abort_task(&self, cleanup: &TaskArtifactCleanup) -> ArtifactResult<()> {
+        self.store.abort_task(cleanup).await
+    }
+
     async fn bind_task(
         &self,
         id: &ArtifactIdentity,
@@ -71,9 +78,21 @@ impl TaskArtifactStore for PausedCleanup {
     }
 }
 
+#[rstest::rstest]
+#[case::legacy(false)]
+#[case::online(true)]
 #[actix_web::test]
-async fn paused_maintenance_does_not_block_the_task_claim_loop() {
-    let baseline = StorageHandle::memory();
+async fn paused_maintenance_does_not_block_the_task_claim_loop(#[case] online: bool) {
+    let unbound = StorageHandle::memory();
+    let registration = if online {
+        Some(unbound.register_history_runtime(None).await.unwrap())
+    } else {
+        None
+    };
+    let baseline = match &registration {
+        Some(registration) => unbound.clone().with_runtime_owner(registration.owner()),
+        None => unbound.clone(),
+    };
     let paused = Arc::new(PausedCleanup {
         store: baseline.artifact_store(),
         entered: Notify::new(),
@@ -106,6 +125,9 @@ async fn paused_maintenance_does_not_block_the_task_claim_loop() {
     .await;
     paused.release.notify_waiters();
     maintenance.await.unwrap().unwrap();
+    if let Some(registration) = registration {
+        unbound.unregister_runtime(registration).await.unwrap();
+    }
 
     assert!(
         !result

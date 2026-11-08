@@ -493,6 +493,7 @@ impl StorageHandle {
                     | "settle_api_request"
                     | "settle_history_publication"
                     | "settle_history_producer"
+                    | "abort_task"
                     | "poll_task_execution"
                     | "acknowledge_task_stop"
                     | "renew_task_lease"

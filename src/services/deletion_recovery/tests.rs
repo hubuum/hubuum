@@ -329,6 +329,80 @@ async fn offline_recovery_requires_process_exit_and_revokes_old_runtime_access()
     assert!(bound.admit_application_work().await.is_err());
 }
 
+#[rstest]
+#[case::registered(false, true)]
+#[case::orphaned_known(true, true)]
+#[case::orphaned_unknown(true, false)]
+#[tokio::test]
+async fn offline_recovery_retires_only_publications_with_proven_process_isolation(
+    #[case] unregister: bool,
+    #[case] known: bool,
+) {
+    use crate::storage::StorageExecutionScope;
+    use hubuum_storage_core::{ExecutionStorage, HistoryPublicationKind};
+    let fixture = Fixture::new().await;
+    let permit = require_runtime_permit(&fixture.storage, &fixture.options())
+        .await
+        .unwrap();
+    let registration = fixture
+        .storage
+        .register_history_runtime(if known {
+            permit.isolation_domain()
+        } else {
+            None
+        })
+        .await
+        .unwrap();
+    let bound = fixture
+        .storage
+        .clone()
+        .with_runtime_owner(registration.owner());
+    let application = bound.admit_application_work().await.unwrap();
+    let owner = bound
+        .run_in_scope(
+            StorageExecutionScope::default().with_application_access(application),
+            bound.admit_history_publication(HistoryPublicationKind::Backup),
+        )
+        .await
+        .unwrap();
+    if unregister {
+        fixture
+            .storage
+            .unregister_runtime(registration)
+            .await
+            .unwrap();
+    }
+    // Registration removal never substitutes for the live OS exclusion lock.
+    assert!(
+        recover(&fixture.storage, &fixture.directory, &fixture.key)
+            .await
+            .is_err()
+    );
+    drop(permit);
+    let result = recover(&fixture.storage, &fixture.directory, &fixture.key).await;
+    assert_eq!(result.is_ok(), known);
+    if known {
+        reapply(&fixture.storage, &fixture.directory, &fixture.key)
+            .await
+            .unwrap();
+        assert!(bound.admit_application_work().await.is_err());
+    }
+    let settlement = owner
+        .after_drained(std::future::ready(Ok(())), std::future::ready(Ok(())))
+        .await
+        .unwrap();
+    // No work was launched in this fixture. An isolated owner was already
+    // retired; an unknown owner still requires its original positive settlement.
+    assert_eq!(
+        fixture
+            .storage
+            .settle_history_publication(settlement)
+            .await
+            .is_err(),
+        known
+    );
+}
+
 #[tokio::test]
 async fn unknown_recovered_copy_cannot_be_released_by_reapplication() {
     let fixture = Fixture::new().await;

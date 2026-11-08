@@ -24,7 +24,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   This does not enable the default database/memory history producer or expiry.
 - **Breaking storage SDK 0.20:** upgrade all ten exact SDK dependencies together
   and implement the required `HistoryLifecycleStorage` control, audit, scoped read,
-  publication and recovery contracts. Deploy the new
+  publication and recovery contracts, plus exact nonproductive
+  `TaskArtifactStore::abort_task` cleanup using the original attempt/task/claim. Deploy the new
   `2026-11-03-000005_history_lifecycle` migration after shipped archive 000004;
   refresh grants and preserve signed format-3 authority for roll-forward recovery.
   Archive entries now preserve the original history publication and producer
@@ -314,6 +315,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Task workers cooperatively stop and drain execution during shutdown or lease
+  loss. Cancelled and timed-out backup/export attempts can confirm exact staging
+  abort without reopening productive admission. Offline recovery retires local
+  backup, metadata and archive-read owners only after exclusive process isolation;
+  renderer-capable owners and unresolved external outcomes remain charged.
 - Handler-local conditional mutations and export query limits retain their
   original history publication while binding additional restrictions. Nested
   work cannot discard an inherited condition or weaken an inherited limit.

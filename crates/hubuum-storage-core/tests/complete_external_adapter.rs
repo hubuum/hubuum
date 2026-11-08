@@ -8,6 +8,7 @@
 
 use hubuum_domain::PrincipalIdentity;
 use hubuum_storage_core::StorageTaskClaimRequest;
+use hubuum_storage_core::artifacts::TaskArtifactCleanup;
 
 use hubuum_storage_core::{
     DeletionAuditObservation, DeletionControlState, HotObjectHistoryCleanup,
@@ -2738,6 +2739,12 @@ impl ArtifactStore for CompleteExternalAdapter {
 }
 #[async_trait]
 impl TaskArtifactStore for CompleteExternalAdapter {
+    async fn abort_task(&self, cleanup: &TaskArtifactCleanup) -> ArtifactResult<()> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+
     async fn bind_task(
         &self,
         identity: &ArtifactIdentity,

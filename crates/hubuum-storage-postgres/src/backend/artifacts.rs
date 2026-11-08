@@ -52,6 +52,10 @@ impl ArtifactStore for PostgresStorage {
 }
 #[async_trait]
 impl TaskArtifactStore for PostgresStorage {
+    async fn abort_task(&self, cleanup: &TaskArtifactCleanup) -> ArtifactResult<()> {
+        self.artifact_store().abort_task(cleanup).await
+    }
+
     async fn bind_task(
         &self,
         identity: &ArtifactIdentity,

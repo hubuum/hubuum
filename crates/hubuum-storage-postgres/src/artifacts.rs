@@ -12,7 +12,7 @@ use hubuum_storage_core::StorageErrorKind;
 use hubuum_storage_core::artifacts::{
     ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactManifest, ArtifactReference,
     ArtifactReservation, ArtifactResult, ArtifactStore, Destination, LOCAL_SPOOL_CLEANUP_GRACE,
-    TaskArtifactStore, VerifiedArtifact,
+    TaskArtifactCleanup, TaskArtifactStore, VerifiedArtifact,
 };
 use uuid::Uuid;
 
@@ -452,6 +452,29 @@ pub(crate) async fn publish_for_task(
 
 #[async_trait]
 impl TaskArtifactStore for PostgresArtifactStore {
+    async fn abort_task(&self, cleanup: &TaskArtifactCleanup) -> ArtifactResult<()> {
+        crate::runtime::ensure_no_storage_callback().map_err(boundary)?;
+        let identity = cleanup.identity();
+        let lease = cleanup.lease();
+        self.runtime.with_control_transaction(async |connection| {
+            let attempt = load(connection, identity, true).await?;
+            if attempt.state == "published" { return Err(conflict()); }
+            #[derive(QueryableByName)]
+            struct Owned { #[diesel(sql_type = Bool)] owned: bool }
+            let token = Uuid::parse_str(lease.token().adapter_value()).map_err(invalid)?;
+            let owned = diesel::sql_query("SELECT EXISTS(SELECT 1 FROM artifact_task_owners WHERE artifact_id=$1 AND task_id=$2 AND lease_token=$3) AS owned")
+                .bind::<SqlUuid,_>(artifact_id(identity))
+                .bind::<Integer,_>(lease.task_id().id())
+                .bind::<SqlUuid,_>(token).get_result::<Owned>(connection).await?;
+            if !owned.owned { return Err(conflict()); }
+            if attempt.state != "discarded" {
+                diesel::sql_query("UPDATE artifact_attempts SET state='deleting' WHERE artifact_id=$1")
+                    .bind::<SqlUuid,_>(artifact_id(identity)).execute(connection).await?;
+            }
+            Ok::<_,PostgresStorageError>(())
+        }).await.map_err(boundary)
+    }
+
     async fn bind_task(
         &self,
         identity: &ArtifactIdentity,

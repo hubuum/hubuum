@@ -620,7 +620,8 @@ async fn control_monitor_stops_executor_from_durable_backend_state(#[case] deadl
                         }
                         tokio::time::sleep(Duration::from_millis(10)).await;
                     }
-                }
+                },
+                std::future::pending(),
             ),
             async {
                 started.notified().await;
@@ -648,4 +649,83 @@ async fn control_monitor_stops_executor_from_durable_backend_state(#[case] deadl
     hubuum_storage_postgres::test_support::delete_task(&context.pool, stored.id())
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn external_stop_waits_for_the_original_executor_to_drain() {
+    use hubuum_task_core::TaskExecutionLimit;
+    use std::time::Duration;
+    let context = TestContext::new().await;
+    let task = create_worker_test_task(
+        &context,
+        StorageTaskKind::Import,
+        serde_json::json!({}),
+        1,
+        "stop_drain",
+    )
+    .await;
+    let claimed = claim_worker_test_task(&context, task.id).await;
+    let backend = crate::storage::storage_handle(&context.pool);
+    let app = crate::permissions::AppContext::new(
+        backend.clone(),
+        Arc::new(crate::permissions::LocalPermissionBackend::new(
+            backend,
+            "admin".into(),
+        )),
+    );
+    let entered = tokio::sync::Notify::new();
+    let stop = tokio::sync::Notify::new();
+    let draining = tokio::sync::Notify::new();
+    let release = tokio::sync::Notify::new();
+    let executor = super::super::control::execute(
+        &app,
+        &claimed,
+        TaskExecutionLimit::from_milliseconds(60_000).unwrap(),
+        async {
+            entered.notify_one();
+            let error = loop {
+                if let Err(error) = super::super::control::checkpoint() {
+                    break error;
+                }
+                tokio::task::yield_now().await;
+            };
+            draining.notify_one();
+            release.notified().await;
+            Err::<(), ApiError>(error)
+        },
+        stop.notified(),
+    );
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::pin!(executor);
+        tokio::select! {
+            biased;
+            _ = &mut executor => panic!("executor ended before starting"),
+            _ = entered.notified() => {}
+        }
+        stop.notify_one();
+        tokio::select! {
+            biased;
+            _ = &mut executor => panic!("stop dropped an executor with outstanding work"),
+            _ = draining.notified() => {}
+        }
+        // Poll once more while drain acknowledgement is deliberately withheld.
+        tokio::select! {
+            biased;
+            _ = &mut executor => panic!("stop bypassed positive drain acknowledgement"),
+            _ = tokio::task::yield_now() => {}
+        }
+        release.notify_one();
+        executor.await
+    })
+    .await
+    .expect("cooperative stop must reach and await drain");
+    hubuum_storage_postgres::test_support::delete_task(&context.pool, claimed.lease().task_id())
+        .await
+        .unwrap();
+    assert!(matches!(
+        result,
+        Err(ApiError::TaskStopped(
+            hubuum_task_core::TaskStopReason::Cancelled
+        ))
+    ));
 }

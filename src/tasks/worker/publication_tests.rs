@@ -8,6 +8,7 @@ use hubuum_storage_core::{
     StorageObserver, StorageTaskKind,
 };
 use hubuum_storage_postgres::PostgresStorage;
+use hubuum_task_core::{TaskStopHandle, TaskStopReason};
 use rstest::rstest;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -49,7 +50,8 @@ struct OutputDriver {
     store: Arc<dyn TaskArtifactStore>,
     entered: Notify,
     release: Notify,
-    fail: bool,
+    failure: Failure,
+    stop: TaskStopHandle,
     kind: HistoryPublicationKind,
     storage: StorageHandle,
 }
@@ -79,8 +81,10 @@ impl ArtifactStore for OutputDriver {
             self.entered.notify_one();
             self.release.notified().await;
         }
-        if self.fail {
-            return Err(ArtifactError::Backend("injected output failure".into()));
+        match self.failure {
+            Failure::Store => return Err(ArtifactError::Backend("injected output failure".into())),
+            Failure::Stop(reason) => self.stop.request_stop(reason),
+            Failure::None => {}
         }
         self.store.append(identity, ordinal, bytes).await
     }
@@ -112,6 +116,10 @@ impl ArtifactStore for OutputDriver {
 }
 #[async_trait]
 impl TaskArtifactStore for OutputDriver {
+    async fn abort_task(&self, cleanup: &TaskArtifactCleanup) -> ArtifactResult<()> {
+        self.store.abort_task(cleanup).await
+    }
+
     async fn bind_task(
         &self,
         identity: &ArtifactIdentity,
@@ -125,15 +133,26 @@ impl TaskArtifactStore for OutputDriver {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Failure {
+    None,
+    Store,
+    Stop(TaskStopReason),
+}
+
 #[rstest]
-#[case::export(false, false)]
-#[case::backup(true, false)]
-#[case::failed_export(false, true)]
-#[case::failed_backup(true, true)]
+#[case::export(false, Failure::None)]
+#[case::backup(true, Failure::None)]
+#[case::failed_export(false, Failure::Store)]
+#[case::failed_backup(true, Failure::Store)]
+#[case::cancelled_export(false, Failure::Stop(TaskStopReason::Cancelled))]
+#[case::cancelled_backup(true, Failure::Stop(TaskStopReason::Cancelled))]
+#[case::expired_export(false, Failure::Stop(TaskStopReason::DeadlineExceeded))]
+#[case::expired_backup(true, Failure::Stop(TaskStopReason::DeadlineExceeded))]
 #[tokio::test]
 async fn native_output_owns_its_publication_until_driver_completion(
     #[case] backup: bool,
-    #[case] fail: bool,
+    #[case] failure: Failure,
 ) {
     let test = TestContext::new().await;
     let collection = test.collection_fixture("owned_output").await;
@@ -172,11 +191,14 @@ async fn native_output_owns_its_publication_until_driver_completion(
     );
     let registration = unbound.register_history_runtime(None).await.unwrap();
     let storage = unbound.clone().with_runtime_owner(registration.owner());
+    let (execution, stop) =
+        hubuum_task_core::TaskExecutionContext::new(Duration::from_secs(60)).unwrap();
     let driver = Arc::new(OutputDriver {
         store: storage.artifact_store(),
         entered: Notify::new(),
         release: Notify::new(),
-        fail,
+        failure,
+        stop,
         kind: if backup {
             HistoryPublicationKind::Backup
         } else {
@@ -187,8 +209,6 @@ async fn native_output_owns_its_publication_until_driver_completion(
     let storage = storage.with_artifact_test_store(driver.clone());
     let permissions = Arc::new(LocalPermissionBackend::new(storage.clone(), "admin".into()));
     let context = AppContext::new(storage.clone(), permissions);
-    let (execution, _) =
-        hubuum_task_core::TaskExecutionContext::new(Duration::from_secs(60)).unwrap();
     let settings = configured_backup_settings();
     let work = storage.run_in_scope(
         StorageExecutionScope::default().with_task_execution(Some(execution)),
@@ -222,7 +242,7 @@ async fn native_output_owns_its_publication_until_driver_completion(
         settled, 1,
         "the joined producer and confirmed driver must retire exactly once"
     );
-    if fail {
+    if !matches!(failure, Failure::None) {
         assert!(result.is_err());
     } else {
         assert_eq!(observations.completed.load(Ordering::SeqCst), 1);
@@ -232,4 +252,79 @@ async fn native_output_owns_its_publication_until_driver_completion(
             hubuum_storage_core::StorageTaskStatus::Succeeded
         );
     }
+}
+
+#[actix_web::test]
+async fn online_worker_reconciles_failure_through_bounded_owned_phases() {
+    use crate::tests::asserts::expect_legacy_task;
+    use hubuum_domain::PrincipalId;
+    use hubuum_events_core::EventContext;
+    use hubuum_storage_core::{
+        StorageTaskCreateRequest, StorageTaskStatus, StorageUserCreate, UserStorage,
+    };
+    let observations = Arc::new(Publications::default());
+    let unbound = StorageHandle::from_registered_backend_with_observer(
+        hubuum_storage_memory::MemoryStorage::new(),
+        observations.clone(),
+    );
+    let user = unbound
+        .create_user(StorageUserCreate::new(
+            None,
+            "owned-worker",
+            "test-hash",
+            None,
+            None,
+            EventContext::system(),
+        ))
+        .await
+        .unwrap()
+        .into_value()
+        .into_parts()
+        .id();
+    let task = expect_legacy_task(
+        unbound
+            .create_task(
+                StorageTaskCreateRequest::builder(
+                    StorageTaskKind::Backup,
+                    PrincipalId::new(user.id()).unwrap(),
+                    serde_json::json!({"invalid":true}),
+                    1,
+                )
+                .try_build()
+                .unwrap(),
+            )
+            .await
+            .unwrap(),
+    );
+    let registration = unbound.register_history_runtime(None).await.unwrap();
+    let storage = unbound.clone().with_runtime_owner(registration.owner());
+    let context = AppContext::new(
+        storage.clone(),
+        Arc::new(LocalPermissionBackend::new(storage, "admin".into())),
+    );
+    // The isolated backend contains only this task. Its unprivileged principal
+    // fails before staging, exercising the real claim/control/failure loop.
+    assert!(
+        process_one_task_with_settings(
+            &context,
+            TaskWorkerId::generate(),
+            None,
+            &configured_backup_settings()
+        )
+        .await
+        .unwrap()
+    );
+    let persisted = unbound
+        .get_task_access(task.id())
+        .await
+        .unwrap()
+        .into_parts()
+        .0;
+    unbound.unregister_runtime(registration).await.unwrap();
+    assert_eq!(persisted.status(), StorageTaskStatus::Failed);
+    assert!(observations.admitted.load(Ordering::SeqCst) >= 4);
+    assert_eq!(
+        observations.admitted.load(Ordering::SeqCst),
+        observations.settled.load(Ordering::SeqCst)
+    );
 }

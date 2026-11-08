@@ -462,10 +462,13 @@ event. Logical restores preserve the setting and portable backups exclude it.
 
 `ArtifactStore::register_destination`, `ArtifactStore::stage`,
 `ArtifactStore::append`, `ArtifactStore::seal`, `ArtifactStore::publish`,
-`ArtifactStore::abort`, `ArtifactStore::cleanup`, and
-`TaskArtifactStore::bind_task` are context-free workflow operations. They change
+`ArtifactStore::abort`, `ArtifactStore::cleanup`,
+`TaskArtifactStore::bind_task`, and `TaskArtifactStore::abort_task` are context-free workflow operations. They change
 physical storage state and durable ownership, not ordinary domain resources.
 Task completion owns the terminal task event and atomic output publication.
+Exact task abort validates the original immutable attempt, task ID and claim
+token, including after productive admission closes. It cannot authorize reads
+or publication, and cannot release physical reservations by itself.
 Cleanup retains obligations and reservations until bounded physical deletion
 finishes, independently of application task deletion and logical restore.
 

@@ -2,6 +2,7 @@ use super::*;
 use crate::models::Permissions;
 use async_trait::async_trait;
 use chrono::DateTime;
+use hubuum_storage_core::artifacts::TaskArtifactCleanup;
 use hubuum_storage_core::artifacts::*;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -148,6 +149,10 @@ impl ArtifactStore for GatedReadStore {
 }
 #[async_trait]
 impl TaskArtifactStore for GatedReadStore {
+    async fn abort_task(&self, cleanup: &TaskArtifactCleanup) -> ArtifactResult<()> {
+        self.store.abort_task(cleanup).await
+    }
+
     async fn bind_task(
         &self,
         id: &ArtifactIdentity,

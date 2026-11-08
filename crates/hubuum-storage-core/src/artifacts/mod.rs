@@ -223,10 +223,36 @@ impl ArtifactReservation {
     }
 }
 
-/// Task-owned artifact admission supplements the immutable byte-store protocol.
-/// Adapters bind to the exact durable task incarnation and fenced execution.
+/// Exact original task-attempt binding for nonproductive cleanup.
+#[derive(Clone, Debug)]
+pub struct TaskArtifactCleanup {
+    identity: ArtifactIdentity,
+    lease: crate::StorageTaskLease,
+}
+
+impl TaskArtifactCleanup {
+    /// The adapter validates this exact original binding. Possession permits
+    /// only aborting its unpublished attempt, including after stop or lease loss.
+    pub fn new(identity: ArtifactIdentity, lease: crate::StorageTaskLease) -> Self {
+        Self { identity, lease }
+    }
+
+    pub fn identity(&self) -> &ArtifactIdentity {
+        &self.identity
+    }
+    pub fn lease(&self) -> &crate::StorageTaskLease {
+        &self.lease
+    }
+}
+
+/// Task-owned admission binds immutable output to its durable task incarnation.
 #[async_trait]
 pub trait TaskArtifactStore: ArtifactStore {
+    /// Exact nonproductive cleanup; must not reacquire productive admission or
+    /// waive scope restrictions for reads, append, seal or publication. Wait for
+    /// in-flight attempt writes and reject published, unknown or foreign work.
+    async fn abort_task(&self, cleanup: &TaskArtifactCleanup) -> ArtifactResult<()>;
+
     async fn bind_task(
         &self,
         identity: &ArtifactIdentity,

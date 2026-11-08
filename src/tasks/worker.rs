@@ -320,6 +320,12 @@ async fn process_one_task_with_settings(
         .await
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum WorkerInterruption {
+    Shutdown,
+    LeaseLost,
+}
+
 async fn process_admitted_task(
     context: &AppContext,
     worker: TaskWorkerId,
@@ -335,7 +341,8 @@ async fn process_admitted_task(
         StorageTaskLeaseDuration::from_milliseconds(settings.lease_duration().as_millis() as i64)
             .expect("validated worker lease"),
     );
-    let task = match claim_next_task(context, request).await {
+    let task = match super::history::run(context.backend(), claim_next_task(context, request)).await
+    {
         Ok(task) => task,
         Err(error) => {
             metrics::task_worker_iteration("error");
@@ -371,70 +378,84 @@ async fn process_admitted_task(
             .worker_provenance()
             .with_trace_link(telemetry::current_trace_link());
         with_mutation_provenance(context, Some(provenance), async {
-        let mut heartbeat = start_task_lease_heartbeat(
-            context.backend().clone(),
-            &task,
-            claim_started_at + settings.lease_duration(),
-        );
-        let execution = async {
-            match shutdown {
-                Some(shutdown) => {
-                    tokio::select! {
+            let mut heartbeat = start_task_lease_heartbeat(
+                context.backend().clone(),
+                &task,
+                claim_started_at + settings.lease_duration(),
+            );
+            let mut interruption = None;
+            let stopped = async {
+                match shutdown {
+                    Some(shutdown) => tokio::select! {
                         biased;
-                        _ = shutdown.requested() => Err(ApiError::ServiceUnavailable(
-                            "Task interrupted by graceful server shutdown".to_string(),
-                        )),
-                        result = execute_with_control(context, &task, backup_settings, settings) => result,
+                        _ = shutdown.requested() => interruption = Some(WorkerInterruption::Shutdown),
+                        _ = wait_for_lost_task_lease(&mut heartbeat) => interruption = Some(WorkerInterruption::LeaseLost),
+                    },
+                    None => {
+                        wait_for_lost_task_lease(&mut heartbeat).await;
+                        interruption = Some(WorkerInterruption::LeaseLost);
                     }
                 }
-                None => execute_with_control(context, &task, backup_settings, settings).await,
-            }
-        };
-        let mut ownership_lost = false;
-        let result = tokio::select! {
-            result = execution => result,
-            _ = wait_for_lost_task_lease(&mut heartbeat) => {
-                ownership_lost = true;
-                Err(ApiError::ServiceUnavailable(
-                    "Task execution stopped because its worker lease was lost".to_string(),
-                ))
-            }
-        };
-        let persisted_terminal = crate::services::tasks::find_task(context, task.lease().task_id()).await
-            .ok().and_then(|task| TaskStatus::from_db(&task.status).ok()).filter(|status| status.is_terminal());
-        let mut terminal_status = persisted_terminal.or(result.as_ref().ok().copied());
-        if persisted_terminal.is_none() && matches!(&result, Err(ApiError::TaskStopped(_))) && !ownership_lost {
-            let finished = crate::services::tasks::acknowledge_task_stop(context, &task).await?;
-            terminal_status = Some(TaskStatus::from_db(&finished.status)?);
-        } else if let Err(err) = &result
-            && persisted_terminal.is_none()
-            && !ownership_lost
-        {
-            let finalized = finalize_failure_while_lease_owned(
-                &mut heartbeat,
-                mark_claimed_task_failed(context, &task, err),
+            };
+            let result =
+                execute_with_control(context, &task, backup_settings, settings, stopped).await;
+            let ownership_lost = interruption == Some(WorkerInterruption::LeaseLost);
+            let result = match interruption {
+                Some(WorkerInterruption::LeaseLost) => Err(ApiError::ServiceUnavailable(
+                    "Task execution stopped because its worker lease was lost".into(),
+                )),
+                Some(WorkerInterruption::Shutdown) => Err(ApiError::ServiceUnavailable(
+                    "Task interrupted by graceful server shutdown".into(),
+                )),
+                None => result,
+            };
+            let persisted_terminal = super::history::run(
+                context.backend(),
+                crate::services::tasks::find_task(context, task.lease().task_id()),
             )
-            .await?;
-            if finalized {
-                let finished = crate::services::tasks::find_task(context, task.lease().task_id()).await?;
+            .await
+            .ok()
+            .and_then(|task| TaskStatus::from_db(&task.status).ok())
+            .filter(|status| status.is_terminal());
+            let mut terminal_status = persisted_terminal.or(result.as_ref().ok().copied());
+            if persisted_terminal.is_none()
+                && matches!(&result, Err(ApiError::TaskStopped(_)))
+                && !ownership_lost
+            {
+                let finished =
+                    crate::services::tasks::acknowledge_task_stop(context, &task).await?;
                 terminal_status = Some(TaskStatus::from_db(&finished.status)?);
-            } else {
-                warn!(
-                    message = "Task failure finalization stopped because its worker lease was lost",
-                    task_id = task.id,
-                );
+            } else if let Err(err) = &result
+                && persisted_terminal.is_none()
+                && !ownership_lost
+            {
+                let finalized = finalize_failure_while_lease_owned(
+                    &mut heartbeat,
+                    mark_claimed_task_failed(context, &task, err),
+                )
+                .await?;
+                if finalized {
+                    let finished = super::history::run(
+                        context.backend(),
+                        crate::services::tasks::find_task(context, task.lease().task_id()),
+                    )
+                    .await?;
+                    terminal_status = Some(TaskStatus::from_db(&finished.status)?);
+                } else {
+                    warn!(
+                        message =
+                            "Task failure finalization stopped because its worker lease was lost",
+                        task_id = task.id,
+                    );
+                }
             }
-        }
-        if let Some(heartbeat) = heartbeat {
-            heartbeat.stop().await;
-        }
+            if let Some(heartbeat) = heartbeat {
+                heartbeat.stop().await;
+            }
 
-        tracing::Span::current().record(
-            "task.outcome",
-            task_span_outcome(terminal_status),
-        );
+            tracing::Span::current().record("task.outcome", task_span_outcome(terminal_status));
 
-        Ok(true)
+            Ok(true)
         })
         .await
     }
@@ -839,11 +860,12 @@ fn duration_since(timestamp: chrono::NaiveDateTime) -> Option<Duration> {
     (elapsed >= 0).then(|| Duration::from_millis(elapsed as u64))
 }
 
-async fn execute_with_control(
+async fn execute_with_control<S: Future<Output = ()>>(
     context: &AppContext,
     task: &ClaimedTask,
     backup_settings: &BackupSettings,
     settings: TaskWorkerSettings,
+    stopped: S,
 ) -> Result<TaskStatus, ApiError> {
     super::control::execute(
         context,
@@ -852,6 +874,7 @@ async fn execute_with_control(
         // Keep the dispatch state on the heap before control adds its own
         // admission, cancellation tracking and task-local scope wrappers.
         Box::pin(process_claimed_task(context, task, backup_settings)),
+        stopped,
     )
     .await
 }
@@ -1000,7 +1023,13 @@ mod worker_future_tests {
             "worker iteration exceeds its future-size budget: {iteration} bytes"
         );
         let execution = execution_future_size(|task| {
-            execute_with_control(&context, task, &settings, task_worker_settings())
+            execute_with_control(
+                &context,
+                task,
+                &settings,
+                task_worker_settings(),
+                std::future::pending(),
+            )
         });
         assert!(
             execution < 16 * 1024,

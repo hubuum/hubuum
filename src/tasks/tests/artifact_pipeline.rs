@@ -7,6 +7,7 @@ use crate::traits::CanSave;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
+use hubuum_storage_core::artifacts::TaskArtifactCleanup;
 use hubuum_storage_core::artifacts::*;
 use hubuum_storage_core::{
     StorageTaskLease, StorageTaskLeaseDuration, StorageTaskOutputLookup, TaskCapacityStorage,
@@ -93,6 +94,10 @@ impl ArtifactStore for SlowDestination {
 }
 #[async_trait]
 impl TaskArtifactStore for SlowDestination {
+    async fn abort_task(&self, cleanup: &TaskArtifactCleanup) -> ArtifactResult<()> {
+        self.store.abort_task(cleanup).await
+    }
+
     async fn bind_task(
         &self,
         id: &ArtifactIdentity,

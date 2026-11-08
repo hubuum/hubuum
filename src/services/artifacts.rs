@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use futures_util::{FutureExt, Stream, stream};
 use hubuum_artifacts::{
     ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactReader, ArtifactReference,
-    ArtifactReservation, Destination, DestinationId, TaskArtifactStore,
+    ArtifactReservation, Destination, DestinationId, TaskArtifactCleanup, TaskArtifactStore,
 };
 use hubuum_storage_core::{
     HistoryLifecycleStorage, HistoryPublicationKind, HistoryPublicationOwner,
@@ -139,6 +139,7 @@ pub(crate) struct TaskOutput {
     pub store: Arc<dyn TaskArtifactStore>,
     pub identity: ArtifactIdentity,
     pub limits: ArtifactLimits,
+    cleanup: TaskArtifactCleanup,
 }
 impl TaskOutput {
     pub async fn begin(
@@ -198,6 +199,7 @@ impl TaskOutput {
             return Err(abort_output(store.as_ref(), &identity, publication, failure).await);
         }
         Ok(Self {
+            cleanup: TaskArtifactCleanup::new(identity.clone(), task.lease().clone()),
             store,
             identity,
             limits,
@@ -210,7 +212,7 @@ impl TaskOutput {
         result: Result<TaskStatus, ApiError>,
     ) -> Result<TaskStatus, ApiError> {
         if !matches!(result, Ok(TaskStatus::Succeeded))
-            && let Err(cleanup) = self.store.abort(&self.identity).await
+            && let Err(cleanup) = self.store.abort_task(&self.cleanup).await
         {
             tracing::warn!(%cleanup, "Task output abort remains unconfirmed");
             return result.and_then(|_| Err(error(cleanup)));

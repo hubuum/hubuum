@@ -37,6 +37,7 @@ CREATE TABLE hubuum_control.history_publication_owners (
     id UUID PRIMARY KEY,
     ownership_token UUID NOT NULL,
     runtime_id UUID NOT NULL,
+    isolation JSONB,
     incarnation UUID NOT NULL,
     deletion_revision BIGINT NOT NULL CHECK (deletion_revision>=0),
     history_revision BIGINT NOT NULL CHECK (history_revision>=0),
@@ -150,9 +151,10 @@ BEGIN
         WHERE id=1 AND generation=expected_generation;
     IF NOT FOUND OR (SELECT count(*) FROM hubuum_control.history_publication_owners)>=256
         OR (SELECT count(*) FROM hubuum_control.history_publication_owners WHERE runtime_id=runtime)>=64 THEN RETURN FALSE; END IF;
-    INSERT INTO hubuum_control.history_publication_owners(id,ownership_token,runtime_id,incarnation,deletion_revision,history_revision,generation,kind,api_request_owner)
-        VALUES(identity,ownership,runtime,incarnation,deletion_revision,history_revision,expected_generation,producer_kind,original_api_owner);
-    RETURN TRUE;
+    INSERT INTO hubuum_control.history_publication_owners(id,ownership_token,runtime_id,isolation,incarnation,deletion_revision,history_revision,generation,kind,api_request_owner)
+        SELECT identity,ownership,runtime,r.isolation,incarnation,deletion_revision,history_revision,expected_generation,producer_kind,original_api_owner
+        FROM hubuum_control.runtime_registrations r WHERE r.id=runtime AND r.ownership_token=runtime_ownership;
+    RETURN FOUND;
 END
 $function$;
 REVOKE ALL ON FUNCTION public.hubuum_history_publication_admit(UUID,UUID,TEXT,UUID,UUID,UUID,BIGINT,BIGINT,BIGINT,UUID) FROM PUBLIC;

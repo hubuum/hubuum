@@ -24,6 +24,22 @@ The application bridge must validate its own original-scope cause before any
 API/task projection. Do not traverse arbitrary source chains, stringify causes
 for classification, or serialize raw error evidence.
 
+**Breaking task-artifact cleanup contract:** implement
+`TaskArtifactStore::abort_task(&TaskArtifactCleanup)` as an exact nonproductive
+operation. Match the original immutable attempt, task ID and claim token, wait
+for outstanding writes, and reject unknown, published or foreign attempts.
+Cancellation, lease loss and old application fences must still permit this abort;
+never use it to authorize reads, writes or publication. Physical reservations
+remain until bounded cleanup confirms removal.
+
+Publication admission retains its original runtime isolation domain even after
+unregistration. Offline recovery may retire backup, metadata and archive-read owners and
+unclaimed producer slots only under exclusive process isolation and the native
+application fence. Retain renderer-capable HTTP/export owners: excluding the
+parent process alone does not prove descendant completion.
+Unknown domains, orphaned ownership and claimed external publication outcomes
+remain charged; process death alone cannot reconcile a provider outcome.
+
 Deploy `2026-11-03-000005_history_lifecycle` after the landed archive migration
 000004, refresh runtime grants, and retain independent format-3 recovery material.
 Never rewrite the shipped admission/archive migrations. Once retained expiry
