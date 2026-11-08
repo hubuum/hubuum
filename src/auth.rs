@@ -1751,10 +1751,13 @@ mod tests {
     #[case::enabled(true)]
     #[case::disabled(false)]
     #[tokio::test]
-    async fn deployment_activation_survives_reload(#[case] enabled: bool) {
+    async fn deployment_activation_survives_reload(
+        #[case] enabled: bool,
+        #[values("corporate", "corp.example.org", "Bedrift Øst")] name: &str,
+    ) {
         let configured = StorageAuthenticationProviders::try_new(vec![
             StorageAuthenticationProvider::deployment(
-                "corporate",
+                name,
                 StorageAuthenticationProviderKind::Ldap,
                 enabled,
             )
@@ -1774,28 +1777,33 @@ mod tests {
         let registry = AuthProviderRegistry::from_runtime_providers(
             &reloaded,
             &AuthProvidersConfig {
-                ldap: vec![ldap_scope("corporate")],
+                ldap: vec![ldap_scope(name)],
             },
         )
         .await
         .unwrap();
-        assert_eq!(registry.provider("corporate").is_ok(), enabled);
+        assert_eq!(registry.provider(name).is_ok(), enabled);
     }
 
     #[rstest]
     #[case::implicit(false)]
     #[case::explicit(true)]
     #[tokio::test]
-    async fn deployment_definition_requires_explicit_adoption(#[case] adopt: bool) {
+    async fn deployment_definition_requires_explicit_adoption(
+        #[case] adopt: bool,
+        #[values("corporate", "corp.example.org", "Bedrift Øst")] name: &str,
+    ) {
         let deployment = AuthProvidersConfig {
-            ldap: vec![ldap_scope("corporate")],
+            ldap: vec![ldap_scope(name)],
         };
         let result = protect_runtime_authentication_settings(
-            vec![runtime_request(
-                serde_json::to_value(&deployment.ldap[0]).unwrap(),
-                false,
-                adopt,
-            )],
+            vec![RuntimeAuthenticationProviderRequest::Runtime {
+                name: name.to_string(),
+                kind: crate::models::runtime_settings::RuntimeAuthenticationProviderKind::Ldap,
+                enabled: false,
+                configuration: serde_json::to_value(&deployment.ldap[0]).unwrap(),
+                adopt_deployment: adopt,
+            }],
             None,
             &deployment,
         )

@@ -263,15 +263,16 @@ impl StorageAuthenticationProvider {
     }
 
     fn validate_name(name: String) -> Result<String, StorageValidationError> {
-        if name == "local"
-            || name.is_empty()
-            || name.len() > 128
-            || !name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-        {
+        if name == "local" {
             return Err(StorageValidationError::invalid(
-                "Authentication providers require a safe name; local authentication cannot be replaced or disabled",
+                "Local authentication cannot be replaced or disabled",
+            ));
+        }
+        // Keep names compatible with hubuum_auth_core::IdentityScopeName so
+        // existing deployment providers can retain their identity namespace.
+        if name.trim().is_empty() || name.trim() != name {
+            return Err(StorageValidationError::invalid(
+                "Authentication provider names must be non-empty without leading or trailing whitespace",
             ));
         }
         Ok(name)
@@ -1125,6 +1126,65 @@ mod tests {
             .unwrap()
         };
         assert!(StorageAuthenticationProviders::try_new(vec![provider(), provider()]).is_err());
+    }
+
+    #[rstest]
+    #[case::dotted("corp.example.org".to_string())]
+    #[case::unicode("Bedrift Øst".to_string())]
+    #[case::long("a".repeat(129))]
+    fn authentication_provider_names_survive_persistence(
+        #[case] name: String,
+        #[values(true, false)] deployment_owned: bool,
+    ) {
+        let provider = if deployment_owned {
+            StorageAuthenticationProvider::deployment(
+                name,
+                StorageAuthenticationProviderKind::Ldap,
+                true,
+            )
+        } else {
+            StorageAuthenticationProvider::try_new(
+                name,
+                StorageAuthenticationProviderKind::Ldap,
+                json!({}),
+            )
+        }
+        .unwrap();
+        let value = StorageRuntimeSettingsValue::Authentication(
+            StorageAuthenticationProviders::try_new(vec![provider]).unwrap(),
+        );
+        assert_eq!(
+            StorageRuntimeSettingsValue::from_document(value.group(), &value.to_document())
+                .unwrap(),
+            value
+        );
+    }
+
+    #[rstest]
+    #[case::local("local")]
+    #[case::empty("")]
+    #[case::whitespace(" ")]
+    #[case::leading_whitespace(" corporate")]
+    #[case::trailing_whitespace("corporate ")]
+    #[case::unicode_whitespace("\u{2003}corporate")]
+    fn authentication_provider_names_reject_reserved_or_untrimmed_names(
+        #[case] name: &str,
+        #[values(true, false)] deployment_owned: bool,
+    ) {
+        let result = if deployment_owned {
+            StorageAuthenticationProvider::deployment(
+                name,
+                StorageAuthenticationProviderKind::Ldap,
+                false,
+            )
+        } else {
+            StorageAuthenticationProvider::try_new(
+                name,
+                StorageAuthenticationProviderKind::Ldap,
+                json!({}),
+            )
+        };
+        assert!(result.is_err());
     }
 
     #[rstest]

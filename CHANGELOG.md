@@ -28,7 +28,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   administrator adopts a value; replica startup never overwrites shared
   settings. See [runtime settings](docs/runtime_settings.md).
 - Administrators can select authentication providers and the authorization
-  backend at runtime. LDAP provider updates are validated and connection-tested
+  backend at runtime. Existing LDAP identity-scope names, including names with
+  dots, Unicode, or more than 128 bytes, remain valid for deployment references
+  and runtime adoption. LDAP provider updates are validated and connection-tested
   before persistence; bind passwords are encrypted at rest using a
   key identified by an immutable secret reference. New requests use
   applied settings, and authorization initialization failures fail closed.

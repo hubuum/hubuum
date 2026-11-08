@@ -388,8 +388,12 @@ async fn local_authentication_cannot_be_disabled_through_the_api() {
     );
 }
 
+#[rstest::rstest]
+#[case::simple("corporate")]
+#[case::dotted("corp.example.org")]
+#[case::unicode("Bedrift Øst")]
 #[actix_web::test]
-async fn disabled_deployment_provider_is_audited_without_connectivity() {
+async fn disabled_deployment_provider_is_audited_without_connectivity(#[case] name: &str) {
     let backend = StorageHandle::memory();
     let user = admin(&backend).await;
     let (status, _) = send_json(
@@ -398,7 +402,7 @@ async fn disabled_deployment_provider_is_audited_without_connectivity() {
         test::TestRequest::post()
             .uri("/api/v1/admin/runtime-settings/authentication/preflight")
             .set_json(json!({"expected_revision": 1, "providers": [
-                {"source": "deployment", "name": "corporate", "kind": "ldap", "enabled": false}
+                {"source": "deployment", "name": name, "kind": "ldap", "enabled": false}
             ]})),
     )
     .await;
@@ -418,7 +422,7 @@ async fn disabled_deployment_provider_is_audited_without_connectivity() {
     assert_eq!(
         document["providers"],
         json!([
-            {"source": "deployment", "name": "corporate", "kind": "ldap", "enabled": false}
+            {"source": "deployment", "name": name, "kind": "ldap", "enabled": false}
         ])
     );
     assert_eq!(
