@@ -1060,6 +1060,71 @@ async fn client_configuration_reports_the_applied_default() {
     assert_eq!(body["pagination"]["default_page_limit"], 4);
 }
 
+#[rstest::rstest]
+#[case::runtime_default(None, false, 2)]
+#[case::updated_before_body(None, true, 2)]
+#[case::explicit_limit(Some(1), true, 1)]
+#[actix_web::test]
+async fn structured_search_stream_keeps_request_page_limits(
+    #[case] requested_limit: Option<usize>,
+    #[case] update_before_body: bool,
+    #[case] expected_limit: usize,
+) {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    for index in 0..4 {
+        backend
+            .collection_store()
+            .create_collection(
+                StorageCollectionCreate::new(
+                    format!("stream_collection_{index}"),
+                    "runtime pagination stream fixture",
+                    group_id(1),
+                    None,
+                ),
+                &EventContext::system(),
+            )
+            .await
+            .unwrap()
+            .into_value();
+    }
+    commit(&backend, pagination(2)).await;
+    backend.refresh_runtime_settings().await.unwrap();
+    let mut request = json!({"version": 1, "target": {"kind": "collection"}});
+    if let Some(limit) = requested_limit {
+        request["limit"] = json!(limit);
+    }
+    let response = send(
+        &backend,
+        Some(&user.raw_token),
+        test::TestRequest::post()
+            .uri("/api/v1/search/stream")
+            .set_json(request),
+    )
+    .await;
+    assert_eq!(response.status(), http::StatusCode::OK);
+
+    // The handler has returned, but the search runs when its body is polled.
+    if update_before_body {
+        commit(&backend, pagination(3)).await;
+        backend.refresh_runtime_settings().await.unwrap();
+    }
+    let body = String::from_utf8(test::read_body(response).await.to_vec()).unwrap();
+    let done = body
+        .split("\n\n")
+        .find_map(|event| event.strip_prefix("event: done\ndata: "))
+        .expect("stream should finish with pagination metadata");
+    let done: Value = serde_json::from_str(done).unwrap();
+    assert_eq!(
+        (
+            body.matches("event: result\n").count(),
+            done["page_limit"].as_u64(),
+            done["next"].is_string(),
+        ),
+        (expected_limit, Some(expected_limit as u64), true),
+    );
+}
+
 #[actix_web::test]
 async fn admin_configuration_reports_effective_runtime_settings() {
     let storage = MemoryStorage::new();

@@ -20,7 +20,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   committed together with a durable audit record. Read the records through
   `GET /api/v1/admin/runtime-settings/history/{group}`. Replicas apply committed
   changes on notification or within 30 seconds. API requests resolve page
-  limits once, when they start. `GET /api/v1/admin/config` reports each group's
+  limits once, when they start, including deferred searches in streaming
+  responses. `GET /api/v1/admin/config` reports each group's
   source, revision, mutability, and effective value, and whether the responding
   replica's applied state is current or stale. `GET /api/v1/config` reports the
   effective default page size. Runtime settings survive restores and are
