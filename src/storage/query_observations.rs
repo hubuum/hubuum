@@ -25,7 +25,7 @@ use super::runtime_settings::AppliedRuntimeSettings;
 type PatternKey = (ClassId, StorageQueryUsagePattern);
 struct Entry {
     observation: StorageQueryPatternObservation,
-    expires_at: Instant,
+    observed_at: Instant,
 }
 struct State {
     entries: HashMap<PatternKey, Entry>,
@@ -33,20 +33,64 @@ struct State {
     drops: u64,
 }
 impl State {
-    fn expire(&mut self, now: Instant) {
-        let counts = &mut self.class_counts;
-        self.entries.retain(|(class_id, _), entry| {
-            if entry.expires_at > now {
-                return true;
+    fn expire(&mut self, now: Instant, retention_seconds: u32) {
+        let retention = Duration::from_secs(u64::from(retention_seconds));
+        let expired = self
+            .entries
+            .iter()
+            .filter(|(_, entry)| now.saturating_duration_since(entry.observed_at) >= retention)
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        for key in expired {
+            self.remove(&key, false);
+        }
+    }
+
+    fn enforce_limits(&mut self, settings: StorageQueryObservationSettings) {
+        while self.entries.len() > settings.max_patterns() {
+            if !self.remove_oldest(None) {
+                break;
             }
-            if let Some(count) = counts.get_mut(class_id) {
-                *count -= 1;
-                if *count == 0 {
-                    counts.remove(class_id);
-                }
+        }
+        loop {
+            let over_limit = self
+                .class_counts
+                .iter()
+                .find(|(_, count)| **count > settings.max_patterns_per_class())
+                .map(|(class_id, _)| *class_id);
+            let Some(class_id) = over_limit else {
+                break;
+            };
+            if !self.remove_oldest(Some(class_id)) {
+                break;
             }
-            false
-        });
+        }
+    }
+
+    fn remove_oldest(&mut self, class_id: Option<ClassId>) -> bool {
+        let key = self
+            .entries
+            .iter()
+            .filter(|((id, _), _)| class_id.is_none_or(|class_id| class_id == *id))
+            .min_by_key(|(_, entry)| entry.observed_at)
+            .map(|(key, _)| key.clone());
+        key.is_some_and(|key| self.remove(&key, true))
+    }
+
+    fn remove(&mut self, key: &PatternKey, count_drop: bool) -> bool {
+        if self.entries.remove(key).is_none() {
+            return false;
+        }
+        if let Some(count) = self.class_counts.get_mut(&key.0) {
+            *count -= 1;
+            if *count == 0 {
+                self.class_counts.remove(&key.0);
+            }
+        }
+        if count_drop {
+            self.drops = self.drops.saturating_add(1);
+        }
+        true
     }
 }
 
@@ -75,7 +119,7 @@ impl QueryObservations {
         self.settings
     }
 
-    /// Deployment bounds with the shared enablement applied, when one is managed.
+    /// Effective settings after the shared policy and local ceilings apply.
     pub(crate) fn settings(
         &self,
         applied: &AppliedRuntimeSettings,
@@ -84,13 +128,12 @@ impl QueryObservations {
             .snapshot()
             .and_then(|snapshot| snapshot.query_observations())
         {
-            Some(policy) => self.settings.with_enabled(policy.enabled()),
+            Some(policy) => self.settings.with_runtime_policy(policy),
             None => self.settings,
         }
     }
 
-    /// A failed refresh pauses collection rather than keep a possibly stale
-    /// enablement; ordinary queries never wait for or fail on storage reads.
+    #[cfg(test)]
     pub(crate) fn collection_enabled(&self, applied: &AppliedRuntimeSettings) -> bool {
         !applied.refresh_failed() && self.settings(applied).enabled()
     }
@@ -99,9 +142,10 @@ impl QueryObservations {
         self: &Arc<Self>,
         query: &QueryOptions,
         class_id: Option<ClassId>,
+        settings: StorageQueryObservationSettings,
         operation: impl Future<Output = Result<T, E>>,
     ) -> Result<T, E> {
-        let ticket = self.begin(query, class_id);
+        let ticket = self.begin(query, class_id, settings);
         let result = operation.await;
         if result.is_ok()
             && let Some(ticket) = ticket
@@ -115,15 +159,16 @@ impl QueryObservations {
         self: &Arc<Self>,
         query: &QueryOptions,
         explicit_class: Option<ClassId>,
+        settings: StorageQueryObservationSettings,
     ) -> Option<QueryObservationTicket> {
         if !self
             .requests
             .fetch_add(1, Ordering::Relaxed)
-            .is_multiple_of(u64::from(self.settings.sample_every()))
+            .is_multiple_of(u64::from(settings.sample_every()))
         {
             return None;
         }
-        let filters = direct_filters(query, self.settings.max_predicates_per_query())?;
+        let filters = direct_filters(query, settings.max_predicates_per_query())?;
         let class_id = match explicit_class {
             Some(id) => id,
             None => attributed_class(&filters)?,
@@ -172,6 +217,7 @@ impl QueryObservations {
             class_id,
             patterns,
             started: Instant::now(),
+            settings,
         })
     }
 
@@ -184,7 +230,8 @@ impl QueryObservations {
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        state.expire(Instant::now());
+        state.expire(Instant::now(), settings.retention_seconds());
+        state.enforce_limits(settings);
         let mut patterns = state
             .entries
             .iter()
@@ -211,19 +258,21 @@ struct QueryObservationTicket {
     class_id: ClassId,
     patterns: HashSet<StorageQueryUsagePattern>,
     started: Instant,
+    settings: StorageQueryObservationSettings,
 }
 impl QueryObservationTicket {
     fn complete(self) {
         let elapsed = self.started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
         let instant = Instant::now();
         let now = Utc::now();
-        let settings = self.collector.settings;
+        let settings = self.settings;
         let mut state = self
             .collector
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        state.expire(instant);
+        state.expire(instant, settings.retention_seconds());
+        state.enforce_limits(settings);
         for pattern in self.patterns {
             let key = (self.class_id, pattern);
             if let Some(entry) = state.entries.get_mut(&key) {
@@ -243,8 +292,7 @@ impl QueryObservationTicket {
                 key,
                 Entry {
                     observation,
-                    expires_at: instant
-                        + Duration::from_secs(u64::from(settings.retention_seconds())),
+                    observed_at: instant,
                 },
             );
         }
@@ -313,9 +361,9 @@ mod tests {
     use hubuum_domain::ResourceRevision;
     use hubuum_query::{StructuredQueryField, parse_query_parameter};
     use hubuum_storage_core::{
-        StorageError, StorageQueryObservationPolicy, StorageRuntimeSettingsAssignment,
-        StorageRuntimeSettingsGroup, StorageRuntimeSettingsRecord, StorageRuntimeSettingsSnapshot,
-        StorageRuntimeSettingsValue,
+        StorageError, StorageQueryObservationCeilings, StorageQueryObservationPolicy,
+        StorageRuntimeSettingsAssignment, StorageRuntimeSettingsGroup,
+        StorageRuntimeSettingsRecord, StorageRuntimeSettingsSnapshot, StorageRuntimeSettingsValue,
     };
     use rstest::rstest;
 
@@ -336,19 +384,21 @@ mod tests {
                             StorageRuntimeSettingsGroup::QueryObservations,
                         ),
                     };
-                    StorageRuntimeSettingsSnapshot::try_new(vec![
-                        StorageRuntimeSettingsRecord::new(
-                            assignment,
-                            ResourceRevision::INITIAL,
-                            Utc::now(),
-                            None,
-                        ),
-                        StorageRuntimeSettingsRecord::initial(
-                            StorageRuntimeSettingsGroup::Pagination,
-                            Utc::now(),
-                        ),
-                    ])
-                    .unwrap()
+                    let now = Utc::now();
+                    let mut records = StorageRuntimeSettingsGroup::ALL
+                        .into_iter()
+                        .map(|group| StorageRuntimeSettingsRecord::initial(group, now))
+                        .collect::<Vec<_>>();
+                    records.retain(|record| {
+                        record.group() != StorageRuntimeSettingsGroup::QueryObservations
+                    });
+                    records.push(StorageRuntimeSettingsRecord::new(
+                        assignment,
+                        ResourceRevision::INITIAL,
+                        now,
+                        None,
+                    ));
+                    StorageRuntimeSettingsSnapshot::try_new(records).unwrap()
                 })
             })
             .await;
@@ -373,6 +423,65 @@ mod tests {
             collector.collection_enabled(&applied(Ok(managed)).await),
             expected
         );
+    }
+
+    #[tokio::test]
+    async fn runtime_resource_limits_are_clamped_to_replica_ceilings() {
+        let ceilings = StorageQueryObservationCeilings::try_new(4, 4, 2, 60, 8).unwrap();
+        let deployment =
+            StorageQueryObservationSettings::try_new_with_ceilings(true, 8, 4, 2, 60, 8, ceilings)
+                .unwrap();
+        let replica = super::super::runtime_settings::RuntimeSettingsReplica::new();
+        let assignment = StorageRuntimeSettingsAssignment::Managed(
+            StorageRuntimeSettingsValue::QueryObservations(
+                StorageQueryObservationPolicy::try_with_resource_limits(true, 1, 16, 8, 3600, 32)
+                    .unwrap(),
+            ),
+        );
+        replica
+            .refresh(async {
+                let now = Utc::now();
+                let mut records = StorageRuntimeSettingsGroup::ALL
+                    .into_iter()
+                    .map(|group| StorageRuntimeSettingsRecord::initial(group, now))
+                    .collect::<Vec<_>>();
+                records.retain(|record| {
+                    record.group() != StorageRuntimeSettingsGroup::QueryObservations
+                });
+                records.push(StorageRuntimeSettingsRecord::new(
+                    assignment,
+                    ResourceRevision::new(2).unwrap(),
+                    now,
+                    None,
+                ));
+                Ok(StorageRuntimeSettingsSnapshot::try_new(records).unwrap())
+            })
+            .await
+            .unwrap();
+        let collector = QueryObservations::new(deployment);
+        let settings = collector.settings(&replica.current());
+        assert_eq!(
+            (
+                settings.sample_every(),
+                settings.max_patterns(),
+                settings.max_patterns_per_class(),
+                settings.retention_seconds(),
+                settings.max_predicates_per_query(),
+            ),
+            (4, 4, 2, 60, 8)
+        );
+    }
+
+    #[test]
+    fn lowering_capacity_trims_retained_patterns() {
+        let collector = collector(8, 8, 1);
+        for id in 1..=4 {
+            record(&collector, &format!("class_id={id}&json_data=serial=value"));
+        }
+        let restricted = StorageQueryObservationSettings::try_new(true, 1, 2, 2, 60, 16).unwrap();
+        let snapshot = collector.snapshot_with_settings(ClassId::new(1).unwrap(), restricted);
+        assert!(snapshot.patterns().len() <= 2);
+        assert!(collector.state.lock().unwrap().entries.len() <= 2);
     }
 
     #[test]
@@ -400,7 +509,7 @@ mod tests {
     }
     fn record(collector: &Arc<QueryObservations>, query: &str) {
         let options = parse_query_parameter(query).unwrap();
-        if let Some(ticket) = collector.begin(&options, None) {
+        if let Some(ticket) = collector.begin(&options, None, collector.settings) {
             ticket.complete();
         }
     }
@@ -410,7 +519,7 @@ mod tests {
         record(&collector, "class_id=1&json_data=serial=secret-alpha");
         record(&collector, "class_id=1&json_data=serial=secret-beta");
         let failed = parse_query_parameter("class_id=1&json_data=failed=secret-gamma").unwrap();
-        drop(collector.begin(&failed, None));
+        drop(collector.begin(&failed, None, collector.settings));
         let snapshot = collector.snapshot(ClassId::new(1).unwrap());
         assert_eq!(snapshot.patterns().len(), 1);
         assert_eq!(snapshot.patterns()[0].sampled_queries(), 2);
@@ -464,7 +573,7 @@ mod tests {
             field: StructuredQueryField::JsonData,
             parameter: predicate.filters()[0].clone(),
         })));
-        if let Some(ticket) = collector.begin(&query, None) {
+        if let Some(ticket) = collector.begin(&query, None, collector.settings) {
             ticket.complete();
         }
         assert_eq!(
@@ -481,7 +590,7 @@ mod tests {
         let query = parse_query_parameter("class_id=1&json_data=serial=sample").unwrap();
         let authorization_delay = Duration::from_millis(20);
         collector
-            .observe(&query, None, async {
+            .observe(&query, None, collector.settings, async {
                 tokio::time::sleep(authorization_delay).await;
                 Ok::<_, ()>(())
             })
@@ -501,7 +610,12 @@ mod tests {
         use futures::FutureExt;
         let collector = collector(8, 8, 1);
         let query = parse_query_parameter("class_id=1&json_data=serial=sample").unwrap();
-        let operation = collector.observe(&query, None, std::future::pending::<Result<(), ()>>());
+        let operation = collector.observe(
+            &query,
+            None,
+            collector.settings,
+            std::future::pending::<Result<(), ()>>(),
+        );
         assert!(operation.now_or_never().is_none());
         assert!(
             collector
@@ -538,7 +652,7 @@ mod tests {
             .state
             .lock()
             .unwrap()
-            .expire(Instant::now() + Duration::from_secs(61));
+            .expire(Instant::now() + Duration::from_secs(61), 60);
         record(&collector, "class_id=2&json_data=new=sample");
         assert!(
             collector

@@ -1168,6 +1168,15 @@ pub struct AppConfig {
     #[clap(long, env = "HUBUUM_AUTH_CONFIG_PATH", default_value = None)]
     pub auth_config_path: Option<String>,
 
+    /// Secret-source name of the active key for runtime-stored credentials.
+    #[clap(
+        long,
+        env = "HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF",
+        default_value = None,
+        hide_env_values = true
+    )]
+    pub runtime_settings_encryption_key_ref: Option<String>,
+
     /// Path to the TLS certificate chain file
     #[clap(long, env = "HUBUUM_TLS_CERT_PATH", default_value = None)]
     pub tls_cert_path: Option<String>,
@@ -1734,6 +1743,12 @@ impl AppConfig {
             return Err(ApiError::BadRequest(
                 "auth_config_path must not be empty".to_string(),
             ));
+        }
+
+        if let Some(key_ref) = &self.runtime_settings_encryption_key_ref {
+            hubuum_secrets::SecretName::new(key_ref.clone()).map_err(|_| {
+                ApiError::BadRequest("runtime_settings_encryption_key_ref is invalid".to_string())
+            })?;
         }
 
         if self.default_page_limit == 0 {
@@ -2450,6 +2465,10 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         admin_groupname: env_or_default("HUBUUM_ADMIN_GROUPNAME", "admin"),
         admin_identity_scope: Some(env_or_default("HUBUUM_ADMIN_IDENTITY_SCOPE", "local")),
         auth_config_path: env_or_default_opt("HUBUUM_AUTH_CONFIG_PATH", None),
+        runtime_settings_encryption_key_ref: env_or_default_opt(
+            "HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF",
+            None,
+        ),
         tls_cert_path: env_or_default_opt("HUBUUM_TLS_CERT_PATH", None),
         tls_key_path: env_or_default_opt("HUBUUM_TLS_KEY_PATH", None),
         tls_key_passphrase: env_or_default_opt("HUBUUM_TLS_KEY_PASSPHRASE", None),

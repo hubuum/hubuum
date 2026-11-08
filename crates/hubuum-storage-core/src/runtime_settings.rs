@@ -15,28 +15,38 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::{StorageError, StorageValidationError};
+use crate::{StorageError, StorageQueryObservationSettings, StorageValidationError};
 
 /// Largest page accepted by [`StorageRuntimeSettingsHistoryQuery`].
 pub const MAX_RUNTIME_SETTINGS_HISTORY_PAGE: u16 = 100;
+pub const RUNTIME_AUTHENTICATION_PASSWORD_ENVELOPE_FIELD: &str = "runtime_bind_password_envelope";
 
 /// Stable identifier for a group of correlated runtime settings.
 ///
 /// Groups are updated atomically and revisioned independently.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum StorageRuntimeSettingsGroup {
+    Authentication,
+    Authorization,
     QueryObservations,
     Pagination,
 }
 
 impl StorageRuntimeSettingsGroup {
     /// Every group a complete adapter must persist.
-    pub const ALL: [Self; 2] = [Self::QueryObservations, Self::Pagination];
+    pub const ALL: [Self; 4] = [
+        Self::Authentication,
+        Self::Authorization,
+        Self::QueryObservations,
+        Self::Pagination,
+    ];
 
     /// Bounded persistence and diagnostic key.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Authentication => "authentication",
+            Self::Authorization => "authorization",
             Self::QueryObservations => "query_observations",
             Self::Pagination => "pagination",
         }
@@ -53,23 +63,80 @@ impl StorageRuntimeSettingsGroup {
     }
 }
 
-/// Shared enablement of process-local query observation collection.
-///
-/// Sampling and capacity limits remain deployment resource ceilings.
+/// Shared enablement and optional sampling/capacity overrides for
+/// process-local query observation collection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StorageQueryObservationPolicy {
     enabled: bool,
+    sample_every: Option<u32>,
+    max_patterns: Option<usize>,
+    max_patterns_per_class: Option<usize>,
+    retention_seconds: Option<u32>,
+    max_predicates_per_query: Option<usize>,
 }
 
 impl StorageQueryObservationPolicy {
     #[must_use]
     pub const fn new(enabled: bool) -> Self {
-        Self { enabled }
+        Self {
+            enabled,
+            sample_every: None,
+            max_patterns: None,
+            max_patterns_per_class: None,
+            retention_seconds: None,
+            max_predicates_per_query: None,
+        }
+    }
+
+    pub fn try_with_resource_limits(
+        enabled: bool,
+        sample_every: u32,
+        max_patterns: usize,
+        max_patterns_per_class: usize,
+        retention_seconds: u32,
+        max_predicates_per_query: usize,
+    ) -> Result<Self, StorageValidationError> {
+        StorageQueryObservationSettings::try_new(
+            enabled,
+            sample_every,
+            max_patterns,
+            max_patterns_per_class,
+            retention_seconds,
+            max_predicates_per_query,
+        )?;
+        Ok(Self {
+            enabled,
+            sample_every: Some(sample_every),
+            max_patterns: Some(max_patterns),
+            max_patterns_per_class: Some(max_patterns_per_class),
+            retention_seconds: Some(retention_seconds),
+            max_predicates_per_query: Some(max_predicates_per_query),
+        })
     }
 
     #[must_use]
     pub const fn enabled(self) -> bool {
         self.enabled
+    }
+
+    pub const fn sample_every(self) -> Option<u32> {
+        self.sample_every
+    }
+
+    pub const fn max_patterns(self) -> Option<usize> {
+        self.max_patterns
+    }
+
+    pub const fn max_patterns_per_class(self) -> Option<usize> {
+        self.max_patterns_per_class
+    }
+
+    pub const fn retention_seconds(self) -> Option<u32> {
+        self.retention_seconds
+    }
+
+    pub const fn max_predicates_per_query(self) -> Option<usize> {
+        self.max_predicates_per_query
     }
 }
 
@@ -101,10 +168,176 @@ impl StoragePaginationPolicy {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageAuthorizationBackend {
+    Local,
+    Treetop,
+}
+
+impl StorageAuthorizationBackend {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Treetop => "treetop",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, StorageValidationError> {
+        match value {
+            "local" => Ok(Self::Local),
+            "treetop" => Ok(Self::Treetop),
+            _ => Err(StorageValidationError::invalid(format!(
+                "Unknown authorization backend '{value}'"
+            ))),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageAuthenticationProviderKind {
+    Ldap,
+}
+
+impl StorageAuthenticationProviderKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ldap => "ldap",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, StorageValidationError> {
+        match value {
+            "ldap" => Ok(Self::Ldap),
+            _ => Err(StorageValidationError::invalid(format!(
+                "Unknown authentication provider kind '{value}'"
+            ))),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct StorageAuthenticationProvider {
+    name: String,
+    kind: StorageAuthenticationProviderKind,
+    configuration: Value,
+}
+
+impl StorageAuthenticationProvider {
+    pub fn try_new(
+        name: impl Into<String>,
+        kind: StorageAuthenticationProviderKind,
+        configuration: Value,
+    ) -> Result<Self, StorageValidationError> {
+        let name = name.into();
+        if name.is_empty()
+            || name.len() > 128
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+            || !configuration.is_object()
+            || configuration.get("bind_password").is_some()
+        {
+            return Err(StorageValidationError::invalid(
+                "Authentication providers require a safe name and object configuration without plaintext passwords",
+            ));
+        }
+        Ok(Self {
+            name,
+            kind,
+            configuration,
+        })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub const fn kind(&self) -> StorageAuthenticationProviderKind {
+        self.kind
+    }
+
+    pub fn configuration(&self) -> &Value {
+        &self.configuration
+    }
+}
+
+impl std::fmt::Debug for StorageAuthenticationProvider {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StorageAuthenticationProvider")
+            .field("name", &self.name)
+            .field("kind", &self.kind)
+            .field("configuration", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StorageAuthenticationProviders(Vec<StorageAuthenticationProvider>);
+
+impl StorageAuthenticationProviders {
+    pub const MAX_PROVIDERS: usize = 64;
+
+    pub fn try_new(
+        providers: Vec<StorageAuthenticationProvider>,
+    ) -> Result<Self, StorageValidationError> {
+        if providers.len() > Self::MAX_PROVIDERS {
+            return Err(StorageValidationError::invalid(format!(
+                "Authentication providers must not exceed {} entries",
+                Self::MAX_PROVIDERS
+            )));
+        }
+        let mut names = std::collections::HashSet::with_capacity(providers.len());
+        if providers
+            .iter()
+            .any(|provider| !names.insert(&provider.name))
+        {
+            return Err(StorageValidationError::invalid(
+                "Authentication provider names must be unique",
+            ));
+        }
+        Ok(Self(providers))
+    }
+
+    pub fn providers(&self) -> &[StorageAuthenticationProvider] {
+        &self.0
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AuthenticationProviderDocument {
+    name: String,
+    kind: String,
+    configuration: Value,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AuthenticationProvidersDocument {
+    providers: Vec<AuthenticationProviderDocument>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorizationDocument {
+    backend: String,
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct QueryObservationDocument {
     enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sample_every: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    max_patterns: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    max_patterns_per_class: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retention_seconds: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    max_predicates_per_query: Option<usize>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -114,30 +347,55 @@ struct PaginationDocument {
 }
 
 /// A validated value for exactly one group.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StorageRuntimeSettingsValue {
     QueryObservations(StorageQueryObservationPolicy),
     Pagination(StoragePaginationPolicy),
+    Authentication(StorageAuthenticationProviders),
+    Authorization(StorageAuthorizationBackend),
 }
 
 impl StorageRuntimeSettingsValue {
     #[must_use]
-    pub const fn group(self) -> StorageRuntimeSettingsGroup {
+    pub const fn group(&self) -> StorageRuntimeSettingsGroup {
         match self {
             Self::QueryObservations(_) => StorageRuntimeSettingsGroup::QueryObservations,
             Self::Pagination(_) => StorageRuntimeSettingsGroup::Pagination,
+            Self::Authentication(_) => StorageRuntimeSettingsGroup::Authentication,
+            Self::Authorization(_) => StorageRuntimeSettingsGroup::Authorization,
         }
     }
 
     /// Stable persistence document. Adapters store it without interpretation.
     #[must_use]
-    pub fn to_document(self) -> Value {
+    pub fn to_document(&self) -> Value {
         let document = match self {
             Self::QueryObservations(policy) => serde_json::to_value(QueryObservationDocument {
                 enabled: policy.enabled(),
+                sample_every: policy.sample_every(),
+                max_patterns: policy.max_patterns(),
+                max_patterns_per_class: policy.max_patterns_per_class(),
+                retention_seconds: policy.retention_seconds(),
+                max_predicates_per_query: policy.max_predicates_per_query(),
             }),
             Self::Pagination(policy) => serde_json::to_value(PaginationDocument {
                 default_page_limit: u64::from(policy.default_page_limit()),
+            }),
+            Self::Authentication(providers) => {
+                serde_json::to_value(AuthenticationProvidersDocument {
+                    providers: providers
+                        .providers()
+                        .iter()
+                        .map(|provider| AuthenticationProviderDocument {
+                            name: provider.name.clone(),
+                            kind: provider.kind().as_str().to_string(),
+                            configuration: provider.configuration.clone(),
+                        })
+                        .collect(),
+                })
+            }
+            Self::Authorization(backend) => serde_json::to_value(AuthorizationDocument {
+                backend: backend.as_str().to_string(),
             }),
         };
         document.expect("runtime settings documents contain only scalar fields")
@@ -155,11 +413,71 @@ impl StorageRuntimeSettingsValue {
             ))
         };
         match group {
+            StorageRuntimeSettingsGroup::Authentication => {
+                let document =
+                    AuthenticationProvidersDocument::deserialize(document).map_err(invalid)?;
+                let providers = document
+                    .providers
+                    .into_iter()
+                    .map(|provider| {
+                        StorageAuthenticationProvider::try_new(
+                            provider.name,
+                            StorageAuthenticationProviderKind::parse(&provider.kind)?,
+                            provider.configuration,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Self::Authentication(
+                    StorageAuthenticationProviders::try_new(providers)?,
+                ))
+            }
+            StorageRuntimeSettingsGroup::Authorization => {
+                let document = AuthorizationDocument::deserialize(document).map_err(invalid)?;
+                Ok(Self::Authorization(StorageAuthorizationBackend::parse(
+                    &document.backend,
+                )?))
+            }
             StorageRuntimeSettingsGroup::QueryObservations => {
                 let document = QueryObservationDocument::deserialize(document).map_err(invalid)?;
-                Ok(Self::QueryObservations(StorageQueryObservationPolicy::new(
-                    document.enabled,
-                )))
+                let values = [
+                    document.sample_every.is_some(),
+                    document.max_patterns.is_some(),
+                    document.max_patterns_per_class.is_some(),
+                    document.retention_seconds.is_some(),
+                    document.max_predicates_per_query.is_some(),
+                ];
+                if values.iter().any(|present| *present) && values.iter().any(|present| !present) {
+                    return Err(StorageValidationError::invalid(
+                        "Query observation resource settings must be specified together",
+                    ));
+                }
+                let policy = match (
+                    document.sample_every,
+                    document.max_patterns,
+                    document.max_patterns_per_class,
+                    document.retention_seconds,
+                    document.max_predicates_per_query,
+                ) {
+                    (
+                        Some(sample_every),
+                        Some(max_patterns),
+                        Some(max_patterns_per_class),
+                        Some(retention_seconds),
+                        Some(max_predicates_per_query),
+                    ) => StorageQueryObservationPolicy::try_with_resource_limits(
+                        document.enabled,
+                        sample_every,
+                        max_patterns,
+                        max_patterns_per_class,
+                        retention_seconds,
+                        max_predicates_per_query,
+                    )?,
+                    (None, None, None, None, None) => {
+                        StorageQueryObservationPolicy::new(document.enabled)
+                    }
+                    _ => unreachable!("query observation fields were checked as a group"),
+                };
+                Ok(Self::QueryObservations(policy))
             }
             StorageRuntimeSettingsGroup::Pagination => {
                 let document = PaginationDocument::deserialize(document).map_err(invalid)?;
@@ -172,7 +490,7 @@ impl StorageRuntimeSettingsValue {
 }
 
 /// Owner of a group's effective value.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StorageRuntimeSettingsAssignment {
     /// Each process applies its own deployment configuration.
     Deployment(StorageRuntimeSettingsGroup),
@@ -182,15 +500,15 @@ pub enum StorageRuntimeSettingsAssignment {
 
 impl StorageRuntimeSettingsAssignment {
     #[must_use]
-    pub const fn group(self) -> StorageRuntimeSettingsGroup {
+    pub const fn group(&self) -> StorageRuntimeSettingsGroup {
         match self {
-            Self::Deployment(group) => group,
+            Self::Deployment(group) => *group,
             Self::Managed(value) => value.group(),
         }
     }
 
     #[must_use]
-    pub const fn value(self) -> Option<StorageRuntimeSettingsValue> {
+    pub const fn value(&self) -> Option<&StorageRuntimeSettingsValue> {
         match self {
             Self::Deployment(_) => None,
             Self::Managed(value) => Some(value),
@@ -199,7 +517,7 @@ impl StorageRuntimeSettingsAssignment {
 
     /// Persistence document; `None` records deployment ownership.
     #[must_use]
-    pub fn to_document(self) -> Option<Value> {
+    pub fn to_document(&self) -> Option<Value> {
         self.value().map(StorageRuntimeSettingsValue::to_document)
     }
 
@@ -259,8 +577,8 @@ impl StorageRuntimeSettingsRecord {
     }
 
     #[must_use]
-    pub const fn assignment(&self) -> StorageRuntimeSettingsAssignment {
-        self.assignment
+    pub const fn assignment(&self) -> &StorageRuntimeSettingsAssignment {
+        &self.assignment
     }
 
     #[must_use]
@@ -335,7 +653,7 @@ impl StorageRuntimeSettingsSnapshot {
             .assignment()
             .value()
         {
-            Some(StorageRuntimeSettingsValue::QueryObservations(policy)) => Some(policy),
+            Some(StorageRuntimeSettingsValue::QueryObservations(policy)) => Some(*policy),
             _ => None,
         }
     }
@@ -348,7 +666,31 @@ impl StorageRuntimeSettingsSnapshot {
             .assignment()
             .value()
         {
-            Some(StorageRuntimeSettingsValue::Pagination(policy)) => Some(policy),
+            Some(StorageRuntimeSettingsValue::Pagination(policy)) => Some(*policy),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn authentication(&self) -> Option<&StorageAuthenticationProviders> {
+        match self
+            .record(StorageRuntimeSettingsGroup::Authentication)
+            .assignment()
+            .value()
+        {
+            Some(StorageRuntimeSettingsValue::Authentication(providers)) => Some(providers),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn authorization(&self) -> Option<StorageAuthorizationBackend> {
+        match self
+            .record(StorageRuntimeSettingsGroup::Authorization)
+            .assignment()
+            .value()
+        {
+            Some(StorageRuntimeSettingsValue::Authorization(backend)) => Some(*backend),
             _ => None,
         }
     }
@@ -382,8 +724,8 @@ impl StorageRuntimeSettingsUpdate {
     }
 
     #[must_use]
-    pub const fn assignment(&self) -> StorageRuntimeSettingsAssignment {
-        self.assignment
+    pub const fn assignment(&self) -> &StorageRuntimeSettingsAssignment {
+        &self.assignment
     }
 
     #[must_use]
@@ -512,13 +854,13 @@ impl StorageRuntimeSettingsChange {
     }
 
     #[must_use]
-    pub const fn previous(&self) -> StorageRuntimeSettingsAssignment {
-        self.previous
+    pub const fn previous(&self) -> &StorageRuntimeSettingsAssignment {
+        &self.previous
     }
 
     #[must_use]
-    pub const fn current(&self) -> StorageRuntimeSettingsAssignment {
-        self.current
+    pub const fn current(&self) -> &StorageRuntimeSettingsAssignment {
+        &self.current
     }
 
     #[must_use]
@@ -632,8 +974,26 @@ mod tests {
     #[case::query_observations(StorageRuntimeSettingsValue::QueryObservations(
         StorageQueryObservationPolicy::new(true)
     ))]
+    #[case::query_observation_limits(StorageRuntimeSettingsValue::QueryObservations(
+        StorageQueryObservationPolicy::try_with_resource_limits(true, 4, 128, 32, 3600, 8)
+            .unwrap()
+    ))]
     #[case::pagination(StorageRuntimeSettingsValue::Pagination(
         StoragePaginationPolicy::try_new(25).unwrap()
+    ))]
+    #[case::authentication(StorageRuntimeSettingsValue::Authentication(
+        StorageAuthenticationProviders::try_new(vec![
+            StorageAuthenticationProvider::try_new(
+                "corporate",
+                StorageAuthenticationProviderKind::Ldap,
+                json!({"url": "ldaps://directory.example"}),
+            )
+            .unwrap(),
+        ])
+        .unwrap()
+    ))]
+    #[case::authorization(StorageRuntimeSettingsValue::Authorization(
+        StorageAuthorizationBackend::Treetop
     ))]
     fn documents_round_trip_through_validation(#[case] value: StorageRuntimeSettingsValue) {
         assert_eq!(
@@ -648,6 +1008,8 @@ mod tests {
     #[case::zero_limit(StorageRuntimeSettingsGroup::Pagination, json!({"default_page_limit": 0}))]
     #[case::oversized_limit(StorageRuntimeSettingsGroup::Pagination, json!({"default_page_limit": u64::from(u32::MAX) + 1}))]
     #[case::negative_limit(StorageRuntimeSettingsGroup::Pagination, json!({"default_page_limit": -1}))]
+    #[case::unknown_authentication_kind(StorageRuntimeSettingsGroup::Authentication, json!({"providers": [{"name": "corporate", "kind": "oidc", "configuration": {}}]}))]
+    #[case::unknown_authorization_backend(StorageRuntimeSettingsGroup::Authorization, json!({"backend": "remote"}))]
     #[case::wrong_group(StorageRuntimeSettingsGroup::QueryObservations, json!({"default_page_limit": 5}))]
     #[case::wrong_type(StorageRuntimeSettingsGroup::QueryObservations, json!({"enabled": "yes"}))]
     fn invalid_documents_are_rejected(
@@ -655,6 +1017,79 @@ mod tests {
         #[case] document: Value,
     ) {
         assert!(StorageRuntimeSettingsValue::from_document(group, &document).is_err());
+    }
+
+    #[test]
+    fn authentication_configuration_debug_output_redacts_credentials() {
+        let providers = StorageAuthenticationProviders::try_new(vec![
+            StorageAuthenticationProvider::try_new(
+                "corporate",
+                StorageAuthenticationProviderKind::Ldap,
+                json!({"runtime_bind_password_envelope": "secret-value"}),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        assert!(!format!("{providers:?}").contains("secret-value"));
+    }
+
+    #[test]
+    fn authentication_provider_names_must_be_unique() {
+        let provider = || {
+            StorageAuthenticationProvider::try_new(
+                "corporate",
+                StorageAuthenticationProviderKind::Ldap,
+                json!({}),
+            )
+            .unwrap()
+        };
+        assert!(StorageAuthenticationProviders::try_new(vec![provider(), provider()]).is_err());
+    }
+
+    #[test]
+    fn authentication_provider_documents_reject_plaintext_passwords() {
+        assert!(
+            StorageAuthenticationProvider::try_new(
+                "corporate",
+                StorageAuthenticationProviderKind::Ldap,
+                json!({"bind_password": "must-not-persist"}),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn legacy_query_observation_documents_keep_deployment_resource_defaults() {
+        let value = StorageRuntimeSettingsValue::from_document(
+            StorageRuntimeSettingsGroup::QueryObservations,
+            &json!({"enabled": true}),
+        )
+        .unwrap();
+        let StorageRuntimeSettingsValue::QueryObservations(policy) = value else {
+            panic!("expected query observation policy");
+        };
+        assert_eq!(
+            (
+                policy.enabled(),
+                policy.sample_every(),
+                policy.max_patterns(),
+                policy.max_patterns_per_class(),
+                policy.retention_seconds(),
+                policy.max_predicates_per_query(),
+            ),
+            (true, None, None, None, None, None)
+        );
+    }
+
+    #[test]
+    fn query_observation_documents_reject_partial_resource_limits() {
+        assert!(
+            StorageRuntimeSettingsValue::from_document(
+                StorageRuntimeSettingsGroup::QueryObservations,
+                &json!({"enabled": true, "sample_every": 4}),
+            )
+            .is_err()
+        );
     }
 
     #[rstest]
@@ -710,7 +1145,12 @@ mod tests {
         }
         assert_eq!(
             StorageRuntimeSettingsGroup::ALL.map(StorageRuntimeSettingsGroup::as_str),
-            ["query_observations", "pagination"]
+            [
+                "authentication",
+                "authorization",
+                "query_observations",
+                "pagination"
+            ]
         );
     }
 }

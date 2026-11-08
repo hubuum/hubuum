@@ -89,6 +89,20 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
         "HUBUUM_QUERY_OBSERVATIONS_MAX_PREDICATES_PER_QUERY",
         Operations
     ),
+    option!("HUBUUM_QUERY_OBSERVATIONS_MIN_SAMPLE_EVERY", Operations),
+    option!("HUBUUM_QUERY_OBSERVATIONS_MAX_PATTERNS_CEILING", Operations),
+    option!(
+        "HUBUUM_QUERY_OBSERVATIONS_MAX_PATTERNS_PER_CLASS_CEILING",
+        Operations
+    ),
+    option!(
+        "HUBUUM_QUERY_OBSERVATIONS_MAX_RETENTION_SECONDS_CEILING",
+        Operations
+    ),
+    option!(
+        "HUBUUM_QUERY_OBSERVATIONS_MAX_PREDICATES_PER_QUERY_CEILING",
+        Operations
+    ),
     option!("HUBUUM_SCHEMA_MAX_EXPANDED_WORK", Schemas),
     option!("HUBUUM_SCHEMA_MAX_INSTANCE_BYTES", Schemas),
     option!("HUBUUM_SCHEMA_MAX_INSTANCE_WORK", Schemas),
@@ -240,6 +254,11 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_ADMIN_GROUPNAME", Authentication),
     option!("HUBUUM_ADMIN_IDENTITY_SCOPE", Authentication),
     option!("HUBUUM_AUTH_CONFIG_PATH", Authentication, metadata),
+    option!(
+        "HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF",
+        Authentication,
+        metadata
+    ),
     option!("HUBUUM_DEFAULT_PAGE_LIMIT", Pagination),
     option!("HUBUUM_MAX_PAGE_LIMIT", Pagination),
     option!("HUBUUM_MAX_TRANSITIVE_DEPTH", Relations),
@@ -283,6 +302,10 @@ pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
 /// reference validated by the corresponding secret resolver.
 pub const DYNAMIC_SECRET_PREFIXES: &[(&str, EnvironmentOwner)] = &[
     ("HUBUUM_TOKEN_HASH_KEY_", EnvironmentOwner::Authentication),
+    (
+        "HUBUUM_RUNTIME_SETTINGS_KEY_",
+        EnvironmentOwner::Authentication,
+    ),
     ("HUBUUM_REMOTE_SECRET_", EnvironmentOwner::RemoteCalls),
     ("HUBUUM_EVENT_SINK_SECRET_", EnvironmentOwner::Events),
     ("HUBUUM_LDAP_SECRET_", EnvironmentOwner::Authentication),
@@ -375,6 +398,56 @@ pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
             config
                 .query_observations
                 .query_observations_max_predicates_per_query as i128
+        },
+    },
+    ConfigurationBound {
+        name: "HUBUUM_QUERY_OBSERVATIONS_MIN_SAMPLE_EVERY",
+        minimum: Some(1),
+        maximum: Some(1_000_000),
+        value: |config| {
+            config
+                .query_observations
+                .query_observations_min_sample_every as i128
+        },
+    },
+    ConfigurationBound {
+        name: "HUBUUM_QUERY_OBSERVATIONS_MAX_PATTERNS_CEILING",
+        minimum: Some(1),
+        maximum: Some(16_384),
+        value: |config| {
+            config
+                .query_observations
+                .query_observations_max_patterns_ceiling as i128
+        },
+    },
+    ConfigurationBound {
+        name: "HUBUUM_QUERY_OBSERVATIONS_MAX_PATTERNS_PER_CLASS_CEILING",
+        minimum: Some(1),
+        maximum: Some(128),
+        value: |config| {
+            config
+                .query_observations
+                .query_observations_max_patterns_per_class_ceiling as i128
+        },
+    },
+    ConfigurationBound {
+        name: "HUBUUM_QUERY_OBSERVATIONS_MAX_RETENTION_SECONDS_CEILING",
+        minimum: Some(1),
+        maximum: Some(604_800),
+        value: |config| {
+            config
+                .query_observations
+                .query_observations_max_retention_seconds_ceiling as i128
+        },
+    },
+    ConfigurationBound {
+        name: "HUBUUM_QUERY_OBSERVATIONS_MAX_PREDICATES_PER_QUERY_CEILING",
+        minimum: Some(1),
+        maximum: Some(32),
+        value: |config| {
+            config
+                .query_observations
+                .query_observations_max_predicates_per_query_ceiling as i128
         },
     },
     ConfigurationBound {

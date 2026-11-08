@@ -8,7 +8,78 @@ use chrono::{DateTime, Utc};
 use hubuum_domain::ResourceId;
 use serde::Serialize;
 
-/// Validated deployment bounds; class identifiers and paths are never metric labels.
+/// Deployment resource ceilings for runtime query-observation settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct StorageQueryObservationCeilings {
+    min_sample_every: u32,
+    max_patterns: usize,
+    max_patterns_per_class: usize,
+    max_retention_seconds: u32,
+    max_predicates_per_query: usize,
+}
+
+impl StorageQueryObservationCeilings {
+    pub fn try_new(
+        min_sample_every: u32,
+        max_patterns: usize,
+        max_patterns_per_class: usize,
+        max_retention_seconds: u32,
+        max_predicates_per_query: usize,
+    ) -> Result<Self, StorageValidationError> {
+        if !(1..=1_000_000).contains(&min_sample_every)
+            || !(1..=16_384).contains(&max_patterns)
+            || !(1..=128).contains(&max_patterns_per_class)
+            || max_patterns_per_class > max_patterns
+            || !(1..=604_800).contains(&max_retention_seconds)
+            || !(1..=32).contains(&max_predicates_per_query)
+        {
+            return Err(StorageValidationError::invalid(
+                "Query observation ceilings exceed supported bounds",
+            ));
+        }
+        Ok(Self {
+            min_sample_every,
+            max_patterns,
+            max_patterns_per_class,
+            max_retention_seconds,
+            max_predicates_per_query,
+        })
+    }
+
+    pub const fn min_sample_every(self) -> u32 {
+        self.min_sample_every
+    }
+
+    pub const fn max_patterns(self) -> usize {
+        self.max_patterns
+    }
+
+    pub const fn max_patterns_per_class(self) -> usize {
+        self.max_patterns_per_class
+    }
+
+    pub const fn max_retention_seconds(self) -> u32 {
+        self.max_retention_seconds
+    }
+
+    pub const fn max_predicates_per_query(self) -> usize {
+        self.max_predicates_per_query
+    }
+}
+
+impl Default for StorageQueryObservationCeilings {
+    fn default() -> Self {
+        Self {
+            min_sample_every: 1,
+            max_patterns: 16_384,
+            max_patterns_per_class: 128,
+            max_retention_seconds: 604_800,
+            max_predicates_per_query: 32,
+        }
+    }
+}
+
+/// Validated deployment defaults; class identifiers and paths are never metric labels.
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct StorageQueryObservationSettings {
     enabled: bool,
@@ -17,6 +88,8 @@ pub struct StorageQueryObservationSettings {
     max_patterns_per_class: usize,
     retention_seconds: u32,
     max_predicates_per_query: usize,
+    #[serde(skip_serializing)]
+    ceilings: StorageQueryObservationCeilings,
 }
 impl Default for StorageQueryObservationSettings {
     fn default() -> Self {
@@ -27,6 +100,13 @@ impl Default for StorageQueryObservationSettings {
             max_patterns_per_class: 64,
             retention_seconds: 86400,
             max_predicates_per_query: 16,
+            ceilings: StorageQueryObservationCeilings {
+                min_sample_every: 1,
+                max_patterns: 16_384,
+                max_patterns_per_class: 128,
+                max_retention_seconds: 604_800,
+                max_predicates_per_query: 32,
+            },
         }
     }
 }
@@ -39,6 +119,26 @@ impl StorageQueryObservationSettings {
         retention_seconds: u32,
         max_predicates_per_query: usize,
     ) -> Result<Self, StorageValidationError> {
+        Self::try_new_with_ceilings(
+            enabled,
+            sample_every,
+            max_patterns,
+            max_patterns_per_class,
+            retention_seconds,
+            max_predicates_per_query,
+            StorageQueryObservationCeilings::default(),
+        )
+    }
+
+    pub fn try_new_with_ceilings(
+        enabled: bool,
+        sample_every: u32,
+        max_patterns: usize,
+        max_patterns_per_class: usize,
+        retention_seconds: u32,
+        max_predicates_per_query: usize,
+        ceilings: StorageQueryObservationCeilings,
+    ) -> Result<Self, StorageValidationError> {
         if !(1..=1_000_000).contains(&sample_every)
             || !(1..=16_384).contains(&max_patterns)
             || !(1..=128).contains(&max_patterns_per_class)
@@ -50,6 +150,16 @@ impl StorageQueryObservationSettings {
                 "Query observation limits exceed supported bounds",
             ));
         }
+        if sample_every < ceilings.min_sample_every()
+            || max_patterns > ceilings.max_patterns()
+            || max_patterns_per_class > ceilings.max_patterns_per_class()
+            || retention_seconds > ceilings.max_retention_seconds()
+            || max_predicates_per_query > ceilings.max_predicates_per_query()
+        {
+            return Err(StorageValidationError::invalid(
+                "Query observation deployment settings exceed their configured ceilings",
+            ));
+        }
         Ok(Self {
             enabled,
             sample_every,
@@ -57,8 +167,10 @@ impl StorageQueryObservationSettings {
             max_patterns_per_class,
             retention_seconds,
             max_predicates_per_query,
+            ceilings,
         })
     }
+
     pub const fn enabled(self) -> bool {
         self.enabled
     }
@@ -81,6 +193,68 @@ impl StorageQueryObservationSettings {
     }
     pub const fn max_predicates_per_query(self) -> usize {
         self.max_predicates_per_query
+    }
+
+    pub const fn ceilings(self) -> StorageQueryObservationCeilings {
+        self.ceilings
+    }
+
+    /// Apply a shared runtime policy, clamping resource values to this
+    /// replica's deployment ceilings.
+    #[must_use]
+    pub const fn with_runtime_policy(self, policy: crate::StorageQueryObservationPolicy) -> Self {
+        let ceilings = self.ceilings;
+        Self {
+            enabled: policy.enabled(),
+            sample_every: match policy.sample_every() {
+                Some(value) if value > ceilings.min_sample_every => value,
+                Some(_) => ceilings.min_sample_every,
+                None => self.sample_every,
+            },
+            max_patterns: match policy.max_patterns() {
+                Some(value) if value < ceilings.max_patterns => value,
+                Some(_) => ceilings.max_patterns,
+                None => self.max_patterns,
+            },
+            max_patterns_per_class: match policy.max_patterns_per_class() {
+                Some(value) if value < ceilings.max_patterns_per_class => value,
+                Some(_) => ceilings.max_patterns_per_class,
+                None => self.max_patterns_per_class,
+            },
+            retention_seconds: match policy.retention_seconds() {
+                Some(value) if value < ceilings.max_retention_seconds => value,
+                Some(_) => ceilings.max_retention_seconds,
+                None => self.retention_seconds,
+            },
+            max_predicates_per_query: match policy.max_predicates_per_query() {
+                Some(value) if value < ceilings.max_predicates_per_query => value,
+                Some(_) => ceilings.max_predicates_per_query,
+                None => self.max_predicates_per_query,
+            },
+            ceilings,
+        }
+    }
+
+    /// Whether a proposed runtime policy fits this replica's resource ceilings.
+    pub const fn policy_within_ceilings(
+        self,
+        policy: crate::StorageQueryObservationPolicy,
+    ) -> bool {
+        let ceilings = self.ceilings;
+        !matches!(policy.sample_every(), Some(value) if value < ceilings.min_sample_every)
+            && !matches!(policy.max_patterns(), Some(value) if value > ceilings.max_patterns)
+            && !matches!(
+                policy.max_patterns_per_class(),
+                Some(value) if value > ceilings.max_patterns_per_class
+            )
+            && !matches!(
+                policy.retention_seconds(),
+                Some(value) if value > ceilings.max_retention_seconds
+            )
+            && !matches!(
+                policy.max_predicates_per_query(),
+                Some(value) if value > ceilings.max_predicates_per_query
+            )
     }
 }
 
@@ -117,6 +291,11 @@ impl StorageQueryPatternObservation {
     pub const fn sampled_queries(&self) -> u64 {
         self.sampled_queries
     }
+
+    pub const fn first_observed_at(&self) -> DateTime<Utc> {
+        self.first_observed_at
+    }
+
     pub const fn last_observed_at(&self) -> DateTime<Utc> {
         self.last_observed_at
     }

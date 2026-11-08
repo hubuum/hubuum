@@ -4,7 +4,12 @@
 CREATE TABLE runtime_settings (
     setting_group TEXT PRIMARY KEY
         CONSTRAINT runtime_settings_group_check
-        CHECK (setting_group IN ('query_observations', 'pagination')),
+        CHECK (setting_group IN (
+            'authentication',
+            'authorization',
+            'query_observations',
+            'pagination'
+        )),
     revision BIGINT NOT NULL CHECK (revision > 0),
     -- NULL records deployment ownership; an object is the managed value.
     value JSONB CHECK (value IS NULL OR jsonb_typeof(value) = 'object'),
@@ -47,7 +52,11 @@ CREATE TRIGGER runtime_setting_changes_no_truncate
     FOR EACH STATEMENT EXECUTE FUNCTION reject_runtime_setting_change_mutation();
 
 INSERT INTO runtime_settings (setting_group, revision, value)
-VALUES ('query_observations', 1, NULL), ('pagination', 1, NULL);
+VALUES
+    ('authentication', 1, NULL),
+    ('authorization', 1, NULL),
+    ('query_observations', 1, NULL),
+    ('pagination', 1, NULL);
 
 -- Adopt an existing query observation override once, as an audited system
 -- revision. Afterwards the runtime settings record is authoritative; the

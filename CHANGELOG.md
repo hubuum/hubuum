@@ -11,8 +11,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Administrators can change selected shared settings without restarting any
   replica. The default page size (`pagination.default_page_limit`) and query
-  observation enablement (`query_observations.enabled`) are the first runtime
-  settings. Use `GET /api/v1/admin/runtime-settings`, then
+  observation enablement, sampling interval, predicate budget, capacity, and
+  retention are runtime settings. Use `GET /api/v1/admin/runtime-settings`, then
   `PUT /api/v1/admin/runtime-settings/{pagination,query_observations}` with an
   `expected_revision`, or `DELETE` to return a group to deployment
   configuration. Updates are validated against deployment ceilings,
@@ -27,6 +27,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   excluded from portable backups. Startup configuration still applies until an
   administrator adopts a value; replica startup never overwrites shared
   settings. See [runtime settings](docs/runtime_settings.md).
+- Administrators can select authentication providers and the authorization
+  backend at runtime. LDAP provider updates are validated and connection-tested
+  before persistence; bind passwords are encrypted at rest using a
+  version-pinned key from the configured secret provider. New requests use
+  applied settings, and authorization initialization failures fail closed.
+  Configure `HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF` and retain prior key
+  versions while stored credentials depend on them. See
+  [runtime settings](docs/runtime_settings.md).
 
 ### Changed
 
@@ -40,7 +48,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   [separation guidance](docs/development.md#separating-project-3-from-main).
 - Reject database schemas newer than the stable binary during readiness and
   reject unknown applied migrations before the migration command writes changes.
-- **Breaking:** query observation enablement is now a runtime setting.
+- **Breaking:** query observation settings are now runtime-managed.
   `GET` and `PUT /api/v1/admin/query-observations` have been removed; use
   `GET /api/v1/admin/runtime-settings` and
   `PUT /api/v1/admin/runtime-settings/query_observations` with an

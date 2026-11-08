@@ -386,16 +386,7 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let managed = StorageRuntimeSettingsAssignment::Managed(
         StorageRuntimeSettingsValue::Pagination(StoragePaginationPolicy::try_new(25).unwrap()),
     );
-    let runtime_settings = StorageRuntimeSettingsSnapshot::try_new(vec![
-        StorageRuntimeSettingsRecord::initial(StorageRuntimeSettingsGroup::QueryObservations, now),
-        StorageRuntimeSettingsRecord::new(
-            managed,
-            ResourceRevision::new(2).unwrap(),
-            now,
-            Some(PrincipalId::new(1).unwrap()),
-        ),
-    ])
-    .unwrap();
+    let runtime_settings = StorageRuntimeSettingsSnapshot::initial(now);
     let _ = StorageRuntimeSettingsUpdateOutcome::Unchanged(
         runtime_settings
             .record(StorageRuntimeSettingsGroup::Pagination)

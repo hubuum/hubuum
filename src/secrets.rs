@@ -4,7 +4,7 @@ use std::time::Instant;
 use hubuum_secrets::{
     DEFAULT_MAX_SECRET_BYTES, EnvironmentProvider, FileProvider, FileSymlinkPolicy, ResolvedSecret,
     ResolvedSecretGroup, SecretError, SecretErrorKind, SecretName, SecretProviderKind, SecretRef,
-    SecretResolver,
+    SecretResolver, SecretVersion, SecretVersionSelector,
 };
 
 use crate::config::{CommandLineDatabaseUrl, SecretSourceOptions, SecretSourceSettings};
@@ -20,11 +20,22 @@ struct ConsumerSecrets {
 
 impl ConsumerSecrets {
     async fn resolve(&self, alias: &str) -> Result<ResolvedSecret, SecretError> {
+        self.resolve_version(alias, None).await
+    }
+
+    async fn resolve_version(
+        &self,
+        alias: &str,
+        version: Option<&SecretVersion>,
+    ) -> Result<ResolvedSecret, SecretError> {
         let started = Instant::now();
         crate::observability::metrics::secret_source_identity(self.provider_label);
         let result = match SecretName::new(alias) {
             Ok(name) => {
-                let reference = SecretRef::new(self.provider_kind, name);
+                let selector = version.map_or(SecretVersionSelector::Latest, |version| {
+                    SecretVersionSelector::Exact(version.clone())
+                });
+                let reference = SecretRef::new(self.provider_kind, name).with_version(selector);
                 self.resolver.resolve(&reference).await
             }
             Err(error) => Err(error),
@@ -74,6 +85,7 @@ struct ApplicationSecrets {
     event_sink: ConsumerSecrets,
     remote: ConsumerSecrets,
     ldap: ConsumerSecrets,
+    runtime_settings: ConsumerSecrets,
     token: ConsumerSecrets,
 }
 
@@ -113,6 +125,13 @@ impl ApplicationSecrets {
                 "remote_target",
             )?,
             ldap: consumer_resolver(&settings, "HUBUUM_LDAP_SECRET_", None, "ldap", "ldap")?,
+            runtime_settings: consumer_resolver(
+                &settings,
+                "HUBUUM_RUNTIME_SETTINGS_KEY_",
+                None,
+                "runtime-settings",
+                "runtime_settings",
+            )?,
             token: consumer_resolver(
                 &settings,
                 "HUBUUM_TOKEN_HASH_KEY_",
@@ -293,6 +312,16 @@ pub(crate) async fn resolve_remote_secret(alias: &str) -> Result<ResolvedSecret,
 
 pub(crate) async fn resolve_ldap_secret(alias: &str) -> Result<ResolvedSecret, SecretError> {
     configured()?.ldap.resolve(alias).await
+}
+
+pub(crate) async fn resolve_runtime_settings_key(
+    alias: &str,
+    version: Option<&SecretVersion>,
+) -> Result<ResolvedSecret, SecretError> {
+    configured()?
+        .runtime_settings
+        .resolve_version(alias, version)
+        .await
 }
 
 pub(crate) fn resolve_token_hash_key() -> Result<Vec<u8>, SecretError> {

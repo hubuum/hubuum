@@ -1,5 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
+use futures_util::future::BoxFuture;
 use hubuum_storage_core::{
     RuntimeSettingsStorage, StorageQueryObservationSettings, StorageRuntimeSettingsChange,
     StorageRuntimeSettingsHistoryQuery, StorageRuntimeSettingsSnapshot,
@@ -91,20 +92,41 @@ impl StorageHandle {
 
     /// Follow committed changes. Every process participates, including
     /// API-only replicas, because each applies shared settings locally.
-    pub(crate) fn start_runtime_settings_reconciler(&self) {
+    pub(crate) fn start_runtime_settings_reconciler_with(
+        &self,
+        on_applied: impl Fn(AppliedRuntimeSettings) -> BoxFuture<'static, ()> + Send + Sync + 'static,
+    ) {
         let storage = self.clone();
+        let on_applied = Arc::new(on_applied);
         spawn_background_worker("runtime-settings", move |shutdown| {
-            actix_rt::System::new().block_on(
-                storage
-                    .run_runtime_settings_reconciler(shutdown, RUNTIME_SETTINGS_RECONCILE_INTERVAL),
-            );
+            let on_applied = on_applied.clone();
+            actix_rt::System::new().block_on(storage.run_runtime_settings_reconciler_with(
+                shutdown,
+                RUNTIME_SETTINGS_RECONCILE_INTERVAL,
+                on_applied,
+            ));
         });
     }
 
+    #[cfg(test)]
     async fn run_runtime_settings_reconciler(
         &self,
         shutdown: ShutdownSignal,
         refresh_interval: Duration,
+    ) {
+        self.run_runtime_settings_reconciler_with(
+            shutdown,
+            refresh_interval,
+            Arc::new(|_| Box::pin(async {})),
+        )
+        .await;
+    }
+
+    async fn run_runtime_settings_reconciler_with(
+        &self,
+        shutdown: ShutdownSignal,
+        refresh_interval: Duration,
+        on_applied: Arc<dyn Fn(AppliedRuntimeSettings) -> BoxFuture<'static, ()> + Send + Sync>,
     ) {
         let wakeup = Arc::new(Notify::new());
         let notified = wakeup.clone();
@@ -132,7 +154,9 @@ impl StorageHandle {
                 }
                 // Failures are logged and reported as staleness; the next
                 // notification or poll retries.
-                let _ = self.refresh_runtime_settings().await;
+                if let Ok(applied) = self.refresh_runtime_settings().await {
+                    on_applied(applied).await;
+                }
             }
         };
         if let Some(listener) = listener {

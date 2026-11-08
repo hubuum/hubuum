@@ -395,16 +395,14 @@ impl StorageHandle {
         {
             return operation.await;
         }
-        let enabled = self
-            .inner
-            .query_observations
-            .collection_enabled(&self.applied_runtime_settings());
-        if !enabled {
+        let applied = self.applied_runtime_settings();
+        let settings = self.inner.query_observations.settings(&applied);
+        if applied.refresh_failed() || !settings.enabled() {
             return operation.await;
         }
         self.inner
             .query_observations
-            .observe(query, class_id, operation)
+            .observe(query, class_id, settings, operation)
             .await
     }
 

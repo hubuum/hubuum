@@ -161,21 +161,21 @@ mod tests {
     };
 
     fn pagination(limit: u64) -> StorageRuntimeSettingsSnapshot {
-        StorageRuntimeSettingsSnapshot::try_new(vec![
-            StorageRuntimeSettingsRecord::initial(
-                StorageRuntimeSettingsGroup::QueryObservations,
-                Utc::now(),
-            ),
-            StorageRuntimeSettingsRecord::new(
-                StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Pagination(
-                    StoragePaginationPolicy::try_new(limit).unwrap(),
-                )),
-                ResourceRevision::new(2).unwrap(),
-                Utc::now(),
-                None,
-            ),
-        ])
-        .unwrap()
+        let now = Utc::now();
+        let mut records = StorageRuntimeSettingsGroup::ALL
+            .into_iter()
+            .map(|group| StorageRuntimeSettingsRecord::initial(group, now))
+            .collect::<Vec<_>>();
+        records.retain(|record| record.group() != StorageRuntimeSettingsGroup::Pagination);
+        records.push(StorageRuntimeSettingsRecord::new(
+            StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Pagination(
+                StoragePaginationPolicy::try_new(limit).unwrap(),
+            )),
+            ResourceRevision::new(2).unwrap(),
+            now,
+            None,
+        ));
+        StorageRuntimeSettingsSnapshot::try_new(records).unwrap()
     }
 
     #[tokio::test]

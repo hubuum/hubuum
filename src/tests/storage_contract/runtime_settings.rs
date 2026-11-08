@@ -159,10 +159,16 @@ async fn scoped_admin_token(backend: &StorageHandle) -> String {
 async fn runtime_settings_require_an_unscoped_administrator(
     #[values(
         ("GET", "/api/v1/admin/runtime-settings"),
+        ("POST", "/api/v1/admin/runtime-settings/authentication/preflight"),
+        ("PUT", "/api/v1/admin/runtime-settings/authorization"),
         ("PUT", "/api/v1/admin/runtime-settings/pagination"),
         ("PUT", "/api/v1/admin/runtime-settings/query_observations"),
+        ("DELETE", "/api/v1/admin/runtime-settings/authentication?expected_revision=1"),
+        ("DELETE", "/api/v1/admin/runtime-settings/authorization?expected_revision=1"),
         ("DELETE", "/api/v1/admin/runtime-settings/pagination?expected_revision=1"),
         ("DELETE", "/api/v1/admin/runtime-settings/query_observations?expected_revision=1"),
+        ("GET", "/api/v1/admin/runtime-settings/history/authentication"),
+        ("GET", "/api/v1/admin/runtime-settings/history/authorization"),
         ("GET", "/api/v1/admin/runtime-settings/history/pagination")
     )]
     endpoint: (&str, &str),
@@ -193,7 +199,7 @@ async fn runtime_settings_require_an_unscoped_administrator(
         .collect::<Vec<_>>();
     assert_eq!(
         (response.status().as_u16(), revisions),
-        (identity.1, vec![ResourceRevision::INITIAL; 2])
+        (identity.1, vec![ResourceRevision::INITIAL; 4])
     );
 }
 
@@ -223,7 +229,8 @@ async fn runtime_settings_are_revisioned_and_audited() {
     let current = backend.load_runtime_settings().await.unwrap();
     assert_eq!(
         (
-            StorageRuntimeSettingsGroup::ALL.map(|group| initial.record(group).assignment()),
+            StorageRuntimeSettingsGroup::ALL
+                .map(|group| initial.record(group).assignment().clone()),
             committed.is_committed(),
             current
                 .record(StorageRuntimeSettingsGroup::Pagination)
@@ -236,8 +243,8 @@ async fn runtime_settings_are_revisioned_and_audited() {
                 .iter()
                 .map(|change| (
                     change.revision(),
-                    change.previous(),
-                    change.current(),
+                    change.previous().clone(),
+                    change.current().clone(),
                     change.actor()
                 ))
                 .collect::<Vec<_>>(),
@@ -276,7 +283,8 @@ fn above_ceiling() -> Value {
 #[case::observation_missing_value("query_observations", json!({"expected_revision": 1}))]
 #[case::observation_null("query_observations", json!({"expected_revision": 1, "enabled": null}))]
 #[case::observation_string("query_observations", json!({"expected_revision": 1, "enabled": "true"}))]
-#[case::observation_resource_ceiling("query_observations", json!({"expected_revision": 1, "enabled": true, "sample_every": 1}))]
+#[case::observation_invalid_sample_interval("query_observations", json!({"expected_revision": 1, "enabled": true, "sample_every": 0}))]
+#[case::observation_unknown_field("query_observations", json!({"expected_revision": 1, "enabled": true, "unknown": 2}))]
 #[actix_web::test]
 async fn invalid_updates_are_rejected_before_persistence(#[case] group: &str, #[case] body: Value) {
     let backend = StorageHandle::memory();
@@ -394,8 +402,132 @@ async fn committed_update_reports_commit_and_responding_replica_application() {
             &json!(true),
             &json!("runtime"),
             &json!(2),
-            &json!({"enabled": true}),
+            &json!({
+                "enabled": true,
+                "sample_every": 16,
+                "max_patterns": 2048,
+                "max_patterns_per_class": 64,
+                "retention_seconds": 86400,
+                "max_predicates_per_query": 16
+            }),
             &json!("current"),
+        )
+    );
+}
+
+#[actix_web::test]
+async fn query_observation_limits_are_clamped_and_reported_per_replica() {
+    let storage = MemoryStorage::new();
+    let writer = StorageHandle::from_registered_backend(storage.clone())
+        .with_query_observations(StorageQueryObservationSettings::default());
+    let user = admin(&writer).await;
+    let (status, _) = send_json(
+        &writer,
+        &user.raw_token,
+        put(
+            "/api/v1/admin/runtime-settings/query_observations",
+            json!({
+                "expected_revision": 1,
+                "enabled": true,
+                "sample_every": 1,
+                "max_patterns": 256,
+                "max_patterns_per_class": 128,
+                "retention_seconds": 1200,
+                "max_predicates_per_query": 20
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, http::StatusCode::OK);
+
+    let ceilings =
+        hubuum_storage_core::StorageQueryObservationCeilings::try_new(4, 64, 32, 300, 8).unwrap();
+    let deployment =
+        StorageQueryObservationSettings::try_new_with_ceilings(false, 4, 32, 16, 300, 8, ceilings)
+            .unwrap();
+    let reader =
+        StorageHandle::from_registered_backend(storage).with_query_observations(deployment);
+    reader.refresh_runtime_settings().await.unwrap();
+    let (status, body) = send_json(
+        &reader,
+        &user.raw_token,
+        test::TestRequest::get().uri("/api/v1/admin/runtime-settings"),
+    )
+    .await;
+    let reported = &body["query_observations"];
+    assert_eq!(
+        (
+            status,
+            &reported["runtime"],
+            &reported["effective"],
+            &reported["constrained_by_ceiling"],
+            &reported["ceilings"],
+        ),
+        (
+            http::StatusCode::OK,
+            &json!({
+                "enabled": true,
+                "sample_every": 1,
+                "max_patterns": 256,
+                "max_patterns_per_class": 128,
+                "retention_seconds": 1200,
+                "max_predicates_per_query": 20
+            }),
+            &json!({
+                "enabled": true,
+                "sample_every": 4,
+                "max_patterns": 64,
+                "max_patterns_per_class": 32,
+                "retention_seconds": 300,
+                "max_predicates_per_query": 8
+            }),
+            &json!(true),
+            &json!({
+                "min_sample_every": 4,
+                "max_patterns": 64,
+                "max_patterns_per_class": 32,
+                "max_retention_seconds": 300,
+                "max_predicates_per_query": 8
+            }),
+        )
+    );
+}
+
+#[actix_web::test]
+async fn failed_authentication_preflight_does_not_persist_the_candidate() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let (status, _) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::post()
+            .uri("/api/v1/admin/runtime-settings/authentication/preflight")
+            .set_json(json!({
+                "expected_revision": 1,
+                "providers": [{
+                    "name": "corporate",
+                    "kind": "ldap",
+                    "configuration": {
+                        "scope": "corporate",
+                        "url": "http://ldap.example.org",
+                        "user_base_dn": "ou=people,dc=example,dc=org",
+                        "user_filter": "(uid={username})"
+                    }
+                }]
+            })),
+    )
+    .await;
+
+    let snapshot = backend.load_runtime_settings().await.unwrap();
+    let record = snapshot.record(StorageRuntimeSettingsGroup::Authentication);
+    assert_eq!(
+        (status, record.revision(), record.assignment()),
+        (
+            http::StatusCode::BAD_REQUEST,
+            ResourceRevision::INITIAL,
+            &StorageRuntimeSettingsAssignment::Deployment(
+                StorageRuntimeSettingsGroup::Authentication
+            )
         )
     );
 }
@@ -760,8 +892,22 @@ async fn admin_configuration_reports_shared_enablement_on_a_new_replica(#[case] 
             http::StatusCode::OK,
             &json!(enabled),
             &json!("runtime"),
-            &json!({"enabled": enabled}),
-            &json!({"enabled": !enabled}),
+            &json!({
+                "enabled": enabled,
+                "sample_every": 1,
+                "max_patterns": 64,
+                "max_patterns_per_class": 64,
+                "retention_seconds": 60,
+                "max_predicates_per_query": 16
+            }),
+            &json!({
+                "enabled": !enabled,
+                "sample_every": 1,
+                "max_patterns": 64,
+                "max_patterns_per_class": 64,
+                "retention_seconds": 60,
+                "max_predicates_per_query": 16
+            }),
         )
     );
 }

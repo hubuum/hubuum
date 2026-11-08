@@ -164,7 +164,13 @@ async fn history(
         .await
         .unwrap()
         .into_iter()
-        .map(|change| (change.revision().get(), change.previous(), change.current()))
+        .map(|change| {
+            (
+                change.revision().get(),
+                change.previous().clone(),
+                change.current().clone(),
+            )
+        })
         .collect()
 }
 
@@ -210,7 +216,7 @@ async fn migration_without_an_override_leaves_every_group_to_deployment() {
             .iter()
             .map(|record| (record.assignment().value(), record.revision()))
             .collect::<Vec<_>>(),
-        vec![(None, ResourceRevision::INITIAL); 2]
+        vec![(None, ResourceRevision::INITIAL); 4]
     );
     fixture.cleanup().await;
 }

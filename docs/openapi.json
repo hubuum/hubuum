@@ -490,6 +490,324 @@
         ]
       }
     },
+    "/api/v1/admin/runtime-settings/authentication": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete Api V1 Admin Runtime Settings Authentication",
+        "description": "Auto-generated documentation for DELETE /api/v1/admin/runtime-settings/authentication.",
+        "operationId": "deleteApiV1AdminRuntimeSettingsAuthentication",
+        "parameters": [
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "description": "Current revision of the group.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ResourceRevision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deployment authentication provider definitions restored as a new audited revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; the response carries the current revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/runtime-settings/authentication/preflight": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Post Api V1 Admin Runtime Settings Authentication Preflight",
+        "description": "Auto-generated documentation for POST /api/v1/admin/runtime-settings/authentication/preflight.",
+        "operationId": "postApiV1AdminRuntimeSettingsAuthenticationPreflight",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthenticationSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "LDAP provider definitions passed validation and connectivity checks, then were committed with an audit record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid provider configuration or failed LDAP connectivity preflight",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; no settings were persisted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Encryption key or secret source unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/runtime-settings/authorization": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Put Api V1 Admin Runtime Settings Authorization",
+        "description": "Auto-generated documentation for PUT /api/v1/admin/runtime-settings/authorization.",
+        "operationId": "putApiV1AdminRuntimeSettingsAuthorization",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthorizationSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorization backend selection committed with an audit record and applied by the responding replica",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid backend selection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; the response carries the current revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete Api V1 Admin Runtime Settings Authorization",
+        "description": "Auto-generated documentation for DELETE /api/v1/admin/runtime-settings/authorization.",
+        "operationId": "deleteApiV1AdminRuntimeSettingsAuthorization",
+        "parameters": [
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "description": "Current revision of the group.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ResourceRevision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deployment ownership committed as a new audited revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; the response carries the current revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/admin/runtime-settings/history/{group}": {
       "get": {
         "tags": [
@@ -25682,6 +26000,96 @@
           }
         }
       },
+      "AuthenticationSettingsReport": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RuntimeSettingsOwnership"
+          },
+          {
+            "type": "object",
+            "required": [
+              "providers"
+            ],
+            "properties": {
+              "providers": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RuntimeAuthenticationProviderStatus"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "AuthenticationSettingsRequest": {
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "providers"
+        ],
+        "properties": {
+          "expected_revision": {
+            "$ref": "#/components/schemas/ResourceRevision",
+            "description": "Current revision of the `authentication` group."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeAuthenticationProviderRequest"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthorizationSettingsReport": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RuntimeSettingsOwnership"
+          },
+          {
+            "type": "object",
+            "required": [
+              "effective_backend",
+              "deployment_backend",
+              "available"
+            ],
+            "properties": {
+              "available": {
+                "type": "boolean"
+              },
+              "deployment_backend": {
+                "type": "string"
+              },
+              "effective_backend": {
+                "type": "string"
+              },
+              "runtime_backend": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "AuthorizationSettingsRequest": {
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "backend"
+        ],
+        "properties": {
+          "backend": {
+            "$ref": "#/components/schemas/RuntimeAuthorizationBackend"
+          },
+          "expected_revision": {
+            "$ref": "#/components/schemas/ResourceRevision",
+            "description": "Current revision of the `authorization` group."
+          }
+        },
+        "additionalProperties": false
+      },
       "BackupConfig": {
         "type": "object",
         "required": [
@@ -35738,6 +36146,40 @@
           }
         }
       },
+      "QueryObservationCeilingsValue": {
+        "type": "object",
+        "required": [
+          "min_sample_every",
+          "max_patterns",
+          "max_patterns_per_class",
+          "max_retention_seconds",
+          "max_predicates_per_query"
+        ],
+        "properties": {
+          "max_patterns": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_patterns_per_class": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_predicates_per_query": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_retention_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "min_sample_every": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "QueryObservationConfig": {
         "type": "object",
         "required": [
@@ -35780,11 +36222,38 @@
       "QueryObservationPolicyValue": {
         "type": "object",
         "required": [
-          "enabled"
+          "enabled",
+          "sample_every",
+          "max_patterns",
+          "max_patterns_per_class",
+          "retention_seconds",
+          "max_predicates_per_query"
         ],
         "properties": {
           "enabled": {
             "type": "boolean"
+          },
+          "max_patterns": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_patterns_per_class": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_predicates_per_query": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "retention_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "sample_every": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
@@ -35836,12 +36305,20 @@
             "required": [
               "effective",
               "deployment",
+              "ceilings",
+              "constrained_by_ceiling",
               "collection_paused"
             ],
             "properties": {
+              "ceilings": {
+                "$ref": "#/components/schemas/QueryObservationCeilingsValue"
+              },
               "collection_paused": {
                 "type": "boolean",
                 "description": "Collection pauses while this replica's latest refresh has failed,\nrather than keep a possibly stale enablement."
+              },
+              "constrained_by_ceiling": {
+                "type": "boolean"
               },
               "deployment": {
                 "$ref": "#/components/schemas/QueryObservationPolicyValue"
@@ -35877,6 +36354,49 @@
           "expected_revision": {
             "$ref": "#/components/schemas/ResourceRevision",
             "description": "Current revision of the `query_observations` group."
+          },
+          "max_patterns": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "maximum": 16384,
+            "minimum": 1
+          },
+          "max_patterns_per_class": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "maximum": 128,
+            "minimum": 1
+          },
+          "max_predicates_per_query": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "maximum": 32,
+            "minimum": 1
+          },
+          "retention_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "maximum": 604800,
+            "minimum": 1
+          },
+          "sample_every": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Sample one in every N eligible queries. Smaller values sample more often.",
+            "maximum": 1000000,
+            "minimum": 1
           }
         },
         "additionalProperties": false
@@ -37419,6 +37939,55 @@
           }
         }
       },
+      "RuntimeAuthenticationProviderKind": {
+        "type": "string",
+        "enum": [
+          "ldap"
+        ]
+      },
+      "RuntimeAuthenticationProviderRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "configuration"
+        ],
+        "properties": {
+          "configuration": {
+            "type": "object",
+            "description": "Provider-specific configuration. LDAP passwords are accepted here but\nare encrypted before the document is persisted."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RuntimeAuthenticationProviderKind"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuntimeAuthenticationProviderStatus": {
+        "type": "object",
+        "required": [
+          "name",
+          "available"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "RuntimeAuthorizationBackend": {
+        "type": "string",
+        "enum": [
+          "local",
+          "treetop"
+        ]
+      },
       "RuntimeSettingsApplicationStatus": {
         "type": "string",
         "enum": [
@@ -37507,6 +38076,8 @@
         "type": "string",
         "description": "Stable key of a group of correlated runtime settings.",
         "enum": [
+          "authentication",
+          "authorization",
           "query_observations",
           "pagination"
         ]
@@ -37635,10 +38206,18 @@
         "description": "Runtime-managed settings as applied by the responding replica.",
         "required": [
           "replica",
+          "authentication",
+          "authorization",
           "query_observations",
           "pagination"
         ],
         "properties": {
+          "authentication": {
+            "$ref": "#/components/schemas/AuthenticationSettingsReport"
+          },
+          "authorization": {
+            "$ref": "#/components/schemas/AuthorizationSettingsReport"
+          },
           "pagination": {
             "$ref": "#/components/schemas/PaginationSettingsReport"
           },

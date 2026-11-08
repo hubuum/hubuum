@@ -15,22 +15,28 @@ settings store. The initial runtime-managed settings are listed below.
 
 | Group | Setting | Takes effect | Deployment ceiling |
 | --- | --- | --- | --- |
+| `authentication` | LDAP provider definitions | On the next authentication request | 64 providers |
+| `authorization` | Permission backend selection | On the next API request | Available backend and deployment connection settings |
 | `pagination` | `default_page_limit` | When the next API request starts | `HUBUUM_MAX_PAGE_LIMIT` |
-| `query_observations` | `enabled` | On the next eligible query | Sampling and capacity limits |
+| `query_observations` | `enabled`, `sample_every`, `max_patterns`, `max_patterns_per_class`, `retention_seconds`, `max_predicates_per_query` | On the next eligible query | Query-observation ceiling variables |
 
 Everything else remains deployment configuration. That includes:
 
 - storage backend selection, database credentials, and pool sizes;
 - bind address, TLS, runtime role, and worker counts;
-- the secret provider, signing keys, and hash keys;
-- authentication and authorization backend selection;
-- machine resource ceilings and filesystem paths; and
-- `HUBUUM_MAX_PAGE_LIMIT` and the query observation sampling and capacity
-  limits, which act as ceilings for the runtime values above.
+- the secret provider, signing keys, hash keys, and runtime-settings encryption
+  key reference;
+- LDAP secret-source selection and authorization backend connection settings;
+- machine resource ceilings and filesystem paths;
+- `HUBUUM_MAX_PAGE_LIMIT`, which caps `pagination.default_page_limit`; and
+- query-observation sampling and capacity ceiling variables, which cap the
+  runtime values above.
 
 Other candidates, such as retention, task admission, token lifetimes, and worker
 concurrency, will move only after their effect on running work and their failure
-behavior have been defined. Secrets never move into runtime settings.
+behavior have been defined. Raw secrets never move into runtime settings. An
+LDAP bind password supplied through the runtime API is encrypted before it is
+stored.
 
 ### Groups and ownership states
 
@@ -85,9 +91,11 @@ Every endpoint requires an unscoped human administrator token.
 | Method and path | Purpose |
 | --- | --- |
 | `GET /api/v1/admin/runtime-settings` | Report every group as applied by the responding replica |
+| `POST /api/v1/admin/runtime-settings/authentication/preflight` | Validate and test LDAP providers; persist only after successful preflight |
+| `PUT /api/v1/admin/runtime-settings/authorization` | Select `local` or `treetop` authorization |
 | `PUT /api/v1/admin/runtime-settings/pagination` | Set the shared default page size |
-| `PUT /api/v1/admin/runtime-settings/query_observations` | Set shared query observation enablement |
-| `DELETE /api/v1/admin/runtime-settings/{pagination,query_observations}` | Return the group to deployment configuration |
+| `PUT /api/v1/admin/runtime-settings/query_observations` | Set shared query observation enablement, sampling, and capacity limits |
+| `DELETE /api/v1/admin/runtime-settings/{authentication,authorization,pagination,query_observations}` | Return the group to deployment configuration |
 | `GET /api/v1/admin/runtime-settings/history/{group}` | List durable audit records, newest first |
 | `GET /api/v1/admin/config` | Effective process configuration, including `runtime_settings` |
 
@@ -108,8 +116,33 @@ restore effects it already had.
 Requests are validated before anything is stored. Unknown fields, wrong types,
 non-positive values, and inconsistent combinations are rejected with `400 Bad
 Request`. `default_page_limit` must be between 1 and the responding replica's
-`HUBUUM_MAX_PAGE_LIMIT`. If another replica has a lower ceiling, it clamps the
-shared value to that ceiling and reports `constrained_by_ceiling: true`.
+`HUBUUM_MAX_PAGE_LIMIT`. Query-observation values must fit the responding
+replica's ceilings: `sample_every` must be at least
+`HUBUUM_QUERY_OBSERVATIONS_MIN_SAMPLE_EVERY`, and each capacity/retention value
+must not exceed its corresponding `HUBUUM_QUERY_OBSERVATIONS_*_CEILING`.
+Omitted observation fields use the responding replica's deployment defaults.
+If another replica has a lower ceiling, it clamps the shared values and
+reports `constrained_by_ceiling: true`.
+
+Authentication updates use the preflight endpoint. It validates every LDAP
+definition, tests connectivity and service bind, and commits the new revision
+only after all checks succeed. A stale revision discovered after preflight
+still prevents the write. Omitting `configuration.bind_password` for an
+existing provider of the same name preserves its encrypted password; setting it
+to `null` clears it. A supplied password is encrypted using AES-256-GCM with a
+random data key wrapped by the secret resolved from
+`HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF`. The key must resolve to exactly
+32 bytes. The envelope pins the secret reference and version used for
+encryption. Keep old key versions resolvable until the ciphertext is replaced;
+this API does not provide key rewrapping. API reports and audit responses never
+return encrypted envelopes, password values, or secret references.
+
+Authorization updates select a backend that is already supported by the
+running binary. Backend-specific connection options, such as the Treetop URL
+and TLS settings, remain deployment configuration. If a replica cannot
+initialize the selected authorization backend, permission checks fail closed
+and that replica's readiness probe returns `503` until reinitialization
+succeeds.
 
 ### Audit
 
@@ -144,9 +177,15 @@ successfully and applies it without a storage read on request paths.
 - **Pagination**: an API request fixes its page limits when it starts. A
   request in progress keeps them even if a change arrives. Exports capture the
   effective default when they are submitted.
-- **Query observations**: sampling decisions read the applied value for each
-  eligible query. Requests that are already being observed may finish
-  recording after collection is disabled.
+- **Authentication and authorization**: new requests use the newly applied
+  providers or permission backend. A request already in progress keeps the
+  authorization backend it started with. An invalid authentication provider is
+  reported unavailable without disabling other providers.
+- **Query observations**: sampling and predicate budgets read the applied value
+  for each eligible query. Capacity and retention changes apply as the next
+  observation is recorded or reported; existing entries over a newly lowered
+  limit are evicted. Requests already being observed may finish recording
+  after collection is disabled.
 
 ### Failure behavior
 
@@ -167,6 +206,8 @@ refresh for more than two reconcile intervals.
 
 - `replica.status`: `current`, `stale`, or `not_loaded`, together with refresh
   timestamps and the reconcile interval;
+- authentication provider names and per-provider availability, plus the
+  effective, runtime, and deployment authorization backend and its readiness;
 - for each group:
   - `source`: `deployment` or `runtime`;
   - `revision`: the revision this replica applies;

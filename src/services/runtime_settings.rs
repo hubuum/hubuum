@@ -2,23 +2,35 @@
 use chrono::Utc;
 use hubuum_domain::ResourceRevision;
 use hubuum_storage_core::{
-    RuntimeSettingsStorage, StorageRuntimeSettingsHistoryQuery, StorageRuntimeSettingsUpdate,
+    RuntimeSettingsStorage, StorageAuthenticationProviderKind, StorageRuntimeSettingsAssignment,
+    StorageRuntimeSettingsHistoryQuery, StorageRuntimeSettingsUpdate, StorageRuntimeSettingsValue,
 };
 
 use crate::config::running::QueryObservationConfig;
 use crate::errors::ApiError;
 use crate::models::runtime_settings::{
-    RuntimeSettingsDeployment, RuntimeSettingsGroup, RuntimeSettingsHistoryParams,
-    RuntimeSettingsHistoryResponse, RuntimeSettingsReport, RuntimeSettingsUpdateResponse,
+    RuntimeAuthenticationProviderStatus, RuntimeSettingsDeployment, RuntimeSettingsGroup,
+    RuntimeSettingsHistoryParams, RuntimeSettingsHistoryResponse, RuntimeSettingsReport,
+    RuntimeSettingsUpdateResponse,
 };
 use crate::pagination::deployment_page_limits;
+use crate::permissions::AppContext;
 use crate::storage::runtime_settings::AppliedRuntimeSettings;
 use crate::storage::{StorageContext, StorageHandle, storage_handle};
 
 fn deployment(storage: &StorageHandle) -> Result<RuntimeSettingsDeployment, ApiError> {
+    let config = crate::config::get_config()?;
     Ok(RuntimeSettingsDeployment {
         query_observations: storage.deployment_query_observation_settings(),
         pagination: deployment_page_limits()?,
+        authorization_backend: match config.permission_backend {
+            crate::config::PermissionBackendKind::Local => {
+                hubuum_storage_core::StorageAuthorizationBackend::Local
+            }
+            crate::config::PermissionBackendKind::Treetop => {
+                hubuum_storage_core::StorageAuthorizationBackend::Treetop
+            }
+        },
     })
 }
 
@@ -26,13 +38,21 @@ fn deployment(storage: &StorageHandle) -> Result<RuntimeSettingsDeployment, ApiE
 ///
 /// A failed refresh is reported as staleness with the retained snapshot rather
 /// than failing the read, so administrators can diagnose the replica.
-pub async fn report(context: &impl StorageContext) -> Result<RuntimeSettingsReport, ApiError> {
-    let storage = storage_handle(context);
-    let _ = storage.refresh_runtime_settings().await;
+pub async fn report(context: &AppContext) -> Result<RuntimeSettingsReport, ApiError> {
+    let storage = context.clone_backend();
+    if let Err(error) = context.refresh_runtime_settings().await {
+        tracing::warn!(%error, "Runtime settings refresh failed; reporting the retained snapshot");
+    }
     Ok(RuntimeSettingsReport::new(
         &storage.applied_runtime_settings(),
         deployment(&storage)?,
         Utc::now(),
+        crate::auth::auth_provider_statuses()?
+            .into_iter()
+            .map(|(name, available)| RuntimeAuthenticationProviderStatus { name, available })
+            .collect(),
+        context.current_permission_backend_kind().to_string(),
+        context.permission_backend_is_ready(),
     ))
 }
 
@@ -41,7 +61,7 @@ pub async fn report(context: &impl StorageContext) -> Result<RuntimeSettingsRepo
 /// Success confirms the commit. Other replicas apply it asynchronously; the
 /// response reports only the responding replica's applied revision.
 pub async fn update(
-    context: &impl StorageContext,
+    context: &AppContext,
     request: StorageRuntimeSettingsUpdate,
 ) -> Result<RuntimeSettingsUpdateResponse, ApiError> {
     let group = RuntimeSettingsGroup::from(request.group());
@@ -56,9 +76,45 @@ pub async fn update(
         changed: outcome.is_committed(),
         applied_by_responding_replica: settings
             .applied_revision(group)
-            .is_some_and(|applied| applied >= committed_revision),
+            .is_some_and(|applied| applied >= committed_revision)
+            && (group != RuntimeSettingsGroup::Authorization
+                || context.permission_backend_is_ready()),
         settings,
     })
+}
+
+pub async fn preflight_authentication(
+    context: &AppContext,
+    expected_revision: ResourceRevision,
+    providers: Vec<(String, StorageAuthenticationProviderKind, serde_json::Value)>,
+    event_context: crate::events::EventContext,
+) -> Result<RuntimeSettingsUpdateResponse, ApiError> {
+    let storage = storage_handle(context);
+    let current = storage.load_runtime_settings().await?;
+    let current_record =
+        current.record(hubuum_storage_core::StorageRuntimeSettingsGroup::Authentication);
+    if current_record.revision() != expected_revision {
+        return Err(ApiError::RevisionConflict(
+            "The authentication settings revision is stale".to_string(),
+            current_record.revision(),
+        ));
+    }
+
+    let providers =
+        crate::auth::protect_runtime_authentication_settings(providers, current.authentication())
+            .await?;
+    crate::auth::preflight_runtime_authentication_settings(&providers, &storage).await?;
+    update(
+        context,
+        StorageRuntimeSettingsUpdate::new(
+            StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Authentication(
+                providers,
+            )),
+            expected_revision,
+            event_context,
+        ),
+    )
+    .await
 }
 
 pub async fn history(

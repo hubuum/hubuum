@@ -64,6 +64,11 @@ pub async fn readyz(context: AppContext) -> Result<impl Responder, ApiError> {
             snapshot.maintenance_state()
         )));
     }
+    if !context.permission_backend_is_ready() {
+        return Err(ApiError::ServiceUnavailable(
+            "Authorization backend is not ready".to_string(),
+        ));
+    }
 
     Ok(ApiResponse::new(ProbeResponse::ok("ready"), StatusCode::OK))
 }

@@ -40,14 +40,14 @@ impl MemoryRuntimeSettings {
         let changed_at = Utc::now();
         let change = StorageRuntimeSettingsChange::try_new(
             revision,
-            current.assignment(),
-            request.assignment(),
+            current.assignment().clone(),
+            request.assignment().clone(),
             changed_at,
             StorageRuntimeSettingsActor::from_context(request.context()),
         )
         .map_err(|error| StorageError::internal(error.to_string()))?;
         let record = StorageRuntimeSettingsRecord::new(
-            request.assignment(),
+            request.assignment().clone(),
             revision,
             changed_at,
             request.context().actor_user_id(),

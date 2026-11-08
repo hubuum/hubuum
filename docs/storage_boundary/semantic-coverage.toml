@@ -280,7 +280,7 @@ native_scenarios = ["crates/hubuum-storage-postgres/tests/runtime_settings.rs::c
 
 [enums.StorageRuntimeSettingsGroup]
 source = "crates/hubuum-storage-core/src/runtime_settings.rs"
-variants = ["QueryObservations", "Pagination"]
+variants = ["Authentication", "Authorization", "QueryObservations", "Pagination"]
 scenarios = ["crates/hubuum-storage-core/src/runtime_settings.rs::group_keys_are_stable", "src/tests/storage_contract/runtime_settings.rs::runtime_settings_are_revisioned_and_audited"]
 
 [traits.TokenRetentionStorage]

@@ -2,7 +2,8 @@
 use chrono::{DateTime, Utc};
 use hubuum_domain::{PrincipalId, ResourceRevision};
 use hubuum_storage_core::{
-    StoragePaginationPolicy, StorageQueryObservationPolicy, StorageQueryObservationSettings,
+    StorageAuthenticationProviderKind, StorageAuthorizationBackend, StoragePaginationPolicy,
+    StorageQueryObservationPolicy, StorageQueryObservationSettings,
     StorageRuntimeSettingsAssignment, StorageRuntimeSettingsChange, StorageRuntimeSettingsGroup,
     StorageRuntimeSettingsRecord, StorageRuntimeSettingsUpdate, StorageRuntimeSettingsValue,
 };
@@ -25,6 +26,8 @@ const DEFAULT_HISTORY_LIMIT: usize = 20;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeSettingsGroup {
+    Authentication,
+    Authorization,
     QueryObservations,
     Pagination,
 }
@@ -32,6 +35,8 @@ pub enum RuntimeSettingsGroup {
 impl From<RuntimeSettingsGroup> for StorageRuntimeSettingsGroup {
     fn from(value: RuntimeSettingsGroup) -> Self {
         match value {
+            RuntimeSettingsGroup::Authentication => Self::Authentication,
+            RuntimeSettingsGroup::Authorization => Self::Authorization,
             RuntimeSettingsGroup::QueryObservations => Self::QueryObservations,
             RuntimeSettingsGroup::Pagination => Self::Pagination,
         }
@@ -41,6 +46,8 @@ impl From<RuntimeSettingsGroup> for StorageRuntimeSettingsGroup {
 impl From<StorageRuntimeSettingsGroup> for RuntimeSettingsGroup {
     fn from(value: StorageRuntimeSettingsGroup) -> Self {
         match value {
+            StorageRuntimeSettingsGroup::Authentication => Self::Authentication,
+            StorageRuntimeSettingsGroup::Authorization => Self::Authorization,
             StorageRuntimeSettingsGroup::QueryObservations => Self::QueryObservations,
             StorageRuntimeSettingsGroup::Pagination => Self::Pagination,
         }
@@ -54,19 +61,49 @@ pub struct QueryObservationSettingsRequest {
     /// Current revision of the `query_observations` group.
     pub expected_revision: ResourceRevision,
     pub enabled: bool,
+    /// Sample one in every N eligible queries. Smaller values sample more often.
+    #[schema(minimum = 1, maximum = 1_000_000)]
+    pub sample_every: Option<u32>,
+    #[schema(minimum = 1, maximum = 16_384)]
+    pub max_patterns: Option<usize>,
+    #[schema(minimum = 1, maximum = 128)]
+    pub max_patterns_per_class: Option<usize>,
+    #[schema(minimum = 1, maximum = 604_800)]
+    pub retention_seconds: Option<u32>,
+    #[schema(minimum = 1, maximum = 32)]
+    pub max_predicates_per_query: Option<usize>,
 }
 
 impl QueryObservationSettingsRequest {
-    pub fn into_update(self, context: EventContext) -> StorageRuntimeSettingsUpdate {
-        StorageRuntimeSettingsUpdate::new(
+    pub fn into_update(
+        self,
+        deployment: StorageQueryObservationSettings,
+        context: EventContext,
+    ) -> Result<StorageRuntimeSettingsUpdate, ApiError> {
+        let policy = StorageQueryObservationPolicy::try_with_resource_limits(
+            self.enabled,
+            self.sample_every.unwrap_or(deployment.sample_every()),
+            self.max_patterns.unwrap_or(deployment.max_patterns()),
+            self.max_patterns_per_class
+                .unwrap_or(deployment.max_patterns_per_class()),
+            self.retention_seconds
+                .unwrap_or(deployment.retention_seconds()),
+            self.max_predicates_per_query
+                .unwrap_or(deployment.max_predicates_per_query()),
+        )
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        if !deployment.policy_within_ceilings(policy) {
+            return Err(ApiError::BadRequest(
+                "query observation settings exceed this replica's deployment ceilings".to_string(),
+            ));
+        }
+        Ok(StorageRuntimeSettingsUpdate::new(
             StorageRuntimeSettingsAssignment::Managed(
-                StorageRuntimeSettingsValue::QueryObservations(StorageQueryObservationPolicy::new(
-                    self.enabled,
-                )),
+                StorageRuntimeSettingsValue::QueryObservations(policy),
             ),
             self.expected_revision,
             context,
-        )
+        ))
     }
 }
 
@@ -80,6 +117,92 @@ pub struct PaginationSettingsRequest {
     /// responding replica's deployment `max_page_limit`.
     #[schema(minimum = 1)]
     pub default_page_limit: u64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeAuthenticationProviderKind {
+    Ldap,
+}
+
+impl From<RuntimeAuthenticationProviderKind> for StorageAuthenticationProviderKind {
+    fn from(value: RuntimeAuthenticationProviderKind) -> Self {
+        match value {
+            RuntimeAuthenticationProviderKind::Ldap => Self::Ldap,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeAuthenticationProviderRequest {
+    pub name: String,
+    pub kind: RuntimeAuthenticationProviderKind,
+    /// Provider-specific configuration. LDAP passwords are accepted here but
+    /// are encrypted before the document is persisted.
+    #[schema(value_type = Object)]
+    pub configuration: Value,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AuthenticationSettingsRequest {
+    /// Current revision of the `authentication` group.
+    pub expected_revision: ResourceRevision,
+    pub providers: Vec<RuntimeAuthenticationProviderRequest>,
+}
+
+impl AuthenticationSettingsRequest {
+    pub fn into_parts(
+        self,
+    ) -> (
+        ResourceRevision,
+        Vec<(String, StorageAuthenticationProviderKind, Value)>,
+    ) {
+        (
+            self.expected_revision,
+            self.providers
+                .into_iter()
+                .map(|provider| (provider.name, provider.kind.into(), provider.configuration))
+                .collect(),
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeAuthorizationBackend {
+    Local,
+    Treetop,
+}
+
+impl From<RuntimeAuthorizationBackend> for StorageAuthorizationBackend {
+    fn from(value: RuntimeAuthorizationBackend) -> Self {
+        match value {
+            RuntimeAuthorizationBackend::Local => Self::Local,
+            RuntimeAuthorizationBackend::Treetop => Self::Treetop,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorizationSettingsRequest {
+    /// Current revision of the `authorization` group.
+    pub expected_revision: ResourceRevision,
+    pub backend: RuntimeAuthorizationBackend,
+}
+
+impl AuthorizationSettingsRequest {
+    pub fn into_update(self, context: EventContext) -> StorageRuntimeSettingsUpdate {
+        StorageRuntimeSettingsUpdate::new(
+            StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Authorization(
+                self.backend.into(),
+            )),
+            self.expected_revision,
+            context,
+        )
+    }
 }
 
 impl PaginationSettingsRequest {
@@ -242,6 +365,45 @@ impl RuntimeSettingsOwnership {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 pub struct QueryObservationPolicyValue {
     pub enabled: bool,
+    pub sample_every: u32,
+    pub max_patterns: usize,
+    pub max_patterns_per_class: usize,
+    pub retention_seconds: u32,
+    pub max_predicates_per_query: usize,
+}
+
+impl From<StorageQueryObservationSettings> for QueryObservationPolicyValue {
+    fn from(value: StorageQueryObservationSettings) -> Self {
+        Self {
+            enabled: value.enabled(),
+            sample_every: value.sample_every(),
+            max_patterns: value.max_patterns(),
+            max_patterns_per_class: value.max_patterns_per_class(),
+            retention_seconds: value.retention_seconds(),
+            max_predicates_per_query: value.max_predicates_per_query(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, ToSchema)]
+pub struct QueryObservationCeilingsValue {
+    pub min_sample_every: u32,
+    pub max_patterns: usize,
+    pub max_patterns_per_class: usize,
+    pub max_retention_seconds: u32,
+    pub max_predicates_per_query: usize,
+}
+
+impl From<hubuum_storage_core::StorageQueryObservationCeilings> for QueryObservationCeilingsValue {
+    fn from(value: hubuum_storage_core::StorageQueryObservationCeilings) -> Self {
+        Self {
+            min_sample_every: value.min_sample_every(),
+            max_patterns: value.max_patterns(),
+            max_patterns_per_class: value.max_patterns_per_class(),
+            max_retention_seconds: value.max_retention_seconds(),
+            max_predicates_per_query: value.max_predicates_per_query(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -251,6 +413,8 @@ pub struct QueryObservationSettingsReport {
     pub effective: QueryObservationPolicyValue,
     pub runtime: Option<QueryObservationPolicyValue>,
     pub deployment: QueryObservationPolicyValue,
+    pub ceilings: QueryObservationCeilingsValue,
+    pub constrained_by_ceiling: bool,
     /// Collection pauses while this replica's latest refresh has failed,
     /// rather than keep a possibly stale enablement.
     pub collection_paused: bool,
@@ -275,17 +439,43 @@ pub struct PaginationSettingsReport {
     pub constrained_by_ceiling: bool,
 }
 
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct RuntimeAuthenticationProviderStatus {
+    pub name: String,
+    pub available: bool,
+}
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct AuthenticationSettingsReport {
+    #[serde(flatten)]
+    pub ownership: RuntimeSettingsOwnership,
+    pub providers: Vec<RuntimeAuthenticationProviderStatus>,
+}
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct AuthorizationSettingsReport {
+    #[serde(flatten)]
+    pub ownership: RuntimeSettingsOwnership,
+    pub effective_backend: String,
+    pub runtime_backend: Option<String>,
+    pub deployment_backend: String,
+    pub available: bool,
+}
+
 /// Deployment values that runtime settings override on this replica.
 #[derive(Clone, Copy, Debug)]
 pub struct RuntimeSettingsDeployment {
     pub query_observations: StorageQueryObservationSettings,
     pub pagination: PageLimits,
+    pub authorization_backend: StorageAuthorizationBackend,
 }
 
 /// Runtime-managed settings as applied by the responding replica.
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct RuntimeSettingsReport {
     pub replica: RuntimeSettingsReplicaStatus,
+    pub authentication: AuthenticationSettingsReport,
+    pub authorization: AuthorizationSettingsReport,
     pub query_observations: QueryObservationSettingsReport,
     pub pagination: PaginationSettingsReport,
 }
@@ -295,17 +485,44 @@ impl RuntimeSettingsReport {
         applied: &AppliedRuntimeSettings,
         deployment: RuntimeSettingsDeployment,
         now: DateTime<Utc>,
+        authentication_providers: Vec<RuntimeAuthenticationProviderStatus>,
+        authorization_backend: String,
+        authorization_ready: bool,
     ) -> Self {
         let snapshot = applied.snapshot();
         let record = |group| snapshot.map(|snapshot| snapshot.record(group));
-        let observation_runtime = snapshot
+        let observation_runtime = snapshot.and_then(|snapshot| {
+            snapshot.query_observations().map(|policy| {
+                QueryObservationPolicyValue::from(
+                    deployment.query_observations.with_runtime_policy(policy),
+                )
+            })
+        });
+        let observation_deployment =
+            QueryObservationPolicyValue::from(deployment.query_observations);
+        let observation_effective = observation_runtime.unwrap_or(observation_deployment);
+        let observation_requested = snapshot
             .and_then(|snapshot| snapshot.query_observations())
-            .map(|policy| QueryObservationPolicyValue {
-                enabled: policy.enabled(),
+            .map(|policy| {
+                let mut value = observation_deployment;
+                value.enabled = policy.enabled();
+                if let Some(sample_every) = policy.sample_every() {
+                    value.sample_every = sample_every;
+                }
+                if let Some(max_patterns) = policy.max_patterns() {
+                    value.max_patterns = max_patterns;
+                }
+                if let Some(max_patterns_per_class) = policy.max_patterns_per_class() {
+                    value.max_patterns_per_class = max_patterns_per_class;
+                }
+                if let Some(retention_seconds) = policy.retention_seconds() {
+                    value.retention_seconds = retention_seconds;
+                }
+                if let Some(max_predicates_per_query) = policy.max_predicates_per_query() {
+                    value.max_predicates_per_query = max_predicates_per_query;
+                }
+                value
             });
-        let observation_deployment = QueryObservationPolicyValue {
-            enabled: deployment.query_observations.enabled(),
-        };
         let pagination_policy = snapshot.and_then(|snapshot| snapshot.pagination());
         let effective_pages = deployment
             .pagination
@@ -318,14 +535,36 @@ impl RuntimeSettingsReport {
                 last_refresh_failure_at: applied.last_failure_at(),
                 reconcile_interval_seconds: RUNTIME_SETTINGS_RECONCILE_INTERVAL.as_secs(),
             },
+            authentication: AuthenticationSettingsReport {
+                ownership: RuntimeSettingsOwnership::new(
+                    record(StorageRuntimeSettingsGroup::Authentication),
+                    RuntimeSettingsEffect::NextRequest,
+                ),
+                providers: authentication_providers,
+            },
+            authorization: AuthorizationSettingsReport {
+                ownership: RuntimeSettingsOwnership::new(
+                    record(StorageRuntimeSettingsGroup::Authorization),
+                    RuntimeSettingsEffect::NextRequest,
+                ),
+                effective_backend: authorization_backend,
+                runtime_backend: snapshot
+                    .and_then(|snapshot| snapshot.authorization())
+                    .map(|backend| backend.as_str().to_string()),
+                deployment_backend: deployment.authorization_backend.as_str().to_string(),
+                available: authorization_ready,
+            },
             query_observations: QueryObservationSettingsReport {
                 ownership: RuntimeSettingsOwnership::new(
                     record(StorageRuntimeSettingsGroup::QueryObservations),
                     RuntimeSettingsEffect::NextQuery,
                 ),
-                effective: observation_runtime.unwrap_or(observation_deployment),
-                runtime: observation_runtime,
+                effective: observation_effective,
+                runtime: observation_requested,
                 deployment: observation_deployment,
+                ceilings: deployment.query_observations.ceilings().into(),
+                constrained_by_ceiling: observation_requested
+                    .is_some_and(|requested| requested != observation_effective),
                 collection_paused: applied.refresh_failed(),
             },
             pagination: PaginationSettingsReport {
@@ -353,6 +592,8 @@ impl RuntimeSettingsReport {
     /// Revision of `group` applied by the responding replica.
     pub fn applied_revision(&self, group: RuntimeSettingsGroup) -> Option<ResourceRevision> {
         match group {
+            RuntimeSettingsGroup::Authentication => self.authentication.ownership.revision,
+            RuntimeSettingsGroup::Authorization => self.authorization.ownership.revision,
             RuntimeSettingsGroup::QueryObservations => self.query_observations.ownership.revision,
             RuntimeSettingsGroup::Pagination => self.pagination.ownership.revision,
         }
@@ -383,8 +624,15 @@ pub struct RuntimeSettingsValueResponse {
     pub value: Option<Value>,
 }
 
-impl From<StorageRuntimeSettingsAssignment> for RuntimeSettingsValueResponse {
-    fn from(value: StorageRuntimeSettingsAssignment) -> Self {
+impl From<&StorageRuntimeSettingsAssignment> for RuntimeSettingsValueResponse {
+    fn from(value: &StorageRuntimeSettingsAssignment) -> Self {
+        let document = value.to_document().map(|document| {
+            if value.group() == StorageRuntimeSettingsGroup::Authentication {
+                redact_authentication_document(document)
+            } else {
+                document
+            }
+        });
         Self {
             source: match value {
                 StorageRuntimeSettingsAssignment::Deployment(_) => {
@@ -392,9 +640,44 @@ impl From<StorageRuntimeSettingsAssignment> for RuntimeSettingsValueResponse {
                 }
                 StorageRuntimeSettingsAssignment::Managed(_) => RuntimeSettingsSource::Runtime,
             },
-            value: value.to_document(),
+            value: document,
         }
     }
+}
+
+fn redact_authentication_document(mut document: Value) -> Value {
+    let Some(providers) = document.get_mut("providers").and_then(Value::as_array_mut) else {
+        return document;
+    };
+    for provider in providers {
+        let Some(configuration) = provider
+            .get_mut("configuration")
+            .and_then(Value::as_object_mut)
+        else {
+            continue;
+        };
+        let envelope_configured = configuration
+            .remove(hubuum_storage_core::RUNTIME_AUTHENTICATION_PASSWORD_ENVELOPE_FIELD)
+            .is_some();
+        let inline_configured = configuration.remove("bind_password").is_some();
+        let bind_password_ref = configuration.remove("bind_password_ref");
+        let secret_configured = envelope_configured
+            || inline_configured
+            || bind_password_ref
+                .as_ref()
+                .is_some_and(|value| !value.is_null());
+        if bind_password_ref.is_some_and(|value| !value.is_null()) {
+            configuration.insert(
+                "bind_password_ref".to_string(),
+                Value::String("<redacted>".to_string()),
+            );
+        }
+        configuration.insert(
+            "bind_password_configured".to_string(),
+            Value::Bool(secret_configured),
+        );
+    }
+    document
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -448,6 +731,10 @@ pub struct RuntimeSettingsHistoryResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hubuum_storage_core::{
+        StorageAuthenticationProvider, StorageAuthenticationProviders,
+        StorageQueryObservationCeilings,
+    };
     use rstest::rstest;
 
     fn ceiling() -> PageLimits {
@@ -481,10 +768,95 @@ mod tests {
             .into_update(ceiling(), EventContext::system())
             .unwrap();
         assert_eq!(
-            update.assignment(),
+            update.assignment().clone(),
             StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Pagination(
                 StoragePaginationPolicy::try_new(limit).unwrap()
             ))
+        );
+    }
+
+    #[test]
+    fn authentication_audit_values_redact_envelopes_and_secret_references() {
+        let providers = StorageAuthenticationProviders::try_new(vec![
+            StorageAuthenticationProvider::try_new(
+                "corporate",
+                StorageAuthenticationProviderKind::Ldap,
+                serde_json::json!({
+                    "scope": "corporate",
+                    "runtime_bind_password_envelope": {
+                        "ciphertext": "ciphertext-secret"
+                    },
+                    "bind_password_ref": "secret-alias"
+                }),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let assignment = StorageRuntimeSettingsAssignment::Managed(
+            StorageRuntimeSettingsValue::Authentication(providers),
+        );
+        let response = RuntimeSettingsValueResponse::from(&assignment);
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(!json.contains("ciphertext-secret"));
+        assert!(!json.contains("secret-alias"));
+        assert!(json.contains("\"bind_password_configured\":true"));
+    }
+
+    #[test]
+    fn query_observation_requests_manage_all_limits_and_fill_omitted_values() {
+        let request = QueryObservationSettingsRequest {
+            expected_revision: ResourceRevision::INITIAL,
+            enabled: true,
+            sample_every: Some(4),
+            max_patterns: None,
+            max_patterns_per_class: Some(8),
+            retention_seconds: None,
+            max_predicates_per_query: Some(6),
+        };
+        let update = request
+            .into_update(
+                StorageQueryObservationSettings::default(),
+                EventContext::system(),
+            )
+            .unwrap();
+        let Some(StorageRuntimeSettingsValue::QueryObservations(policy)) =
+            update.assignment().value()
+        else {
+            panic!("expected query observation policy");
+        };
+        assert_eq!(
+            (
+                policy.enabled(),
+                policy.sample_every(),
+                policy.max_patterns(),
+                policy.max_patterns_per_class(),
+                policy.retention_seconds(),
+                policy.max_predicates_per_query(),
+            ),
+            (true, Some(4), Some(2048), Some(8), Some(86400), Some(6))
+        );
+    }
+
+    #[test]
+    fn query_observation_requests_must_fit_the_deployment_ceilings() {
+        let ceilings = StorageQueryObservationCeilings::try_new(4, 64, 32, 3600, 16).unwrap();
+        let deployment = StorageQueryObservationSettings::try_new_with_ceilings(
+            false, 8, 32, 16, 1800, 8, ceilings,
+        )
+        .unwrap();
+        let request = QueryObservationSettingsRequest {
+            expected_revision: ResourceRevision::INITIAL,
+            enabled: true,
+            sample_every: Some(2),
+            max_patterns: Some(128),
+            max_patterns_per_class: Some(16),
+            retention_seconds: None,
+            max_predicates_per_query: None,
+        };
+        assert!(
+            request
+                .into_update(deployment, EventContext::system())
+                .is_err()
         );
     }
 }

@@ -1,4 +1,4 @@
-use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, put, web};
+use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, post, put, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
@@ -6,9 +6,10 @@ use crate::config::running::RunningConfig;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess};
 use crate::models::runtime_settings::{
-    PaginationSettingsRequest, QueryObservationSettingsRequest, RuntimeSettingsGroup,
-    RuntimeSettingsHistoryParams, RuntimeSettingsHistoryResponse, RuntimeSettingsReleaseParams,
-    RuntimeSettingsReport, RuntimeSettingsUpdateResponse,
+    AuthenticationSettingsRequest, AuthorizationSettingsRequest, PaginationSettingsRequest,
+    QueryObservationSettingsRequest, RuntimeSettingsGroup, RuntimeSettingsHistoryParams,
+    RuntimeSettingsHistoryResponse, RuntimeSettingsReleaseParams, RuntimeSettingsReport,
+    RuntimeSettingsUpdateResponse,
 };
 use crate::pagination::deployment_page_limits;
 use crate::permissions::AppContext;
@@ -91,9 +92,12 @@ pub async fn set_query_observation_settings(
     http_request: HttpRequest,
     request: web::Json<QueryObservationSettingsRequest>,
 ) -> Result<impl Responder, ApiError> {
-    let update = request
-        .into_inner()
-        .into_update(admin.event_context(&http_request));
+    let update = request.into_inner().into_update(
+        context
+            .clone_backend()
+            .deployment_query_observation_settings(),
+        admin.event_context(&http_request),
+    )?;
     let response = runtime_settings::update(&context, update).await?;
     log_update(&admin, &response);
     Ok(ApiResponse::ok(response))
@@ -124,6 +128,69 @@ pub async fn set_pagination_settings(
         deployment_page_limits()?,
         admin.event_context(&http_request),
     )?;
+    let response = runtime_settings::update(&context, update).await?;
+    log_update(&admin, &response);
+    Ok(ApiResponse::ok(response))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/runtime-settings/authentication/preflight",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    request_body = AuthenticationSettingsRequest,
+    responses(
+        (status = 200, description = "LDAP provider definitions passed validation and connectivity checks, then were committed with an audit record", body = RuntimeSettingsUpdateResponse),
+        (status = 400, description = "Invalid provider configuration or failed LDAP connectivity preflight", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse),
+        (status = 412, description = "Stale expected_revision; no settings were persisted", body = ApiErrorResponse),
+        (status = 503, description = "Encryption key or secret source unavailable", body = ApiErrorResponse)
+    )
+)]
+#[post("/runtime-settings/authentication/preflight")]
+pub async fn preflight_authentication_settings(
+    context: AppContext,
+    admin: AdminAccess,
+    http_request: HttpRequest,
+    request: web::Json<AuthenticationSettingsRequest>,
+) -> Result<impl Responder, ApiError> {
+    let (expected_revision, providers) = request.into_inner().into_parts();
+    let response = runtime_settings::preflight_authentication(
+        &context,
+        expected_revision,
+        providers,
+        admin.event_context(&http_request),
+    )
+    .await?;
+    log_update(&admin, &response);
+    Ok(ApiResponse::ok(response))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/v1/admin/runtime-settings/authorization",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    request_body = AuthorizationSettingsRequest,
+    responses(
+        (status = 200, description = "Authorization backend selection committed with an audit record and applied by the responding replica", body = RuntimeSettingsUpdateResponse),
+        (status = 400, description = "Invalid backend selection", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse),
+        (status = 412, description = "Stale expected_revision; the response carries the current revision", body = ApiErrorResponse)
+    )
+)]
+#[put("/runtime-settings/authorization")]
+pub async fn set_authorization_settings(
+    context: AppContext,
+    admin: AdminAccess,
+    http_request: HttpRequest,
+    request: web::Json<AuthorizationSettingsRequest>,
+) -> Result<impl Responder, ApiError> {
+    let update = request
+        .into_inner()
+        .into_update(admin.event_context(&http_request));
     let response = runtime_settings::update(&context, update).await?;
     log_update(&admin, &response);
     Ok(ApiResponse::ok(response))
@@ -205,6 +272,37 @@ pub async fn release_pagination_settings(
 }
 
 #[utoipa::path(
+    delete,
+    path = "/api/v1/admin/runtime-settings/authentication",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(RuntimeSettingsReleaseParams),
+    responses(
+        (status = 200, description = "Deployment authentication provider definitions restored as a new audited revision", body = RuntimeSettingsUpdateResponse),
+        (status = 400, description = "Invalid request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse),
+        (status = 412, description = "Stale expected_revision; the response carries the current revision", body = ApiErrorResponse)
+    )
+)]
+#[delete("/runtime-settings/authentication")]
+pub async fn release_authentication_settings(
+    context: AppContext,
+    admin: AdminAccess,
+    http_request: HttpRequest,
+    params: web::Query<RuntimeSettingsReleaseParams>,
+) -> Result<impl Responder, ApiError> {
+    release(
+        &context,
+        &admin,
+        &http_request,
+        RuntimeSettingsGroup::Authentication,
+        params.into_inner(),
+    )
+    .await
+}
+
+#[utoipa::path(
     get,
     path = "/api/v1/admin/runtime-settings/history/{group}",
     tag = "admin",
@@ -232,11 +330,46 @@ pub async fn get_runtime_settings_history(
     ))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/admin/runtime-settings/authorization",
+    tag = "admin",
+    security(("bearer_auth" = [])),
+    params(RuntimeSettingsReleaseParams),
+    responses(
+        (status = 200, description = "Deployment ownership committed as a new audited revision", body = RuntimeSettingsUpdateResponse),
+        (status = 400, description = "Invalid request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse),
+        (status = 412, description = "Stale expected_revision; the response carries the current revision", body = ApiErrorResponse)
+    )
+)]
+#[delete("/runtime-settings/authorization")]
+pub async fn release_authorization_settings(
+    context: AppContext,
+    admin: AdminAccess,
+    http_request: HttpRequest,
+    params: web::Query<RuntimeSettingsReleaseParams>,
+) -> Result<impl Responder, ApiError> {
+    release(
+        &context,
+        &admin,
+        &http_request,
+        RuntimeSettingsGroup::Authorization,
+        params.into_inner(),
+    )
+    .await
+}
+
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(get_running_config)
         .service(get_runtime_settings)
+        .service(preflight_authentication_settings)
+        .service(set_authorization_settings)
         .service(set_query_observation_settings)
         .service(set_pagination_settings)
+        .service(release_authentication_settings)
+        .service(release_authorization_settings)
         .service(release_query_observation_settings)
         .service(release_pagination_settings)
         .service(get_runtime_settings_history);
