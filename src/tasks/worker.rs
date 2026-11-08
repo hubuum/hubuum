@@ -1,4 +1,6 @@
 use crate::models::task::task_kind_from_db;
+use crate::services::artifacts::TaskPublication;
+use hubuum_storage_core::HistoryPublicationKind;
 use hubuum_storage_core::{
     StorageBackupBudget, StorageTaskClaimRequest, StorageTaskLeaseDuration, TaskExecutionStorage,
     TaskWorkerId,
@@ -873,6 +875,35 @@ async fn process_claimed_task(
             crate::services::tasks::execute_computed_field_rebuild(context, task).await?;
         return TaskStatus::from_db(&completed.status);
     }
+    let kind = match task_kind {
+        TaskKind::Export => Some(HistoryPublicationKind::Export),
+        TaskKind::Backup => Some(HistoryPublicationKind::Backup),
+        _ => None,
+    };
+    let mut publication = TaskPublication::admit(context.backend(), kind).await?;
+    let result = context
+        .backend()
+        .run_in_scope(
+            publication.scope(),
+            Box::pin(dispatch_claimed_task(
+                context,
+                task,
+                backup_settings,
+                task_kind,
+                &mut publication,
+            )),
+        )
+        .await;
+    publication.settle(result).await
+}
+
+async fn dispatch_claimed_task(
+    context: &AppContext,
+    task: &ClaimedTask,
+    backup_settings: &BackupSettings,
+    task_kind: TaskKind,
+    publication: &mut TaskPublication,
+) -> Result<TaskStatus, ApiError> {
     let submitted_by = task.submitted_by.ok_or_else(|| {
         ApiError::BadRequest(
             "Submitting principal is no longer available for this task".to_string(),
@@ -910,9 +941,19 @@ async fn process_claimed_task(
             crate::services::schema_profiling::execute(context, task, &principal, scopes).await
         }
         TaskKind::Import => execute_import_task(context, task, &principal, scopes).await,
-        TaskKind::Export => execute_export_task(context, task, &principal, scopes).await,
+        TaskKind::Export => {
+            execute_export_task(context, task, &principal, scopes, publication).await
+        }
         TaskKind::Backup => {
-            execute_backup_task(context, task, &principal, scopes, backup_settings).await
+            execute_backup_task(
+                context,
+                task,
+                &principal,
+                scopes,
+                backup_settings,
+                publication,
+            )
+            .await
         }
         TaskKind::RemoteCall => execute_remote_call_task(context, task, &principal, scopes).await,
         TaskKind::Reindex | TaskKind::SchemaValidation => {
@@ -1324,3 +1365,6 @@ mod lease_heartbeat_tests {
         assert!(renewal_attempts.load(Ordering::Relaxed) > 0);
     }
 }
+
+#[cfg(test)]
+mod publication_tests;

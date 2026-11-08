@@ -29,7 +29,7 @@ impl PostgresRuntime {
         context: &TransactionLocalContext,
     ) -> Result<HistoryPublicationRequirement, PostgresStorageError> {
         if let Some(history) = &context.history_read {
-            history.epoch().validate_scope(&current_execution_scope())?;
+            history.validate_scope(&current_execution_scope())?;
         }
         // Unbound pools are supported only by focused adapter tests. Production
         // composition always captures its registered application permit.

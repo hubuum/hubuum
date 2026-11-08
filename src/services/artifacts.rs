@@ -1,4 +1,5 @@
 //! Application artifact ownership, bounded transfer and authorized-reader transport.
+use std::future::ready;
 use std::io;
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, OnceLock};
@@ -11,11 +12,97 @@ use hubuum_artifacts::{
     ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactReader, ArtifactReference,
     ArtifactReservation, Destination, DestinationId, TaskArtifactStore,
 };
+use hubuum_storage_core::{
+    HistoryLifecycleStorage, HistoryPublicationKind, HistoryPublicationOwner,
+};
 use uuid::Uuid;
 
 use crate::errors::ApiError;
+use crate::models::TaskStatus;
+use crate::restores::ApplicationWorkCompletion;
 use crate::services::tasks::ClaimedTask;
-use crate::storage::{ExecutionStorage, StorageContext, storage_handle};
+use crate::storage::{
+    ExecutionStorage, StorageContext, StorageExecutionScope, StorageHandle, storage_handle,
+};
+
+/// Owns one backup/export from its first domain read through joined producers,
+/// final task publication or positively completed cleanup. Drop is not proof.
+pub(crate) struct TaskPublication {
+    storage: StorageHandle,
+    scope: StorageExecutionScope,
+    owner: Option<(HistoryPublicationOwner, ApplicationWorkCompletion)>,
+    pending: bool,
+}
+
+impl TaskPublication {
+    pub(crate) async fn admit(
+        storage: &StorageHandle,
+        kind: Option<HistoryPublicationKind>,
+    ) -> Result<Self, ApiError> {
+        let mut scope = storage.current_execution_scope();
+        let owner = if storage.uses_online_history()
+            && let Some(kind) = kind
+        {
+            if scope.history_read_override().is_some() {
+                return Err(ApiError::ServiceUnavailable(
+                    "Task publication cannot replace an inherited owner".into(),
+                ));
+            }
+            let execution = scope
+                .task_execution_override()
+                .and_then(Option::as_ref)
+                .ok_or_else(|| {
+                    ApiError::ServiceUnavailable(
+                        "Owned task publication requires supervised execution".into(),
+                    )
+                })?;
+            execution.check()?;
+            scope = scope.with_application_access(storage.admit_application_work().await?);
+            let owner = storage
+                .run_in_scope(scope.clone(), storage.admit_history_publication(kind))
+                .await?;
+            scope = scope.with_history_read(owner.context());
+            Some(owner)
+        } else {
+            None
+        };
+        Ok(Self {
+            storage: storage.clone(),
+            scope,
+            owner: owner.map(|owner| (owner, ApplicationWorkCompletion::begin())),
+            pending: false,
+        })
+    }
+
+    pub(crate) fn scope(&self) -> StorageExecutionScope {
+        self.scope.clone()
+    }
+
+    pub(crate) async fn settle(
+        mut self,
+        result: Result<TaskStatus, ApiError>,
+    ) -> Result<TaskStatus, ApiError> {
+        if let Some((owner, mut completion)) = self.owner.take() {
+            if self.pending {
+                tracing::warn!("Task publication retains an unconfirmed output driver");
+                return result.and_then(|_| {
+                    Err(ApiError::ServiceUnavailable(
+                        "Task publication cleanup remains unconfirmed".into(),
+                    ))
+                });
+            }
+            // Every stage producer has been joined and its spool released;
+            // TaskOutput confirmed either final publication or awaited abort.
+            let settlement = owner.after_drained(ready(Ok(())), ready(Ok(()))).await?;
+            if let Err(error) = self.storage.settle_history_publication(settlement).await {
+                tracing::warn!(%error, "Task publication settlement remains charged");
+                return result.and_then(|_| Err(error.into()));
+            }
+            completion.confirm();
+        }
+        result
+    }
+}
 
 #[cfg(test)]
 mod tests;
@@ -55,7 +142,7 @@ pub(crate) struct TaskOutput {
 }
 impl TaskOutput {
     pub async fn begin(
-        context: &impl StorageContext,
+        publication: &mut TaskPublication,
         task: &ClaimedTask,
         max_bytes: usize,
         spool_bytes: u64,
@@ -78,7 +165,7 @@ impl TaskOutput {
             .manifest_bytes(manifest_bytes)
             .build()
             .map_err(error)?;
-        let store = storage_handle(context).artifact_store();
+        let store = publication.storage.artifact_store();
         // Stable identity for this directly readable primary-backend destination.
         let destination = Destination::new(
             DestinationId::from_bytes([0x50; 16]).map_err(error)?,
@@ -90,7 +177,6 @@ impl TaskOutput {
             .await
             .map_err(error)?;
         let identity = ArtifactIdentity::new(destination.id());
-        store.stage(&identity, limits).await.map_err(error)?;
         let reservation = ArtifactReservation::new(
             worker,
             spool_bytes,
@@ -101,18 +187,54 @@ impl TaskOutput {
                 }),
         )
         .map_err(error)?;
+        publication.pending = true;
+        if let Err(failure) = store.stage(&identity, limits).await {
+            return Err(abort_output(store.as_ref(), &identity, publication, failure).await);
+        }
         if let Err(failure) = store
             .bind_task(&identity, task.lease(), reservation, expires)
             .await
         {
-            let _ = store.abort(&identity).await;
-            return Err(error(failure));
+            return Err(abort_output(store.as_ref(), &identity, publication, failure).await);
         }
         Ok(Self {
             store,
             identity,
             limits,
         })
+    }
+
+    pub(crate) async fn finish(
+        &self,
+        publication: &mut TaskPublication,
+        result: Result<TaskStatus, ApiError>,
+    ) -> Result<TaskStatus, ApiError> {
+        if !matches!(result, Ok(TaskStatus::Succeeded))
+            && let Err(cleanup) = self.store.abort(&self.identity).await
+        {
+            tracing::warn!(%cleanup, "Task output abort remains unconfirmed");
+            return result.and_then(|_| Err(error(cleanup)));
+        }
+        publication.pending = false;
+        result
+    }
+}
+
+async fn abort_output(
+    store: &dyn TaskArtifactStore,
+    identity: &ArtifactIdentity,
+    publication: &mut TaskPublication,
+    primary: ArtifactError,
+) -> ApiError {
+    match store.abort(identity).await {
+        Ok(()) => {
+            publication.pending = false;
+            error(primary)
+        }
+        Err(abort) => error(ArtifactError::AbortFailed {
+            primary: Box::new(primary),
+            abort: Box::new(abort),
+        }),
     }
 }
 

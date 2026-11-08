@@ -246,7 +246,7 @@ impl MemoryStateLock {
             ));
         }
         if let Some(history) = &history {
-            history.epoch().validate_scope(&original_scope)?;
+            history.validate_scope(&original_scope)?;
         }
         if let Ok(Some(request)) =
             MEMORY_EXECUTION_SCOPE.try_with(|scope| scope.api_request_override().cloned())

@@ -158,9 +158,36 @@ pub struct HistoryReadContext {
     ownership: Uuid,
     kind: HistoryPublicationKind,
     epoch: HistoryReadEpoch,
+    binding: Box<StorageExecutionScope>,
 }
 
 impl HistoryReadContext {
+    pub(crate) fn binding(&self) -> &StorageExecutionScope {
+        &self.binding
+    }
+    pub(crate) fn with_binding(&self, binding: StorageExecutionScope) -> Self {
+        let mut context = self.clone();
+        context.binding = Box::new(binding);
+        context
+    }
+    /// A narrowed local context retains the original native owner and epoch.
+    pub fn is_restriction_of(&self, parent: &Self) -> bool {
+        self.same_publication(parent) && self.binding.restriction_of(&parent.binding).is_some()
+    }
+    fn same_publication(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.ownership == other.ownership
+            && self.kind == other.kind
+            && self.epoch == other.epoch
+    }
+    pub fn validate_scope(&self, scope: &StorageExecutionScope) -> Result<(), StorageError> {
+        if self.binding.as_ref() != &scope.history_binding() {
+            return Err(StorageError::unavailable(
+                "History scope differs from its bound productive restrictions",
+            ));
+        }
+        Ok(())
+    }
     pub const fn id(&self) -> Uuid {
         self.id
     }
@@ -199,6 +226,7 @@ impl HistoryPublicationOwner {
             id: Uuid::new_v4(),
             ownership: Uuid::new_v4(),
             kind,
+            binding: epoch.scope.clone(),
             epoch,
         })
     }
@@ -360,8 +388,14 @@ impl HistoryPublicationRegistry {
         context: &HistoryReadContext,
         current: &HistoryReadEpoch,
     ) -> Result<(), StorageError> {
-        if self.owners.get(&context.id) != Some(context)
-            || context.epoch() != current
+        if self
+            .owners
+            .get(&context.id)
+            .is_none_or(|owner| !context.same_publication(owner))
+            || context.epoch.application != current.application
+            || context.epoch.history != current.history
+            || context.epoch.generation != current.generation
+            || context.binding != current.scope
             || current.generation() != self.generation
         {
             return Err(StorageError::unavailable(

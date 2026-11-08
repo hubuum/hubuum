@@ -314,6 +314,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Handler-local conditional mutations and export query limits retain their
+  original history publication while binding additional restrictions. Nested
+  work cannot discard an inherited condition or weaken an inherited limit.
+  The memory adapter now enforces revision preconditions on user updates.
+- History-aware backup and export tasks retain publication ownership through
+  producer completion and final output publication or confirmed cleanup. Failed
+  aborts and interrupted work remain charged; production expiry stays disabled.
 - API occupancy and history publication/producer settlement validate their
   existing ownership without acquiring a fresh application permit. Cleanup
   remains independent of productive admission and API response buffering.

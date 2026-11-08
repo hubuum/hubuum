@@ -21,41 +21,44 @@ impl ExecutionStorage for PostgresStorage {
         F: Future<Output = R> + 'a,
         R: 'a,
     {
-        let application = scope.application_access_override().cloned();
-        let call_site = scope.call_site_override();
-        let provenance = scope.mutation_provenance_override().cloned();
-        let precondition = scope.revision_precondition_override().cloned();
-        let query_budget = scope.query_budget_override();
-        let task_execution = scope.task_execution_override().cloned();
-        let mut scoped: Pin<Box<dyn Future<Output = R> + 'a>> = Box::pin(future);
-        if scope.storage_callback_active() {
-            scoped = Box::pin(crate::runtime::with_storage_callback(scoped));
-        }
-        if let Some(context) = scope.history_read_override().cloned() {
-            scoped = Box::pin(crate::runtime::with_history_read(context, scoped));
-        }
-        if let Some(permit) = scope.api_request_override().cloned() {
-            scoped = Box::pin(crate::runtime::with_api_request(permit, scoped));
-        }
-        if let Some(permit) = application {
-            scoped = Box::pin(crate::runtime::with_application_access(permit, scoped));
-        }
-        if let Some(task_execution) = task_execution {
-            scoped = Box::pin(crate::runtime::with_task_execution(task_execution, scoped));
-        }
-        if let Some(query_budget) = query_budget {
-            scoped = Box::pin(crate::with_query_budget(query_budget, scoped));
-        }
-        if let Some(precondition) = precondition {
-            scoped = Box::pin(crate::with_revision_precondition(precondition, scoped));
-        }
-        if let Some(provenance) = provenance {
-            scoped = Box::pin(crate::with_mutation_provenance(provenance, scoped));
-        }
-        if let Some(call_site) = call_site {
-            scoped = Box::pin(crate::with_storage_call_site(call_site, scoped));
-        }
-        scoped
+        Box::pin(async move {
+            let scope = scope.nested_within(&crate::runtime::current_execution_scope());
+            let application = scope.application_access_override().cloned();
+            let call_site = scope.call_site_override();
+            let provenance = scope.mutation_provenance_override().cloned();
+            let precondition = scope.revision_precondition_override().cloned();
+            let query_budget = scope.query_budget_override();
+            let task_execution = scope.task_execution_override().cloned();
+            let mut scoped: Pin<Box<dyn Future<Output = R> + 'a>> = Box::pin(future);
+            if scope.storage_callback_active() {
+                scoped = Box::pin(crate::runtime::with_storage_callback(scoped));
+            }
+            if let Some(context) = scope.history_read_override().cloned() {
+                scoped = Box::pin(crate::runtime::with_history_read(context, scoped));
+            }
+            if let Some(permit) = scope.api_request_override().cloned() {
+                scoped = Box::pin(crate::runtime::with_api_request(permit, scoped));
+            }
+            if let Some(permit) = application {
+                scoped = Box::pin(crate::runtime::with_application_access(permit, scoped));
+            }
+            if let Some(task_execution) = task_execution {
+                scoped = Box::pin(crate::runtime::with_task_execution(task_execution, scoped));
+            }
+            if let Some(query_budget) = query_budget {
+                scoped = Box::pin(crate::with_query_budget(query_budget, scoped));
+            }
+            if let Some(precondition) = precondition {
+                scoped = Box::pin(crate::with_revision_precondition(precondition, scoped));
+            }
+            if let Some(provenance) = provenance {
+                scoped = Box::pin(crate::with_mutation_provenance(provenance, scoped));
+            }
+            if let Some(call_site) = call_site {
+                scoped = Box::pin(crate::with_storage_call_site(call_site, scoped));
+            }
+            scoped.await
+        })
     }
 
     fn run_in_scope_send<'a, F, R>(
@@ -67,40 +70,43 @@ impl ExecutionStorage for PostgresStorage {
         F: Future<Output = R> + Send + 'a,
         R: Send + 'a,
     {
-        let application = scope.application_access_override().cloned();
-        let call_site = scope.call_site_override();
-        let provenance = scope.mutation_provenance_override().cloned();
-        let precondition = scope.revision_precondition_override().cloned();
-        let query_budget = scope.query_budget_override();
-        let task_execution = scope.task_execution_override().cloned();
-        let mut scoped: Pin<Box<dyn Future<Output = R> + Send + 'a>> = Box::pin(future);
-        if scope.storage_callback_active() {
-            scoped = Box::pin(crate::runtime::with_storage_callback(scoped));
-        }
-        if let Some(context) = scope.history_read_override().cloned() {
-            scoped = Box::pin(crate::runtime::with_history_read(context, scoped));
-        }
-        if let Some(permit) = scope.api_request_override().cloned() {
-            scoped = Box::pin(crate::runtime::with_api_request(permit, scoped));
-        }
-        if let Some(permit) = application {
-            scoped = Box::pin(crate::runtime::with_application_access(permit, scoped));
-        }
-        if let Some(task_execution) = task_execution {
-            scoped = Box::pin(crate::runtime::with_task_execution(task_execution, scoped));
-        }
-        if let Some(query_budget) = query_budget {
-            scoped = Box::pin(crate::with_query_budget(query_budget, scoped));
-        }
-        if let Some(precondition) = precondition {
-            scoped = Box::pin(crate::with_revision_precondition(precondition, scoped));
-        }
-        if let Some(provenance) = provenance {
-            scoped = Box::pin(crate::with_mutation_provenance(provenance, scoped));
-        }
-        if let Some(call_site) = call_site {
-            scoped = Box::pin(crate::with_storage_call_site(call_site, scoped));
-        }
-        scoped
+        Box::pin(async move {
+            let scope = scope.nested_within(&crate::runtime::current_execution_scope());
+            let application = scope.application_access_override().cloned();
+            let call_site = scope.call_site_override();
+            let provenance = scope.mutation_provenance_override().cloned();
+            let precondition = scope.revision_precondition_override().cloned();
+            let query_budget = scope.query_budget_override();
+            let task_execution = scope.task_execution_override().cloned();
+            let mut scoped: Pin<Box<dyn Future<Output = R> + Send + 'a>> = Box::pin(future);
+            if scope.storage_callback_active() {
+                scoped = Box::pin(crate::runtime::with_storage_callback(scoped));
+            }
+            if let Some(context) = scope.history_read_override().cloned() {
+                scoped = Box::pin(crate::runtime::with_history_read(context, scoped));
+            }
+            if let Some(permit) = scope.api_request_override().cloned() {
+                scoped = Box::pin(crate::runtime::with_api_request(permit, scoped));
+            }
+            if let Some(permit) = application {
+                scoped = Box::pin(crate::runtime::with_application_access(permit, scoped));
+            }
+            if let Some(task_execution) = task_execution {
+                scoped = Box::pin(crate::runtime::with_task_execution(task_execution, scoped));
+            }
+            if let Some(query_budget) = query_budget {
+                scoped = Box::pin(crate::with_query_budget(query_budget, scoped));
+            }
+            if let Some(precondition) = precondition {
+                scoped = Box::pin(crate::with_revision_precondition(precondition, scoped));
+            }
+            if let Some(provenance) = provenance {
+                scoped = Box::pin(crate::with_mutation_provenance(provenance, scoped));
+            }
+            if let Some(call_site) = call_site {
+                scoped = Box::pin(crate::with_storage_call_site(call_site, scoped));
+            }
+            scoped.await
+        })
     }
 }

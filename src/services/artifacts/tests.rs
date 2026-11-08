@@ -16,6 +16,98 @@ use crate::storage::StorageHandle;
 
 const PAYLOAD: &[u8] = b"verified download";
 
+#[rstest]
+#[case::dropped_work(false)]
+#[case::unconfirmed_abort(true)]
+#[tokio::test]
+async fn unconfirmed_task_work_preserves_native_owner_and_shutdown_obligation(
+    #[case] failed_abort: bool,
+) {
+    use hubuum_storage_core::{
+        DeletionControlStorage, PrincipalStorage, StorageUserCreate, UserStorage,
+    };
+    let unbound = StorageHandle::memory();
+    let user = unbound
+        .create_user(StorageUserCreate::new(
+            None,
+            "publication-drop",
+            "fixture-hash",
+            None,
+            None,
+            crate::events::EventContext::system(),
+        ))
+        .await
+        .unwrap()
+        .into_value()
+        .into_parts();
+    let principal = hubuum_domain::PrincipalId::new(user.id().id()).unwrap();
+    let registration = unbound.register_history_runtime(None).await.unwrap();
+    let storage = unbound.clone().with_runtime_owner(registration.owner());
+    let (execution, _) = TaskExecutionContext::new(Duration::from_secs(10)).unwrap();
+    let mut publication = storage
+        .run_in_scope(
+            StorageExecutionScope::default().with_task_execution(Some(execution)),
+            TaskPublication::admit(&storage, Some(HistoryPublicationKind::Backup)),
+        )
+        .await
+        .unwrap();
+    let (abandoned, isolated) = ApplicationWorkCompletion::isolated();
+    // The normal guard is transferred to isolated failure accounting so this
+    // intentional abandonment cannot poison unrelated restore tests.
+    publication.owner.as_mut().unwrap().1.confirm();
+    publication.owner.as_mut().unwrap().1 = isolated;
+    let scope = publication.scope();
+    if failed_abort {
+        let store = publication.storage.artifact_store();
+        let destination =
+            Destination::new(DestinationId::generate(), "unconfirmed-output").unwrap();
+        let identity = ArtifactIdentity::new(destination.id());
+        let limits = ArtifactLimits::default();
+        publication.pending = true;
+        let result = storage
+            .run_in_scope(scope.clone(), async {
+                store.register_destination(&destination).await.unwrap();
+                let (proof, ()) = hubuum_artifacts::stage_producer(
+                    store.as_ref(),
+                    identity.clone(),
+                    limits,
+                    |sink| {
+                        sink.write_all(PAYLOAD)
+                            .map_err(|error| ArtifactError::Backend(error.to_string()))
+                    },
+                )
+                .await
+                .unwrap();
+                // A previously published result models an ambiguous completion.
+                // The real adapter refuses to abort visible output.
+                store.publish(&proof).await.unwrap();
+                let output = TaskOutput {
+                    store,
+                    identity,
+                    limits,
+                };
+                output
+                    .finish(
+                        &mut publication,
+                        Err(ApiError::Conflict("primary task failure".into())),
+                    )
+                    .await
+            })
+            .await;
+        assert!(
+            matches!(publication.settle(result).await, Err(ApiError::Conflict(message)) if message == "primary task failure")
+        );
+    } else {
+        drop(publication);
+    }
+    assert!(abandoned.load(Ordering::Acquire));
+    storage
+        .run_in_scope(scope, storage.get_principal(principal))
+        .await
+        .unwrap();
+    unbound.unregister_runtime(registration).await.unwrap();
+}
+
 #[derive(Clone, Copy)]
 enum ReadMode {
     Normal,

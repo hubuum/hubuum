@@ -1,4 +1,5 @@
 use super::*;
+use crate::execution::enforce_memory_revision_precondition;
 use hubuum_storage_core::StorageExternalSyncFailure;
 use hubuum_storage_core::{StorageAuthorizationResource, StorageAuthorizationResourcesQuery};
 
@@ -2952,6 +2953,15 @@ fn update_user_in_state(
         .get(&id.id())
         .cloned()
         .ok_or_else(|| StorageError::not_found(format!("User {} was not found", id.id())))?;
+    let principal = state
+        .principals
+        .get(&id.id())
+        .cloned()
+        .ok_or_else(|| StorageError::internal("updated user principal is missing"))?;
+    enforce_memory_revision_precondition(
+        StorageRevisionTarget::Principal(PrincipalId::new(id.id()).expect("validated user ID")),
+        principal.revision(),
+    )?;
     if password_hash.is_none() && proper_name.is_none() && email.is_none() {
         return Ok(match approval_audit {
             Some(audit) => StorageMutationOutcome::committed(current.user, audit),
@@ -2981,11 +2991,6 @@ fn update_user_in_state(
     .map_err(invalid_contract_value)?;
     let record = state.users.get_mut(&id.id()).expect("updated user exists");
     record.user = user.clone();
-    let principal = state
-        .principals
-        .get(&id.id())
-        .cloned()
-        .ok_or_else(|| StorageError::internal("updated user principal is missing"))?;
     state.store_principal(
         id.id(),
         advanced_principal(

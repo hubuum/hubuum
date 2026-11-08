@@ -844,6 +844,7 @@ pub(crate) fn run_in_scope_sync<F: FnOnce() -> R, R>(
     scope: StorageExecutionScope,
     operation: F,
 ) -> R {
+    let scope = scope.nested_within(&current_execution_scope());
     // Preserve an inherited admission: nesting must not refresh old producers.
     let application =
         ambient_application_access().or_else(|| scope.application_access_override().cloned());
@@ -899,10 +900,7 @@ pub(crate) fn run_in_scope_sync<F: FnOnce() -> R, R>(
         .try_with(Clone::clone)
         .unwrap_or(None)
         .or_else(|| scope.api_request_override().cloned());
-    let history = AMBIENT_HISTORY_READ
-        .try_with(Clone::clone)
-        .unwrap_or(None)
-        .or_else(|| scope.history_read_override().cloned());
+    let history = scope.history_read_override().cloned();
     let callback = scope.storage_callback_active()
         || AMBIENT_STORAGE_CALLBACK
             .try_with(|active| *active)
@@ -949,7 +947,11 @@ pub(crate) async fn with_history_read<F: Future>(
     future: F,
 ) -> F::Output {
     if AMBIENT_HISTORY_READ
-        .try_with(|current| current.is_some())
+        .try_with(|current| {
+            current
+                .as_ref()
+                .is_some_and(|parent| !context.is_restriction_of(parent))
+        })
         .unwrap_or(false)
     {
         future.await

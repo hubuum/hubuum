@@ -193,11 +193,31 @@ compatibility and transport rejection. Native
 plain HTTP, Rustls and OpenSSL cases exercise successful delivery and positive
 retirement through the production middleware and TLS configuration.
 
-Production composition still registers Legacy, so this integration does not
-activate online expiry. Handler-local revision-precondition scope binding, export/backup final
-publication and query budgets, restored descendants, crash retirement, all-family
-native races and measured resource/liveness qualification remain acceptance gates. No timer or absent API-owner row can
-substitute for these proofs.
+Handler-local ETag preconditions and export query budgets derive a private,
+restricted context from the same publication. The native owner and original
+epoch remain unchanged. A local scope can add a revision assertion or tighten a
+query budget. Nested and captured work cannot clear or replace the assertion,
+remove or enlarge the budget, or replace application, API, task or provenance
+facts. Both adapters compose these restrictions through synchronous, asynchronous
+and sendable execution scopes.
+
+Backup and export dispatch admits its publication before principal resolution
+and domain reads, retaining the supervised task deadline. Ownership spans
+capture, spooling, joined serialization/rendering, verified staging and atomic
+task/output completion. Errors before staging can settle after the operation
+returns. Once staging starts, successful final publication or positively
+completed abort is required. Failed cleanup, interrupted work and failed exact
+settlement retain native ownership and prevent clean shutdown acknowledgement.
+Publication-bound task completion retains its original task execution context;
+stopped owned work cannot gain a new deadline exemption to publish output.
+An abort failure is logged without losing the primary task error. A deadline or
+worker lease loss cannot substitute for producer and driver completion.
+
+Production composition still registers Legacy, so these integrations do not
+activate online expiry. Restored descendants, crash retirement, complete worker
+entry/cleanup qualification, all-family native races and measured
+resource/liveness budgets remain acceptance gates. No timer or absent API-owner
+row can substitute for these proofs.
 
 The online model bounds selected membership to 1000 rows
 and 16 MiB measured full-row input, with a 1 MiB encoded membership envelope.

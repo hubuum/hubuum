@@ -56,6 +56,7 @@ pub(crate) async fn execute_backup_task(
     user: &ExecutionPrincipal,
     scopes: Option<&TokenScope>,
     settings: &BackupSettings,
+    publication: &mut crate::services::artifacts::TaskPublication,
 ) -> Result<TaskStatus, ApiError> {
     let payload = task
         .request_payload
@@ -68,7 +69,7 @@ pub(crate) async fn execute_backup_task(
         .map_err(ApiError::BadRequest)?;
     let expires_at = settings.output_expires_at(Utc::now().naive_utc())?;
     let output = crate::services::artifacts::TaskOutput::begin(
-        context,
+        publication,
         task,
         settings.budget().max_bytes(),
         settings.budget().max_bytes() as u64,
@@ -136,10 +137,7 @@ pub(crate) async fn execute_backup_task(
         TaskStatus::from_db(&finished.status)
     }
     .await;
-    if result.is_err() || matches!(result, Ok(TaskStatus::Cancelled)) {
-        let _ = output.store.abort(&output.identity).await;
-    }
-    result
+    output.finish(publication, result).await
 }
 
 pub(crate) async fn authorize_backup_request(

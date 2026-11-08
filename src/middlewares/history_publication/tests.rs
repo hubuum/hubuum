@@ -47,11 +47,11 @@ impl StorageObserver for Observations {
     }
 }
 impl Observations {
-    async fn wait_for_settlement(&self) {
+    pub(crate) async fn wait_for_settlements(&self, expected: usize) {
         timeout(Duration::from_secs(5), async {
             loop {
                 let changed = self.changed.notified();
-                if self.settled.load(Ordering::SeqCst) == 1 {
+                if self.settled.load(Ordering::SeqCst) >= expected {
                     break;
                 }
                 changed.await;
@@ -330,7 +330,7 @@ pub(crate) async fn verify_middleware(
         assert_eq!(observations.settled.load(Ordering::SeqCst), 0);
         return;
     }
-    observations.wait_for_settlement().await;
+    observations.wait_for_settlements(1).await;
     assert_eq!(
         observations.captured.load(Ordering::SeqCst),
         captured,
@@ -544,7 +544,7 @@ async fn native_delivery(tls: Option<crate::config::TlsBackend>, response: Nativ
         200
     };
     assert!(received.starts_with(format!("HTTP/1.1 {status}").as_bytes()));
-    observations.wait_for_settlement().await;
+    observations.wait_for_settlements(1).await;
     assert_eq!(
         observations.api_settled.load(Ordering::SeqCst),
         usize::from(!matches!(response, NativeResponse::Head))

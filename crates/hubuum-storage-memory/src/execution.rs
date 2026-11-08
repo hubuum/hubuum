@@ -56,62 +56,7 @@ fn merge_memory_execution_scope(
     parent: &StorageExecutionScope,
     child: &StorageExecutionScope,
 ) -> StorageExecutionScope {
-    let mut merged = StorageExecutionScope::default();
-    if parent.storage_callback_active() || child.storage_callback_active() {
-        merged = merged.with_storage_callback();
-    }
-    if let Some(context) = parent
-        .history_read_override()
-        .or_else(|| child.history_read_override())
-    {
-        merged = merged.with_history_read(context.clone());
-    }
-    if let Some(permit) = parent
-        .api_request_override()
-        .or_else(|| child.api_request_override())
-    {
-        merged = merged.with_api_request(permit.clone());
-    }
-    // Once a producer captures authority, nested calls cannot silently refresh
-    // it to a newer generation after deletion or application replacement.
-    if let Some(permit) = parent
-        .application_access_override()
-        .or_else(|| child.application_access_override())
-    {
-        merged = merged.with_application_access(permit.clone());
-    }
-    if let Some(execution) = child
-        .task_execution_override()
-        .or_else(|| parent.task_execution_override())
-    {
-        merged = merged.with_task_execution(execution.clone());
-    }
-
-    if let Some(call_site) = child
-        .call_site_override()
-        .or_else(|| parent.call_site_override())
-    {
-        merged = merged.with_call_site(call_site);
-    }
-    if let Some(provenance) = child
-        .mutation_provenance_override()
-        .or_else(|| parent.mutation_provenance_override())
-    {
-        merged = merged.with_mutation_provenance(provenance.clone());
-    }
-    if let Some(precondition) = child
-        .revision_precondition_override()
-        .or_else(|| parent.revision_precondition_override())
-    {
-        merged = merged.with_revision_precondition(precondition.clone());
-    }
-    if let Some(budget) = child
-        .query_budget_override()
-        .or_else(|| parent.query_budget_override())
-    {
-        merged = merged.with_query_budget(budget);
-    }
-    merged
+    child.clone().nested_within(parent)
 }
 
 pub(crate) fn enforce_memory_revision_precondition(

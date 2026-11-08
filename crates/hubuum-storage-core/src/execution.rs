@@ -147,6 +147,61 @@ pub struct StorageExecutionScope {
 }
 
 impl StorageExecutionScope {
+    /// Compose nested work without refreshing inherited ownership. A history
+    /// context may acquire additional local restrictions, never weaker ones.
+    #[must_use]
+    pub fn nested_within(mut self, parent: &Self) -> Self {
+        self.storage_callback |= parent.storage_callback;
+        self.history_read = match (&parent.history_read, &self.history_read) {
+            (Some(parent), Some(child)) if child.is_restriction_of(parent) => Some(child.clone()),
+            (Some(parent), _) => Some(parent.clone()),
+            (None, _) => self.history_read,
+        };
+        self.application_access = parent
+            .application_access
+            .clone()
+            .or(self.application_access);
+        self.api_request = parent.api_request.clone().or(self.api_request);
+        self.task_execution = self
+            .task_execution
+            .or_else(|| parent.task_execution.clone());
+        self.call_site = self.call_site.or(parent.call_site);
+        self.mutation_provenance = self
+            .mutation_provenance
+            .or_else(|| parent.mutation_provenance.clone());
+        self.revision_precondition = self
+            .revision_precondition
+            .or_else(|| parent.revision_precondition.clone());
+        self.query_budget = self.query_budget.or(parent.query_budget);
+        if let Some(context) = &self.history_read
+            && let Some(binding) = self.history_binding().restriction_of(context.binding())
+        {
+            self.history_read = Some(context.with_binding(binding));
+        }
+        // Invalid changes retain the old proof and fail its exact validation
+        // on productive entry; scope installation itself has a generic result.
+        self
+    }
+
+    pub(crate) fn restriction_of(&self, parent: &Self) -> Option<Self> {
+        let mut expected = parent.clone();
+        if expected
+            .revision_precondition
+            .as_ref()
+            .is_none_or(Option::is_none)
+        {
+            expected.revision_precondition = self.revision_precondition.clone();
+        }
+        if expected.query_budget.flatten().is_none_or(|original| {
+            self.query_budget
+                .flatten()
+                .is_some_and(|budget| budget.as_millis() <= original.as_millis())
+        }) {
+            expected.query_budget = self.query_budget;
+        }
+        (self == &expected).then(|| self.clone())
+    }
+
     /// Restrictive marker for a DB callback or its captured descendants. Scope
     /// layering must OR this bit; callers cannot clear an inherited marker.
     #[must_use]

@@ -147,6 +147,168 @@ fn supervised(scope: StorageExecutionScope) -> StorageExecutionScope {
 }
 
 #[rstest]
+#[case::matching(false)]
+#[case::stale(true)]
+#[actix_web::test]
+async fn every_backend_binds_handler_local_revision_preconditions(#[case] stale: bool) {
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let fixture = Fixture::new(backend).await;
+        let scope = supervised(fixture.scope.clone());
+        let owner = fixture
+            .backend
+            .run_in_scope(
+                scope.clone(),
+                fixture
+                    .backend
+                    .admit_history_publication(HistoryPublicationKind::HttpResponse),
+            )
+            .await
+            .unwrap();
+        let scope = scope.with_history_read(owner.context());
+        let checked = fixture
+            .backend
+            .run_in_scope(scope, async {
+                let revision = fixture
+                    .backend
+                    .get_user_details(fixture.user.id)
+                    .await
+                    .unwrap()
+                    .into_parts()
+                    .revision();
+                let revision = if stale {
+                    revision.checked_advance().unwrap()
+                } else {
+                    revision
+                };
+                crate::storage::with_revision_precondition(
+                    &fixture.backend,
+                    Some(StorageRevisionPrecondition::new(
+                        StorageRevisionTarget::Principal(fixture.user.principal_id),
+                        vec![revision],
+                    )),
+                    fixture.backend.update_user(StorageUserUpdate::new(
+                        fixture.user.id,
+                        None,
+                        Some("Bound conditional update".into()),
+                        None,
+                        EventContext::system(),
+                    )),
+                )
+                .await
+            })
+            .await;
+        fixture
+            .backend
+            .settle_history_publication(
+                owner
+                    .after_drained(ready(Ok(())), ready(Ok(())))
+                    .await
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        fixture.cleanup().await;
+        if stale {
+            assert_eq!(
+                checked.unwrap_err().kind(),
+                StorageErrorKind::RevisionConflict
+            );
+        } else {
+            let _ = checked.unwrap();
+        }
+    }
+}
+
+#[rstest]
+#[case::inherit(0, true)]
+#[case::tighter_budget(1, true)]
+#[case::clear_precondition(2, false)]
+#[case::replace_precondition(3, false)]
+#[case::clear_budget(4, false)]
+#[case::longer_budget(5, false)]
+#[case::replace_task(6, false)]
+#[actix_web::test]
+async fn every_backend_preserves_narrowed_publication_constraints(
+    #[case] change: u8,
+    #[case] allowed: bool,
+) {
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let fixture = Fixture::new(backend).await;
+        let scope = supervised(fixture.scope.clone());
+        let owner = fixture
+            .backend
+            .run_in_scope(
+                scope.clone(),
+                fixture
+                    .backend
+                    .admit_history_publication(HistoryPublicationKind::Export),
+            )
+            .await
+            .unwrap();
+        let scope = scope.with_history_read(owner.context());
+        let checked = fixture
+            .backend
+            .run_in_scope(scope, async {
+                let condition = StorageRevisionPrecondition::new(
+                    StorageRevisionTarget::Principal(fixture.user.principal_id),
+                    vec![],
+                );
+                let narrowed = StorageExecutionScope::default()
+                    .with_revision_precondition(Some(condition))
+                    .with_query_budget(StorageQueryBudget::from_millis(1000));
+                // Capture the derived proof, then re-enter outside its local scope.
+                // Clearing captured constraints must fail as well as nested clears.
+                let captured = fixture
+                    .backend
+                    .run_in_scope(narrowed, async {
+                        fixture.backend.current_execution_scope()
+                    })
+                    .await;
+                let changed = match change {
+                    0 => captured,
+                    1 => captured.with_query_budget(StorageQueryBudget::from_millis(500)),
+                    2 => captured.with_revision_precondition(None),
+                    3 => {
+                        captured.with_revision_precondition(Some(StorageRevisionPrecondition::new(
+                            StorageRevisionTarget::Token(fixture.token),
+                            vec![],
+                        )))
+                    }
+                    4 => captured.with_query_budget(None),
+                    5 => captured.with_query_budget(StorageQueryBudget::from_millis(2000)),
+                    6 => supervised(captured),
+                    _ => unreachable!(),
+                };
+                // Re-entering beneath the original scope must not replace the
+                // captured, stricter proof with its less constrained parent.
+                fixture
+                    .backend
+                    .run_in_scope(changed, fixture.backend.get_user(fixture.user.id))
+                    .await
+            })
+            .await;
+        fixture
+            .backend
+            .settle_history_publication(
+                owner
+                    .after_drained(ready(Ok(())), ready(Ok(())))
+                    .await
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        fixture.cleanup().await;
+        if allowed {
+            checked.unwrap();
+        } else {
+            assert_eq!(checked.unwrap_err().kind(), StorageErrorKind::Unavailable);
+        }
+    }
+}
+
+#[rstest]
 #[case::authentication(BootstrapOperation::Authentication)]
 #[case::credential_source(BootstrapOperation::CredentialObservation)]
 #[case::api_admission(BootstrapOperation::ApiAdmission)]
