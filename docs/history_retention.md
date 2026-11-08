@@ -61,6 +61,12 @@ permit expiry. Missing historical attribution, retained dependencies, holds,
 protected minimums and unavailable logical-size accounting are explicit blockers.
 No present-day parent lookup fills a missing historical reference.
 
+Native deletion tombstones retain their original point interval
+(`valid_to == valid_from`); older unbounded tombstones remain supported. Both
+represent a deletion gap from that point onward, rather than an empty read
+exclusion. Unknown restore ancestry is reported as unresolved inspection coverage
+and cannot become an eligible preview candidate.
+
 Age, size, age-or-size and age-and-size are separate rule variants. Size pressure
 uses measured logical bytes and persists hysteresis until its lower target is
 reached. The policy model includes these semantics; native complete accounting

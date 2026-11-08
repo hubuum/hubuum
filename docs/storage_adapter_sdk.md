@@ -4,6 +4,14 @@ Status: accepted; current experimental release train is `0.20`.
 
 ## Upgrading from 0.19 to 0.20
 
+Recheck clock-dependent review protection while holding the policy commit lock
+after verifying the predecessor and fence. Use
+`HistoryLifecycleControlChange::validate_commit_at` or equivalent native checks;
+preparing a transition does not freeze review or hold expiry. Preserve native
+point tombstones (`valid_to == valid_from`) in retained read spans and treat them
+as deletion gaps from that point onward. Unknown restore ancestry must remain
+unresolved in inspection and preview coverage, matching admission.
+
 **Breaking:** upgrade exact dependencies for all ten SDK crates together.
 `OperationalStorage` now requires `HistoryLifecycleStorage`. Complete adapters
 must implement scoped policy/hold/review control, atomic canonical audit,

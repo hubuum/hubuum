@@ -97,6 +97,11 @@ impl HistoryExpiryCandidate {
         anchor: Option<HistoryRetentionAnchor>,
         has_dependency: bool,
     ) -> Result<Option<Self>, StorageValidationError> {
+        // A known subject/scope cannot prove separation from unknown restore
+        // ancestry. Inspection and admission share this boundary.
+        if evidence.has_unknown_restore_source() {
+            return Ok(None);
+        }
         let Some(target) = evidence
             .subject()
             .and_then(|subject| subject.record_identity())
@@ -172,5 +177,80 @@ impl HistoryExpiryCandidate {
             has_dependency,
         )
         .map(Some)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hubuum_domain::{IdentityReference, VersionIdentity};
+    use rstest::rstest;
+    use std::collections::BTreeMap;
+
+    #[rstest]
+    #[case::collection(StorageIdentityHistoryKind::Collection)]
+    #[case::class(StorageIdentityHistoryKind::Class)]
+    #[case::object(StorageIdentityHistoryKind::Object)]
+    #[case::class_relation(StorageIdentityHistoryKind::ClassRelation)]
+    #[case::object_relation(StorageIdentityHistoryKind::ObjectRelation)]
+    #[case::template(StorageIdentityHistoryKind::ExportTemplate)]
+    #[case::remote(StorageIdentityHistoryKind::RemoteTarget)]
+    #[case::computed(StorageIdentityHistoryKind::ComputedDefinitions)]
+    #[case::schema(StorageIdentityHistoryKind::ClassSchema)]
+    fn restored_candidate_requires_proven_ancestry(
+        #[case] family: StorageIdentityHistoryKind,
+        #[values(false, true)] proven: bool,
+    ) {
+        let mut references = BTreeMap::new();
+        for (kind, paths) in [
+            (
+                StorageIdentityResourceKind::Collection,
+                [
+                    "/collection_id",
+                    "/lifecycle/from/collection",
+                    "/lifecycle/to/collection",
+                ],
+            ),
+            (
+                StorageIdentityResourceKind::Class,
+                ["/class_id", "/lifecycle/from/class", "/lifecycle/to/class"],
+            ),
+        ] {
+            let identity = ResourceIdentity::generate();
+            for path in paths {
+                references.insert(
+                    path.into(),
+                    StorageCapturedIdentity::Resource {
+                        family: kind,
+                        reference: IdentityReference::Known { identity },
+                    },
+                );
+            }
+        }
+        let mut bytes = *VersionIdentity::generate().as_bytes();
+        bytes[6] = (bytes[6] & 0x0f) | 0x80;
+        let derived = VersionIdentity::from_bytes(bytes).unwrap();
+        let evidence = StorageIdentityEvidence::try_new(
+            Some(crate::StorageIdentitySubject::Resource {
+                identity: IdentityReference::Known {
+                    identity: ResourceIdentity::generate(),
+                },
+                version: if proven {
+                    VersionIdentity::generate()
+                } else {
+                    derived
+                },
+            }),
+            references,
+        )
+        .unwrap();
+        let evidence = if proven {
+            evidence.at_restore_baseline(derived).unwrap()
+        } else {
+            evidence
+        };
+        let candidate =
+            HistoryExpiryCandidate::from_evidence(family, &evidence, None, false).unwrap();
+        assert_eq!(candidate.is_some(), proven);
     }
 }

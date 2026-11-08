@@ -19,7 +19,9 @@ CREATE TABLE hubuum_control.history_expiry_members (
     version_uuid UUID NOT NULL,
     intent_uuid UUID NOT NULL,
     valid_from TIMESTAMPTZ NOT NULL,
-    valid_to TIMESTAMPTZ CHECK (valid_to IS NULL OR valid_to > valid_from),
+    -- Equality retains a native deletion point, whose exclusion protects the
+    -- subsequent gap just like the older unbounded deletion representation.
+    valid_to TIMESTAMPTZ CHECK (valid_to IS NULL OR valid_to >= valid_from),
     PRIMARY KEY (family,resource_uuid,version_uuid)
 );
 CREATE INDEX history_expiry_members_as_of ON hubuum_control.history_expiry_members(family,resource_uuid,valid_from);
@@ -434,7 +436,7 @@ RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog 
        AND NOT EXISTS(SELECT 1 FROM hubuum_control.history_expiry_members
         WHERE family=history_family
           AND resource_uuid=(evidence #>> '{subject,identity,identity}')::UUID
-          AND valid_from<=at_time AND (valid_to IS NULL OR at_time<valid_to)
+          AND valid_from<=at_time AND (valid_to IS NULL OR valid_to=valid_from OR at_time<valid_to)
           AND valid_from>=selected_from)
 $function$;
 REVOKE ALL ON FUNCTION public.hubuum_history_as_of_visible(TEXT,JSONB,TIMESTAMPTZ,TIMESTAMPTZ) FROM PUBLIC;
@@ -447,7 +449,7 @@ RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog 
        AND history_family IN ('collection','class','object','class_relation','object_relation','export_template','remote_target','computed_definitions','class_schema')
        AND NOT EXISTS(SELECT 1 FROM hubuum_control.history_expiry_members
         WHERE family=history_family AND resource_uuid=resource
-          AND valid_from<=at_time AND (valid_to IS NULL OR at_time<valid_to))
+          AND valid_from<=at_time AND (valid_to IS NULL OR valid_to=valid_from OR at_time<valid_to))
 $function$;
 REVOKE ALL ON FUNCTION public.hubuum_history_requested_as_of_visible(TEXT,UUID,TIMESTAMPTZ) FROM PUBLIC;
 
@@ -780,6 +782,8 @@ BEGIN
       IF source_from IS DISTINCT FROM (member #>> '{read_span,valid_from}')::TIMESTAMPTZ
         OR source_until IS DISTINCT FROM (member #>> '{read_span,valid_to}')::TIMESTAMPTZ
         OR source_bytes<>(member->>'input_bytes')::BIGINT OR total_bytes>16777216
+        OR (source->>'op'='D' AND (member #>> '{read_span,kind}' IS DISTINCT FROM 'deleted'
+          OR (source_until IS NOT NULL AND source_until<>source_from)))
         OR public.hubuum_history_expiry_dependency(member->>'family',source->'logical_identity')
         OR (member->>'family'<>'class_schema' AND source_until IS NULL AND source->>'op' IS DISTINCT FROM 'D')
         OR EXISTS(SELECT 1 FROM hubuum_control.history_expiry_members retained

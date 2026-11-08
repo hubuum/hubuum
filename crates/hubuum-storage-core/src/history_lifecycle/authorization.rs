@@ -113,14 +113,10 @@ impl TryFrom<ObjectAuthorizationInput> for HistoryObjectAuthorizationFacts {
                     invalid("Object value authorization requires its original closure")
                 })?,
             )?,
-            HistoryObjectAuthorizationKind::Tombstone => {
-                if value.read_span.valid_to().is_some() {
-                    return Err(invalid(
-                        "Bounded tombstone authorization requires explicit interval support",
-                    ));
-                }
-                HistoryExpiryReadSpan::deleted(value.read_span.valid_from())
-            }
+            HistoryObjectAuthorizationKind::Tombstone => HistoryExpiryReadSpan::tombstone(
+                value.read_span.valid_from(),
+                value.read_span.valid_to(),
+            )?,
         };
         if value.read_span != expected_span {
             return Err(invalid(
@@ -204,17 +200,10 @@ impl HistoryObjectAuthorizationFacts {
                     })?,
                 )?,
             ),
-            StorageHistoryOperation::Delete => {
-                if metadata.valid_to().is_some() {
-                    return Err(invalid(
-                        "Bounded tombstone authorization requires explicit interval support",
-                    ));
-                }
-                (
-                    HistoryObjectAuthorizationKind::Tombstone,
-                    HistoryExpiryReadSpan::deleted(metadata.valid_from()),
-                )
-            }
+            StorageHistoryOperation::Delete => (
+                HistoryObjectAuthorizationKind::Tombstone,
+                HistoryExpiryReadSpan::tombstone(metadata.valid_from(), metadata.valid_to())?,
+            ),
         };
         if record.name().len() > HistoryAuthorizationBytes::MAX_BYTES {
             return Err(invalid(

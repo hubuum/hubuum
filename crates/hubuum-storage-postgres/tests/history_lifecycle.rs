@@ -263,6 +263,86 @@ async fn runtime_applies_only_an_issued_revision_bound_review() {
     assert!(matches!(stale, Err(error) if error.kind() == StorageErrorKind::Conflict));
 }
 
+#[rstest::rstest]
+#[case::review_expired(true)]
+#[case::hold_expired(false)]
+#[tokio::test]
+async fn prepared_policy_rechecks_temporal_protection_before_commit(#[case] review_expired: bool) {
+    let _guard = CONTROL_LOCK.lock().await;
+    let fixture = Fixture::new().await;
+    let principal = PrincipalIdentity::generate();
+    let initial = fixture.storage.capture_history_lifecycle().await.unwrap();
+    let prepared_at =
+        initial.observed_at() - Duration::seconds(if review_expired { 301 } else { 10 });
+    let key = proposal(&initial).key();
+    if !review_expired {
+        let hold = HistoryRetentionHold::new(
+            Uuid::new_v4(),
+            key,
+            prepared_at - Duration::seconds(1),
+            Some(prepared_at + Duration::seconds(1)),
+            principal,
+        )
+        .unwrap();
+        fixture
+            .storage
+            .commit_history_lifecycle(
+                initial
+                    .control()
+                    .create_hold(hold, initial.fence())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+    let snapshot = fixture.storage.capture_history_lifecycle().await.unwrap();
+    let proposal = HistoryPolicyChange::new(
+        key,
+        snapshot
+            .control()
+            .authority()
+            .policies()
+            .current_revision(key),
+        HistoryPolicyBinding::Indefinite,
+        HistoryPolicyApplication::Retrospective {
+            closed_through: prepared_at - Duration::seconds(1),
+        },
+    )
+    .unwrap();
+    let preview = HistoryPolicyPreview::issue(
+        principal,
+        proposal.clone(),
+        snapshot.fence(),
+        prepared_at,
+        HistoryPreviewImpact::new(HistoryPreviewCoverage::Complete, 0, 0, vec![]).unwrap(),
+    )
+    .unwrap();
+    let issued = fixture
+        .storage
+        .commit_history_lifecycle(
+            snapshot
+                .control()
+                .issue_preview(preview.clone(), snapshot.fence())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let change = issued
+        .control()
+        .apply(
+            HistoryPolicyApplyRequest::new(proposal, Some(preview.reference().clone())),
+            principal,
+            issued.fence(),
+            prepared_at,
+        )
+        .unwrap();
+    let result = fixture.storage.commit_history_lifecycle(change).await;
+    let current = fixture.storage.capture_history_lifecycle().await.unwrap();
+    fixture.restore().await;
+    assert!(matches!(result, Err(error) if error.kind() == StorageErrorKind::Conflict));
+    assert_eq!(current.control(), issued.control());
+}
+
 #[tokio::test]
 async fn required_audit_failure_rolls_back_policy_authority() {
     let _guard = CONTROL_LOCK.lock().await;
@@ -2128,6 +2208,105 @@ mod archive_producer_slots {
         storage.unregister_runtime(registration).await.unwrap();
         assert!(occupied && rolled_back && still_occupied);
     }
+}
+
+#[rstest::rstest]
+#[case::collection(StorageIdentityHistoryKind::Collection)]
+#[case::class(StorageIdentityHistoryKind::Class)]
+#[case::object(StorageIdentityHistoryKind::Object)]
+#[case::class_relation(StorageIdentityHistoryKind::ClassRelation)]
+#[case::object_relation(StorageIdentityHistoryKind::ObjectRelation)]
+#[case::template(StorageIdentityHistoryKind::ExportTemplate)]
+#[case::remote(StorageIdentityHistoryKind::RemoteTarget)]
+#[tokio::test]
+async fn native_expiry_retains_trigger_created_tombstone_gaps(
+    #[case] family: StorageIdentityHistoryKind,
+) {
+    #[derive(QueryableByName)]
+    struct Visibility {
+        #[diesel(sql_type = diesel::sql_types::Bool)]
+        visible: bool,
+    }
+    let _guard = CONTROL_LOCK.lock().await;
+    let (fixture, key, collection) = expiry_fixture(family, 32).await;
+    with_transaction(&fixture.owner_pool, async |connection| {
+        owner(connection).await?;
+        sql_query("DELETE FROM public.collections WHERE id=$1")
+            .bind::<diesel::sql_types::Integer, _>(collection)
+            .execute(connection)
+            .await?;
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
+    .unwrap();
+    let runtime = fixture
+        .storage
+        .register_history_runtime(None)
+        .await
+        .unwrap();
+    let application = fixture
+        .storage
+        .capture_application_execution(Some(runtime.owner()))
+        .await
+        .unwrap();
+    let snapshot = fixture.storage.capture_history_lifecycle().await.unwrap();
+    let batch = Uuid::new_v4();
+    let request = HistoryExpiryAdmissionRequest::new(
+        batch,
+        Uuid::new_v4(),
+        HistoryExpiryOrigin::Scheduled { initiator: None },
+        HistoryLifecycleScan::new(key, 1000).unwrap(),
+        snapshot.fence(),
+    )
+    .unwrap();
+    let result = fixture
+        .storage
+        .run_in_scope(
+            StorageExecutionScope::default().with_application_access(application),
+            fixture.storage.admit_history_expiry(request),
+        )
+        .await;
+    let point = result
+        .as_ref()
+        .ok()
+        .and_then(Option::as_ref)
+        .and_then(|manifest| {
+            manifest
+                .members()
+                .iter()
+                .find(|member| matches!(member.anchor(), HistoryRetentionAnchor::Deleted(_),))
+        })
+        .cloned();
+    let visible = if let Some(point) = &point {
+        let family_name = serde_json::to_value(family).unwrap();
+        Some(with_transaction(&fixture.owner_pool, async |connection| {
+            owner(connection).await?;
+            sql_query("SELECT public.hubuum_history_requested_as_of_visible($1,$2,$3)
+                OR public.hubuum_history_as_of_visible($1,
+                    jsonb_build_object('subject',jsonb_build_object('kind','resource',
+                        'identity',jsonb_build_object('state','known','identity',$2),
+                        'version',$4),'references','{}'::jsonb),$3,$3-INTERVAL '2 seconds') AS visible")
+                .bind::<Text, _>(family_name.as_str().unwrap())
+                .bind::<SqlUuid, _>(Uuid::from_bytes(*point.target().resource().as_bytes()))
+                .bind::<diesel::sql_types::Timestamptz, _>(point.read_span().valid_from() + Duration::seconds(1))
+                .bind::<SqlUuid, _>(Uuid::new_v4())
+                .get_result::<Visibility>(connection).await.map_err(PostgresStorageError::from)
+        }).await.unwrap().visible)
+    } else {
+        None
+    };
+    fixture.storage.unregister_runtime(runtime).await.unwrap();
+    cleanup_expiry_fixture(fixture, collection, batch).await;
+    let point = point.unwrap_or_else(|| panic!("native point admission failed: {result:?}"));
+    assert_eq!(
+        point.read_span().valid_to(),
+        Some(point.read_span().valid_from())
+    );
+    assert_eq!(
+        visible,
+        Some(false),
+        "Point deletion must exclude subsequent gaps and fallback copies"
+    );
 }
 
 async fn expiry_fixture(

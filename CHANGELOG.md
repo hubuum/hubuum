@@ -326,6 +326,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- History lifecycle inspection and native admission preserve zero-length deletion
+  tombstones and their subsequent read exclusions. Unknown restore ancestry stays
+  unresolved in previews, and memory policy commits recheck review and hold expiry
+  under the commit lock, matching PostgreSQL.
+
 - History inspection and policy previews preserve retained dependency blockers.
   Memory expiry admission counts skipped source rows against its scan limits,
   and concurrent policy updates cannot cause a false recovery-required status

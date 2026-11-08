@@ -513,8 +513,10 @@ fn hold_on_either_relation_endpoint_protects_whole_copy() {
     );
 }
 
-#[test]
-fn expiring_hold_invalidates_review_without_a_concurrent_write() {
+#[rstest]
+#[case::at_preparation(false)]
+#[case::at_commit(true)]
+fn expiring_hold_invalidates_review_without_a_concurrent_write(#[case] prepared: bool) {
     let principal = PrincipalIdentity::generate();
     let key = HistoryPolicyKey::new(
         StorageIdentityHistoryKind::Object,
@@ -560,17 +562,49 @@ fn expiring_hold_invalidates_review_without_a_concurrent_write() {
         .unwrap()
         .next()
         .clone();
-    assert!(matches!(
-        issued.apply(
-            HistoryPolicyApplyRequest::new(proposal, Some(preview.reference().clone())),
+    let change = issued.apply(
+        HistoryPolicyApplyRequest::new(proposal, Some(preview.reference().clone())),
+        principal,
+        fence,
+        at(if prepared { 101 } else { 151 }),
+    );
+    let result = if prepared {
+        change.unwrap().validate_commit_at(at(151))
+    } else {
+        change.map(|_| ()).map_err(|error| match error {
+            HistoryPolicyApplyError::Conflict(reason) => reason,
+            HistoryPolicyApplyError::Invalid(error) => panic!("invalid proposal: {error}"),
+        })
+    };
+    assert_eq!(result, Err(HistoryPolicyReviewConflict::StalePreview));
+}
+
+#[rstest]
+#[case::before_expiry(399, Ok(()))]
+#[case::at_expiry(400, Err(HistoryPolicyReviewConflict::PreviewExpired))]
+#[case::after_expiry(401, Err(HistoryPolicyReviewConflict::PreviewExpired))]
+fn prepared_policy_rechecks_review_lifetime_at_commit(
+    #[case] now: i64,
+    #[case] expected: Result<(), HistoryPolicyReviewConflict>,
+) {
+    let (preview, principal, fence) = preview_fixture();
+    let control = HistoryLifecycleControl::empty()
+        .issue_preview(preview.clone(), fence)
+        .unwrap()
+        .next()
+        .clone();
+    let change = control
+        .apply(
+            HistoryPolicyApplyRequest::new(
+                preview.proposal().clone(),
+                Some(preview.reference().clone()),
+            ),
             principal,
             fence,
-            at(151)
-        ),
-        Err(HistoryPolicyApplyError::Conflict(
-            HistoryPolicyReviewConflict::StalePreview
-        ))
-    ));
+            at(101),
+        )
+        .unwrap();
+    assert_eq!(change.validate_commit_at(at(now)), expected);
 }
 #[rstest]
 #[case(serde_json::json!(null))]

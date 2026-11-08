@@ -1155,6 +1155,17 @@ mod scan_tests {
             );
             assert_eq!(tombstone.anchor, Some(original.at));
             assert_eq!(tombstone.valid_from, original.at);
+            let evidence: StorageIdentityEvidence =
+                serde_json::from_value(tombstone.logical_identity.unwrap()).unwrap();
+            let candidate = HistoryExpiryCandidate::from_evidence(
+                StorageIdentityHistoryKind::Collection,
+                &evidence,
+                Some(HistoryRetentionAnchor::Deleted(original.at)),
+                tombstone.dependency,
+            )?
+            .unwrap()
+            .with_native_interval(tombstone.valid_from, tombstone.valid_to)?;
+            assert_eq!(candidate.read_span().unwrap().valid_to(), Some(original.at));
             connection
                 .batch_execute("ROLLBACK TO SAVEPOINT lifecycle_scan_fixture")
                 .await?;

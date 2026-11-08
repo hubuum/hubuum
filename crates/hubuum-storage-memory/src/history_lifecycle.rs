@@ -225,6 +225,9 @@ impl HistoryLifecycleStorage for MemoryStorage {
                 "History policy authority or application incarnation changed",
             ));
         }
+        change
+            .validate_commit_at(current.observed_at())
+            .map_err(|reason| StorageError::conflict(reason.as_str()))?;
         if change.next().authority().expiry() != change.expected().authority().expiry() {
             return Err(StorageError::conflict(
                 "Generic policy control cannot change retained expiry",
@@ -2135,6 +2138,163 @@ mod tests {
         assert_eq!(applied.control().authority().policies().records().len(), 1);
         assert!(storage.commit_history_lifecycle(change).await.is_err());
     }
+    #[rstest::rstest]
+    #[case::review_expired(true)]
+    #[case::hold_expired(false)]
+    #[tokio::test]
+    async fn prepared_policy_rechecks_temporal_protection_before_commit(
+        #[case] review_expired: bool,
+    ) {
+        let storage = MemoryStorage::new();
+        let principal = PrincipalIdentity::generate();
+        let initial = storage.capture_history_lifecycle().await.unwrap();
+        let prepared_at =
+            initial.observed_at() - Duration::seconds(if review_expired { 301 } else { 10 });
+        let key = proposal().key();
+        if !review_expired {
+            let hold = HistoryRetentionHold::new(
+                Uuid::new_v4(),
+                key,
+                prepared_at - Duration::seconds(1),
+                Some(prepared_at + Duration::seconds(1)),
+                principal,
+            )
+            .unwrap();
+            storage
+                .commit_history_lifecycle(
+                    initial
+                        .control()
+                        .create_hold(hold, initial.fence())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+        }
+        let snapshot = storage.capture_history_lifecycle().await.unwrap();
+        let proposal = HistoryPolicyChange::new(
+            key,
+            snapshot
+                .control()
+                .authority()
+                .policies()
+                .current_revision(key),
+            HistoryPolicyBinding::Indefinite,
+            HistoryPolicyApplication::Retrospective {
+                closed_through: prepared_at - Duration::seconds(1),
+            },
+        )
+        .unwrap();
+        let preview = HistoryPolicyPreview::issue(
+            principal,
+            proposal.clone(),
+            snapshot.fence(),
+            prepared_at,
+            HistoryPreviewImpact::new(HistoryPreviewCoverage::Complete, 0, 0, vec![]).unwrap(),
+        )
+        .unwrap();
+        let issued = storage
+            .commit_history_lifecycle(
+                snapshot
+                    .control()
+                    .issue_preview(preview.clone(), snapshot.fence())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let change = issued
+            .control()
+            .apply(
+                HistoryPolicyApplyRequest::new(proposal, Some(preview.reference().clone())),
+                principal,
+                issued.fence(),
+                prepared_at,
+            )
+            .unwrap();
+        let error = storage.commit_history_lifecycle(change).await.unwrap_err();
+        assert_eq!(error.kind(), StorageErrorKind::Conflict);
+        assert_eq!(
+            storage.capture_history_lifecycle().await.unwrap().control(),
+            issued.control()
+        );
+    }
+
+    #[tokio::test]
+    async fn inspection_accepts_trigger_created_deletion_points() {
+        let storage = MemoryStorage::new();
+        let collection = storage
+            .create_collection(
+                StorageCollectionCreate::new("point tombstone", "", GroupId::new(1).unwrap(), None),
+                &EventContext::system(),
+            )
+            .await
+            .unwrap()
+            .into_value();
+        storage
+            .delete_collection(collection.id(), &EventContext::system())
+            .await
+            .unwrap()
+            .into_value();
+        let scan = storage
+            .scan_history_lifecycle(
+                HistoryLifecycleScan::new(
+                    HistoryPolicyKey::new(
+                        StorageIdentityHistoryKind::Collection,
+                        HistoryPolicyScope::Deployment,
+                    )
+                    .unwrap(),
+                    1000,
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let tombstone = scan
+            .candidates()
+            .iter()
+            .find(|candidate| {
+                matches!(candidate.anchor(), Some(HistoryRetentionAnchor::Deleted(_)),)
+            })
+            .expect("native deletion event");
+        let span = tombstone.read_span().unwrap();
+        assert_eq!(span.valid_to(), Some(span.valid_from()));
+    }
+
+    #[tokio::test]
+    async fn inspection_reports_unknown_restore_ancestry_as_unresolved() {
+        let (storage, _, closed) =
+            crate::deletion_control::tests::fixture_on(MemoryStorage::new(), true).await;
+        {
+            let mut state = storage.state.write_control().await;
+            let row = state
+                .history
+                .iter_mut()
+                .find(|row| row.id == closed.id)
+                .unwrap();
+            let mut raw = serde_json::to_value(&row.logical_identity).unwrap();
+            let mut bytes = *VersionIdentity::generate().as_bytes();
+            bytes[6] = (bytes[6] & 0x0f) | 0x80;
+            raw["subject"]["version"] =
+                serde_json::json!(VersionIdentity::from_bytes(bytes).unwrap());
+            row.logical_identity = serde_json::from_value(raw).unwrap();
+        }
+        let scan = storage
+            .scan_history_lifecycle(
+                HistoryLifecycleScan::new(
+                    HistoryPolicyKey::new(
+                        StorageIdentityHistoryKind::Object,
+                        HistoryPolicyScope::Deployment,
+                    )
+                    .unwrap(),
+                    1000,
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(scan.unresolved_identities(), 1);
+        assert!(!scan.complete());
+    }
+
     #[tokio::test]
     async fn concurrent_control_writers_cannot_overwrite_each_other() {
         let storage = MemoryStorage::new();

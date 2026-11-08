@@ -436,12 +436,7 @@ impl HistoryExpiryCandidate {
                 HistoryExpiryReadSpan::closed(from, at)?
             }
             Some(HistoryRetentionAnchor::Deleted(_)) => {
-                if until.is_some() {
-                    return Err(invalid(
-                        "A bounded tombstone requires explicit deletion interval support",
-                    ));
-                }
-                HistoryExpiryReadSpan::deleted(from)
+                HistoryExpiryReadSpan::tombstone(from, until)?
             }
             Some(HistoryRetentionAnchor::SchemaEvent(_)) => {
                 HistoryExpiryReadSpan::schema(from, until)?

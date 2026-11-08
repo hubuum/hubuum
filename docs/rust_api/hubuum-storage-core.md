@@ -276,7 +276,14 @@ and [restore ownership table](../task_admission.md#ownership-and-restore-reconci
 ## History lifecycle policy capability (unreleased)
 
 `HistoryLifecycleStorage` is a required operational capability. Complete adapters
-must implement `register_history_runtime`, `capture_history_lifecycle`,
+must recheck clock-dependent policy review protection under their commit lock;
+`HistoryLifecycleControlChange::validate_commit_at` performs that check after
+the exact predecessor and fence have been verified. Preparation cannot extend a
+review lifetime or freeze a hold's expiry. Native deletion points retain
+`valid_to == valid_from` in `HistoryExpiryReadSpan` and protect the subsequent
+deletion gap. Unknown restore ancestry cannot produce an eligible scan candidate.
+
+Complete adapters must implement `register_history_runtime`, `capture_history_lifecycle`,
 `scan_history_lifecycle`, `admit_history_expiry`,
 `commit_history_lifecycle` and `recover_history_lifecycle`. Capture returns the
 adapter clock with application incarnation and history/deletion revision fences.

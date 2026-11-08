@@ -140,7 +140,7 @@ impl TryFrom<ReadSpanInput> for HistoryExpiryReadSpan {
     type Error = StorageValidationError;
     fn try_from(value: ReadSpanInput) -> Result<Self, Self::Error> {
         match (value.kind, value.valid_to) {
-            (HistoryExpiryReadSpanKind::Deleted, None) => Ok(Self::deleted(value.valid_from)),
+            (HistoryExpiryReadSpanKind::Deleted, until) => Self::tombstone(value.valid_from, until),
             (HistoryExpiryReadSpanKind::Closed, Some(until)) => {
                 Self::closed(value.valid_from, until)
             }
@@ -178,6 +178,23 @@ impl HistoryExpiryReadSpan {
             valid_to: None,
         }
     }
+    /// Native deletion events may store a point interval or an unbounded marker.
+    /// Retain that original representation; both protect the gap after deletion.
+    pub(super) fn tombstone(
+        from: DateTime<Utc>,
+        until: Option<DateTime<Utc>>,
+    ) -> Result<Self, StorageValidationError> {
+        if until.is_some_and(|until| until != from) {
+            return Err(invalid(
+                "A tombstone must retain its original deletion point",
+            ));
+        }
+        Ok(Self {
+            kind: HistoryExpiryReadSpanKind::Deleted,
+            valid_from: from,
+            valid_to: until,
+        })
+    }
     fn interval(
         kind: HistoryExpiryReadSpanKind,
         from: DateTime<Utc>,
@@ -199,7 +216,9 @@ impl HistoryExpiryReadSpan {
         self.valid_to
     }
     pub fn contains(&self, at: DateTime<Utc>) -> bool {
-        at >= self.valid_from && self.valid_to.is_none_or(|until| at < until)
+        at >= self.valid_from
+            && (self.kind == HistoryExpiryReadSpanKind::Deleted
+                || self.valid_to.is_none_or(|until| at < until))
     }
     pub(super) fn matches(
         &self,
@@ -802,6 +821,12 @@ mod tests {
         false
     )]
     #[case::deleted(Some(HistoryRetentionAnchor::Deleted(at(110))), at(110), None, true)]
+    #[case::point_tombstone(
+        Some(HistoryRetentionAnchor::Deleted(at(110))),
+        at(110),
+        Some(at(110)),
+        true
+    )]
     #[case::changed_deletion(Some(HistoryRetentionAnchor::Deleted(at(110))), at(111), None, false)]
     #[case::bounded_tombstone(
         Some(HistoryRetentionAnchor::Deleted(at(110))),
@@ -827,6 +852,24 @@ mod tests {
                 "Open versions have no expiry interval"
             );
         }
+    }
+
+    #[rstest::rstest]
+    #[case::before(at(109), false)]
+    #[case::at_deletion(at(110), true)]
+    #[case::after_deletion(at(120), true)]
+    fn point_tombstone_preserves_its_interval_and_protects_the_deletion_gap(
+        #[case] queried_at: DateTime<Utc>,
+        #[case] excluded: bool,
+    ) {
+        let original = candidate(Some(HistoryRetentionAnchor::Deleted(at(110))))
+            .with_native_interval(at(110), Some(at(110)))
+            .unwrap();
+        let span = original.read_span().unwrap();
+        assert_eq!(span.valid_to(), Some(at(110)));
+        let decoded: HistoryExpiryReadSpan =
+            serde_json::from_value(serde_json::to_value(span).unwrap()).unwrap();
+        assert_eq!(decoded.contains(queried_at), excluded);
     }
 
     #[test]

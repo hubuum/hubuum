@@ -155,9 +155,13 @@ fn candidate(facts: &HistoryObjectAuthorizationFacts) -> HistoryExpiryCandidate 
 }
 
 #[rstest]
-#[case::closed_value(false)]
-#[case::unbounded_tombstone(true)]
-fn capture_retains_only_original_policy_inputs_with_redacted_diagnostics(#[case] deleted: bool) {
+#[case::closed_value(false, Some(at(150)))]
+#[case::unbounded_tombstone(true, None)]
+#[case::point_tombstone(true, Some(at(150)))]
+fn capture_retains_only_original_policy_inputs_with_redacted_diagnostics(
+    #[case] deleted: bool,
+    #[case] until: Option<DateTime<Utc>>,
+) {
     let fixture = Fixture::new();
     let row = fixture.row(1, "original_policy_name_marker");
     let row = if deleted {
@@ -166,7 +170,7 @@ fn capture_retains_only_original_policy_inputs_with_redacted_diagnostics(#[case]
         let metadata = StorageHistoryMetadata::try_new(
             StorageHistoryOperation::Delete,
             at(150),
-            None,
+            until,
             HistoryRecordId::new(1).unwrap(),
             ResourceRevision::INITIAL,
         )
@@ -177,6 +181,7 @@ fn capture_retains_only_original_policy_inputs_with_redacted_diagnostics(#[case]
         row
     };
     let facts = HistoryObjectAuthorizationFacts::capture(row).unwrap();
+    assert_eq!(facts.read_span().valid_to(), until);
     assert_eq!(
         facts.kind(),
         if deleted {

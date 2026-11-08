@@ -197,15 +197,8 @@ impl HistoryLifecycleControl {
                 issued
                     .validate_apply(principal, &request.proposal, reference, fence, now)
                     .map_err(HistoryPolicyApplyError::Conflict)?;
-                if self
-                    .authority
-                    .current_holds()
-                    .any(|hold| hold.is_active(issued.issued_at()) && !hold.is_active(now))
-                {
-                    return Err(HistoryPolicyApplyError::Conflict(
-                        HistoryPolicyReviewConflict::StalePreview,
-                    ));
-                }
+                self.validate_review_protection(issued.issued_at(), now)
+                    .map_err(HistoryPolicyApplyError::Conflict)?;
             }
             None if matches!(
                 request.proposal.application(),
@@ -280,6 +273,20 @@ impl HistoryLifecycleControl {
             fence,
         })
     }
+    fn validate_review_protection(
+        &self,
+        issued_at: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> Result<(), HistoryPolicyReviewConflict> {
+        if self
+            .authority
+            .current_holds()
+            .any(|hold| hold.is_active(issued_at) && !hold.is_active(now))
+        {
+            return Err(HistoryPolicyReviewConflict::StalePreview);
+        }
+        Ok(())
+    }
 }
 impl Default for HistoryLifecycleControl {
     fn default() -> Self {
@@ -323,6 +330,36 @@ pub struct HistoryLifecycleControlChange {
     fence: HistoryReviewFence,
 }
 impl HistoryLifecycleControlChange {
+    /// Recheck clock-dependent review protection under the adapter's commit
+    /// lock, after verifying the exact predecessor and fence. Preparing a change
+    /// does not extend its review lifetime or freeze a hold's expiry clock.
+    pub fn validate_commit_at(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<(), HistoryPolicyReviewConflict> {
+        for record in &self.next.authority.policies().records()
+            [self.expected.authority.policies().records().len()..]
+        {
+            if let Some(review) = record.review() {
+                let issued = self
+                    .expected
+                    .previews
+                    .iter()
+                    .find(|issued| issued.reference() == review.reference())
+                    .ok_or(HistoryPolicyReviewConflict::InaccessiblePreview)?;
+                issued.validate_apply(
+                    record.principal(),
+                    record.proposal(),
+                    review.reference(),
+                    self.fence,
+                    now,
+                )?;
+                self.expected
+                    .validate_review_protection(issued.issued_at(), now)?;
+            }
+        }
+        Ok(())
+    }
     pub const fn expected(&self) -> &HistoryLifecycleControl {
         &self.expected
     }
