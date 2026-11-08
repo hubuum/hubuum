@@ -39,6 +39,18 @@ pub(crate) struct AppliedRuntimeSettings {
 }
 
 impl AppliedRuntimeSettings {
+    /// Loaded security settings must stop authorizing new work when stale.
+    /// Production startup loads a snapshot before serving; isolated test
+    /// contexts may still use deployment configuration without reconciliation.
+    pub(crate) fn ensure_security_current(&self) -> Result<(), StorageError> {
+        if self.application(Utc::now()) == RuntimeSettingsApplication::Stale {
+            return Err(StorageError::unavailable(
+                "Security settings are stale; waiting for successful reconciliation",
+            ));
+        }
+        Ok(())
+    }
+
     /// Last successfully loaded snapshot, retained across failed refreshes.
     pub(crate) fn snapshot(&self) -> Option<&StorageRuntimeSettingsSnapshot> {
         self.snapshot.as_deref()
@@ -226,6 +238,22 @@ mod tests {
             applied.application(Utc::now()),
             RuntimeSettingsApplication::Stale
         );
+    }
+
+    #[rstest::rstest]
+    #[case::failed(true, 0)]
+    #[case::overdue(false, 120)]
+    fn stale_security_settings_reject_new_requests(
+        #[case] refresh_failed: bool,
+        #[case] age_seconds: i64,
+    ) {
+        let applied = AppliedRuntimeSettings {
+            snapshot: Some(Arc::new(pagination(5))),
+            applied_at: Some(Utc::now() - chrono::Duration::seconds(age_seconds)),
+            refresh_failed,
+            ..AppliedRuntimeSettings::default()
+        };
+        assert!(applied.ensure_security_current().is_err());
     }
 
     const SHORT_TIMEOUT: Duration = Duration::from_millis(20);

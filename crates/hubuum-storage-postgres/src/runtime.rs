@@ -30,6 +30,8 @@ const REQUIRED_DATABASE_MIGRATION_VERSIONS: &[&str] = &[
     "20260903000003",
     REQUIRED_DATABASE_MIGRATION_VERSION,
 ];
+// Available in every build, including binaries without migration execution.
+include!(concat!(env!("OUT_DIR"), "/migration_versions.rs"));
 pub const DEFAULT_COMPUTED_REINDEX_BATCH_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 
 /// Adapter-level observation hook supplied by the application composition root.
@@ -839,11 +841,12 @@ pub(crate) async fn postgres_schema_is_ready(
             SELECT unnest($1::text[]) \
             EXCEPT SELECT version::text FROM __diesel_schema_migrations\
         ) AND NOT EXISTS (\
-            SELECT 1 FROM __diesel_schema_migrations WHERE version::text > $2\
+            SELECT version::text FROM __diesel_schema_migrations \
+            EXCEPT SELECT unnest($2::text[])\
         ) AS ready",
     )
     .bind::<diesel::sql_types::Array<Text>, _>(REQUIRED_DATABASE_MIGRATION_VERSIONS)
-    .bind::<Text, _>(REQUIRED_DATABASE_MIGRATION_VERSION)
+    .bind::<diesel::sql_types::Array<Text>, _>(KNOWN_DATABASE_MIGRATION_VERSIONS)
     .get_result::<DatabaseSchemaReadiness>(connection)
     .await?
     .ready)
@@ -997,9 +1000,10 @@ mod tests {
     #[rstest::rstest]
     #[case::project_identity("20261027000001")]
     #[case::project_waiting("20261101000001")]
+    #[case::historical_unknown("20000101000001")]
     #[case::future("20990101000001")]
     #[tokio::test]
-    async fn readiness_rejects_newer_schema_versions(#[case] version: &str) {
+    async fn readiness_rejects_unknown_schema_versions(#[case] version: &str) {
         use diesel::sql_types::Text;
         use diesel_async::RunQueryDsl;
 

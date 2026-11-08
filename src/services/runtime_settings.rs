@@ -2,19 +2,21 @@
 use chrono::Utc;
 use hubuum_domain::ResourceRevision;
 use hubuum_storage_core::{
-    RuntimeSettingsStorage, StorageAuthenticationProviderKind, StorageRuntimeSettingsAssignment,
+    RuntimeSettingsStorage, StorageRuntimeSettingsAssignment, StorageRuntimeSettingsGroup,
     StorageRuntimeSettingsHistoryQuery, StorageRuntimeSettingsUpdate, StorageRuntimeSettingsValue,
 };
 
 use crate::config::running::QueryObservationConfig;
 use crate::errors::ApiError;
+use crate::events::EventContext;
+use crate::models::LOCAL_IDENTITY_SCOPE;
 use crate::models::runtime_settings::{
-    RuntimeAuthenticationProviderStatus, RuntimeSettingsDeployment, RuntimeSettingsGroup,
+    RuntimeAuthenticationProviderRequest, RuntimeSettingsDeployment, RuntimeSettingsGroup,
     RuntimeSettingsHistoryParams, RuntimeSettingsHistoryResponse, RuntimeSettingsReport,
     RuntimeSettingsUpdateResponse,
 };
 use crate::pagination::deployment_page_limits;
-use crate::permissions::AppContext;
+use crate::permissions::{AppContext, PermissionBackend, PrincipalRef};
 use crate::storage::runtime_settings::AppliedRuntimeSettings;
 use crate::storage::{StorageContext, StorageHandle, storage_handle};
 
@@ -47,10 +49,7 @@ pub async fn report(context: &AppContext) -> Result<RuntimeSettingsReport, ApiEr
         &storage.applied_runtime_settings(),
         deployment(&storage)?,
         Utc::now(),
-        crate::auth::auth_provider_statuses()?
-            .into_iter()
-            .map(|(name, available)| RuntimeAuthenticationProviderStatus { name, available })
-            .collect(),
+        crate::auth::auth_provider_statuses()?,
         context.current_permission_backend_kind().to_string(),
         context.permission_backend_is_ready(),
     ))
@@ -64,32 +63,90 @@ pub async fn update(
     context: &AppContext,
     request: StorageRuntimeSettingsUpdate,
 ) -> Result<RuntimeSettingsUpdateResponse, ApiError> {
-    if request.group() == hubuum_storage_core::StorageRuntimeSettingsGroup::Authorization {
+    if matches!(
+        request.group(),
+        StorageRuntimeSettingsGroup::Authentication | StorageRuntimeSettingsGroup::Authorization
+    ) {
+        let administrator = LocalSettingsAdministrator::require(context, request.context()).await?;
         let current = storage_handle(context).load_runtime_settings().await?;
         let revision = current.record(request.group()).revision();
         if revision != request.expected_revision() {
             return Err(ApiError::RevisionConflict(
-                "The authorization settings revision is stale".to_string(),
+                "The security settings revision is stale".to_string(),
                 revision,
             ));
         }
-        let config = crate::config::get_config()?.clone();
-        match request.assignment().value() {
-            Some(StorageRuntimeSettingsValue::Authorization(selected)) => {
-                crate::permissions::build_permission_backend_for_runtime(
-                    &config,
-                    context.clone_backend(),
-                    *selected,
-                )
+        if request.group() == StorageRuntimeSettingsGroup::Authorization {
+            let config = crate::config::get_config()?.clone();
+            let candidate = match request.assignment().value() {
+                Some(StorageRuntimeSettingsValue::Authorization(selected)) => {
+                    crate::permissions::build_permission_backend_for_runtime(
+                        &config,
+                        context.clone_backend(),
+                        *selected,
+                    )
+                    .await?
+                }
+                None => {
+                    crate::permissions::build_permission_backend(&config, context.clone_backend())
+                        .await?
+                }
+                Some(_) => unreachable!("authorization group must contain authorization settings"),
+            };
+            administrator.check_backend(candidate.as_ref()).await?;
+        } else if request.assignment().value().is_none() {
+            crate::auth::preflight_deployment_authentication_settings(&context.clone_backend())
                 .await?;
-            }
-            None => {
-                crate::permissions::build_permission_backend(&config, context.clone_backend())
-                    .await?;
-            }
-            Some(_) => unreachable!("authorization group must contain authorization settings"),
         }
     }
+    commit(context, request).await
+}
+
+/// Proof that a password-capable local administrator can recover after a change.
+struct LocalSettingsAdministrator(PrincipalRef);
+
+impl LocalSettingsAdministrator {
+    async fn require(context: &AppContext, event: &EventContext) -> Result<Self, ApiError> {
+        let actor = event.actor_user_id().ok_or_else(|| {
+            ApiError::Forbidden("Security settings require a local human administrator".to_string())
+        })?;
+        let user = super::identity::get_user(context, actor.id()).await?;
+        let details = super::identity::get_user_point(context, actor.id()).await?;
+        let scope =
+            super::identity::resolve_identity_scope_name(context, details.identity_scope_id)
+                .await?;
+        if scope != LOCAL_IDENTITY_SCOPE
+            || details.provider_managed
+            || user.password.is_none()
+            || user.anonymized_at.is_some()
+        {
+            return Err(ApiError::Forbidden(
+                "Authentication and authorization settings require a local administrator with password login configured".to_string(),
+            ));
+        }
+        let principal = PrincipalRef::load(context, &user).await?;
+        if !context.permission_backend().is_admin(&principal).await? {
+            return Err(ApiError::Forbidden(
+                "Security settings require administrator access".to_string(),
+            ));
+        }
+        Ok(Self(principal))
+    }
+
+    async fn check_backend(&self, candidate: &dyn PermissionBackend) -> Result<(), ApiError> {
+        if !candidate.is_admin(&self.0).await? {
+            return Err(ApiError::BadRequest(
+                "The selected authorization backend must retain administrator access for the local administrator making this change".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+async fn commit(
+    context: &AppContext,
+    request: StorageRuntimeSettingsUpdate,
+) -> Result<RuntimeSettingsUpdateResponse, ApiError> {
     let group = RuntimeSettingsGroup::from(request.group());
     let outcome = storage_handle(context)
         .update_runtime_settings(request)
@@ -116,13 +173,13 @@ pub async fn update(
 pub async fn preflight_authentication(
     context: &AppContext,
     expected_revision: ResourceRevision,
-    providers: Vec<(String, StorageAuthenticationProviderKind, serde_json::Value)>,
-    event_context: crate::events::EventContext,
+    providers: Vec<RuntimeAuthenticationProviderRequest>,
+    event_context: EventContext,
 ) -> Result<RuntimeSettingsUpdateResponse, ApiError> {
+    let _administrator = LocalSettingsAdministrator::require(context, &event_context).await?;
     let storage = storage_handle(context);
     let current = storage.load_runtime_settings().await?;
-    let current_record =
-        current.record(hubuum_storage_core::StorageRuntimeSettingsGroup::Authentication);
+    let current_record = current.record(StorageRuntimeSettingsGroup::Authentication);
     if current_record.revision() != expected_revision {
         return Err(ApiError::RevisionConflict(
             "The authentication settings revision is stale".to_string(),
@@ -130,11 +187,20 @@ pub async fn preflight_authentication(
         ));
     }
 
-    let providers =
-        crate::auth::protect_runtime_authentication_settings(providers, current.authentication())
-            .await?;
-    crate::auth::preflight_runtime_authentication_settings(&providers, &storage).await?;
-    update(
+    let deployment = if current.authentication().is_some() {
+        crate::auth::runtime_deployment_config()
+    } else {
+        crate::auth::load_auth_config()?
+    };
+    let providers = crate::auth::protect_runtime_authentication_settings(
+        providers,
+        current.authentication(),
+        &deployment,
+    )
+    .await?;
+    crate::auth::preflight_runtime_authentication_settings(&providers, &storage, &deployment)
+        .await?;
+    commit(
         context,
         StorageRuntimeSettingsUpdate::new(
             StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Authentication(

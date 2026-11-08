@@ -380,7 +380,7 @@ impl AppContext {
                 Err(error) => {
                     tracing::warn!(
                         %error,
-                        "Authentication settings could not be applied; retaining the last valid providers"
+                        "Authentication settings could not be applied; authentication fails closed"
                     );
                 }
             }

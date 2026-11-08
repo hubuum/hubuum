@@ -38,6 +38,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking for unreleased runtime-settings clients:** authentication provider
+  requests now require explicit `source` and `enabled` fields. Deployment
+  definitions are read-only through the API; activation persists across restart,
+  and editing a definition requires explicit runtime adoption. Existing stored
+  definitions remain runtime-owned and enabled. Update clients and provision a
+  local password-capable administrator before upgrading: authentication and
+  authorization changes, including releases, now require that recovery identity.
+  Authorization replacements must preserve its administrator access. Local
+  authentication cannot be disabled, and exactly one authorization backend stays
+  selected. Replicas reject new API requests and fail readiness when runtime
+  settings become stale. See [runtime settings](docs/runtime_settings.md).
+
 - **Breaking for unreleased main builds:** workload-capacity and data-lifecycle
   development moves to `project/workload-lifecycle`. The stable line retains
   `v0.0.21` behavior and independent testing/CI fixes. Project-only APIs, storage
@@ -46,8 +58,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   preserve deletion authority and recovery material; this change provides no
   database or backup downgrade. See the
   [separation guidance](docs/development.md#separating-project-3-from-main).
-- Reject database schemas newer than the stable binary during readiness and
-  reject unknown applied migrations before the migration command writes changes.
+- Reject unknown applied migration versions during readiness and before the
+  migration command writes changes, even when a supported migration sorts after
+  an unsupported project migration.
 - **Breaking:** query observation settings are now runtime-managed.
   `GET` and `PUT /api/v1/admin/query-observations` have been removed; use
   `GET /api/v1/admin/runtime-settings` and

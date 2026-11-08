@@ -4,6 +4,7 @@ use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::middleware::Next;
 use actix_web::{Error, web::Data};
 
+use crate::errors::ApiError;
 use crate::pagination::{deployment_page_limits, with_request_page_limits};
 use crate::permissions::AppContext;
 
@@ -15,6 +16,13 @@ pub async fn apply_runtime_settings(
     req: ServiceRequest,
     next: Next<impl MessageBody + 'static>,
 ) -> Result<ServiceResponse<BoxBody>, Error> {
+    if let Some(context) = req.app_data::<Data<AppContext>>() {
+        context
+            .backend()
+            .applied_runtime_settings()
+            .ensure_security_current()
+            .map_err(ApiError::from)?;
+    }
     let Ok(deployment) = deployment_page_limits() else {
         return Ok(next.call(req).await?.map_into_boxed_body());
     };

@@ -149,6 +149,40 @@ fn update(
     )
 }
 
+#[tokio::test]
+async fn disabled_deployment_provider_survives_independent_replica_reload() {
+    use hubuum_storage_core::{
+        StorageAuthenticationProvider, StorageAuthenticationProviderKind,
+        StorageAuthenticationProviders,
+    };
+    let fixture = Fixture::new(None).await;
+    let assignment =
+        StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Authentication(
+            StorageAuthenticationProviders::try_new(vec![
+                StorageAuthenticationProvider::deployment(
+                    "corporate",
+                    StorageAuthenticationProviderKind::Ldap,
+                    false,
+                )
+                .unwrap(),
+            ])
+            .unwrap(),
+        ));
+    fixture
+        .replica()
+        .update_runtime_settings(update(assignment.clone(), 1))
+        .await
+        .unwrap();
+    let reloaded = fixture.replica().load_runtime_settings().await.unwrap();
+    assert_eq!(
+        reloaded
+            .record(StorageRuntimeSettingsGroup::Authentication)
+            .assignment(),
+        &assignment
+    );
+    fixture.cleanup().await;
+}
+
 async fn history(
     storage: &PostgresStorage,
     group: StorageRuntimeSettingsGroup,
@@ -229,7 +263,10 @@ async fn down_migration_restores_the_legacy_override() {
         .update_runtime_settings(update(observations(true), 1))
         .await
         .unwrap();
-    fixture.owner(&format!("{DOWN} {UP}")).await.unwrap();
+    fixture
+        .owner(&format!("{DOWN} {UP} {}", fixture.runtime_grants()))
+        .await
+        .unwrap();
     assert_eq!(
         fixture
             .replica()

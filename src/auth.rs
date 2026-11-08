@@ -21,6 +21,10 @@ use tokio::sync::Mutex;
 use tracing::{Instrument, field, info_span};
 
 use crate::errors::ApiError;
+use crate::models::runtime_settings::{
+    RuntimeAuthenticationProviderRequest, RuntimeAuthenticationProviderStatus,
+    RuntimeSettingsSource,
+};
 use crate::models::user::{User, ValidatedLogin, auth_failure};
 use crate::models::{LDAP_PROVIDER_KIND, LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use crate::services::identity::ensure_identity_scope;
@@ -95,6 +99,7 @@ impl ConfiguredLdapScope {
 struct AuthProviderRegistry {
     providers: HashMap<String, RegisteredAuthProvider>,
     unavailable: HashMap<String, bool>,
+    statuses: HashMap<String, RuntimeAuthenticationProviderStatus>,
 }
 
 struct ApplicationLdapSecretSource;
@@ -110,14 +115,68 @@ impl LdapSecretSource for ApplicationLdapSecretSource {
 }
 
 pub(crate) async fn protect_runtime_authentication_settings(
-    providers: Vec<(String, StorageAuthenticationProviderKind, serde_json::Value)>,
+    providers: Vec<RuntimeAuthenticationProviderRequest>,
     current: Option<&StorageAuthenticationProviders>,
+    deployment: &AuthProvidersConfig,
 ) -> Result<StorageAuthenticationProviders, ApiError> {
     let key_ref = crate::config::get_config()?
         .runtime_settings_encryption_key_ref
         .clone();
     let mut protected = Vec::with_capacity(providers.len());
-    for (name, kind, mut configuration) in providers {
+    for request in providers {
+        let (name, kind, enabled, mut configuration) = match request {
+            RuntimeAuthenticationProviderRequest::Deployment {
+                name,
+                kind,
+                enabled,
+            } => {
+                if enabled
+                    && !deployment
+                        .ldap
+                        .iter()
+                        .any(|provider| provider.ldap.scope == name)
+                {
+                    return Err(ApiError::BadRequest(format!(
+                        "Deployment authentication provider '{name}' is not configured on this replica"
+                    )));
+                }
+                protected.push(
+                    StorageAuthenticationProvider::deployment(name, kind.into(), enabled)
+                        .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+                );
+                continue;
+            }
+            RuntimeAuthenticationProviderRequest::Runtime {
+                name,
+                kind,
+                enabled,
+                configuration,
+                adopt_deployment,
+            } => {
+                let already_managed = current.is_some_and(|providers| {
+                    providers.providers().iter().any(|provider| {
+                        provider.name() == name && provider.configuration().is_some()
+                    })
+                });
+                if !already_managed
+                    && !adopt_deployment
+                    && deployment
+                        .ldap
+                        .iter()
+                        .any(|provider| provider.ldap.scope == name)
+                {
+                    return Err(ApiError::BadRequest(format!(
+                        "Provider '{name}' is deployment-owned; use a deployment activation entry or explicitly set adopt_deployment to true"
+                    )));
+                }
+                (
+                    name,
+                    StorageAuthenticationProviderKind::from(kind),
+                    enabled,
+                    configuration,
+                )
+            }
+        };
         let Some(config) = configuration.as_object_mut() else {
             return Err(ApiError::BadRequest(
                 "Authentication provider configuration must be an object".to_string(),
@@ -143,7 +202,7 @@ pub(crate) async fn protect_runtime_authentication_settings(
             .and_then(|provider| {
                 provider
                     .configuration()
-                    .get(RUNTIME_AUTHENTICATION_PASSWORD_ENVELOPE_FIELD)
+                    .and_then(|config| config.get(RUNTIME_AUTHENTICATION_PASSWORD_ENVELOPE_FIELD))
             })
             .cloned();
         match config.remove("bind_password") {
@@ -205,9 +264,28 @@ pub(crate) async fn protect_runtime_authentication_settings(
                 }
             }
         }
+        if !enabled {
+            // Validate the complete definition without resolving an unavailable
+            // existing key. The placeholder is used only for structural checks.
+            let mut validation = configuration.clone();
+            if let Some(config) = validation.as_object_mut()
+                && config
+                    .remove(RUNTIME_AUTHENTICATION_PASSWORD_ENVELOPE_FIELD)
+                    .is_some()
+            {
+                config.insert(
+                    "bind_password".to_string(),
+                    serde_json::Value::String("validation-only".to_string()),
+                );
+            }
+            AuthProviderRegistry::from_config(AuthProvidersConfig {
+                ldap: vec![parse_runtime_provider_configuration(&name, validation)?],
+            })?;
+        }
         protected.push(
             StorageAuthenticationProvider::try_new(name, kind, configuration)
-                .map_err(|error| ApiError::BadRequest(error.message().to_string()))?,
+                .map_err(|error| ApiError::BadRequest(error.message().to_string()))?
+                .with_enabled(enabled),
         );
     }
     StorageAuthenticationProviders::try_new(protected)
@@ -217,7 +295,9 @@ pub(crate) async fn protect_runtime_authentication_settings(
 async fn runtime_provider_configuration(
     provider: &StorageAuthenticationProvider,
 ) -> Result<ConfiguredLdapScope, ApiError> {
-    let mut configuration = provider.configuration().clone();
+    let mut configuration = provider.configuration().cloned().ok_or_else(|| {
+        ApiError::BadRequest("Provider definition belongs to deployment configuration".to_string())
+    })?;
     let Some(config) = configuration.as_object_mut() else {
         return Err(ApiError::BadRequest(
             "Authentication provider configuration must be an object".to_string(),
@@ -268,11 +348,17 @@ async fn runtime_provider_configuration(
             serde_json::Value::String(password.to_string()),
         );
     }
+    parse_runtime_provider_configuration(provider.name(), configuration)
+}
+
+fn parse_runtime_provider_configuration(
+    name: &str,
+    configuration: serde_json::Value,
+) -> Result<ConfiguredLdapScope, ApiError> {
     let configured: ConfiguredLdapScope =
         serde_json::from_value(configuration.clone()).map_err(|_| {
             ApiError::BadRequest(format!(
-                "Authentication provider '{}' configuration is invalid",
-                provider.name()
+                "Authentication provider '{name}' configuration is invalid"
             ))
         })?;
     let known = serde_json::to_value(&configured).map_err(|_| {
@@ -282,8 +368,7 @@ async fn runtime_provider_configuration(
     })?;
     if contains_unknown_fields(&configuration, &known) {
         return Err(ApiError::BadRequest(format!(
-            "Authentication provider '{}' configuration contains unrecognized fields",
-            provider.name()
+            "Authentication provider '{name}' configuration contains unrecognized fields"
         )));
     }
     Ok(configured)
@@ -430,6 +515,7 @@ impl AuthProviderRegistry {
         let mut registry = Self {
             providers: HashMap::new(),
             unavailable: HashMap::new(),
+            statuses: HashMap::new(),
         };
         LocalAuthProvider::register(&mut registry)?;
         for configured in config.ldap {
@@ -440,14 +526,62 @@ impl AuthProviderRegistry {
 
     async fn from_runtime_providers(
         configured: &StorageAuthenticationProviders,
+        deployment: &AuthProvidersConfig,
     ) -> Result<Self, ApiError> {
-        let mut registry = Self {
-            providers: HashMap::new(),
-            unavailable: HashMap::new(),
-        };
-        LocalAuthProvider::register(&mut registry)?;
+        let mut registry = Self::from_config(AuthProvidersConfig { ldap: Vec::new() })?;
+        for provider in &deployment.ldap {
+            if provider.ldap.scope == LOCAL_IDENTITY_SCOPE {
+                continue;
+            }
+            registry.statuses.insert(
+                provider.ldap.scope.clone(),
+                RuntimeAuthenticationProviderStatus {
+                    name: provider.ldap.scope.clone(),
+                    source: RuntimeSettingsSource::Deployment,
+                    enabled: false,
+                    definition_mutable: false,
+                    available: false,
+                },
+            );
+        }
         for definition in configured.providers() {
-            let result = match runtime_provider_configuration(definition).await {
+            let source = if definition.configuration().is_some() {
+                RuntimeSettingsSource::Runtime
+            } else {
+                RuntimeSettingsSource::Deployment
+            };
+            let mut status = RuntimeAuthenticationProviderStatus {
+                name: definition.name().to_string(),
+                source,
+                enabled: definition.enabled(),
+                definition_mutable: source == RuntimeSettingsSource::Runtime,
+                available: false,
+            };
+            if !definition.enabled() {
+                registry
+                    .statuses
+                    .insert(definition.name().to_string(), status);
+                continue;
+            }
+            let configuration = if definition.configuration().is_some() {
+                runtime_provider_configuration(definition).await
+            } else {
+                let mut matches = deployment
+                    .ldap
+                    .iter()
+                    .filter(|provider| provider.ldap.scope == definition.name());
+                let candidate = matches.next();
+                candidate
+                    .filter(|_| matches.next().is_none())
+                    .cloned()
+                    .ok_or_else(|| {
+                        ApiError::BadRequest(
+                            "Deployment authentication provider must have exactly one definition"
+                                .to_string(),
+                        )
+                    })
+            };
+            let result = match configuration {
                 Ok(provider) if provider.ldap.scope == definition.name() => {
                     LdapAuthProvider::register(provider, &mut registry)
                 }
@@ -465,7 +599,12 @@ impl AuthProviderRegistry {
                     provider = definition.name(),
                     "Authentication provider could not be initialized"
                 );
+            } else {
+                status.available = true;
             }
+            registry
+                .statuses
+                .insert(definition.name().to_string(), status);
         }
         Ok(registry)
     }
@@ -494,7 +633,17 @@ impl AuthProviderRegistry {
                 "duplicate auth provider name '{name}'"
             )));
         }
-        self.providers.insert(name, provider);
+        self.providers.insert(name.clone(), provider);
+        self.statuses.insert(
+            name.clone(),
+            RuntimeAuthenticationProviderStatus {
+                name,
+                source: RuntimeSettingsSource::Deployment,
+                enabled: true,
+                definition_mutable: false,
+                available: true,
+            },
+        );
         Ok(())
     }
 
@@ -515,14 +664,10 @@ impl AuthProviderRegistry {
         names
     }
 
-    fn provider_statuses(&self) -> Vec<(String, bool)> {
-        self.provider_names()
-            .into_iter()
-            .map(|name| {
-                let available = self.providers.contains_key(&name);
-                (name, available)
-            })
-            .collect()
+    fn provider_statuses(&self) -> Vec<RuntimeAuthenticationProviderStatus> {
+        let mut statuses = self.statuses.values().cloned().collect::<Vec<_>>();
+        statuses.sort_unstable_by(|left, right| left.name.cmp(&right.name));
+        statuses
     }
 
     fn provider(&self, name: &str) -> Result<&RegisteredAuthProvider, ApiError> {
@@ -540,7 +685,8 @@ pub fn auth_provider_names() -> Result<Vec<String>, ApiError> {
     Ok(auth_provider_registry()?.provider_names())
 }
 
-pub(crate) fn auth_provider_statuses() -> Result<Vec<(String, bool)>, ApiError> {
+pub(crate) fn auth_provider_statuses() -> Result<Vec<RuntimeAuthenticationProviderStatus>, ApiError>
+{
     Ok(auth_provider_registry()?.provider_statuses())
 }
 
@@ -684,6 +830,9 @@ pub async fn login(
     storage: &impl crate::storage::StorageContext,
     login: ValidatedLogin,
 ) -> Result<AuthenticatedLogin, ApiError> {
+    crate::storage::storage_handle(storage)
+        .applied_runtime_settings()
+        .ensure_security_current()?;
     let registry = auth_provider_registry()?;
     login_with_registry(storage, login, &registry).await
 }
@@ -736,6 +885,9 @@ pub async fn refresh_principal_if_needed(
     principal_id: i32,
 ) -> Result<(), ApiError> {
     let storage = crate::storage::storage_handle(storage);
+    storage
+        .applied_runtime_settings()
+        .ensure_security_current()?;
     let Some(state) = get_external_principal_state(&storage, principal_id).await? else {
         return Ok(());
     };
@@ -862,8 +1014,22 @@ pub(crate) async fn apply_runtime_authentication_settings(
     providers: Option<&StorageAuthenticationProviders>,
 ) -> Result<bool, ApiError> {
     let registry = match providers {
-        Some(providers) => AuthProviderRegistry::from_runtime_providers(providers).await?,
-        None => build_auth_provider_registry()?,
+        Some(providers) => {
+            AuthProviderRegistry::from_runtime_providers(providers, &runtime_deployment_config())
+                .await
+        }
+        None => build_auth_provider_registry(),
+    };
+    let registry = match registry {
+        Ok(registry) => registry,
+        Err(error) => {
+            // Never continue using a removed runtime provider after a failed
+            // release to this replica's deployment configuration.
+            *AUTH_PROVIDER_REGISTRY
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+            return Err(error);
+        }
     };
     let complete = registry.unavailable.is_empty();
     *AUTH_PROVIDER_REGISTRY
@@ -872,14 +1038,30 @@ pub(crate) async fn apply_runtime_authentication_settings(
     Ok(complete)
 }
 
+pub(crate) fn authentication_is_ready() -> bool {
+    auth_provider_registry().is_ok()
+}
+
 pub(crate) async fn preflight_runtime_authentication_settings(
     providers: &StorageAuthenticationProviders,
     storage: &crate::storage::StorageHandle,
+    deployment: &AuthProvidersConfig,
 ) -> Result<(), ApiError> {
-    let registry = AuthProviderRegistry::from_runtime_providers(providers).await?;
+    let registry = AuthProviderRegistry::from_runtime_providers(providers, deployment).await?;
     registry.preflight().await?;
     for provider in providers.providers() {
         ensure_identity_scope(storage, provider.name(), LDAP_PROVIDER_KIND).await?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn preflight_deployment_authentication_settings(
+    storage: &crate::storage::StorageHandle,
+) -> Result<(), ApiError> {
+    let registry = build_auth_provider_registry()?;
+    registry.preflight().await?;
+    for provider in registry.providers() {
+        ensure_identity_scope(storage, &provider.name, &provider.kind).await?;
     }
     Ok(())
 }
@@ -903,7 +1085,7 @@ fn build_auth_provider_registry() -> Result<AuthProviderRegistry, ApiError> {
     AuthProviderRegistry::from_config(load_auth_config()?)
 }
 
-fn load_auth_config() -> Result<AuthProvidersConfig, ApiError> {
+pub(crate) fn load_auth_config() -> Result<AuthProvidersConfig, ApiError> {
     let config = crate::config::get_config()?;
     let Some(path) = config.auth_config_path.as_deref() else {
         return Ok(AuthProvidersConfig { ldap: Vec::new() });
@@ -911,6 +1093,15 @@ fn load_auth_config() -> Result<AuthProvidersConfig, ApiError> {
     let path = Path::new(path);
     let source = read_auth_config_source(path)?;
     parse_auth_config_source(path, &source)
+}
+
+/// Runtime definitions remain authoritative if the old deployment file is gone.
+/// Enabled deployment references will be reported unavailable and fail preflight.
+pub(crate) fn runtime_deployment_config() -> AuthProvidersConfig {
+    load_auth_config().unwrap_or_else(|_| {
+        tracing::warn!("Deployment authentication configuration is unavailable; runtime-owned definitions remain authoritative");
+        AuthProvidersConfig { ldap: Vec::new() }
+    })
 }
 
 fn read_auth_config_source(path: &Path) -> Result<String, ApiError> {
@@ -1525,6 +1716,20 @@ mod tests {
         );
     }
 
+    fn runtime_request(
+        configuration: serde_json::Value,
+        enabled: bool,
+        adopt_deployment: bool,
+    ) -> RuntimeAuthenticationProviderRequest {
+        RuntimeAuthenticationProviderRequest::Runtime {
+            name: "corporate".to_string(),
+            kind: crate::models::runtime_settings::RuntimeAuthenticationProviderKind::Ldap,
+            enabled,
+            configuration,
+            adopt_deployment,
+        }
+    }
+
     fn existing_runtime_provider() -> StorageAuthenticationProviders {
         StorageAuthenticationProviders::try_new(vec![
             StorageAuthenticationProvider::try_new(
@@ -1540,6 +1745,135 @@ mod tests {
             .unwrap(),
         ])
         .unwrap()
+    }
+
+    #[rstest]
+    #[case::enabled(true)]
+    #[case::disabled(false)]
+    #[tokio::test]
+    async fn deployment_activation_survives_reload(#[case] enabled: bool) {
+        let configured = StorageAuthenticationProviders::try_new(vec![
+            StorageAuthenticationProvider::deployment(
+                "corporate",
+                StorageAuthenticationProviderKind::Ldap,
+                enabled,
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let value = hubuum_storage_core::StorageRuntimeSettingsValue::Authentication(configured);
+        let reloaded = hubuum_storage_core::StorageRuntimeSettingsValue::from_document(
+            hubuum_storage_core::StorageRuntimeSettingsGroup::Authentication,
+            &value.to_document(),
+        )
+        .unwrap();
+        let hubuum_storage_core::StorageRuntimeSettingsValue::Authentication(reloaded) = reloaded
+        else {
+            panic!("expected authentication settings");
+        };
+        let registry = AuthProviderRegistry::from_runtime_providers(
+            &reloaded,
+            &AuthProvidersConfig {
+                ldap: vec![ldap_scope("corporate")],
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(registry.provider("corporate").is_ok(), enabled);
+    }
+
+    #[rstest]
+    #[case::implicit(false)]
+    #[case::explicit(true)]
+    #[tokio::test]
+    async fn deployment_definition_requires_explicit_adoption(#[case] adopt: bool) {
+        let deployment = AuthProvidersConfig {
+            ldap: vec![ldap_scope("corporate")],
+        };
+        let result = protect_runtime_authentication_settings(
+            vec![runtime_request(
+                serde_json::to_value(&deployment.ldap[0]).unwrap(),
+                false,
+                adopt,
+            )],
+            None,
+            &deployment,
+        )
+        .await;
+        assert_eq!(result.is_ok(), adopt);
+    }
+
+    #[tokio::test]
+    async fn omitted_deployment_provider_stays_disabled_under_runtime_ownership() {
+        let registry = AuthProviderRegistry::from_runtime_providers(
+            &StorageAuthenticationProviders::try_new(Vec::new()).unwrap(),
+            &AuthProvidersConfig {
+                ldap: vec![ldap_scope("corporate")],
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(registry.provider_names(), vec![LOCAL_IDENTITY_SCOPE]);
+        assert!(
+            registry
+                .provider_statuses()
+                .iter()
+                .any(|provider| provider.name == "corporate"
+                    && !provider.enabled
+                    && !provider.definition_mutable)
+        );
+    }
+
+    #[tokio::test]
+    async fn disabled_provider_rejects_even_fresh_cached_external_identity() {
+        let registry = AuthProviderRegistry::from_runtime_providers(
+            &StorageAuthenticationProviders::try_new(vec![
+                StorageAuthenticationProvider::deployment(
+                    "corporate",
+                    StorageAuthenticationProviderKind::Ldap,
+                    false,
+                )
+                .unwrap(),
+            ])
+            .unwrap(),
+            &AuthProvidersConfig {
+                ldap: vec![ldap_scope("corporate")],
+            },
+        )
+        .await
+        .unwrap();
+        let state = ExternalPrincipalState {
+            identity_scope: "corporate".to_string(),
+            username: "alice".to_string(),
+            external_subject: "stable-subject".to_string(),
+            last_sync_attempted_at: Some(now()),
+            last_sync_success_at: Some(now()),
+        };
+        assert!(matches!(
+            ExternalUserState::from_registry(state, &registry),
+            Err(ApiError::Unauthorized(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn disabled_runtime_provider_does_not_require_its_encryption_key() {
+        let configured = StorageAuthenticationProviders::try_new(
+            existing_runtime_provider()
+                .providers()
+                .iter()
+                .cloned()
+                .map(|provider| provider.with_enabled(false))
+                .collect(),
+        )
+        .unwrap();
+        let registry = AuthProviderRegistry::from_runtime_providers(
+            &configured,
+            &AuthProvidersConfig { ldap: Vec::new() },
+        )
+        .await
+        .unwrap();
+        registry.preflight().await.unwrap();
+        assert_eq!(registry.provider_names(), vec![LOCAL_IDENTITY_SCOPE]);
     }
 
     #[rstest]
@@ -1598,22 +1932,25 @@ mod tests {
     async fn omitted_runtime_password_preserves_the_existing_envelope() {
         let current = existing_runtime_provider();
         let providers = protect_runtime_authentication_settings(
-            vec![(
-                "corporate".to_string(),
-                StorageAuthenticationProviderKind::Ldap,
+            vec![runtime_request(
                 serde_json::json!({"scope": "corporate"}),
+                true,
+                false,
             )],
             Some(&current),
+            &AuthProvidersConfig { ldap: Vec::new() },
         )
         .await
         .unwrap();
         assert_eq!(
             providers.providers()[0]
                 .configuration()
-                .get(RUNTIME_AUTHENTICATION_PASSWORD_ENVELOPE_FIELD),
+                .and_then(|configuration| configuration
+                    .get(RUNTIME_AUTHENTICATION_PASSWORD_ENVELOPE_FIELD)),
             current.providers()[0]
                 .configuration()
-                .get(RUNTIME_AUTHENTICATION_PASSWORD_ENVELOPE_FIELD)
+                .and_then(|configuration| configuration
+                    .get(RUNTIME_AUTHENTICATION_PASSWORD_ENVELOPE_FIELD))
         );
     }
 
@@ -1621,19 +1958,21 @@ mod tests {
     async fn explicit_null_runtime_password_clears_the_existing_envelope() {
         let current = existing_runtime_provider();
         let providers = protect_runtime_authentication_settings(
-            vec![(
-                "corporate".to_string(),
-                StorageAuthenticationProviderKind::Ldap,
+            vec![runtime_request(
                 serde_json::json!({"scope": "corporate", "bind_password": null}),
+                true,
+                false,
             )],
             Some(&current),
+            &AuthProvidersConfig { ldap: Vec::new() },
         )
         .await
         .unwrap();
         assert!(
             providers.providers()[0]
                 .configuration()
-                .get(RUNTIME_AUTHENTICATION_PASSWORD_ENVELOPE_FIELD)
+                .and_then(|configuration| configuration
+                    .get(RUNTIME_AUTHENTICATION_PASSWORD_ENVELOPE_FIELD))
                 .is_none()
         );
     }

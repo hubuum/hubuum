@@ -46,6 +46,10 @@ pub async fn healthz() -> impl Responder {
 )]
 #[get("/readyz")]
 pub async fn readyz(context: AppContext) -> Result<impl Responder, ApiError> {
+    context
+        .backend()
+        .applied_runtime_settings()
+        .ensure_security_current()?;
     let snapshot = with_storage_call_site(
         &context,
         StorageCallSite::Readiness,
@@ -67,6 +71,11 @@ pub async fn readyz(context: AppContext) -> Result<impl Responder, ApiError> {
     if !context.permission_backend_is_ready() {
         return Err(ApiError::ServiceUnavailable(
             "Authorization backend is not ready".to_string(),
+        ));
+    }
+    if !crate::auth::authentication_is_ready() {
+        return Err(ApiError::ServiceUnavailable(
+            "Authentication configuration is not ready".to_string(),
         ));
     }
 

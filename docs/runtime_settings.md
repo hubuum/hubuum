@@ -15,7 +15,7 @@ settings store. The initial runtime-managed settings are listed below.
 
 | Group | Setting | Takes effect | Deployment ceiling |
 | --- | --- | --- | --- |
-| `authentication` | LDAP provider definitions | On the next authentication request | 64 providers |
+| `authentication` | LDAP provider activation and runtime-owned definitions | On the next authentication request | 64 providers |
 | `authorization` | Permission backend selection | On the next API request | Available backend and deployment connection settings |
 | `pagination` | `default_page_limit` | When the next API request starts | `HUBUUM_MAX_PAGE_LIMIT` |
 | `query_observations` | `enabled`, `sample_every`, `max_patterns`, `max_patterns_per_class`, `retention_seconds`, `max_predicates_per_query` | On the next eligible query | Query-observation ceiling variables |
@@ -49,7 +49,56 @@ revision. A group is always in one of two states:
   storage, whatever each replica's startup configuration says.
 
 Process startup never writes runtime settings. A replica's environment can
-change what it applies only while the group is in the deployment state.
+change the active selection only while the group is in the deployment state.
+Deployment-owned provider definitions and authorization connection settings still
+come from deployment configuration.
+
+### Authentication provider ownership
+
+The authentication group stores the complete external-provider selection. Local
+password authentication is always enabled and cannot be replaced, disabled, or
+included in that selection. An empty external selection therefore means local
+login only.
+
+Each provider entry has a stable `name` matching its LDAP identity scope,
+`kind: "ldap"`, an explicit `enabled` flag, and one of two definition sources:
+
+- `source: "deployment"` references the definition in `HUBUUM_AUTH_CONFIG_PATH`.
+  The API can change activation but rejects a `configuration` field. Connection
+  settings and secret references stay deployment-owned.
+- `source: "runtime"` supplies `configuration`. Taking over an existing
+  deployment definition requires `adopt_deployment: true` on the first write.
+  Subsequent edits use the stored definition, including after restart. To return
+  that provider to deployment ownership, explicitly replace its entry with a
+  deployment reference.
+
+For example, this complete selection disables the deployment-defined corporate
+provider while retaining local login:
+
+```json
+{
+  "expected_revision": 1,
+  "providers": [
+    {"source": "deployment", "name": "corporate", "kind": "ldap", "enabled": false}
+  ]
+}
+```
+
+Send it to `POST /api/v1/admin/runtime-settings/authentication/preflight`.
+Include every external provider that should remain enabled. Omitted deployment
+providers stay disabled while the group is runtime-owned; newly added deployment
+providers also need explicit activation. Omitted runtime definitions are removed.
+Restart never resets these activation decisions. Releasing the whole group with
+`DELETE` explicitly restores the complete deployment selection, after preflight.
+A disabled reference can be retained when its deployment definition is missing;
+enabling it requires the definition to exist.
+
+Fully runtime-owned definitions remain usable if the old deployment file is
+removed. An enabled deployment reference missing on a replica is unavailable;
+that replica never substitutes another provider or an older definition.
+If releasing the group encounters an invalid deployment configuration on another
+replica, that replica stops authentication and fails readiness until repaired;
+it does not keep the previous runtime providers active.
 
 ## Adopting existing configuration
 
@@ -86,7 +135,11 @@ migration that introduces runtime settings. If an override was set, the
 
 ## Administrator API
 
-Every endpoint requires an unscoped human administrator token.
+Every endpoint requires an unscoped human administrator token. Authentication
+and authorization changes, including releases, additionally require a local
+human administrator with password login configured. External administrators can
+inspect settings but must establish a local recovery administrator before
+changing security settings.
 
 | Method and path | Purpose |
 | --- | --- |
@@ -124,9 +177,12 @@ Omitted observation fields use the responding replica's deployment defaults.
 If another replica has a lower ceiling, it clamps the shared values and
 reports `constrained_by_ceiling: true`.
 
-Authentication updates use the preflight endpoint. It validates every LDAP
-definition, tests connectivity and service bind, and commits the new revision
-only after all checks succeed. A stale revision discovered after preflight
+Authentication updates use the preflight endpoint. It validates ownership and
+identity-scope bindings, tests enabled providers' configuration, connectivity,
+and service bind, and commits the new revision only after all checks succeed.
+Disabled providers do not require connectivity or decryption, so an unavailable
+provider or key does not prevent disabling it. Their configuration is checked
+before they can be enabled. A stale revision discovered after preflight
 still prevents the write. Omitting `configuration.bind_password` for an
 existing provider of the same name preserves its encrypted password; setting it
 to `null` clears it. A supplied password is encrypted using AES-256-GCM with a
@@ -147,10 +203,21 @@ Authorization updates select a backend that is already supported by the
 running binary. Backend-specific connection options, such as the Treetop URL
 and TLS settings, remain deployment configuration. Before committing an
 authorization update or release, the responding replica initializes and checks
-the selected backend. Other replicas must have compatible builds and deployment
-configuration. If a replica cannot initialize the selected authorization
-backend, permission checks fail closed
-and that replica's readiness probe returns `503` until reinitialization
+the selected backend and verifies that the local administrator making the change
+is also an administrator under the replacement. A backend that is reachable but
+would remove that access is rejected without a revision or audit write. Exactly
+one backend is selected; there is no disabled authorization state or automatic
+fallback to local policy. Other replicas must have compatible builds and
+deployment configuration.
+
+Local login remains available independently of the external-provider selection.
+Consequently, concurrent authentication and authorization updates cannot remove
+the validated local recovery path by disabling its authentication provider.
+Revision checks serialize competing edits of each group. This protects settings
+changes; operators must still preserve the recovery account, its password, and
+its grants when editing users, groups, or external policy directly. If a replica
+cannot initialize the selected authorization backend, permission checks fail
+closed and that replica's readiness probe returns `503` until reinitialization
 succeeds.
 
 ### Audit
@@ -191,6 +258,12 @@ successfully and applies it without a storage read on request paths.
   authorization backend it started with. An invalid authentication provider is
   reported unavailable without disabling other providers; reconciliation
   retries unavailable providers even when the revision has not changed.
+  Disabled providers are excluded from public discovery. After a replica applies
+  a disable, new logins, bearer-token requests, and session refreshes for that
+  scope are rejected even if cached identity data is fresh. Requests already in
+  progress may finish. Disablement suspends access; it does not permanently revoke
+  stored credentials, and re-enabling may restore unexpired credentials. Use
+  credential revocation when permanent invalidation is required.
 - **Query observations**: sampling and predicate budgets read the applied value
   for each eligible query. Capacity and retention changes apply as the next
   observation is recorded or reported; existing entries over a newly lowered
@@ -200,14 +273,19 @@ successfully and applies it without a storage read on request paths.
 ### Failure behavior
 
 If a refresh fails, the replica keeps its last valid snapshot and reports the
-`stale` status, with the time of the failure. Pagination continues with the
-retained snapshot. Query observation collection pauses until the next successful
-refresh (`collection_paused: true`) rather than keep an enablement that may be
-stale. Ordinary queries never wait on, or fail because of, a runtime settings
-read.
+`stale` status, with the time of the failure. New API requests and readiness
+return `503` until reconciliation succeeds, including requests using local
+credentials. This prevents an isolated replica from indefinitely accepting a
+provider or authorization policy that was disabled elsewhere. Existing work
+retains its captured settings. Query observation collection also pauses until
+the next successful refresh (`collection_paused: true`). Request paths check
+cached freshness; they do not wait for a settings read.
 
-A replica is also reported as stale when it has not completed a successful
-refresh for more than two reconcile intervals.
+A replica also becomes stale when its last successful refresh is older than two
+reconcile intervals plus the five-second refresh timeout (65 seconds). Missed
+notifications therefore have a bounded security effect even if reconciliation
+stalls. Inspect logs and readiness during an outage; the administrator API is
+available again after reconciliation succeeds.
 
 ## Reporting
 
@@ -216,8 +294,9 @@ refresh for more than two reconcile intervals.
 
 - `replica.status`: `current`, `stale`, or `not_loaded`, together with refresh
   timestamps and the reconcile interval;
-- authentication provider names and per-provider availability, plus the
-  effective, runtime, and deployment authorization backend and its readiness;
+- authentication provider names, definition `source`, `enabled`,
+  `definition_mutable`, and `available`, including disabled deployment providers;
+- the effective, runtime, and deployment authorization backend and its readiness;
 - for each group:
   - `source`: `deployment` or `runtime`;
   - `revision`: the latest revision loaded by this replica; authentication
@@ -260,3 +339,10 @@ removed. Use `GET /api/v1/admin/runtime-settings` and
 `PUT /api/v1/admin/runtime-settings/query_observations` instead. The
 `query_observations.runtime_override` field of `GET /api/v1/admin/config` has
 been replaced by `runtime_settings.query_observations`.
+
+Earlier unreleased builds accepted authentication provider entries without
+`source` and `enabled`. Update clients to supply both fields explicitly. Existing
+stored runtime definitions retain runtime ownership and default to enabled;
+existing runtime selections continue to suppress omitted deployment providers.
+Security-setting edits now require a local administrator, so provision and test
+that account before upgrading installations administered solely through LDAP.

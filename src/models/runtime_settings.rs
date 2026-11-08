@@ -134,14 +134,25 @@ impl From<RuntimeAuthenticationProviderKind> for StorageAuthenticationProviderKi
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RuntimeAuthenticationProviderRequest {
-    pub name: String,
-    pub kind: RuntimeAuthenticationProviderKind,
-    /// Provider-specific configuration. LDAP passwords are accepted here but
-    /// are encrypted before the document is persisted.
-    #[schema(value_type = Object)]
-    pub configuration: Value,
+#[serde(tag = "source", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RuntimeAuthenticationProviderRequest {
+    /// Deployment configuration stays read-only; only activation is persisted.
+    Deployment {
+        name: String,
+        kind: RuntimeAuthenticationProviderKind,
+        enabled: bool,
+    },
+    Runtime {
+        name: String,
+        kind: RuntimeAuthenticationProviderKind,
+        enabled: bool,
+        /// LDAP passwords are encrypted before persistence.
+        #[schema(value_type = Object)]
+        configuration: Value,
+        /// Required when taking ownership of an existing deployment definition.
+        #[serde(default)]
+        adopt_deployment: bool,
+    },
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -153,19 +164,8 @@ pub struct AuthenticationSettingsRequest {
 }
 
 impl AuthenticationSettingsRequest {
-    pub fn into_parts(
-        self,
-    ) -> (
-        ResourceRevision,
-        Vec<(String, StorageAuthenticationProviderKind, Value)>,
-    ) {
-        (
-            self.expected_revision,
-            self.providers
-                .into_iter()
-                .map(|provider| (provider.name, provider.kind.into(), provider.configuration))
-                .collect(),
-        )
+    pub fn into_parts(self) -> (ResourceRevision, Vec<RuntimeAuthenticationProviderRequest>) {
+        (self.expected_revision, self.providers)
     }
 }
 
@@ -442,6 +442,9 @@ pub struct PaginationSettingsReport {
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct RuntimeAuthenticationProviderStatus {
     pub name: String,
+    pub source: RuntimeSettingsSource,
+    pub enabled: bool,
+    pub definition_mutable: bool,
     pub available: bool,
 }
 

@@ -541,7 +541,7 @@
             }
           },
           "403": {
-            "description": "Unscoped human administrator required",
+            "description": "Unscoped local human administrator with password login required",
             "content": {
               "application/json": {
                 "schema": {
@@ -588,7 +588,7 @@
         },
         "responses": {
           "200": {
-            "description": "LDAP provider definitions passed validation and connectivity checks, then were committed with an audit record",
+            "description": "Provider ownership and activation validated; enabled LDAP providers passed connectivity checks before the audited commit",
             "content": {
               "application/json": {
                 "schema": {
@@ -598,7 +598,7 @@
             }
           },
           "400": {
-            "description": "Invalid provider configuration or failed LDAP connectivity preflight",
+            "description": "Invalid ownership transfer, provider configuration, or enabled-provider connectivity preflight",
             "content": {
               "application/json": {
                 "schema": {
@@ -618,7 +618,7 @@
             }
           },
           "403": {
-            "description": "Unscoped human administrator required",
+            "description": "Unscoped local human administrator with password login required",
             "content": {
               "application/json": {
                 "schema": {
@@ -685,7 +685,7 @@
             }
           },
           "400": {
-            "description": "Unsupported backend or invalid deployment configuration",
+            "description": "Unsupported backend, invalid deployment configuration, or administrator access would be lost",
             "content": {
               "application/json": {
                 "schema": {
@@ -705,7 +705,7 @@
             }
           },
           "403": {
-            "description": "Unscoped human administrator required",
+            "description": "Unscoped local human administrator with password login required",
             "content": {
               "application/json": {
                 "schema": {
@@ -791,7 +791,7 @@
             }
           },
           "403": {
-            "description": "Unscoped human administrator required",
+            "description": "Unscoped local human administrator with password login required",
             "content": {
               "application/json": {
                 "schema": {
@@ -37966,38 +37966,95 @@
         ]
       },
       "RuntimeAuthenticationProviderRequest": {
-        "type": "object",
-        "required": [
-          "name",
-          "kind",
-          "configuration"
-        ],
-        "properties": {
-          "configuration": {
+        "oneOf": [
+          {
             "type": "object",
-            "description": "Provider-specific configuration. LDAP passwords are accepted here but\nare encrypted before the document is persisted."
+            "description": "Deployment configuration stays read-only; only activation is persisted.",
+            "required": [
+              "name",
+              "kind",
+              "enabled",
+              "source"
+            ],
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "kind": {
+                "$ref": "#/components/schemas/RuntimeAuthenticationProviderKind"
+              },
+              "name": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "deployment"
+                ]
+              }
+            }
           },
-          "kind": {
-            "$ref": "#/components/schemas/RuntimeAuthenticationProviderKind"
-          },
-          "name": {
-            "type": "string"
+          {
+            "type": "object",
+            "required": [
+              "name",
+              "kind",
+              "enabled",
+              "configuration",
+              "source"
+            ],
+            "properties": {
+              "adopt_deployment": {
+                "type": "boolean",
+                "description": "Required when taking ownership of an existing deployment definition."
+              },
+              "configuration": {
+                "type": "object",
+                "description": "LDAP passwords are encrypted before persistence."
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "kind": {
+                "$ref": "#/components/schemas/RuntimeAuthenticationProviderKind"
+              },
+              "name": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "runtime"
+                ]
+              }
+            }
           }
-        },
-        "additionalProperties": false
+        ]
       },
       "RuntimeAuthenticationProviderStatus": {
         "type": "object",
         "required": [
           "name",
+          "source",
+          "enabled",
+          "definition_mutable",
           "available"
         ],
         "properties": {
           "available": {
             "type": "boolean"
           },
+          "definition_mutable": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
           "name": {
             "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/RuntimeSettingsSource"
           }
         }
       },

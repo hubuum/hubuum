@@ -454,18 +454,21 @@ mod tests {
                         "user_filter": "(uid={username})"
                     });
                     let providers = crate::auth::protect_runtime_authentication_settings(
-                        vec![(
-                            "directory".to_string(),
-                            StorageAuthenticationProviderKind::Ldap,
-                            config,
-                        )],
+                        vec![crate::models::runtime_settings::RuntimeAuthenticationProviderRequest::Runtime {
+                            name: "directory".to_string(),
+                            kind: crate::models::runtime_settings::RuntimeAuthenticationProviderKind::Ldap,
+                            configuration: config,
+                            enabled: true,
+                            adopt_deployment: false,
+                        }],
                         None,
+                        &crate::auth::AuthProvidersConfig { ldap: Vec::new() },
                     )
                     .await
                     .unwrap();
                     std::fs::write(
                         config_path,
-                        serde_json::to_vec(providers.providers()[0].configuration()).unwrap(),
+                        serde_json::to_vec(providers.providers()[0].configuration().unwrap()).unwrap(),
                     )
                     .unwrap();
                     return;
@@ -502,7 +505,7 @@ mod tests {
                 assert!(
                     crate::auth::auth_provider_statuses()
                         .unwrap()
-                        .contains(&("directory".to_string(), false))
+                        .iter().any(|provider| provider.name == "directory" && !provider.available)
                 );
 
                 std::fs::write(key_path, key).unwrap();
@@ -511,7 +514,7 @@ mod tests {
                 assert!(
                     crate::auth::auth_provider_statuses()
                         .unwrap()
-                        .contains(&("directory".to_string(), true))
+                        .iter().any(|provider| provider.name == "directory" && provider.available)
                 );
             });
     }
@@ -601,9 +604,58 @@ mod tests {
                     assert!(
                         crate::auth::auth_provider_statuses()
                             .unwrap()
-                            .contains(&("directory".to_string(), true))
+                            .iter()
+                            .any(|provider| provider.name == "directory" && provider.available)
                     );
                 }
+            });
+    }
+
+    #[test]
+    fn failed_authentication_release_discards_previous_runtime_providers() {
+        const CHILD: &str = "RUNTIME_AUTH_RELEASE_FAILURE_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let missing = std::env::temp_dir().join(format!(
+                "hubuum-missing-auth-release-{}.toml",
+                uuid::Uuid::new_v4(),
+            ));
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "secrets::tests::failed_authentication_release_discards_previous_runtime_providers"])
+                .env(CHILD, "1")
+                .env("HUBUUM_AUTH_CONFIG_PATH", missing)
+                .status().unwrap();
+            assert!(status.success());
+            return;
+        }
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                use hubuum_storage_core::{
+                    StorageAuthenticationProvider, StorageAuthenticationProviderKind,
+                    StorageAuthenticationProviders,
+                };
+                let providers =
+                    StorageAuthenticationProviders::try_new(
+                        vec![StorageAuthenticationProvider::try_new(
+                "directory", StorageAuthenticationProviderKind::Ldap,
+                serde_json::json!({
+                    "scope": "directory", "url": "ldap://localhost",
+                    "user_base_dn": "dc=example,dc=org", "user_filter": "(uid={username})"
+                }),
+            ).unwrap()],
+                    )
+                    .unwrap();
+                crate::auth::apply_runtime_authentication_settings(Some(&providers))
+                    .await
+                    .unwrap();
+                assert!(
+                    crate::auth::apply_runtime_authentication_settings(None)
+                        .await
+                        .is_err()
+                );
+                assert!(crate::auth::auth_provider_names().is_err());
             });
     }
 

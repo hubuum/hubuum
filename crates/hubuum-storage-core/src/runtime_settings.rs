@@ -219,7 +219,14 @@ impl StorageAuthenticationProviderKind {
 pub struct StorageAuthenticationProvider {
     name: String,
     kind: StorageAuthenticationProviderKind,
-    configuration: Value,
+    enabled: bool,
+    definition: AuthenticationProviderDefinition,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum AuthenticationProviderDefinition {
+    Deployment,
+    Runtime(Value),
 }
 
 impl StorageAuthenticationProvider {
@@ -228,24 +235,46 @@ impl StorageAuthenticationProvider {
         kind: StorageAuthenticationProviderKind,
         configuration: Value,
     ) -> Result<Self, StorageValidationError> {
-        let name = name.into();
-        if name.is_empty()
-            || name.len() > 128
-            || !name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-            || !configuration.is_object()
-            || configuration.get("bind_password").is_some()
-        {
+        let name = Self::validate_name(name.into())?;
+        if !configuration.is_object() || configuration.get("bind_password").is_some() {
             return Err(StorageValidationError::invalid(
-                "Authentication providers require a safe name and object configuration without plaintext passwords",
+                "Runtime authentication providers require object configuration without plaintext passwords",
             ));
         }
         Ok(Self {
             name,
             kind,
-            configuration,
+            enabled: true,
+            definition: AuthenticationProviderDefinition::Runtime(configuration),
         })
+    }
+
+    pub fn deployment(
+        name: impl Into<String>,
+        kind: StorageAuthenticationProviderKind,
+        enabled: bool,
+    ) -> Result<Self, StorageValidationError> {
+        Ok(Self {
+            name: Self::validate_name(name.into())?,
+            kind,
+            enabled,
+            definition: AuthenticationProviderDefinition::Deployment,
+        })
+    }
+
+    fn validate_name(name: String) -> Result<String, StorageValidationError> {
+        if name == "local"
+            || name.is_empty()
+            || name.len() > 128
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            return Err(StorageValidationError::invalid(
+                "Authentication providers require a safe name; local authentication cannot be replaced or disabled",
+            ));
+        }
+        Ok(name)
     }
 
     pub fn name(&self) -> &str {
@@ -256,8 +285,20 @@ impl StorageAuthenticationProvider {
         self.kind
     }
 
-    pub fn configuration(&self) -> &Value {
-        &self.configuration
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    pub const fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn configuration(&self) -> Option<&Value> {
+        match &self.definition {
+            AuthenticationProviderDefinition::Deployment => None,
+            AuthenticationProviderDefinition::Runtime(configuration) => Some(configuration),
+        }
     }
 }
 
@@ -267,6 +308,7 @@ impl std::fmt::Debug for StorageAuthenticationProvider {
             .debug_struct("StorageAuthenticationProvider")
             .field("name", &self.name)
             .field("kind", &self.kind)
+            .field("enabled", &self.enabled)
             .field("configuration", &"<redacted>")
             .finish()
     }
@@ -309,7 +351,24 @@ impl StorageAuthenticationProviders {
 struct AuthenticationProviderDocument {
     name: String,
     kind: String,
-    configuration: Value,
+    #[serde(default)]
+    source: AuthenticationProviderSource,
+    #[serde(default = "provider_enabled_by_default")]
+    enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    configuration: Option<Value>,
+}
+
+#[derive(Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum AuthenticationProviderSource {
+    Deployment,
+    #[default]
+    Runtime,
+}
+
+const fn provider_enabled_by_default() -> bool {
+    true
 }
 
 #[derive(Deserialize, Serialize)]
@@ -389,7 +448,13 @@ impl StorageRuntimeSettingsValue {
                         .map(|provider| AuthenticationProviderDocument {
                             name: provider.name.clone(),
                             kind: provider.kind().as_str().to_string(),
-                            configuration: provider.configuration.clone(),
+                            source: if provider.configuration().is_some() {
+                                AuthenticationProviderSource::Runtime
+                            } else {
+                                AuthenticationProviderSource::Deployment
+                            },
+                            enabled: provider.enabled(),
+                            configuration: provider.configuration().cloned(),
                         })
                         .collect(),
                 })
@@ -420,11 +485,27 @@ impl StorageRuntimeSettingsValue {
                     .providers
                     .into_iter()
                     .map(|provider| {
-                        StorageAuthenticationProvider::try_new(
-                            provider.name,
-                            StorageAuthenticationProviderKind::parse(&provider.kind)?,
-                            provider.configuration,
-                        )
+                        let kind = StorageAuthenticationProviderKind::parse(&provider.kind)?;
+                        match (provider.source, provider.configuration) {
+                            (AuthenticationProviderSource::Runtime, Some(configuration)) => {
+                                StorageAuthenticationProvider::try_new(
+                                    provider.name,
+                                    kind,
+                                    configuration,
+                                )
+                                .map(|value| value.with_enabled(provider.enabled))
+                            }
+                            (AuthenticationProviderSource::Deployment, None) => {
+                                StorageAuthenticationProvider::deployment(
+                                    provider.name,
+                                    kind,
+                                    provider.enabled,
+                                )
+                            }
+                            _ => Err(StorageValidationError::invalid(
+                                "Only runtime-owned providers may contain a configuration",
+                            )),
+                        }
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(Self::Authentication(
@@ -1044,6 +1125,21 @@ mod tests {
             .unwrap()
         };
         assert!(StorageAuthenticationProviders::try_new(vec![provider(), provider()]).is_err());
+    }
+
+    #[rstest]
+    #[case::deployment(json!({"name": "local", "kind": "ldap", "source": "deployment", "enabled": false}))]
+    #[case::runtime(json!({"name": "local", "kind": "ldap", "source": "runtime", "configuration": {}}))]
+    #[case::deployment_configuration(json!({"name": "corporate", "kind": "ldap", "source": "deployment", "configuration": {}}))]
+    #[case::missing_runtime_configuration(json!({"name": "corporate", "kind": "ldap", "source": "runtime"}))]
+    fn authentication_documents_reject_invalid_ownership(#[case] provider: Value) {
+        assert!(
+            StorageRuntimeSettingsValue::from_document(
+                StorageRuntimeSettingsGroup::Authentication,
+                &json!({"providers": [provider]}),
+            )
+            .is_err()
+        );
     }
 
     #[test]

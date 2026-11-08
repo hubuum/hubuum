@@ -140,10 +140,10 @@ pub async fn set_pagination_settings(
     security(("bearer_auth" = [])),
     request_body = AuthenticationSettingsRequest,
     responses(
-        (status = 200, description = "LDAP provider definitions passed validation and connectivity checks, then were committed with an audit record", body = RuntimeSettingsUpdateResponse),
-        (status = 400, description = "Invalid provider configuration or failed LDAP connectivity preflight", body = ApiErrorResponse),
+        (status = 200, description = "Provider ownership and activation validated; enabled LDAP providers passed connectivity checks before the audited commit", body = RuntimeSettingsUpdateResponse),
+        (status = 400, description = "Invalid ownership transfer, provider configuration, or enabled-provider connectivity preflight", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse),
+        (status = 403, description = "Unscoped local human administrator with password login required", body = ApiErrorResponse),
         (status = 412, description = "Stale expected_revision; no settings were persisted", body = ApiErrorResponse),
         (status = 503, description = "Encryption key or secret source unavailable", body = ApiErrorResponse)
     )
@@ -175,9 +175,9 @@ pub async fn preflight_authentication_settings(
     request_body = AuthorizationSettingsRequest,
     responses(
         (status = 200, description = "Authorization backend selection committed with an audit record and applied by the responding replica", body = RuntimeSettingsUpdateResponse),
-        (status = 400, description = "Unsupported backend or invalid deployment configuration", body = ApiErrorResponse),
+        (status = 400, description = "Unsupported backend, invalid deployment configuration, or administrator access would be lost", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse),
+        (status = 403, description = "Unscoped local human administrator with password login required", body = ApiErrorResponse),
         (status = 412, description = "Stale expected_revision; the response carries the current revision", body = ApiErrorResponse),
         (status = 503, description = "Selected authorization backend is unavailable", body = ApiErrorResponse)
     )
@@ -282,7 +282,7 @@ pub async fn release_pagination_settings(
         (status = 200, description = "Deployment authentication provider definitions restored as a new audited revision", body = RuntimeSettingsUpdateResponse),
         (status = 400, description = "Invalid request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse),
+        (status = 403, description = "Unscoped local human administrator with password login required", body = ApiErrorResponse),
         (status = 412, description = "Stale expected_revision; the response carries the current revision", body = ApiErrorResponse)
     )
 )]
@@ -341,7 +341,7 @@ pub async fn get_runtime_settings_history(
         (status = 200, description = "Deployment ownership committed as a new audited revision", body = RuntimeSettingsUpdateResponse),
         (status = 400, description = "Invalid request or unsupported deployment backend", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse),
+        (status = 403, description = "Unscoped local human administrator with password login required", body = ApiErrorResponse),
         (status = 412, description = "Stale expected_revision; the response carries the current revision", body = ApiErrorResponse),
         (status = 503, description = "Deployment authorization backend is unavailable", body = ApiErrorResponse)
     )

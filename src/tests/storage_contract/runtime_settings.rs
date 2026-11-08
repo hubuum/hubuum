@@ -272,6 +272,161 @@ async fn supported_authorization_backend_is_committed() {
     );
 }
 
+#[rstest::rstest]
+#[case::select(false)]
+#[case::release(true)]
+#[actix_web::test]
+async fn authorization_change_cannot_remove_the_callers_administrator_access(
+    #[case] release: bool,
+) {
+    let backend = StorageHandle::memory();
+    let user = create_backend_user(&backend, &prefix("previous_admin")).await;
+    let group_name = prefix("previous_admin_group");
+    let group = backend
+        .create_group(
+            StorageGroupCreate::new(None, &group_name, None),
+            &EventContext::system(),
+        )
+        .await
+        .unwrap()
+        .into_value();
+    backend
+        .add_group_member(user.principal_id, group.id(), &EventContext::system())
+        .await
+        .unwrap()
+        .into_value();
+    let context = AppContext::new(
+        backend.clone(),
+        Arc::new(LocalPermissionBackend::new(backend.clone(), group_name)),
+    );
+    let assignment = if release {
+        StorageRuntimeSettingsAssignment::Deployment(StorageRuntimeSettingsGroup::Authorization)
+    } else {
+        StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Authorization(
+            hubuum_storage_core::StorageAuthorizationBackend::Local,
+        ))
+    };
+    let result = crate::services::runtime_settings::update(
+        &context,
+        StorageRuntimeSettingsUpdate::new(
+            assignment,
+            ResourceRevision::INITIAL,
+            EventContext::user(user.principal_id, None, None),
+        ),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(ApiError::BadRequest(message)) if message.contains("retain administrator access"))
+    );
+    assert_eq!(
+        history_len(&backend, StorageRuntimeSettingsGroup::Authorization).await,
+        0
+    );
+}
+
+#[rstest::rstest]
+#[case::authentication(StorageRuntimeSettingsGroup::Authentication)]
+#[case::authorization(StorageRuntimeSettingsGroup::Authorization)]
+#[actix_web::test]
+async fn external_administrators_cannot_change_security_settings(
+    #[case] group: StorageRuntimeSettingsGroup,
+) {
+    let backend = StorageHandle::memory();
+    let user = backend
+        .sync_external_user(
+            hubuum_storage_core::StorageExternalUserSync::builder(
+                "corporate",
+                "ldap",
+                "subject",
+                "alice",
+            )
+            .build(),
+        )
+        .await
+        .unwrap()
+        .into_value();
+    let actor = principal_id(user.id().id());
+    backend
+        .add_group_member(actor, group_id(1), &EventContext::system())
+        .await
+        .unwrap()
+        .into_value();
+    let context = context(&backend);
+    let result = crate::services::runtime_settings::update(
+        &context,
+        StorageRuntimeSettingsUpdate::new(
+            StorageRuntimeSettingsAssignment::Deployment(group),
+            ResourceRevision::INITIAL,
+            EventContext::user(actor, None, None),
+        ),
+    )
+    .await;
+    assert!(matches!(result, Err(ApiError::Forbidden(_))));
+    assert_eq!(history_len(&backend, group).await, 0);
+}
+
+#[actix_web::test]
+async fn local_authentication_cannot_be_disabled_through_the_api() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let (status, _) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::post()
+            .uri("/api/v1/admin/runtime-settings/authentication/preflight")
+            .set_json(json!({"expected_revision": 1, "providers": [
+                {"source": "deployment", "name": "local", "kind": "ldap", "enabled": false}
+            ]})),
+    )
+    .await;
+    assert_eq!(
+        (
+            status,
+            history_len(&backend, StorageRuntimeSettingsGroup::Authentication).await
+        ),
+        (http::StatusCode::BAD_REQUEST, 0)
+    );
+}
+
+#[actix_web::test]
+async fn disabled_deployment_provider_is_audited_without_connectivity() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let (status, _) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::post()
+            .uri("/api/v1/admin/runtime-settings/authentication/preflight")
+            .set_json(json!({"expected_revision": 1, "providers": [
+                {"source": "deployment", "name": "corporate", "kind": "ldap", "enabled": false}
+            ]})),
+    )
+    .await;
+    assert_eq!(status, http::StatusCode::OK);
+    let changes = backend
+        .list_runtime_settings_changes(
+            StorageRuntimeSettingsHistoryQuery::try_new(
+                StorageRuntimeSettingsGroup::Authentication,
+                None,
+                10,
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let document = changes[0].current().to_document().unwrap();
+    assert_eq!(
+        document["providers"],
+        json!([
+            {"source": "deployment", "name": "corporate", "kind": "ldap", "enabled": false}
+        ])
+    );
+    assert_eq!(
+        history_len(&backend, StorageRuntimeSettingsGroup::Authentication).await,
+        1
+    );
+}
+
 #[actix_web::test]
 async fn runtime_settings_are_revisioned_and_audited() {
     let backend = StorageHandle::memory();
@@ -576,6 +731,8 @@ async fn failed_authentication_preflight_does_not_persist_the_candidate() {
                 "providers": [{
                     "name": "corporate",
                     "kind": "ldap",
+                    "source": "runtime",
+                    "enabled": true,
                     "configuration": {
                         "scope": "corporate",
                         "url": "http://ldap.example.org",
@@ -607,7 +764,10 @@ async fn failed_authentication_preflight_does_not_persist_the_candidate() {
     "group_rules": [{"pattern": "admins", "name": "admins", "unexpected": true}]
 }))]
 #[actix_web::test]
-async fn authentication_preflight_does_not_persist_unknown_fields(#[case] extra: Value) {
+async fn authentication_preflight_does_not_persist_unknown_fields(
+    #[case] extra: Value,
+    #[values(true, false)] enabled: bool,
+) {
     let backend = StorageHandle::memory();
     let user = admin(&backend).await;
     let mut configuration = json!({
@@ -630,6 +790,8 @@ async fn authentication_preflight_does_not_persist_unknown_fields(#[case] extra:
                 "providers": [{
                     "name": "corporate",
                     "kind": "ldap",
+                    "source": "runtime",
+                    "enabled": enabled,
                     "configuration": configuration
                 }]
             })),
