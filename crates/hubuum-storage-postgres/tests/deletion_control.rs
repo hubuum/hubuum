@@ -1900,12 +1900,77 @@ mod managed_cleanup {
         );
     }
 
+    #[rstest]
+    #[case::future(serde_json::json!("inherited_lock_v2"))]
+    #[case::null(serde_json::Value::Null)]
+    #[case::boolean(serde_json::json!(true))]
+    #[tokio::test]
+    async fn unknown_native_renderer_protocol_blocks_isolated_recovery(
+        #[case] protocol: Value,
+        #[values(false, true)] runtime_row: bool,
+    ) {
+        use hubuum_storage_core::{
+            ExecutionStorage, HistoryLifecycleStorage, HistoryPublicationKind,
+            RuntimeIsolationDomain, StorageExecutionScope,
+        };
+        let _guard = CONTROL_TEST_LOCK.lock().await;
+        let fixture = Fixture::new(true).await;
+        let runtime = PostgresStorage::unobserved(integration_test_pool(2));
+        let domain = RuntimeIsolationDomain::new(Uuid::new_v4(), 1, 2).unwrap();
+        let registration = runtime
+            .register_history_runtime(Some(domain.clone()))
+            .await
+            .unwrap();
+        let permit = runtime
+            .capture_application_execution(Some(registration.owner()))
+            .await
+            .unwrap();
+        let owner = runtime
+            .run_in_scope(
+                StorageExecutionScope::default().with_application_access(permit),
+                runtime.admit_history_publication(HistoryPublicationKind::Backup),
+            )
+            .await
+            .unwrap();
+        with_transaction(&fixture.pool, async |connection| {
+            assume_owner(connection).await?;
+            let (query, id) = if runtime_row {
+                ("UPDATE hubuum_control.runtime_registrations SET isolation=jsonb_set(isolation,'{renderer_isolation}',$2) WHERE id=$1", registration.id())
+            } else {
+                ("UPDATE hubuum_control.history_publication_owners SET isolation=jsonb_set(isolation,'{renderer_isolation}',$2) WHERE id=$1", owner.context().id())
+            };
+            sql_query(query).bind::<SqlUuid,_>(id).bind::<Jsonb,_>(protocol).execute(connection).await?;
+            Ok::<_,PostgresStorageError>(())
+        }).await.unwrap();
+        let result = fixture
+            .storage()
+            .recover_application_control(
+                fixture.before.recover_from(&fixture.before).unwrap(),
+                domain,
+            )
+            .await;
+        let settlement = owner
+            .after_drained(std::future::ready(Ok(())), std::future::ready(Ok(())))
+            .await
+            .unwrap();
+        runtime
+            .settle_history_publication(settlement)
+            .await
+            .unwrap();
+        runtime.unregister_runtime(registration).await.unwrap();
+        fixture.finish().await;
+        assert!(result.is_err());
+    }
+
     #[derive(Clone, Copy, Eq, PartialEq)]
     enum RecoveryPublication {
         Local,
         Producer,
         Claimed,
         Rendered,
+        ProtectedExport,
+        ProtectedHttp,
+        ProtectedClaimed,
     }
 
     #[rstest]
@@ -1916,11 +1981,15 @@ mod managed_cleanup {
     async fn recovery_requires_original_publication_isolation_even_after_unregister(
         #[case] unregister: bool,
         #[case] known: bool,
+        #[values(false, true)] recovery_claims_renderer_coverage: bool,
         #[values(
             RecoveryPublication::Local,
             RecoveryPublication::Producer,
             RecoveryPublication::Claimed,
-            RecoveryPublication::Rendered
+            RecoveryPublication::Rendered,
+            RecoveryPublication::ProtectedExport,
+            RecoveryPublication::ProtectedHttp,
+            RecoveryPublication::ProtectedClaimed
         )]
         kind: RecoveryPublication,
     ) {
@@ -1932,8 +2001,19 @@ mod managed_cleanup {
         let fixture = Fixture::new(true).await;
         let runtime = PostgresStorage::unobserved(integration_test_pool(2));
         let domain = RuntimeIsolationDomain::new(Uuid::new_v4(), 1, 2).unwrap();
+        let protected = matches!(
+            kind,
+            RecoveryPublication::ProtectedExport
+                | RecoveryPublication::ProtectedHttp
+                | RecoveryPublication::ProtectedClaimed
+        );
+        let original = if protected {
+            domain.clone().with_renderer_isolation()
+        } else {
+            domain.clone()
+        };
         let registration = runtime
-            .register_history_runtime(known.then_some(domain.clone()))
+            .register_history_runtime(known.then_some(original))
             .await
             .unwrap();
         let permit = runtime
@@ -1944,10 +2024,12 @@ mod managed_cleanup {
         let owner = bound
             .run_in_scope(
                 StorageExecutionScope::default().with_application_access(permit),
-                bound.admit_history_publication(if kind == RecoveryPublication::Rendered {
-                    HistoryPublicationKind::Export
-                } else {
-                    HistoryPublicationKind::Backup
+                bound.admit_history_publication(match kind {
+                    RecoveryPublication::Rendered
+                    | RecoveryPublication::ProtectedExport
+                    | RecoveryPublication::ProtectedClaimed => HistoryPublicationKind::Export,
+                    RecoveryPublication::ProtectedHttp => HistoryPublicationKind::HttpResponse,
+                    _ => HistoryPublicationKind::Backup,
                 }),
             )
             .await
@@ -1968,7 +2050,10 @@ mod managed_cleanup {
         } else {
             None
         };
-        if kind == RecoveryPublication::Claimed {
+        if matches!(
+            kind,
+            RecoveryPublication::Claimed | RecoveryPublication::ProtectedClaimed
+        ) {
             with_transaction(&fixture.pool, async |connection| {
                 assume_owner(connection).await?;
                 sql_query("UPDATE hubuum_control.history_publication_producers SET publication_claimed=TRUE WHERE publication_id=$1")
@@ -1989,7 +2074,14 @@ mod managed_cleanup {
             .await;
         let result = fixture
             .storage()
-            .recover_application_control(change, domain)
+            .recover_application_control(
+                change,
+                if recovery_claims_renderer_coverage {
+                    domain.with_renderer_isolation()
+                } else {
+                    domain
+                },
+            )
             .await;
         let retained = with_transaction(&fixture.pool, async |connection| {
             assume_owner(connection).await?;
@@ -2020,7 +2112,10 @@ mod managed_cleanup {
         let retired = known
             && matches!(
                 kind,
-                RecoveryPublication::Local | RecoveryPublication::Producer
+                RecoveryPublication::Local
+                    | RecoveryPublication::Producer
+                    | RecoveryPublication::ProtectedExport
+                    | RecoveryPublication::ProtectedHttp
             );
         assert_eq!(retained, !retired);
         assert_eq!(settled.is_err(), retired);

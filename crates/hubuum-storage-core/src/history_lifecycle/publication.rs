@@ -22,10 +22,13 @@ pub enum HistoryPublicationKind {
     ArchiveRead,
 }
 impl HistoryPublicationKind {
-    /// Parent-process exclusion does not exclude renderer descendants. Keep
-    /// renderer-capable owners charged until that stronger proof is available.
-    pub const fn isolated_retirement_supported(self) -> bool {
-        matches!(self, Self::TaskOutput | Self::Backup | Self::ArchiveRead)
+    /// Use the original admitting runtime's coverage. A recovery caller cannot
+    /// upgrade an old parent-only owner by advertising stronger exclusion now.
+    pub const fn isolated_retirement_supported(self, original: &RuntimeIsolationDomain) -> bool {
+        match self {
+            Self::HttpResponse | Self::Export => original.excludes_renderers(),
+            Self::TaskOutput | Self::Backup | Self::ArchiveRead => true,
+        }
     }
 
     pub const fn as_str(self) -> &'static str {
@@ -553,14 +556,15 @@ impl HistoryPublicationRegistry {
         &mut self,
         domain: &RuntimeIsolationDomain,
     ) -> Result<usize, StorageError> {
-        if self
-            .owners
+        if self.owners.keys().any(|id| {
+            self.isolation
+                .get(id)
+                .and_then(Option::as_ref)
+                .is_none_or(|original| !original.same_lock(domain))
+        }) || self
+            .producers
             .keys()
-            .any(|id| self.isolation.get(id).and_then(Option::as_ref) != Some(domain))
-            || self
-                .producers
-                .keys()
-                .any(|id| !self.owners.contains_key(id))
+            .any(|id| !self.owners.contains_key(id))
         {
             return Err(StorageError::unavailable(
                 "Unknown or different publication process isolation prevents recovery",
@@ -571,11 +575,14 @@ impl HistoryPublicationRegistry {
             .keys()
             .copied()
             .filter(|id| {
-                self.owners[id].kind.isolated_retirement_supported()
-                    && self
-                        .producers
-                        .get(id)
-                        .is_none_or(|producer| !producer.publication_claimed)
+                self.owners[id].kind.isolated_retirement_supported(
+                    self.isolation[id]
+                        .as_ref()
+                        .expect("validated original isolation"),
+                ) && self
+                    .producers
+                    .get(id)
+                    .is_none_or(|producer| !producer.publication_claimed)
             })
             .collect();
         for id in &ids {
@@ -688,6 +695,7 @@ mod tests {
     #[case::export(HistoryPublicationKind::Export)]
     fn parent_process_isolation_cannot_retire_renderer_capable_owners(
         #[case] kind: HistoryPublicationKind,
+        #[values(false, true)] recovery_advertises_renderers: bool,
     ) {
         let domain = RuntimeIsolationDomain::new(Uuid::new_v4(), 1, 2).unwrap();
         let runtime = RuntimeRegistration::generate_history_aware();
@@ -697,9 +705,37 @@ mod tests {
             .unwrap();
         let context = owner.context();
         registry.admit_producer(&context, context.epoch()).unwrap();
-        assert_eq!(registry.retire_isolated(&domain).unwrap(), 0);
+        let recovery = if recovery_advertises_renderers {
+            domain.with_renderer_isolation()
+        } else {
+            domain
+        };
+        assert_eq!(registry.retire_isolated(&recovery).unwrap(), 0);
         assert_eq!(registry.active(), 1);
         assert_eq!(registry.active_producers(), 1);
+    }
+
+    #[rstest]
+    #[case::http(HistoryPublicationKind::HttpResponse)]
+    #[case::export(HistoryPublicationKind::Export)]
+    fn original_inherited_renderer_lock_allows_positive_isolated_retirement(
+        #[case] kind: HistoryPublicationKind,
+    ) {
+        let parent = RuntimeIsolationDomain::new(Uuid::new_v4(), 1, 2).unwrap();
+        let runtime = RuntimeRegistration::generate_history_aware();
+        let mut registry = HistoryPublicationRegistry::default();
+        let owner = registry
+            .admit_isolated(
+                kind,
+                epoch(&runtime, Uuid::new_v4()),
+                Some(parent.clone().with_renderer_isolation()),
+            )
+            .unwrap();
+        let context = owner.context();
+        registry.admit_producer(&context, context.epoch()).unwrap();
+        assert_eq!(registry.retire_isolated(&parent).unwrap(), 1);
+        assert_eq!(registry.active(), 0);
+        assert_eq!(registry.active_producers(), 0);
     }
 
     #[test]

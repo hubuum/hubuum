@@ -9,6 +9,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- **Breaking storage SDK 0.20 isolation descriptors:** renderer subprocesses
+  inherit configured runtime exclusion across exec. Parent
+  crashes cannot release offline recovery while a renderer remains alive. HTTP
+  and export ownership may retire only with the original versioned inheritance
+  proof and exclusive isolation; older owners and external claims stay charged.
+  Stop older producers/readers, upgrade all producers, descriptor readers and
+  matching renderer binaries, then restart. Configured startup records the new
+  proof automatically; preserve unresolved older ownership and roll forward.
+
 - **Breaking storage SDK 0.20 error contract:** `ArtifactError` drops `Clone`,
   `Eq` and `PartialEq` to retain an owned, non-serializable source without copying
   private evidence. Move errors and match typed categories; producer failures
@@ -319,7 +328,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   loss. Cancelled and timed-out backup/export attempts can confirm exact staging
   abort without reopening productive admission. Offline recovery retires local
   backup, metadata and archive-read owners only after exclusive process isolation;
-  renderer-capable owners and unresolved external outcomes remain charged.
+  older parent-only renderer owners and unresolved external outcomes remain charged.
 - Handler-local conditional mutations and export query limits retain their
   original history publication while binding additional restrictions. Nested
   work cannot discard an inherited condition or weaken an inherited limit.

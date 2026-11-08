@@ -32,13 +32,23 @@ Cancellation, lease loss and old application fences must still permit this abort
 never use it to authorize reads, writes or publication. Physical reservations
 remain until bounded cleanup confirms removal.
 
-Publication admission retains its original runtime isolation domain even after
-unregistration. Offline recovery may retire backup, metadata and archive-read owners and
-unclaimed producer slots only under exclusive process isolation and the native
-application fence. Retain renderer-capable HTTP/export owners: excluding the
-parent process alone does not prove descendant completion.
-Unknown domains, orphaned ownership and claimed external publication outcomes
-remain charged; process death alone cannot reconcile a provider outcome.
+Publication admission retains its original runtime isolation domain after
+unregistration. Missing `renderer_isolation` remains the legacy parent-only
+encoding. Trusted startup may attest `inherited_lock_v1` only after fixing the
+renderer supervisor's inherited shared lock before any template execution.
+Preserve that original attestation in publication ownership; compare the nonce,
+device and inode as lock identity, independently of coverage. Recovery's current
+descriptor must never promote an older owner. Reject unknown protocol values.
+
+**Breaking isolation descriptor upgrade:** stop older producers and descriptor
+readers, upgrade the producers/readers and matching renderer binary, then start
+the new versions. Configured startup records the new proof automatically. Older
+readers may reject the additional field; preserve unresolved parent-only owners
+and roll forward.
+No new migration version is required. Both adapters may retire originally
+protected HTTP/export owners after actual exclusive process isolation and native
+application fencing. Parent-only HTTP/export owners and external publication
+claims stay charged; process death does not reconcile a provider outcome.
 
 Deploy `2026-11-03-000005_history_lifecycle` after the landed archive migration
 000004, refresh runtime grants, and retain independent format-3 recovery material.

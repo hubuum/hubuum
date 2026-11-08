@@ -591,10 +591,10 @@ impl DeletionControlStorage for PostgresStorage {
             crate::operations::task_retention::lock_on(connection).await?;
             sql_query("UPDATE hubuum_control.deletion_authority SET material=material WHERE id=1").execute(connection).await?;
             let domain=serde_json::to_value(isolation).map_err(|_|PostgresStorageError::internal("Cannot encode isolation domain"))?;
-            let row=sql_query("SELECT NOT EXISTS (SELECT 1 FROM hubuum_control.runtime_registrations WHERE isolation IS DISTINCT FROM $1) AS allowed")
+            let row=sql_query("SELECT NOT EXISTS (SELECT 1 FROM hubuum_control.runtime_registrations WHERE (isolation - 'renderer_isolation') IS DISTINCT FROM ($1 - 'renderer_isolation') OR (isolation ? 'renderer_isolation' AND (jsonb_typeof(isolation->'renderer_isolation') <> 'string' OR isolation->>'renderer_isolation' NOT IN ('parent_only','inherited_lock_v1')))) AS allowed")
                 .bind::<Jsonb,_>(domain.clone()).get_result::<AllowedRow>(connection).await?;
             if !row.allowed { return Err(PostgresStorageError::unavailable("Unknown runtime isolation ownership prevents recovery")); }
-            let row=sql_query("SELECT NOT EXISTS (SELECT 1 FROM hubuum_control.history_publication_owners WHERE isolation IS DISTINCT FROM $1) AS allowed")
+            let row=sql_query("SELECT NOT EXISTS (SELECT 1 FROM hubuum_control.history_publication_owners WHERE (isolation - 'renderer_isolation') IS DISTINCT FROM ($1 - 'renderer_isolation') OR (isolation ? 'renderer_isolation' AND (jsonb_typeof(isolation->'renderer_isolation') <> 'string' OR isolation->>'renderer_isolation' NOT IN ('parent_only','inherited_lock_v1')))) AS allowed")
                 .bind::<Jsonb,_>(domain.clone()).get_result::<AllowedRow>(connection).await?;
             if !row.allowed { return Err(PostgresStorageError::unavailable("Unknown publication isolation ownership prevents recovery")); }
             let row=sql_query("SELECT NOT EXISTS(SELECT 1 FROM hubuum_control.history_publication_producers c LEFT JOIN hubuum_control.history_publication_owners p ON p.id=c.publication_id AND p.ownership_token=c.publication_ownership WHERE p.id IS NULL) AND NOT EXISTS(SELECT 1 FROM hubuum_control.history_archive_publication_claims c LEFT JOIN hubuum_control.history_publication_owners p ON p.id=c.publication_id AND p.ownership_token=c.publication_ownership WHERE p.id IS NULL) AS allowed").get_result::<AllowedRow>(connection).await?;
@@ -603,11 +603,11 @@ impl DeletionControlStorage for PostgresStorage {
             // authority UPDATE already excludes new productive admissions.
             sql_query("SELECT id FROM hubuum_control.history_publication_owners ORDER BY id FOR UPDATE NOWAIT").execute(connection).await?;
             sql_query("SELECT publication_id FROM hubuum_control.history_publication_producers ORDER BY publication_id FOR UPDATE NOWAIT").execute(connection).await?;
-            // HTTP/export can own renderer descendants outside the parent lock.
-            // Retain those and all claimed provider work until their outcome
-            // is independently reconciled, even after process isolation.
-            sql_query("DELETE FROM hubuum_control.history_publication_producers c WHERE NOT c.publication_claimed AND EXISTS(SELECT 1 FROM hubuum_control.history_publication_owners p WHERE p.id=c.publication_id AND p.kind IN ('task_output','backup','archive_read')) AND NOT EXISTS(SELECT 1 FROM hubuum_control.history_archive_publication_claims a WHERE a.publication_id=c.publication_id)").execute(connection).await?;
-            sql_query("DELETE FROM hubuum_control.history_publication_owners p WHERE p.kind IN ('task_output','backup','archive_read') AND NOT EXISTS(SELECT 1 FROM hubuum_control.history_archive_publication_claims a WHERE a.publication_id=p.id) AND NOT EXISTS(SELECT 1 FROM hubuum_control.history_publication_producers c WHERE c.publication_id=p.id)").execute(connection).await?;
+            // Only the original runtime can attest inherited renderer locks;
+            // recovery cannot promote an older parent-only owner. All claimed
+            // provider outcomes remain charged after local process isolation.
+            sql_query("DELETE FROM hubuum_control.history_publication_producers c WHERE NOT c.publication_claimed AND EXISTS(SELECT 1 FROM hubuum_control.history_publication_owners p WHERE p.id=c.publication_id AND (p.kind IN ('task_output','backup','archive_read') OR (p.kind IN ('http_response','export') AND p.isolation->>'renderer_isolation'='inherited_lock_v1'))) AND NOT EXISTS(SELECT 1 FROM hubuum_control.history_archive_publication_claims a WHERE a.publication_id=c.publication_id)").execute(connection).await?;
+            sql_query("DELETE FROM hubuum_control.history_publication_owners p WHERE (p.kind IN ('task_output','backup','archive_read') OR (p.kind IN ('http_response','export') AND p.isolation->>'renderer_isolation'='inherited_lock_v1')) AND NOT EXISTS(SELECT 1 FROM hubuum_control.history_archive_publication_claims a WHERE a.publication_id=p.id) AND NOT EXISTS(SELECT 1 FROM hubuum_control.history_publication_producers c WHERE c.publication_id=p.id)").execute(connection).await?;
             sql_query("DELETE FROM hubuum_control.runtime_registrations").execute(connection).await?;
             sql_query("DELETE FROM hubuum_control.task_execution_claims").execute(connection).await?;
             store_control(connection,change.next()).await?;

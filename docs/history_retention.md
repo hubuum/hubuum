@@ -221,14 +221,22 @@ Task-output abort validates the original immutable attempt, task and claim token
 without reacquiring productive admission; it cannot publish or read output.
 
 Offline recovery retains each publication's original process-isolation domain
-independently of runtime registration. After exclusive process isolation, both
-adapters retire backup, metadata and archive-read owners and unclaimed producer
-slots under the application fence. HTTP/export owners remain charged because
-renderer descendants do not inherit the parent runtime lock; their own positive
-isolation or completion proof is still required. Unknown domains and orphaned ownership block recovery. Claimed external
-publication outcomes remain charged until independently reconciled; local process
-exit cannot prove their provider outcome. PostgreSQL recovery fails rather than
-waiting in a cycle with an in-flight exact settlement.
+independently of runtime registration. Before registering a configured server or
+administrator producer/executor, startup fixes the renderer supervisor to the
+same stable runtime lock. Every queued and executing renderer pins a shared
+open-file description and inherits it across exec; parent descriptors keep
+close-on-exec enabled. Killing the parent cannot release exclusion while a
+renderer descendant still holds that lock. Successful supervisor shutdown drops
+its pin only after all children are reaped; uncertain shutdown retains it.
+
+The admitting runtime records the versioned `inherited_lock_v1` attestation in
+its isolation descriptor. Exclusive process isolation plus the native application
+fence can retire HTTP/export owners only with that original proof. A recovery
+caller cannot upgrade older parent-only owners; they remain charged. Backup,
+metadata and archive-read owners retain their existing parent-isolation rule.
+Unknown domains/protocols and orphaned ownership block recovery. Claimed external
+publication outcomes remain charged until independently reconciled. PostgreSQL
+recovery refuses lock contention instead of waiting in an exact-settlement cycle.
 
 Production composition still registers Legacy, so these integrations do not
 activate online expiry. Restored descendants, external-claim reconciliation, complete worker

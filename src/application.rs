@@ -336,6 +336,7 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
     }
     let recovery = require_runtime_permit(&storage, &config.control_recovery)
         .await
+        .and_then(|permit| permit.protect_renderers())
         .unwrap_or_else(|error| {
             fatal_error(
                 &format!("Recovery startup gate: {error}"),

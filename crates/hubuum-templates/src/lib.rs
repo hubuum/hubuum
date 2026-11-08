@@ -13,6 +13,8 @@
 //! app-specific warning collection.
 
 mod isolation;
+#[cfg(unix)]
+pub use isolation::configure_template_process_isolation;
 mod spool;
 mod worker;
 use hubuum_budget::{ByteLimit, LimitedWriter};

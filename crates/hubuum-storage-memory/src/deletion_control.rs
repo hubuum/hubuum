@@ -294,11 +294,12 @@ impl DeletionControlStorage for MemoryStorage {
                 "Deletion authority changed before isolated recovery",
             ));
         }
-        if state
-            .runtime_registrations
-            .values()
-            .any(|registration| registration.isolation.as_ref() != Some(&isolation))
-        {
+        if state.runtime_registrations.values().any(|registration| {
+            registration
+                .isolation
+                .as_ref()
+                .is_none_or(|original| !original.same_lock(&isolation))
+        }) {
             return Err(StorageError::unavailable(
                 "Unknown or different runtime isolation domains prevent recovery",
             ));

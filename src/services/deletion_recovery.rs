@@ -48,6 +48,14 @@ pub(crate) struct RuntimeRecoveryLifetime {
 }
 
 impl RuntimeRecoveryLifetime {
+    pub(crate) fn protect_renderers(mut self) -> Result<Self, ApiError> {
+        self.permit
+            .as_mut()
+            .expect("unreleased runtime lifetime")
+            .pin_renderers()?;
+        Ok(self)
+    }
+
     pub(crate) fn isolation_domain(&self) -> Option<RuntimeIsolationDomain> {
         self.permit
             .as_ref()
@@ -68,6 +76,18 @@ impl Drop for RuntimeRecoveryLifetime {
 }
 
 impl RuntimeRecoveryPermit {
+    pub(crate) fn protect_renderers(mut self) -> Result<Self, ApiError> {
+        self.pin_renderers()?;
+        Ok(self)
+    }
+
+    fn pin_renderers(&mut self) -> Result<(), ApiError> {
+        if let Some(isolation) = &mut self.isolation {
+            isolation.protect_renderers()?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn into_runtime_lifetime(self) -> RuntimeRecoveryLifetime {
         RuntimeRecoveryLifetime { permit: Some(self) }
     }

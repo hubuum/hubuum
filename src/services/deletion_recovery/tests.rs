@@ -1,8 +1,12 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
+use std::process::Stdio;
+use std::time::Duration;
 
-use hubuum_storage_core::{DeletionControlCapture, DeletionSubject, OperationalStateStorage};
+use hubuum_storage_core::{
+    DeletionControlCapture, DeletionSubject, HistoryPublicationKind, OperationalStateStorage,
+};
 use rstest::rstest;
 use uuid::Uuid;
 
@@ -327,6 +331,126 @@ async fn offline_recovery_requires_process_exit_and_revokes_old_runtime_access()
         .await
         .unwrap();
     assert!(bound.admit_application_work().await.is_err());
+}
+
+#[tokio::test]
+#[ignore = "subprocess fixture for renderer-isolation recovery"]
+async fn renderer_isolation_runtime_child() {
+    use hubuum_templates::{TemplateExecution, TemplateLimits};
+    let root = std::env::current_dir().unwrap();
+    let repository =
+        CheckpointRepository::open(&root.join("repository"), &root.join("key")).unwrap();
+    let mut guard = repository.runtime_isolation(false).unwrap();
+    if fs::read_to_string(root.join("renderer-isolation-case")).unwrap() == "protected" {
+        guard.protect_renderers().unwrap();
+        let output = TemplateExecution::new(
+            "recovery-probe",
+            "{{ 6 * 7 }}",
+            TemplateLimits::new(32, 1000),
+        )
+        .render(&serde_json::json!({}))
+        .await
+        .unwrap();
+        assert_eq!(output.into_parts().0, "42");
+        hubuum_templates::shutdown_template_workers().await.unwrap();
+    }
+    fs::write(
+        root.join("isolation-domain.json"),
+        serde_json::to_vec(&guard.domain()).unwrap(),
+    )
+    .unwrap();
+    loop {
+        std::thread::park();
+    }
+}
+
+#[rstest]
+#[case::http(HistoryPublicationKind::HttpResponse)]
+#[case::export(HistoryPublicationKind::Export)]
+#[tokio::test]
+async fn offline_renderer_retirement_uses_the_original_startup_proof(
+    #[case] kind: HistoryPublicationKind,
+    #[values(false, true)] protected: bool,
+    #[values(false, true)] unregister: bool,
+) {
+    use crate::storage::StorageExecutionScope;
+    use hubuum_storage_core::{ExecutionStorage, RuntimeIsolationDomain};
+    use tokio::process::Command;
+    let fixture = Fixture::new().await;
+    fs::write(
+        fixture.root.join("renderer-isolation-case"),
+        if protected { "protected" } else { "parent" },
+    )
+    .unwrap();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "services::deletion_recovery::tests::renderer_isolation_runtime_child",
+            "--ignored",
+        ])
+        .current_dir(&fixture.root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let domain: RuntimeIsolationDomain = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Ok(bytes) = fs::read(fixture.root.join("isolation-domain.json"))
+                && let Ok(domain) = serde_json::from_slice(&bytes)
+            {
+                break domain;
+            }
+            if let Some(status) = child.try_wait().unwrap() {
+                panic!("startup probe exited: {status}");
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(domain.excludes_renderers(), protected);
+    let registration = fixture
+        .storage
+        .register_history_runtime(Some(domain))
+        .await
+        .unwrap();
+    let bound = fixture
+        .storage
+        .clone()
+        .with_runtime_owner(registration.owner());
+    let application = bound.admit_application_work().await.unwrap();
+    let owner = bound
+        .run_in_scope(
+            StorageExecutionScope::default().with_application_access(application),
+            bound.admit_history_publication(kind),
+        )
+        .await
+        .unwrap();
+    if unregister {
+        fixture
+            .storage
+            .unregister_runtime(registration)
+            .await
+            .unwrap();
+    }
+    let live = recover(&fixture.storage, &fixture.directory, &fixture.key).await;
+    child.kill().await.unwrap();
+    child.wait().await.unwrap();
+    recover(&fixture.storage, &fixture.directory, &fixture.key)
+        .await
+        .unwrap();
+    let released = reapply(&fixture.storage, &fixture.directory, &fixture.key).await;
+    // No output producer exists in this fixture. Parent-only owners still
+    // require their original positive settlement; protected ones were retired.
+    let settlement = owner
+        .after_drained(std::future::ready(Ok(())), std::future::ready(Ok(())))
+        .await
+        .unwrap();
+    let settled = fixture.storage.settle_history_publication(settlement).await;
+    assert!(live.is_err());
+    assert_eq!(released.is_ok(), protected);
+    assert_eq!(settled.is_err(), protected);
 }
 
 #[rstest]
