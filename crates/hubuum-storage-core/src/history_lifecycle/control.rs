@@ -483,13 +483,14 @@ pub trait HistoryLifecycleStorage: Send + Sync {
     ) -> Result<HistoryLifecycleScanResult, StorageError>;
     /// Select and atomically retain exact native membership and audit facts.
     /// Requires original OnlineV1 application admission and an entirely aware
-    /// fleet. None means no batch was selected within this bounded scan, never
-    /// proof of an empty source. The service must independently checkpoint the
+    /// fleet. Return continuation even when no batch was selected, so blocked
+    /// prefixes cannot starve later rows. Continuation is never proof of an empty
+    /// source. The service must independently checkpoint the
     /// result before any removal; this operation never removes payloads.
     async fn admit_history_expiry(
         &self,
         request: HistoryExpiryAdmissionRequest,
-    ) -> Result<Option<HistoryExpiryManifest>, StorageError>;
+    ) -> Result<HistoryExpiryAdmissionPage, StorageError>;
     async fn recover_history_lifecycle(
         &self,
         recovery: HistoryLifecycleRecovery,

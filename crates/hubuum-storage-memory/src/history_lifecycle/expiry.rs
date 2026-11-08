@@ -3,7 +3,7 @@ use super::*;
 pub(super) async fn admit(
     storage: &MemoryStorage,
     request: HistoryExpiryAdmissionRequest,
-) -> Result<Option<HistoryExpiryManifest>, StorageError> {
+) -> Result<HistoryExpiryAdmissionPage, StorageError> {
     let scope = storage.current_execution_scope();
     if scope.storage_callback_active() || scope.history_read_override().is_some() {
         return Err(StorageError::unavailable(
@@ -143,38 +143,50 @@ pub(super) async fn admit(
             HistoryExpirySelectionOutcome::BudgetReached
         ))
     };
+    let start = usize::try_from(request.source_position())
+        .map_err(|_| StorageError::invalid_input("Expiry source position is out of range"))?;
+    let mut position = None;
     // Bound examined source rows before family, closure, scope, identity, visibility
     // or dependency filtering. Skipping an unselectable source never replenishes this budget.
     match family {
         StorageIdentityHistoryKind::ClassSchema => {
-            for row in state
+            for (index, row) in state
                 .schema_history
                 .iter()
+                .enumerate()
+                .skip(start)
                 .take(request.scan().limit() as usize)
             {
-                if !consider(row, None)? {
+                let complete = consider(row, None)?;
+                position = Some(index as u64 + u64::from(complete || index == start));
+                if !complete {
                     break;
                 }
             }
         }
         StorageIdentityHistoryKind::ComputedDefinitions => {
-            for row in state
+            for (index, row) in state
                 .computed_history
                 .iter()
+                .enumerate()
+                .skip(start)
                 .take(request.scan().limit() as usize)
             {
                 if bounded_encoded_bytes(row, u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES))?
                     .is_none()
                 {
+                    position = Some(index as u64 + u64::from(index == start));
                     break;
                 }
                 let raw = serde_json::to_value(row).map_err(|_| {
                     StorageError::backend_failure("Cannot encode computed expiry source")
                 })?;
-                if !consider(
+                let complete = consider(
                     &StorageBackupRow::try_from_value(raw).map_err(invalid_contract_value)?,
                     None,
-                )? {
+                )?;
+                position = Some(index as u64 + u64::from(complete || index == start));
+                if !complete {
                     break;
                 }
             }
@@ -185,33 +197,45 @@ pub(super) async fn admit(
             } else {
                 StorageBackupHistorySection::ObjectRelationHistory
             };
-            for row in state
+            for (index, row) in state
                 .relation_history
                 .get(&section)
                 .into_iter()
                 .flatten()
+                .enumerate()
+                .skip(start)
                 .take(request.scan().limit() as usize)
             {
-                if !consider(row, None)? {
+                let complete = consider(row, None)?;
+                position = Some(index as u64 + u64::from(complete || index == start));
+                if !complete {
                     break;
                 }
             }
         }
         _ => {
-            for row in state
+            for (index, row) in state
                 .history
                 .iter()
+                .enumerate()
+                .skip(start)
                 .take(request.scan().limit() as usize)
-                .filter(|row| row.family() == family)
             {
-                if !consider(&row.backup_history_row()?.1, Some(row))? {
+                if row.family() != family {
+                    position = Some(index as u64 + 1);
+                    continue;
+                }
+                let complete = consider(&row.backup_history_row()?.1, Some(row))?;
+                position = Some(index as u64 + u64::from(complete || index == start));
+                if !complete {
                     break;
                 }
             }
         }
     }
     if selection.is_empty() {
-        return Ok(None);
+        return HistoryExpiryAdmissionPage::new(&request, None, position)
+            .map_err(invalid_contract_value);
     }
     let manifest = selection.finish().map_err(invalid_contract_value)?;
     let change = snapshot
@@ -224,7 +248,8 @@ pub(super) async fn admit(
         .map_err(invalid_contract_value)?;
     state.append_retained_lifecycle_events(pending)?;
     state.history_lifecycle = change.next().clone();
-    Ok(Some(manifest))
+    HistoryExpiryAdmissionPage::new(&request, Some(manifest), position)
+        .map_err(invalid_contract_value)
 }
 
 fn bounded_encoded_bytes(
@@ -247,6 +272,115 @@ fn bounded_encoded_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn continuation_reaches_later_versions_without_widening_the_scan() {
+        let storage = MemoryStorage::new();
+        let principal = PrincipalIdentity::generate();
+        let collection = storage
+            .create_collection(
+                StorageCollectionCreate::new(
+                    "continued expiry",
+                    "before",
+                    GroupId::new(1).unwrap(),
+                    None,
+                ),
+                &EventContext::system(),
+            )
+            .await
+            .unwrap()
+            .into_value();
+        for index in 0..3 {
+            storage
+                .update_collection(
+                    collection.id(),
+                    StorageCollectionUpdate::new(None, Some(format!("version {index}"))),
+                    &EventContext::system(),
+                )
+                .await
+                .unwrap()
+                .into_value();
+        }
+        let key = HistoryPolicyKey::new(
+            StorageIdentityHistoryKind::Collection,
+            HistoryPolicyScope::Deployment,
+        )
+        .unwrap();
+        let snapshot = storage.capture_history_lifecycle().await.unwrap();
+        let proposal = HistoryPolicyChange::new(
+            key,
+            HistoryPolicyRevision::new(0).unwrap(),
+            HistoryPolicyBinding::Expire {
+                trigger: HistoryExpiryTrigger::Age {
+                    age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+                    deleted_age_seconds: None,
+                },
+                minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+            },
+            HistoryPolicyApplication::Prospective,
+        )
+        .unwrap();
+        storage
+            .commit_history_lifecycle(
+                snapshot
+                    .control()
+                    .apply(
+                        HistoryPolicyApplyRequest::new(proposal, None),
+                        principal,
+                        snapshot.fence(),
+                        snapshot.observed_at() - Duration::seconds(30),
+                    )
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let runtime = storage.register_history_runtime(None).await.unwrap();
+        let application = storage
+            .capture_application_execution(Some(runtime.owner()))
+            .await
+            .unwrap();
+        let scope = StorageExecutionScope::default().with_application_access(application);
+        let mut cursor = None;
+        let mut targets = BTreeSet::new();
+        // Includes the permanently open root, previously admitted rows and the
+        // final open version. Every pass keeps exactly the same two-row budget.
+        for _ in 0..4 {
+            let snapshot = storage.capture_history_lifecycle().await.unwrap();
+            let mut request = HistoryExpiryAdmissionRequest::new(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                HistoryExpiryOrigin::Manual { principal },
+                HistoryLifecycleScan::new(key, 2).unwrap(),
+                snapshot.fence(),
+            )
+            .unwrap();
+            if let Some(cursor) = cursor.take() {
+                request = request.resume(cursor).unwrap();
+            }
+            let page = storage
+                .run_in_scope(scope.clone(), storage.admit_history_expiry(request))
+                .await
+                .unwrap();
+            cursor = page.continuation().cloned();
+            if let Some(manifest) = page.into_manifest() {
+                for member in manifest.members() {
+                    targets.insert((
+                        *member.target().resource().as_bytes(),
+                        *member.target().version().as_bytes(),
+                    ));
+                }
+            }
+            if cursor.is_none() {
+                break;
+            }
+        }
+        storage.unregister_runtime(runtime).await.unwrap();
+        assert_eq!(targets.len(), 3);
+        assert!(
+            cursor.is_none(),
+            "A later pass must reach the end without resetting the cursor"
+        );
+    }
 
     async fn schema_class(storage: &MemoryStorage, name: &str) -> StorageClass {
         storage
@@ -401,7 +535,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            bounded.is_none(),
+            bounded.manifest().is_none(),
             "A skipped first row must still consume the scan limit"
         );
         let wider = storage
@@ -409,7 +543,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            wider.is_some(),
+            wider.manifest().is_some(),
             "The wider scan must reach the eligible second source"
         );
     }
@@ -547,9 +681,9 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(selected.is_some(), expected);
+        assert_eq!(selected.manifest().is_some(), expected);
         let state = storage.state.read_control().await;
-        if let Some(manifest) = selected {
+        if let Some(manifest) = selected.into_manifest() {
             assert_eq!(
                 state
                     .history_lifecycle

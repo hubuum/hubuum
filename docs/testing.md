@@ -52,6 +52,10 @@ database role configuration. Archive overflow and retained-publication tests use
 a third database: their oversized rows must not enter ordinary backups, and their
 deliberately unsettled owners must not block later restore certification. The
 runner migrates and removes all three databases, including on test failure.
+Rollback-only history recovery probes and archive-capacity cleanup unit fixtures
+share the isolated restore database under `ISOLATED_RESTORE_TEST_LOCK`, held
+through positive publication cleanup. They do not wait for unrelated publications
+on the primary test database to become idle.
 
 By default, the runner provisions separate owner, migrator and runtime roles,
 requiring a test login with `CREATEDB` and `CREATEROLE`. For a disposable instance

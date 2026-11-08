@@ -1,6 +1,6 @@
 use super::*;
 use hubuum_storage_core::{
-    HistoryArchiveExecutionOwner, HistoryExpiryAdmissionRequest, HistoryExpiryManifest,
+    HistoryArchiveExecutionOwner, HistoryExpiryAdmissionPage, HistoryExpiryAdmissionRequest,
     HistoryLifecycleControlChange, HistoryLifecycleRecovery, HistoryLifecycleScan,
     HistoryLifecycleScanResult, HistoryLifecycleSnapshot, HistoryLifecycleStorage,
     HistoryProducerOwner, HistoryProducerSettlement, HistoryPublicationKind,
@@ -120,7 +120,7 @@ impl HistoryLifecycleStorage for StorageHandle {
     async fn admit_history_expiry(
         &self,
         request: HistoryExpiryAdmissionRequest,
-    ) -> Result<Option<HistoryExpiryManifest>, StorageError> {
+    ) -> Result<HistoryExpiryAdmissionPage, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::History,

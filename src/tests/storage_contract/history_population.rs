@@ -839,6 +839,7 @@ async fn retained_population_gap_requires_original_configured_authorization(
         )
         .await
         .unwrap()
+        .into_manifest()
         .unwrap();
     assert_eq!(manifest.members()[0].target(), facts.target());
     let permit = backend

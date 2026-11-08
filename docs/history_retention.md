@@ -273,8 +273,15 @@ block admission. New relation, computed and schema versions capture the required
 class/collection UUID attribution when written. Closure and same-version refresh
 preserve those facts; older missing attribution is never reconstructed from
 current ownership. An uncertain retry must inspect the original batch identity; it
-cannot silently select another batch. No batch within a bounded scan is not proof
-that the source is empty.
+cannot silently select another batch. Admission returns a `HistoryExpiryAdmissionPage`
+with an optional retained manifest and an optional opaque continuation, including
+when the page selected no batch. Resume a new batch request with that continuation
+and the current authority fence; the scope and application incarnation must match.
+The cursor never authorizes membership, restores a stale execution permit, or
+proves completion. A row that exceeds a page remainder is retried on the next
+page; a row too large for an empty page remains retained while scanning advances.
+Rows that change eligibility behind a cursor require another sweep. No batch or
+continuation within a bounded scan is proof that the source is empty.
 
 Native tests exercise trigger-created rows from all nine families, held/stale
 selection, mixed fleets, oversized payloads, required audit rollback and retained

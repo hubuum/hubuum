@@ -283,6 +283,12 @@ review lifetime or freeze a hold's expiry. Native deletion points retain
 `valid_to == valid_from` in `HistoryExpiryReadSpan` and protect the subsequent
 deletion gap. Unknown restore ancestry cannot produce an eligible scan candidate.
 
+`admit_history_expiry` returns `HistoryExpiryAdmissionPage`, preserving an optional
+manifest and an independent opaque continuation even when no member was admitted.
+Resume a new batch with the current fence and the same scope/incarnation. Each
+pass retains its row/byte bounds and rechecks all productive protections; cursors
+are scan hints and never source-exhaustion, membership or deletion proofs.
+
 Complete adapters must implement `register_history_runtime`, `capture_history_lifecycle`,
 `scan_history_lifecycle`, `admit_history_expiry`,
 `commit_history_lifecycle` and `recover_history_lifecycle`. Capture returns the

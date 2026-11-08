@@ -47,6 +47,25 @@ impl Fixture {
         .unwrap()
     }
 
+    async fn reapply_after_lock_release(&self) -> Result<ControlRecoveryReport, ApiError> {
+        // A parallel template-worker fork can inherit the repository lock
+        // until exec closes its CLOEXEC copy. Retry only transient contention
+        // after recovery finished; live-process exclusion stays strict.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            match reapply(&self.storage, &self.directory, &self.key).await {
+                Err(ApiError::ServiceUnavailable(message))
+                    if message
+                        == "Control repository is busy; retry without bypassing protection"
+                        && tokio::time::Instant::now() < deadline =>
+                {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                result => return result,
+            }
+        }
+    }
+
     async fn checkpoint_ahead_of_primary(&self) -> DeletionControlState {
         let initial = self.storage.capture_control_checkpoint().await.unwrap();
         let change = initial
@@ -327,9 +346,7 @@ async fn offline_recovery_requires_process_exit_and_revokes_old_runtime_access()
     recover(&fixture.storage, &fixture.directory, &fixture.key)
         .await
         .unwrap();
-    reapply(&fixture.storage, &fixture.directory, &fixture.key)
-        .await
-        .unwrap();
+    fixture.reapply_after_lock_release().await.unwrap();
     assert!(bound.admit_application_work().await.is_err());
 }
 
@@ -440,7 +457,7 @@ async fn offline_renderer_retirement_uses_the_original_startup_proof(
     recover(&fixture.storage, &fixture.directory, &fixture.key)
         .await
         .unwrap();
-    let released = reapply(&fixture.storage, &fixture.directory, &fixture.key).await;
+    let released = fixture.reapply_after_lock_release().await;
     // No output producer exists in this fixture. Parent-only owners still
     // require their original positive settlement; protected ones were retired.
     let settlement = owner
@@ -506,9 +523,7 @@ async fn offline_recovery_retires_only_publications_with_proven_process_isolatio
     let result = recover(&fixture.storage, &fixture.directory, &fixture.key).await;
     assert_eq!(result.is_ok(), known);
     if known {
-        reapply(&fixture.storage, &fixture.directory, &fixture.key)
-            .await
-            .unwrap();
+        fixture.reapply_after_lock_release().await.unwrap();
         assert!(bound.admit_application_work().await.is_err());
     }
     let settlement = owner

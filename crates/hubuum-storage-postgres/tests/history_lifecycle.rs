@@ -1036,6 +1036,7 @@ mod runtime_protocol {
             )
             .await
             .unwrap()
+            .into_manifest()
             .unwrap();
         let admitted = fixture.storage.capture_history_lifecycle().await.unwrap();
         let event_ids = admitted
@@ -2269,7 +2270,7 @@ async fn native_expiry_retains_trigger_created_tombstone_gaps(
     let point = result
         .as_ref()
         .ok()
-        .and_then(Option::as_ref)
+        .and_then(HistoryExpiryAdmissionPage::manifest)
         .and_then(|manifest| {
             manifest
                 .members()
@@ -2309,9 +2310,33 @@ async fn native_expiry_retains_trigger_created_tombstone_gaps(
     );
 }
 
+#[derive(Clone, Copy, Debug)]
+enum ExpiryTestScope {
+    Deployment,
+    Collection,
+    Class,
+}
+
 async fn expiry_fixture(
     family: StorageIdentityHistoryKind,
     width: i32,
+) -> (Fixture, HistoryPolicyKey, i32) {
+    expiry_fixture_in_scope(
+        family,
+        width,
+        if family == StorageIdentityHistoryKind::ClassSchema {
+            ExpiryTestScope::Class
+        } else {
+            ExpiryTestScope::Collection
+        },
+    )
+    .await
+}
+
+async fn expiry_fixture_in_scope(
+    family: StorageIdentityHistoryKind,
+    width: i32,
+    scope: ExpiryTestScope,
 ) -> (Fixture, HistoryPolicyKey, i32) {
     use diesel::sql_types::Integer;
     #[derive(QueryableByName)]
@@ -2369,59 +2394,76 @@ async fn expiry_fixture(
         .record_identity()
         .unwrap()
         .resource();
-    let scope = if family == StorageIdentityHistoryKind::ClassSchema {
-        let identity=with_transaction(&fixture.owner_pool,async |connection| {
+    let scope = match scope {
+        ExpiryTestScope::Deployment => HistoryPolicyScope::Deployment,
+        ExpiryTestScope::Collection => HistoryPolicyScope::Collection {
+            identity: collection,
+        },
+        ExpiryTestScope::Class => {
+            let identity=with_transaction(&fixture.owner_pool,async |connection| {
             owner(connection).await?;
             sql_query("SELECT logical_identity AS material FROM public.hubuumclass_history WHERE name=$1||'_b' AND op='I'").bind::<Text,_>(&name).get_result::<Material>(connection).await.map_err(PostgresStorageError::from)
         }).await.unwrap();
-        let evidence: StorageIdentityEvidence = serde_json::from_value(identity.material).unwrap();
-        HistoryPolicyScope::Class {
-            identity: evidence
-                .subject()
-                .unwrap()
-                .record_identity()
-                .unwrap()
-                .resource(),
-        }
-    } else {
-        HistoryPolicyScope::Collection {
-            identity: collection,
+            let evidence: StorageIdentityEvidence =
+                serde_json::from_value(identity.material).unwrap();
+            HistoryPolicyScope::Class {
+                identity: evidence
+                    .subject()
+                    .unwrap()
+                    .record_identity()
+                    .unwrap()
+                    .resource(),
+            }
         }
     };
     let key = HistoryPolicyKey::new(family, scope).unwrap();
-    let before = fixture.storage.capture_history_lifecycle().await.unwrap();
-    let proposal = HistoryPolicyChange::new(
-        key,
-        HistoryPolicyRevision::new(0).unwrap(),
-        HistoryPolicyBinding::Expire {
-            trigger: HistoryExpiryTrigger::Age {
-                age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
-                deleted_age_seconds: Some(HistoryRetentionSeconds::new(0).unwrap()),
+    // Both relation endpoints must be eligible. The class policy governs the
+    // selected endpoint; the deployment fallback governs the other endpoint.
+    let fallback = (matches!(scope, HistoryPolicyScope::Class { .. })
+        && matches!(
+            family,
+            StorageIdentityHistoryKind::ClassRelation | StorageIdentityHistoryKind::ObjectRelation
+        ))
+    .then(|| HistoryPolicyKey::new(family, HistoryPolicyScope::Deployment).unwrap());
+    for binding_key in fallback.into_iter().chain([key]) {
+        let before = fixture.storage.capture_history_lifecycle().await.unwrap();
+        let proposal = HistoryPolicyChange::new(
+            binding_key,
+            before
+                .control()
+                .authority()
+                .policies()
+                .current_revision(binding_key),
+            HistoryPolicyBinding::Expire {
+                trigger: HistoryExpiryTrigger::Age {
+                    age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+                    deleted_age_seconds: Some(HistoryRetentionSeconds::new(0).unwrap()),
+                },
+                minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
             },
-            minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
-        },
-        HistoryPolicyApplication::Prospective,
-    )
-    .unwrap();
-    let change = before
-        .control()
-        .apply(
-            HistoryPolicyApplyRequest::new(proposal, None),
-            PrincipalIdentity::generate(),
-            before.fence(),
-            before.observed_at() - Duration::seconds(30),
+            HistoryPolicyApplication::Prospective,
         )
         .unwrap();
-    with_transaction(&fixture.owner_pool, async |connection| {
-        owner(connection).await?;
-        sql_query("UPDATE hubuum_control.history_lifecycle_control SET material=$1 WHERE id=1")
-            .bind::<Jsonb, _>(serde_json::to_value(change.next()).unwrap())
-            .execute(connection)
-            .await?;
-        Ok::<_, PostgresStorageError>(())
-    })
-    .await
-    .unwrap();
+        let change = before
+            .control()
+            .apply(
+                HistoryPolicyApplyRequest::new(proposal, None),
+                PrincipalIdentity::generate(),
+                before.fence(),
+                before.observed_at() - Duration::seconds(30),
+            )
+            .unwrap();
+        with_transaction(&fixture.owner_pool, async |connection| {
+            owner(connection).await?;
+            sql_query("UPDATE hubuum_control.history_lifecycle_control SET material=$1 WHERE id=1")
+                .bind::<Jsonb, _>(serde_json::to_value(change.next()).unwrap())
+                .execute(connection)
+                .await?;
+            Ok::<_, PostgresStorageError>(())
+        })
+        .await
+        .unwrap();
+    }
     (fixture, key, created.id)
 }
 
@@ -2508,7 +2550,10 @@ async fn native_expiry_admits_exact_trigger_created_membership(
     if let Some(protected) = protected_schema {
         assert_eq!(protected, Value::Bool(true));
     }
-    let manifest = result.unwrap().expect("eligible native batch");
+    let manifest = result
+        .unwrap()
+        .into_manifest()
+        .expect("eligible native batch");
     assert_eq!(manifest.members().len(), 1);
     assert_eq!(
         after
@@ -2525,6 +2570,257 @@ async fn native_expiry_admits_exact_trigger_created_membership(
     if family == StorageIdentityHistoryKind::Object {
         assert!(manifest.members()[0].object_authorization().is_some());
     }
+}
+
+#[rstest::rstest]
+#[case::collection_deployment(StorageIdentityHistoryKind::Collection, ExpiryTestScope::Deployment)]
+#[case::collection_collection(StorageIdentityHistoryKind::Collection, ExpiryTestScope::Collection)]
+#[case::class_deployment(StorageIdentityHistoryKind::Class, ExpiryTestScope::Deployment)]
+#[case::class_collection(StorageIdentityHistoryKind::Class, ExpiryTestScope::Collection)]
+#[case::class_class(StorageIdentityHistoryKind::Class, ExpiryTestScope::Class)]
+#[case::object_deployment(StorageIdentityHistoryKind::Object, ExpiryTestScope::Deployment)]
+#[case::object_collection(StorageIdentityHistoryKind::Object, ExpiryTestScope::Collection)]
+#[case::object_class(StorageIdentityHistoryKind::Object, ExpiryTestScope::Class)]
+#[case::classrelation_deployment(
+    StorageIdentityHistoryKind::ClassRelation,
+    ExpiryTestScope::Deployment
+)]
+#[case::classrelation_collection(
+    StorageIdentityHistoryKind::ClassRelation,
+    ExpiryTestScope::Collection
+)]
+#[case::classrelation_class(StorageIdentityHistoryKind::ClassRelation, ExpiryTestScope::Class)]
+#[case::objectrelation_deployment(
+    StorageIdentityHistoryKind::ObjectRelation,
+    ExpiryTestScope::Deployment
+)]
+#[case::objectrelation_collection(
+    StorageIdentityHistoryKind::ObjectRelation,
+    ExpiryTestScope::Collection
+)]
+#[case::objectrelation_class(StorageIdentityHistoryKind::ObjectRelation, ExpiryTestScope::Class)]
+#[case::exporttemplate_deployment(
+    StorageIdentityHistoryKind::ExportTemplate,
+    ExpiryTestScope::Deployment
+)]
+#[case::exporttemplate_collection(
+    StorageIdentityHistoryKind::ExportTemplate,
+    ExpiryTestScope::Collection
+)]
+#[case::exporttemplate_class(StorageIdentityHistoryKind::ExportTemplate, ExpiryTestScope::Class)]
+#[case::remotetarget_deployment(
+    StorageIdentityHistoryKind::RemoteTarget,
+    ExpiryTestScope::Deployment
+)]
+#[case::remotetarget_collection(
+    StorageIdentityHistoryKind::RemoteTarget,
+    ExpiryTestScope::Collection
+)]
+#[case::remotetarget_class(StorageIdentityHistoryKind::RemoteTarget, ExpiryTestScope::Class)]
+#[case::computeddefinitions_deployment(
+    StorageIdentityHistoryKind::ComputedDefinitions,
+    ExpiryTestScope::Deployment
+)]
+#[case::computeddefinitions_collection(
+    StorageIdentityHistoryKind::ComputedDefinitions,
+    ExpiryTestScope::Collection
+)]
+#[case::computeddefinitions_class(
+    StorageIdentityHistoryKind::ComputedDefinitions,
+    ExpiryTestScope::Class
+)]
+#[case::classschema_deployment(
+    StorageIdentityHistoryKind::ClassSchema,
+    ExpiryTestScope::Deployment
+)]
+#[case::classschema_collection(
+    StorageIdentityHistoryKind::ClassSchema,
+    ExpiryTestScope::Collection
+)]
+#[case::classschema_class(StorageIdentityHistoryKind::ClassSchema, ExpiryTestScope::Class)]
+#[tokio::test]
+async fn native_expiry_respects_every_supported_family_scope(
+    #[case] family: StorageIdentityHistoryKind,
+    #[case] scope: ExpiryTestScope,
+) {
+    let _guard = CONTROL_LOCK.lock().await;
+    let (fixture, key, collection) = expiry_fixture_in_scope(family, 32, scope).await;
+    let runtime = fixture
+        .storage
+        .register_history_runtime(None)
+        .await
+        .unwrap();
+    let application = fixture
+        .storage
+        .capture_application_execution(Some(runtime.owner()))
+        .await
+        .unwrap();
+    let snapshot = fixture.storage.capture_history_lifecycle().await.unwrap();
+    let batch = Uuid::new_v4();
+    let request = HistoryExpiryAdmissionRequest::new(
+        batch,
+        Uuid::new_v4(),
+        HistoryExpiryOrigin::Scheduled { initiator: None },
+        HistoryLifecycleScan::new(key, 1000).unwrap(),
+        snapshot.fence(),
+    )
+    .unwrap();
+    let result = fixture
+        .storage
+        .run_in_scope(
+            StorageExecutionScope::default().with_application_access(application),
+            fixture.storage.admit_history_expiry(request),
+        )
+        .await;
+    fixture.storage.unregister_runtime(runtime).await.unwrap();
+    cleanup_expiry_fixture(fixture, collection, batch).await;
+    // These fixtures have collection-wide templates/targets, with no class
+    // attribution. A class policy must not adopt them through today's owner.
+    let expected = !(matches!(scope, ExpiryTestScope::Class)
+        && matches!(
+            family,
+            StorageIdentityHistoryKind::ExportTemplate | StorageIdentityHistoryKind::RemoteTarget
+        ));
+    assert_eq!(result.unwrap().manifest().is_some(), expected);
+}
+
+#[rstest::rstest]
+#[case::blocked("blocked")]
+#[case::oversize("oversize")]
+#[case::admitted("admitted")]
+#[case::remainder("remainder")]
+#[tokio::test]
+async fn native_expiry_continues_past_an_unproductive_prefix(#[case] mode: &str) {
+    let _guard = CONTROL_LOCK.lock().await;
+    let (fixture, key, collection) = expiry_fixture(
+        StorageIdentityHistoryKind::Object,
+        if mode == "remainder" {
+            9 * 1024 * 1024
+        } else {
+            32
+        },
+    )
+    .await;
+    let snapshot = fixture.storage.capture_history_lifecycle().await.unwrap();
+    if mode == "blocked" {
+        let original = with_transaction(&fixture.owner_pool, async |connection| {
+            owner(connection).await?;
+            sql_query("SELECT logical_identity AS material FROM public.hubuumclass WHERE collection_id=$1 ORDER BY id LIMIT 1")
+                .bind::<diesel::sql_types::Integer, _>(collection)
+                .get_result::<Material>(connection).await.map_err(PostgresStorageError::from)
+        }).await.unwrap();
+        let evidence: StorageIdentityEvidence = serde_json::from_value(original.material).unwrap();
+        let class = evidence
+            .subject()
+            .unwrap()
+            .record_identity()
+            .unwrap()
+            .resource();
+        let hold_key = HistoryPolicyKey::new(
+            StorageIdentityHistoryKind::Object,
+            HistoryPolicyScope::Class { identity: class },
+        )
+        .unwrap();
+        fixture
+            .storage
+            .commit_history_lifecycle(
+                snapshot
+                    .control()
+                    .create_hold(
+                        HistoryRetentionHold::new(
+                            Uuid::new_v4(),
+                            hold_key,
+                            snapshot.observed_at(),
+                            None,
+                            PrincipalIdentity::generate(),
+                        )
+                        .unwrap(),
+                        snapshot.fence(),
+                    )
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    } else if mode == "oversize" {
+        with_transaction(&fixture.owner_pool, async |connection| {
+            owner(connection).await?;
+            sql_query("UPDATE public.hubuumobject_history SET description=repeat('x',17*1024*1024) WHERE history_id=(SELECT min(history_id) FROM public.hubuumobject_history WHERE collection_id=$1 AND valid_to IS NOT NULL)")
+                .bind::<diesel::sql_types::Integer, _>(collection).execute(connection).await?;
+            Ok::<_, PostgresStorageError>(())
+        }).await.unwrap();
+    }
+    let runtime = fixture
+        .storage
+        .register_history_runtime(None)
+        .await
+        .unwrap();
+    let application = fixture
+        .storage
+        .capture_application_execution(Some(runtime.owner()))
+        .await
+        .unwrap();
+    let scope = StorageExecutionScope::default().with_application_access(application);
+    let mut cursor = None;
+    let mut batches = Vec::new();
+    let mut outcomes = Vec::new();
+    let mut failure = None;
+    for _ in 0..20 {
+        let snapshot = fixture.storage.capture_history_lifecycle().await.unwrap();
+        let batch = Uuid::new_v4();
+        batches.push(batch);
+        let mut request = HistoryExpiryAdmissionRequest::new(
+            batch,
+            Uuid::new_v4(),
+            HistoryExpiryOrigin::Scheduled { initiator: None },
+            HistoryLifecycleScan::new(key, if mode == "remainder" { 1000 } else { 1 }).unwrap(),
+            snapshot.fence(),
+        )
+        .unwrap();
+        if let Some(cursor) = cursor.take() {
+            request = request.resume(cursor).unwrap();
+        }
+        let page = match fixture
+            .storage
+            .run_in_scope(scope.clone(), fixture.storage.admit_history_expiry(request))
+            .await
+        {
+            Ok(page) => page,
+            Err(error) => {
+                failure = Some(error);
+                break;
+            }
+        };
+        outcomes.push(page.manifest().is_some());
+        cursor = page.continuation().cloned();
+        if cursor.is_none() {
+            break;
+        }
+    }
+    fixture.storage.unregister_runtime(runtime).await.unwrap();
+    with_transaction(&fixture.owner_pool, async |connection| {
+        owner(connection).await?;
+        sql_query("DELETE FROM hubuum_control.history_expiry_members WHERE intent_uuid=ANY($1)")
+            .bind::<Array<SqlUuid>, _>(&batches)
+            .execute(connection)
+            .await?;
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
+    .unwrap();
+    cleanup_expiry_fixture(fixture, collection, batches[0]).await;
+    assert!(
+        failure.is_none(),
+        "{mode} admission failed after {outcomes:?}: {failure:?}"
+    );
+    assert_eq!(outcomes[0], matches!(mode, "admitted" | "remainder"));
+    assert!(
+        outcomes[1..].iter().any(|selected| *selected),
+        "Later eligible native rows must remain reachable"
+    );
+    assert!(
+        cursor.is_none(),
+        "Continuation must reach the bounded source end"
+    );
 }
 
 #[rstest::rstest]
@@ -2622,7 +2918,7 @@ async fn native_expiry_refuses_unsafe_or_uncommitted_selection(#[case] mode: &st
     fixture.storage.unregister_runtime(runtime).await.unwrap();
     cleanup_expiry_fixture(fixture, collection, batch).await;
     if matches!(mode, "held" | "oversize") {
-        assert!(result.unwrap().is_none());
+        assert!(result.unwrap().manifest().is_none());
     } else {
         assert!(result.is_err(), "{mode} unexpectedly admitted a batch");
     }
@@ -2715,7 +3011,7 @@ async fn admitted_expiry_fences_old_publications_without_retiring_them() {
     }).await.unwrap().count;
     fixture.storage.unregister_runtime(runtime).await.unwrap();
     cleanup_expiry_fixture(fixture, collection, batch).await;
-    let manifest = admitted.unwrap().unwrap();
+    let manifest = admitted.unwrap().into_manifest().unwrap();
     assert!(stale.is_err());
     assert_eq!(charged, 1);
     assert!(preserved > 0);

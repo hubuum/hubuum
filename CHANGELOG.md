@@ -34,7 +34,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking storage SDK 0.20:** upgrade all ten exact SDK dependencies together
   and implement the required `HistoryLifecycleStorage` control, audit, scoped read,
   publication and recovery contracts, including bounded native
-  `admit_history_expiry` with atomic membership/audit retention and no payload
+  `admit_history_expiry` returning `HistoryExpiryAdmissionPage` with separate
+  manifest/continuation handling, atomic membership/audit retention and no payload
   removal, plus exact nonproductive
   `TaskArtifactStore::abort_task` cleanup using the original attempt/task/claim. Deploy the new
   `2026-11-03-000005_history_lifecycle` migration after shipped archive 000004;
@@ -325,6 +326,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   [0.7 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-06-to-07).
 
 ### Fixed
+
+- Native history-expiry admission now selects class history under its own class
+  policy and returns scope-bound continuation through blocked, oversized and
+  already admitted scan prefixes. Repeated bounded passes can reach later rows
+  without increasing their row or byte budgets; retaining an earlier native
+  intent no longer prevents admitting another batch. Physical expiry remains disabled.
 
 - History lifecycle inspection and native admission preserve zero-length deletion
   tombstones and their subsequent read exclusions. Unknown restore ancestry stays

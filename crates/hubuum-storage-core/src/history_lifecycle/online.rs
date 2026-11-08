@@ -17,6 +17,7 @@ pub struct HistoryExpiryAdmissionRequest {
     origin: HistoryExpiryOrigin,
     scan: HistoryLifecycleScan,
     fence: HistoryReviewFence,
+    after: Option<HistoryExpiryScanCursor>,
 }
 
 impl HistoryExpiryAdmissionRequest {
@@ -39,6 +40,7 @@ impl HistoryExpiryAdmissionRequest {
             origin,
             scan,
             fence,
+            after: None,
         })
     }
     pub const fn identity(&self) -> Uuid {
@@ -49,6 +51,24 @@ impl HistoryExpiryAdmissionRequest {
     }
     pub const fn fence(&self) -> HistoryReviewFence {
         self.fence
+    }
+
+    /// Continue a bounded source scan, while retaining a fresh authority fence.
+    /// This hint cannot prove source exhaustion or authorize any member.
+    pub fn resume(
+        mut self,
+        cursor: HistoryExpiryScanCursor,
+    ) -> Result<Self, StorageValidationError> {
+        if cursor.key != self.scan.key() || cursor.incarnation != self.fence.incarnation() {
+            return Err(invalid(
+                "Expiry continuation belongs to another scope or incarnation",
+            ));
+        }
+        self.after = Some(cursor);
+        Ok(self)
+    }
+    pub fn source_position(&self) -> u64 {
+        self.after.as_ref().map_or(0, |cursor| cursor.position)
     }
 
     /// Adapters call this under their authority lock. An uncertain retry must
@@ -77,6 +97,68 @@ impl HistoryExpiryAdmissionRequest {
         )?;
         selection.manifest.identity = self.identity;
         Ok(selection)
+    }
+}
+
+/// Adapter-local source position, correlated with the original scope and image.
+/// It is a scan hint, never complete coverage, membership or deletion authority.
+#[derive(Clone, Debug)]
+pub struct HistoryExpiryScanCursor {
+    key: HistoryPolicyKey,
+    incarnation: Uuid,
+    position: u64,
+}
+
+/// One bounded scan, including continuation when no eligible batch was found.
+/// A missing continuation means this pass observed no further source rows;
+/// concurrent writes and unresolved rows prevent treating it as completion.
+#[derive(Debug)]
+pub struct HistoryExpiryAdmissionPage {
+    manifest: Option<HistoryExpiryManifest>,
+    continuation: Option<HistoryExpiryScanCursor>,
+}
+impl HistoryExpiryAdmissionPage {
+    /// Complete-adapter boundary. Positions are private native scan coordinates.
+    pub fn new(
+        request: &HistoryExpiryAdmissionRequest,
+        manifest: Option<HistoryExpiryManifest>,
+        position: Option<u64>,
+    ) -> Result<Self, StorageValidationError> {
+        if position.is_some_and(|position| {
+            position <= request.source_position() || position > i64::MAX as u64
+        }) {
+            return Err(invalid(
+                "Expiry continuation must advance within its native range",
+            ));
+        }
+        if manifest.as_ref().is_some_and(|manifest| {
+            manifest.identity() != request.identity
+                || manifest.run() != request.run
+                || manifest.origin() != &request.origin
+                || manifest.key() != request.scan.key()
+                || manifest.fence() != request.fence
+        }) {
+            return Err(invalid(
+                "Expiry page differs from its original admission request",
+            ));
+        }
+        Ok(Self {
+            manifest,
+            continuation: position.map(|position| HistoryExpiryScanCursor {
+                key: request.scan.key(),
+                incarnation: request.fence.incarnation(),
+                position,
+            }),
+        })
+    }
+    pub const fn manifest(&self) -> Option<&HistoryExpiryManifest> {
+        self.manifest.as_ref()
+    }
+    pub const fn continuation(&self) -> Option<&HistoryExpiryScanCursor> {
+        self.continuation.as_ref()
+    }
+    pub fn into_manifest(self) -> Option<HistoryExpiryManifest> {
+        self.manifest
     }
 }
 
@@ -650,6 +732,81 @@ mod tests {
 
     use super::*;
     use crate::StorageRecordIdentity;
+
+    #[test]
+    fn admission_page_rejects_another_batches_valid_manifest() {
+        let snapshot = snapshot();
+        let request = HistoryExpiryAdmissionRequest::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            HistoryExpiryOrigin::Scheduled { initiator: None },
+            HistoryLifecycleScan::new(key(), 1).unwrap(),
+            snapshot.fence(),
+        )
+        .unwrap();
+        assert!(
+            HistoryExpiryAdmissionPage::new(&request, Some(manifest(&snapshot)), Some(1)).is_err()
+        );
+    }
+
+    #[rstest]
+    #[case::scope(true)]
+    #[case::incarnation(false)]
+    fn continuation_rejects_a_different_original_binding(#[case] change_scope: bool) {
+        let snapshot = snapshot();
+        let request = HistoryExpiryAdmissionRequest::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            HistoryExpiryOrigin::Scheduled { initiator: None },
+            HistoryLifecycleScan::new(key(), 1).unwrap(),
+            snapshot.fence(),
+        )
+        .unwrap();
+        let page = HistoryExpiryAdmissionPage::new(&request, None, Some(1)).unwrap();
+        let mut other = request;
+        if change_scope {
+            other.scan = HistoryLifecycleScan::new(
+                HistoryPolicyKey::new(
+                    StorageIdentityHistoryKind::Object,
+                    HistoryPolicyScope::Class {
+                        identity: ResourceIdentity::generate(),
+                    },
+                )
+                .unwrap(),
+                1,
+            )
+            .unwrap();
+        } else {
+            other.fence = HistoryReviewFence::new(
+                Uuid::new_v4(),
+                snapshot.fence().authority_revision(),
+                snapshot.fence().deletion_revision(),
+            )
+            .unwrap();
+        }
+        assert!(other.resume(page.continuation().unwrap().clone()).is_err());
+    }
+
+    #[rstest]
+    #[case::stationary(1)]
+    #[case::backwards(0)]
+    #[case::out_of_range(u64::MAX)]
+    fn continuation_requires_forward_native_progress(#[case] position: u64) {
+        let snapshot = snapshot();
+        let request = HistoryExpiryAdmissionRequest::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            HistoryExpiryOrigin::Scheduled { initiator: None },
+            HistoryLifecycleScan::new(key(), 1).unwrap(),
+            snapshot.fence(),
+        )
+        .unwrap();
+        let page = HistoryExpiryAdmissionPage::new(&request, None, Some(1)).unwrap();
+        let continued = request
+            .resume(page.continuation().unwrap().clone())
+            .unwrap();
+        assert!(HistoryExpiryAdmissionPage::new(&continued, None, Some(position)).is_err());
+    }
 
     #[rstest]
     #[case::batch(true)]

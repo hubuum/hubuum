@@ -24,7 +24,14 @@ use hubuum_storage_core::{
     StorageTaskClaimToken, StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration,
     StorageTaskProgress, StorageTaskScopeSnapshot, StorageTaskStatus,
 };
+#[cfg(test)]
+use tokio::sync::Mutex;
 use tokio::time::{Duration, Instant, sleep};
+
+/// Unit fixtures that replace restore authority share the runner's isolated
+/// restore database; hold this guard through positive publication cleanup.
+#[cfg(test)]
+pub(crate) static ISOLATED_RESTORE_TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
 use crate::{
     DatabaseRoleNames, PostgresConnection, PostgresPool, PostgresPoolSettings,

@@ -3,6 +3,8 @@ use super::*;
 
 #[derive(QueryableByName)]
 struct SourceRow {
+    #[diesel(sql_type = BigInt)]
+    position: i64,
     #[diesel(sql_type = Timestamptz)]
     valid_from: DateTime<Utc>,
     #[diesel(sql_type = Nullable<Timestamptz>)]
@@ -24,7 +26,7 @@ struct SourceRow {
 pub(super) async fn admit(
     storage: &PostgresStorage,
     request: HistoryExpiryAdmissionRequest,
-) -> Result<Option<HistoryExpiryManifest>, StorageError> {
+) -> Result<HistoryExpiryAdmissionPage, StorageError> {
     let scope = current_scope(storage)?;
     storage.runtime().with_history_control_transaction(scope, async move |connection| {
         // Authority UPDATE is held before API/task validation or native rows.
@@ -43,8 +45,16 @@ pub(super) async fn admit(
         sql_query("SELECT set_config('statement_timeout', CASE WHEN current_setting('statement_timeout')::INTERVAL=INTERVAL '0' THEN '5000' ELSE GREATEST(1,FLOOR(LEAST(EXTRACT(EPOCH FROM current_setting('statement_timeout')::INTERVAL)*1000,5000)))::BIGINT::TEXT END,true)")
             .execute(connection).await?;
         let family = request.scan().key().family();
-        for row in rows(connection, request.scan()).await? {
-            if !row.within_budget { break; }
+        let mut position = None;
+        for row in rows(connection, &request).await? {
+            if !row.within_budget {
+                // Retry a row that exceeded this page's remainder; skip a row
+                // that cannot fit even an otherwise empty bounded page.
+                if position.is_none() { position = Some(row.position as u64); }
+                break;
+            }
+            let previous = position;
+            position = Some(row.position as u64);
             let Some(raw) = row.logical_identity else { continue; };
             let evidence: StorageIdentityEvidence = serde_json::from_value(raw)
                 .map_err(|error| PostgresStorageError::invalid_persisted_value("expiry source identity", error))?;
@@ -67,9 +77,12 @@ pub(super) async fn admit(
                 let facts: HistoryObjectAuthorizationFacts = serde_json::from_value(coordinates).map_err(|error| PostgresStorageError::invalid_persisted_value("expiry object authorization",error))?;
                 candidate = candidate.with_object_authorization(facts)?;
             }
-            if matches!(selection.consider(candidate, HistoryExpiryInputBytes::new(row.input_bytes as u64)?, &[])?, HistoryExpirySelectionOutcome::BudgetReached) { break; }
+            if matches!(selection.consider(candidate, HistoryExpiryInputBytes::new(row.input_bytes as u64)?, &[])?, HistoryExpirySelectionOutcome::BudgetReached) {
+                position = previous.or(position);
+                break;
+            }
         }
-        if selection.is_empty() { return Ok(None); }
+        if selection.is_empty() { return HistoryExpiryAdmissionPage::new(&request, None, position).map_err(PostgresStorageError::from); }
         let manifest = selection.finish()?;
         let change = snapshot.control().admit_expiry(manifest.clone(), snapshot.fence())?;
         let committed = sql_query("SELECT public.hubuum_history_expiry_admit($1,$2,$3,$4) AS committed")
@@ -82,7 +95,7 @@ pub(super) async fn admit(
         for event in change.next().audit_events_since(change.expected())? {
             crate::operations::event_record::append_retained_lifecycle_event(connection, &event).await?;
         }
-        Ok::<_,PostgresStorageError>(Some(manifest))
+        HistoryExpiryAdmissionPage::new(&request, Some(manifest), position).map_err(PostgresStorageError::from)
     }).await.map_err(Into::into)
 }
 
@@ -110,9 +123,10 @@ fn current_scope(storage: &PostgresStorage) -> Result<StorageExecutionPermit, St
 
 async fn rows(
     connection: &mut PostgresConnection,
-    scan: &HistoryLifecycleScan,
+    request: &HistoryExpiryAdmissionRequest,
 ) -> Result<Vec<SourceRow>, PostgresStorageError> {
     use StorageIdentityHistoryKind as F;
+    let scan = request.scan();
     // These identifiers and projections are a closed adapter-owned vocabulary;
     // all caller values remain parameters. No historical payload is transferred.
     let (table, position, from, until, closed, deleted, coordinates) = match scan.key().family() {
@@ -208,7 +222,7 @@ async fn rows(
         }
     };
     let query = format!(
-        "WITH source AS MATERIALIZED (SELECT {position} AS position, {from} AS valid_from, {until} AS valid_to, logical_identity, {deleted} AS deleted, octet_length(to_jsonb(h.*)::text)::bigint AS input_bytes, {coordinates} AS coordinates FROM public.{table} h WHERE ({closed}) AND public.hubuum_history_version_visible($4,logical_identity) AND ($2='deployment' OR CASE WHEN $2='collection' AND $4='collection' THEN logical_identity #>> '{{subject,identity,identity}}'=$3::text ELSE logical_identity #>> ARRAY['references','/'||$2||'_id','reference','identity']=$3::text OR logical_identity #>> ARRAY['references','/lifecycle/from/'||$2,'reference','identity']=$3::text OR logical_identity #>> ARRAY['references','/lifecycle/to/'||$2,'reference','identity']=$3::text END) ORDER BY {position} LIMIT $1), bounded AS (SELECT *, sum(input_bytes) OVER (ORDER BY position)<=16777216 AND sum(octet_length(coalesce(logical_identity::text,''))+octet_length(coalesce(coordinates::text,''))) OVER (ORDER BY position)<=1048576 AS within_budget FROM source) SELECT valid_from,valid_to,CASE WHEN within_budget THEN logical_identity END AS logical_identity,deleted,input_bytes,within_budget,CASE WHEN within_budget THEN public.hubuum_history_expiry_dependency($4,logical_identity) ELSE TRUE END AS dependency,CASE WHEN within_budget THEN coordinates END AS coordinates FROM bounded ORDER BY position"
+        "WITH source AS MATERIALIZED (SELECT {position} AS position, {from} AS valid_from, {until} AS valid_to, logical_identity, {deleted} AS deleted, octet_length(to_jsonb(h.*)::text)::bigint AS input_bytes, {coordinates} AS coordinates FROM public.{table} h WHERE {position}>$5 AND ({closed}) AND public.hubuum_history_version_visible($4,logical_identity) AND ($2='deployment' OR CASE WHEN $2=$4 AND $4 IN ('collection','class') THEN logical_identity #>> '{{subject,identity,identity}}'=$3::text ELSE logical_identity #>> ARRAY['references','/'||$2||'_id','reference','identity']=$3::text OR logical_identity #>> ARRAY['references','/lifecycle/from/'||$2,'reference','identity']=$3::text OR logical_identity #>> ARRAY['references','/lifecycle/to/'||$2,'reference','identity']=$3::text END) ORDER BY {position} LIMIT $1), bounded AS (SELECT *, sum(input_bytes) OVER (ORDER BY position)<=16777216 AND sum(octet_length(coalesce(logical_identity::text,''))+octet_length(coalesce(coordinates::text,''))) OVER (ORDER BY position)<=1048576 AS within_budget FROM source) SELECT position::bigint AS position,valid_from,valid_to,CASE WHEN within_budget THEN logical_identity END AS logical_identity,deleted,input_bytes,within_budget,CASE WHEN within_budget THEN public.hubuum_history_expiry_dependency($4,logical_identity) ELSE TRUE END AS dependency,CASE WHEN within_budget THEN coordinates END AS coordinates FROM bounded ORDER BY position"
     );
     sql_query(query)
         .bind::<BigInt, _>(i64::from(scan.limit()))
@@ -220,6 +234,7 @@ async fn rows(
                 .as_str()
                 .ok_or_else(|| PostgresStorageError::invalid_input("Invalid expiry family"))?,
         )
+        .bind::<BigInt, _>(request.source_position() as i64)
         .load(connection)
         .await
         .map_err(Into::into)

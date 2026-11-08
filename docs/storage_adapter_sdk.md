@@ -4,6 +4,14 @@ Status: accepted; current experimental release train is `0.20`.
 
 ## Upgrading from 0.19 to 0.20
 
+`admit_history_expiry` returns `HistoryExpiryAdmissionPage`. Preserve its optional
+manifest and continuation separately, even for a page with no admitted batch.
+Use `HistoryExpiryAdmissionRequest::resume` with a new batch identity and current
+fence to advance. Adapter positions must advance within the original scope and
+incarnation; they are bounded scan hints, never exhaustion or deletion proofs.
+Keep row/byte limits and policy, hold, dependency and execution checks on every
+page. Restart a sweep to reconsider earlier rows whose eligibility changes.
+
 Recheck clock-dependent review protection while holding the policy commit lock
 after verifying the predecessor and fence. Use
 `HistoryLifecycleControlChange::validate_commit_at` or equivalent native checks;
