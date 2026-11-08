@@ -1520,6 +1520,7 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             "event_sink",
             "remote_target",
             "ldap",
+            "runtime_settings",
             "token_hash",
         ]),
         (name, "outcome") if name.starts_with("hubuum_secret_resolution") => strings(&[

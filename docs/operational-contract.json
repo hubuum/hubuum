@@ -1635,6 +1635,7 @@
             "event_sink",
             "remote_target",
             "ldap",
+            "runtime_settings",
             "token_hash"
           ]
         },
@@ -1695,6 +1696,7 @@
             "event_sink",
             "remote_target",
             "ldap",
+            "runtime_settings",
             "token_hash"
           ]
         },

@@ -443,6 +443,7 @@ mod tests {
                 let key = [b'k'; 32];
                 let config_path = root.join("provider.json");
                 if std::env::var(CHILD).unwrap() == "writer" {
+                    crate::observability::metrics::init().unwrap();
                     std::fs::write(&key_path, key).unwrap();
                     let config = json!({
                         "scope": "directory",
@@ -512,6 +513,97 @@ mod tests {
                         .unwrap()
                         .contains(&("directory".to_string(), true))
                 );
+            });
+    }
+
+    #[test]
+    fn startup_uses_authoritative_authentication_settings_before_provider_scopes() {
+        const CHILD: &str = "RUNTIME_AUTH_STARTUP_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let missing = std::env::temp_dir().join(format!(
+                "hubuum-missing-auth-config-{}.toml",
+                uuid::Uuid::new_v4()
+            ));
+            for ownership in ["managed", "deployment"] {
+                let status = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "secrets::tests::startup_uses_authoritative_authentication_settings_before_provider_scopes",
+                        "--nocapture",
+                    ])
+                    .env(CHILD, ownership)
+                    .env("HUBUUM_AUTH_CONFIG_PATH", &missing)
+                    .status()
+                    .unwrap();
+                assert!(status.success(), "{ownership} child failed");
+            }
+            return;
+        }
+
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                use crate::permissions::{AppContext, LocalPermissionBackend};
+                use crate::storage::StorageHandle;
+                use hubuum_domain::ResourceRevision;
+                use hubuum_storage_core::{
+                    RuntimeSettingsStorage, StorageAuthenticationProvider,
+                    StorageAuthenticationProviderKind, StorageAuthenticationProviders,
+                    StorageRuntimeSettingsAssignment, StorageRuntimeSettingsUpdate,
+                    StorageRuntimeSettingsValue,
+                };
+                use std::sync::Arc;
+
+                let managed = std::env::var(CHILD).unwrap() == "managed";
+                let storage = StorageHandle::memory();
+                if managed {
+                    let provider = StorageAuthenticationProvider::try_new(
+                        "directory",
+                        StorageAuthenticationProviderKind::Ldap,
+                        serde_json::json!({
+                            "scope": "directory",
+                            "url": "ldap://localhost",
+                            "user_base_dn": "dc=example,dc=org",
+                            "user_filter": "(uid={username})"
+                        }),
+                    )
+                    .unwrap();
+                    let providers =
+                        StorageAuthenticationProviders::try_new(vec![provider]).unwrap();
+                    storage
+                        .update_runtime_settings(StorageRuntimeSettingsUpdate::new(
+                            StorageRuntimeSettingsAssignment::Managed(
+                                StorageRuntimeSettingsValue::Authentication(providers),
+                            ),
+                            ResourceRevision::INITIAL,
+                            crate::events::EventContext::system(),
+                        ))
+                        .await
+                        .unwrap();
+                }
+
+                let settings =
+                    crate::utilities::init::InitializationSettings::new("admin").unwrap();
+                crate::utilities::init::init(&storage, &settings)
+                    .await
+                    .unwrap();
+                let context = AppContext::new(
+                    storage.clone(),
+                    Arc::new(LocalPermissionBackend::new(storage, "admin".to_string())),
+                );
+                context.refresh_runtime_settings().await.unwrap();
+                let result =
+                    crate::auth::ensure_configured_identity_scopes(context.backend()).await;
+                assert_eq!(result.is_ok(), managed);
+                if managed {
+                    assert!(
+                        crate::auth::auth_provider_statuses()
+                            .unwrap()
+                            .contains(&("directory".to_string(), true))
+                    );
+                }
             });
     }
 

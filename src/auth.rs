@@ -9,7 +9,7 @@ use hubuum_storage_core::{
     StorageAuthenticationProviderKind, StorageAuthenticationProviders, StorageExternalSyncFailure,
     StorageUser,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
 use std::future::Future;
@@ -74,7 +74,7 @@ pub struct AuthProvidersConfig {
     pub ldap: Vec<ConfiguredLdapScope>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ConfiguredLdapScope {
     #[serde(flatten)]
     pub ldap: LdapScopeConfig,
@@ -268,12 +268,42 @@ async fn runtime_provider_configuration(
             serde_json::Value::String(password.to_string()),
         );
     }
-    serde_json::from_value(configuration).map_err(|_| {
-        ApiError::BadRequest(format!(
-            "Authentication provider '{}' configuration is invalid",
+    let configured: ConfiguredLdapScope =
+        serde_json::from_value(configuration.clone()).map_err(|_| {
+            ApiError::BadRequest(format!(
+                "Authentication provider '{}' configuration is invalid",
+                provider.name()
+            ))
+        })?;
+    let known = serde_json::to_value(&configured).map_err(|_| {
+        ApiError::InternalServerError(
+            "Authentication provider configuration could not be validated".to_string(),
+        )
+    })?;
+    if contains_unknown_fields(&configuration, &known) {
+        return Err(ApiError::BadRequest(format!(
+            "Authentication provider '{}' configuration contains unrecognized fields",
             provider.name()
-        ))
-    })
+        )));
+    }
+    Ok(configured)
+}
+
+fn contains_unknown_fields(input: &serde_json::Value, known: &serde_json::Value) -> bool {
+    match (input, known) {
+        (serde_json::Value::Object(input), serde_json::Value::Object(known)) => {
+            input.iter().any(|(key, value)| {
+                known
+                    .get(key)
+                    .is_none_or(|known| contains_unknown_fields(value, known))
+            })
+        }
+        (serde_json::Value::Array(input), serde_json::Value::Array(known)) => input
+            .iter()
+            .zip(known)
+            .any(|(value, known)| contains_unknown_fields(value, known)),
+        _ => false,
+    }
 }
 
 type AuthProviderFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ApiError>> + Send + 'a>>;
@@ -1510,6 +1540,58 @@ mod tests {
             .unwrap(),
         ])
         .unwrap()
+    }
+
+    #[rstest]
+    #[case::top_level(serde_json::json!({"group_filter": "admins"}))]
+    #[case::nested(serde_json::json!({
+        "group_rules": [{"pattern": "admins", "name": "admins", "unexpected": true}]
+    }))]
+    #[tokio::test]
+    async fn runtime_ldap_rejects_unknown_fields(#[case] extra: serde_json::Value) {
+        let mut configuration = serde_json::json!({
+            "scope": "corporate",
+            "url": "ldap://ldap.example.org",
+            "user_base_dn": "dc=example,dc=org",
+            "user_filter": "(uid={username})"
+        });
+        configuration
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let provider = StorageAuthenticationProvider::try_new(
+            "corporate",
+            StorageAuthenticationProviderKind::Ldap,
+            configuration,
+        )
+        .unwrap();
+
+        let error = runtime_provider_configuration(&provider).await.unwrap_err();
+        assert!(matches!(error, ApiError::BadRequest(_)));
+        assert!(error.to_string().contains("unrecognized fields"));
+    }
+
+    #[tokio::test]
+    async fn runtime_ldap_accepts_known_flattened_and_nested_fields() {
+        let provider = StorageAuthenticationProvider::try_new(
+            "corporate",
+            StorageAuthenticationProviderKind::Ldap,
+            serde_json::json!({
+                "scope": "corporate",
+                "url": "ldap://ldap.example.org",
+                "user_base_dn": "dc=example,dc=org",
+                "user_filter": "(uid={username})",
+                "group_filters": ["admins"],
+                "group_rules": [{"pattern": "admins", "name": "admins"}],
+                "refresh_ttl_seconds": 30
+            }),
+        )
+        .unwrap();
+
+        let configured = runtime_provider_configuration(&provider).await.unwrap();
+        assert_eq!(configured.ldap.group_filters, ["admins"]);
+        assert_eq!(configured.ldap.group_rules[0].name, "admins");
+        assert_eq!(configured.refresh_ttl_seconds, Some(30));
     }
 
     #[tokio::test]

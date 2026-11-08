@@ -601,6 +601,55 @@ async fn failed_authentication_preflight_does_not_persist_the_candidate() {
     );
 }
 
+#[rstest::rstest]
+#[case::top_level(json!({"group_filter": "admins"}))]
+#[case::nested(json!({
+    "group_rules": [{"pattern": "admins", "name": "admins", "unexpected": true}]
+}))]
+#[actix_web::test]
+async fn authentication_preflight_does_not_persist_unknown_fields(#[case] extra: Value) {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let mut configuration = json!({
+        "scope": "corporate",
+        "url": "ldap://ldap.example.org",
+        "user_base_dn": "ou=people,dc=example,dc=org",
+        "user_filter": "(uid={username})"
+    });
+    configuration
+        .as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    let (status, _) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::post()
+            .uri("/api/v1/admin/runtime-settings/authentication/preflight")
+            .set_json(json!({
+                "expected_revision": 1,
+                "providers": [{
+                    "name": "corporate",
+                    "kind": "ldap",
+                    "configuration": configuration
+                }]
+            })),
+    )
+    .await;
+
+    let snapshot = backend.load_runtime_settings().await.unwrap();
+    let record = snapshot.record(StorageRuntimeSettingsGroup::Authentication);
+    assert_eq!(
+        (status, record.revision(), record.assignment()),
+        (
+            http::StatusCode::BAD_REQUEST,
+            ResourceRevision::INITIAL,
+            &StorageRuntimeSettingsAssignment::Deployment(
+                StorageRuntimeSettingsGroup::Authentication
+            )
+        )
+    );
+}
+
 #[actix_web::test]
 async fn unchanged_update_keeps_the_revision_and_writes_no_audit() {
     let backend = StorageHandle::memory();
