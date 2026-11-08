@@ -9,7 +9,7 @@ use std::num::{NonZeroU16, NonZeroU32};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use hubuum_domain::{PrincipalId, ResourceRevision};
+use hubuum_domain::{IdentityScopeName, LOCAL_IDENTITY_SCOPE, PrincipalId, ResourceRevision};
 use hubuum_events_core::{ActorKind, CorrelationId, EventContext};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -162,6 +162,20 @@ impl StoragePaginationPolicy {
             })
     }
 
+    /// Validate the shared default against the configuring process's ceiling.
+    pub fn try_new_with_ceiling(
+        default_page_limit: u64,
+        maximum: u64,
+    ) -> Result<Self, StorageValidationError> {
+        let policy = Self::try_new(default_page_limit)?;
+        if default_page_limit > maximum {
+            return Err(StorageValidationError::invalid(format!(
+                "default_page_limit ({default_page_limit}) must be less than or equal to max_page_limit ({maximum})"
+            )));
+        }
+        Ok(policy)
+    }
+
     #[must_use]
     pub const fn default_page_limit(self) -> u32 {
         self.default_page_limit.get()
@@ -217,7 +231,7 @@ impl StorageAuthenticationProviderKind {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageAuthenticationProvider {
-    name: String,
+    name: IdentityScopeName,
     kind: StorageAuthenticationProviderKind,
     enabled: bool,
     definition: AuthenticationProviderDefinition,
@@ -262,24 +276,19 @@ impl StorageAuthenticationProvider {
         })
     }
 
-    fn validate_name(name: String) -> Result<String, StorageValidationError> {
-        if name == "local" {
+    fn validate_name(name: String) -> Result<IdentityScopeName, StorageValidationError> {
+        let name = IdentityScopeName::new(name)
+            .map_err(|error| StorageValidationError::invalid(error.to_string()))?;
+        if name.as_str() == LOCAL_IDENTITY_SCOPE {
             return Err(StorageValidationError::invalid(
                 "Local authentication cannot be replaced or disabled",
-            ));
-        }
-        // Keep names compatible with hubuum_auth_core::IdentityScopeName so
-        // existing deployment providers can retain their identity namespace.
-        if name.trim().is_empty() || name.trim() != name {
-            return Err(StorageValidationError::invalid(
-                "Authentication provider names must be non-empty without leading or trailing whitespace",
             ));
         }
         Ok(name)
     }
 
     pub fn name(&self) -> &str {
-        &self.name
+        self.name.as_str()
     }
 
     pub const fn kind(&self) -> StorageAuthenticationProviderKind {
@@ -447,7 +456,7 @@ impl StorageRuntimeSettingsValue {
                         .providers()
                         .iter()
                         .map(|provider| AuthenticationProviderDocument {
-                            name: provider.name.clone(),
+                            name: provider.name().to_string(),
                             kind: provider.kind().as_str().to_string(),
                             source: if provider.configuration().is_some() {
                                 AuthenticationProviderSource::Runtime

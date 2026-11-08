@@ -417,7 +417,7 @@ fn page_limits_resolve_defaults_and_clamp(
 }
 
 #[rstest]
-#[case(0, 100, "default_page_limit must be greater than 0")]
+#[case(0, 100, "default_page_limit must be between 1 and 4294967295")]
 #[case(10, 0, "max_page_limit must be greater than 0")]
 #[case(
     101,

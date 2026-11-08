@@ -2,6 +2,17 @@
   "schema_version": 1,
   "exceptions": [
     {
+      "id": "shared-pagination-default-validation",
+      "baseline": "v0.0.21",
+      "expires": "2027-03-31",
+      "reason": "Deployment and runtime configuration now share the same default-page-size validator, including the runtime storage format's u32 range.",
+      "migration": "Reduce HUBUUM_DEFAULT_PAGE_LIMIT values above 4294967295 before upgrading and keep the default no greater than HUBUUM_MAX_PAGE_LIMIT.",
+      "changelog_entry": "**Breaking for deployments with oversized pagination defaults:** deployment",
+      "fingerprints": [
+        "4e08f20deffe"
+      ]
+    },
+    {
       "id": "webhook-notification-backup-format-7",
       "baseline": "v0.0.16",
       "expires": "2027-01-31",

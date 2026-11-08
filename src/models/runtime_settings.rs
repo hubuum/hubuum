@@ -115,7 +115,7 @@ pub struct PaginationSettingsRequest {
     pub expected_revision: ResourceRevision,
     /// Items returned when a request omits `limit`. Must not exceed the
     /// responding replica's deployment `max_page_limit`.
-    #[schema(minimum = 1)]
+    #[schema(minimum = 1, maximum = 4_294_967_295u64)]
     pub default_page_limit: u64,
 }
 
@@ -213,15 +213,11 @@ impl PaginationSettingsRequest {
         ceiling: PageLimits,
         context: EventContext,
     ) -> Result<StorageRuntimeSettingsUpdate, ApiError> {
-        let maximum = ceiling.maximum_limit();
-        if usize::try_from(self.default_page_limit).map_or(true, |limit| limit > maximum) {
-            return Err(ApiError::BadRequest(format!(
-                "default_page_limit ({}) must be less than or equal to the deployment max_page_limit ({maximum})",
-                self.default_page_limit
-            )));
-        }
-        let policy = StoragePaginationPolicy::try_new(self.default_page_limit)
-            .map_err(|error| ApiError::BadRequest(error.message().to_string()))?;
+        let policy = StoragePaginationPolicy::try_new_with_ceiling(
+            self.default_page_limit,
+            ceiling.maximum_limit() as u64,
+        )
+        .map_err(|error| ApiError::BadRequest(error.message().to_string()))?;
         Ok(StorageRuntimeSettingsUpdate::new(
             StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Pagination(
                 policy,

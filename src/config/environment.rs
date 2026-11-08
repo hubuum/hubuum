@@ -743,7 +743,11 @@ pub(crate) const CONFIGURATION_BOUNDS: &[ConfigurationBound] = &[
         "HUBUUM_LOGIN_RATE_LIMIT_VALKEY_IO_TIMEOUT_MS",
         login_rate_limit_valkey_io_timeout_ms
     ),
-    configuration_bound!("HUBUUM_DEFAULT_PAGE_LIMIT", default_page_limit),
+    configuration_bound!(
+        "HUBUUM_DEFAULT_PAGE_LIMIT",
+        default_page_limit,
+        maximum = u32::MAX as i64
+    ),
     configuration_bound!("HUBUUM_MAX_PAGE_LIMIT", max_page_limit),
     configuration_bound!(
         "HUBUUM_MAX_TRANSITIVE_DEPTH",

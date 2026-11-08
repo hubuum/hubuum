@@ -35250,6 +35250,7 @@
             "type": "integer",
             "format": "int64",
             "description": "Items returned when a request omits `limit`. Must not exceed the\nresponding replica's deployment `max_page_limit`.",
+            "maximum": 4294967295,
             "minimum": 1
           },
           "expected_revision": {

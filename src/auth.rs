@@ -1748,6 +1748,54 @@ mod tests {
     }
 
     #[rstest]
+    #[case::dotted_scope("scope", serde_json::json!("corp.example.org"), true)]
+    #[case::unicode_scope("scope", serde_json::json!("Bedrift Øst"), true)]
+    #[case::long_scope("scope", serde_json::json!("x".repeat(129)), true)]
+    #[case::empty_scope("scope", serde_json::json!(""), false)]
+    #[case::padded_scope("scope", serde_json::json!(" corporate "), false)]
+    #[case::reserved_scope("scope", serde_json::json!("local"), false)]
+    #[case::url_scheme("url", serde_json::json!("https://ldap.example.org"), false)]
+    #[case::embedded_credentials("url", serde_json::json!("ldap://user:pass@ldap.example.org"), false)]
+    #[case::empty_filter("user_filter", serde_json::json!(""), false)]
+    #[case::filter_placeholder("user_filter", serde_json::json!("(uid=alice)"), false)]
+    #[case::connect_timeout("connect_timeout_seconds", serde_json::json!(0), false)]
+    #[case::operation_timeout("operation_timeout_seconds", serde_json::json!(0), false)]
+    #[case::incomplete_bind("bind_dn", serde_json::json!("cn=service,dc=example,dc=org"), false)]
+    #[case::refresh_ttl("refresh_ttl_seconds", serde_json::json!(0), false)]
+    #[case::stale_before_refresh("max_stale_seconds", serde_json::json!(1), false)]
+    #[tokio::test]
+    async fn deployment_and_runtime_share_provider_validation(
+        #[case] field: &str,
+        #[case] value: serde_json::Value,
+        #[case] accepted: bool,
+    ) {
+        let mut configuration = serde_json::to_value(ldap_scope("corporate")).unwrap();
+        configuration[field] = value;
+        let configured: ConfiguredLdapScope =
+            serde_json::from_value(configuration.clone()).unwrap();
+        let name = configured.ldap.scope.clone();
+        let deployment = AuthProvidersConfig {
+            ldap: vec![configured],
+        };
+        let deployment_accepted = AuthProviderRegistry::from_config(deployment.clone()).is_ok();
+        let runtime_accepted = protect_runtime_authentication_settings(
+            vec![RuntimeAuthenticationProviderRequest::Runtime {
+                name,
+                kind: crate::models::runtime_settings::RuntimeAuthenticationProviderKind::Ldap,
+                enabled: false,
+                configuration,
+                adopt_deployment: true,
+            }],
+            None,
+            &deployment,
+        )
+        .await
+        .is_ok();
+
+        assert_eq!([deployment_accepted, runtime_accepted], [accepted; 2]);
+    }
+
+    #[rstest]
     #[case::enabled(true)]
     #[case::disabled(false)]
     #[tokio::test]

@@ -168,7 +168,9 @@ restore effects it already had.
 
 Requests are validated before anything is stored. Unknown fields, wrong types,
 non-positive values, and inconsistent combinations are rejected with `400 Bad
-Request`. `default_page_limit` must be between 1 and the responding replica's
+Request`. Deployment and runtime configuration share the same LDAP definition,
+identity-scope-name, and pagination validators. `default_page_limit` must be
+between 1 and 4,294,967,295 and cannot exceed the responding replica's
 `HUBUUM_MAX_PAGE_LIMIT`. Query-observation values must fit the responding
 replica's ceilings: `sample_every` must be at least
 `HUBUUM_QUERY_OBSERVATIONS_MIN_SAMPLE_EVERY`, and each capacity/retention value

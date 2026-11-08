@@ -30,7 +30,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Administrators can select authentication providers and the authorization
   backend at runtime. Existing LDAP identity-scope names, including names with
   dots, Unicode, or more than 128 bytes, remain valid for deployment references
-  and runtime adoption. LDAP provider updates are validated and connection-tested
+  and runtime adoption. Deployment and runtime providers share identity-scope
+  validation. LDAP provider updates are validated and connection-tested
   before persistence; bind passwords are encrypted at rest using a
   key identified by an immutable secret reference. New requests use
   applied settings, and authorization initialization failures fail closed.
@@ -39,6 +40,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   [runtime settings](docs/runtime_settings.md).
 
 ### Changed
+
+- **Breaking for deployments with oversized pagination defaults:** deployment
+  configuration and runtime settings now share default-page-size validation.
+  `HUBUUM_DEFAULT_PAGE_LIMIT` must be between 1 and 4,294,967,295 and cannot exceed
+  `HUBUUM_MAX_PAGE_LIMIT`. Reduce larger configured defaults before upgrading.
 
 - **Breaking for unreleased runtime-settings clients:** authentication provider
   requests now require explicit `source` and `enabled` fields. Deployment

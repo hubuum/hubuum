@@ -76,21 +76,13 @@ pub struct PageLimits {
 
 impl PageLimits {
     pub fn new(default: usize, maximum: usize) -> Result<Self, ApiError> {
-        if default == 0 {
-            return Err(ApiError::BadRequest(
-                "default_page_limit must be greater than 0".to_string(),
-            ));
-        }
         if maximum == 0 {
             return Err(ApiError::BadRequest(
                 "max_page_limit must be greater than 0".to_string(),
             ));
         }
-        if default > maximum {
-            return Err(ApiError::BadRequest(format!(
-                "default_page_limit ({default}) must be less than or equal to max_page_limit ({maximum})"
-            )));
-        }
+        StoragePaginationPolicy::try_new_with_ceiling(default as u64, maximum as u64)
+            .map_err(|error| ApiError::BadRequest(error.message().to_string()))?;
 
         Ok(Self { default, maximum })
     }
