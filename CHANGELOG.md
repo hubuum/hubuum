@@ -326,6 +326,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- History inspection and policy previews preserve retained dependency blockers.
+  Memory expiry admission counts skipped source rows against its scan limits,
+  and concurrent policy updates cannot cause a false recovery-required status
+  in policy listings.
+
 - Task workers cooperatively stop and drain execution during shutdown or lease
   loss. Cancelled and timed-out backup/export attempts can confirm exact staging
   abort without reopening productive admission. Offline recovery retires local

@@ -23,7 +23,9 @@ struct Fixture {
 }
 impl Fixture {
     async fn new() -> Self {
-        let storage = StorageHandle::memory();
+        Self::with_storage(StorageHandle::memory()).await
+    }
+    async fn with_storage(storage: StorageHandle) -> Self {
         let context = AppContext::new(
             storage.clone(),
             Arc::new(LocalPermissionBackend::new(storage, "admin".into())),
@@ -96,6 +98,104 @@ impl Fixture {
         )
         .unwrap()
     }
+}
+
+#[derive(Default)]
+struct ApplyOnCapture {
+    action: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+impl hubuum_storage_core::StorageObserver for ApplyOnCapture {
+    fn operation_finished(&self, observation: &hubuum_storage_core::StorageObservation) {
+        if observation.result() == "ok"
+            && matches!(
+                observation.operation(),
+                "capture_history_lifecycle" | "capture_control_checkpoint"
+            )
+        {
+            let action = self.action.lock().unwrap().take();
+            if let Some(action) = action {
+                // The native capture has returned; another request may now
+                // attempt to commit and publish before list resumes.
+                std::thread::spawn(action).join().unwrap();
+            }
+        }
+    }
+}
+
+#[actix_web::test]
+async fn policy_listing_serializes_capture_with_checkpoint_publication() {
+    let observer = Arc::new(ApplyOnCapture::default());
+    let storage = StorageHandle::from_registered_backend_with_observer(
+        hubuum_storage_memory::MemoryStorage::new(),
+        observer.clone(),
+    );
+    let fixture = Fixture::with_storage(storage).await;
+    let proposal = HistoryPolicyChange::new(
+        fixture.proposal().key(),
+        HistoryPolicyRevision::new(0).unwrap(),
+        HistoryPolicyBinding::Indefinite,
+        HistoryPolicyApplication::Prospective,
+    )
+    .unwrap();
+    let initial = apply(
+        &fixture.context,
+        &fixture.admin,
+        &fixture.options,
+        HistoryPolicyApplyRequest::new(proposal, None),
+    )
+    .await
+    .unwrap();
+    let context = fixture.context.clone();
+    let user = fixture.admin.user.clone();
+    let options = fixture.options.clone();
+    let next = HistoryPolicyChange::new(
+        initial.proposal().key(),
+        initial.revision(),
+        HistoryPolicyBinding::DisabledExpiry,
+        HistoryPolicyApplication::Prospective,
+    )
+    .unwrap();
+    let refused = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let attempted = refused.clone();
+    *observer.action.lock().unwrap() = Some(Box::new(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = runtime.block_on(apply(
+            &context,
+            &AdminAccess { user },
+            &options,
+            HistoryPolicyApplyRequest::new(next, None),
+        ));
+        attempted.store(
+            matches!(result, Err(ApiError::ServiceUnavailable(_))),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+    }));
+    let page = list(
+        &fixture.context,
+        &fixture.admin,
+        HistoryPolicyListRequest {
+            after_revision: HistoryPolicyRevision::new(0).unwrap(),
+            limit: 100,
+        },
+        &fixture.options,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        page.protection,
+        HistoryAuthorityProtection::Protected
+    ));
+    assert_eq!(
+        page.protected_authority_revision,
+        Some(page.authority_revision)
+    );
+    assert!(
+        refused.load(std::sync::atomic::Ordering::SeqCst),
+        "Concurrent checkpoint publication must remain excluded during capture"
+    );
 }
 impl Drop for Fixture {
     fn drop(&mut self) {

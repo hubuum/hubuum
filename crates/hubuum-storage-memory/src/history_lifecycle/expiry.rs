@@ -37,12 +37,30 @@ pub(super) async fn admit(
         StorageError::conflict("Expiry authority changed or batch already admitted")
     })?;
     let family = request.scan().key().family();
-    let mut scanned = 0;
     let mut input_bytes = 0;
     let mut metadata_bytes = 0;
-    let mut consider = |row: StorageBackupRow,
-                        facts: Option<HistoryObjectAuthorizationFacts>|
+    let mut consider = |row: &StorageBackupRow,
+                        source: Option<&MemoryHistoryEntry>|
      -> Result<bool, StorageError> {
+        let Some(bytes) = bounded_encoded_bytes(
+            row,
+            u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES) - input_bytes,
+        )?
+        else {
+            return Ok(false);
+        };
+        input_bytes += bytes;
+        let raw = row.get("logical_identity").filter(|value| !value.is_null());
+        if let Some(raw) = raw {
+            let Some(bytes) = bounded_encoded_bytes(
+                raw,
+                HistoryLifecycleScan::MAX_INPUT_BYTES as u64 - metadata_bytes,
+            )?
+            else {
+                return Ok(false);
+            };
+            metadata_bytes += bytes;
+        }
         let time = |field| {
             row.get(field)
                 .filter(|value| !value.is_null())
@@ -72,29 +90,6 @@ pub(super) async fn admit(
         {
             return Ok(true);
         }
-        if family == StorageIdentityHistoryKind::ClassSchema {
-            let source_class = evidence.references().get("/class_id");
-            for &(class_id, revision) in state.schema_revisions.keys() {
-                let current =
-                    state
-                        .logical_identities
-                        .record_ref(StorageIdentityTarget::SchemaRevision {
-                            class_id: ClassId::new(class_id).map_err(|error| {
-                                StorageError::backend_failure(error.to_string())
-                            })?,
-                            revision: SchemaRevision::new(revision).map_err(|error| {
-                                StorageError::backend_failure(error.to_string())
-                            })?,
-                        })?;
-                if current
-                    .references()
-                    .get("/class_id")
-                    .is_none_or(|class| Some(class) == source_class)
-                {
-                    return Ok(true);
-                }
-            }
-        }
         let anchor = if family == StorageIdentityHistoryKind::ClassSchema {
             HistoryRetentionAnchor::SchemaEvent(from)
         } else if deleted {
@@ -102,58 +97,45 @@ pub(super) async fn admit(
         } else {
             HistoryRetentionAnchor::Closed(until.expect("closed above"))
         };
-        let Some(mut candidate) =
-            HistoryExpiryCandidate::from_evidence(family, &evidence, Some(anchor), false)
-                .map_err(invalid_contract_value)?
+        let Some(mut candidate) = HistoryExpiryCandidate::from_evidence(
+            family,
+            &evidence,
+            Some(anchor),
+            state.history_candidate_has_dependency(family, &evidence),
+        )
+        .map_err(invalid_contract_value)?
         else {
             return Ok(true);
         };
         if !request.scan().includes(&candidate) {
             return Ok(true);
         }
-        if scanned == request.scan().limit() {
-            return Ok(false);
-        }
-        scanned += 1;
-        let bytes = encoded_bytes(&row)?;
-        input_bytes += bytes;
-        metadata_bytes += encoded_bytes(raw)?
-            + facts
-                .as_ref()
-                .map_or(0, |facts| facts.encoded_bytes().value() as u64);
-        if input_bytes > u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES)
-            || metadata_bytes > HistoryLifecycleScan::MAX_INPUT_BYTES as u64
-        {
-            return Ok(false);
-        }
         candidate = candidate
             .with_native_interval(from, until)
             .map_err(invalid_contract_value)?;
-        if let Some(facts) = facts {
+        if let Some(source) = source
+            && let MemoryHistoryValue::Object(value) = &source.value
+        {
+            // Capture authorization only after bounded identity/scope selection.
+            // Missing older facts stay unresolved instead of poisoning a batch.
+            if candidate.attributions().is_empty() || evidence.has_unknown_restore_source() {
+                return Ok(true);
+            }
+            let facts = HistoryObjectAuthorizationFacts::capture(
+                StorageObjectHistoryRecord::try_new(value.clone(), source.metadata()?)
+                    .map_err(invalid_contract_value)?,
+            )
+            .map_err(invalid_contract_value)?;
+            let bytes = u64::from(facts.encoded_bytes().value());
+            if bytes > HistoryLifecycleScan::MAX_INPUT_BYTES as u64 - metadata_bytes {
+                return Ok(false);
+            }
+            metadata_bytes += bytes;
             candidate = candidate
                 .with_object_authorization(facts)
                 .map_err(invalid_contract_value)?;
         }
         let size = HistoryExpiryInputBytes::new(bytes).map_err(invalid_contract_value)?;
-        let mut probe = request
-            .selection(&snapshot)
-            .map_err(invalid_contract_value)?;
-        if !matches!(
-            probe
-                .consider(candidate.clone(), size, &[])
-                .map_err(invalid_contract_value)?,
-            HistoryExpirySelectionOutcome::Selected
-        ) {
-            return Ok(true);
-        }
-        let journal = HistoryExpiryJournal::default()
-            .admit(probe.finish().map_err(invalid_contract_value)?)
-            .map_err(invalid_contract_value)?;
-        // ponytail: at most 1000 candidates x 1000 protected copies in this
-        // logical adapter; index dependency evidence if measured contention warrants it.
-        if state.require_history_current_copies_safe(&journal).is_err() {
-            return Ok(true);
-        }
         Ok(!matches!(
             selection
                 .consider(candidate, size, &[])
@@ -161,21 +143,36 @@ pub(super) async fn admit(
             HistoryExpirySelectionOutcome::BudgetReached
         ))
     };
+    // Bound examined source rows before family, closure, scope, identity, visibility
+    // or dependency filtering. Skipping an unselectable source never replenishes this budget.
     match family {
         StorageIdentityHistoryKind::ClassSchema => {
-            for row in &state.schema_history {
-                if !consider(row.clone(), None)? {
+            for row in state
+                .schema_history
+                .iter()
+                .take(request.scan().limit() as usize)
+            {
+                if !consider(row, None)? {
                     break;
                 }
             }
         }
         StorageIdentityHistoryKind::ComputedDefinitions => {
-            for row in &state.computed_history {
+            for row in state
+                .computed_history
+                .iter()
+                .take(request.scan().limit() as usize)
+            {
+                if bounded_encoded_bytes(row, u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES))?
+                    .is_none()
+                {
+                    break;
+                }
                 let raw = serde_json::to_value(row).map_err(|_| {
                     StorageError::backend_failure("Cannot encode computed expiry source")
                 })?;
                 if !consider(
-                    StorageBackupRow::try_from_value(raw).map_err(invalid_contract_value)?,
+                    &StorageBackupRow::try_from_value(raw).map_err(invalid_contract_value)?,
                     None,
                 )? {
                     break;
@@ -188,29 +185,26 @@ pub(super) async fn admit(
             } else {
                 StorageBackupHistorySection::ObjectRelationHistory
             };
-            for row in state.relation_history.get(&section).into_iter().flatten() {
-                if !consider(row.clone(), None)? {
+            for row in state
+                .relation_history
+                .get(&section)
+                .into_iter()
+                .flatten()
+                .take(request.scan().limit() as usize)
+            {
+                if !consider(row, None)? {
                     break;
                 }
             }
         }
         _ => {
-            for row in state.history.iter().filter(|row| row.family() == family) {
-                if row.valid_to.is_none() && row.operation != StorageHistoryOperation::Delete {
-                    continue;
-                }
-                let facts = if let MemoryHistoryValue::Object(value) = &row.value {
-                    Some(
-                        HistoryObjectAuthorizationFacts::capture(
-                            StorageObjectHistoryRecord::try_new(value.clone(), row.metadata()?)
-                                .map_err(invalid_contract_value)?,
-                        )
-                        .map_err(invalid_contract_value)?,
-                    )
-                } else {
-                    None
-                };
-                if !consider(row.backup_history_row()?.1, facts)? {
+            for row in state
+                .history
+                .iter()
+                .take(request.scan().limit() as usize)
+                .filter(|row| row.family() == family)
+            {
+                if !consider(&row.backup_history_row()?.1, Some(row))? {
                     break;
                 }
             }
@@ -233,32 +227,214 @@ pub(super) async fn admit(
     Ok(Some(manifest))
 }
 
-fn encoded_bytes(value: &impl serde::Serialize) -> Result<u64, StorageError> {
-    struct Counter(u64);
-    impl std::io::Write for Counter {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0 += bytes.len() as u64;
-            Ok(bytes.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
+fn bounded_encoded_bytes(
+    value: &impl serde::Serialize,
+    limit: u64,
+) -> Result<Option<u64>, StorageError> {
+    // Reuse the existing bounded JSON writer without allocating a payload copy.
+    // No valid JSON value can fit a zero-byte remainder.
+    if limit == 0 {
+        return Ok(None);
     }
-    let mut count = Counter(0);
-    serde_json::to_writer(&mut count, value)
-        .map_err(|_| StorageError::backend_failure("Cannot measure native expiry source"))?;
-    Ok(count.0)
+    let budget = StorageBackupBudget::new(limit as usize, 1).map_err(invalid_contract_value)?;
+    match budget.serialize_into(value, std::io::sink()) {
+        Ok(bytes) => Ok(Some(bytes as u64)),
+        Err(error) if error.kind() == StorageErrorKind::InputTooLarge => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    async fn schema_class(storage: &MemoryStorage, name: &str) -> StorageClass {
+        storage
+            .create_class(
+                StorageClassCreate::builder(name, CollectionId::new(1).unwrap(), "").build(),
+                &EventContext::system(),
+            )
+            .await
+            .unwrap()
+            .into_value()
+    }
+
+    async fn delete_schema_class(storage: &MemoryStorage, class: &StorageClass) {
+        let resolved = storage
+            .resolve_class(StorageClassSelector::Id(class.id()))
+            .await
+            .unwrap();
+        storage
+            .delete_class(&resolved, &EventContext::system())
+            .await
+            .unwrap()
+            .into_value();
+    }
+
     #[rstest::rstest]
-    #[case::eligible(false)]
-    #[case::held(true)]
+    #[case::retained(true)]
+    #[case::released(false)]
     #[tokio::test]
-    async fn native_selection_retains_only_currently_eligible_membership(#[case] held: bool) {
+    async fn inspection_preserves_schema_revision_dependency(#[case] retained: bool) {
+        let storage = MemoryStorage::new();
+        let class = schema_class(&storage, "schema dependency").await;
+        if !retained {
+            delete_schema_class(&storage, &class).await;
+        }
+        let scan = HistoryLifecycleScan::new(
+            HistoryPolicyKey::new(
+                StorageIdentityHistoryKind::ClassSchema,
+                HistoryPolicyScope::Deployment,
+            )
+            .unwrap(),
+            1,
+        )
+        .unwrap();
+        let observed = storage.scan_history_lifecycle(scan).await.unwrap();
+        let decision = storage
+            .capture_history_lifecycle()
+            .await
+            .unwrap()
+            .control()
+            .authority()
+            .inspect(&observed.candidates()[0], Utc::now(), &[])
+            .unwrap();
+        assert_eq!(
+            decision.blocker(),
+            Some(if retained {
+                HistoryExpiryBlocker::RetainedDependency
+            } else {
+                HistoryExpiryBlocker::ExpiryDisabled
+            })
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::protected("protected")]
+    #[case::other_scope("other_scope")]
+    #[case::missing_identity("missing_identity")]
+    #[tokio::test]
+    async fn admission_counts_skipped_source_rows(#[case] reason: &str) {
+        let storage = MemoryStorage::new();
+        let first = schema_class(&storage, "first source").await;
+        let second = schema_class(&storage, "second source").await;
+        let scope = if reason == "other_scope" {
+            let evidence = storage
+                .resolve_logical_identity(StorageIdentityTarget::Resource {
+                    kind: StorageIdentityResourceKind::Class,
+                    id: second.id().into(),
+                })
+                .await
+                .unwrap();
+            HistoryPolicyScope::Class {
+                identity: evidence
+                    .subject()
+                    .unwrap()
+                    .record_identity()
+                    .unwrap()
+                    .resource(),
+            }
+        } else {
+            HistoryPolicyScope::Deployment
+        };
+        let key = HistoryPolicyKey::new(StorageIdentityHistoryKind::ClassSchema, scope).unwrap();
+        let before = storage.capture_history_lifecycle().await.unwrap();
+        let change = HistoryPolicyChange::new(
+            key,
+            HistoryPolicyRevision::new(0).unwrap(),
+            HistoryPolicyBinding::Expire {
+                trigger: HistoryExpiryTrigger::Age {
+                    age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+                    deleted_age_seconds: None,
+                },
+                minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+            },
+            HistoryPolicyApplication::Prospective,
+        )
+        .unwrap();
+        storage
+            .commit_history_lifecycle(
+                before
+                    .control()
+                    .apply(
+                        HistoryPolicyApplyRequest::new(change, None),
+                        PrincipalIdentity::generate(),
+                        before.fence(),
+                        before.observed_at() - Duration::seconds(1),
+                    )
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        delete_schema_class(&storage, &second).await;
+        if reason == "other_scope" {
+            delete_schema_class(&storage, &first).await;
+        } else if reason == "missing_identity" {
+            // A legacy source is valid retained input, but cannot be selected.
+            let mut state = storage.state.write_control().await;
+            let mut fields = state.schema_history[0].fields().clone();
+            fields.insert("logical_identity".into(), Value::Null);
+            state.schema_history[0] =
+                StorageBackupRow::try_from_value(Value::Object(fields)).unwrap();
+        }
+        let runtime = storage.register_history_runtime(None).await.unwrap();
+        let application = storage
+            .capture_application_execution(Some(runtime.owner()))
+            .await
+            .unwrap();
+        let snapshot = storage.capture_history_lifecycle().await.unwrap();
+        let request = |limit| {
+            HistoryExpiryAdmissionRequest::new(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                HistoryExpiryOrigin::Manual {
+                    principal: PrincipalIdentity::generate(),
+                },
+                HistoryLifecycleScan::new(key, limit).unwrap(),
+                snapshot.fence(),
+            )
+            .unwrap()
+        };
+        let scope = StorageExecutionScope::default().with_application_access(application);
+        let bounded = storage
+            .run_in_scope(scope.clone(), storage.admit_history_expiry(request(1)))
+            .await
+            .unwrap();
+        assert!(
+            bounded.is_none(),
+            "A skipped first row must still consume the scan limit"
+        );
+        let wider = storage
+            .run_in_scope(scope, storage.admit_history_expiry(request(100)))
+            .await
+            .unwrap();
+        assert!(
+            wider.is_some(),
+            "The wider scan must reach the eligible second source"
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::exact(5, Some(5))]
+    #[case::over(4, None)]
+    #[test]
+    fn native_input_measurement_stops_at_its_bound(
+        #[case] limit: u64,
+        #[case] expected: Option<u64>,
+    ) {
+        assert_eq!(bounded_encoded_bytes(&"abc", limit).unwrap(), expected);
+    }
+
+    #[rstest::rstest]
+    #[case::eligible(false, 1000, true)]
+    #[case::held(true, 1000, false)]
+    #[case::open_prefix(false, 1, false)]
+    #[tokio::test]
+    async fn native_selection_retains_only_currently_eligible_membership(
+        #[case] held: bool,
+        #[case] limit: u32,
+        #[case] expected: bool,
+    ) {
         let storage = MemoryStorage::new();
         let principal = PrincipalIdentity::generate();
         let collection = storage
@@ -360,7 +536,7 @@ mod tests {
             Uuid::new_v4(),
             Uuid::new_v4(),
             HistoryExpiryOrigin::Manual { principal },
-            HistoryLifecycleScan::new(key, 1).unwrap(),
+            HistoryLifecycleScan::new(key, limit).unwrap(),
             before.fence(),
         )
         .unwrap();
@@ -371,7 +547,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(selected.is_some(), !held);
+        assert_eq!(selected.is_some(), expected);
         let state = storage.state.read_control().await;
         if let Some(manifest) = selected {
             assert_eq!(

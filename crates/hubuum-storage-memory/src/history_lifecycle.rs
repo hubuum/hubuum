@@ -311,7 +311,10 @@ impl MemoryState {
     /// Never equate history-query filtering with restored-image exposure proof.
     /// Call under the state write lock; no current/open copy is removed here.
     fn check_history_exposure_copy(
-        journal: &HistoryExpiryJournal,
+        check: &mut impl FnMut(
+            StorageIdentityHistoryKind,
+            &StorageIdentityEvidence,
+        ) -> Result<(), StorageError>,
         budget: &mut HistoryRecoveryExposureBudget,
         family: StorageIdentityHistoryKind,
         evidence: &StorageIdentityEvidence,
@@ -319,12 +322,7 @@ impl MemoryState {
         budget
             .observe_evidence(evidence)
             .map_err(|error| StorageError::unavailable(error.to_string()))?;
-        if journal.excludes_evidence(family, Some(evidence)) {
-            return Err(StorageError::unavailable(
-                "Current or protected-open copy carries expired or unresolved history ancestry; keep quarantine for explicit reconciliation",
-            ));
-        }
-        Ok(())
+        check(family, evidence)
     }
 
     pub(super) fn require_history_exposure_safe(&self) -> Result<(), StorageError> {
@@ -349,9 +347,69 @@ impl MemoryState {
             .flat_map(|intent| intent.manifest().members())
             .map(HistoryExpiryMember::family)
             .collect::<BTreeSet<_>>();
+        self.require_history_copies_safe(&families, |family, evidence| {
+            if journal.excludes_evidence(family, Some(evidence)) {
+                return Err(StorageError::unavailable(
+                    "Current or protected-open copy carries expired or unresolved history ancestry; keep quarantine for explicit reconciliation",
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    /// Reuse the same bounded current/open inventory for admission, inspection
+    /// and recovery. Incomplete dependency evidence always protects the copy.
+    fn history_candidate_has_dependency(
+        &self,
+        family: StorageIdentityHistoryKind,
+        evidence: &StorageIdentityEvidence,
+    ) -> bool {
+        // ponytail: up to 1000 candidates x 1000 inventory rows; index
+        // dependency identities if measured contention warrants it.
+        let Some(target) = evidence
+            .subject()
+            .and_then(|subject| subject.record_identity())
+        else {
+            return true;
+        };
+        self.require_history_copies_safe(&BTreeSet::from([family]), |family, copy| {
+            let dependent = if family == StorageIdentityHistoryKind::ClassSchema {
+                copy.references()
+                    .get("/class_id")
+                    .is_none_or(|class| Some(class) == evidence.references().get("/class_id"))
+            } else {
+                copy.subject()
+                    .and_then(|subject| subject.record_identity())
+                    .is_none_or(|current| {
+                        current.resource() == target.resource()
+                            && (current.version() == target.version()
+                                || copy.restore_source_versions().contains(target.version())
+                                || copy.has_unknown_restore_source()
+                                || !self.history_identity_visible(family, Some(copy)))
+                    })
+            };
+            if dependent {
+                Err(StorageError::unavailable(
+                    "History version has a retained dependency",
+                ))
+            } else {
+                Ok(())
+            }
+        })
+        .is_err()
+    }
+
+    fn require_history_copies_safe(
+        &self,
+        families: &BTreeSet<StorageIdentityHistoryKind>,
+        mut check: impl FnMut(
+            StorageIdentityHistoryKind,
+            &StorageIdentityEvidence,
+        ) -> Result<(), StorageError>,
+    ) -> Result<(), StorageError> {
         let mut budget = HistoryRecoveryExposureBudget::default();
         use StorageIdentityHistoryKind as Family;
-        for family in &families {
+        for family in families {
             let (kind, ids): (
                 StorageIdentityResourceKind,
                 Box<dyn Iterator<Item = i32> + '_>,
@@ -395,20 +453,34 @@ impl MemoryState {
                                 StorageError::backend_failure(error.to_string())
                             })?,
                         })?;
-                Self::check_history_exposure_copy(journal, &mut budget, *family, evidence)?;
+                Self::check_history_exposure_copy(&mut check, &mut budget, *family, evidence)?;
             }
         }
-        for entry in &self.history {
-            if families.contains(&entry.family())
-                && entry.valid_to.is_none()
-                && entry.operation != StorageHistoryOperation::Delete
-            {
-                Self::check_history_exposure_copy(
-                    journal,
-                    &mut budget,
-                    entry.family(),
-                    &entry.logical_identity,
-                )?;
+        if families.iter().any(|family| {
+            !matches!(
+                family,
+                Family::ClassSchema
+                    | Family::ComputedDefinitions
+                    | Family::ClassRelation
+                    | Family::ObjectRelation
+            )
+        }) {
+            for entry in &self.history {
+                if families.contains(&entry.family())
+                    && entry.valid_to.is_none()
+                    && entry.operation != StorageHistoryOperation::Delete
+                {
+                    Self::check_history_exposure_copy(
+                        &mut check,
+                        &mut budget,
+                        entry.family(),
+                        &entry.logical_identity,
+                    )?;
+                } else {
+                    budget
+                        .observe(0)
+                        .map_err(|error| StorageError::unavailable(error.to_string()))?;
+                }
             }
         }
         for (section, family) in [
@@ -440,6 +512,9 @@ impl MemoryState {
                     ));
                 }
                 if !until.is_null() || operation == "delete" {
+                    budget
+                        .observe(0)
+                        .map_err(|error| StorageError::unavailable(error.to_string()))?;
                     continue;
                 }
                 let raw = row.get("logical_identity").ok_or_else(|| {
@@ -454,11 +529,7 @@ impl MemoryState {
                             "Invalid open-copy correspondence; keep quarantine",
                         )
                     })?;
-                if journal.excludes_evidence(family, Some(&evidence)) {
-                    return Err(StorageError::unavailable(
-                        "Protected-open copy carries expired or unresolved history ancestry; keep quarantine for explicit reconciliation",
-                    ));
-                }
+                check(family, &evidence)?;
             }
         }
         if families.contains(&Family::ComputedDefinitions) {
@@ -470,11 +541,15 @@ impl MemoryState {
                         )
                     })?;
                     Self::check_history_exposure_copy(
-                        journal,
+                        &mut check,
                         &mut budget,
                         Family::ComputedDefinitions,
                         evidence,
                     )?;
+                } else {
+                    budget
+                        .observe(0)
+                        .map_err(|error| StorageError::unavailable(error.to_string()))?;
                 }
             }
         }
@@ -491,7 +566,7 @@ impl MemoryState {
                             })?,
                         })?;
                 Self::check_history_exposure_copy(
-                    journal,
+                    &mut check,
                     &mut budget,
                     Family::ClassSchema,
                     evidence,
@@ -2232,8 +2307,13 @@ impl MemoryState {
                     exhausted = true;
                     return Ok(false);
                 }
-                match HistoryExpiryCandidate::from_evidence(family, evidence, anchor, false)
-                    .map_err(invalid_contract_value)?
+                match HistoryExpiryCandidate::from_evidence(
+                    family,
+                    evidence,
+                    anchor,
+                    self.history_candidate_has_dependency(family, evidence),
+                )
+                .map_err(invalid_contract_value)?
                 {
                     Some(candidate) if scan.includes(&candidate) => candidates.push(
                         candidate
@@ -3035,7 +3115,7 @@ mod online_read_tests {
             Uuid::new_v4(),
             manifest.run(),
             manifest.origin().clone(),
-            HistoryLifecycleScan::new(manifest.key(), 1).unwrap(),
+            HistoryLifecycleScan::new(manifest.key(), 1000).unwrap(),
             change.fence(),
         )
         .unwrap();

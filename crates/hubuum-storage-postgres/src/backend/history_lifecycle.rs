@@ -23,13 +23,16 @@ use crate::{PostgresConnection, PostgresStorageError};
 #[diesel::declare_sql_function]
 extern "SQL" {
     fn octet_length(value: Nullable<Text>) -> Nullable<Integer>;
+
+    #[sql_name = "public.hubuum_history_expiry_dependency"]
+    fn history_expiry_dependency(family: Text, identity: Nullable<Jsonb>) -> Bool;
 }
 
 // Keep table/column selection typed. Every family orders by its unique native
 // history key; the ordered SUM therefore has an unambiguous current-row bound.
 // PostgreSQL suppresses the over-budget suffix before transferring JSON to Rust.
 macro_rules! history_scan_query {
-    ($table:ident, $position:ident, $from:expr, $until:expr, $anchor:expr, $deleted:expr) => {{
+    ($family:expr, $table:ident, $position:ident, $from:expr, $until:expr, $anchor:expr, $deleted:expr) => {{
         let within_budget = || {
             let bytes = case_when(
                 $table::logical_identity.is_null(),
@@ -50,10 +53,16 @@ macro_rules! history_scan_query {
             $anchor,
             $deleted,
             within_budget(),
+            case_when(
+                within_budget(),
+                history_expiry_dependency($family, $table::logical_identity),
+            )
+            .otherwise(true),
         ))
     }};
-    ($table:ident) => {
+    ($family:expr, $table:ident) => {
         history_scan_query!(
+            $family,
             $table,
             history_id,
             $table::valid_from,
@@ -74,9 +83,15 @@ async fn history_scan_rows(
         export_templates_history, hubuumclass_history, hubuumclass_relation_history,
         hubuumobject_history, hubuumobject_relation_history, remote_targets_history,
     };
+    let family = serde_json::to_value(scan.key().family()).map_err(|_| {
+        PostgresStorageError::invalid_input("Cannot encode history inspection family")
+    })?;
+    let family = family
+        .as_str()
+        .ok_or_else(|| PostgresStorageError::invalid_input("Invalid history inspection family"))?;
     macro_rules! load {
         ($($query:tt)*) => {
-            history_scan_query!($($query)*).limit(i64::from(scan.limit()))
+            history_scan_query!(family, $($query)*).limit(i64::from(scan.limit()))
                 .load::<HistoryRow>(connection).await?
         };
     }
@@ -130,6 +145,7 @@ struct HistoryRow {
     anchor: Option<DateTime<Utc>>,
     deleted: bool,
     within_budget: bool,
+    dependency: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -642,7 +658,12 @@ impl HistoryLifecycleStorage for PostgresStorage {
                             HistoryRetentionAnchor::Closed(at)
                         }
                     });
-                    match HistoryExpiryCandidate::from_evidence(family, &evidence, anchor, false)? {
+                    match HistoryExpiryCandidate::from_evidence(
+                        family,
+                        &evidence,
+                        anchor,
+                        row.dependency,
+                    )? {
                         Some(candidate) if scan.includes(&candidate) => candidates
                             .push(candidate.with_native_interval(row.valid_from, row.valid_to)?),
                         Some(_) => {}
@@ -824,6 +845,41 @@ mod scan_tests {
     }
 
     #[rstest::rstest]
+    #[case::retained(true)]
+    #[case::released(false)]
+    #[tokio::test]
+    async fn inspection_preserves_native_schema_revision_dependency(#[case] retained: bool) {
+        let pool = integration_test_pool(1);
+        with_transaction(&pool, async |connection| {
+            connection.batch_execute("SAVEPOINT schema_dependency_fixture").await?;
+            let class = sql_query("INSERT INTO public.hubuumclass(name,description,collection_id) SELECT $1,'',id FROM public.collections WHERE parent_collection_id IS NULL RETURNING id")
+                .bind::<Text, _>(format!("schema_dependency_{}", Uuid::new_v4().simple()))
+                .get_result::<Created>(connection).await?;
+            if !retained {
+                sql_query("DELETE FROM public.hubuumclass WHERE id=$1").bind::<Integer, _>(class.id).execute(connection).await?;
+            }
+            use crate::schema::class_schema_history;
+            let row = history_scan_query!(
+                "class_schema", class_schema_history, id, class_schema_history::occurred_at,
+                None::<DateTime<Utc>>.into_sql::<Nullable<Timestamptz>>(),
+                class_schema_history::occurred_at.nullable(), false.into_sql::<Bool>()
+            ).filter(class_schema_history::class_id.eq(class.id))
+                .first::<HistoryRow>(connection).await?;
+            let evidence: StorageIdentityEvidence = serde_json::from_value(row.logical_identity.unwrap()).unwrap();
+            let candidate = HistoryExpiryCandidate::from_evidence(
+                StorageIdentityHistoryKind::ClassSchema, &evidence,
+                Some(HistoryRetentionAnchor::SchemaEvent(row.valid_from)), row.dependency,
+            )?.unwrap();
+            let decision = HistoryLifecycleAuthority::empty().inspect(&candidate, Utc::now(), &[])?;
+            assert_eq!(decision.blocker(), Some(if retained {
+                HistoryExpiryBlocker::RetainedDependency
+            } else { HistoryExpiryBlocker::ExpiryDisabled }));
+            connection.batch_execute("ROLLBACK TO SAVEPOINT schema_dependency_fixture").await?;
+            Ok::<_, PostgresStorageError>(())
+        }).await.unwrap();
+    }
+
+    #[rstest::rstest]
     #[case::single_oversized([1_048_576, 1, 1], 3, &[false, false, false])]
     #[case::cumulative_overflow([524_288, 524_288, 1], 3, &[true, false, false])]
     #[case::exact_byte_limit([1_048_574, 0, 0], 3, &[true, false, false])]
@@ -870,7 +926,7 @@ mod scan_tests {
                     .execute(connection)
                     .await?;
             }
-            history_scan_query!(history_scan_fixture)
+            history_scan_query!("collection", history_scan_fixture)
                 .limit(i64::from(row_limit))
                 .load::<HistoryRow>(connection)
                 .await
@@ -1077,7 +1133,7 @@ mod scan_tests {
                 .execute(connection)
                 .await?;
             use crate::schema::collections_history;
-            let tombstone = history_scan_query!(collections_history)
+            let tombstone = history_scan_query!("collection", collections_history)
                 .filter(collections_history::id.eq(created.id))
                 .filter(collections_history::op.eq("D"))
                 .get_result::<HistoryRow>(connection)

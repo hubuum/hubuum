@@ -205,10 +205,17 @@ pub(crate) async fn list(
             "Policy page limit must be 1..=100".into(),
         ));
     }
-    let snapshot = storage_handle(context).capture_history_lifecycle().await?;
-    let records = snapshot
-        .control()
-        .authority()
+    // Hold the independent writer session across a single composite primary
+    // capture, so a concurrent protected apply cannot make its checkpoint newer
+    // than the authority used for this page and its protection verdict.
+    let repository = if options.configured() {
+        Some(session(options).await)
+    } else {
+        None
+    };
+    let primary = storage_handle(context).capture_control_checkpoint().await?;
+    let authority = primary.history_lifecycle().cloned().unwrap_or_default();
+    let records = authority
         .policies()
         .records()
         .iter()
@@ -222,28 +229,22 @@ pub(crate) async fn list(
         .take(usize::from(query.limit))
         .collect::<Vec<_>>();
     let next_revision = more.then(|| records.last().expect("positive page limit").revision());
-    let authority = snapshot.control().authority();
-    let (protection, protected_authority_revision) = if !options.configured() {
-        (HistoryAuthorityProtection::Unconfigured, None)
-    } else {
-        match session(options).await {
-            Ok(session) => {
-                let primary = storage_handle(context).capture_control_checkpoint().await?;
-                let checkpoint = session.checkpoint();
-                let protected = checkpoint.history_lifecycle();
-                let revision = protected.map(|authority| authority.revision());
-                let state = if !primary.deletion().state().covers(checkpoint.state())
-                    || protected.is_some_and(|required| !authority.covers(required))
-                {
-                    HistoryAuthorityProtection::RecoveryRequired
-                } else if protected.is_some_and(|protected| protected.covers(authority)) {
-                    HistoryAuthorityProtection::Protected
-                } else {
-                    HistoryAuthorityProtection::Pending
-                };
-                (state, revision)
-            }
-            Err(_) => (HistoryAuthorityProtection::Unavailable, None),
+    let (protection, protected_authority_revision) = match &repository {
+        None => (HistoryAuthorityProtection::Unconfigured, None),
+        Some(Err(_)) => (HistoryAuthorityProtection::Unavailable, None),
+        Some(Ok(session)) => {
+            let checkpoint = session.checkpoint();
+            let protected = checkpoint.history_lifecycle();
+            let state = if !primary.deletion().state().covers(checkpoint.state())
+                || protected.is_some_and(|required| !authority.covers(required))
+            {
+                HistoryAuthorityProtection::RecoveryRequired
+            } else if protected.is_some_and(|protected| protected.covers(&authority)) {
+                HistoryAuthorityProtection::Protected
+            } else {
+                HistoryAuthorityProtection::Pending
+            };
+            (state, protected.map(|authority| authority.revision()))
         }
     };
     Ok(HistoryPolicyPage {

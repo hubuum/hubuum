@@ -730,8 +730,8 @@ async fn every_backend_population_uses_historical_class_membership(
     }
 }
 
-// Real memory-adapter evidence and configured policy, not native admission or
-// physical replay. Native closed-copy absence has separate PostgreSQL coverage.
+// Real memory-native admission and configured policy. Physical closed-copy
+// absence has separate PostgreSQL coverage.
 #[rstest]
 #[case::authorized("both", "expired")]
 #[case::historical_denied("current", "forbidden")]
@@ -827,7 +827,8 @@ async fn retained_population_gap_requires_original_configured_authorization(
         HistoryExpiryOrigin::Manual {
             principal: principal_id,
         },
-        HistoryLifecycleScan::new(key, 1).unwrap(),
+        // The positive fixture includes preceding open and other-family rows.
+        HistoryLifecycleScan::new(key, 1000).unwrap(),
         snapshot.fence(),
     )
     .unwrap();
