@@ -14,6 +14,24 @@ intervals and read epochs through typed error evidence and restore remapping.
 Preserve both archive-budget and lifecycle-gap evidence through adapter errors;
 API request rejection reasons keep their existing priority.
 
+**Breaking expiry-admission capability:** implement
+`HistoryLifecycleStorage::admit_history_expiry` using native selection under the
+same authority transaction as intent and canonical-audit retention. Require the
+original OnlineV1 application scope, current policy/deletion/incarnation fences,
+and a fleet with no Legacy producers. Callers provide a stable batch/run request,
+not membership; retries inspect the original batch instead of selecting again.
+Generic policy commits preserve retained expiry byte-for-byte on both adapters.
+Capture endpoint and class/collection ownership at version creation; preserve it
+through closure, same-version refresh and restore. Older missing ownership stays
+unresolved. Never infer historical ownership from a current row during selection.
+Measure complete native rows within the 1000-row/16-MiB input bound and transfer
+only bounded identity/authorization metadata. Preserve current/open copies and
+retained schema revisions. Keep admitted membership and object authorization facts
+through checkpoint capture and recovery; primary admission is not independent
+protection or removal permission. `None` is a bounded result, never an empty-source
+proof. Upgrade complete adapters and refresh runtime grants from the existing new
+migration. Production registration, physical removal and scheduling stay gated.
+
 **Breaking error contract:** `ArtifactError` no longer implements `Clone`, `Eq`
 or `PartialEq`. Move errors rather than copying protected causes. Its neutral
 `Source` retains an owned `Error + Send + Sync` with redacted display/debug;

@@ -33,7 +33,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   This does not enable the default database/memory history producer or expiry.
 - **Breaking storage SDK 0.20:** upgrade all ten exact SDK dependencies together
   and implement the required `HistoryLifecycleStorage` control, audit, scoped read,
-  publication and recovery contracts, plus exact nonproductive
+  publication and recovery contracts, including bounded native
+  `admit_history_expiry` with atomic membership/audit retention and no payload
+  removal, plus exact nonproductive
   `TaskArtifactStore::abort_task` cleanup using the original attempt/task/claim. Deploy the new
   `2026-11-03-000005_history_lifecycle` migration after shipped archive 000004;
   refresh grants and preserve signed format-3 authority for roll-forward recovery.

@@ -1066,6 +1066,14 @@ impl MemoryLogicalIdentities {
             unreachable!("class reference")
         };
         references.insert("/class_id".into(), owner);
+        if let Some(collection) = self
+            .entries
+            .get(&resource(Family::Class, class_id))
+            .and_then(|entry| entry.evidence.references().get("/collection_id"))
+        {
+            references.insert("/collection_id".into(), *collection);
+        }
+
         StorageIdentityEvidence::try_new(
             Some(StorageIdentitySubject::Resource {
                 identity,
@@ -1162,6 +1170,9 @@ impl MemoryLogicalIdentities {
             .iter()
             .map(|(path, identity)| (format!("/snapshot{path}"), *identity))
             .collect::<BTreeMap<_, _>>();
+        if let Some(collection) = source.references().get("/collection_id") {
+            references.insert("/collection_id".into(), *collection);
+        }
         references.insert(
             "/snapshot/revision".into(),
             StorageCapturedIdentity::Version {
@@ -1346,6 +1357,56 @@ impl MemoryLogicalIdentities {
                 (path.to_owned(), captured)
             })
             .collect();
+        if let Target::Resource {
+            kind: Family::ClassRelation | Family::ObjectRelation,
+            ..
+        } = target
+        {
+            if let Some(previous) = previous.filter(|entry| entry.revision == revision) {
+                for (path, value) in previous
+                    .evidence
+                    .references()
+                    .iter()
+                    .filter(|(path, _)| path.starts_with("/lifecycle/"))
+                {
+                    references.insert(path.clone(), *value);
+                }
+            } else {
+                for endpoint in ["from", "to"] {
+                    let class_relation = matches!(
+                        target,
+                        Target::Resource {
+                            kind: Family::ClassRelation,
+                            ..
+                        }
+                    );
+                    let path = format!(
+                        "/{endpoint}_{}_id",
+                        if class_relation { "class" } else { "object" }
+                    );
+                    if let Some(parent) = dependencies
+                        .get(&path)
+                        .and_then(|target| self.entries.get(target))
+                    {
+                        if let Some(collection) = parent.evidence.references().get("/collection_id")
+                        {
+                            references
+                                .insert(format!("/lifecycle/{endpoint}/collection"), *collection);
+                        }
+                        let class = if class_relation {
+                            dependencies
+                                .get(&path)
+                                .map(|target| self.reference(*target))
+                        } else {
+                            parent.evidence.references().get("/class_id").copied()
+                        };
+                        if let Some(class) = class {
+                            references.insert(format!("/lifecycle/{endpoint}/class"), class);
+                        }
+                    }
+                }
+            }
+        }
         if let Some(previous) = previous {
             for (path, reference) in previous.evidence.references() {
                 if matches!(

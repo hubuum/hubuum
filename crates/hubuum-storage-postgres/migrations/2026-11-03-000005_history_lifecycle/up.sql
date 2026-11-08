@@ -382,7 +382,7 @@ $function$;
 REVOKE ALL ON FUNCTION public.hubuum_register_history_runtime(UUID,UUID,JSONB) FROM PUBLIC;
 
 -- Internal protocol check only: this is not intent validation or deletion
--- permission. Complete native admission remains disabled in the CAS below.
+-- permission. Native admission is separate from the generic policy CAS below.
 CREATE FUNCTION public.hubuum_history_producers_fenced(expected_incarnation UUID, expected_deletion BIGINT)
 RETURNS BOOLEAN LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog AS $function$
 BEGIN
@@ -677,3 +677,270 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
     SELECT NOT EXISTS(SELECT 1 FROM hubuum_control.history_expiry_members WHERE family='collection' AND resource_uuid=subject)
 $$;
 REVOKE ALL ON FUNCTION public.hubuum_history_archive_resource_available(uuid) FROM PUBLIC;
+
+-- Protected current/open copies and retained schema revisions cannot be turned
+-- into gaps by intent admission. Missing correspondence fails closed.
+CREATE FUNCTION public.hubuum_history_expiry_dependency(history_family TEXT, evidence JSONB)
+RETURNS BOOLEAN LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $function$
+DECLARE current_table TEXT; history_table TEXT; dependent BOOLEAN; predicate TEXT;
+BEGIN
+    CASE history_family
+      WHEN 'collection' THEN current_table:='collections'; history_table:='collections_history';
+      WHEN 'class' THEN current_table:='hubuumclass'; history_table:='hubuumclass_history';
+      WHEN 'object' THEN current_table:='hubuumobject'; history_table:='hubuumobject_history';
+      WHEN 'class_relation' THEN current_table:='hubuumclass_relation'; history_table:='hubuumclass_relation_history';
+      WHEN 'object_relation' THEN current_table:='hubuumobject_relation'; history_table:='hubuumobject_relation_history';
+      WHEN 'export_template' THEN current_table:='export_templates'; history_table:='export_templates_history';
+      WHEN 'remote_target' THEN current_table:='remote_targets'; history_table:='remote_targets_history';
+      WHEN 'class_schema' THEN current_table:='class_schema_revisions';
+      WHEN 'computed_definitions' THEN history_table:='computed_field_history';
+      ELSE RAISE EXCEPTION 'Unsupported expiry family';
+    END CASE;
+    predicate := $predicate$(c.logical_identity #>> '{subject,identity,identity}' IS NULL
+       OR (c.logical_identity #>> '{subject,identity,identity}'=$1 #>> '{subject,identity,identity}'
+       AND (c.logical_identity #>> '{subject,version}'=$1 #>> '{subject,version}'
+         OR public.hubuum_history_version_visible($2,c.logical_identity) IS NOT TRUE
+         OR EXISTS(SELECT 1 FROM jsonb_object_keys(coalesce(c.logical_identity->'references','{}')) paths(path)
+             WHERE starts_with(path,'/restore_unknown_source_versions/'))
+         OR (substring(c.logical_identity #>> '{subject,version}' FROM 15 FOR 1)='8'
+           AND NOT EXISTS(SELECT 1 FROM jsonb_object_keys(coalesce(c.logical_identity->'references','{}')) paths(path)
+             WHERE starts_with(path,'/restore_source_versions/')))
+         OR c.logical_identity->'references'->('/restore_source_versions/'||($1 #>> '{subject,version}'))
+            =jsonb_build_object('kind','version','reference',jsonb_build_object('state','known','identity',$1 #>> '{subject,version}')))))$predicate$;
+    IF history_family='class_schema' THEN
+      -- Event and revision version UUIDs differ. Bind dependencies to
+      -- their captured class UUID, never a reusable numeric class identifier.
+      predicate := $class$(c.logical_identity #>> '{references,/class_id,reference,identity}' IS NULL
+        OR c.logical_identity #>> '{references,/class_id,reference,identity}'=$1 #>> '{references,/class_id,reference,identity}')$class$;
+    END IF;
+    IF current_table IS NOT NULL THEN
+      EXECUTE format('SELECT EXISTS(SELECT 1 FROM public.%I c WHERE %s)',current_table,predicate)
+        INTO dependent USING evidence,history_family;
+      IF dependent THEN RETURN TRUE; END IF;
+    END IF;
+    IF history_table IS NOT NULL THEN
+      EXECUTE format('SELECT EXISTS(SELECT 1 FROM public.%I c WHERE valid_to IS NULL %s AND %s)',history_table,
+          CASE WHEN history_family='computed_definitions' THEN '' ELSE 'AND op<>''D''' END,predicate)
+        INTO dependent USING evidence,history_family;
+      IF dependent THEN RETURN TRUE; END IF;
+    END IF;
+    RETURN FALSE;
+END
+$function$;
+REVOKE ALL ON FUNCTION public.hubuum_history_expiry_dependency(TEXT,JSONB) FROM PUBLIC;
+
+-- Separate from policy/hold CAS: exact predecessor, one immutable new intent,
+-- native source correspondence and the fleet fence are required together.
+-- Rust validates policy/hold decisions while holding these same authority locks.
+-- This function neither authorizes removal nor acknowledges independent protection.
+CREATE FUNCTION public.hubuum_history_expiry_admit(expected JSONB, replacement JSONB, expected_incarnation UUID, expected_deletion BIGINT)
+RETURNS BOOLEAN LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog AS $function$
+DECLARE current_material JSONB; old_expiry JSONB; new_expiry JSONB; additions JSONB;
+  intent JSONB; manifest JSONB; member JSONB; source JSONB; source_table TEXT;
+  source_from TIMESTAMPTZ; source_until TIMESTAMPTZ; source_bytes BIGINT; total_bytes BIGINT:=0;
+BEGIN
+    IF public.hubuum_history_producers_fenced(expected_incarnation,expected_deletion) IS NOT TRUE THEN RETURN FALSE; END IF;
+    SELECT material INTO current_material FROM hubuum_control.history_lifecycle_control WHERE id=1 FOR UPDATE;
+    IF current_material IS DISTINCT FROM expected OR replacement IS NULL
+      OR jsonb_typeof(replacement) IS DISTINCT FROM 'object'
+      OR replacement - 'authority' IS DISTINCT FROM current_material - 'authority'
+      OR (replacement->'authority') - ARRAY['revision','expiry'] IS DISTINCT FROM (current_material->'authority') - ARRAY['revision','expiry']
+      OR (replacement #>> '{authority,revision}')::BIGINT<>(current_material #>> '{authority,revision}')::BIGINT+1
+      OR octet_length(replacement::text)>4194304 THEN RETURN FALSE; END IF;
+    old_expiry:=coalesce(current_material #> '{authority,expiry}','[]'::JSONB);
+    new_expiry:=replacement #> '{authority,expiry}';
+    IF jsonb_typeof(new_expiry) IS DISTINCT FROM 'array' OR jsonb_array_length(new_expiry)<>jsonb_array_length(old_expiry)+1
+       OR jsonb_array_length(new_expiry)>256 THEN RETURN FALSE; END IF;
+    SELECT jsonb_agg(value) INTO additions FROM jsonb_array_elements(new_expiry) value
+      WHERE NOT EXISTS(SELECT 1 FROM jsonb_array_elements(old_expiry) old WHERE old #>> '{manifest,identity}'=value #>> '{manifest,identity}');
+    IF jsonb_array_length(additions) IS DISTINCT FROM 1 THEN RETURN FALSE; END IF;
+    intent:=additions->0; manifest:=intent->'manifest';
+    IF (SELECT coalesce(jsonb_agg(value ORDER BY ordinal),'[]') FROM jsonb_array_elements(new_expiry) WITH ORDINALITY entries(value,ordinal)
+        WHERE value #>> '{manifest,identity}'<>manifest->>'identity') IS DISTINCT FROM old_expiry
+      OR coalesce(intent->'removals','[]')<>'[]'::JSONB OR intent->'cancellation' IS NOT NULL AND intent->'cancellation'<>'null'::JSONB
+      OR manifest #>> '{fence,incarnation}'<>expected_incarnation::TEXT
+      OR manifest #>> '{fence,deletion_revision}'<>expected_deletion::TEXT
+      OR manifest #>> '{fence,authority_revision}'<>current_material #>> '{authority,revision}'
+      OR (manifest->>'selected_at')::TIMESTAMPTZ>clock_timestamp()
+      OR jsonb_array_length(manifest->'members') NOT BETWEEN 1 AND 1000
+      OR octet_length(manifest::text)>1048576 THEN RETURN FALSE; END IF;
+    FOR member IN SELECT value FROM jsonb_array_elements(manifest->'members') LOOP
+      source_table:=CASE member->>'family'
+        WHEN 'collection' THEN 'collections_history' WHEN 'class' THEN 'hubuumclass_history'
+        WHEN 'object' THEN 'hubuumobject_history' WHEN 'class_relation' THEN 'hubuumclass_relation_history'
+        WHEN 'object_relation' THEN 'hubuumobject_relation_history' WHEN 'export_template' THEN 'export_templates_history'
+        WHEN 'remote_target' THEN 'remote_targets_history' WHEN 'class_schema' THEN 'class_schema_history'
+        WHEN 'computed_definitions' THEN 'computed_field_history' ELSE NULL END;
+      IF source_table IS NULL OR member->>'family'<>manifest #>> '{key,family}' THEN RETURN FALSE; END IF;
+      EXECUTE format('SELECT to_jsonb(h.*) FROM public.%I h WHERE logical_identity #>> ''{subject,identity,identity}''=$1 AND logical_identity #>> ''{subject,version}''=$2 FOR SHARE',source_table)
+        INTO STRICT source USING member #>> '{target,resource}',member #>> '{target,version}';
+      source_bytes:=octet_length(source::TEXT); total_bytes:=total_bytes+source_bytes;
+      source_from:=(source->>CASE WHEN member->>'family'='class_schema' THEN 'occurred_at' ELSE 'valid_from' END)::TIMESTAMPTZ;
+      source_until:=(source->>'valid_to')::TIMESTAMPTZ;
+      IF source_from IS DISTINCT FROM (member #>> '{read_span,valid_from}')::TIMESTAMPTZ
+        OR source_until IS DISTINCT FROM (member #>> '{read_span,valid_to}')::TIMESTAMPTZ
+        OR source_bytes<>(member->>'input_bytes')::BIGINT OR total_bytes>16777216
+        OR public.hubuum_history_expiry_dependency(member->>'family',source->'logical_identity')
+        OR (member->>'family'<>'class_schema' AND source_until IS NULL AND source->>'op' IS DISTINCT FROM 'D')
+        OR EXISTS(SELECT 1 FROM hubuum_control.history_expiry_members retained
+           WHERE retained.family=member->>'family' AND retained.resource_uuid=(member #>> '{target,resource}')::UUID
+             AND retained.version_uuid=(member #>> '{target,version}')::UUID) THEN RETURN FALSE; END IF;
+    END LOOP;
+    IF total_bytes<>(manifest->>'input_bytes')::BIGINT THEN RETURN FALSE; END IF;
+    UPDATE hubuum_control.history_lifecycle_control SET material=replacement WHERE id=1;
+    PERFORM public.hubuum_history_expiry_sync();
+    RETURN TRUE;
+END
+$function$;
+REVOKE ALL ON FUNCTION public.hubuum_history_expiry_admit(JSONB,JSONB,UUID,BIGINT) FROM PUBLIC;
+
+-- Capture policy attribution at version creation. Never derive an older
+-- historical version's scope from today's class/object location.
+CREATE FUNCTION public.hubuum_history_policy_references(relation_name TEXT, source_row JSONB, previous_row JSONB, captured JSONB)
+RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $function$
+DECLARE result JSONB:='{}'; inherited JSONB; endpoint TEXT; endpoint_row JSONB;
+  collection_reference JSONB; class_reference JSONB; column_name TEXT;
+BEGIN
+    IF relation_name NOT IN ('hubuumclass_relation','hubuumobject_relation','hubuumclass_relation_history',
+       'hubuumobject_relation_history','computed_field_history','class_schema_revisions','class_schema_history') THEN RETURN result; END IF;
+    IF previous_row IS NOT NULL AND (relation_name LIKE '%\_history' ESCAPE '\'
+       OR captured #>> '{subject,version}'=previous_row #>> '{logical_identity,subject,version}') THEN
+        -- Closure and same-version refresh preserve evidence, including its
+        -- absence. A metadata backfill must not manufacture historical scope.
+        inherited:=previous_row #> '{logical_identity,references}';
+    ELSIF relation_name IN ('hubuumclass_relation_history','hubuumobject_relation_history') THEN
+        inherited:=source_row #> '{logical_identity,references}';
+    ELSIF relation_name='class_schema_history' THEN
+        inherited:=coalesce(source_row #> '{logical_identity,references}',source_row #> '{snapshot,logical_identity,references}');
+    END IF;
+    IF inherited IS NOT NULL THEN
+        SELECT coalesce(jsonb_object_agg(key,value),'{}') INTO result FROM jsonb_each(inherited)
+          WHERE key IN ('/collection_id','/class_id') OR starts_with(key,'/lifecycle/');
+        RETURN result;
+    END IF;
+    IF previous_row IS NOT NULL AND relation_name LIKE '%\_history' ESCAPE '\' THEN RETURN result; END IF;
+    IF relation_name IN ('hubuumclass_relation_history','hubuumobject_relation_history','class_schema_history') THEN RETURN result; END IF;
+    IF relation_name IN ('computed_field_history','class_schema_revisions') THEN
+        SELECT c.logical_identity INTO endpoint_row FROM public.hubuumclass c WHERE c.id=(source_row->>'class_id')::INTEGER
+          AND c.logical_identity #>> '{subject,identity,identity}'=captured #>> '{references,/class_id,reference,identity}';
+        collection_reference:=endpoint_row #> '{references,/collection_id}';
+        IF collection_reference IS NOT NULL THEN result:=jsonb_build_object('/collection_id',collection_reference); END IF;
+        RETURN result;
+    END IF;
+    FOREACH endpoint IN ARRAY ARRAY['from','to'] LOOP
+        IF relation_name='hubuumclass_relation' THEN
+            column_name:=endpoint||'_hubuum_class_id';
+            SELECT c.logical_identity INTO endpoint_row FROM public.hubuumclass c WHERE c.id=(source_row->>column_name)::INTEGER;
+            collection_reference:=endpoint_row #> '{references,/collection_id}';
+            class_reference:=CASE WHEN endpoint_row->'subject'->'identity' IS NULL THEN NULL ELSE
+                jsonb_build_object('kind','resource','family','class','reference',endpoint_row #> '{subject,identity}') END;
+        ELSE
+            column_name:=endpoint||'_hubuum_object_id';
+            SELECT o.logical_identity INTO endpoint_row FROM public.hubuumobject o WHERE o.id=(source_row->>column_name)::INTEGER;
+            collection_reference:=endpoint_row #> '{references,/collection_id}';
+            class_reference:=endpoint_row #> '{references,/class_id}';
+        END IF;
+        IF collection_reference IS NOT NULL AND class_reference IS NOT NULL THEN
+            result:=result||jsonb_build_object('/lifecycle/'||endpoint||'/collection',collection_reference,
+                                             '/lifecycle/'||endpoint||'/class',class_reference);
+        END IF;
+    END LOOP;
+    RETURN result;
+END
+$function$;
+REVOKE ALL ON FUNCTION public.hubuum_history_policy_references(TEXT,JSONB,JSONB,JSONB) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.hubuum_manage_logical_identity()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $function$
+DECLARE
+    layout RECORD;
+    source_row JSONB := to_jsonb(NEW);
+    previous_row JSONB := CASE WHEN TG_OP = 'UPDATE' THEN to_jsonb(OLD) ELSE NULL END;
+    evidence JSONB;
+    subject JSONB;
+    class_reference JSONB;
+    restored_sources JSONB;
+    trusted_restore BOOLEAN := current_setting('hubuum.restore_identities', TRUE) IS NOT DISTINCT FROM 'on'
+        AND pg_has_role(session_user, current_user, 'MEMBER');
+BEGIN
+    IF trusted_restore THEN
+        IF NEW.logical_identity IS NULL THEN
+            RAISE EXCEPTION 'Restore requires upgraded logical identity evidence' USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+    END IF;
+    SELECT * INTO STRICT layout FROM public.hubuum_identity_layout() WHERE relation_name = TG_TABLE_NAME;
+    IF TG_OP = 'INSERT' AND NEW.logical_identity IS NOT NULL
+        AND layout.mode NOT IN ('history', 'schema_history') THEN
+        IF TG_TABLE_NAME = 'restore_success_receipts' AND pg_has_role(session_user, current_user, 'MEMBER') THEN
+            -- The executor copies the pre-replacement requester evidence from
+            -- its retained stage. It must not resolve that integer after restore.
+            RETURN NEW;
+        END IF;
+        RAISE EXCEPTION 'New records cannot supply logical identity evidence' USING ERRCODE = '23514';
+    END IF;
+    IF TG_OP = 'UPDATE' THEN
+        IF NEW.logical_identity IS DISTINCT FROM OLD.logical_identity THEN
+            RAISE EXCEPTION 'Logical identity evidence cannot be supplied by an update' USING ERRCODE = '23514';
+        END IF;
+        evidence := COALESCE(OLD.logical_identity, public.hubuum_legacy_identity(TG_TABLE_NAME, previous_row));
+        previous_row := jsonb_set(previous_row, '{logical_identity}', evidence);
+        subject := evidence->'subject';
+        IF layout.mode = 'resource'
+            AND (source_row - 'logical_identity') IS DISTINCT FROM (previous_row - 'logical_identity') THEN
+            subject := jsonb_set(subject, '{version}', to_jsonb(gen_random_uuid()));
+        END IF;
+    ELSIF layout.mode IN ('resource', 'principal', 'task') THEN
+        IF NEW.logical_identity IS NOT NULL THEN
+            RAISE EXCEPTION 'New resources must mint a fresh logical identity' USING ERRCODE = '23514';
+        END IF;
+        subject := jsonb_build_object('kind', CASE WHEN layout.mode = 'resource' THEN 'resource' ELSE layout.mode END,
+            'identity', public.hubuum_known_identity(gen_random_uuid()));
+        IF layout.mode = 'resource' THEN
+            subject := subject || jsonb_build_object('version', gen_random_uuid());
+        END IF;
+    ELSIF layout.mode = 'history' THEN
+        subject := NEW.logical_identity->'subject';
+        IF subject IS NULL THEN
+            -- Deletion can race a bounded backfill before its live row is visited.
+            subject := public.hubuum_legacy_identity(TG_TABLE_NAME, source_row)->'subject';
+        END IF;
+        IF NEW.op = 'D' THEN
+            subject := jsonb_set(subject, '{version}', to_jsonb(gen_random_uuid()));
+        END IF;
+    ELSIF layout.mode = 'principal_extension' THEN
+        class_reference := public.hubuum_identity_reference('principal', (source_row->>'id')::BIGINT, FALSE);
+        subject := jsonb_build_object('kind', 'principal', 'identity', class_reference->'reference');
+    ELSIF layout.mode IN ('definition_history', 'schema_revision', 'schema_history') THEN
+        class_reference := public.hubuum_identity_reference('class', (source_row->>'class_id')::BIGINT, FALSE);
+        subject := jsonb_build_object('kind', 'resource', 'identity',
+            COALESCE(source_row #> '{snapshot,logical_identity,subject,identity}', class_reference->'reference'),
+            'version', gen_random_uuid());
+    ELSIF layout.family = 'event' THEN
+        subject := jsonb_build_object('kind', 'event', 'identity', source_row->'event_id');
+    END IF;
+    -- Closure changes neither the captured references nor the historical UUID.
+    IF TG_OP = 'UPDATE' AND layout.mode IN ('history', 'definition_history', 'schema_history') THEN
+        NEW.logical_identity := evidence;
+    ELSE
+        -- A history snapshot and a refresh of the same immutable version must
+        -- retain the sources represented by its payload. A genuinely authored
+        -- version has a new UUID and intentionally starts a new ancestry.
+        evidence := COALESCE(evidence, source_row->'logical_identity');
+        IF (TG_OP = 'INSERT' AND layout.mode = 'history')
+            OR subject->>'version' = evidence #>> '{subject,version}' THEN
+            SELECT jsonb_object_agg(key, value) INTO restored_sources
+            FROM jsonb_each(COALESCE(evidence->'references', '{}'::jsonb))
+            WHERE key LIKE '/restore_source_versions/%'
+               OR key LIKE '/restore_unknown_source_versions/%';
+        END IF;
+        NEW.logical_identity := jsonb_build_object('subject', subject, 'references',
+            public.hubuum_capture_identity_references(source_row, previous_row, FALSE)
+                || COALESCE(restored_sources, '{}'::jsonb));
+    END IF;
+    NEW.logical_identity := jsonb_set(NEW.logical_identity,'{references}',
+        coalesce(NEW.logical_identity->'references','{}') || public.hubuum_history_policy_references(
+            TG_TABLE_NAME,source_row,previous_row,NEW.logical_identity));
+    RETURN NEW;
+END
+$function$;

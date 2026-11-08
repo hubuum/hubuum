@@ -8,6 +8,78 @@ use uuid::Uuid;
 use super::*;
 use crate::StorageRecordIdentity;
 
+/// Stable batch identity and captured authority for native selection. This is
+/// not caller-supplied membership or independent checkpoint protection.
+#[derive(Clone, Debug)]
+pub struct HistoryExpiryAdmissionRequest {
+    identity: Uuid,
+    run: Uuid,
+    origin: HistoryExpiryOrigin,
+    scan: HistoryLifecycleScan,
+    fence: HistoryReviewFence,
+}
+
+impl HistoryExpiryAdmissionRequest {
+    pub fn new(
+        identity: Uuid,
+        run: Uuid,
+        origin: HistoryExpiryOrigin,
+        scan: HistoryLifecycleScan,
+        fence: HistoryReviewFence,
+    ) -> Result<Self, StorageValidationError> {
+        if [identity, run]
+            .iter()
+            .any(|id| id.get_variant() != uuid::Variant::RFC4122 || id.get_version().is_none())
+        {
+            return Err(invalid("Expiry admission requires RFC batch and run UUIDs"));
+        }
+        Ok(Self {
+            identity,
+            run,
+            origin,
+            scan,
+            fence,
+        })
+    }
+    pub const fn identity(&self) -> Uuid {
+        self.identity
+    }
+    pub const fn scan(&self) -> &HistoryLifecycleScan {
+        &self.scan
+    }
+    pub const fn fence(&self) -> HistoryReviewFence {
+        self.fence
+    }
+
+    /// Adapters call this under their authority lock. An uncertain retry must
+    /// inspect the original batch; it cannot silently select new membership.
+    pub fn selection<'a>(
+        &self,
+        snapshot: &'a HistoryLifecycleSnapshot,
+    ) -> Result<HistoryExpirySelection<'a>, StorageValidationError> {
+        if self.fence != snapshot.fence()
+            || snapshot
+                .control()
+                .authority()
+                .expiry()
+                .intent(self.identity)
+                .is_some()
+        {
+            return Err(invalid(
+                "Expiry admission authority changed or batch already exists",
+            ));
+        }
+        let mut selection = HistoryExpirySelection::new(
+            self.run,
+            self.origin.clone(),
+            self.scan.clone(),
+            snapshot,
+        )?;
+        selection.manifest.identity = self.identity;
+        Ok(selection)
+    }
+}
+
 /// Complete native encoded input size for one selected historical row, including
 /// payload and metadata. Preview identity-byte samples cannot establish it.
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -428,6 +500,9 @@ pub struct HistoryExpirySelection<'a> {
     retained_bytes: usize,
 }
 impl<'a> HistoryExpirySelection<'a> {
+    pub fn is_empty(&self) -> bool {
+        self.manifest.members.is_empty()
+    }
     pub fn new(
         run: Uuid,
         origin: HistoryExpiryOrigin,
@@ -556,6 +631,65 @@ mod tests {
 
     use super::*;
     use crate::StorageRecordIdentity;
+
+    #[rstest]
+    #[case::batch(true)]
+    #[case::run(false)]
+    fn admission_rejects_unidentified_batches(#[case] nil_batch: bool) {
+        let before = snapshot();
+        assert!(
+            HistoryExpiryAdmissionRequest::new(
+                if nil_batch {
+                    Uuid::nil()
+                } else {
+                    Uuid::new_v4()
+                },
+                if nil_batch {
+                    Uuid::new_v4()
+                } else {
+                    Uuid::nil()
+                },
+                HistoryExpiryOrigin::Scheduled { initiator: None },
+                HistoryLifecycleScan::new(key(), 1).unwrap(),
+                before.fence(),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn admission_binds_original_batch_identity_and_fence() {
+        let before = snapshot();
+        let identity = Uuid::new_v4();
+        let request = HistoryExpiryAdmissionRequest::new(
+            identity,
+            Uuid::new_v4(),
+            HistoryExpiryOrigin::Scheduled { initiator: None },
+            HistoryLifecycleScan::new(key(), 1).unwrap(),
+            before.fence(),
+        )
+        .unwrap();
+        let mut selection = request.selection(&before).unwrap();
+        assert!(matches!(
+            selection
+                .consider(
+                    candidate(Some(HistoryRetentionAnchor::Closed(at(110)))),
+                    HistoryExpiryInputBytes::new(1).unwrap(),
+                    &[],
+                )
+                .unwrap(),
+            HistoryExpirySelectionOutcome::Selected
+        ));
+        assert_eq!(selection.finish().unwrap().identity(), identity);
+        let changed = HistoryLifecycleSnapshot::new(
+            before.control().clone(),
+            Uuid::new_v4(),
+            before.fence().deletion_revision(),
+            before.observed_at(),
+        )
+        .unwrap();
+        assert!(request.selection(&changed).is_err());
+    }
 
     fn at(seconds: i64) -> DateTime<Utc> {
         DateTime::from_timestamp(seconds, 0).unwrap()

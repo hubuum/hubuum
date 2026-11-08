@@ -1,10 +1,11 @@
 use super::*;
 use hubuum_storage_core::{
-    HistoryArchiveExecutionOwner, HistoryLifecycleControlChange, HistoryLifecycleRecovery,
-    HistoryLifecycleScan, HistoryLifecycleScanResult, HistoryLifecycleSnapshot,
-    HistoryLifecycleStorage, HistoryProducerOwner, HistoryProducerSettlement,
-    HistoryPublicationKind, HistoryPublicationOwner, HistoryPublicationSettlement,
-    HistoryReadContext, RuntimeIsolationDomain, RuntimeRegistration,
+    HistoryArchiveExecutionOwner, HistoryExpiryAdmissionRequest, HistoryExpiryManifest,
+    HistoryLifecycleControlChange, HistoryLifecycleRecovery, HistoryLifecycleScan,
+    HistoryLifecycleScanResult, HistoryLifecycleSnapshot, HistoryLifecycleStorage,
+    HistoryProducerOwner, HistoryProducerSettlement, HistoryPublicationKind,
+    HistoryPublicationOwner, HistoryPublicationSettlement, HistoryReadContext,
+    RuntimeIsolationDomain, RuntimeRegistration,
 };
 
 #[async_trait]
@@ -113,6 +114,20 @@ impl HistoryLifecycleStorage for StorageHandle {
             StorageCapability::History,
             "scan_history_lifecycle",
             async { dispatch_backend!(self, |backend| backend.scan_history_lifecycle(scan).await) },
+        )
+        .await
+    }
+    async fn admit_history_expiry(
+        &self,
+        request: HistoryExpiryAdmissionRequest,
+    ) -> Result<Option<HistoryExpiryManifest>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::History,
+            "admit_history_expiry",
+            async {
+                dispatch_backend!(self, |backend| backend.admit_history_expiry(request).await)
+            },
         )
         .await
     }

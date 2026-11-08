@@ -744,13 +744,12 @@ async fn retained_population_gap_requires_original_configured_authorization(
 ) {
     use hubuum_domain::{PrincipalIdentity, ResourceIdentity};
     use hubuum_storage_core::{
-        DeletionControlStorage, ExecutionStorage, HistoryExpiryCandidate, HistoryExpiryInputBytes,
-        HistoryExpiryOrigin, HistoryExpirySelection, HistoryExpirySelectionOutcome,
-        HistoryExpiryTrigger, HistoryLifecycleScan, HistoryLifecycleStorage,
-        HistoryObjectAuthorizationFacts, HistoryPolicyApplication, HistoryPolicyApplyRequest,
-        HistoryPolicyBinding, HistoryPolicyChange, HistoryPolicyKey, HistoryPolicyRevision,
-        HistoryPolicyScope, HistoryPublicationKind, HistoryRetentionAnchor,
-        HistoryRetentionSeconds, StorageExecutionScope, StorageIdentityHistoryKind,
+        DeletionControlStorage, ExecutionStorage, HistoryExpiryOrigin, HistoryExpiryTrigger,
+        HistoryLifecycleScan, HistoryLifecycleStorage, HistoryObjectAuthorizationFacts,
+        HistoryPolicyApplication, HistoryPolicyApplyRequest, HistoryPolicyBinding,
+        HistoryPolicyChange, HistoryPolicyKey, HistoryPolicyRevision, HistoryPolicyScope,
+        HistoryPublicationKind, HistoryRetentionSeconds, StorageExecutionScope,
+        StorageIdentityHistoryKind,
     };
     use uuid::Uuid;
     let backend = StorageHandle::from_registered_backend(MemoryStorage::new());
@@ -817,40 +816,30 @@ async fn retained_population_gap_requires_original_configured_authorization(
     let facts = HistoryObjectAuthorizationFacts::capture(row).unwrap();
     let class_uuid = facts.attribution().class().unwrap();
     let snapshot = backend.capture_history_lifecycle().await.unwrap();
-    let candidate = HistoryExpiryCandidate::new(
-        StorageIdentityHistoryKind::Object,
-        facts.target(),
-        Some(HistoryRetentionAnchor::Closed(metadata.valid_to().unwrap())),
-        vec![facts.attribution()],
-        false,
-    )
-    .unwrap()
-    .with_read_span(facts.read_span().clone())
-    .unwrap()
-    .with_object_authorization(facts)
-    .unwrap();
-    let mut selection = HistoryExpirySelection::new(
+    let registration = backend.register_history_runtime(None).await.unwrap();
+    let application = backend
+        .capture_application_execution(Some(registration.owner()))
+        .await
+        .unwrap();
+    let request = hubuum_storage_core::HistoryExpiryAdmissionRequest::new(
+        Uuid::new_v4(),
         Uuid::new_v4(),
         HistoryExpiryOrigin::Manual {
             principal: principal_id,
         },
         HistoryLifecycleScan::new(key, 1).unwrap(),
-        &snapshot,
+        snapshot.fence(),
     )
     .unwrap();
-    // Logical fixture budget input only, not a native measurement/H4 claim.
-    assert!(matches!(
-        selection
-            .consider(candidate, HistoryExpiryInputBytes::new(1).unwrap(), &[])
-            .unwrap(),
-        HistoryExpirySelectionOutcome::Selected
-    ));
-    let registration = backend.register_history_runtime(None).await.unwrap();
-    let retained = snapshot
-        .control()
-        .admit_expiry(selection.finish().unwrap(), snapshot.fence())
+    let manifest = backend
+        .run_in_scope(
+            StorageExecutionScope::default().with_application_access(application),
+            backend.admit_history_expiry(request),
+        )
+        .await
+        .unwrap()
         .unwrap();
-    backend.commit_history_lifecycle(retained).await.unwrap();
+    assert_eq!(manifest.members()[0].target(), facts.target());
     let permit = backend
         .capture_application_execution(Some(registration.owner()))
         .await

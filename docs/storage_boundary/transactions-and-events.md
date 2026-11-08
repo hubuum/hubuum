@@ -582,3 +582,19 @@ receipt is inferred from a task result, identity, timeout, cancellation or drop.
 The provider ownership/outcome bridge remains required before external effects;
 current claim admission cannot retire its physical obligation. Production remains
 Legacy, and generic expiry remains disabled.
+
+### Native history-expiry admission
+
+`HistoryLifecycleStorage::admit_history_expiry` requires an original OnlineV1
+application scope and selects exact native membership inside the authority
+transaction. Lock deletion/application authority before history authority UPDATE,
+API/task validation and native source rows. First intent admission serializes
+with runtime registration; a Legacy producer blocks admission. Recheck the
+captured policy/hold fence, native original intervals/identities and protected
+current/open copies. Keep complete-row input within 16 MiB, source rows within
+1000 and transferred metadata within 1 MiB. A bounded empty result does not prove
+source exhaustion. Persist the intent, read-exclusion projection and required
+canonical audit facts together; append failure rolls back all of them. Existing
+publications stay charged after their original revision is fenced and require
+exact positive settlement. Primary commit grants no deletion authority: capture
+and independently publish its recovery authority before a future removal step.

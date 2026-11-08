@@ -1,3 +1,4 @@
+mod expiry;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use diesel::dsl::{case_when, exists, sum};
@@ -595,6 +596,12 @@ impl HistoryLifecycleStorage for PostgresStorage {
             })
             .await
             .map_err(Into::into)
+    }
+    async fn admit_history_expiry(
+        &self,
+        request: HistoryExpiryAdmissionRequest,
+    ) -> Result<Option<HistoryExpiryManifest>, StorageError> {
+        expiry::admit(self, request).await
     }
     async fn scan_history_lifecycle(
         &self,

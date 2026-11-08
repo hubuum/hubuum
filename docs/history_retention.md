@@ -255,9 +255,28 @@ at most 256 retained intents within 4 MiB and reserves 512 encoded bytes per pen
 cancellation. These are bounded source contracts, not measured resource
 acceptance. These types are now included in typed protected history authority and the memory adapter's
 control state. Focused memory tests cover exact object list/as-of/backup exclusion
-and continued newer-version reads with a runtime registered. PostgreSQL projection,
-complete native admission/dependencies, publication fencing, physical cleanup and
-measured qualification remain unfinished.
+and continued newer-version reads with a runtime registered. Both adapters now provide a separate bounded native selection/admission operation.
+It requires the original OnlineV1 application scope, a matching authority fence
+and an entirely history-aware fleet. PostgreSQL measures complete JSON-encoded
+rows inside a materialized, row-bounded query; only identity/authorization
+metadata within 1 MiB crosses the adapter boundary. Selected native input is
+bounded to 16 MiB. Original intervals, UUIDs, policy revisions and object
+authorization facts are retained atomically with the canonical audit and read
+exclusion projection. Current/open restored copies and retained schema revisions
+block admission. New relation, computed and schema versions capture the required
+class/collection UUID attribution when written. Closure and same-version refresh
+preserve those facts; older missing attribution is never reconstructed from
+current ownership. An uncertain retry must inspect the original batch identity; it
+cannot silently select another batch. No batch within a bounded scan is not proof
+that the source is empty.
+
+Native tests exercise trigger-created rows from all nine families, held/stale
+selection, mixed fleets, oversized payloads, required audit rollback and retained
+publication charging. Primary admission is not independent checkpoint protection:
+its authority must be captured and independently published before a future
+removal capability can use it. No removal capability is added here. Complete
+native dependency/race qualification, restored descendants, physical cleanup and
+measured resource/liveness acceptance remain unfinished.
 
 ### Executor implementation and acceptance map
 

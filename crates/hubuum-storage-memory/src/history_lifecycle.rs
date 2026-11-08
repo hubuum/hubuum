@@ -1,3 +1,4 @@
+mod expiry;
 use super::*;
 use serde_json::Value;
 
@@ -161,6 +162,12 @@ impl HistoryLifecycleStorage for MemoryStorage {
             .await
             .register_runtime_protocol(isolation, HistoryRuntimeProtocol::OnlineV1)
     }
+    async fn admit_history_expiry(
+        &self,
+        request: HistoryExpiryAdmissionRequest,
+    ) -> Result<Option<HistoryExpiryManifest>, StorageError> {
+        expiry::admit(self, request).await
+    }
     async fn scan_history_lifecycle(
         &self,
         scan: HistoryLifecycleScan,
@@ -218,28 +225,9 @@ impl HistoryLifecycleStorage for MemoryStorage {
                 "History policy authority or application incarnation changed",
             ));
         }
-        let admits_expiry = change
-            .next()
-            .authority()
-            .expiry()
-            .intents()
-            .iter()
-            .any(|intent| {
-                change
-                    .expected()
-                    .authority()
-                    .expiry()
-                    .intent(intent.identity())
-                    .is_none()
-            });
-        if admits_expiry
-            && state
-                .runtime_registrations
-                .values()
-                .any(|runtime| !runtime.history_protocol.supports_online())
-        {
-            return Err(StorageError::unavailable(
-                "A registered producer lacks online history fencing",
+        if change.next().authority().expiry() != change.expected().authority().expiry() {
+            return Err(StorageError::conflict(
+                "Generic policy control cannot change retained expiry",
             ));
         }
         for scope in change.scopes_to_validate() {
@@ -345,7 +333,13 @@ impl MemoryState {
                 "History publication drivers or producers lack positive retirement; keep quarantine",
             ));
         }
-        let journal = self.history_lifecycle.authority().expiry();
+        self.require_history_current_copies_safe(self.history_lifecycle.authority().expiry())
+    }
+
+    fn require_history_current_copies_safe(
+        &self,
+        journal: &HistoryExpiryJournal,
+    ) -> Result<(), StorageError> {
         if journal.intents().is_empty() {
             return Ok(());
         }
@@ -809,6 +803,21 @@ impl MemoryState {
         )
         .map_err(invalid_contract_value)
     }
+}
+
+#[cfg(test)]
+async fn install_expiry_read_fixture(
+    storage: &MemoryStorage,
+    change: HistoryLifecycleControlChange,
+) {
+    // Logical read/recovery fixture only; never productive native admission.
+    let mut state = storage.state.write_control().await;
+    state
+        .append_retained_lifecycle_events(
+            change.next().audit_events_since(change.expected()).unwrap(),
+        )
+        .unwrap();
+    state.history_lifecycle = change.next().clone();
 }
 
 #[cfg(test)]
@@ -1810,15 +1819,14 @@ mod tests {
                 .unwrap(),
             HistoryExpirySelectionOutcome::Selected
         ));
-        storage
-            .commit_history_lifecycle(
-                snapshot
-                    .control()
-                    .admit_expiry(selection.finish().unwrap(), snapshot.fence())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        install_expiry_read_fixture(
+            &storage,
+            snapshot
+                .control()
+                .admit_expiry(selection.finish().unwrap(), snapshot.fence())
+                .unwrap(),
+        )
+        .await;
         if existing_capture {
             assert!(
                 storage
@@ -2588,7 +2596,7 @@ mod online_read_tests {
     }
     async fn fixture() -> (MemoryStorage, MemoryHistoryEntry, RuntimeRegistration) {
         let (storage, entry, registration, change) = prepared_fixture().await;
-        storage.commit_history_lifecycle(change).await.unwrap();
+        install_expiry_read_fixture(&storage, change).await;
         (storage, entry, registration)
     }
     #[rstest::rstest]
@@ -2890,7 +2898,7 @@ mod online_read_tests {
     ) {
         let (storage, entry, registration, change) = prepared_fixture().await;
         if retained {
-            storage.commit_history_lifecycle(change).await.unwrap();
+            install_expiry_read_fixture(&storage, change).await;
         }
         let original = entry
             .logical_identity
@@ -3022,14 +3030,34 @@ mod online_read_tests {
     #[tokio::test]
     async fn mixed_protocol_fleet_blocks_admission_until_legacy_owner_unregisters() {
         let (storage, _, aware, change) = prepared_fixture().await;
+        let manifest = change.next().authority().expiry().intents()[0].manifest();
+        let request = HistoryExpiryAdmissionRequest::new(
+            Uuid::new_v4(),
+            manifest.run(),
+            manifest.origin().clone(),
+            HistoryLifecycleScan::new(manifest.key(), 1).unwrap(),
+            change.fence(),
+        )
+        .unwrap();
+        let application = storage
+            .capture_application_execution(Some(aware.owner()))
+            .await
+            .unwrap();
+        let scope = StorageExecutionScope::default().with_application_access(application);
         let legacy = storage.register_runtime().await.unwrap();
         let error = storage
-            .commit_history_lifecycle(change.clone())
+            .run_in_scope(scope.clone(), storage.admit_history_expiry(request.clone()))
             .await
             .unwrap_err();
         assert_eq!(error.kind(), StorageErrorKind::Unavailable);
         storage.unregister_runtime(legacy).await.unwrap();
-        storage.commit_history_lifecycle(change).await.unwrap();
+        assert!(
+            storage
+                .run_in_scope(scope, storage.admit_history_expiry(request))
+                .await
+                .unwrap()
+                .is_some()
+        );
         storage.unregister_runtime(aware).await.unwrap();
     }
     #[tokio::test]

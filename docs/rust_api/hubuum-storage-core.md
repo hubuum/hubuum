@@ -277,7 +277,7 @@ and [restore ownership table](../task_admission.md#ownership-and-restore-reconci
 
 `HistoryLifecycleStorage` is a required operational capability. Complete adapters
 must implement `register_history_runtime`, `capture_history_lifecycle`,
-`scan_history_lifecycle`,
+`scan_history_lifecycle`, `admit_history_expiry`,
 `commit_history_lifecycle` and `recover_history_lifecycle`. Capture returns the
 adapter clock with application incarnation and history/deletion revision fences.
 Scanning covers all nine history families using captured UUID ownership and

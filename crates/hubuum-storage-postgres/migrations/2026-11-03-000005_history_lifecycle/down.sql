@@ -23,6 +23,99 @@ BEGIN
 END
 $rollback_guard$;
 
+CREATE OR REPLACE FUNCTION public.hubuum_manage_logical_identity()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $function$
+DECLARE
+    layout RECORD;
+    source_row JSONB := to_jsonb(NEW);
+    previous_row JSONB := CASE WHEN TG_OP = 'UPDATE' THEN to_jsonb(OLD) ELSE NULL END;
+    evidence JSONB;
+    subject JSONB;
+    class_reference JSONB;
+    restored_sources JSONB;
+    trusted_restore BOOLEAN := current_setting('hubuum.restore_identities', TRUE) IS NOT DISTINCT FROM 'on'
+        AND pg_has_role(session_user, current_user, 'MEMBER');
+BEGIN
+    IF trusted_restore THEN
+        IF NEW.logical_identity IS NULL THEN
+            RAISE EXCEPTION 'Restore requires upgraded logical identity evidence' USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+    END IF;
+    SELECT * INTO STRICT layout FROM public.hubuum_identity_layout() WHERE relation_name = TG_TABLE_NAME;
+    IF TG_OP = 'INSERT' AND NEW.logical_identity IS NOT NULL
+        AND layout.mode NOT IN ('history', 'schema_history') THEN
+        IF TG_TABLE_NAME = 'restore_success_receipts' AND pg_has_role(session_user, current_user, 'MEMBER') THEN
+            -- The executor copies the pre-replacement requester evidence from
+            -- its retained stage. It must not resolve that integer after restore.
+            RETURN NEW;
+        END IF;
+        RAISE EXCEPTION 'New records cannot supply logical identity evidence' USING ERRCODE = '23514';
+    END IF;
+    IF TG_OP = 'UPDATE' THEN
+        IF NEW.logical_identity IS DISTINCT FROM OLD.logical_identity THEN
+            RAISE EXCEPTION 'Logical identity evidence cannot be supplied by an update' USING ERRCODE = '23514';
+        END IF;
+        evidence := COALESCE(OLD.logical_identity, public.hubuum_legacy_identity(TG_TABLE_NAME, previous_row));
+        previous_row := jsonb_set(previous_row, '{logical_identity}', evidence);
+        subject := evidence->'subject';
+        IF layout.mode = 'resource'
+            AND (source_row - 'logical_identity') IS DISTINCT FROM (previous_row - 'logical_identity') THEN
+            subject := jsonb_set(subject, '{version}', to_jsonb(gen_random_uuid()));
+        END IF;
+    ELSIF layout.mode IN ('resource', 'principal', 'task') THEN
+        IF NEW.logical_identity IS NOT NULL THEN
+            RAISE EXCEPTION 'New resources must mint a fresh logical identity' USING ERRCODE = '23514';
+        END IF;
+        subject := jsonb_build_object('kind', CASE WHEN layout.mode = 'resource' THEN 'resource' ELSE layout.mode END,
+            'identity', public.hubuum_known_identity(gen_random_uuid()));
+        IF layout.mode = 'resource' THEN
+            subject := subject || jsonb_build_object('version', gen_random_uuid());
+        END IF;
+    ELSIF layout.mode = 'history' THEN
+        subject := NEW.logical_identity->'subject';
+        IF subject IS NULL THEN
+            -- Deletion can race a bounded backfill before its live row is visited.
+            subject := public.hubuum_legacy_identity(TG_TABLE_NAME, source_row)->'subject';
+        END IF;
+        IF NEW.op = 'D' THEN
+            subject := jsonb_set(subject, '{version}', to_jsonb(gen_random_uuid()));
+        END IF;
+    ELSIF layout.mode = 'principal_extension' THEN
+        class_reference := public.hubuum_identity_reference('principal', (source_row->>'id')::BIGINT, FALSE);
+        subject := jsonb_build_object('kind', 'principal', 'identity', class_reference->'reference');
+    ELSIF layout.mode IN ('definition_history', 'schema_revision', 'schema_history') THEN
+        class_reference := public.hubuum_identity_reference('class', (source_row->>'class_id')::BIGINT, FALSE);
+        subject := jsonb_build_object('kind', 'resource', 'identity',
+            COALESCE(source_row #> '{snapshot,logical_identity,subject,identity}', class_reference->'reference'),
+            'version', gen_random_uuid());
+    ELSIF layout.family = 'event' THEN
+        subject := jsonb_build_object('kind', 'event', 'identity', source_row->'event_id');
+    END IF;
+    -- Closure changes neither the captured references nor the historical UUID.
+    IF TG_OP = 'UPDATE' AND layout.mode IN ('history', 'definition_history', 'schema_history') THEN
+        NEW.logical_identity := evidence;
+    ELSE
+        -- A history snapshot and a refresh of the same immutable version must
+        -- retain the sources represented by its payload. A genuinely authored
+        -- version has a new UUID and intentionally starts a new ancestry.
+        evidence := COALESCE(evidence, source_row->'logical_identity');
+        IF (TG_OP = 'INSERT' AND layout.mode = 'history')
+            OR subject->>'version' = evidence #>> '{subject,version}' THEN
+            SELECT jsonb_object_agg(key, value) INTO restored_sources
+            FROM jsonb_each(COALESCE(evidence->'references', '{}'::jsonb))
+            WHERE key LIKE '/restore_source_versions/%'
+               OR key LIKE '/restore_unknown_source_versions/%';
+        END IF;
+        NEW.logical_identity := jsonb_build_object('subject', subject, 'references',
+            public.hubuum_capture_identity_references(source_row, previous_row, FALSE)
+                || COALESCE(restored_sources, '{}'::jsonb));
+    END IF;
+    RETURN NEW;
+END
+$function$;
+DROP FUNCTION public.hubuum_history_policy_references(TEXT,JSONB,JSONB,JSONB);
+
 CREATE OR REPLACE FUNCTION public.hubuum_rotate_application_for_restore()
 RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE authority JSONB; empty_authority BOOLEAN; task_activation JSONB;
@@ -105,6 +198,8 @@ ALTER TABLE hubuum_control.runtime_registrations DROP COLUMN IF EXISTS history_p
 DROP FUNCTION IF EXISTS public.hubuum_history_requested_as_of_visible(TEXT,UUID,TIMESTAMPTZ);
 DROP FUNCTION IF EXISTS public.hubuum_history_as_of_visible(TEXT,JSONB,TIMESTAMPTZ,TIMESTAMPTZ);
 DROP FUNCTION IF EXISTS public.hubuum_history_version_visible(TEXT,JSONB);
+DROP FUNCTION IF EXISTS public.hubuum_history_expiry_admit(JSONB,JSONB,UUID,BIGINT);
+DROP FUNCTION IF EXISTS public.hubuum_history_expiry_dependency(TEXT,JSONB);
 DROP FUNCTION IF EXISTS public.hubuum_history_expiry_sync();
 DROP TABLE IF EXISTS hubuum_control.history_expiry_members;
 
