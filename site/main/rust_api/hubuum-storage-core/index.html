@@ -4335,6 +4335,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#audited-runtime-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Audited runtime settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4811,6 +4822,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#audited-runtime-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Audited runtime settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4892,7 +4914,7 @@
 
 
 <h1 id="hubuum-storage-core-rust-api-policy"><code>hubuum-storage-core</code> Rust API Policy<a class="headerlink" href="#hubuum-storage-core-rust-api-policy" title="Permanent link">&para;</a></h1>
-<p>Status: experimental public API in the storage SDK <code>0.6</code> release train.</p>
+<p>Status: experimental public API in the storage SDK <code>0.7</code> release train.</p>
 <h2 id="purpose-and-callers">Purpose and Callers<a class="headerlink" href="#purpose-and-callers" title="Permanent link">&para;</a></h2>
 <p><code>hubuum-storage-core</code> is the complete backend-neutral storage extension
 contract. It exposes capability traits, private-field DTOs, the bounded
@@ -5093,6 +5115,12 @@ variant. Every adapter implements <code>get_schema_profile_output</code> and
 <code>purge_expired_schema_profile_outputs</code>, fences publication with terminal task
 completion, and retains expiry metadata after removal. See the
 <a href="../../storage_adapter_sdk/#upgrading-from-05-to-06">0.6 upgrade guide</a>.</p>
+<h2 id="audited-runtime-settings">Audited runtime settings<a class="headerlink" href="#audited-runtime-settings" title="Permanent link">&para;</a></h2>
+<p>The 0.7 SDK replaces legacy query-observation control with the mandatory
+<code>RuntimeSettingsStorage</code> capability in <code>OperationalStorage</code>. Complete typed
+snapshots, revision-checked writes with atomic audit records, bounded history,
+restore preservation, and runtime-settings notifications are part of the adapter
+contract. See the <a href="../../storage_adapter_sdk/#upgrading-from-06-to-07">0.7 upgrade guide</a>.</p>
 
 
 

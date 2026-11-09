@@ -5383,7 +5383,11 @@ enable <code>related.*</code> and <code>reachable.*</code>.</p>
 <h2 id="render-guards-and-cleanup">Render guards and cleanup<a class="headerlink" href="#render-guards-and-cleanup" title="Permanent link">&para;</a></h2>
 <ul>
 <li>hydrated relation export templates are limited to <code>depth &lt;= 2</code></li>
-<li>the renderer enforces a recursion limit and a MiniJinja fuel budget</li>
+<li>the renderer enforces a recursion limit and a MiniJinja fuel budget;
+  <code>HUBUUM_EXPORT_TEMPLATE_FUEL</code> covers instructions, processed and allocated data,
+  output, and work inside filters and operators. MiniJinja 3.1 expanded this
+  accounting, so previously accepted templates may need smaller workloads or a
+  reviewed fuel increase. Worker heap and output limits remain independent.</li>
 <li>relation hydration enforces a maximum hydrated object count</li>
 <li><code>HUBUUM_EXPORT_STAGE_TIMEOUT_MS</code> is a <strong>post-completion rejection budget</strong>, not
   an in-flight interrupt: an export is rejected only <em>after</em> a stage (query,
