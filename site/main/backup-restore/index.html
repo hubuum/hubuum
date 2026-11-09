@@ -1826,6 +1826,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../runtime_settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Runtime settings
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../database_roles/" class="md-nav__link">
         
   
@@ -5056,6 +5083,10 @@ excluded as rebuildable caches; restore validates definitions and queues shared
 class rebuild tasks. Personal values are evaluated when their owner reads an
 object. The <a href="https://github.com/hubuum/hubuum/blob/main/test-corpora/README.md#object-data-and-computed-fields">functional corpus</a>
 includes verified restore examples for both scopes.</p>
+<p><a href="../runtime_settings/">Runtime settings</a> and their audit records are deployment
+configuration. Backups exclude them, and a restore leaves the target
+deployment's runtime settings and history unchanged. Reapply runtime settings
+explicitly after restoring into a new deployment.</p>
 <p>The manifest does not carry partial-selection counts, import-planning
 warnings, a collection scope, or an embedded import request.</p>
 <p>Backups cannot be scoped and backup documents are not import requests. Use the

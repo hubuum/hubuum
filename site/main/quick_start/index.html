@@ -16,7 +16,7 @@
         <link rel="prev" href="../distributed_deployment/">
       
       
-        <link rel="next" href="../database_roles/">
+        <link rel="next" href="../runtime_settings/">
       
       
         
@@ -2121,6 +2121,33 @@
   
 </nav>
       
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../runtime_settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Runtime settings
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -5773,8 +5800,11 @@ locking behavior, and export/import alternative for selective transfers.</p>
 </tr>
 </tbody>
 </table>
-<p>Clients can discover the effective pagination values, including deployment
-overrides, without authentication:</p>
+<p>Administrators can manage the default page size for every replica as a
+<a href="../runtime_settings/">runtime setting</a>, without restarting.
+<code>HUBUUM_MAX_PAGE_LIMIT</code> stays a deployment ceiling. Clients can discover the
+effective pagination values, including runtime and deployment overrides,
+without authentication:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>GET /api/v1/config
 </code></pre></div>
 <p>The response exposes only settings deliberately classified as client-safe:</p>
@@ -6169,13 +6199,13 @@ not provision its database or apply migrations.</p>
         
         
           
-          <a href="../database_roles/" class="md-footer__link md-footer__link--next" aria-label="Next: PostgreSQL roles">
+          <a href="../runtime_settings/" class="md-footer__link md-footer__link--next" aria-label="Next: Runtime settings">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                PostgreSQL roles
+                Runtime settings
               </div>
             </div>
             <div class="md-footer__button md-icon">

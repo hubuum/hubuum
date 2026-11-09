@@ -1945,6 +1945,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../runtime_settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Runtime settings
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../database_roles/" class="md-nav__link">
         
   
@@ -4933,43 +4960,30 @@ usable workload evidence is missing or bounded catalog inspection is incomplete.
 A <code>complete</code> review can contain zero suggestions. Neither missing observations
 nor zero native scans establishes that a resource is unused.</p>
 <p>Collection is disabled by default. <code>HUBUUM_QUERY_OBSERVATIONS_ENABLED=true</code>
-sets the startup default. An unscoped human administrator can enable or disable
-collection at runtime through <code>PUT /api/v1/admin/query-observations</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>--request<span class="w"> </span>PUT<span class="w"> </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/admin/query-observations"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--header<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span>--data<span class="w"> </span><span class="s1">'{"enabled":true}'</span>
+sets the deployment default. Enablement is a
+<a href="../runtime_settings/">runtime setting</a>: an unscoped human administrator can
+enable or disable collection for every replica sharing storage, without
+restarting:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>--request<span class="w"> </span>PUT<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/admin/runtime-settings/query_observations"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--header<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>--data<span class="w"> </span><span class="s1">'{"expected_revision":1,"enabled":true}'</span>
 </code></pre></div>
-<p>Send <code>{"enabled":false}</code> to disable collection. The override applies to every
-upgraded API replica connected to the same PostgreSQL database, including replicas
-whose startup default differs. It survives restarts and logical backup restores;
-it is deployment configuration and is not copied into portable backups. Concurrent
-updates use the last committed value. Memory storage shares the setting only
-among handles using the same in-process store; independent memory processes do
-not form a shared deployment.</p>
-<p>The update commits the shared value and broadcasts a PostgreSQL notification in
-one transaction. Running replicas reload and apply it on notification, without
-waiting for another query or the next poll. New replicas load it before serving
-requests, and listeners reload it after reconnecting. Each process also refreshes
-every 30 seconds to recover missed notifications, including while collection is
-off. Queries that can contribute observations refresh an expired one-second
-control cache before collecting, so idle recovery does not add a database read
-every second on each replica.
-Delivery is asynchronous: a successful PUT confirms the commit and the responding
-replica's applied state, not an acknowledgement from every replica. Control refreshes
-have a 250 ms budget that includes waiting for another refresh. Failed or slow
-refreshes skip collection without failing ordinary queries. Requests already
-being observed can finish recording after disablement. Disabling retains existing
+<p>Changes are revision-checked and audited. Replicas apply them on notification
+or within the 30-second reconcile interval. Sampling decisions read the applied
+value without a storage read. A replica whose latest runtime settings refresh
+failed pauses collection until a refresh succeeds. Requests already being
+observed can finish recording after disablement. Disabling retains existing
 observations until their normal expiry and leaves declarations and indexes intact.</p>
-<p><code>GET /api/v1/admin/query-observations</code> returns the effective settings for the
-responding replica, including <code>enabled</code> and <code>runtime_override</code>. A null override
-means its startup default still applies. <code>GET /api/v1/admin/config</code> exposes the
-same effective settings. Both reads reconcile the live collector with the shared
-setting before reporting it, so <code>enabled</code> is the state applied on that replica. Sampling
-and capacity limits remain startup settings. CLI flags use the corresponding
-lowercase hyphenated names; TOML keys use lowercase underscores under
-<code>[query_observations]</code>.</p>
-<p>Apply the query observation control migration before starting the updated server,
-and upgrade all API replicas before relying on the deployment-wide toggle.</p>
+<p><code>GET /api/v1/admin/runtime-settings</code> reports the responding replica's
+effective, runtime, and deployment settings, with the source and revision.
+<code>GET /api/v1/admin/config</code> also reports the effective observation settings.
+The existing observation variables are deployment defaults, used while the
+group is released and to fill omitted fields in an update. Runtime-managed
+sampling and capacity values are clamped by the additional deployment ceiling
+variables below. CLI flags use the corresponding lowercase hyphenated names;
+TOML keys use lowercase underscores under <code>[query_observations]</code>.</p>
 <table>
 <thead>
 <tr>
@@ -5002,6 +5016,42 @@ and upgrade all API replicas before relying on the deployment-wide toggle.</p>
 <tr>
 <td><code>MAX_PREDICATES_PER_QUERY</code></td>
 <td>16</td>
+<td>1–32</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Ceiling suffix after <code>HUBUUM_QUERY_OBSERVATIONS_</code></th>
+<th>Default</th>
+<th>Accepted range</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MIN_SAMPLE_EVERY</code></td>
+<td>1</td>
+<td>1–1,000,000</td>
+</tr>
+<tr>
+<td><code>MAX_PATTERNS_CEILING</code></td>
+<td>16384</td>
+<td>1–16,384</td>
+</tr>
+<tr>
+<td><code>MAX_PATTERNS_PER_CLASS_CEILING</code></td>
+<td>128</td>
+<td>1–128, no greater than the total ceiling</td>
+</tr>
+<tr>
+<td><code>MAX_RETENTION_SECONDS_CEILING</code></td>
+<td>604800</td>
+<td>1–604,800</td>
+</tr>
+<tr>
+<td><code>MAX_PREDICATES_PER_QUERY_CEILING</code></td>
+<td>32</td>
 <td>1–32</td>
 </tr>
 </tbody>

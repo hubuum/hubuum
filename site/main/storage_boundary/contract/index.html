@@ -1816,6 +1816,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../runtime_settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Runtime settings
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../database_roles/" class="md-nav__link">
         
   
@@ -5319,8 +5346,10 @@ organized into 20 documented semantic capability groups covering:</p>
 unsupported implementations do not satisfy the semantic contract. Truly
 optional behavior is composed outside the aggregate. In particular,
 <code>WorkerNotificationProvider</code> may be attached for low-latency wake-ups because
-durable polling remains the correctness path. <code>QueryUsageStorage</code> declaration
-management and shared observation control are mandatory, while <code>QueryUsageAnalysisProvider</code> is optional and
+durable polling remains the correctness path. <code>RuntimeSettingsStorage</code> is
+mandatory: notifications only wake replicas, which reload authoritative
+settings and also reconcile by polling. <code>QueryUsageStorage</code> declaration
+management is mandatory, while <code>QueryUsageAnalysisProvider</code> is optional and
 read-only. A backend without that provider reports analysis as unavailable;
 query behavior never depends on declarations, observations, or native preparation.
 See <a href="../../query_usage/">query usage</a> for vocabulary and bounded observations.</p>

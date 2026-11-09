@@ -1816,6 +1816,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../runtime_settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Runtime settings
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../database_roles/" class="md-nav__link">
         
   
@@ -3993,10 +4020,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#runtime-observation-control" class="md-nav__link">
+  <a href="#runtime-settings" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Runtime observation control
+        Runtime settings
       </span>
     </span>
   </a>
@@ -4884,10 +4911,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#runtime-observation-control" class="md-nav__link">
+  <a href="#runtime-settings" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Runtime observation control
+        Runtime settings
       </span>
     </span>
   </a>
@@ -5312,12 +5339,18 @@ as token issuance and external synchronization. The operation retains
 <code>mark_external_sync_attempted</code> as its telemetry label for compatibility.
 These are synchronization metadata
 and credential invalidation effects, with no independent lifecycle audit event.</p>
-<h2 id="runtime-observation-control">Runtime observation control<a class="headerlink" href="#runtime-observation-control" title="Permanent link">&para;</a></h2>
-<p><code>QueryUsageStorage::set_query_observation_control</code> changes deployment configuration,
-not a domain resource. It atomically replaces the shared override and publishes a
-commit-ordered wake-up on notification-capable adapters. The administrator handler
-logs the actor and enabled state; this operation does not create a domain audit
-event. Logical restores preserve the setting and portable backups exclude it.</p>
+<h2 id="runtime-settings">Runtime settings<a class="headerlink" href="#runtime-settings" title="Permanent link">&para;</a></h2>
+<p><code>RuntimeSettingsStorage::update_runtime_settings</code> changes deployment
+configuration, not a domain resource. In one atomic operation it checks the
+group's expected revision, replaces the group's assignment, advances its
+revision, and appends one runtime settings audit record with the actor,
+request, correlation, previous value, and new value. Notification-capable
+adapters publish a commit-ordered <code>RuntimeSettings</code> wake-up in the same
+transaction. A stale revision returns <code>RevisionConflict</code> with the current
+revision; requesting the current assignment returns <code>Unchanged</code> without a
+revision, audit record, or notification. These records are separate from the
+domain event stream. Logical restores preserve settings and their audit
+records, and portable backups exclude them.</p>
 
 
 

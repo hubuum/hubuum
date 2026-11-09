@@ -1635,6 +1635,7 @@
             "event_sink",
             "remote_target",
             "ldap",
+            "runtime_settings",
             "token_hash"
           ]
         },
@@ -1695,6 +1696,7 @@
             "event_sink",
             "remote_target",
             "ldap",
+            "runtime_settings",
             "token_hash"
           ]
         },
@@ -1808,6 +1810,7 @@
             "relation_query",
             "remote_target",
             "restore",
+            "runtime_settings",
             "service_account",
             "schema_evolution",
             "query_usage",
@@ -2027,6 +2030,7 @@
             "list_remote_target_history",
             "list_remote_targets",
             "list_retained_tokens",
+            "list_runtime_settings_changes",
             "list_schema_compliance",
             "list_schema_revisions",
             "list_shared_computed_fields",
@@ -2043,6 +2047,7 @@
             "load_group_member_principals",
             "load_groups_with_collection_permission",
             "load_principal_collection_permissions",
+            "load_runtime_settings",
             "load_token_metadata_by_ids",
             "mark_event_delivery_dead",
             "mark_event_delivery_failed",
@@ -2063,7 +2068,6 @@
             "purge_expired_export_outputs",
             "purge_expired_schema_profile_outputs",
             "purge_expired_tokens",
-            "query_observation_control",
             "record_claimed_import_results",
             "record_credential_creation",
             "record_import_results",
@@ -2105,7 +2109,6 @@
             "search_classes",
             "search_collections",
             "search_objects",
-            "set_query_observation_control",
             "set_user_password",
             "stage_restore_artifact",
             "stage_schema_revision",
@@ -2123,6 +2126,7 @@
             "update_personal_computed_field",
             "update_principal_settings",
             "update_remote_target",
+            "update_runtime_settings",
             "update_service_account",
             "update_shared_computed_field",
             "update_task_state",
@@ -2231,6 +2235,7 @@
             "relation_query",
             "remote_target",
             "restore",
+            "runtime_settings",
             "service_account",
             "schema_evolution",
             "query_usage",
@@ -2450,6 +2455,7 @@
             "list_remote_target_history",
             "list_remote_targets",
             "list_retained_tokens",
+            "list_runtime_settings_changes",
             "list_schema_compliance",
             "list_schema_revisions",
             "list_shared_computed_fields",
@@ -2466,6 +2472,7 @@
             "load_group_member_principals",
             "load_groups_with_collection_permission",
             "load_principal_collection_permissions",
+            "load_runtime_settings",
             "load_token_metadata_by_ids",
             "mark_event_delivery_dead",
             "mark_event_delivery_failed",
@@ -2486,7 +2493,6 @@
             "purge_expired_export_outputs",
             "purge_expired_schema_profile_outputs",
             "purge_expired_tokens",
-            "query_observation_control",
             "record_claimed_import_results",
             "record_credential_creation",
             "record_import_results",
@@ -2528,7 +2534,6 @@
             "search_classes",
             "search_collections",
             "search_objects",
-            "set_query_observation_control",
             "set_user_password",
             "stage_restore_artifact",
             "stage_schema_revision",
@@ -2546,6 +2551,7 @@
             "update_personal_computed_field",
             "update_principal_settings",
             "update_remote_target",
+            "update_runtime_settings",
             "update_service_account",
             "update_shared_computed_field",
             "update_task_state",
@@ -4129,7 +4135,7 @@
       "dynamic_default": null,
       "allowed_values": [],
       "minimum": 1,
-      "maximum": null,
+      "maximum": 4294967295,
       "runtime_roles": [
         "all",
         "api",
@@ -5348,6 +5354,28 @@
       "dynamic_prefix": false
     },
     {
+      "name": "HUBUUM_QUERY_OBSERVATIONS_MAX_PATTERNS_CEILING",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "16384"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 16384,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
       "name": "HUBUUM_QUERY_OBSERVATIONS_MAX_PATTERNS_PER_CLASS",
       "owner": "operations",
       "exposure": "public",
@@ -5355,6 +5383,28 @@
       "default_is_set": true,
       "default": [
         "64"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 128,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_QUERY_OBSERVATIONS_MAX_PATTERNS_PER_CLASS_CEILING",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "128"
       ],
       "dynamic_default": null,
       "allowed_values": [],
@@ -5382,6 +5432,72 @@
       "allowed_values": [],
       "minimum": 1,
       "maximum": 32,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_QUERY_OBSERVATIONS_MAX_PREDICATES_PER_QUERY_CEILING",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "32"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 32,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_QUERY_OBSERVATIONS_MAX_RETENTION_SECONDS_CEILING",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "604800"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 604800,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_QUERY_OBSERVATIONS_MIN_SAMPLE_EVERY",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "1"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": 1,
+      "maximum": 1000000,
       "runtime_roles": [
         "all",
         "api",
@@ -5642,6 +5758,47 @@
       "appears_in_running_configuration": true,
       "source": "server",
       "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF",
+      "owner": "authentication",
+      "exposure": "sensitive_metadata",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_RUNTIME_SETTINGS_KEY_*",
+      "owner": "authentication",
+      "exposure": "secret",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker",
+        "admin"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "dynamic secret namespace",
+      "dynamic_prefix": true
     },
     {
       "name": "HUBUUM_SCHEMA_MAX_BYTES",
@@ -7880,6 +8037,101 @@
           },
           "default": [
             "16"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "query_observations_min_sample_every",
+          "long": "query-observations-min-sample-every",
+          "short": null,
+          "environment": "HUBUUM_QUERY_OBSERVATIONS_MIN_SAMPLE_EVERY",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "1"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "query_observations_max_patterns_ceiling",
+          "long": "query-observations-max-patterns-ceiling",
+          "short": null,
+          "environment": "HUBUUM_QUERY_OBSERVATIONS_MAX_PATTERNS_CEILING",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "16384"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "query_observations_max_patterns_per_class_ceiling",
+          "long": "query-observations-max-patterns-per-class-ceiling",
+          "short": null,
+          "environment": "HUBUUM_QUERY_OBSERVATIONS_MAX_PATTERNS_PER_CLASS_CEILING",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "128"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "query_observations_max_retention_seconds_ceiling",
+          "long": "query-observations-max-retention-seconds-ceiling",
+          "short": null,
+          "environment": "HUBUUM_QUERY_OBSERVATIONS_MAX_RETENTION_SECONDS_CEILING",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "604800"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "query_observations_max_predicates_per_query_ceiling",
+          "long": "query-observations-max-predicates-per-query-ceiling",
+          "short": null,
+          "environment": "HUBUUM_QUERY_OBSERVATIONS_MAX_PREDICATES_PER_QUERY_CEILING",
+          "value_kind": "integer",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "32"
           ],
           "dynamic_default": null,
           "allowed_values": [],
@@ -10166,6 +10418,23 @@
           "long": "auth-config-path",
           "short": null,
           "environment": "HUBUUM_AUTH_CONFIG_PATH",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "runtime_settings_encryption_key_ref",
+          "long": "runtime-settings-encryption-key-ref",
+          "short": null,
+          "environment": "HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF",
           "value_kind": "string",
           "value_count": {
             "minimum": 1,
