@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.22] - 2026-11-09
+
 ### Added
 
 - Administrator clients can discover runtime settings through
@@ -49,6 +51,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   [runtime settings](docs/runtime_settings.md).
 
 ### Changed
+
+- **Breaking (templates):** MiniJinja 3.1 charges fuel for string processing,
+  allocations, output, and work inside filters and operators, in addition to
+  instructions. Existing templates can exhaust their unchanged fuel allowance.
+  Reduce their processed data or review and increase `HUBUUM_EXPORT_TEMPLATE_FUEL`;
+  heap and output guards remain independent. Review rendered output for the
+  upstream changes to escaping, ordering, and null/undefined handling. See
+  [MiniJinja 3.1 release notes](https://github.com/mitsuhiko/minijinja/releases/tag/3.1.0).
 
 - **Breaking for deployments with oversized pagination defaults:** deployment
   configuration and runtime settings now share default-page-size validation.
@@ -96,7 +106,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `update_runtime_settings`, and `list_runtime_settings_changes` under the new
   `runtime_settings` capability label. Update dashboards and alerts that filter
   on the removed operation labels; metric names and other labels are unchanged.
-- **Breaking storage SDK changes:** adapters must implement the new
+- **Breaking storage SDK changes:** update all ten SDK dependencies to `0.7.0`
+  together. Adapters must implement the new
   `RuntimeSettingsStorage` capability, now part of `OperationalStorage`. It
   requires complete snapshots, revision-checked updates that commit their audit
   record atomically, and bounded newest-first audit pages, all preserved across
@@ -106,7 +117,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `StorageQueryObservationControl` are removed. The
   `StorageNotification::QueryObservationControl` topic is renamed to
   `StorageNotification::RuntimeSettings`, and notification providers must
-  support it. `StorageCapability::RuntimeSettings` is a new telemetry label.
+  support it. `StorageCapability::RuntimeSettings` is a new telemetry label. See
+  the [0.7 migration guide](docs/storage_adapter_sdk.md#upgrading-from-06-to-07).
 
 ## [0.0.21] - 2026-10-26
 
