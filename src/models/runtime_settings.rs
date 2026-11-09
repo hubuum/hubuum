@@ -1,4 +1,5 @@
 //! API representation of database-managed runtime settings.
+pub mod discovery;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{PrincipalId, ResourceRevision};
 use hubuum_storage_core::{
@@ -60,16 +61,34 @@ impl From<StorageRuntimeSettingsGroup> for RuntimeSettingsGroup {
 pub struct QueryObservationSettingsRequest {
     /// Current revision of the `query_observations` group.
     pub expected_revision: ResourceRevision,
+    /// Collect sampled query patterns for query-usage analysis. Turning this off
+    /// stops new observations; retained observations remain subject to retention
+    /// and capacity limits. This does not enable or disable query execution.
     pub enabled: bool,
-    /// Sample one in every N eligible queries. Smaller values sample more often.
+    /// Sample one in every N eligible queries. Set to 1 to sample every eligible
+    /// query. Larger values reduce collection overhead and the number of samples;
+    /// 0 is not allowed. Use Collect query observations to turn collection off.
     #[schema(minimum = 1, maximum = 1_000_000)]
     pub sample_every: Option<u32>,
+    /// Maximum distinct query patterns retained across all classes on each
+    /// replica. New patterns are dropped when capacity is full. Lowering this
+    /// limit can evict retained patterns; increasing it allows more memory use.
     #[schema(minimum = 1, maximum = 16_384)]
     pub max_patterns: Option<usize>,
+    /// Maximum distinct query patterns retained for one class on each replica.
+    /// Must not exceed Total pattern limit. New patterns for a class are dropped
+    /// when its capacity is full; lowering this limit can evict retained patterns.
     #[schema(minimum = 1, maximum = 128)]
     pub max_patterns_per_class: Option<usize>,
+    /// Retention window in seconds, starting when a pattern is first recorded
+    /// on a replica. Expired patterns are removed during collection or
+    /// inspection. Longer windows retain observations longer, subject to
+    /// capacity limits. 0 is not allowed.
     #[schema(minimum = 1, maximum = 604_800)]
     pub retention_seconds: Option<u32>,
+    /// Maximum filter predicates in a query eligible for observation. Queries
+    /// above this limit still execute but are not observed. Higher limits allow
+    /// more complex queries to be sampled and increase collection work.
     #[schema(minimum = 1, maximum = 32)]
     pub max_predicates_per_query: Option<usize>,
 }
@@ -113,8 +132,10 @@ impl QueryObservationSettingsRequest {
 pub struct PaginationSettingsRequest {
     /// Current revision of the `pagination` group.
     pub expected_revision: ResourceRevision,
-    /// Items returned when a request omits `limit`. Must not exceed the
-    /// responding replica's deployment `max_page_limit`.
+    /// Maximum items in a page when a request omits its limit. Requests with an
+    /// explicit limit keep that limit, subject to the deployment maximum. Larger
+    /// pages can use more memory and transfer more data. Must be at least 1 and
+    /// must not exceed this replica's deployment maximum page size.
     #[schema(minimum = 1, maximum = 4_294_967_295u64)]
     pub default_page_limit: u64,
 }
@@ -160,6 +181,8 @@ pub enum RuntimeAuthenticationProviderRequest {
 pub struct AuthenticationSettingsRequest {
     /// Current revision of the `authentication` group.
     pub expected_revision: ResourceRevision,
+    /// Authentication providers available for login. Provider activation,
+    /// configuration and ownership changes require authentication preflight.
     pub providers: Vec<RuntimeAuthenticationProviderRequest>,
 }
 
@@ -176,6 +199,17 @@ pub enum RuntimeAuthorizationBackend {
     Treetop,
 }
 
+impl RuntimeAuthorizationBackend {
+    fn description(self) -> &'static str {
+        match self {
+            Self::Local => "Evaluate permissions using Hubuum's built-in authorization backend.",
+            Self::Treetop => {
+                "Evaluate permissions using the configured Treetop policy backend. Requires a server built with Treetop support and a working deployment configuration; activation validates connectivity and administrator access."
+            }
+        }
+    }
+}
+
 impl From<RuntimeAuthorizationBackend> for StorageAuthorizationBackend {
     fn from(value: RuntimeAuthorizationBackend) -> Self {
         match value {
@@ -190,6 +224,9 @@ impl From<RuntimeAuthorizationBackend> for StorageAuthorizationBackend {
 pub struct AuthorizationSettingsRequest {
     /// Current revision of the `authorization` group.
     pub expected_revision: ResourceRevision,
+    /// Backend used to evaluate permissions on subsequent requests. Changing
+    /// this can change access decisions. A local administrator with password
+    /// login must make the change and retain administrator access afterward.
     pub backend: RuntimeAuthorizationBackend,
 }
 

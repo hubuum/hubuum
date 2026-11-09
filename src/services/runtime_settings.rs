@@ -5,15 +5,18 @@ use hubuum_storage_core::{
     RuntimeSettingsStorage, StorageRuntimeSettingsAssignment, StorageRuntimeSettingsGroup,
     StorageRuntimeSettingsHistoryQuery, StorageRuntimeSettingsUpdate, StorageRuntimeSettingsValue,
 };
+use serde_json::{Value, json};
 
 use crate::config::running::QueryObservationConfig;
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::LOCAL_IDENTITY_SCOPE;
+use crate::models::runtime_settings::discovery::{RuntimeSettingsCatalogue, RuntimeSettingsPatch};
 use crate::models::runtime_settings::{
-    RuntimeAuthenticationProviderRequest, RuntimeSettingsDeployment, RuntimeSettingsGroup,
-    RuntimeSettingsHistoryParams, RuntimeSettingsHistoryResponse, RuntimeSettingsReport,
-    RuntimeSettingsUpdateResponse,
+    AuthorizationSettingsRequest, PaginationSettingsRequest, QueryObservationPolicyValue,
+    QueryObservationSettingsRequest, RuntimeAuthenticationProviderRequest,
+    RuntimeSettingsDeployment, RuntimeSettingsGroup, RuntimeSettingsHistoryParams,
+    RuntimeSettingsHistoryResponse, RuntimeSettingsReport, RuntimeSettingsUpdateResponse,
 };
 use crate::pagination::deployment_page_limits;
 use crate::permissions::{AppContext, PermissionBackend, PrincipalRef};
@@ -34,6 +37,97 @@ fn deployment(storage: &StorageHandle) -> Result<RuntimeSettingsDeployment, ApiE
             }
         },
     })
+}
+
+pub fn catalogue(context: &AppContext) -> Result<RuntimeSettingsCatalogue, ApiError> {
+    RuntimeSettingsCatalogue::new(deployment(context.backend())?)
+}
+
+/// Merge only supplied fields into authoritative requested values, then run the
+/// existing typed validation, authorization, audit and compare-and-swap path.
+pub async fn patch(
+    context: &AppContext,
+    group: RuntimeSettingsGroup,
+    request: RuntimeSettingsPatch,
+    event: EventContext,
+) -> Result<RuntimeSettingsUpdateResponse, ApiError> {
+    let storage = context.backend();
+    let deployment = deployment(storage)?;
+    let descriptor = RuntimeSettingsCatalogue::new(deployment)?
+        .groups
+        .into_iter()
+        .find(|descriptor| descriptor.key == group)
+        .expect("every runtime settings group has a descriptor");
+    if !descriptor.patch_supported {
+        return Err(ApiError::BadRequest(
+            descriptor.read_only_reason.unwrap_or_default(),
+        ));
+    }
+    if request.changes.is_empty() {
+        return Err(ApiError::BadRequest(
+            "changes must contain at least one field".into(),
+        ));
+    }
+    for (name, value) in &request.changes {
+        if descriptor.schema["properties"].get(name).is_none() || value.is_null() {
+            return Err(ApiError::BadRequest(format!(
+                "Unknown or null runtime setting '{name}'; omit unchanged fields and use DELETE to release a group"
+            )));
+        }
+    }
+    let snapshot = storage.load_runtime_settings().await?;
+    let record = snapshot.record(group.into());
+    if record.revision() != request.expected_revision {
+        return Err(ApiError::RevisionConflict(
+            "The runtime settings revision is stale".into(),
+            record.revision(),
+        ));
+    }
+    let mut merged = match group {
+        RuntimeSettingsGroup::Pagination => {
+            json!({"default_page_limit": deployment.pagination.default_limit()})
+        }
+        RuntimeSettingsGroup::QueryObservations => serde_json::to_value(
+            QueryObservationPolicyValue::from(deployment.query_observations),
+        )?,
+        RuntimeSettingsGroup::Authorization => {
+            json!({"backend": deployment.authorization_backend.as_str()})
+        }
+        RuntimeSettingsGroup::Authentication => unreachable!("authentication uses preflight"),
+    };
+    if let Some(Value::Object(current)) = record.assignment().to_document() {
+        for (name, value) in current {
+            // Migrated enablement-only observation policies inherit their
+            // omitted resource settings from the deployment until first edited.
+            if !value.is_null() {
+                merged[&name] = value;
+            }
+        }
+    }
+    for (name, value) in request.changes {
+        merged[&name] = value;
+    }
+    merged["expected_revision"] = serde_json::to_value(request.expected_revision)?;
+    let invalid = |error| ApiError::BadRequest(format!("Invalid runtime settings: {error}"));
+    let update_request = match group {
+        RuntimeSettingsGroup::Pagination => {
+            serde_json::from_value::<PaginationSettingsRequest>(merged)
+                .map_err(invalid)?
+                .into_update(deployment.pagination, event)?
+        }
+        RuntimeSettingsGroup::QueryObservations => {
+            serde_json::from_value::<QueryObservationSettingsRequest>(merged)
+                .map_err(invalid)?
+                .into_update(deployment.query_observations, event)?
+        }
+        RuntimeSettingsGroup::Authorization => {
+            serde_json::from_value::<AuthorizationSettingsRequest>(merged)
+                .map_err(invalid)?
+                .into_update(event)
+        }
+        RuntimeSettingsGroup::Authentication => unreachable!("authentication uses preflight"),
+    };
+    update(context, update_request).await
 }
 
 /// Reconcile the responding replica, then report what it applies.

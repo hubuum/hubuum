@@ -348,3 +348,87 @@ stored runtime definitions retain runtime ownership and default to enabled;
 existing runtime selections continue to suppress omitted deployment providers.
 Security-setting edits now require a local administrator, so provision and test
 that account before upgrading installations administered solely through LDAP.
+
+## Discovery for generic clients
+
+`GET /api/v1/admin/runtime-settings/schema` returns an administrator-only
+catalogue with `schema_version: 1` and a `groups` array. Each descriptor has a
+stable `key`, title, description, JSON Schema, `patch_supported`,
+`requires_local_admin`, application timing, and an optional read-only reason.
+The catalogue describes the responding binary and deployment, not every replica
+in the cluster. Upgrade all participating replicas before enabling new settings;
+keep deployment ceilings consistent when identical effective values are needed.
+
+The value schemas use JSON Schema 2020-12. Simple editors can support boolean,
+integer, number, string, and enum fields, including minimum/maximum bounds,
+descriptions, defaults, and the optional `x-unit` annotation. Ignore unfamiliar
+annotations. Display unsupported field shapes read-only and never send them back
+as part of an edit. An unknown catalogue major version must disable edits.
+`default` describes the responding deployment's value; it is not the current
+runtime value and does not authorize resetting a field.
+
+Every advertised field includes a plain-text `title` and `description`. Keep
+descriptions alongside the request type so OpenAPI and discovery share the field
+help; presentation titles live in the catalogue.
+Describe what the setting controls, its units and special values, interactions
+with other settings, and the operational effect of changing it. Catalogue tests
+require nonempty help for every group and field, including read-only fields.
+
+String enums also include `x-enum-descriptions`: an object mapping each advertised
+wire value to its plain-text explanation. Only supported choices are included.
+Clients should show these explanations alongside the selector and associate
+field help with its input for assistive technologies. Render help as text, not
+HTML. Clients may ignore this additive annotation and continue displaying the
+raw enum values; the discovery version remains 1. For example:
+
+```json
+{
+  "type": "string",
+  "title": "Authorization backend",
+  "description": "Backend used to evaluate permissions on subsequent requests.",
+  "enum": ["local"],
+  "x-enum-descriptions": {
+    "local": "Evaluate permissions using Hubuum's built-in authorization backend."
+  }
+}
+```
+
+`GET /api/v1/admin/runtime-settings/{group}` returns a uniform view with ownership,
+revision, replica application status, `effective`, `runtime`, `deployment`, and
+`constrained_by_ceiling`. Prefer requested `runtime` values when preparing an edit;
+`effective` can be lower because of a deployment ceiling. Authentication exposes
+only redacted provider status, with runtime/deployment definitions omitted.
+
+For groups with `patch_supported: true`, send only the edited top-level fields:
+
+```json
+{
+  "expected_revision": 3,
+  "changes": {
+    "default_page_limit": 75
+  }
+}
+```
+
+Send that document to `PATCH /api/v1/admin/runtime-settings/pagination`. The server
+loads the authoritative group, preserves omitted fields, validates the complete
+candidate using the same typed constructors as PUT, and commits it with an audit
+record and revision check. Empty changes, unknown fields, null values, incorrect
+types, invalid combinations, and deployment-ceiling violations are rejected.
+A stale revision returns `412`; refetch and let the administrator review the
+conflict rather than silently retrying the mutation. DELETE remains the explicit
+operation for returning an entire group to deployment ownership.
+
+The initial generic editors cover pagination, query observations, and authorization
+backend selection. Authorization retains the local recovery-administrator check.
+Authentication is advertised read-only to generic editors because its existing
+preflight workflow validates ownership transfer, secrets, and connectivity before
+committing. Discovery never relaxes server authorization or makes deployment-only
+settings mutable. None of these additive endpoints changes persistence or backup
+semantics.
+
+Clients must discover group and field names at runtime. An older generic client
+can then edit a newly added scalar field without recompilation, while partial
+updates preserve fields that client does not understand. A `404` from discovery
+means an older server does not implement this capability; retain read-only
+configuration inspection and do not fall back to unrevisioned writes.
