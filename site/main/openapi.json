@@ -1222,6 +1222,197 @@
         ]
       }
     },
+    "/api/v1/admin/runtime-settings/schema": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Api V1 Admin Runtime Settings Schema",
+        "description": "Auto-generated documentation for GET /api/v1/admin/runtime-settings/schema.",
+        "operationId": "getApiV1AdminRuntimeSettingsSchema",
+        "responses": {
+          "200": {
+            "description": "Versioned settings catalogue with this replica's deployment bounds; capability metadata is not a cluster-wide acknowledgement",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsCatalogue"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/runtime-settings/{group}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Api V1 Admin Runtime Settings By Group",
+        "description": "Auto-generated documentation for GET /api/v1/admin/runtime-settings/{group}.",
+        "operationId": "getApiV1AdminRuntimeSettingsByGroup",
+        "parameters": [
+          {
+            "name": "group",
+            "in": "path",
+            "description": "Discovered settings group",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/RuntimeSettingsGroup"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Uniform redacted state of one group on the responding replica",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsGroupState"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Patch Api V1 Admin Runtime Settings By Group",
+        "description": "Auto-generated documentation for PATCH /api/v1/admin/runtime-settings/{group}.",
+        "operationId": "patchApiV1AdminRuntimeSettingsByGroup",
+        "parameters": [
+          {
+            "name": "group",
+            "in": "path",
+            "description": "Discovered settings group with patch_supported=true",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/RuntimeSettingsGroup"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuntimeSettingsPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Supplied fields committed atomically; omitted fields preserved, replicas reconcile asynchronously",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid fields, values, combination, deployment ceiling or unsupported workflow",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator required; security settings require a local password-capable human administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; refetch before editing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/auth/login": {
       "post": {
         "tags": [
@@ -26056,7 +26247,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/RuntimeAuthenticationProviderRequest"
-            }
+            },
+            "description": "Authentication providers available for login. Provider activation,\nconfiguration and ownership changes require authentication preflight."
           }
         },
         "additionalProperties": false
@@ -26101,7 +26293,8 @@
         ],
         "properties": {
           "backend": {
-            "$ref": "#/components/schemas/RuntimeAuthorizationBackend"
+            "$ref": "#/components/schemas/RuntimeAuthorizationBackend",
+            "description": "Backend used to evaluate permissions on subsequent requests. Changing\nthis can change access decisions. A local administrator with password\nlogin must make the change and retain administrator access afterward."
           },
           "expected_revision": {
             "$ref": "#/components/schemas/ResourceRevision",
@@ -35249,7 +35442,7 @@
           "default_page_limit": {
             "type": "integer",
             "format": "int64",
-            "description": "Items returned when a request omits `limit`. Must not exceed the\nresponding replica's deployment `max_page_limit`.",
+            "description": "Maximum items in a page when a request omits its limit. Requests with an\nexplicit limit keep that limit, subject to the deployment maximum. Larger\npages can use more memory and transfer more data. Must be at least 1 and\nmust not exceed this replica's deployment maximum page size.",
             "maximum": 4294967295,
             "minimum": 1
           },
@@ -36370,7 +36563,8 @@
         ],
         "properties": {
           "enabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Collect sampled query patterns for query-usage analysis. Turning this off\nstops new observations; retained observations remain subject to retention\nand capacity limits. This does not enable or disable query execution."
           },
           "expected_revision": {
             "$ref": "#/components/schemas/ResourceRevision",
@@ -36381,6 +36575,7 @@
               "integer",
               "null"
             ],
+            "description": "Maximum distinct query patterns retained across all classes on each\nreplica. New patterns are dropped when capacity is full. Lowering this\nlimit can evict retained patterns; increasing it allows more memory use.",
             "maximum": 16384,
             "minimum": 1
           },
@@ -36389,6 +36584,7 @@
               "integer",
               "null"
             ],
+            "description": "Maximum distinct query patterns retained for one class on each replica.\nMust not exceed Total pattern limit. New patterns for a class are dropped\nwhen its capacity is full; lowering this limit can evict retained patterns.",
             "maximum": 128,
             "minimum": 1
           },
@@ -36397,6 +36593,7 @@
               "integer",
               "null"
             ],
+            "description": "Maximum filter predicates in a query eligible for observation. Queries\nabove this limit still execute but are not observed. Higher limits allow\nmore complex queries to be sampled and increase collection work.",
             "maximum": 32,
             "minimum": 1
           },
@@ -36406,6 +36603,7 @@
               "null"
             ],
             "format": "int32",
+            "description": "Retention window in seconds, starting when a pattern is first recorded\non a replica. Expired patterns are removed during collection or\ninspection. Longer windows retain observations longer, subject to\ncapacity limits. 0 is not allowed.",
             "maximum": 604800,
             "minimum": 1
           },
@@ -36415,7 +36613,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "Sample one in every N eligible queries. Smaller values sample more often.",
+            "description": "Sample one in every N eligible queries. Set to 1 to sample every eligible\nquery. Larger values reduce collection overhead and the number of samples;\n0 is not allowed. Use Collect query observations to turn collection off.",
             "maximum": 1000000,
             "minimum": 1
           }
@@ -38074,6 +38272,27 @@
           "stale"
         ]
       },
+      "RuntimeSettingsCatalogue": {
+        "type": "object",
+        "description": "Version 1 uses JSON Schema 2020-12 field descriptions. New groups and fields\nare additive. Clients must leave unsupported schemas read-only.",
+        "required": [
+          "schema_version",
+          "groups"
+        ],
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeSettingsDescriptor"
+            }
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "RuntimeSettingsChangeActor": {
         "type": "object",
         "required": [
@@ -38142,6 +38361,49 @@
           }
         }
       },
+      "RuntimeSettingsDescriptor": {
+        "type": "object",
+        "required": [
+          "key",
+          "title",
+          "description",
+          "schema",
+          "patch_supported",
+          "requires_local_admin",
+          "takes_effect"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "key": {
+            "$ref": "#/components/schemas/RuntimeSettingsGroup"
+          },
+          "patch_supported": {
+            "type": "boolean"
+          },
+          "read_only_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why a generic client cannot edit this group."
+          },
+          "requires_local_admin": {
+            "type": "boolean"
+          },
+          "schema": {
+            "type": "object",
+            "description": "Schema for the group's values, excluding revision metadata. Every field\nhas a plain-text title and description. String enums also provide\nx-enum-descriptions, mapping each wire value to its plain-text explanation."
+          },
+          "takes_effect": {
+            "$ref": "#/components/schemas/RuntimeSettingsEffect"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
       "RuntimeSettingsEffect": {
         "type": "string",
         "description": "When a changed value takes effect on a replica that has applied it.",
@@ -38159,6 +38421,50 @@
           "query_observations",
           "pagination"
         ]
+      },
+      "RuntimeSettingsGroupState": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RuntimeSettingsOwnership"
+          },
+          {
+            "type": "object",
+            "required": [
+              "group",
+              "replica",
+              "effective",
+              "constrained_by_ceiling"
+            ],
+            "properties": {
+              "constrained_by_ceiling": {
+                "type": "boolean"
+              },
+              "deployment": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "effective": {
+                "type": "object"
+              },
+              "group": {
+                "$ref": "#/components/schemas/RuntimeSettingsGroup"
+              },
+              "replica": {
+                "$ref": "#/components/schemas/RuntimeSettingsReplicaStatus"
+              },
+              "runtime": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "description": "Requested shared values, before deployment ceilings. Authentication\ndefinitions are deliberately omitted, including encrypted secrets."
+              }
+            }
+          }
+        ],
+        "description": "A uniform, redacted view of one group, applied by the responding replica."
       },
       "RuntimeSettingsHistoryResponse": {
         "type": "object",
@@ -38238,6 +38544,23 @@
             "$ref": "#/components/schemas/RuntimeSettingsEffect"
           }
         }
+      },
+      "RuntimeSettingsPatch": {
+        "type": "object",
+        "description": "Partial replacement of named top-level fields. Omitted fields are preserved;\nnull is a value, never a reset command. Release uses the existing DELETE API.",
+        "required": [
+          "expected_revision",
+          "changes"
+        ],
+        "properties": {
+          "changes": {
+            "type": "object"
+          },
+          "expected_revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          }
+        },
+        "additionalProperties": false
       },
       "RuntimeSettingsReplicaStatus": {
         "type": "object",

@@ -2056,6 +2056,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#discovery-for-generic-clients" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Discovery for generic clients
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4998,6 +5009,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#discovery-for-generic-clients" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Discovery for generic clients
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5438,6 +5460,76 @@ stored runtime definitions retain runtime ownership and default to enabled;
 existing runtime selections continue to suppress omitted deployment providers.
 Security-setting edits now require a local administrator, so provision and test
 that account before upgrading installations administered solely through LDAP.</p>
+<h2 id="discovery-for-generic-clients">Discovery for generic clients<a class="headerlink" href="#discovery-for-generic-clients" title="Permanent link">&para;</a></h2>
+<p><code>GET /api/v1/admin/runtime-settings/schema</code> returns an administrator-only
+catalogue with <code>schema_version: 1</code> and a <code>groups</code> array. Each descriptor has a
+stable <code>key</code>, title, description, JSON Schema, <code>patch_supported</code>,
+<code>requires_local_admin</code>, application timing, and an optional read-only reason.
+The catalogue describes the responding binary and deployment, not every replica
+in the cluster. Upgrade all participating replicas before enabling new settings;
+keep deployment ceilings consistent when identical effective values are needed.</p>
+<p>The value schemas use JSON Schema 2020-12. Simple editors can support boolean,
+integer, number, string, and enum fields, including minimum/maximum bounds,
+descriptions, defaults, and the optional <code>x-unit</code> annotation. Ignore unfamiliar
+annotations. Display unsupported field shapes read-only and never send them back
+as part of an edit. An unknown catalogue major version must disable edits.
+<code>default</code> describes the responding deployment's value; it is not the current
+runtime value and does not authorize resetting a field.</p>
+<p>Every advertised field includes a plain-text <code>title</code> and <code>description</code>. Keep
+descriptions alongside the request type so OpenAPI and discovery share the field
+help; presentation titles live in the catalogue.
+Describe what the setting controls, its units and special values, interactions
+with other settings, and the operational effect of changing it. Catalogue tests
+require nonempty help for every group and field, including read-only fields.</p>
+<p>String enums also include <code>x-enum-descriptions</code>: an object mapping each advertised
+wire value to its plain-text explanation. Only supported choices are included.
+Clients should show these explanations alongside the selector and associate
+field help with its input for assistive technologies. Render help as text, not
+HTML. Clients may ignore this additive annotation and continue displaying the
+raw enum values; the discovery version remains 1. For example:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"string"</span><span class="p">,</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">"title"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Authorization backend"</span><span class="p">,</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Backend used to evaluate permissions on subsequent requests."</span><span class="p">,</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">"enum"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"local"</span><span class="p">],</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="nt">"x-enum-descriptions"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="nt">"local"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Evaluate permissions using Hubuum's built-in authorization backend."</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>GET /api/v1/admin/runtime-settings/{group}</code> returns a uniform view with ownership,
+revision, replica application status, <code>effective</code>, <code>runtime</code>, <code>deployment</code>, and
+<code>constrained_by_ceiling</code>. Prefer requested <code>runtime</code> values when preparing an edit;
+<code>effective</code> can be lower because of a deployment ceiling. Authentication exposes
+only redacted provider status, with runtime/deployment definitions omitted.</p>
+<p>For groups with <code>patch_supported: true</code>, send only the edited top-level fields:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">{</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">"expected_revision"</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">"changes"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nt">"default_page_limit"</span><span class="p">:</span><span class="w"> </span><span class="mi">75</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="p">}</span>
+</code></pre></div>
+<p>Send that document to <code>PATCH /api/v1/admin/runtime-settings/pagination</code>. The server
+loads the authoritative group, preserves omitted fields, validates the complete
+candidate using the same typed constructors as PUT, and commits it with an audit
+record and revision check. Empty changes, unknown fields, null values, incorrect
+types, invalid combinations, and deployment-ceiling violations are rejected.
+A stale revision returns <code>412</code>; refetch and let the administrator review the
+conflict rather than silently retrying the mutation. DELETE remains the explicit
+operation for returning an entire group to deployment ownership.</p>
+<p>The initial generic editors cover pagination, query observations, and authorization
+backend selection. Authorization retains the local recovery-administrator check.
+Authentication is advertised read-only to generic editors because its existing
+preflight workflow validates ownership transfer, secrets, and connectivity before
+committing. Discovery never relaxes server authorization or makes deployment-only
+settings mutable. None of these additive endpoints changes persistence or backup
+semantics.</p>
+<p>Clients must discover group and field names at runtime. An older generic client
+can then edit a newly added scalar field without recompilation, while partial
+updates preserve fields that client does not understand. A <code>404</code> from discovery
+means an older server does not implement this capability; retain read-only
+configuration inspection and do not fall back to unrevisioned writes.</p>
 
 
 
