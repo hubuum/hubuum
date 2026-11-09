@@ -1,0 +1,263 @@
+{
+  "measurement_version": 1,
+  "date": "2026-10-24",
+  "baseline_commit": "283ce8ce2c149b4aef9543e579c4b2103e43887b",
+  "candidate": "initial materialized memory phase, followed by the streaming phase recorded below",
+  "fixture": {
+    "profile": "large",
+    "profile_version": 2,
+    "seed": 36520260901,
+    "objects": 250000,
+    "object_relations": 1000000,
+    "logical_rows": 2589029,
+    "artifact_bytes": 857313491,
+    "semantic_digest": "88d1b8c8e94e611ff31d4f117423f95e8a674b4643b2b5fa085c1912bfea3620"
+  },
+  "environment": {
+    "rust": "1.98.0",
+    "postgresql": "18.6",
+    "optimization": "release opt-level=3, fat LTO, codegen-units=1",
+    "features": [
+      "embedded-migrations",
+      "tls-rustls",
+      "tls-openssl"
+    ]
+  },
+  "measurement": {
+    "tool": "/usr/bin/time -v",
+    "maximum_resident_set_size_unit": "KiB",
+    "timeout_seconds": 1800,
+    "virtual_address_space_limit_bytes": 17179869184,
+    "note": "Builds ran concurrently; elapsed times are diagnostic, not performance comparisons. Virtual address-space limit is a diagnostic bound, not a production memory setting."
+  },
+  "independent_runs": {
+    "baseline_capture": {
+      "elapsed_seconds": 440.43,
+      "peak_resident_bytes": 6819688448,
+      "exit_status": 0
+    },
+    "baseline_offline_verification": {
+      "elapsed_seconds": 35.27,
+      "peak_resident_bytes": 12727758848,
+      "exit_status": 0
+    },
+    "candidate_offline_verification": {
+      "elapsed_seconds": 26.13,
+      "peak_resident_bytes": 6853197824,
+      "exit_status": 0
+    },
+    "candidate_restore_and_comparison": {
+      "elapsed_seconds": 1218.19,
+      "peak_resident_bytes": 11302916096,
+      "exit_status": 0,
+      "restore_test": {
+        "target_version": "0.0.20",
+        "migrations_applied": 73,
+        "restore_duration_ms": 707633,
+        "storage_ready": true,
+        "state_matches_source": true,
+        "history_matches_source": true,
+        "target_cleanup": "schema_reset"
+      },
+      "canonical_state_sha256": "4b3a777491c1058dfede3f50c8890e717079c721763679a6da89f1bdca82d373",
+      "note": "Includes offline verification, restore staging/confirmation/application, destination capture, logical state/history comparison, and disposable schema cleanup. Computed reindex jobs are queued; their worker completion is not measured."
+    }
+  },
+  "verification_reports_match_excluding_timestamp": true,
+  "canonical_state_sha256": "4b3a777491c1058dfede3f50c8890e717079c721763679a6da89f1bdca82d373",
+  "superseded_monitor": {
+    "bug": "Linux threads were enumerated as child processes and their shared RSS was counted repeatedly.",
+    "baseline_reported_peak_bytes": 6454394880,
+    "baseline_termination_after_seconds": 14.748,
+    "allocator_probe": {
+      "scanned_rows": 100000,
+      "retained_logical_bytes": 34187173,
+      "peak_heap_bytes": 147304414,
+      "peak_resident_bytes": 228327424
+    }
+  },
+  "candidate_lifecycle_8g": {
+    "measurement": "Corrected process-only supervisor; sampled aggregate process RSS, excluding Linux thread entries",
+    "resident_limit_bytes": 8589934592,
+    "stage_timeout_seconds": 1800,
+    "backup_artifact_bytes": 857313491,
+    "backup_generation_ms": 493989,
+    "backup_logical_rows": 2589029,
+    "backup_preflight_ms": 20314,
+    "backup_section_counts": {
+      "class_relations": 8000,
+      "class_schema_revisions": 4000,
+      "class_schema_state": 4000,
+      "classes": 4000,
+      "collection_authorization": 1000,
+      "collection_hierarchy": 4332,
+      "collection_permission_grants": 1200,
+      "collections": 1000,
+      "computed_field_definitions": 100,
+      "event_sink_collection_grants": 100,
+      "event_sinks": 12,
+      "event_subscriptions": 100,
+      "export_templates": 100,
+      "group_membership_sources": 6000,
+      "group_memberships": 6000,
+      "groups": 400,
+      "history.audit_events": 10000,
+      "history.class_history": 4000,
+      "history.class_relation_history": 8000,
+      "history.class_schema_history": 4000,
+      "history.collection_history": 1000,
+      "history.computed_field_history": 4000,
+      "history.export_outputs": 0,
+      "history.export_template_history": 100,
+      "history.import_results": 0,
+      "history.object_history": 253868,
+      "history.object_relation_history": 1000000,
+      "history.remote_call_results": 0,
+      "history.remote_target_history": 25,
+      "history.terminal_event_deliveries": 6666,
+      "history.terminal_tasks": 5000,
+      "identity_scopes": 1,
+      "object_relations": 1000000,
+      "object_schema_evidence": 0,
+      "objects": 250000,
+      "principals": 1000,
+      "query_usage_declarations": 0,
+      "remote_targets": 25,
+      "service_accounts": 0,
+      "users": 1000
+    },
+    "backup_size_lower_bound_bytes": 837811676,
+    "computed_rebuild_ms": null,
+    "dataset_generation_ms": 0,
+    "dataset_loading_ms": 0,
+    "offline_verification_ms": 26790,
+    "outcome": "isolated_restore_exceeds_memory_envelope",
+    "restore_ms": null,
+    "semantic_verification_ms": null,
+    "stages": {
+      "backup": {
+        "elapsed_ms": 493989,
+        "peak_resident_bytes": 6034833408,
+        "termination": null
+      },
+      "isolated_restore": {
+        "elapsed_ms": 56899,
+        "peak_resident_bytes": 8658653184,
+        "termination": "resident_memory_limit"
+      },
+      "offline_verification": {
+        "elapsed_ms": 26790,
+        "peak_resident_bytes": 6853775360,
+        "termination": null
+      }
+    },
+    "supported_ceiling_bytes": 1073741824
+  },
+  "streaming_measurement": {
+    "date": "2026-10-24",
+    "fixture": "Reloaded version-2 large profile with the same seed, counts and artifact size; generated credential salts vary between loads.",
+    "environment": "Same Rust, PostgreSQL, optimization and TLS features as the initial phase.",
+    "measurement": "Corrected process-only supervisor; sampled aggregate administrator-process RSS. PostgreSQL server memory and filesystem cache are outside this RSS measurement.",
+    "resident_limit_bytes": 8589934592,
+    "stage_timeout_seconds": 1800,
+    "migrations_applied": 74,
+    "canonical_state_sha256": "a83c642e1eb42c9d19a3c1af6790f9f59611fb4965ffbf0fc1a5a1fd798ec476",
+    "artifact_sha256": "a08e4e9c3d9c5808946aecc1e9a52070cdf41da3c903a719f0b3996a95ac849c",
+    "reports_match_excluding_verification_timestamp": true,
+    "independent_same_artifact_runs": {
+      "measurement": "/usr/bin/time -v; maximum resident set size converted from KiB to bytes",
+      "materialized_offline_verification": {
+        "elapsed_seconds": 26.66,
+        "peak_resident_bytes": 6852456448,
+        "exit_status": 0,
+        "virtual_address_space_limit_bytes": 17179869184,
+        "timeout_seconds": 1800
+      },
+      "streaming_offline_verification": {
+        "elapsed_seconds": 77.09,
+        "peak_resident_bytes": 120356864,
+        "exit_status": 0,
+        "virtual_address_space_limit_bytes": null,
+        "timeout_seconds": null
+      },
+      "peak_resident_reduction_percent": 98.24
+    },
+    "lifecycle": {
+      "backup_artifact_bytes": 857313491,
+      "backup_generation_ms": 469855,
+      "backup_logical_rows": 2589029,
+      "backup_preflight_ms": 20352,
+      "backup_section_counts": {
+        "class_relations": 8000,
+        "class_schema_revisions": 4000,
+        "class_schema_state": 4000,
+        "classes": 4000,
+        "collection_authorization": 1000,
+        "collection_hierarchy": 4332,
+        "collection_permission_grants": 1200,
+        "collections": 1000,
+        "computed_field_definitions": 100,
+        "event_sink_collection_grants": 100,
+        "event_sinks": 12,
+        "event_subscriptions": 100,
+        "export_templates": 100,
+        "group_membership_sources": 6000,
+        "group_memberships": 6000,
+        "groups": 400,
+        "history.audit_events": 10000,
+        "history.class_history": 4000,
+        "history.class_relation_history": 8000,
+        "history.class_schema_history": 4000,
+        "history.collection_history": 1000,
+        "history.computed_field_history": 4000,
+        "history.export_outputs": 0,
+        "history.export_template_history": 100,
+        "history.import_results": 0,
+        "history.object_history": 253868,
+        "history.object_relation_history": 1000000,
+        "history.remote_call_results": 0,
+        "history.remote_target_history": 25,
+        "history.terminal_event_deliveries": 6666,
+        "history.terminal_tasks": 5000,
+        "identity_scopes": 1,
+        "object_relations": 1000000,
+        "object_schema_evidence": 0,
+        "objects": 250000,
+        "principals": 1000,
+        "query_usage_declarations": 0,
+        "remote_targets": 25,
+        "service_accounts": 0,
+        "users": 1000
+      },
+      "backup_size_lower_bound_bytes": 837811676,
+      "computed_rebuild_ms": 0,
+      "dataset_generation_ms": 0,
+      "dataset_loading_ms": 0,
+      "offline_verification_ms": 76152,
+      "outcome": "backup_verified_and_restored",
+      "restore_ms": null,
+      "semantic_verification_ms": 1227648,
+      "stages": {
+        "backup": {
+          "elapsed_ms": 469855,
+          "peak_resident_bytes": 120729600,
+          "termination": null
+        },
+        "isolated_restore": {
+          "elapsed_ms": 1227648,
+          "peak_resident_bytes": 155267072,
+          "termination": null
+        },
+        "offline_verification": {
+          "elapsed_ms": 76152,
+          "peak_resident_bytes": 121737216,
+          "termination": null
+        }
+      },
+      "supported_ceiling_bytes": 1073741824
+    },
+    "timing_note": "Builds ran concurrently; elapsed times are diagnostic. The recorded runner could not parse the restore sub-duration after a structured setup log, so restore_ms is null and semantic_verification_ms contains the combined stage duration. Its computed_rebuild_ms=0 is an old placeholder: rebuild jobs were queued but worker completion was not measured. Both reporting defects were corrected after this run.",
+    "build_note": "This release binary contains the streaming implementation and all 74 migrations. The subsequent final-code changes update the required schema-readiness checkpoint and benchmark report extraction; neither changes the measured streaming algorithm.",
+    "scope_note": "One successful fixture run under an 8 GiB administrator RSS envelope; not a whole-container memory limit, constant-memory guarantee, huge-profile result, or production sizing recommendation."
+  }
+}

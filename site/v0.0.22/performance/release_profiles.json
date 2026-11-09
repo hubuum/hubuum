@@ -1,0 +1,1075 @@
+{
+  "schema_version": 1,
+  "started_at": "2026-10-23T09:09:34.521111+00:00",
+  "compiler": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+  "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+  "platform": "Linux-5.14.0-687.44.1.el9_8.x86_64-x86_64-with-glibc2.34",
+  "cpu": "{\n   \"lscpu\": [\n      {\n         \"field\": \"Architecture:\",\n         \"data\": \"x86_64\"\n      },{\n         \"field\": \"CPU op-mode(s):\",\n         \"data\": \"32-bit, 64-bit\"\n      },{\n         \"field\": \"Address sizes:\",\n         \"data\": \"46 bits physical, 48 bits virtual\"\n      },{\n         \"field\": \"Byte Order:\",\n         \"data\": \"Little Endian\"\n      },{\n         \"field\": \"CPU(s):\",\n         \"data\": \"32\"\n      },{\n         \"field\": \"On-line CPU(s) list:\",\n         \"data\": \"0-31\"\n      },{\n         \"field\": \"Vendor ID:\",\n         \"data\": \"GenuineIntel\"\n      },{\n         \"field\": \"Model name:\",\n         \"data\": \"Intel(R) Xeon(R) Silver 4216 CPU @ 2.10GHz\"\n      },{\n         \"field\": \"CPU family:\",\n         \"data\": \"6\"\n      },{\n         \"field\": \"Model:\",\n         \"data\": \"85\"\n      },{\n         \"field\": \"Thread(s) per core:\",\n         \"data\": \"2\"\n      },{\n         \"field\": \"Core(s) per socket:\",\n         \"data\": \"16\"\n      },{\n         \"field\": \"Socket(s):\",\n         \"data\": \"1\"\n      },{\n         \"field\": \"Stepping:\",\n         \"data\": \"7\"\n      },{\n         \"field\": \"CPU(s) scaling MHz:\",\n         \"data\": \"90%\"\n      },{\n         \"field\": \"CPU max MHz:\",\n         \"data\": \"3200.0000\"\n      },{\n         \"field\": \"CPU min MHz:\",\n         \"data\": \"800.0000\"\n      },{\n         \"field\": \"BogoMIPS:\",\n         \"data\": \"4200.00\"\n      },{\n         \"field\": \"Flags:\",\n         \"data\": \"fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp lm constant_tsc art arch_perfmon pebs bts rep_good nopl xtopology nonstop_tsc cpuid aperfmperf pni pclmulqdq dtes64 ds_cpl vmx smx est tm2 ssse3 sdbg fma cx16 xtpr pdcm pcid dca sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm 3dnowprefetch cpuid_fault epb cat_l3 cdp_l3 intel_ppin ssbd mba ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid cqm mpx rdt_a avx512f avx512dq rdseed adx smap clflushopt clwb intel_pt avx512cd avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local dtherm ida arat pln pts vnmi pku ospke avx512_vnni md_clear flush_l1d arch_capabilities\"\n      },{\n         \"field\": \"Virtualization:\",\n         \"data\": \"VT-x\"\n      },{\n         \"field\": \"L1d cache:\",\n         \"data\": \"512 KiB (16 instances)\"\n      },{\n         \"field\": \"L1i cache:\",\n         \"data\": \"512 KiB (16 instances)\"\n      },{\n         \"field\": \"L2 cache:\",\n         \"data\": \"16 MiB (16 instances)\"\n      },{\n         \"field\": \"L3 cache:\",\n         \"data\": \"22 MiB (1 instance)\"\n      },{\n         \"field\": \"NUMA node(s):\",\n         \"data\": \"1\"\n      },{\n         \"field\": \"NUMA node0 CPU(s):\",\n         \"data\": \"0-31\"\n      },{\n         \"field\": \"Vulnerability Gather data sampling:\",\n         \"data\": \"Mitigation; Microcode\"\n      },{\n         \"field\": \"Vulnerability Indirect target selection:\",\n         \"data\": \"Mitigation; Aligned branch/return thunks\"\n      },{\n         \"field\": \"Vulnerability Itlb multihit:\",\n         \"data\": \"KVM: Mitigation: Split huge pages\"\n      },{\n         \"field\": \"Vulnerability L1tf:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Mds:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Meltdown:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Mmio stale data:\",\n         \"data\": \"Mitigation; Clear CPU buffers; SMT vulnerable\"\n      },{\n         \"field\": \"Vulnerability Old microcode:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Reg file data sampling:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Retbleed:\",\n         \"data\": \"Mitigation; Enhanced IBRS\"\n      },{\n         \"field\": \"Vulnerability Spec rstack overflow:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Spec store bypass:\",\n         \"data\": \"Mitigation; Speculative Store Bypass disabled via prctl\"\n      },{\n         \"field\": \"Vulnerability Spectre v1:\",\n         \"data\": \"Mitigation; usercopy/swapgs barriers and __user pointer sanitization\"\n      },{\n         \"field\": \"Vulnerability Spectre v2:\",\n         \"data\": \"Mitigation; Enhanced / Automatic IBRS; IBPB conditional; PBRSB-eIBRS SW sequence; BHI SW loop, KVM SW loop\"\n      },{\n         \"field\": \"Vulnerability Srbds:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Tsa:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Tsx async abort:\",\n         \"data\": \"Mitigation; TSX disabled\"\n      },{\n         \"field\": \"Vulnerability Vmscape:\",\n         \"data\": \"Mitigation; IBPB before exit to userspace\"\n      }\n   ]\n}",
+  "jobs": 6,
+  "features": "tls-rustls,tls-openssl,embedded-migrations",
+  "commit": "11e9ce0b8ebfb0dd506c56a31a5507cca337b906",
+  "dirty": true,
+  "corpus_sha256": {
+    "release_serialization_criterion": "02d39a77259664e6aeef443bef2ffbe89d8bbdc61ab9198e2580842bebc66a8f",
+    "release_schema_criterion": "8eac3c882dfd6b7d1210ee8c56ed52ae097827cd5a8c37a7f22c3f6f6390e91a",
+    "release_search_criterion": "7a057d7387f17fd8dde2fa888f3570486f02a7446af5755c7c5d446f78fa0634",
+    "release_template_criterion": "f0e95913e866d7984a7982e32d73f0bbe737bf8c2d27bdff2ff98ca98b22a6ff"
+  },
+  "profiles": {
+    "z": {
+      "target_cache_existed": true,
+      "build": {
+        "wall_seconds": 31.38,
+        "user_seconds": 0.4,
+        "system_seconds": 0.21,
+        "max_child_rss_bytes": 123314176
+      },
+      "executables": {
+        "hubuum-server": {
+          "unstripped_bytes": 66500128,
+          "stripped_bytes": 45742200
+        },
+        "hubuum-admin": {
+          "unstripped_bytes": 17172096,
+          "stripped_bytes": 12595040
+        },
+        "hubuum-template-worker": {
+          "unstripped_bytes": 1784960,
+          "stripped_bytes": 1249400
+        }
+      },
+      "benchmark_builds": {
+        "release_serialization_criterion": {
+          "wall_seconds": 1171.97,
+          "user_seconds": 1371.78,
+          "system_seconds": 28.35,
+          "max_child_rss_bytes": 4653953024
+        },
+        "release_schema_criterion": {
+          "wall_seconds": 110.03,
+          "user_seconds": 38.71,
+          "system_seconds": 0.8,
+          "max_child_rss_bytes": 610410496
+        },
+        "release_search_criterion": {
+          "wall_seconds": 127.25,
+          "user_seconds": 45.06,
+          "system_seconds": 2.47,
+          "max_child_rss_bytes": 2680320000
+        },
+        "release_template_criterion": {
+          "wall_seconds": 37.89,
+          "user_seconds": 31.32,
+          "system_seconds": 0.55,
+          "max_child_rss_bytes": 514531328
+        }
+      },
+      "benchmark_processes": {
+        "release_serialization_criterion": {
+          "wall_seconds": 23.94,
+          "user_seconds": 23.84,
+          "system_seconds": 0.01,
+          "max_child_rss_bytes": 18124800
+        },
+        "release_schema_criterion": {
+          "wall_seconds": 10.22,
+          "user_seconds": 9.34,
+          "system_seconds": 0.0,
+          "max_child_rss_bytes": 16547840
+        },
+        "release_search_criterion": {
+          "wall_seconds": 18.38,
+          "user_seconds": 16.98,
+          "system_seconds": 0.01,
+          "max_child_rss_bytes": 15634432
+        },
+        "release_template_criterion": {
+          "wall_seconds": 8.51,
+          "user_seconds": 8.35,
+          "system_seconds": 0.01,
+          "max_child_rss_bytes": 15486976
+        }
+      },
+      "workloads": {
+        "release_schema/validate": {
+          "mean_ns": 27709.663136711715,
+          "median_ns": 27635.557331166485,
+          "mean_confidence_interval_ns": {
+            "confidence_level": 0.95,
+            "lower_bound": 27654.773875305753,
+            "upper_bound": 27781.173192486614
+          },
+          "throughput": {
+            "unit": "Elements",
+            "per_second": 9238654.354510473
+          }
+        },
+        "release_search/filter_parse": {
+          "mean_ns": 1376.868653900959,
+          "median_ns": 1369.857300713873,
+          "mean_confidence_interval_ns": {
+            "confidence_level": 0.95,
+            "lower_bound": 1372.3165121479437,
+            "upper_bound": 1382.6834414497418
+          }
+        },
+        "release_search/unified_parse": {
+          "mean_ns": 1241.8203295095338,
+          "median_ns": 1237.4084529442694,
+          "mean_confidence_interval_ns": {
+            "confidence_level": 0.95,
+            "lower_bound": 1238.9838432565848,
+            "upper_bound": 1245.1918312753146
+          }
+        },
+        "release_serialization/decode": {
+          "mean_ns": 3782039.452883276,
+          "median_ns": 3767948.7201897018,
+          "mean_confidence_interval_ns": {
+            "confidence_level": 0.95,
+            "lower_bound": 3773837.6995421243,
+            "upper_bound": 3791701.692286422
+          },
+          "throughput": {
+            "unit": "Bytes",
+            "per_second": 70373406.54844148
+          }
+        },
+        "release_serialization/encode": {
+          "mean_ns": 1518098.437757453,
+          "median_ns": 1513344.9739179588,
+          "mean_confidence_interval_ns": {
+            "confidence_level": 0.95,
+            "lower_bound": 1513026.1812439596,
+            "upper_bound": 1525188.554620322
+          },
+          "throughput": {
+            "unit": "Bytes",
+            "per_second": 175321305.50978386
+          }
+        },
+        "release_template/render": {
+          "mean_ns": 69724.22266309898,
+          "median_ns": 68069.9492502312,
+          "mean_confidence_interval_ns": {
+            "confidence_level": 0.95,
+            "lower_bound": 68537.07945688088,
+            "upper_bound": 71243.36576712868
+          },
+          "throughput": {
+            "unit": "Elements",
+            "per_second": 1835803.9015864574
+          }
+        }
+      }
+    },
+    "3": {
+      "target_cache_existed": true,
+      "build": {
+        "wall_seconds": 37.46,
+        "user_seconds": 0.39,
+        "system_seconds": 0.21,
+        "max_child_rss_bytes": 125165568
+      },
+      "executables": {
+        "hubuum-server": {
+          "unstripped_bytes": 87526944,
+          "stripped_bytes": 69140824
+        },
+        "hubuum-admin": {
+          "unstripped_bytes": 24589712,
+          "stripped_bytes": 20614080
+        },
+        "hubuum-template-worker": {
+          "unstripped_bytes": 2241848,
+          "stripped_bytes": 1824024
+        }
+      },
+      "benchmark_builds": {
+        "release_serialization_criterion": {
+          "wall_seconds": 2047.45,
+          "user_seconds": 3135.56,
+          "system_seconds": 45.01,
+          "max_child_rss_bytes": 6343835648
+        },
+        "release_schema_criterion": {
+          "wall_seconds": 161.9,
+          "user_seconds": 77.76,
+          "system_seconds": 0.92,
+          "max_child_rss_bytes": 823783424
+        },
+        "release_search_criterion": {
+          "wall_seconds": 93.57,
+          "user_seconds": 58.27,
+          "system_seconds": 2.82,
+          "max_child_rss_bytes": 3689967616
+        },
+        "release_template_criterion": {
+          "wall_seconds": 54.65,
+          "user_seconds": 49.18,
+          "system_seconds": 0.57,
+          "max_child_rss_bytes": 589897728
+        }
+      },
+      "benchmark_processes": {
+        "release_serialization_criterion": {
+          "wall_seconds": 19.32,
+          "user_seconds": 19.0,
+          "system_seconds": 0.01,
+          "max_child_rss_bytes": 18345984
+        },
+        "release_schema_criterion": {
+          "wall_seconds": 8.31,
+          "user_seconds": 8.26,
+          "system_seconds": 0.0,
+          "max_child_rss_bytes": 18653184
+        },
+        "release_search_criterion": {
+          "wall_seconds": 16.38,
+          "user_seconds": 16.29,
+          "system_seconds": 0.01,
+          "max_child_rss_bytes": 15450112
+        },
+        "release_template_criterion": {
+          "wall_seconds": 9.27,
+          "user_seconds": 9.2,
+          "system_seconds": 0.01,
+          "max_child_rss_bytes": 15998976
+        }
+      },
+      "workloads": {
+        "release_schema/validate": {
+          "mean_ns": 19801.33449989599,
+          "median_ns": 19588.553958333334,
+          "mean_confidence_interval_ns": {
+            "confidence_level": 0.95,
+            "lower_bound": 19676.540935455276,
+            "upper_bound": 19963.659059985046
+          },
+          "throughput": {
+            "unit": "Elements",
+            "per_second": 12928421.566806251
+          }
+        },
+        "release_search/filter_parse": {
+          "mean_ns": 787.7583968346921,
+          "median_ns": 788.2192053292612,
+          "mean_confidence_interval_ns": {
+            "confidence_level": 0.95,
+            "lower_bound": 786.6368879502197,
+            "upper_bound": 788.8128351859797
+          }
+        },
+        "release_search/unified_parse": {
+          "mean_ns": 923.3899986288508,
+          "median_ns": 919.0341614906832,
+          "mean_confidence_interval_ns": {
+            "confidence_level": 0.95,
+            "lower_bound": 919.9950829399968,
+            "upper_bound": 927.6313461262902
+          }
+        },
+        "release_serialization/decode": {
+          "mean_ns": 2896218.0047968384,
+          "median_ns": 2889025.353888889,
+          "mean_confidence_interval_ns": {
+            "confidence_level": 0.95,
+            "lower_bound": 2889206.119611734,
+            "upper_bound": 2906530.2771365475
+          },
+          "throughput": {
+            "unit": "Bytes",
+            "per_second": 91897432.98300849
+          }
+        },
+        "release_serialization/encode": {
+          "mean_ns": 524964.2737744828,
+          "median_ns": 518264.14513888885,
+          "mean_confidence_interval_ns": {
+            "confidence_level": 0.95,
+            "lower_bound": 519918.56211744377,
+            "upper_bound": 532500.2843828418
+          },
+          "throughput": {
+            "unit": "Bytes",
+            "per_second": 506996405.84367925
+          }
+        },
+        "release_template/render": {
+          "mean_ns": 54928.98063225559,
+          "median_ns": 54873.09722222222,
+          "mean_confidence_interval_ns": {
+            "confidence_level": 0.95,
+            "lower_bound": 54888.85780404097,
+            "upper_bound": 54970.48738927009
+          },
+          "throughput": {
+            "unit": "Elements",
+            "per_second": 2330281.729729304
+          }
+        }
+      }
+    }
+  },
+  "comparison": {
+    "release_schema/validate": {
+      "latency_change_percent": -28.539966717741194
+    },
+    "release_search/filter_parse": {
+      "latency_change_percent": -42.78623493949066
+    },
+    "release_search/unified_parse": {
+      "latency_change_percent": -25.6422224144494
+    },
+    "release_serialization/decode": {
+      "latency_change_percent": -23.421792900947203
+    },
+    "release_serialization/encode": {
+      "latency_change_percent": -65.41961570357952
+    },
+    "release_template/render": {
+      "latency_change_percent": -21.219658629014248
+    }
+  },
+  "initial_workloads": {
+    "z": {
+      "release_schema/validate": {
+        "mean_ns": 27687.973301347414,
+        "median_ns": 27676.443431421863,
+        "mean_confidence_interval_ns": {
+          "confidence_level": 0.95,
+          "lower_bound": 27672.574975096442,
+          "upper_bound": 27704.083095307156
+        },
+        "throughput": {
+          "unit": "Elements",
+          "per_second": 9245891.608380811
+        }
+      },
+      "release_search/filter_parse": {
+        "mean_ns": 1367.8235202891485,
+        "median_ns": 1363.971062998613,
+        "mean_confidence_interval_ns": {
+          "confidence_level": 0.95,
+          "lower_bound": 1364.648929292722,
+          "upper_bound": 1371.8124695508484
+        }
+      },
+      "release_search/unified_parse": {
+        "mean_ns": 1246.4394513660743,
+        "median_ns": 1239.0201255936695,
+        "mean_confidence_interval_ns": {
+          "confidence_level": 0.95,
+          "lower_bound": 1242.2470257354207,
+          "upper_bound": 1251.4861092884398
+        }
+      },
+      "release_serialization/decode": {
+        "mean_ns": 4011262.808472029,
+        "median_ns": 3970900.9260584377,
+        "mean_confidence_interval_ns": {
+          "confidence_level": 0.95,
+          "lower_bound": 3968732.3490841244,
+          "upper_bound": 4056652.6912996047
+        },
+        "throughput": {
+          "unit": "Bytes",
+          "per_second": 66351922.750577345
+        }
+      },
+      "release_serialization/encode": {
+        "mean_ns": 1532618.3236114907,
+        "median_ns": 1527815.2443181816,
+        "mean_confidence_interval_ns": {
+          "confidence_level": 0.95,
+          "lower_bound": 1528586.5048791235,
+          "upper_bound": 1538449.3150841345
+        },
+        "throughput": {
+          "unit": "Bytes",
+          "per_second": 173660327.49290597
+        }
+      },
+      "release_template/render": {
+        "mean_ns": 68766.22689182333,
+        "median_ns": 67884.3788401254,
+        "mean_confidence_interval_ns": {
+          "confidence_level": 0.95,
+          "lower_bound": 68261.57832483674,
+          "upper_bound": 69372.60941662928
+        },
+        "throughput": {
+          "unit": "Elements",
+          "per_second": 1861378.8451903544
+        }
+      }
+    },
+    "3": {
+      "release_schema/validate": {
+        "mean_ns": 19991.899173694583,
+        "median_ns": 19774.409609298265,
+        "mean_confidence_interval_ns": {
+          "confidence_level": 0.95,
+          "lower_bound": 19837.647210933977,
+          "upper_bound": 20190.4633306981
+        },
+        "throughput": {
+          "unit": "Elements",
+          "per_second": 12805186.629634757
+        }
+      },
+      "release_search/filter_parse": {
+        "mean_ns": 768.3091820721611,
+        "median_ns": 759.8052594461698,
+        "mean_confidence_interval_ns": {
+          "confidence_level": 0.95,
+          "lower_bound": 761.9037619692925,
+          "upper_bound": 777.2291785057924
+        }
+      },
+      "release_search/unified_parse": {
+        "mean_ns": 935.6709764079474,
+        "median_ns": 928.4307597591351,
+        "mean_confidence_interval_ns": {
+          "confidence_level": 0.95,
+          "lower_bound": 928.2421881364425,
+          "upper_bound": 945.7807456223841
+        }
+      },
+      "release_serialization/decode": {
+        "mean_ns": 3240763.2129028426,
+        "median_ns": 2991410.2142857146,
+        "mean_confidence_interval_ns": {
+          "confidence_level": 0.95,
+          "lower_bound": 3069847.852890752,
+          "upper_bound": 3443766.4288191646
+        },
+        "throughput": {
+          "unit": "Bytes",
+          "per_second": 82127259.07907276
+        }
+      },
+      "release_serialization/encode": {
+        "mean_ns": 563211.4826732604,
+        "median_ns": 526950.1790293041,
+        "mean_confidence_interval_ns": {
+          "confidence_level": 0.95,
+          "lower_bound": 539240.7497074011,
+          "upper_bound": 592885.5658787898
+        },
+        "throughput": {
+          "unit": "Bytes",
+          "per_second": 472566714.61438626
+        }
+      },
+      "release_template/render": {
+        "mean_ns": 56019.72135364667,
+        "median_ns": 55101.52397986222,
+        "mean_confidence_interval_ns": {
+          "confidence_level": 0.95,
+          "lower_bound": 55229.18782167926,
+          "upper_bound": 57231.75789216148
+        },
+        "throughput": {
+          "unit": "Elements",
+          "per_second": 2284909.615882402
+        }
+      }
+    }
+  },
+  "runtime_repeats": [
+    {
+      "started_at": "2026-10-23T11:10:13.542755+00:00",
+      "cpu_affinity": 15,
+      "load_average_start": [
+        3.02,
+        5.16,
+        10.35
+      ],
+      "order": [
+        "z",
+        "3"
+      ],
+      "profiles": {
+        "z": {
+          "benchmark_processes": {
+            "release_serialization_criterion": {
+              "wall_seconds": 24.01,
+              "user_seconds": 23.84,
+              "system_seconds": 0.01,
+              "max_child_rss_bytes": 18092032
+            },
+            "release_schema_criterion": {
+              "wall_seconds": 9.45,
+              "user_seconds": 9.35,
+              "system_seconds": 0.01,
+              "max_child_rss_bytes": 16551936
+            },
+            "release_search_criterion": {
+              "wall_seconds": 17.06,
+              "user_seconds": 16.94,
+              "system_seconds": 0.01,
+              "max_child_rss_bytes": 15634432
+            },
+            "release_template_criterion": {
+              "wall_seconds": 8.38,
+              "user_seconds": 7.95,
+              "system_seconds": 0.0,
+              "max_child_rss_bytes": 15482880
+            }
+          },
+          "executable_sha256": {
+            "release_serialization_criterion": "cff5b1808cddb8b5a6d79a6e8f0d8193c522551ea5affb5f5d55805b98ff2e9f",
+            "release_schema_criterion": "47a5e56b5fdcc33b1840c0294a181607643fa2914e11d130f86943aaae4387c7",
+            "release_search_criterion": "87392fc529f135c49e573dd527bbd0612546e7b387a9d3e6ff8ccc55613bcfe0",
+            "release_template_criterion": "7c5dbbf9ec50900af0d29977f888745254177aef1e623002c97e50316ee2afdb"
+          },
+          "workloads": {
+            "release_schema/validate": {
+              "mean_ns": 27635.37599655828,
+              "median_ns": 27627.718728998276,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 27627.535573269313,
+                "upper_bound": 27643.824498068923
+              },
+              "throughput": {
+                "unit": "Elements",
+                "per_second": 9263488.943732206
+              }
+            },
+            "release_search/filter_parse": {
+              "mean_ns": 1370.3002219963166,
+              "median_ns": 1369.5082630405273,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 1369.6679469352232,
+                "upper_bound": 1371.0391614182513
+              }
+            },
+            "release_search/unified_parse": {
+              "mean_ns": 1239.4313853218794,
+              "median_ns": 1236.3005200126063,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 1236.3751107246603,
+                "upper_bound": 1245.2717031709267
+              }
+            },
+            "release_serialization/decode": {
+              "mean_ns": 3776014.288991504,
+              "median_ns": 3772711.2097069593,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 3766931.158183419,
+                "upper_bound": 3789146.0613529137
+              },
+              "throughput": {
+                "unit": "Bytes",
+                "per_second": 70485697.25383231
+              }
+            },
+            "release_serialization/encode": {
+              "mean_ns": 1517725.9608452606,
+              "median_ns": 1512945.405855856,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 1512671.0470889746,
+                "upper_bound": 1527440.3414025963
+              },
+              "throughput": {
+                "unit": "Bytes",
+                "per_second": 175364332.47262335
+              }
+            },
+            "release_template/render": {
+              "mean_ns": 67683.33794601864,
+              "median_ns": 67625.14502557334,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 67611.2609997074,
+                "upper_bound": 67797.97669974905
+              },
+              "throughput": {
+                "unit": "Elements",
+                "per_second": 1891159.6839695964
+              }
+            }
+          }
+        },
+        "3": {
+          "benchmark_processes": {
+            "release_serialization_criterion": {
+              "wall_seconds": 19.23,
+              "user_seconds": 19.11,
+              "system_seconds": 0.01,
+              "max_child_rss_bytes": 18345984
+            },
+            "release_schema_criterion": {
+              "wall_seconds": 8.27,
+              "user_seconds": 8.22,
+              "system_seconds": 0.0,
+              "max_child_rss_bytes": 18657280
+            },
+            "release_search_criterion": {
+              "wall_seconds": 18.74,
+              "user_seconds": 18.27,
+              "system_seconds": 0.01,
+              "max_child_rss_bytes": 15630336
+            },
+            "release_template_criterion": {
+              "wall_seconds": 9.44,
+              "user_seconds": 9.2,
+              "system_seconds": 0.0,
+              "max_child_rss_bytes": 15998976
+            }
+          },
+          "executable_sha256": {
+            "release_serialization_criterion": "d60369663331d078b11f385b662aa3f0fe1506c466e18c6f04ca5b32529eae09",
+            "release_schema_criterion": "b7b317dcceab9bcbf9d1025e7dc4ccbc007ed879879f2cf42aa12f6932301fd6",
+            "release_search_criterion": "5df16234f31e25acd38469ee1b98881e8a376d60f27d47e8616a5bf768af327c",
+            "release_template_criterion": "f29b397ab5131cdb2c68aca703a3bb742cbbc89fe612cbd9eca59d45c1037612"
+          },
+          "workloads": {
+            "release_schema/validate": {
+              "mean_ns": 19768.99177821153,
+              "median_ns": 19553.660564174203,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 19559.08118321641,
+                "upper_bound": 20075.14771828587
+              },
+              "throughput": {
+                "unit": "Elements",
+                "per_second": 12949572.8903156
+              }
+            },
+            "release_search/filter_parse": {
+              "mean_ns": 765.6355498464311,
+              "median_ns": 764.843453675511,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 765.0980033206489,
+                "upper_bound": 766.2098835930248
+              }
+            },
+            "release_search/unified_parse": {
+              "mean_ns": 919.6974081914611,
+              "median_ns": 917.7672541201489,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 917.9771276980172,
+                "upper_bound": 922.7016269024033
+              }
+            },
+            "release_serialization/decode": {
+              "mean_ns": 2901457.7401952273,
+              "median_ns": 2888716.928125,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 2892055.1702524526,
+                "upper_bound": 2913773.076479357
+              },
+              "throughput": {
+                "unit": "Bytes",
+                "per_second": 91731475.63475852
+              }
+            },
+            "release_serialization/encode": {
+              "mean_ns": 526340.8824072455,
+              "median_ns": 518291.79218750005,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 518061.658404063,
+                "upper_bound": 540051.6026876956
+              },
+              "throughput": {
+                "unit": "Bytes",
+                "per_second": 505670391.36828446
+              }
+            },
+            "release_template/render": {
+              "mean_ns": 55027.18101726552,
+              "median_ns": 54961.159476466644,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 54844.19406451025,
+                "upper_bound": 55238.7905490033
+              },
+              "throughput": {
+                "unit": "Elements",
+                "per_second": 2326123.1564785824
+              }
+            }
+          }
+        }
+      },
+      "comparison": {
+        "release_schema/validate": {
+          "latency_change_percent": -28.464907513204928
+        },
+        "release_search/filter_parse": {
+          "latency_change_percent": -44.12643758234105
+        },
+        "release_search/unified_parse": {
+          "latency_change_percent": -25.79682755470837
+        },
+        "release_serialization/decode": {
+          "latency_change_percent": -23.16083790641197
+        },
+        "release_serialization/encode": {
+          "latency_change_percent": -65.32042700817263
+        },
+        "release_template/render": {
+          "latency_change_percent": -18.699073232539355
+        }
+      },
+      "load_average_end": [
+        10.98,
+        6.35,
+        10.08
+      ]
+    },
+    {
+      "started_at": "2026-10-23T11:12:11.955481+00:00",
+      "cpu_affinity": 15,
+      "load_average_start": [
+        10.98,
+        6.35,
+        10.08
+      ],
+      "order": [
+        "3",
+        "z"
+      ],
+      "profiles": {
+        "3": {
+          "benchmark_processes": {
+            "release_serialization_criterion": {
+              "wall_seconds": 19.32,
+              "user_seconds": 19.0,
+              "system_seconds": 0.01,
+              "max_child_rss_bytes": 18345984
+            },
+            "release_schema_criterion": {
+              "wall_seconds": 8.31,
+              "user_seconds": 8.26,
+              "system_seconds": 0.0,
+              "max_child_rss_bytes": 18653184
+            },
+            "release_search_criterion": {
+              "wall_seconds": 16.38,
+              "user_seconds": 16.29,
+              "system_seconds": 0.01,
+              "max_child_rss_bytes": 15450112
+            },
+            "release_template_criterion": {
+              "wall_seconds": 9.27,
+              "user_seconds": 9.2,
+              "system_seconds": 0.01,
+              "max_child_rss_bytes": 15998976
+            }
+          },
+          "executable_sha256": {
+            "release_serialization_criterion": "d60369663331d078b11f385b662aa3f0fe1506c466e18c6f04ca5b32529eae09",
+            "release_schema_criterion": "b7b317dcceab9bcbf9d1025e7dc4ccbc007ed879879f2cf42aa12f6932301fd6",
+            "release_search_criterion": "5df16234f31e25acd38469ee1b98881e8a376d60f27d47e8616a5bf768af327c",
+            "release_template_criterion": "f29b397ab5131cdb2c68aca703a3bb742cbbc89fe612cbd9eca59d45c1037612"
+          },
+          "workloads": {
+            "release_schema/validate": {
+              "mean_ns": 19801.33449989599,
+              "median_ns": 19588.553958333334,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 19676.540935455276,
+                "upper_bound": 19963.659059985046
+              },
+              "throughput": {
+                "unit": "Elements",
+                "per_second": 12928421.566806251
+              }
+            },
+            "release_search/filter_parse": {
+              "mean_ns": 787.7583968346921,
+              "median_ns": 788.2192053292612,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 786.6368879502197,
+                "upper_bound": 788.8128351859797
+              }
+            },
+            "release_search/unified_parse": {
+              "mean_ns": 923.3899986288508,
+              "median_ns": 919.0341614906832,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 919.9950829399968,
+                "upper_bound": 927.6313461262902
+              }
+            },
+            "release_serialization/decode": {
+              "mean_ns": 2896218.0047968384,
+              "median_ns": 2889025.353888889,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 2889206.119611734,
+                "upper_bound": 2906530.2771365475
+              },
+              "throughput": {
+                "unit": "Bytes",
+                "per_second": 91897432.98300849
+              }
+            },
+            "release_serialization/encode": {
+              "mean_ns": 524964.2737744828,
+              "median_ns": 518264.14513888885,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 519918.56211744377,
+                "upper_bound": 532500.2843828418
+              },
+              "throughput": {
+                "unit": "Bytes",
+                "per_second": 506996405.84367925
+              }
+            },
+            "release_template/render": {
+              "mean_ns": 54928.98063225559,
+              "median_ns": 54873.09722222222,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 54888.85780404097,
+                "upper_bound": 54970.48738927009
+              },
+              "throughput": {
+                "unit": "Elements",
+                "per_second": 2330281.729729304
+              }
+            }
+          }
+        },
+        "z": {
+          "benchmark_processes": {
+            "release_serialization_criterion": {
+              "wall_seconds": 23.94,
+              "user_seconds": 23.84,
+              "system_seconds": 0.01,
+              "max_child_rss_bytes": 18124800
+            },
+            "release_schema_criterion": {
+              "wall_seconds": 10.22,
+              "user_seconds": 9.34,
+              "system_seconds": 0.0,
+              "max_child_rss_bytes": 16547840
+            },
+            "release_search_criterion": {
+              "wall_seconds": 18.38,
+              "user_seconds": 16.98,
+              "system_seconds": 0.01,
+              "max_child_rss_bytes": 15634432
+            },
+            "release_template_criterion": {
+              "wall_seconds": 8.51,
+              "user_seconds": 8.35,
+              "system_seconds": 0.01,
+              "max_child_rss_bytes": 15486976
+            }
+          },
+          "executable_sha256": {
+            "release_serialization_criterion": "cff5b1808cddb8b5a6d79a6e8f0d8193c522551ea5affb5f5d55805b98ff2e9f",
+            "release_schema_criterion": "47a5e56b5fdcc33b1840c0294a181607643fa2914e11d130f86943aaae4387c7",
+            "release_search_criterion": "87392fc529f135c49e573dd527bbd0612546e7b387a9d3e6ff8ccc55613bcfe0",
+            "release_template_criterion": "7c5dbbf9ec50900af0d29977f888745254177aef1e623002c97e50316ee2afdb"
+          },
+          "workloads": {
+            "release_schema/validate": {
+              "mean_ns": 27709.663136711715,
+              "median_ns": 27635.557331166485,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 27654.773875305753,
+                "upper_bound": 27781.173192486614
+              },
+              "throughput": {
+                "unit": "Elements",
+                "per_second": 9238654.354510473
+              }
+            },
+            "release_search/filter_parse": {
+              "mean_ns": 1376.868653900959,
+              "median_ns": 1369.857300713873,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 1372.3165121479437,
+                "upper_bound": 1382.6834414497418
+              }
+            },
+            "release_search/unified_parse": {
+              "mean_ns": 1241.8203295095338,
+              "median_ns": 1237.4084529442694,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 1238.9838432565848,
+                "upper_bound": 1245.1918312753146
+              }
+            },
+            "release_serialization/decode": {
+              "mean_ns": 3782039.452883276,
+              "median_ns": 3767948.7201897018,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 3773837.6995421243,
+                "upper_bound": 3791701.692286422
+              },
+              "throughput": {
+                "unit": "Bytes",
+                "per_second": 70373406.54844148
+              }
+            },
+            "release_serialization/encode": {
+              "mean_ns": 1518098.437757453,
+              "median_ns": 1513344.9739179588,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 1513026.1812439596,
+                "upper_bound": 1525188.554620322
+              },
+              "throughput": {
+                "unit": "Bytes",
+                "per_second": 175321305.50978386
+              }
+            },
+            "release_template/render": {
+              "mean_ns": 69724.22266309898,
+              "median_ns": 68069.9492502312,
+              "mean_confidence_interval_ns": {
+                "confidence_level": 0.95,
+                "lower_bound": 68537.07945688088,
+                "upper_bound": 71243.36576712868
+              },
+              "throughput": {
+                "unit": "Elements",
+                "per_second": 1835803.9015864574
+              }
+            }
+          }
+        }
+      },
+      "comparison": {
+        "release_schema/validate": {
+          "latency_change_percent": -28.539966717741194
+        },
+        "release_search/filter_parse": {
+          "latency_change_percent": -42.78623493949066
+        },
+        "release_search/unified_parse": {
+          "latency_change_percent": -25.6422224144494
+        },
+        "release_serialization/decode": {
+          "latency_change_percent": -23.421792900947203
+        },
+        "release_serialization/encode": {
+          "latency_change_percent": -65.41961570357952
+        },
+        "release_template/render": {
+          "latency_change_percent": -21.219658629014248
+        }
+      },
+      "load_average_end": [
+        7.53,
+        6.71,
+        9.8
+      ]
+    }
+  ],
+  "measurement_commit": "e934e23658c2bc8b7b7ea5a4a999a2a80cab1eaa",
+  "measurement_dirty": false,
+  "cold_builds_and_containers": {
+    "compiler": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+    "features": "tls-rustls,tls-openssl,embedded-migrations",
+    "jobs": 6,
+    "profiles": {
+      "z": {
+        "target_cache_existed": false,
+        "build": {
+          "wall_seconds": 998.17,
+          "user_seconds": 1642.85,
+          "system_seconds": 56.53,
+          "max_child_rss_bytes": 4665016320
+        },
+        "executables": {
+          "hubuum-server": {
+            "stripped_bytes": 45742200,
+            "sha256": "28cf6f0899c819d2b8418347c4748961336f7a8ff7f80b5d964410328e08cc77"
+          },
+          "hubuum-admin": {
+            "stripped_bytes": 12595040,
+            "sha256": "b2d154c174d2c2307c3bd7cc24eabf8bffda55417089e3da1d73c802e21661ac"
+          },
+          "hubuum-template-worker": {
+            "stripped_bytes": 1249400,
+            "sha256": "2498c17e780733cbf91e3cfa5131ffbccb77de8c57764b4e15f53ea8534ca278"
+          }
+        }
+      },
+      "3": {
+        "target_cache_existed": false,
+        "build": {
+          "wall_seconds": 2247.71,
+          "user_seconds": 3035.29,
+          "system_seconds": 74.05,
+          "max_child_rss_bytes": 6279503872
+        },
+        "executables": {
+          "hubuum-server": {
+            "stripped_bytes": 69140824,
+            "sha256": "9b4d5b551a7a1c229d1de2929cd07035124482d2eeccbe8a9caa8d986a75e0ef"
+          },
+          "hubuum-admin": {
+            "stripped_bytes": 20614080,
+            "sha256": "b11aea40067e56c1302a75daece833380fe861f89d1750888b05fb9958bee682"
+          },
+          "hubuum-template-worker": {
+            "stripped_bytes": 1824024,
+            "sha256": "1f2746d412d648a883419518764cbbf274302a89e9d0deb8d22f0e8c45dec1c8"
+          }
+        }
+      }
+    },
+    "container_z": {
+      "image_id": "420bbefedd8b1d99ff364a086c2a125618672d5c3b0fe040f40e98979924ed2c",
+      "uncompressed_bytes": 87260858,
+      "build": {
+        "wall_seconds": 3481.66,
+        "user_seconds": 2932.19,
+        "system_seconds": 315.98,
+        "max_child_rss_bytes": 4518596608
+      }
+    },
+    "container_3": {
+      "image_id": "7fedfe8ed170307c6fa645c12a7a5bc3cc70f956ad23835a33e50c3494904107",
+      "uncompressed_bytes": 119140027,
+      "build": {
+        "wall_seconds": 4243.57,
+        "user_seconds": 4452.99,
+        "system_seconds": 398.08,
+        "max_child_rss_bytes": 6294650880
+      }
+    }
+  },
+  "measurement_conditions": {
+    "runtime": "Two sequential repeats after this experiment's builds and test suites finished; CPU 15, reversed profile order in second repeat. Existing host services were not stopped.",
+    "build": "Cold host Cargo targets, but concurrent builds and database tests contended for CPU and disk; build wall times are observations, not isolated speed ratios.",
+    "container_compiler": "rustc 1.99.1 from the pinned production image",
+    "resources": "GNU time maximum child RSS is not simultaneous process-tree RSS; container client metrics may exclude daemon/container processes."
+  },
+  "selected_release_opt_level": 3,
+  "final_default_container": {
+    "image_id": "7fedfe8ed170307c6fa645c12a7a5bc3cc70f956ad23835a33e50c3494904107",
+    "uncompressed_bytes": 119140027,
+    "build_flags": "-F tls-rustls -F tls-openssl --locked --release",
+    "workspace_manifest_parity": "passed",
+    "build": "passed; identical image to the measured level-3 override"
+  }
+}

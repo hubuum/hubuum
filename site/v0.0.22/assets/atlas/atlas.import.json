@@ -1,0 +1,469 @@
+{
+  "version": 2,
+  "dry_run": false,
+  "mode": {
+    "atomicity": "strict",
+    "collision_policy": "abort",
+    "permission_policy": "abort"
+  },
+  "graph": {
+    "groups": [
+      {
+        "ref": "group:readers",
+        "groupname": "atlas-readers",
+        "description": "Read the Atlas example inventory",
+        "identity_scope_key": {
+          "name": "local"
+        },
+        "managed_by": "local"
+      },
+      {
+        "ref": "group:operators",
+        "groupname": "atlas-operators",
+        "description": "Maintain Atlas server and location records",
+        "identity_scope_key": {
+          "name": "local"
+        },
+        "managed_by": "local"
+      }
+    ],
+    "collections": [
+      {
+        "ref": "collection:atlas",
+        "name": "atlas-demo",
+        "description": "Atlas example service catalogue and context"
+      },
+      {
+        "ref": "collection:operations",
+        "name": "atlas-demo-operations",
+        "description": "Atlas example upstream inventory",
+        "parent_collection_ref": "collection:atlas"
+      }
+    ],
+    "classes": [
+      {
+        "ref": "class:Service",
+        "name": "Service",
+        "description": "Services maintained in Hubuum",
+        "collection_ref": "collection:atlas",
+        "validate_schema": true,
+        "json_schema": {
+          "type": "object",
+          "required": [
+            "owner",
+            "tier",
+            "environment"
+          ],
+          "properties": {
+            "owner": {
+              "type": "string"
+            },
+            "tier": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3
+            },
+            "environment": {
+              "type": "string",
+              "enum": [
+                "production",
+                "staging"
+              ]
+            },
+            "availability": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100,
+              "description": "Target service availability (%)"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            },
+            "support": {
+              "type": "object",
+              "required": [
+                "hours"
+              ],
+              "properties": {
+                "hours": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "ref": "class:Server",
+        "name": "Server",
+        "description": "Reference records from an upstream server inventory",
+        "collection_ref": "collection:operations",
+        "validate_schema": true,
+        "json_schema": {
+          "type": "object",
+          "required": [
+            "hostname",
+            "environment"
+          ],
+          "properties": {
+            "hostname": {
+              "type": "string"
+            },
+            "environment": {
+              "type": "string",
+              "enum": [
+                "production",
+                "staging"
+              ]
+            },
+            "cpu_cores": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "memory_gib": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "costs": {
+              "type": "object",
+              "properties": {
+                "compute": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "storage": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "ref": "class:Location",
+        "name": "Location",
+        "description": "Schema-free reference records from a facilities system",
+        "collection_ref": "collection:operations",
+        "validate_schema": false
+      },
+      {
+        "ref": "class:Context",
+        "name": "Context",
+        "description": "Schema-free notes, checklists and observations",
+        "collection_ref": "collection:atlas",
+        "validate_schema": false
+      }
+    ],
+    "objects": [
+      {
+        "ref": "object:Atlas",
+        "name": "Atlas",
+        "description": "Customer-facing service catalogue",
+        "data": {
+          "owner": "Platform",
+          "tier": 1,
+          "environment": "production",
+          "availability": 99.9,
+          "enabled": true,
+          "tags": [
+            "api",
+            "public"
+          ],
+          "support": {
+            "hours": "24/7"
+          },
+          "source": "hubuum"
+        },
+        "class_ref": "class:Service"
+      },
+      {
+        "ref": "object:Beacon",
+        "name": "Beacon",
+        "description": "Staging event-processing service",
+        "data": {
+          "owner": "Operations",
+          "tier": 2,
+          "environment": "staging",
+          "source": "hubuum"
+        },
+        "class_ref": "class:Service"
+      },
+      {
+        "ref": "object:web-01",
+        "name": "web-01",
+        "description": "Primary Atlas web server",
+        "data": {
+          "hostname": "web-01.example.invalid",
+          "environment": "production",
+          "cpu_cores": 8,
+          "memory_gib": 32,
+          "costs": {
+            "compute": 45,
+            "storage": 5
+          },
+          "source": "inventory.example.invalid"
+        },
+        "class_ref": "class:Server"
+      },
+      {
+        "ref": "object:web-02",
+        "name": "web-02",
+        "description": "Secondary Atlas web server",
+        "data": {
+          "hostname": "web-02.example.invalid",
+          "environment": "production",
+          "cpu_cores": 4,
+          "memory_gib": 16,
+          "costs": {
+            "compute": 30,
+            "storage": 5
+          },
+          "source": "inventory.example.invalid"
+        },
+        "class_ref": "class:Server"
+      },
+      {
+        "ref": "object:worker-01",
+        "name": "worker-01",
+        "description": "Beacon staging worker",
+        "data": {
+          "hostname": "worker-01.example.invalid",
+          "environment": "staging",
+          "cpu_cores": 2,
+          "memory_gib": 8,
+          "costs": {
+            "compute": 20,
+            "storage": 5
+          },
+          "source": "inventory.example.invalid"
+        },
+        "class_ref": "class:Server"
+      },
+      {
+        "ref": "object:Oslo",
+        "name": "Oslo",
+        "description": "Primary site from the facilities directory",
+        "data": {
+          "country": "Norway",
+          "site_code": "OSL",
+          "source": "facilities.example.invalid"
+        },
+        "class_ref": "class:Location"
+      },
+      {
+        "ref": "object:Bergen",
+        "name": "Bergen",
+        "description": "Secondary site from the facilities directory",
+        "data": {
+          "country": "Norway",
+          "site_code": "BGO",
+          "notes": [
+            "Secondary location",
+            "Capacity under review"
+          ],
+          "source": "facilities.example.invalid"
+        },
+        "class_ref": "class:Location"
+      },
+      {
+        "ref": "object:Research notes",
+        "name": "Research notes",
+        "description": "Atlas hosting research maintained in Hubuum",
+        "data": {
+          "purpose": "Explore new hosting",
+          "questions": [
+            "Capacity?",
+            "Location?"
+          ],
+          "candidate": true,
+          "source": "hubuum"
+        },
+        "class_ref": "class:Context"
+      },
+      {
+        "ref": "object:Migration checklist",
+        "name": "Migration checklist",
+        "description": "Shared planning context for Atlas and Beacon",
+        "data": {
+          "steps": [
+            {
+              "title": "Review capacity",
+              "done": true
+            },
+            {
+              "title": "Schedule maintenance",
+              "done": false
+            }
+          ],
+          "source": "hubuum"
+        },
+        "class_ref": "class:Context"
+      },
+      {
+        "ref": "object:Capacity observation",
+        "name": "Capacity observation",
+        "description": "Reference observation from external telemetry",
+        "data": {
+          "observed_at": "2026-09-01T12:00:00Z",
+          "memory_used_gib": 18,
+          "labels": [
+            "synthetic",
+            "daily-sample"
+          ],
+          "source": "telemetry.example.invalid"
+        },
+        "class_ref": "class:Context"
+      }
+    ],
+    "computed_fields": [
+      {
+        "ref": "computed:monthly_cost",
+        "class_ref": "class:Server",
+        "visibility": "shared",
+        "key": "monthly_cost",
+        "label": "Monthly cost",
+        "description": "Compute plus storage, in fictional example cost units",
+        "operation": {
+          "type": "sum",
+          "paths": [
+            "/costs/compute",
+            "/costs/storage"
+          ]
+        },
+        "result_type": "number",
+        "enabled": true
+      }
+    ],
+    "class_relations": [
+      {
+        "ref": "class-relation:Service:Server",
+        "from_class_ref": "class:Service",
+        "to_class_ref": "class:Server",
+        "forward_template_alias": "servers",
+        "reverse_template_alias": "services",
+        "from_max_relations": null
+      },
+      {
+        "ref": "class-relation:Server:Location",
+        "from_class_ref": "class:Server",
+        "to_class_ref": "class:Location",
+        "forward_template_alias": "location",
+        "reverse_template_alias": "servers",
+        "from_max_relations": 1
+      },
+      {
+        "ref": "class-relation:Service:Context",
+        "from_class_ref": "class:Service",
+        "to_class_ref": "class:Context",
+        "forward_template_alias": "context",
+        "reverse_template_alias": "services",
+        "from_max_relations": null
+      },
+      {
+        "ref": "class-relation:Server:Context",
+        "from_class_ref": "class:Server",
+        "to_class_ref": "class:Context",
+        "forward_template_alias": "context",
+        "reverse_template_alias": "servers",
+        "from_max_relations": null
+      }
+    ],
+    "object_relations": [
+      {
+        "ref": "relation:Atlas:web-01",
+        "from_object_ref": "object:Atlas",
+        "to_object_ref": "object:web-01"
+      },
+      {
+        "ref": "relation:Atlas:web-02",
+        "from_object_ref": "object:Atlas",
+        "to_object_ref": "object:web-02"
+      },
+      {
+        "ref": "relation:Beacon:worker-01",
+        "from_object_ref": "object:Beacon",
+        "to_object_ref": "object:worker-01"
+      },
+      {
+        "ref": "relation:web-01:Oslo",
+        "from_object_ref": "object:web-01",
+        "to_object_ref": "object:Oslo"
+      },
+      {
+        "ref": "relation:web-02:Bergen",
+        "from_object_ref": "object:web-02",
+        "to_object_ref": "object:Bergen"
+      },
+      {
+        "ref": "relation:worker-01:Oslo",
+        "from_object_ref": "object:worker-01",
+        "to_object_ref": "object:Oslo"
+      },
+      {
+        "ref": "relation:Atlas:Research notes",
+        "from_object_ref": "object:Atlas",
+        "to_object_ref": "object:Research notes"
+      },
+      {
+        "ref": "relation:Atlas:Migration checklist",
+        "from_object_ref": "object:Atlas",
+        "to_object_ref": "object:Migration checklist"
+      },
+      {
+        "ref": "relation:Beacon:Migration checklist",
+        "from_object_ref": "object:Beacon",
+        "to_object_ref": "object:Migration checklist"
+      },
+      {
+        "ref": "relation:web-01:Capacity observation",
+        "from_object_ref": "object:web-01",
+        "to_object_ref": "object:Capacity observation"
+      }
+    ],
+    "collection_permissions": [
+      {
+        "ref": "permissions:readers",
+        "collection_ref": "collection:atlas",
+        "group_key": {
+          "identity_scope": "local",
+          "groupname": "atlas-readers"
+        },
+        "permissions": [
+          "ReadCollection",
+          "ReadClass",
+          "ReadObject",
+          "ReadClassRelation",
+          "ReadObjectRelation"
+        ],
+        "replace_existing": false
+      },
+      {
+        "ref": "permissions:operators",
+        "collection_ref": "collection:operations",
+        "group_key": {
+          "identity_scope": "local",
+          "groupname": "atlas-operators"
+        },
+        "permissions": [
+          "ReadCollection",
+          "ReadClass",
+          "ReadObject",
+          "ReadClassRelation",
+          "ReadObjectRelation",
+          "CreateObject",
+          "UpdateObject",
+          "DeleteObject"
+        ],
+        "replace_existing": false
+      }
+    ]
+  }
+}
