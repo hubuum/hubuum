@@ -69,7 +69,7 @@ for authorization_path in src/tests/permissions/candidate_paging.rs \
   assert_flag "$authorization_output" treetop_conformance true
 done
 
-for history_handler in src/models/history/computed.rs src/api/v1/handlers/classes/history_computed.rs src/api/v1/handlers/classes/history_population.rs src/api/v1/handlers/classes/history_relations.rs; do
+for history_handler in src/models/history/computed.rs src/api/v1/handlers/classes/history_computed.rs src/api/v1/handlers/classes/history_population.rs src/api/v1/handlers/classes/history_relations.rs src/models/runtime_settings/discovery.rs; do
   history_output="$(bash "$classifier" "$history_handler")"
   assert_flag "$history_output" openapi true
 done

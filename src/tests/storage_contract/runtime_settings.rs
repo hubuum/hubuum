@@ -159,6 +159,9 @@ async fn scoped_admin_token(backend: &StorageHandle) -> String {
 async fn runtime_settings_require_an_unscoped_administrator(
     #[values(
         ("GET", "/api/v1/admin/runtime-settings"),
+        ("GET", "/api/v1/admin/runtime-settings/schema"),
+        ("GET", "/api/v1/admin/runtime-settings/pagination"),
+        ("PATCH", "/api/v1/admin/runtime-settings/pagination"),
         ("POST", "/api/v1/admin/runtime-settings/authentication/preflight"),
         ("PUT", "/api/v1/admin/runtime-settings/authorization"),
         ("PUT", "/api/v1/admin/runtime-settings/pagination"),
@@ -187,7 +190,11 @@ async fn runtime_settings_require_an_unscoped_administrator(
     let request = test::TestRequest::default()
         .method(endpoint.0.parse().unwrap())
         .uri(endpoint.1)
-        .set_json(json!({"expected_revision": 1, "enabled": true, "default_page_limit": 5}));
+        .set_json(if endpoint.0 == "PATCH" {
+            json!({"expected_revision": 1, "changes": {"default_page_limit": 5}})
+        } else {
+            json!({"expected_revision": 1, "enabled": true, "default_page_limit": 5})
+        });
     let response = send(&backend, token.as_deref(), request).await;
     let revisions = backend
         .load_runtime_settings()
@@ -1259,4 +1266,217 @@ async fn admin_configuration_reports_shared_enablement_on_a_new_replica(#[case] 
             }),
         )
     );
+}
+
+#[actix_web::test]
+async fn discovery_reports_all_groups_and_deployment_bounds() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let (status, catalogue) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::get().uri("/api/v1/admin/runtime-settings/schema"),
+    )
+    .await;
+    assert_eq!(status, http::StatusCode::OK);
+    let groups = catalogue["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), StorageRuntimeSettingsGroup::ALL.len());
+    let pagination = groups
+        .iter()
+        .find(|group| group["key"] == "pagination")
+        .unwrap();
+    assert_eq!(
+        pagination["schema"]["properties"]["default_page_limit"]["maximum"],
+        deployment_page_limits().unwrap().maximum_limit()
+    );
+    let observations = groups
+        .iter()
+        .find(|group| group["key"] == "query_observations")
+        .unwrap();
+    assert_eq!(
+        observations["schema"]["properties"]["retention_seconds"]["type"],
+        "integer"
+    );
+    assert!(
+        observations["schema"]["properties"]
+            .get("expected_revision")
+            .is_none()
+    );
+}
+
+#[actix_web::test]
+async fn discovery_documents_every_advertised_field_and_enum_choice() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let (status, catalogue) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::get().uri("/api/v1/admin/runtime-settings/schema"),
+    )
+    .await;
+    assert_eq!(status, http::StatusCode::OK);
+    for group in catalogue["groups"].as_array().unwrap() {
+        let key = group["key"].as_str().unwrap();
+        for annotation in ["title", "description"] {
+            assert!(
+                group[annotation]
+                    .as_str()
+                    .is_some_and(|text| !text.trim().is_empty()),
+                "{key}: missing {annotation}"
+            );
+        }
+        for (name, field) in group["schema"]["properties"].as_object().unwrap() {
+            for annotation in ["title", "description"] {
+                assert!(
+                    field[annotation]
+                        .as_str()
+                        .is_some_and(|text| !text.trim().is_empty()),
+                    "{key}.{name}: missing {annotation}"
+                );
+            }
+            if let Some(choices) = field["enum"].as_array() {
+                let descriptions = field["x-enum-descriptions"]
+                    .as_object()
+                    .expect("enum choices require help");
+                assert_eq!(
+                    choices.len(),
+                    descriptions.len(),
+                    "{key}.{name}: describe only supported choices"
+                );
+                for choice in choices {
+                    assert!(
+                        descriptions[choice.as_str().unwrap()]
+                            .as_str()
+                            .is_some_and(|text| !text.trim().is_empty()),
+                        "{key}.{name}: missing help for {choice}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[actix_web::test]
+async fn generic_patch_preserves_unedited_requested_settings() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let policy =
+        StorageQueryObservationPolicy::try_with_resource_limits(true, 8, 100, 20, 120, 8).unwrap();
+    let expected = commit(
+        &backend,
+        StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::QueryObservations(
+            policy,
+        )),
+    )
+    .await;
+    let (status, _) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::patch()
+            .uri("/api/v1/admin/runtime-settings/query_observations")
+            .set_json(json!({"expected_revision": expected, "changes": {"enabled": false}})),
+    )
+    .await;
+    assert_eq!(status, http::StatusCode::OK);
+    let updated = backend
+        .load_runtime_settings()
+        .await
+        .unwrap()
+        .query_observations()
+        .unwrap();
+    assert_eq!(
+        updated,
+        StorageQueryObservationPolicy::try_with_resource_limits(false, 8, 100, 20, 120, 8).unwrap()
+    );
+}
+
+#[actix_web::test]
+async fn generic_patch_rejects_a_stale_editor_without_overwriting() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    commit(&backend, pagination(7)).await;
+    let response = send(
+        &backend,
+        Some(&user.raw_token),
+        test::TestRequest::patch()
+            .uri("/api/v1/admin/runtime-settings/pagination")
+            .set_json(json!({"expected_revision": 1, "changes": {"default_page_limit": 5}})),
+    )
+    .await;
+    assert_eq!(response.status(), http::StatusCode::PRECONDITION_FAILED);
+    assert_eq!(
+        backend
+            .load_runtime_settings()
+            .await
+            .unwrap()
+            .pagination()
+            .unwrap()
+            .default_page_limit(),
+        7
+    );
+}
+
+#[rstest::rstest]
+#[case::empty(json!({}))]
+#[case::unknown(json!({"typo": 10}))]
+#[case::null(json!({"default_page_limit": null}))]
+#[case::wrong_type(json!({"default_page_limit": "10"}))]
+#[case::zero(json!({"default_page_limit": 0}))]
+#[case::ceiling(json!({"default_page_limit": 4_294_967_295u64}))]
+#[case::revision_in_values(json!({"expected_revision": 1}))]
+#[actix_web::test]
+async fn invalid_generic_patch_is_not_audited(#[case] changes: Value) {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let response = send(
+        &backend,
+        Some(&user.raw_token),
+        test::TestRequest::patch()
+            .uri("/api/v1/admin/runtime-settings/pagination")
+            .set_json(json!({"expected_revision": 1, "changes": changes})),
+    )
+    .await;
+    assert_eq!(response.status(), http::StatusCode::BAD_REQUEST);
+    assert_eq!(
+        history_len(&backend, StorageRuntimeSettingsGroup::Pagination).await,
+        0
+    );
+}
+
+#[actix_web::test]
+async fn generic_patch_cannot_bypass_authentication_preflight() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let response = send(
+        &backend,
+        Some(&user.raw_token),
+        test::TestRequest::patch()
+            .uri("/api/v1/admin/runtime-settings/authentication")
+            .set_json(json!({"expected_revision": 1, "changes": {"providers": []}})),
+    )
+    .await;
+    assert_eq!(response.status(), http::StatusCode::BAD_REQUEST);
+    assert_eq!(
+        history_len(&backend, StorageRuntimeSettingsGroup::Authentication).await,
+        0
+    );
+}
+
+#[actix_web::test]
+async fn group_state_exposes_requested_and_effective_values_separately() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let ceiling = deployment_page_limits().unwrap().maximum_limit() as u64;
+    let expected = commit(&backend, pagination(ceiling + 1)).await;
+    let (status, state) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::get().uri("/api/v1/admin/runtime-settings/pagination"),
+    )
+    .await;
+    assert_eq!(status, http::StatusCode::OK);
+    assert_eq!(state["revision"], json!(expected));
+    assert_eq!(state["effective"]["default_page_limit"], ceiling);
+    assert_eq!(state["runtime"]["default_page_limit"], ceiling + 1);
+    assert_eq!(state["constrained_by_ceiling"], true);
 }

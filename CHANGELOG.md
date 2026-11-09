@@ -9,6 +9,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Administrator clients can discover runtime settings through
+  `GET /api/v1/admin/runtime-settings/schema`, including JSON Schema types,
+  deployment bounds, defaults, and application timing. Generic group reads and
+  revision-checked `PATCH /api/v1/admin/runtime-settings/{group}` preserve omitted
+  fields. Authentication continues to require its dedicated preflight workflow.
+- Every discovered runtime setting includes a readable label and operational
+  explanation; enum choices include help for each supported value.
+
 - Administrators can change selected shared settings without restarting any
   replica. The default page size (`pagination.default_page_limit`) and query
   observation enablement, sampling interval, predicate budget, capacity, and

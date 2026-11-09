@@ -1,10 +1,13 @@
-use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, post, put, web};
+use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, put, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::config::running::RunningConfig;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess};
+use crate::models::runtime_settings::discovery::{
+    RuntimeSettingsCatalogue, RuntimeSettingsGroupState, RuntimeSettingsPatch,
+};
 use crate::models::runtime_settings::{
     AuthenticationSettingsRequest, AuthorizationSettingsRequest, PaginationSettingsRequest,
     QueryObservationSettingsRequest, RuntimeSettingsGroup, RuntimeSettingsHistoryParams,
@@ -69,6 +72,75 @@ fn log_update(admin: &AdminAccess, response: &RuntimeSettingsUpdateResponse) {
         changed = response.changed,
         "Runtime settings updated"
     );
+}
+
+#[utoipa::path(
+    get, path = "/api/v1/admin/runtime-settings/schema", tag = "admin",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Versioned settings catalogue with this replica's deployment bounds; capability metadata is not a cluster-wide acknowledgement", body = RuntimeSettingsCatalogue),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse)
+    )
+)]
+#[get("/runtime-settings/schema")]
+pub async fn get_runtime_settings_schema(
+    context: AppContext,
+    _admin: AdminAccess,
+) -> Result<impl Responder, ApiError> {
+    Ok(ApiResponse::ok(runtime_settings::catalogue(&context)?))
+}
+
+#[utoipa::path(
+    get, path = "/api/v1/admin/runtime-settings/{group}", tag = "admin",
+    security(("bearer_auth" = [])), params(("group" = RuntimeSettingsGroup, Path, description = "Discovered settings group")),
+    responses(
+        (status = 200, description = "Uniform redacted state of one group on the responding replica", body = RuntimeSettingsGroupState),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse)
+    )
+)]
+#[get("/runtime-settings/{group}")]
+pub async fn get_runtime_settings_group(
+    context: AppContext,
+    _admin: AdminAccess,
+    group: web::Path<RuntimeSettingsGroup>,
+) -> Result<impl Responder, ApiError> {
+    Ok(ApiResponse::ok(RuntimeSettingsGroupState::from_report(
+        group.into_inner(),
+        runtime_settings::report(&context).await?,
+    )?))
+}
+
+#[utoipa::path(
+    patch, path = "/api/v1/admin/runtime-settings/{group}", tag = "admin",
+    security(("bearer_auth" = [])), params(("group" = RuntimeSettingsGroup, Path, description = "Discovered settings group with patch_supported=true")),
+    request_body = RuntimeSettingsPatch,
+    responses(
+        (status = 200, description = "Supplied fields committed atomically; omitted fields preserved, replicas reconcile asynchronously", body = RuntimeSettingsUpdateResponse),
+        (status = 400, description = "Invalid fields, values, combination, deployment ceiling or unsupported workflow", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Administrator required; security settings require a local password-capable human administrator", body = ApiErrorResponse),
+        (status = 412, description = "Stale expected_revision; refetch before editing", body = ApiErrorResponse)
+    )
+)]
+#[patch("/runtime-settings/{group}")]
+pub async fn patch_runtime_settings(
+    context: AppContext,
+    admin: AdminAccess,
+    http_request: HttpRequest,
+    group: web::Path<RuntimeSettingsGroup>,
+    request: web::Json<RuntimeSettingsPatch>,
+) -> Result<impl Responder, ApiError> {
+    let response = runtime_settings::patch(
+        &context,
+        group.into_inner(),
+        request.into_inner(),
+        admin.event_context(&http_request),
+    )
+    .await?;
+    log_update(&admin, &response);
+    Ok(ApiResponse::ok(response))
 }
 
 #[utoipa::path(
@@ -366,6 +438,7 @@ pub async fn release_authorization_settings(
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(get_running_config)
         .service(get_runtime_settings)
+        .service(get_runtime_settings_schema)
         .service(preflight_authentication_settings)
         .service(set_authorization_settings)
         .service(set_query_observation_settings)
@@ -374,5 +447,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(release_authorization_settings)
         .service(release_query_observation_settings)
         .service(release_pagination_settings)
-        .service(get_runtime_settings_history);
+        .service(get_runtime_settings_history)
+        .service(get_runtime_settings_group)
+        .service(patch_runtime_settings);
 }
