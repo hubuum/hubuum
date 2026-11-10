@@ -29,6 +29,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (REST clients with closed runtime-setting enums):** runtime-setting responses and discovery add operational policy groups and effect values.
+  Regenerate administrator clients from the updated OpenAPI document or accept
+  the new runtime-setting group and effect values before upgrading the server.
 - **Breaking deployment change:** the runtime-policy migration adds group rows
   older binaries cannot read. Stop older API and worker replicas before applying
   `2026-11-10-000001_runtime_policies`, then deploy upgraded binaries everywhere.
