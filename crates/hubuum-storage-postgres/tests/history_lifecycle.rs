@@ -1154,6 +1154,183 @@ mod runtime_protocol {
             assert!(!result.unwrap());
         }
     }
+    #[rstest]
+    #[case::collection(StorageIdentityHistoryKind::Collection)]
+    #[case::class(StorageIdentityHistoryKind::Class)]
+    #[case::object(StorageIdentityHistoryKind::Object)]
+    #[case::class_relation(StorageIdentityHistoryKind::ClassRelation)]
+    #[case::object_relation(StorageIdentityHistoryKind::ObjectRelation)]
+    #[case::template(StorageIdentityHistoryKind::ExportTemplate)]
+    #[case::remote(StorageIdentityHistoryKind::RemoteTarget)]
+    #[case::computed(StorageIdentityHistoryKind::ComputedDefinitions)]
+    #[case::schema(StorageIdentityHistoryKind::ClassSchema)]
+    #[tokio::test]
+    async fn waiting_expiry_admission_rechecks_committed_authority(
+        #[case] family: StorageIdentityHistoryKind,
+        #[values("hold", "policy", "expiry")] winner: &str,
+    ) {
+        let _guard = CONTROL_LOCK.lock().await;
+        let (fixture, key, collection) = expiry_fixture(family, 32).await;
+        let runtime = fixture
+            .storage
+            .register_history_runtime(None)
+            .await
+            .unwrap();
+        let application = fixture
+            .storage
+            .capture_application_execution(Some(runtime.owner()))
+            .await
+            .unwrap();
+        let scope = StorageExecutionScope::default().with_application_access(application);
+        let before = fixture.storage.capture_history_lifecycle().await.unwrap();
+        let principal = PrincipalIdentity::generate();
+        let batch = Uuid::new_v4();
+        let admission = |identity| {
+            HistoryExpiryAdmissionRequest::new(
+                identity,
+                Uuid::new_v4(),
+                HistoryExpiryOrigin::Manual { principal },
+                HistoryLifecycleScan::new(key, 1).unwrap(),
+                before.fence(),
+            )
+            .unwrap()
+        };
+        let change = match winner {
+            "hold" => Some(
+                before
+                    .control()
+                    .create_hold(
+                        HistoryRetentionHold::new(
+                            Uuid::new_v4(),
+                            key,
+                            before.observed_at(),
+                            None,
+                            principal,
+                        )
+                        .unwrap(),
+                        before.fence(),
+                    )
+                    .unwrap(),
+            ),
+            "policy" => Some(
+                before
+                    .control()
+                    .apply(
+                        HistoryPolicyApplyRequest::new(
+                            HistoryPolicyChange::new(
+                                key,
+                                before
+                                    .control()
+                                    .authority()
+                                    .policies()
+                                    .current_revision(key),
+                                HistoryPolicyBinding::DisabledExpiry,
+                                HistoryPolicyApplication::Prospective,
+                            )
+                            .unwrap(),
+                            None,
+                        ),
+                        principal,
+                        before.fence(),
+                        before.observed_at(),
+                    )
+                    .unwrap(),
+            ),
+            "expiry" => None,
+            _ => unreachable!(),
+        };
+        let expected = change.as_ref().map(|change| change.next().clone());
+
+        // Single-connection pools identify the actual adapter transactions.
+        // Keep both operations on the public capability, including audit append.
+        let first_pool = integration_test_pool(1);
+        let second_pool = integration_test_pool(1);
+        let pid = async |pool: &PostgresPool| {
+            let mut connection = pool.get().await.unwrap();
+            sql_query("SELECT pg_backend_pid() AS pid")
+                .get_result::<Backend>(&mut connection)
+                .await
+                .unwrap()
+                .pid
+        };
+        let first_pid = pid(&first_pool).await;
+        let second_pid = pid(&second_pool).await;
+        let first_storage = PostgresStorage::unobserved(first_pool);
+        let second_storage = PostgresStorage::unobserved(second_pool);
+        let mut audit_gate = fixture.owner_pool.get().await.unwrap();
+        let mut observer = fixture.owner_pool.get().await.unwrap();
+        audit_gate.batch_execute("BEGIN").await.unwrap();
+        owner(&mut audit_gate).await.unwrap();
+        audit_gate
+            .batch_execute("LOCK TABLE public.events IN ACCESS EXCLUSIVE MODE")
+            .await
+            .unwrap();
+        let first = first_storage.run_in_scope(scope.clone(), async {
+            if let Some(change) = change {
+                first_storage.commit_history_lifecycle(change).await?;
+            } else {
+                assert!(
+                    first_storage
+                        .admit_history_expiry(admission(batch))
+                        .await?
+                        .is_some()
+                );
+            }
+            Ok::<_, StorageError>(())
+        });
+        tokio::pin!(first);
+        // The winner has changed authority but cannot acknowledge it until
+        // its required audit is written. No timer establishes this ordering.
+        tokio::select! {
+            result = &mut first => panic!("winner escaped required audit gate: {result:?}"),
+            () = blocked(&mut observer, first_pid) => {}
+        }
+        let losing_batch = Uuid::new_v4();
+        let second = second_storage.run_in_scope(
+            scope,
+            second_storage.admit_history_expiry(admission(losing_batch)),
+        );
+        tokio::pin!(second);
+        tokio::select! {
+            result = &mut first => panic!("winner escaped required audit gate: {result:?}"),
+            result = &mut second => panic!("admission escaped uncommitted authority: {result:?}"),
+            () = blocked(&mut observer, second_pid) => {}
+        }
+        audit_gate.batch_execute("COMMIT").await.unwrap();
+        let (first, second) = timeout(WaitDuration::from_secs(5), async {
+            tokio::join!(first, second)
+        })
+        .await
+        .expect("both operations must finish after audit gate release");
+        drop(audit_gate);
+        drop(observer);
+        let after = fixture.storage.capture_history_lifecycle().await.unwrap();
+        let projected = with_transaction(&fixture.owner_pool, async |connection| {
+            owner(connection).await?;
+            sql_query("SELECT EXISTS(SELECT 1 FROM hubuum_control.history_expiry_members WHERE intent_uuid=$1) AS allowed")
+                .bind::<SqlUuid, _>(losing_batch)
+                .get_result::<Gate>(connection)
+                .await
+                .map_err(PostgresStorageError::from)
+        }).await.unwrap().allowed;
+        fixture.storage.unregister_runtime(runtime).await.unwrap();
+        cleanup_expiry_fixture(fixture, collection, batch).await;
+
+        first.unwrap();
+        assert!(matches!(second, Err(error) if error.kind() == StorageErrorKind::Conflict));
+        assert!(
+            !projected,
+            "losing admission must leave no exclusion projection"
+        );
+        if let Some(expected) = expected {
+            assert_eq!(after.control(), &expected, "preserve the winning {winner}");
+        } else {
+            let intents = after.control().authority().expiry().intents();
+            assert_eq!(intents.len(), 1, "overlapping runs must not both commit");
+            assert_eq!(intents[0].manifest().identity(), batch);
+            assert_eq!(intents[0].manifest().members().len(), 1);
+        }
+    }
 }
 
 mod read_predicates {

@@ -6,6 +6,11 @@
 
 pub mod computed_lock_protocol;
 
+// Adapter unit tests share the runner's isolated restore database. Other test
+// binaries run sequentially and have their own fixture coordination.
+#[cfg(test)]
+pub(crate) static RESTORE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 use chrono::NaiveDateTime;
 use diesel::sql_types::{Bool, Integer, Text, Timestamp};
 use diesel::{

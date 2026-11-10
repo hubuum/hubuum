@@ -233,7 +233,8 @@ async fn rejected_capture_preserves_expired_cleanup_accounting() {
 
 #[tokio::test]
 async fn rejected_admission_commits_cleanup_before_the_next_attempt() {
-    // Only this adapter unit test uses the runner's separate restore database.
+    let _guard = crate::test_support::RESTORE_TEST_LOCK.lock().await;
+    // Exposure fixtures share this database under the same unit-test lock.
     // Other test binaries run sequentially and receive it back without our pins.
     let migration_url = integration_test_restore_migration_database_url();
     IsolatedRestoreTarget::new(&migration_url, &integration_test_database_url()).unwrap();

@@ -95,10 +95,10 @@ async fn position_comparison_seeks_timestamp_ties_in_generic_plans(
         condition.contains("valid_from") && condition.contains("history_id"),
         "{plan:#}"
     );
-    assert_eq!(scan["Actual Rows"], 2, "{plan:#}");
+    assert_eq!(scan["Actual Rows"].as_f64().unwrap(), 2.0, "{plan:#}");
     assert_eq!(
-        scan["Rows Removed by Filter"].as_u64().unwrap_or(0),
-        0,
+        scan["Rows Removed by Filter"].as_f64().unwrap_or(0.0),
+        0.0,
         "{plan:#}"
     );
 }

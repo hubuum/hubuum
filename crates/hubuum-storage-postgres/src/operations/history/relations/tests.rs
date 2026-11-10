@@ -79,7 +79,7 @@ async fn relationship_validity_keeps_index_in_generic_plans() {
         .iter()
         .find(|node| node["Index Name"] == "relation_validity_fixture_validity")
         .expect("the generic count plan must use the validity index");
-    assert_eq!(index["Actual Rows"], 1, "{plan:#}");
+    assert_eq!(index["Actual Rows"].as_f64().unwrap(), 1.0, "{plan:#}");
     assert!(
         index["Index Cond"].as_str().unwrap().contains("$1"),
         "{plan:#}"

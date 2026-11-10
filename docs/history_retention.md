@@ -278,7 +278,14 @@ that the source is empty.
 
 Native tests exercise trigger-created rows from all nine families, held/stale
 selection, mixed fleets, oversized payloads, required audit rollback and retained
-publication charging. Primary admission is not independent checkpoint protection:
+publication charging. Queued-admission races also cover all nine families: an
+actual hold, policy edit or competing expiry batch retains the authority lock
+while its required audit append is blocked. After that transition commits, the
+waiting admission must reject its stale fence without publishing an exclusion
+or overwriting the winner. PostgreSQL lock observations establish both waits;
+elapsed time alone does not establish their order. Late-commit/closure races,
+dependency changes and restore descendants still require qualification.
+Primary admission is not independent checkpoint protection:
 its authority must be captured and independently published before a future
 removal capability can use it. No removal capability is added here. Complete
 native dependency/race qualification, restored descendants, physical cleanup and

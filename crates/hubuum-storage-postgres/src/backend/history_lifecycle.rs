@@ -833,7 +833,6 @@ impl HistoryLifecycleStorage for PostgresStorage {
 mod scan_tests {
     use diesel::sql_types::Text;
     use diesel_async::SimpleAsyncConnection;
-    use tokio::time::{Duration, sleep, timeout};
 
     use super::*;
     use crate::{test_support::integration_test_pool, with_transaction};
@@ -966,9 +965,11 @@ mod scan_tests {
         #[case] blocked: bool,
     ) {
         use crate::test_support::{
-            database_role_tests_enabled, integration_test_database_roles,
-            integration_test_migration_pool,
+            IsolatedRestoreTarget, RESTORE_TEST_LOCK, database_role_tests_enabled,
+            integration_test_database_roles, integration_test_database_url,
+            integration_test_restore_migration_database_url,
         };
+        use crate::{PostgresPoolSettings, build_postgres_pool};
         #[derive(QueryableByName, Debug, PartialEq)]
         struct Version {
             #[diesel(sql_type=Jsonb)]
@@ -990,35 +991,28 @@ mod scan_tests {
             bytes[6] = (bytes[6] & 0x0f) | 0x80;
             hubuum_domain::VersionIdentity::from_bytes(bytes).unwrap()
         };
-        let pool = integration_test_migration_pool(1);
+        let _guard = RESTORE_TEST_LOCK.lock().await;
+        let database_url = integration_test_restore_migration_database_url();
+        IsolatedRestoreTarget::new(&database_url, &integration_test_database_url()).unwrap();
+        let settings = PostgresPoolSettings::builder(database_url)
+            .max_size(1)
+            .statement_timeout_ms(0)
+            .acquire_timeout_ms(5_000)
+            .build()
+            .unwrap();
+        let pool = build_postgres_pool(&settings).unwrap();
         with_transaction(&pool, async |connection| {
             if database_role_tests_enabled() {
                 sql_query("SELECT set_config('role',$1,true)")
                     .bind::<Text,_>(integration_test_database_roles().owner().as_str()).execute(connection).await?;
             }
             connection.batch_execute("SAVEPOINT history_exposure_fixture").await?;
-            // Other parallel archive fixtures retain publications between
-            // transactions. Let them settle rather than locking/deleting their
-            // ownership rows, which can invert the producer settlement order.
-            // Release authority between attempts so productive work can finish.
-            // Once empty, retain the same authority-first locks as reapplication
-            // to exclude new admission for this rollback-only fixture.
-            timeout(Duration::from_secs(5), async {
-                loop {
-                    connection.batch_execute("SAVEPOINT history_fixture_admission;
-                        SELECT id FROM hubuum_control.deletion_authority WHERE id=1 FOR UPDATE;
-                        SELECT id FROM hubuum_control.application_control WHERE id=1 FOR UPDATE;
-                        SELECT id FROM hubuum_control.history_lifecycle_control WHERE id=1 FOR UPDATE").await?;
-                    let busy = sql_query("SELECT EXISTS(SELECT 1 FROM hubuum_control.history_publication_owners) AS committed")
-                        .get_result::<CommittedRow>(connection).await?.committed;
-                    if !busy {
-                        return Ok::<_,PostgresStorageError>(());
-                    }
-                    connection.batch_execute("ROLLBACK TO SAVEPOINT history_fixture_admission;
-                        RELEASE SAVEPOINT history_fixture_admission").await?;
-                    sleep(Duration::from_millis(5)).await;
-                }
-            }).await.expect("Parallel publication fixtures must settle before restore admission")?;
+            // Isolated rollback-only fixtures need an empty publication fleet.
+            // Ordinary archive fixtures in the primary database may retain real
+            // owners across transactions, so never wait for their global drain.
+            connection.batch_execute("SELECT id FROM hubuum_control.deletion_authority WHERE id=1 FOR UPDATE;
+                SELECT id FROM hubuum_control.application_control WHERE id=1 FOR UPDATE;
+                SELECT id FROM hubuum_control.history_lifecycle_control WHERE id=1 FOR UPDATE").await?;
             let created = sql_query("INSERT INTO public.collections(name,description,parent_collection_id)
                 SELECT $1,'exposure original',id FROM public.collections WHERE parent_collection_id IS NULL RETURNING id")
                 .bind::<Text,_>(format!("history_exposure_{}",Uuid::new_v4().simple())).get_result::<Created>(connection).await?;

@@ -66,10 +66,10 @@ async fn resource_identity_predicate_keeps_index_in_generic_plans() {
     }).await.unwrap();
     let scan = &plan[0]["Plan"];
     assert_eq!(scan["Node Type"], "Index Scan", "{plan:#}");
-    assert_eq!(scan["Actual Rows"], 1, "{plan:#}");
+    assert_eq!(scan["Actual Rows"].as_f64().unwrap(), 1.0, "{plan:#}");
     assert_eq!(
-        scan["Rows Removed by Filter"].as_u64().unwrap_or(0),
-        0,
+        scan["Rows Removed by Filter"].as_f64().unwrap_or(0.0),
+        0.0,
         "{plan:#}"
     );
 }
