@@ -25,6 +25,17 @@
       "reason": "Older API and worker replicas do not enforce interactive credential kinds, family revocation, and refresh rotation. The authentication contract requires a coordinated upgrade.",
       "upgrade_action": "Stop older API and worker replicas, apply the session/activity migration and role grants, then start matching binaries and upgrade frontend/SDK consumers. Clear existing BFF sessions and sign in again. See docs/auth_model.md#interactive-sessions.",
       "drop_constraints": {}
+    },
+    {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-11-10-000001_runtime_policies/up.sql",
+      "sha256": "a615d2d26e5b865ab851c53e11398ae706ea17e2f8f392f549187854579d65c6",
+      "reason": "The migration inserts runtime policy groups that older API and worker binaries cannot deserialize, even before an administrator edits a policy.",
+      "upgrade_action": "Stop all older API and worker replicas, back up the database, apply the migration, then start upgraded binaries everywhere. Restore the pre-upgrade database snapshot before reverting to older binaries. See docs/runtime_settings.md#upgrade-and-rollback.",
+      "drop_constraints": {
+        "runtime_settings": [
+          "runtime_settings_group_check"
+        ]
+      }
     }
   ]
 }
