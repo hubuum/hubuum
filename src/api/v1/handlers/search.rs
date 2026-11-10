@@ -1,3 +1,4 @@
+use crate::config::AppConfig;
 use crate::storage::storage_handle;
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, post, web};
 use bytes::Bytes;
@@ -10,6 +11,7 @@ use serde::Serialize;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::future::Future;
+use std::sync::Arc;
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
@@ -160,6 +162,7 @@ fn execute_unified_search_stream(
     principal: StorageAuthenticationPrincipal,
     scope: Option<TokenScope>,
     params: StorageUnifiedSearchQuery,
+    config: Arc<AppConfig>,
 ) -> impl Stream<Item = Result<Bytes, actix_web::Error>> {
     let searches = FuturesUnordered::new();
 
@@ -177,10 +180,10 @@ fn execute_unified_search_stream(
         let scope = scope.clone();
         let params = params.clone();
         searches.push(
-            async move {
+            crate::config::runtime::scope(config.clone(), async move {
                 execute_unified_search_batch(&principal, &context, &params, kind, scope.as_ref())
                     .await
-            }
+            })
             .boxed(),
         );
     }
@@ -767,17 +770,21 @@ pub async fn post_stream_search(
     let scopes = requestor.scope;
     // The response body runs after the request middleware's settings scope ends.
     let limits = page_limits()?;
-    let execution = with_request_page_limits(limits, async move {
-        execute_structured_search(
-            &context,
-            &principal,
-            token_id,
-            token_revision,
-            scopes.as_ref(),
-            request,
-        )
-        .await
-    })
+    let config = crate::config::runtime::current()?;
+    let execution = crate::config::runtime::scope(
+        config,
+        with_request_page_limits(limits, async move {
+            execute_structured_search(
+                &context,
+                &principal,
+                token_id,
+                token_revision,
+                scopes.as_ref(),
+                request,
+            )
+            .await
+        }),
+    )
     .boxed_local();
     let stream = structured_search_event_stream(version, kind, execution);
 
@@ -817,8 +824,13 @@ pub async fn stream_search(
 ) -> Result<HttpResponse, ApiError> {
     let params = parse_unified_search_query(req.query_string())?;
     let limit_per_kind = params.limit_per_kind;
-    let stream =
-        execute_unified_search_stream(context, requestor.principal, requestor.scope, params);
+    let stream = execute_unified_search_stream(
+        context,
+        requestor.principal,
+        requestor.scope,
+        params,
+        crate::config::runtime::current()?,
+    );
 
     Ok(HttpResponse::Ok()
         .insert_header(("Content-Type", "text/event-stream; charset=utf-8"))

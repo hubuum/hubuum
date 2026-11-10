@@ -7,6 +7,53 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Administrators can change `pagination.max_page_limit` together with
+  `default_page_limit` through runtime settings, without restarting. Explicit
+  client limits are clamped to the runtime maximum, bounded by the deployment's
+  `HUBUUM_MAX_PAGE_LIMIT`. Discovery and client/admin configuration report the
+  effective limits. Partial edits preserve omitted fields, and in-flight
+  requests retain their original limits. Existing default-only settings and
+  requests remain supported. Upgrade all API and worker replicas before setting
+  a runtime maximum; older binaries cannot read the extended persisted policy.
+
+- Runtime policy groups now cover log filters; metrics enablement/path; proxy
+  trust and client allowlists; traversal depth; task lease/heartbeat, polling,
+  recovery, reindex batches and admission limits; remote-call limits; token
+  issuance/retention; login limits; event batching/delivery/retention/archive;
+  export/template budgets; and backup/restore limits. Changes are validated,
+  revisioned, audited and exposed through discovery and effective configuration.
+  Requests/jobs retain their snapshots, batch changes wake idle workers, and
+  sensitive policy edits require a local administrator with recovery access.
+
+### Changed
+
+- **Breaking deployment change:** the runtime-policy migration adds group rows
+  older binaries cannot read. Stop older API and worker replicas before applying
+  `2026-11-10-000001_runtime_policies`, then deploy upgraded binaries everywhere.
+  Rollback after editing a new group requires an upgraded binary or database
+  backup because append-only audit history is preserved.
+- **Breaking deployment change:** worker-only processes now bind their HTTP
+  listener even with metrics disabled, supporting later runtime enablement.
+  Assign distinct `HUBUUM_BIND_IP:HUBUUM_PORT` endpoints or separate network
+  namespaces to workers that previously shared a host and port.
+- Runtime configuration uses common validated policy definitions for persistence
+  and discovery. Existing network/path validation is shared with storage;
+  deployment-only lifecycle settings and secrets remain outside runtime editing.
+
+### Fixed
+
+- Shared login reservations retain their original expiry when runtime rate-limit
+  windows change, so in-flight failures still count toward the captured policy.
+- Shared login lockouts keep their expiry when overlapping requests finish under
+  shorter runtime policies. Backup and restore requests retain their captured
+  limits when runtime ownership changes during authentication.
+- Metrics remain available after runtime-settings refresh failures, with network
+  access controls still enforced. Runtime metrics paths retain their maintenance
+  exemption during destructive restores.
+- Stale-policy rejections remain visible in HTTP request metrics and tracing.
+
 ## [0.0.22] - 2026-11-09
 
 ### Added

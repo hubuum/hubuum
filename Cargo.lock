@@ -2416,6 +2416,7 @@ dependencies = [
  "hubuum-events-core",
  "hubuum-query",
  "hubuum-task-core",
+ "ipnet",
  "rstest",
  "serde",
  "serde_json",

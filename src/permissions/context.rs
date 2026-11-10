@@ -342,6 +342,17 @@ impl AppContext {
         let Some(snapshot) = applied.snapshot() else {
             return;
         };
+        if let Ok(config) = crate::config::runtime::for_storage(&self.backend) {
+            if let Err(error) = crate::logger::reload_log_filter(&config.log_level) {
+                tracing::warn!(%error, "Log filter could not be applied");
+            }
+            if let Err(error) = crate::observability::metrics::apply_runtime_config(
+                &config,
+                self.storage_backend_descriptor().kind().as_str(),
+            ) {
+                tracing::warn!(%error, "Metrics could not be applied");
+            }
+        }
         let authentication_revision = snapshot
             .record(hubuum_storage_core::StorageRuntimeSettingsGroup::Authentication)
             .revision();

@@ -114,6 +114,19 @@ impl RuntimeSettingsGroupState {
                     false,
                 )
             }
+            group => {
+                let key = StorageRuntimeSettingsGroup::from(group).as_str();
+                let value = report.policies.get(key).ok_or_else(|| {
+                    ApiError::InternalServerError(format!("Missing policy report for {key}"))
+                })?;
+                (
+                    value.ownership.clone(),
+                    value.effective.clone(),
+                    value.runtime.clone(),
+                    Some(value.deployment.clone()),
+                    value.constrained_by_ceiling,
+                )
+            }
         };
         Ok(Self {
             group,
@@ -173,12 +186,48 @@ fn descriptor(
     group: RuntimeSettingsGroup,
     deployment: RuntimeSettingsDeployment,
 ) -> Result<RuntimeSettingsDescriptor, ApiError> {
+    if let Some(mut schema) = crate::config::runtime::policy_schema(group.into()) {
+        let config = crate::config::get_config()?.clone();
+        let defaults = crate::config::runtime::deployment_document(&config, group.into())
+            .expect("policy group");
+        for (name, value) in defaults.as_object().expect("policy object") {
+            schema["properties"][name]["default"] = value.clone();
+        }
+        match group {
+            RuntimeSettingsGroup::Tokens => {
+                schema["properties"]["lifetime_hours"]["maximum"] =
+                    json!(config.max_token_lifetime_hours)
+            }
+            RuntimeSettingsGroup::Events => {
+                schema["properties"]["delivery_transport_timeout_ms"]["maximum"] =
+                    json!(config.event_delivery_lock_timeout_ms.saturating_sub(1));
+                if config.event_retention_archive_path.is_none() {
+                    schema["properties"]["file_archive_enabled"]["const"] = json!(false);
+                }
+            }
+            RuntimeSettingsGroup::RemoteCalls if !config.remote_call_allow_private_targets => {
+                schema["properties"]["allow_private_targets"]["const"] = json!(false)
+            }
+            _ => {}
+        }
+        let key = StorageRuntimeSettingsGroup::from(group);
+        return Ok(RuntimeSettingsDescriptor {
+            key: group, title: key.as_str().replace('_', " "),
+            description: "Validated policy shared across replicas. Running operations retain their initial settings; new operations use the latest reconciled policy.".into(),
+            schema, patch_supported: true,
+            requires_local_admin: matches!(group, RuntimeSettingsGroup::Network | RuntimeSettingsGroup::Tokens | RuntimeSettingsGroup::LoginRateLimit | RuntimeSettingsGroup::RemoteCalls),
+            takes_effect: policy_effect(key), read_only_reason: None,
+        });
+    }
     let (title, description, mut schema, defaults, effect) = match group {
         RuntimeSettingsGroup::Pagination => (
             "Pagination",
-            "Default page size for requests that omit a limit.",
+            "Default and maximum page sizes, bounded by this replica's deployment ceiling.",
             value_schema::<PaginationSettingsRequest>()?,
-            json!({"default_page_limit": deployment.pagination.default_limit()}),
+            json!({
+                "default_page_limit": deployment.pagination.default_limit(),
+                "max_page_limit": deployment.pagination.maximum_limit()
+            }),
             RuntimeSettingsEffect::NextRequest,
         ),
         RuntimeSettingsGroup::QueryObservations => (
@@ -204,11 +253,15 @@ fn descriptor(
             json!({}),
             RuntimeSettingsEffect::NextRequest,
         ),
+        _ => unreachable!("operational policy handled above"),
     };
     // Utoipa field annotations do not support titles. Keep presentation labels
     // here; descriptions and validation constraints come from the request types.
     let titles: &[(&str, &str)] = match group {
-        RuntimeSettingsGroup::Pagination => &[("default_page_limit", "Default page size")],
+        RuntimeSettingsGroup::Pagination => &[
+            ("default_page_limit", "Default page size"),
+            ("max_page_limit", "Maximum page size"),
+        ],
         RuntimeSettingsGroup::QueryObservations => &[
             ("enabled", "Collect query observations"),
             ("sample_every", "Sampling interval"),
@@ -219,6 +272,7 @@ fn descriptor(
         ],
         RuntimeSettingsGroup::Authorization => &[("backend", "Authorization backend")],
         RuntimeSettingsGroup::Authentication => &[("providers", "Authentication providers")],
+        _ => unreachable!("operational policy handled above"),
     };
     for (name, title) in titles {
         schema["properties"][name]["title"] = json!(title);
@@ -228,6 +282,9 @@ fn descriptor(
             schema["properties"]["default_page_limit"]["maximum"] =
                 json!((deployment.pagination.maximum_limit() as u64).min(u32::MAX as u64));
             schema["properties"]["default_page_limit"]["x-unit"] = json!("items");
+            schema["properties"]["max_page_limit"]["maximum"] =
+                json!(deployment.pagination.maximum_limit());
+            schema["properties"]["max_page_limit"]["x-unit"] = json!("items");
         }
         RuntimeSettingsGroup::QueryObservations => {
             let ceilings = deployment.query_observations.ceilings();
@@ -284,6 +341,7 @@ fn descriptor(
                     "items": {"type": "object"}, "readOnly": true}
             }});
         }
+        _ => unreachable!("operational policy handled above"),
     }
     if let Some(properties) = schema["properties"].as_object_mut() {
         for (name, property) in properties {
@@ -300,4 +358,15 @@ fn descriptor(
         read_only_reason: (group == RuntimeSettingsGroup::Authentication).then(||
             "Use POST /api/v1/admin/runtime-settings/authentication/preflight to validate provider ownership, secrets, and connectivity before committing.".into()),
     })
+}
+
+pub(crate) fn policy_effect(group: StorageRuntimeSettingsGroup) -> RuntimeSettingsEffect {
+    match group {
+        StorageRuntimeSettingsGroup::Observability => RuntimeSettingsEffect::OnReconciliation,
+        StorageRuntimeSettingsGroup::Network
+        | StorageRuntimeSettingsGroup::QueryLimits
+        | StorageRuntimeSettingsGroup::LoginRateLimit
+        | StorageRuntimeSettingsGroup::Tokens => RuntimeSettingsEffect::NextRequest,
+        _ => RuntimeSettingsEffect::NextOperation,
+    }
 }

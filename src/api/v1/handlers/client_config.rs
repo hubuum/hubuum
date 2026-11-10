@@ -12,7 +12,7 @@ use crate::permissions::AppContext;
     path = "/api/v1/config",
     tag = "config",
     responses(
-        (status = 200, description = "Effective client-safe configuration, including runtime-managed defaults applied by the responding replica", body = ClientConfig),
+        (status = 200, description = "Effective client-safe configuration, including runtime-managed page limits applied by the responding replica", body = ClientConfig),
         (status = 500, description = "Internal server error", body = ApiErrorResponse)
     )
 )]
@@ -35,8 +35,13 @@ pub async fn get_client_config(
         client.pagination.default_page_limit,
         client.pagination.max_page_limit,
     )?
-    .with_runtime_default(policy);
+    .with_runtime_policy(policy);
     client.pagination.default_page_limit = limits.default_limit();
+    client.pagination.max_page_limit = limits.maximum_limit();
+    if let Some(context) = request.app_data::<web::Data<AppContext>>() {
+        let effective = crate::config::runtime::for_storage(context.backend())?;
+        client.authentication.default_token_lifetime_hours = effective.token_lifetime_hours;
+    }
     Ok(ApiResponse::new(client, StatusCode::OK))
 }
 

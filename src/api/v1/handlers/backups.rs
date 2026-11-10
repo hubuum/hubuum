@@ -71,6 +71,8 @@ pub async fn create_backup(
     req: HttpRequest,
     request: web::Json<BackupRequest>,
 ) -> Result<impl Responder, ApiError> {
+    let config = crate::config::runtime::current()?;
+    let settings = settings.with_runtime(&config)?;
     let request = request.into_inner();
     authorize_backup_request(&context, &requestor.principal, requestor.scopes()).await?;
     let payload = serde_json::to_value(&request)?;

@@ -23,7 +23,7 @@ use crate::config::get_config;
 use crate::config::initialize_config;
 use crate::config::running::RunningConfig;
 use crate::config::{
-    AppConfig, ClientAllowlist, DatabasePrivilegeMode, LoginRateLimitBackendKind, MetricsPath,
+    AppConfig, ClientAllowlist, DatabasePrivilegeMode, LoginRateLimitBackendKind,
     token_hash_key_ring,
 };
 use crate::errors::{
@@ -428,7 +428,7 @@ async fn run_worker_role(
         storage_backend = storage_backend.kind().as_str(),
         authorization_backend,
         active_event_sinks,
-        metrics_listener = metrics_server.is_some(),
+        metrics_listener = true,
     );
     let supervision_result = supervise_worker_process(metrics_server).await;
     if let Err(error) = &supervision_result {
@@ -467,8 +467,6 @@ async fn run_http_role(
         config.trusted_proxy_hops,
     );
     let running_config = RunningConfig::from_app_config_and_storage(config, storage_backend);
-    let metrics_enabled = config.metrics_enabled;
-    let metrics_path = config.metrics_path.clone();
     let server_app_context = app_context.clone();
     let background_worker_context = app_context.clone();
     let app_backup_settings = backup_settings.clone();
@@ -484,9 +482,11 @@ async fn run_http_role(
                 client_allowlist.clone(),
                 proxy_trust.clone(),
             ))
+            .wrap(from_fn(middlewares::apply_runtime_settings))
             .wrap(middlewares::TracingMiddleware::new_with_trust(
                 proxy_trust.clone(),
             ))
+            .wrap(from_fn(middlewares::resolve_runtime_settings))
             .app_data(Data::new(proxy_trust.clone()))
             .app_data(Data::new(running_config.clone()))
             .app_data(Data::new(app_backup_settings.clone()))
@@ -495,14 +495,7 @@ async fn run_http_role(
             .app_data(JsonConfig::default().error_handler(json_error_handler))
             .route("/api-doc/openapi.json", web::get().to(openapi_json_handler));
 
-        let app = if metrics_enabled {
-            app.route(
-                metrics_path.as_str(),
-                web::get().to(observability::metrics::scrape),
-            )
-        } else {
-            app
-        };
+        let app = app.default_service(web::to(observability::metrics::runtime_endpoint));
 
         #[cfg(feature = "swagger-ui")]
         let app = app.service(
@@ -599,14 +592,7 @@ async fn wait_for_background_worker_failure() -> std::io::Error {
     std::io::Error::other(format!("Background worker supervision failed: {exit}"))
 }
 
-async fn supervise_worker_process(metrics_server: Option<Server>) -> std::io::Result<()> {
-    let Some(metrics_server) = metrics_server else {
-        return tokio::select! {
-            shutdown = wait_for_shutdown_signal() => shutdown,
-            error = wait_for_background_worker_failure() => Err(error),
-        };
-    };
-
+async fn supervise_worker_process(metrics_server: Server) -> std::io::Result<()> {
     let metrics_server_handle = metrics_server.handle();
     let result = tokio::select! {
         shutdown = wait_for_shutdown_signal() => shutdown,
@@ -625,7 +611,6 @@ async fn supervise_worker_process(metrics_server: Option<Server>) -> std::io::Re
 fn worker_metrics_service(
     client_allowlist: ClientAllowlist,
     proxy_trust: middlewares::ProxyTrust,
-    metrics_path: MetricsPath,
     context: AppContext,
 ) -> impl HttpServiceFactory {
     web::scope("")
@@ -633,34 +618,24 @@ fn worker_metrics_service(
             client_allowlist,
             proxy_trust.clone(),
         ))
+        .wrap(from_fn(middlewares::apply_runtime_settings))
         .wrap(middlewares::TracingMiddleware::new_with_trust(proxy_trust))
+        .wrap(from_fn(middlewares::resolve_runtime_settings))
         .app_data(Data::new(context))
-        .route(
-            metrics_path.as_str(),
-            web::get().to(observability::metrics::scrape),
-        )
+        .default_service(web::to(observability::metrics::runtime_endpoint))
 }
 
-fn start_worker_metrics_server(
-    config: &AppConfig,
-    context: AppContext,
-) -> std::io::Result<Option<Server>> {
-    if !config.metrics_enabled {
-        return Ok(None);
-    }
-
+fn start_worker_metrics_server(config: &AppConfig, context: AppContext) -> std::io::Result<Server> {
     let client_allowlist = config.client_allowlist.clone();
     let proxy_trust = middlewares::ProxyTrust::new(
         config.trust_ip_headers,
         config.trusted_proxies.nets().to_vec(),
         config.trusted_proxy_hops,
     );
-    let metrics_path = config.metrics_path.clone();
     let server = HttpServer::new(move || {
         App::new().service(worker_metrics_service(
             client_allowlist.clone(),
             proxy_trust.clone(),
-            metrics_path.clone(),
             context.clone(),
         ))
     });
@@ -691,7 +666,7 @@ fn start_worker_metrics_server(
     // graceful stop through the server handle. Letting Actix install a second
     // signal handler creates a race that can misclassify normal shutdown as an
     // unexpected metrics-server exit.
-    Ok(Some(server.disable_signals().workers(1).run()))
+    Ok(server.disable_signals().workers(1).run())
 }
 
 fn login_rate_limit_store_settings(
@@ -738,12 +713,15 @@ mod tests {
     use std::sync::Arc;
 
     use actix_web::{http::StatusCode, test as actix_test};
+    use rstest::rstest;
 
     use crate::permissions::LocalPermissionBackend;
     use crate::storage::StorageHandle;
     use hubuum_storage_postgres::{PostgresPool, PostgresPoolSettings, build_postgres_pool};
 
     use super::*;
+
+    static METRICS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     fn unreachable_pool() -> PostgresPool {
         let settings = PostgresPoolSettings::builder(
@@ -768,13 +746,165 @@ mod tests {
         )
     }
 
+    fn api_metrics_test_service(context: AppContext) -> impl HttpServiceFactory {
+        web::scope("")
+            .wrap(from_fn(middlewares::actor_context))
+            .wrap(from_fn(middlewares::reject_during_maintenance))
+            .wrap(middlewares::ClientAllowlistMiddleware::new(
+                ClientAllowlist::Any,
+            ))
+            .wrap(from_fn(middlewares::apply_runtime_settings))
+            .wrap(middlewares::TracingMiddleware::new_with_trust(
+                middlewares::ProxyTrust::peer_only(),
+            ))
+            .wrap(from_fn(middlewares::resolve_runtime_settings))
+            .app_data(Data::new(RunningConfig::from(
+                &crate::config::get_config().unwrap(),
+            )))
+            .app_data(Data::new(context))
+            .default_service(web::to(observability::metrics::runtime_endpoint))
+    }
+
+    #[rstest]
+    #[case::worker_scrape(true, "/metrics", true, StatusCode::OK)]
+    #[case::api_scrape(false, "/metrics", true, StatusCode::OK)]
+    #[case::worker_missing_peer(true, "/metrics", false, StatusCode::FORBIDDEN)]
+    #[case::api_missing_peer(false, "/metrics", false, StatusCode::FORBIDDEN)]
+    #[case::worker_other_path(true, "/other", true, StatusCode::SERVICE_UNAVAILABLE)]
+    #[case::api_request(false, "/api/v1/classes", true, StatusCode::SERVICE_UNAVAILABLE)]
+    #[actix_web::test]
+    async fn metrics_availability_after_settings_refresh_failure(
+        #[case] worker: bool,
+        #[case] path: &str,
+        #[case] has_peer: bool,
+        #[case] expected: StatusCode,
+    ) {
+        let _lock = METRICS_TEST_LOCK.lock().await;
+        let context = unreachable_context();
+        assert!(context.backend().refresh_runtime_settings().await.is_err());
+        assert!(
+            context
+                .backend()
+                .applied_runtime_settings()
+                .ensure_security_current()
+                .is_err()
+        );
+        let app = actix_test::init_service(App::new().configure(|cfg| {
+            if worker {
+                cfg.service(worker_metrics_service(
+                    ClientAllowlist::Any,
+                    middlewares::ProxyTrust::peer_only(),
+                    context,
+                ));
+            } else {
+                cfg.service(api_metrics_test_service(context));
+            }
+        }))
+        .await;
+        let mut request = actix_test::TestRequest::get().uri(path);
+        if has_peer {
+            request = request.peer_addr("127.0.0.1:4242".parse().unwrap());
+        }
+        match actix_test::try_call_service(&app, request.to_request()).await {
+            Ok(response) => {
+                assert_eq!(response.status(), expected);
+                if expected == StatusCode::OK {
+                    let body = actix_test::read_body(response).await;
+                    let body = std::str::from_utf8(&body).unwrap();
+                    assert!(body.contains("hubuum_process_start_time_seconds"));
+                    assert!(body.contains("hubuum_tasks"));
+                }
+            }
+            Err(error) => assert_eq!(error.as_response_error().status_code(), expected),
+        }
+    }
+
+    #[actix_web::test]
+    async fn runtime_metrics_path_skips_maintenance_database_reads() {
+        let _lock = METRICS_TEST_LOCK.lock().await;
+        let app = actix_test::init_service(
+            App::new().service(api_metrics_test_service(unreachable_context())),
+        )
+        .await;
+        let mut config = crate::config::get_config().unwrap();
+        config.metrics_enabled = true;
+        config.metrics_path = "/internal/runtime-metrics".parse().unwrap();
+        let request = actix_test::TestRequest::get()
+            .uri(config.metrics_path.as_str())
+            .peer_addr("127.0.0.1:4242".parse().unwrap())
+            .to_request();
+        // A maintenance-state read would fail against this unreachable database.
+        // Both the exemption and the endpoint must use this request's new path.
+        let response = crate::config::runtime::scope(
+            Arc::new(config),
+            actix_test::call_service(&app, request),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[rstest]
+    #[case::api(false)]
+    #[case::worker(true)]
+    #[actix_web::test]
+    async fn stale_policy_rejections_are_instrumented(#[case] worker: bool) {
+        let _lock = METRICS_TEST_LOCK.lock().await;
+        let context = unreachable_context();
+        assert!(context.backend().refresh_runtime_settings().await.is_err());
+        let app = actix_test::init_service(App::new().configure(|cfg| {
+            if worker {
+                cfg.service(worker_metrics_service(
+                    ClientAllowlist::Any,
+                    middlewares::ProxyTrust::peer_only(),
+                    context,
+                ));
+            } else {
+                cfg.service(api_metrics_test_service(context));
+            }
+        }))
+        .await;
+        let scrape_request = || {
+            actix_test::TestRequest::get()
+                .uri("/metrics")
+                .peer_addr("127.0.0.1:4242".parse().unwrap())
+                .to_request()
+        };
+        let before = actix_test::call_and_read_body(&app, scrape_request()).await;
+        let request = actix_test::TestRequest::patch()
+            .uri("/api/v1/stale-policy-probe")
+            .peer_addr("127.0.0.1:4242".parse().unwrap())
+            .to_request();
+        let error = actix_test::try_call_service(&app, request)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.as_response_error().status_code(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        let after = actix_test::call_and_read_body(&app, scrape_request()).await;
+        for metric in [
+            "hubuum_http_requests_total{method=\"PATCH\",route=\"/api/v1/{route}\",status_code=\"503\",status_family=\"5xx\"}",
+            "hubuum_http_request_duration_seconds_count{method=\"PATCH\",route=\"/api/v1/{route}\",status_family=\"5xx\"}",
+        ] {
+            let value = |body: &[u8]| -> f64 {
+                std::str::from_utf8(body)
+                    .unwrap()
+                    .lines()
+                    .find_map(|line| line.strip_prefix(metric))
+                    .map(|value| value.trim().parse().unwrap())
+                    .unwrap_or(0.0)
+            };
+            assert_eq!(value(&after), value(&before) + 1.0, "{metric}");
+        }
+    }
+
     #[actix_web::test]
     async fn worker_metrics_service_instruments_scrape_requests() {
+        let _lock = METRICS_TEST_LOCK.lock().await;
         observability::metrics::init().expect("metrics should initialize");
         let app = actix_test::init_service(App::new().service(worker_metrics_service(
             ClientAllowlist::Any,
             middlewares::ProxyTrust::peer_only(),
-            MetricsPath::new("/metrics").expect("metrics path should be valid"),
             unreachable_context(),
         )))
         .await;

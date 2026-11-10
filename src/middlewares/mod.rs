@@ -8,5 +8,5 @@ pub mod tracing;
 pub use actor_context::actor_context;
 pub use client_allowlist::{ClientAllowlistMiddleware, ProxyTrust};
 pub use maintenance::reject_during_maintenance;
-pub use runtime_settings::apply_runtime_settings;
+pub use runtime_settings::{apply_runtime_settings, resolve_runtime_settings};
 pub use tracing::TracingMiddleware;

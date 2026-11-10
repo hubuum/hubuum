@@ -1,7 +1,7 @@
 use actix_service::{Service, Transform};
 use actix_web::{
-    Error, HttpRequest, HttpResponse, body::EitherBody, dev::ServiceRequest, dev::ServiceResponse,
-    http::header::HeaderMap,
+    Error, HttpMessage, HttpRequest, HttpResponse, body::EitherBody, dev::ServiceRequest,
+    dev::ServiceResponse, http::header::HeaderMap,
 };
 use futures_util::future::{self, LocalBoxFuture, Ready};
 use hubuum_storage_core::ObservedSource;
@@ -40,6 +40,41 @@ impl ProxyTrust {
             trusted_proxies,
             hops,
         }
+    }
+}
+
+/// Connection facts used to prove the updating administrator remains allowed.
+#[derive(Clone, Debug)]
+pub(crate) struct NetworkChangeOrigin {
+    peer: Option<IpAddr>,
+    forwarded: Vec<IpAddr>,
+}
+
+impl NetworkChangeOrigin {
+    pub(crate) fn from_request(request: &HttpRequest) -> Self {
+        Self {
+            peer: request.peer_addr().map(|peer| peer.ip()),
+            forwarded: collect_forwarded_for(request.headers()),
+        }
+    }
+
+    pub(crate) fn ensure_allowed(
+        &self,
+        config: &crate::config::AppConfig,
+    ) -> Result<(), crate::errors::ApiError> {
+        let trust = ProxyTrust::new(
+            config.trust_ip_headers,
+            config.trusted_proxies.nets().to_vec(),
+            config.trusted_proxy_hops,
+        );
+        if resolve_client_ip(self.peer, &self.forwarded, &trust)
+            .is_some_and(|ip| config.client_allowlist.allows(ip))
+        {
+            return Ok(());
+        }
+        Err(crate::errors::ApiError::BadRequest(
+            "The proposed network policy must allow the administrator's current connection".into(),
+        ))
     }
 }
 
@@ -114,8 +149,13 @@ where
 
         let client_ip = extract_client_ip(&req, &self.proxy_trust);
 
+        let runtime = crate::config::runtime::scoped();
+        let allowlist = runtime
+            .as_ref()
+            .map(|config| &config.client_allowlist)
+            .unwrap_or(&self.allowlist);
         match client_ip {
-            Some(ip) if self.allowlist.allows(ip) => {
+            Some(ip) if allowlist.allows(ip) => {
                 let fut = self.service.call(req);
                 Box::pin(async move { fut.await.map(ServiceResponse::map_into_left_body) })
             }
@@ -145,6 +185,8 @@ fn is_probe_path(path: &str) -> bool {
 
 /// Extract the client IP from the request
 pub fn extract_client_ip(req: &ServiceRequest, policy: &ProxyTrust) -> Option<IpAddr> {
+    let extensions = req.extensions();
+    let policy = extensions.get::<ProxyTrust>().unwrap_or(policy);
     resolve_client_ip(
         req.peer_addr().map(|addr| addr.ip()),
         &collect_forwarded_for(req.headers()),
@@ -195,6 +237,8 @@ fn resolve_client_ip(
 }
 
 pub fn extract_client_source(req: &ServiceRequest, policy: &ProxyTrust) -> ObservedSource {
+    let extensions = req.extensions();
+    let policy = extensions.get::<ProxyTrust>().unwrap_or(policy);
     resolve_client_source(
         req.peer_addr().map(|addr| addr.ip()),
         &collect_forwarded_for(req.headers()),

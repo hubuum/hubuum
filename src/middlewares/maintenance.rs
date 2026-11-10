@@ -30,9 +30,14 @@ pub async fn reject_during_maintenance(
         .backend()
         .clone();
     with_storage_call_site(&storage, StorageCallSite::HttpRequest, async move {
-        let metrics_path = req
-            .app_data::<Data<RunningConfig>>()
-            .map(|config| config.server.metrics_path.as_str());
+        let runtime = crate::config::runtime::scoped();
+        let metrics_path = runtime
+            .as_ref()
+            .map(|config| config.metrics_path.as_str())
+            .or_else(|| {
+                req.app_data::<Data<RunningConfig>>()
+                    .map(|config| config.server.metrics_path.as_str())
+            });
         if !allowed_during_maintenance(req.path(), metrics_path) {
             // Begin before reading maintenance state. If draining wins the race,
             // this request is rejected; if the request saw normal first, the

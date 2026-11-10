@@ -27,6 +27,9 @@ const LEGACY_UP: &str =
     include_str!("../migrations/2026-10-19-000001_query_observation_control/up.sql");
 const UP: &str = include_str!("../migrations/2026-11-06-000001_runtime_settings/up.sql");
 const DOWN: &str = include_str!("../migrations/2026-11-06-000001_runtime_settings/down.sql");
+const POLICIES_UP: &str = include_str!("../migrations/2026-11-10-000001_runtime_policies/up.sql");
+const POLICIES_DOWN: &str =
+    include_str!("../migrations/2026-11-10-000001_runtime_policies/down.sql");
 
 /// Isolate the deployment-wide rows from the parallel suite while exercising
 /// the production adapter through independent runtime-role connection pools.
@@ -53,7 +56,7 @@ impl Fixture {
         };
         fixture
             .owner(&format!(
-                "CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}; {LEGACY_UP} {legacy} {UP} {grants}",
+                "CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}; {LEGACY_UP} {legacy} {UP} {POLICIES_UP} {grants}",
                 schema = fixture.schema,
                 grants = fixture.runtime_grants(),
             ))
@@ -250,7 +253,7 @@ async fn migration_without_an_override_leaves_every_group_to_deployment() {
             .iter()
             .map(|record| (record.assignment().value(), record.revision()))
             .collect::<Vec<_>>(),
-        vec![(None, ResourceRevision::INITIAL); 4]
+        vec![(None, ResourceRevision::INITIAL); StorageRuntimeSettingsGroup::ALL.len()]
     );
     fixture.cleanup().await;
 }
@@ -264,7 +267,10 @@ async fn down_migration_restores_the_legacy_override() {
         .await
         .unwrap();
     fixture
-        .owner(&format!("{DOWN} {UP} {}", fixture.runtime_grants()))
+        .owner(&format!(
+            "{POLICIES_DOWN} {DOWN} {UP} {POLICIES_UP} {}",
+            fixture.runtime_grants()
+        ))
         .await
         .unwrap();
     assert_eq!(
@@ -279,13 +285,23 @@ async fn down_migration_restores_the_legacy_override() {
     fixture.cleanup().await;
 }
 
+#[rstest]
+#[case::legacy(StoragePaginationPolicy::try_new(12).unwrap())]
+#[case::with_maximum(StoragePaginationPolicy::try_with_maximum(12, 30).unwrap())]
 #[tokio::test]
-async fn committed_values_are_shared_and_survive_reconnecting() {
+async fn committed_values_are_shared_and_survive_reconnecting(
+    #[case] policy: StoragePaginationPolicy,
+) {
     let fixture = Fixture::new(None).await;
     let writer = fixture.replica();
     let reader = fixture.replica();
     writer
-        .update_runtime_settings(update(pagination(12), 1))
+        .update_runtime_settings(update(
+            StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Pagination(
+                policy,
+            )),
+            1,
+        ))
         .await
         .unwrap();
     drop(writer);
@@ -297,13 +313,7 @@ async fn committed_values_are_shared_and_survive_reconnecting() {
         .await
         .unwrap()
         .pagination();
-    assert_eq!(
-        (shared, restarted),
-        (
-            Some(StoragePaginationPolicy::try_new(12).unwrap()),
-            Some(StoragePaginationPolicy::try_new(12).unwrap())
-        )
-    );
+    assert_eq!((shared, restarted), (Some(policy), Some(policy)));
     fixture.cleanup().await;
 }
 
@@ -441,5 +451,51 @@ async fn committed_changes_notify_every_connected_replica() {
         .expect("each replica must receive the committed change");
     }
     drop((first, second));
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+async fn operational_policy_survives_a_new_connection() {
+    let fixture = Fixture::new(None).await;
+    let value = StorageRuntimeSettingsValue::from_document(StorageRuntimeSettingsGroup::Observability, &serde_json::json!({"log_level":"debug", "metrics_enabled":false, "metrics_path":"/telemetry"})).unwrap();
+    let assignment = StorageRuntimeSettingsAssignment::Managed(value);
+    fixture
+        .replica()
+        .update_runtime_settings(update(assignment.clone(), 1))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .replica()
+            .load_runtime_settings()
+            .await
+            .unwrap()
+            .record(StorageRuntimeSettingsGroup::Observability)
+            .assignment(),
+        &assignment
+    );
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+async fn operational_migration_rollback_preserves_audit_history() {
+    let fixture = Fixture::new(None).await;
+    let value = StorageRuntimeSettingsValue::from_document(
+        StorageRuntimeSettingsGroup::QueryLimits,
+        &serde_json::json!({"max_transitive_depth":12}),
+    )
+    .unwrap();
+    fixture
+        .replica()
+        .update_runtime_settings(update(StorageRuntimeSettingsAssignment::Managed(value), 1))
+        .await
+        .unwrap();
+    assert!(fixture.owner(POLICIES_DOWN).await.is_err());
+    assert_eq!(
+        history(&fixture.replica(), StorageRuntimeSettingsGroup::QueryLimits)
+            .await
+            .len(),
+        1
+    );
     fixture.cleanup().await;
 }

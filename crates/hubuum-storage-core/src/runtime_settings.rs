@@ -5,7 +5,14 @@
 //! the whole deployment. Values cross this boundary as validated types; adapters
 //! may persist them as JSON documents but never expose arbitrary keys.
 
-use std::num::{NonZeroU16, NonZeroU32};
+mod client_network;
+mod metrics_path;
+mod policies;
+pub use client_network::{ClientAllowlist, ClientNetworkParseError, TrustedProxies};
+pub use metrics_path::MetricsPath;
+pub use policies::*;
+
+use std::num::{NonZeroU16, NonZeroU32, NonZeroU64};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -30,15 +37,37 @@ pub enum StorageRuntimeSettingsGroup {
     Authorization,
     QueryObservations,
     Pagination,
+    Observability,
+    Network,
+    QueryLimits,
+    Tasks,
+    RemoteCalls,
+    Tokens,
+    LoginRateLimit,
+    Events,
+    Exports,
+    Backups,
+    Restores,
 }
 
 impl StorageRuntimeSettingsGroup {
     /// Every group a complete adapter must persist.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 15] = [
         Self::Authentication,
         Self::Authorization,
         Self::QueryObservations,
         Self::Pagination,
+        Self::Observability,
+        Self::Network,
+        Self::QueryLimits,
+        Self::Tasks,
+        Self::RemoteCalls,
+        Self::Tokens,
+        Self::LoginRateLimit,
+        Self::Events,
+        Self::Exports,
+        Self::Backups,
+        Self::Restores,
     ];
 
     /// Bounded persistence and diagnostic key.
@@ -49,6 +78,17 @@ impl StorageRuntimeSettingsGroup {
             Self::Authorization => "authorization",
             Self::QueryObservations => "query_observations",
             Self::Pagination => "pagination",
+            Self::Observability => "observability",
+            Self::Network => "network",
+            Self::QueryLimits => "query_limits",
+            Self::Tasks => "tasks",
+            Self::RemoteCalls => "remote_calls",
+            Self::Tokens => "tokens",
+            Self::LoginRateLimit => "login_rate_limit",
+            Self::Events => "events",
+            Self::Exports => "exports",
+            Self::Backups => "backups",
+            Self::Restores => "restores",
         }
     }
 
@@ -140,12 +180,13 @@ impl StorageQueryObservationPolicy {
     }
 }
 
-/// Shared default page size for requests that omit a limit.
+/// Shared default page size and optional maximum for all paginated requests.
 ///
 /// Every process still clamps the value to its own deployment ceiling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StoragePaginationPolicy {
     default_page_limit: NonZeroU32,
+    max_page_limit: Option<NonZeroU64>,
 }
 
 impl StoragePaginationPolicy {
@@ -153,7 +194,10 @@ impl StoragePaginationPolicy {
         u32::try_from(default_page_limit)
             .ok()
             .and_then(NonZeroU32::new)
-            .map(|default_page_limit| Self { default_page_limit })
+            .map(|default_page_limit| Self {
+                default_page_limit,
+                max_page_limit: None,
+            })
             .ok_or_else(|| {
                 StorageValidationError::invalid(format!(
                     "default_page_limit must be between 1 and {}",
@@ -174,6 +218,28 @@ impl StoragePaginationPolicy {
             )));
         }
         Ok(policy)
+    }
+
+    /// Set both limits atomically, preserving `1 <= default <= maximum`.
+    pub fn try_with_maximum(
+        default_page_limit: u64,
+        maximum: u64,
+    ) -> Result<Self, StorageValidationError> {
+        let maximum = NonZeroU64::new(maximum).ok_or_else(|| {
+            StorageValidationError::invalid("max_page_limit must be greater than 0")
+        })?;
+        let mut policy = Self::try_new_with_ceiling(default_page_limit, maximum.get())?;
+        policy.max_page_limit = Some(maximum);
+        Ok(policy)
+    }
+
+    /// `None` preserves legacy policies that inherit the deployment maximum.
+    #[must_use]
+    pub const fn max_page_limit(self) -> Option<u64> {
+        match self.max_page_limit {
+            Some(maximum) => Some(maximum.get()),
+            None => None,
+        }
     }
 
     #[must_use]
@@ -413,6 +479,8 @@ struct QueryObservationDocument {
 #[serde(deny_unknown_fields)]
 struct PaginationDocument {
     default_page_limit: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    max_page_limit: Option<u64>,
 }
 
 /// A validated value for exactly one group.
@@ -422,6 +490,17 @@ pub enum StorageRuntimeSettingsValue {
     Pagination(StoragePaginationPolicy),
     Authentication(StorageAuthenticationProviders),
     Authorization(StorageAuthorizationBackend),
+    Observability(StorageObservabilityPolicy),
+    Network(StorageNetworkPolicy),
+    QueryLimits(StorageQueryLimitsPolicy),
+    Tasks(StorageTasksPolicy),
+    RemoteCalls(StorageRemoteCallsPolicy),
+    Tokens(StorageTokensPolicy),
+    LoginRateLimit(StorageLoginRateLimitPolicy),
+    Events(StorageEventsPolicy),
+    Exports(StorageExportsPolicy),
+    Backups(StorageBackupsPolicy),
+    Restores(StorageRestoresPolicy),
 }
 
 impl StorageRuntimeSettingsValue {
@@ -432,6 +511,17 @@ impl StorageRuntimeSettingsValue {
             Self::Pagination(_) => StorageRuntimeSettingsGroup::Pagination,
             Self::Authentication(_) => StorageRuntimeSettingsGroup::Authentication,
             Self::Authorization(_) => StorageRuntimeSettingsGroup::Authorization,
+            Self::Observability(_) => StorageRuntimeSettingsGroup::Observability,
+            Self::Network(_) => StorageRuntimeSettingsGroup::Network,
+            Self::QueryLimits(_) => StorageRuntimeSettingsGroup::QueryLimits,
+            Self::Tasks(_) => StorageRuntimeSettingsGroup::Tasks,
+            Self::RemoteCalls(_) => StorageRuntimeSettingsGroup::RemoteCalls,
+            Self::Tokens(_) => StorageRuntimeSettingsGroup::Tokens,
+            Self::LoginRateLimit(_) => StorageRuntimeSettingsGroup::LoginRateLimit,
+            Self::Events(_) => StorageRuntimeSettingsGroup::Events,
+            Self::Exports(_) => StorageRuntimeSettingsGroup::Exports,
+            Self::Backups(_) => StorageRuntimeSettingsGroup::Backups,
+            Self::Restores(_) => StorageRuntimeSettingsGroup::Restores,
         }
     }
 
@@ -439,6 +529,18 @@ impl StorageRuntimeSettingsValue {
     #[must_use]
     pub fn to_document(&self) -> Value {
         let document = match self {
+            Self::Observability(policy) => serde_json::to_value(policy),
+            Self::Network(policy) => serde_json::to_value(policy),
+            Self::QueryLimits(policy) => serde_json::to_value(policy),
+            Self::Tasks(policy) => serde_json::to_value(policy),
+            Self::RemoteCalls(policy) => serde_json::to_value(policy),
+            Self::Tokens(policy) => serde_json::to_value(policy),
+            Self::LoginRateLimit(policy) => serde_json::to_value(policy),
+            Self::Events(policy) => serde_json::to_value(policy),
+            Self::Exports(policy) => serde_json::to_value(policy),
+            Self::Backups(policy) => serde_json::to_value(policy),
+            Self::Restores(policy) => serde_json::to_value(policy),
+
             Self::QueryObservations(policy) => serde_json::to_value(QueryObservationDocument {
                 enabled: policy.enabled(),
                 sample_every: policy.sample_every(),
@@ -449,6 +551,7 @@ impl StorageRuntimeSettingsValue {
             }),
             Self::Pagination(policy) => serde_json::to_value(PaginationDocument {
                 default_page_limit: u64::from(policy.default_page_limit()),
+                max_page_limit: policy.max_page_limit(),
             }),
             Self::Authentication(providers) => {
                 serde_json::to_value(AuthenticationProvidersDocument {
@@ -488,6 +591,47 @@ impl StorageRuntimeSettingsValue {
             ))
         };
         match group {
+            StorageRuntimeSettingsGroup::Observability => {
+                StorageObservabilityPolicy::deserialize(document)
+                    .map(Self::Observability)
+                    .map_err(invalid)
+            }
+            StorageRuntimeSettingsGroup::Network => StorageNetworkPolicy::deserialize(document)
+                .map(Self::Network)
+                .map_err(invalid),
+            StorageRuntimeSettingsGroup::QueryLimits => {
+                StorageQueryLimitsPolicy::deserialize(document)
+                    .map(Self::QueryLimits)
+                    .map_err(invalid)
+            }
+            StorageRuntimeSettingsGroup::Tasks => StorageTasksPolicy::deserialize(document)
+                .map(Self::Tasks)
+                .map_err(invalid),
+            StorageRuntimeSettingsGroup::RemoteCalls => {
+                StorageRemoteCallsPolicy::deserialize(document)
+                    .map(Self::RemoteCalls)
+                    .map_err(invalid)
+            }
+            StorageRuntimeSettingsGroup::Tokens => StorageTokensPolicy::deserialize(document)
+                .map(Self::Tokens)
+                .map_err(invalid),
+            StorageRuntimeSettingsGroup::LoginRateLimit => {
+                StorageLoginRateLimitPolicy::deserialize(document)
+                    .map(Self::LoginRateLimit)
+                    .map_err(invalid)
+            }
+            StorageRuntimeSettingsGroup::Events => StorageEventsPolicy::deserialize(document)
+                .map(Self::Events)
+                .map_err(invalid),
+            StorageRuntimeSettingsGroup::Exports => StorageExportsPolicy::deserialize(document)
+                .map(Self::Exports)
+                .map_err(invalid),
+            StorageRuntimeSettingsGroup::Backups => StorageBackupsPolicy::deserialize(document)
+                .map(Self::Backups)
+                .map_err(invalid),
+            StorageRuntimeSettingsGroup::Restores => StorageRestoresPolicy::deserialize(document)
+                .map(Self::Restores)
+                .map_err(invalid),
             StorageRuntimeSettingsGroup::Authentication => {
                 let document =
                     AuthenticationProvidersDocument::deserialize(document).map_err(invalid)?;
@@ -572,9 +716,14 @@ impl StorageRuntimeSettingsValue {
             }
             StorageRuntimeSettingsGroup::Pagination => {
                 let document = PaginationDocument::deserialize(document).map_err(invalid)?;
-                Ok(Self::Pagination(StoragePaginationPolicy::try_new(
-                    document.default_page_limit,
-                )?))
+                let policy = match document.max_page_limit {
+                    Some(maximum) => StoragePaginationPolicy::try_with_maximum(
+                        document.default_page_limit,
+                        maximum,
+                    )?,
+                    None => StoragePaginationPolicy::try_new(document.default_page_limit)?,
+                };
+                Ok(Self::Pagination(policy))
             }
         }
     }
@@ -1072,6 +1221,9 @@ mod tests {
     #[case::pagination(StorageRuntimeSettingsValue::Pagination(
         StoragePaginationPolicy::try_new(25).unwrap()
     ))]
+    #[case::pagination_maximum(StorageRuntimeSettingsValue::Pagination(
+        StoragePaginationPolicy::try_with_maximum(25, 100).unwrap()
+    ))]
     #[case::authentication(StorageRuntimeSettingsValue::Authentication(
         StorageAuthenticationProviders::try_new(vec![
             StorageAuthenticationProvider::try_new(
@@ -1099,6 +1251,9 @@ mod tests {
     #[case::zero_limit(StorageRuntimeSettingsGroup::Pagination, json!({"default_page_limit": 0}))]
     #[case::oversized_limit(StorageRuntimeSettingsGroup::Pagination, json!({"default_page_limit": u64::from(u32::MAX) + 1}))]
     #[case::negative_limit(StorageRuntimeSettingsGroup::Pagination, json!({"default_page_limit": -1}))]
+    #[case::zero_maximum(StorageRuntimeSettingsGroup::Pagination, json!({"default_page_limit": 5, "max_page_limit": 0}))]
+    #[case::negative_maximum(StorageRuntimeSettingsGroup::Pagination, json!({"default_page_limit": 5, "max_page_limit": -1}))]
+    #[case::inverted_limits(StorageRuntimeSettingsGroup::Pagination, json!({"default_page_limit": 10, "max_page_limit": 5}))]
     #[case::unknown_authentication_kind(StorageRuntimeSettingsGroup::Authentication, json!({"providers": [{"name": "corporate", "kind": "oidc", "configuration": {}}]}))]
     #[case::unknown_authorization_backend(StorageRuntimeSettingsGroup::Authorization, json!({"backend": "remote"}))]
     #[case::wrong_group(StorageRuntimeSettingsGroup::QueryObservations, json!({"default_page_limit": 5}))]
@@ -1108,6 +1263,17 @@ mod tests {
         #[case] document: Value,
     ) {
         assert!(StorageRuntimeSettingsValue::from_document(group, &document).is_err());
+    }
+
+    #[test]
+    fn legacy_pagination_documents_keep_the_deployment_maximum() {
+        let document = json!({"default_page_limit": 25});
+        let value = StorageRuntimeSettingsValue::from_document(
+            StorageRuntimeSettingsGroup::Pagination,
+            &document,
+        )
+        .unwrap();
+        assert_eq!(value.to_document(), document);
     }
 
     #[test]
@@ -1314,7 +1480,18 @@ mod tests {
                 "authentication",
                 "authorization",
                 "query_observations",
-                "pagination"
+                "pagination",
+                "observability",
+                "network",
+                "query_limits",
+                "tasks",
+                "remote_calls",
+                "tokens",
+                "login_rate_limit",
+                "events",
+                "exports",
+                "backups",
+                "restores",
             ]
         );
     }

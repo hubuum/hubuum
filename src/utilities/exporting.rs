@@ -1,4 +1,4 @@
-use crate::config::get_config;
+use crate::config::runtime::current as get_config;
 use crate::errors::ApiError;
 use crate::models::{ExportContentType, ExportMissingDataPolicy, ExportTemplate, ExportWarning};
 use hubuum_templates::{

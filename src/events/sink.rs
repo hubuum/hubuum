@@ -1,3 +1,4 @@
+use crate::config::runtime::current as get_config;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use hubuum_event_sink_webhook::WebhookSinkSettings;
@@ -5,7 +6,7 @@ use hubuum_event_sinks_common::SinkDelivery;
 
 use crate::config::{
     DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS, DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES,
-    DEFAULT_REMOTE_CALL_TIMEOUT_MS, get_config,
+    DEFAULT_REMOTE_CALL_TIMEOUT_MS,
 };
 use crate::storage::{StorageEventDeliverySink, StorageEventDeliverySubscription};
 
@@ -94,6 +95,35 @@ impl SinkResolver for DefaultSinkResolver {
     }
 }
 
+/// Capture the outbound policy for a batch while preserving other transports' connections.
+pub(super) struct RuntimeSinkResolver<'a> {
+    fallback: &'a dyn SinkResolver,
+    webhook: hubuum_event_sink_webhook::WebhookSink,
+}
+
+impl<'a> RuntimeSinkResolver<'a> {
+    pub(super) fn new(fallback: &'a dyn SinkResolver, config: &crate::config::AppConfig) -> Self {
+        Self {
+            fallback,
+            webhook: hubuum_event_sink_webhook::WebhookSink::new(webhook_settings_for(
+                config.remote_call_timeout_ms,
+                config.remote_call_max_response_bytes,
+                config.remote_call_allow_private_targets,
+            )),
+        }
+    }
+}
+
+impl SinkResolver for RuntimeSinkResolver<'_> {
+    fn resolve(&self, kind: &str) -> Option<&dyn Sink> {
+        if kind == "webhook" {
+            Some(&self.webhook)
+        } else {
+            self.fallback.resolve(kind)
+        }
+    }
+}
+
 async fn sink_secret(
     sink: &StorageEventDeliverySink,
 ) -> Result<Option<hubuum_secrets::ResolvedSecret>, SinkError> {
@@ -129,6 +159,14 @@ fn webhook_settings() -> WebhookSinkSettings {
             DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES,
             DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS,
         ));
+    webhook_settings_for(max_timeout_ms, max_response_bytes, allow_private_targets)
+}
+
+fn webhook_settings_for(
+    max_timeout_ms: u64,
+    max_response_bytes: usize,
+    allow_private_targets: bool,
+) -> WebhookSinkSettings {
     WebhookSinkSettings::new(max_timeout_ms, max_response_bytes)
         .expect("remote call limits are validated before event sinks are initialized")
         .allow_private_targets(allow_private_targets)

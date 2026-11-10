@@ -51,6 +51,11 @@ impl AppliedRuntimeSettings {
         Ok(())
     }
 
+    /// Destructive maintenance pauses until this replica has reconciled policy.
+    pub(crate) fn maintenance_allowed(&self) -> bool {
+        self.application(Utc::now()) != RuntimeSettingsApplication::Stale
+    }
+
     /// Last successfully loaded snapshot, retained across failed refreshes.
     pub(crate) fn snapshot(&self) -> Option<&StorageRuntimeSettingsSnapshot> {
         self.snapshot.as_deref()
@@ -96,6 +101,7 @@ impl AppliedRuntimeSettings {
 
 pub(crate) struct RuntimeSettingsReplica {
     refresh: tokio::sync::Mutex<()>,
+    changes: tokio::sync::watch::Sender<()>,
     applied: RwLock<AppliedRuntimeSettings>,
 }
 
@@ -103,8 +109,13 @@ impl RuntimeSettingsReplica {
     pub(crate) fn new() -> Self {
         Self {
             refresh: tokio::sync::Mutex::new(()),
+            changes: tokio::sync::watch::channel(()).0,
             applied: RwLock::new(AppliedRuntimeSettings::default()),
         }
+    }
+
+    pub(crate) fn subscribe(&self) -> tokio::sync::watch::Receiver<()> {
+        self.changes.subscribe()
     }
 
     pub(crate) fn current(&self) -> AppliedRuntimeSettings {
@@ -148,9 +159,18 @@ impl RuntimeSettingsReplica {
         applied.last_attempt_at = Some(attempted_at);
         match result {
             Ok(snapshot) => {
+                let changed = !applied.maintenance_allowed()
+                    || applied.snapshot().is_none_or(|previous| {
+                        snapshot.records().iter().any(|record| {
+                            previous.record(record.group()).revision() != record.revision()
+                        })
+                    });
                 applied.snapshot = Some(Arc::new(snapshot));
                 applied.applied_at = Some(Utc::now());
                 applied.refresh_failed = false;
+                if changed {
+                    self.changes.send_replace(());
+                }
                 Ok(applied.clone())
             }
             Err(error) => {
