@@ -843,3 +843,35 @@ async fn native_removal_failure_preserves_copy_receipt_and_checkpoint(#[case] mo
     test.cleanup().await;
     result.unwrap();
 }
+
+#[rstest::rstest]
+#[case::seconds("2026-11-11T00:00:00Z")]
+#[case::milliseconds("2026-11-11T00:00:00.123Z")]
+#[case::millisecond_zero_suffix("2026-11-11T00:00:00.120Z")]
+#[case::microseconds("2026-11-11T00:00:00.123456Z")]
+#[case::microsecond_zero_suffix("2026-11-11T00:00:00.123450Z")]
+#[case::one_microsecond("2026-11-11T00:00:00.000001Z")]
+#[tokio::test]
+async fn native_removal_clock_matches_canonical_control_serialization(#[case] clock: &str) {
+    let _guard = CONTROL_LOCK.lock().await;
+    let (fixture, target) = bounded_scan::restore_fixture().await;
+    let at: chrono::DateTime<Utc> = clock.parse().unwrap();
+    #[derive(QueryableByName)]
+    struct Clock {
+        #[diesel(sql_type=Text)]
+        value: String,
+    }
+    let actual = with_transaction(&fixture.owner_pool, async |connection| {
+        owner(connection).await?;
+        target.validate_connection(connection).await?;
+        sql_query("SELECT public.hubuum_history_expiry_clock($1) AS value")
+            .bind::<diesel::sql_types::Timestamptz, _>(at)
+            .get_result::<Clock>(connection)
+            .await
+            .map_err(PostgresStorageError::from)
+    })
+    .await
+    .unwrap()
+    .value;
+    assert_eq!(actual, serde_json::to_value(at).unwrap().as_str().unwrap());
+}

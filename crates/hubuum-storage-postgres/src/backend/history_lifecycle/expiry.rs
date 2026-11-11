@@ -274,8 +274,11 @@ pub(crate) async fn remove_on(
         #[diesel(sql_type = Bool)]
         dependency: bool,
     }
+    // Runtime history access stays read-only. The authority UPDATE excludes
+    // native writers; the SECURITY DEFINER removal function acquires the exact
+    // row lock and rechecks its interval before deleting in this transaction.
     let row = sql_query(format!(
-        "SELECT {from} AS valid_from,{until} AS valid_to,logical_identity,{deleted} AS deleted,public.hubuum_history_expiry_dependency($3,logical_identity) AS dependency FROM public.{table} h WHERE logical_identity #>> '{{subject,identity,identity}}'=$1 AND logical_identity #>> '{{subject,version}}'=$2 AND octet_length(logical_identity::TEXT)<=1048576 AND octet_length(to_jsonb(h.*)::TEXT)<=16777216 FOR UPDATE"
+        "SELECT {from} AS valid_from,{until} AS valid_to,logical_identity,{deleted} AS deleted,public.hubuum_history_expiry_dependency($3,logical_identity) AS dependency FROM public.{table} h WHERE logical_identity #>> '{{subject,identity,identity}}'=$1 AND logical_identity #>> '{{subject,version}}'=$2 AND octet_length(logical_identity::TEXT)<=1048576 AND octet_length(to_jsonb(h.*)::TEXT)<=16777216"
     ))
         .bind::<Text, _>(member.target().resource().to_string())
         .bind::<Text, _>(member.target().version().to_string())

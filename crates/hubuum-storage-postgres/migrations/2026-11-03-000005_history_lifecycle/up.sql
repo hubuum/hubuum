@@ -801,6 +801,19 @@ END
 $function$;
 REVOKE ALL ON FUNCTION public.hubuum_history_expiry_admit(JSONB,JSONB,UUID,BIGINT) FROM PUBLIC;
 
+-- Retained control uses Chrono/Serde's UTC RFC3339 AutoSi encoding. JSONB
+-- timestamps otherwise keep +00:00 or a different fractional precision, which
+-- breaks later exact predecessor CAS even when the parsed instants are equal.
+CREATE FUNCTION public.hubuum_history_expiry_clock(at_time TIMESTAMPTZ) RETURNS TEXT
+LANGUAGE sql IMMUTABLE STRICT SET search_path=pg_catalog AS $function$
+    SELECT to_char(at_time AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS')
+        || CASE WHEN EXTRACT(MICROSECONDS FROM at_time)::BIGINT % 1000000=0 THEN ''
+             WHEN EXTRACT(MICROSECONDS FROM at_time)::BIGINT % 1000=0
+               THEN '.' || to_char(at_time AT TIME ZONE 'UTC','MS')
+             ELSE '.' || to_char(at_time AT TIME ZONE 'UTC','US') END || 'Z'
+$function$;
+REVOKE ALL ON FUNCTION public.hubuum_history_expiry_clock(TIMESTAMPTZ) FROM PUBLIC;
+
 -- One exact physical outcome and its first receipt commit together. The trusted
 -- adapter rechecks policy/holds in this transaction before calling this function.
 -- No current/open copy, absence, clock expiry or missing runtime retires a producer.
@@ -861,7 +874,7 @@ BEGIN
     END IF;
     SELECT jsonb_agg(receipt ORDER BY receipt #>> '{target,resource}',receipt #>> '{target,version}') INTO receipts
         FROM jsonb_array_elements((intent->'removals') || jsonb_build_array(jsonb_build_object(
-            'target',member->'target','checkpoint',checkpoint,'removed_at',removed_at))) receipt;
+            'target',member->'target','checkpoint',checkpoint,'removed_at',public.hubuum_history_expiry_clock(removed_at)))) receipt;
     updated_intent:=jsonb_set(intent,'{removals}',receipts);
     SELECT jsonb_set(material,'{authority,expiry}',jsonb_agg(CASE
         WHEN value #>> '{manifest,identity}'=batch::TEXT THEN updated_intent ELSE value END ORDER BY ordinal))

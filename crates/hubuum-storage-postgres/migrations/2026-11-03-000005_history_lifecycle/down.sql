@@ -649,6 +649,7 @@ DROP FUNCTION IF EXISTS public.hubuum_history_requested_as_of_visible(TEXT,UUID,
 DROP FUNCTION IF EXISTS public.hubuum_history_as_of_visible(TEXT,JSONB,TIMESTAMPTZ,TIMESTAMPTZ);
 DROP FUNCTION IF EXISTS public.hubuum_history_version_visible(TEXT,JSONB);
 DROP FUNCTION IF EXISTS public.hubuum_history_expiry_remove(JSONB,UUID,UUID,UUID,TEXT,UUID,BIGINT);
+DROP FUNCTION IF EXISTS public.hubuum_history_expiry_clock(TIMESTAMPTZ);
 DROP FUNCTION IF EXISTS public.hubuum_history_expiry_admit(JSONB,JSONB,UUID,BIGINT);
 DROP FUNCTION IF EXISTS public.hubuum_history_expiry_dependency(TEXT,JSONB);
 DROP FUNCTION IF EXISTS public.hubuum_history_expiry_sync();
