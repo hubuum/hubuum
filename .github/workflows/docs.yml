@@ -3,7 +3,7 @@ name: Documentation
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, project/auth-support]
   release:
     types: [published]
   # Releases created by CI's GITHUB_TOKEN do not emit another workflow event.
