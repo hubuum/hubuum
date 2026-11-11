@@ -37,6 +37,7 @@ struct TaskFixture {
     lease: StorageTaskLease,
     task_identity: TaskIdentity,
     user: UserId,
+    restore_target: hubuum_storage_postgres::test_support::IsolatedRestoreTarget,
 }
 
 #[rstest::rstest]
@@ -106,7 +107,7 @@ async fn native_expiry_admission_enforces_internal_lane_kind_limits(#[case] kind
 impl TaskFixture {
     async fn new(family: StorageIdentityHistoryKind) -> Self {
         use hubuum_storage_postgres::test_support::{TestTaskCreate, create_task};
-        let (fixture, _) = bounded_scan::restore_fixture().await;
+        let (fixture, restore_target) = bounded_scan::restore_fixture().await;
         let (fixture, _, collection) = expiry_fixture_on(fixture, family, 32).await;
         let user = fixture
             .storage
@@ -198,6 +199,7 @@ impl TaskFixture {
             lease,
             task_identity,
             user,
+            restore_target,
         }
     }
 
@@ -592,4 +594,252 @@ async fn vocabulary_upgrade_preserves_every_existing_task_limit() {
         connection.batch_execute("ROLLBACK TO SAVEPOINT task_vocabulary_fixture").await?;
         Ok::<_,PostgresStorageError>(())
     }).await.unwrap();
+}
+
+fn protection(snapshot: &HistoryLifecycleSnapshot) -> HistoryExposureProtection {
+    HistoryExposureProtection::new(
+        snapshot.control().authority().clone(),
+        ApplicationFence::new(
+            snapshot.fence().incarnation(),
+            snapshot.fence().deletion_revision().value() as i64,
+        )
+        .unwrap(),
+        DeletionCheckpointIdentity::new("a".repeat(64)).unwrap(),
+    )
+}
+
+async fn remove(
+    test: &TaskFixture,
+    proof: HistoryExposureProtection,
+) -> Result<HistoryExpiryTaskCheckpoint, StorageError> {
+    test.fixture
+        .storage
+        .run_in_scope(
+            test.scope.clone(),
+            test.fixture.storage.process_history_expiry_task(
+                HistoryExpiryTaskRequest::new(test.lease.clone(), None).with_protection(proof),
+            ),
+        )
+        .await
+}
+
+async fn copy_count(
+    test: &TaskFixture,
+    family: StorageIdentityHistoryKind,
+    target: StorageRecordIdentity,
+) -> i64 {
+    #[derive(QueryableByName)]
+    struct Count {
+        #[diesel(sql_type = diesel::sql_types::BigInt)]
+        value: i64,
+    }
+    let (table, _) = bounded_scan::source(family);
+    with_transaction(&test.fixture.owner_pool, async |connection| {
+        owner(connection).await?;
+
+        test.restore_target.validate_connection(connection).await?;
+        let value = sql_query(format!("SELECT count(*)::bigint AS value FROM public.{table} WHERE logical_identity #>> '{{subject,identity,identity}}'=$1 AND logical_identity #>> '{{subject,version}}'=$2"))
+            .bind::<Text,_>(target.resource().to_string()).bind::<Text,_>(target.version().to_string())
+            .get_result::<Count>(connection).await?.value;
+        Ok::<_,PostgresStorageError>(value)
+    }).await.unwrap()
+}
+
+#[rstest::rstest]
+#[case::collection(StorageIdentityHistoryKind::Collection)]
+#[case::class(StorageIdentityHistoryKind::Class)]
+#[case::object(StorageIdentityHistoryKind::Object)]
+#[case::class_relation(StorageIdentityHistoryKind::ClassRelation)]
+#[case::object_relation(StorageIdentityHistoryKind::ObjectRelation)]
+#[case::template(StorageIdentityHistoryKind::ExportTemplate)]
+#[case::remote(StorageIdentityHistoryKind::RemoteTarget)]
+#[case::computed(StorageIdentityHistoryKind::ComputedDefinitions)]
+#[case::schema(StorageIdentityHistoryKind::ClassSchema)]
+#[tokio::test]
+async fn native_protected_batch_removes_exact_copies_and_requires_protected_completion(
+    #[case] family: StorageIdentityHistoryKind,
+) {
+    let _guard = CONTROL_LOCK.lock().await;
+    let mut test = TaskFixture::new(family).await;
+    let result = async {
+        let checkpoint = test.process(true).await?;
+        let before = test.fixture.storage.capture_history_lifecycle().await?;
+        let manifest = checkpoint.retained_manifest(&before).unwrap().clone();
+        let original_protection = protection(&before);
+        for (index, member) in manifest.members().iter().enumerate() {
+            assert_eq!(copy_count(&test, family, member.target()).await, 1);
+            let current = test.fixture.storage.capture_history_lifecycle().await?;
+            let next = remove(&test, protection(&current)).await?;
+            assert!(next.admitted());
+            assert_eq!(copy_count(&test, family, member.target()).await, 0);
+            if index == 0 {
+                with_transaction(&test.fixture.owner_pool, async |connection| {
+                    owner(connection).await?;
+                    test.restore_target.validate_connection(connection).await?;
+                    sql_query("UPDATE public.tasks SET lease_expires_at=clock_timestamp()-INTERVAL '1 second' WHERE id=$1")
+                        .bind::<Integer,_>(test.task.id().id()).execute(connection).await?;
+                    Ok::<_,PostgresStorageError>(())
+                }).await?;
+                phase(&test.fixture, &test.scope, test.fixture.storage.recover_expired_task_leases(10)).await?;
+                let claim=phase(&test.fixture, &test.scope, test.fixture.storage.claim_next_task(TaskFixture::claim_request())).await?.unwrap();
+                assert!(remove(&test, protection(&current)).await.is_err(), "recovery must fence the old deleting claim");
+                test.lease=claim.into_parts().1;
+            }
+
+        }
+        let removed = test.fixture.storage.capture_history_lifecycle().await?;
+        let receipts = removed
+            .control()
+            .authority()
+            .expiry()
+            .intent(checkpoint.batch())
+            .unwrap()
+            .removals();
+        assert_eq!(receipts.len(), manifest.members().len());
+        assert!(
+            remove(&test, original_protection).await.is_err(),
+            "unprotected completion cannot finish"
+        );
+        let completed = remove(&test, protection(&removed)).await?;
+        completed.validate_completion(&removed).unwrap();
+        assert_eq!(completed.removed_count() as usize, receipts.len());
+        assert!(completed.finished());
+        let repeated = test.process(false).await?;
+        assert_eq!(completed, repeated);
+        assert_eq!(
+            test.fixture
+                .storage
+                .capture_history_lifecycle()
+                .await?
+                .control(),
+            removed.control(),
+            "retry must preserve first receipts and audit clocks"
+        );
+        let finish = |count| StorageTaskCompletion::new(
+            StorageTaskTerminalUpdate::new(test.lease.clone(), StorageTaskTerminalStatus::Succeeded,
+                StorageTaskResultCounts::try_new(count,count,0).unwrap()),
+            StorageTaskEventInput::new("succeeded","Protected bounded batch complete"),
+            StorageTaskCompletionPayload::HistoryExpiry,
+        );
+        assert!(phase(&test.fixture,&test.scope,test.fixture.storage.complete_task(finish(0))).await.is_err(),"completion counts must match receipts");
+        let finished=phase(&test.fixture,&test.scope,test.fixture.storage.complete_task(finish(completed.removed_count() as i32))).await?;
+        assert_eq!(finished.status(),StorageTaskStatus::Succeeded);
+        Ok::<_, StorageError>(())
+    }
+    .await;
+    test.cleanup().await;
+    result.unwrap();
+}
+
+#[rstest::rstest]
+#[case::collection(StorageIdentityHistoryKind::Collection)]
+#[case::class(StorageIdentityHistoryKind::Class)]
+#[case::object(StorageIdentityHistoryKind::Object)]
+#[case::class_relation(StorageIdentityHistoryKind::ClassRelation)]
+#[case::object_relation(StorageIdentityHistoryKind::ObjectRelation)]
+#[case::template(StorageIdentityHistoryKind::ExportTemplate)]
+#[case::remote(StorageIdentityHistoryKind::RemoteTarget)]
+#[case::computed(StorageIdentityHistoryKind::ComputedDefinitions)]
+#[case::schema(StorageIdentityHistoryKind::ClassSchema)]
+#[tokio::test]
+async fn native_pre_exclusion_publication_requires_positive_settlement(
+    #[case] family: StorageIdentityHistoryKind,
+) {
+    let _guard = CONTROL_LOCK.lock().await;
+    let test = TaskFixture::new(family).await;
+    let result = async {
+        let owner = test
+            .fixture
+            .storage
+            .run_in_scope(
+                test.scope.clone(),
+                test.fixture
+                    .storage
+                    .admit_history_publication(HistoryPublicationKind::TaskOutput),
+            )
+            .await?;
+        let checkpoint = test.process(true).await?;
+        let before = test.fixture.storage.capture_history_lifecycle().await?;
+        let target = checkpoint.retained_manifest(&before).unwrap().members()[0].target();
+        let blocked = remove(&test, protection(&before)).await;
+        assert!(blocked.is_err());
+        assert_eq!(copy_count(&test, family, target).await, 1);
+        assert_eq!(
+            test.fixture
+                .storage
+                .capture_history_lifecycle()
+                .await?
+                .control(),
+            before.control()
+        );
+        let settled = owner.after_drained(ready(Ok(())), ready(Ok(()))).await?;
+        test.fixture
+            .storage
+            .settle_history_publication(settled)
+            .await?;
+        remove(&test, protection(&before)).await?;
+        assert_eq!(copy_count(&test, family, target).await, 0);
+        Ok::<_, StorageError>(())
+    }
+    .await;
+    test.cleanup().await;
+    result.unwrap();
+}
+
+#[rstest::rstest]
+#[case::independent_membership("protection")]
+#[case::current_hold("hold")]
+#[case::canonical_audit("audit")]
+#[case::missing_copy("missing")]
+#[case::cancellation("cancel")]
+#[case::deadline("deadline")]
+#[tokio::test]
+async fn native_removal_failure_preserves_copy_receipt_and_checkpoint(#[case] mode: &str) {
+    let _guard = CONTROL_LOCK.lock().await;
+    let test = TaskFixture::new(StorageIdentityHistoryKind::Object).await;
+    let result = async {
+        let checkpoint = test.process(true).await?;
+        let admitted = test.fixture.storage.capture_history_lifecycle().await?;
+        let target = checkpoint.retained_manifest(&admitted).unwrap().members()[0].target();
+        let mut proof = protection(&admitted);
+        if mode == "protection" {
+            proof = HistoryExposureProtection::new(HistoryLifecycleAuthority::empty(), proof.fence(), proof.checkpoint().clone());
+        }
+        if mode == "hold" {
+            let hold = HistoryRetentionHold::new(Uuid::new_v4(), checkpoint.retained_manifest(&admitted).unwrap().key(), admitted.observed_at(), None, PrincipalIdentity::generate()).unwrap();
+            let change = admitted.control().create_hold(hold, admitted.fence()).unwrap();
+            phase(&test.fixture, &test.scope, test.fixture.storage.commit_history_lifecycle(change)).await?;
+        }
+        if matches!(mode,"audit"|"cancel"|"deadline"|"missing") {
+            with_transaction(&test.fixture.owner_pool, async |connection| {
+                owner(connection).await?;
+                test.restore_target.validate_connection(connection).await?;
+                match mode {
+                    "audit" => connection.batch_execute("CREATE FUNCTION public.history_expiry_removal_audit_fault() RETURNS trigger LANGUAGE plpgsql AS $fault$ BEGIN IF NEW.metadata #>> '{lifecycle,name}'='lifecycle.erasure.copy_removed' THEN RAISE EXCEPTION 'required removal audit fault'; END IF; RETURN NEW; END $fault$; CREATE TRIGGER history_expiry_removal_audit_fault BEFORE INSERT ON public.events FOR EACH ROW EXECUTE FUNCTION public.history_expiry_removal_audit_fault()").await?,
+                    "missing" => { sql_query("DELETE FROM public.hubuumobject_history WHERE logical_identity #>> '{subject,identity,identity}'=$1 AND logical_identity #>> '{subject,version}'=$2").bind::<Text,_>(target.resource().to_string()).bind::<Text,_>(target.version().to_string()).execute(connection).await?; }
+                    "cancel" => { sql_query("UPDATE public.tasks SET cancel_requested_at=clock_timestamp() WHERE id=$1").bind::<Integer,_>(test.task.id().id()).execute(connection).await?; }
+                    "deadline" => { sql_query("UPDATE public.tasks SET execution_deadline_at=started_at+INTERVAL '1 millisecond' WHERE id=$1").bind::<Integer,_>(test.task.id().id()).execute(connection).await?; }
+                    _ => unreachable!(),
+                }
+                Ok::<_,PostgresStorageError>(())
+            }).await?;
+        }
+        let before = test.fixture.storage.capture_history_lifecycle().await?;
+        let failed = remove(&test, proof).await;
+        let after = test.fixture.storage.capture_history_lifecycle().await?;
+        assert!(failed.is_err(), "{mode}");
+        assert_eq!(copy_count(&test, StorageIdentityHistoryKind::Object, target).await,if mode == "missing" {0} else {1});
+        assert_eq!(after.control(), before.control(), "{mode}");
+        if mode == "audit" {
+            with_transaction(&test.fixture.owner_pool, async |connection| {
+                owner(connection).await?;
+                test.restore_target.validate_connection(connection).await?;
+                connection.batch_execute("DROP TRIGGER history_expiry_removal_audit_fault ON public.events; DROP FUNCTION public.history_expiry_removal_audit_fault()").await?;
+                Ok::<_,PostgresStorageError>(())
+            }).await?;
+        }
+        Ok::<_,StorageError>(())
+    }.await;
+    test.cleanup().await;
+    result.unwrap();
 }

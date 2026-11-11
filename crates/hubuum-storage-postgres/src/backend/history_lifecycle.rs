@@ -12,6 +12,7 @@ use diesel::{
 };
 use diesel_async::RunQueryDsl;
 pub(crate) use expiry::admit_on as admit_history_expiry_on;
+pub(crate) use expiry::remove_on as remove_history_expiry_on;
 use hubuum_storage_core::*;
 use serde::Deserialize;
 use serde_json::Value;

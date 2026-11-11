@@ -765,9 +765,19 @@ async fn finalize_task_connection(
         )
     {
         let checkpoint = super::history_expiry_task::checkpoint_for(connection, &row).await?;
-        if update.status != StorageTaskStatus::Succeeded || !checkpoint.pass_finished() {
+        let snapshot = crate::backend::capture_history_lifecycle_on(connection).await?;
+        checkpoint.validate_completion(&snapshot)?;
+        if update.status != StorageTaskStatus::Succeeded || !checkpoint.finished() {
             return Err(PostgresStorageError::invalid_input(
                 "History expiry task cannot complete while its admitted batch remains pending",
+            ));
+        }
+        if update.counts.processed() != checkpoint.removed_count() as i32
+            || update.counts.succeeded() != checkpoint.removed_count() as i32
+            || update.counts.failed() != 0
+        {
+            return Err(PostgresStorageError::invalid_input(
+                "History expiry completion counts differ from exact receipts",
             ));
         }
     }

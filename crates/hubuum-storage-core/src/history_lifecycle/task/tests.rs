@@ -307,3 +307,86 @@ fn original_task_uuid_and_principal_survive_numeric_principal_deletion(#[case] d
     let captured = HistoryExpiryTaskCheckpoint::from_task(&task, &evidence).unwrap();
     assert_eq!(captured.task_identity(), checkpoint.0.run);
 }
+
+#[rstest]
+#[case::unchanged("unchanged", true)]
+#[case::policy_changed("policy", false)]
+#[case::hold_added("hold", false)]
+#[case::new_dependency("dependency", false)]
+#[case::native_interval_changed("interval", false)]
+#[case::attribution_changed("scope", false)]
+fn removal_rechecks_current_eligibility_and_native_membership(
+    #[case] mode: &str,
+    #[case] eligible: bool,
+) {
+    let (_, snapshot, manifest) = admitted();
+    let member = &manifest.members()[0];
+    let mut authority = snapshot.control().authority().clone();
+    if mode == "policy" {
+        let key = member.policies()[0].key();
+        let proposal = HistoryPolicyChange::new(
+            key,
+            authority.policies().current_revision(key),
+            HistoryPolicyBinding::Indefinite,
+            HistoryPolicyApplication::Retrospective {
+                closed_through: snapshot.observed_at(),
+            },
+        )
+        .unwrap();
+        authority = authority
+            .apply(
+                proposal,
+                PrincipalIdentity::generate(),
+                snapshot.observed_at(),
+            )
+            .unwrap();
+    }
+    if mode == "hold" {
+        authority = authority
+            .create_hold(
+                HistoryRetentionHold::new(
+                    Uuid::new_v4(),
+                    manifest.key(),
+                    snapshot.observed_at(),
+                    None,
+                    PrincipalIdentity::generate(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    let attributions = if mode == "scope" {
+        vec![HistoryScopeAttribution::new(
+            ResourceIdentity::generate(),
+            None,
+        )]
+    } else {
+        member.attributions().to_vec()
+    };
+    let span = member.read_span();
+    let candidate = HistoryExpiryCandidate::new(
+        member.family(),
+        member.target(),
+        Some(member.anchor()),
+        attributions,
+        mode == "dependency",
+    )
+    .unwrap()
+    .with_native_interval(
+        span.valid_from()
+            + if mode == "interval" {
+                chrono::Duration::seconds(1)
+            } else {
+                chrono::Duration::zero()
+            },
+        span.valid_to(),
+    )
+    .unwrap();
+    assert_eq!(
+        member
+            .validate_removal(&candidate, &authority, snapshot.observed_at())
+            .is_ok(),
+        eligible,
+        "{mode}"
+    );
+}

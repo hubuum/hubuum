@@ -4,7 +4,7 @@ use diesel::sql_types::{BigInt, Integer, Nullable, Timestamptz};
 use hubuum_storage_postgres::test_support::IsolatedRestoreTarget;
 use rstest::rstest;
 
-fn source(family: StorageIdentityHistoryKind) -> (&'static str, &'static str) {
+pub(super) fn source(family: StorageIdentityHistoryKind) -> (&'static str, &'static str) {
     use StorageIdentityHistoryKind as F;
     let table = match family {
         F::Collection => "collections_history",

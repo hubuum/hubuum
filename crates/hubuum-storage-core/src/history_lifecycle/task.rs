@@ -49,6 +49,7 @@ impl HistoryExpiryTaskAuthorization {
 pub struct HistoryExpiryTaskRequest {
     lease: StorageTaskLease,
     authorization: Option<HistoryExpiryTaskAuthorization>,
+    protection: Option<HistoryExposureProtection>,
 }
 
 impl HistoryExpiryTaskRequest {
@@ -59,7 +60,19 @@ impl HistoryExpiryTaskRequest {
         Self {
             lease,
             authorization,
+            protection: None,
         }
+    }
+
+    /// Trusted service evidence from authenticated independent read-back. This
+    /// is deliberately absent from the serialized task request and checkpoint.
+    pub fn with_protection(mut self, protection: HistoryExposureProtection) -> Self {
+        self.protection = Some(protection);
+        self
+    }
+
+    pub const fn protection(&self) -> Option<&HistoryExposureProtection> {
+        self.protection.as_ref()
     }
 
     pub const fn lease(&self) -> &StorageTaskLease {
@@ -172,6 +185,10 @@ enum ExpiryPosition {
         batch: Uuid,
         progress: HistoryExpiryScanProgress,
     },
+    Completed {
+        batch: Uuid,
+        removed: u32,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -277,6 +294,12 @@ impl HistoryExpiryTaskCheckpoint {
         let (batch, progress) = match &result.0.position {
             ExpiryPosition::Scanning { batch, progress } => (*batch, progress.as_ref()),
             ExpiryPosition::Admitted { batch, progress } => (*batch, Some(progress)),
+            ExpiryPosition::Completed { batch, removed } => {
+                if *removed == 0 || *removed as usize > HistoryExpiryManifest::MAX_MEMBERS {
+                    return Err(invalid("Invalid history expiry completion count"));
+                }
+                (*batch, None)
+            }
         };
         result.request_for(batch, progress, fence)?;
         Ok(result)
@@ -339,6 +362,10 @@ impl HistoryExpiryTaskCheckpoint {
             ExpiryPosition::Admitted { .. } => Err(invalid(
                 "History expiry task must resume its admitted batch before selecting new work",
             )),
+            ExpiryPosition::Completed { .. } => {
+                self.request_for(self.batch(), None, fence)?;
+                Ok(None)
+            }
         }
     }
 
@@ -388,9 +415,9 @@ impl HistoryExpiryTaskCheckpoint {
 
     pub const fn batch(&self) -> Uuid {
         match self.0.position {
-            ExpiryPosition::Scanning { batch, .. } | ExpiryPosition::Admitted { batch, .. } => {
-                batch
-            }
+            ExpiryPosition::Scanning { batch, .. }
+            | ExpiryPosition::Admitted { batch, .. }
+            | ExpiryPosition::Completed { batch, .. } => batch,
         }
     }
 
@@ -408,13 +435,106 @@ impl HistoryExpiryTaskCheckpoint {
         )
     }
 
+    pub fn finished(&self) -> bool {
+        self.pass_finished() || matches!(self.0.position, ExpiryPosition::Completed { .. })
+    }
+
+    pub const fn removed_count(&self) -> u32 {
+        match self.0.position {
+            ExpiryPosition::Completed { removed, .. } => removed,
+            _ => 0,
+        }
+    }
+
+    /// A serialized completion marker cannot substitute for the retained
+    /// ledger. Adapters check this again under their finalization lock.
+    pub fn validate_completion(
+        &self,
+        snapshot: &HistoryLifecycleSnapshot,
+    ) -> Result<(), StorageValidationError> {
+        if let ExpiryPosition::Completed { removed, .. } = self.0.position {
+            let manifest = self.retained_manifest(snapshot)?;
+            let intent = snapshot
+                .control()
+                .authority()
+                .expiry()
+                .intent(manifest.identity())
+                .expect("validated retained manifest");
+            if !intent.is_complete() || intent.removals().len() != removed as usize {
+                return Err(invalid(
+                    "History expiry completion differs from retained receipts",
+                ));
+            }
+        } else if !self.pass_finished() {
+            return Err(invalid("History expiry task still has unfinished work"));
+        }
+        Ok(())
+    }
+
+    /// Finish one bounded admitted batch only after independent completion
+    /// protection. A subsequent task starts a fresh scan, including late rows.
+    pub fn complete_batch(
+        &self,
+        snapshot: &HistoryLifecycleSnapshot,
+        protection: &HistoryExposureProtection,
+    ) -> Result<Self, StorageValidationError> {
+        let intent = self.protected_intent(snapshot, protection)?;
+        if !intent.is_complete()
+            || !protection
+                .authority()
+                .expiry()
+                .intent(self.batch())
+                .is_some_and(|protected| protected.covers(intent))
+        {
+            return Err(invalid(
+                "History expiry completion lacks independent protection",
+            ));
+        }
+        Ok(Self(CheckpointInput {
+            position: ExpiryPosition::Completed {
+                batch: self.batch(),
+                removed: intent.removals().len() as u32,
+            },
+            ..self.0.clone()
+        }))
+    }
+
+    pub fn protected_intent<'a>(
+        &self,
+        snapshot: &'a HistoryLifecycleSnapshot,
+        protection: &HistoryExposureProtection,
+    ) -> Result<&'a HistoryExpiryIntent, StorageValidationError> {
+        let manifest = self.retained_manifest(snapshot)?;
+        if protection.fence() != self.0.payload.application()
+            || !snapshot
+                .control()
+                .authority()
+                .covers(protection.authority())
+            || !protection
+                .authority()
+                .expiry()
+                .intent(self.batch())
+                .is_some_and(|intent| intent.manifest() == manifest)
+        {
+            return Err(invalid(
+                "History expiry membership lacks independent protection",
+            ));
+        }
+        Ok(snapshot
+            .control()
+            .authority()
+            .expiry()
+            .intent(self.batch())
+            .expect("validated intent"))
+    }
+
     /// Resolve the original retained manifest, never reconstruct it from current
     /// source rows. Independent recovery protection is a separate service step.
     pub fn retained_manifest<'a>(
         &self,
         snapshot: &'a HistoryLifecycleSnapshot,
     ) -> Result<&'a HistoryExpiryManifest, StorageValidationError> {
-        if !self.admitted() {
+        if !self.admitted() && !matches!(self.0.position, ExpiryPosition::Completed { .. }) {
             return Err(invalid("History expiry task has no admitted batch"));
         }
         self.request_for(self.batch(), None, snapshot.fence())?;

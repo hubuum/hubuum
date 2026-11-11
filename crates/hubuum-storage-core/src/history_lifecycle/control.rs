@@ -494,7 +494,11 @@ pub trait HistoryLifecycleStorage: Send + Sync {
     /// Advance one bounded page under the original task lease. Admission,
     /// canonical audit, exclusion projection and the checkpoint commit together.
     /// A retry resolves its admitted batch before any fresh selection. This
-    /// grants neither independent protection nor physical removal authority.
+    /// Without trusted independent read-back this only admits/resumes selection.
+    /// With protection it removes at most one exact closed copy and commits its
+    /// first receipt and audit atomically, after positive old-owner retirement
+    /// and current eligibility checks. Protected completion finishes that batch;
+    /// cancellation, lost lease, deadline or any failure rolls back the step.
     async fn process_history_expiry_task(
         &self,
         request: HistoryExpiryTaskRequest,

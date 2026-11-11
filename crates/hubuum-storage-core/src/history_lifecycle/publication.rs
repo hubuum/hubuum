@@ -549,6 +549,15 @@ impl HistoryPublicationRegistry {
         })
     }
 
+    /// Owners admitted before the exact exclusion can still hold materialized
+    /// bytes. Only their positive settlement removes this obligation.
+    pub fn expiry_blocked(&self, fence: HistoryReviewFence) -> bool {
+        self.owners.values().any(|owner| {
+            owner.epoch.history().incarnation() != fence.incarnation()
+                || owner.epoch.history().authority_revision() <= fence.authority_revision()
+        })
+    }
+
     /// Trusted adapter boundary while holding actual exclusive process isolation
     /// and the application fence. External publication claims retain their owner:
     /// process exit does not reconcile an independently durable provider result.

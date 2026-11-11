@@ -1,5 +1,5 @@
-//! Gated expiry task execution. Exact admission is durable before independent
-//! protection; the pending batch waits for a future qualified removal phase.
+//! Gated expiry task execution. Admission and exact removal receipts are
+//! independently protected before removal and task completion respectively.
 use hubuum_domain::PrincipalId;
 use hubuum_storage_core::{
     HistoryExpiryOrigin, HistoryExpiryTaskAuthorization, HistoryExpiryTaskPayload,
@@ -41,19 +41,44 @@ pub(crate) async fn execute(
             let encoded = checkpoint
                 .encode()
                 .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
-            return crate::tasks::history::run(&storage, async {
-                // Always join publication/read-back before releasing this
-                // finite phase. A failed independent write leaves the exact
-                // batch pending; neither failure nor waiting removes history.
-                if let Err(error) = super::history_policy::protect_expiry(context, &checkpoint).await {
-                    tracing::warn!(message = "History expiry awaits independent recovery protection", task_id = task.id, error = %error);
+            let protected = crate::tasks::history::run(
+                &storage,
+                super::history_policy::protect_expiry(context, &checkpoint),
+            )
+            .await;
+            let result = match protected {
+                Ok(protection) => storage
+                    .process_history_expiry_task(
+                        HistoryExpiryTaskRequest::new(task.lease().clone(), None)
+                            .with_protection(protection),
+                    )
+                    .await
+                    .map_err(ApiError::from),
+                Err(error) => Err(error),
+            };
+            match result {
+                Ok(_) => {
+                    tokio::task::yield_now().await;
+                    continue;
                 }
-                storage.wait_task(StorageTaskWaitRequest::new(task.lease().clone(), encoded)).await?;
+                Err(error) => {
+                    tracing::warn!(message = "History expiry batch remains pending", task_id = task.id, error = %error)
+                }
+            }
+            return crate::tasks::history::run(&storage, async {
+                storage
+                    .wait_task(StorageTaskWaitRequest::new(task.lease().clone(), encoded))
+                    .await?;
                 Ok(TaskStatus::Waiting)
-            }).await;
+            })
+            .await;
         }
-        if checkpoint.pass_finished() {
-            let summary = "History expiry scan pass finished without an admitted batch";
+        if checkpoint.finished() {
+            let summary = if checkpoint.removed_count() == 0 {
+                "History expiry scan pass finished without an admitted batch"
+            } else {
+                "History expiry bounded batch completed with independently protected receipts"
+            };
             let finished = crate::tasks::history::run(
                 &storage,
                 complete_task(
@@ -61,7 +86,7 @@ pub(crate) async fn execute(
                     task,
                     TaskStateChange::new(
                         TaskStatus::Succeeded,
-                        TaskResultCounts::from_outcomes(0, 0)?,
+                        TaskResultCounts::from_outcomes(checkpoint.removed_count(), 0)?,
                     )
                     .summary(summary),
                     NewTaskEventRecord {

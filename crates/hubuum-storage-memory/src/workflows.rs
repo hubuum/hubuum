@@ -1052,9 +1052,20 @@ impl TaskExecutionStorage for MemoryStorage {
             let checkpoint =
                 HistoryExpiryTaskCheckpoint::from_task(&stored.projection()?, &evidence)
                     .map_err(invalid_contract_value)?;
-            if status.as_status() != StorageTaskStatus::Succeeded || !checkpoint.pass_finished() {
+            checkpoint
+                .validate_completion(&state.history_lifecycle_snapshot()?)
+                .map_err(invalid_contract_value)?;
+            if status.as_status() != StorageTaskStatus::Succeeded || !checkpoint.finished() {
                 return Err(StorageError::invalid_input(
                     "History expiry task cannot complete while its admitted batch remains pending",
+                ));
+            }
+            if counts.processed() != checkpoint.removed_count() as i32
+                || counts.succeeded() != checkpoint.removed_count() as i32
+                || counts.failed() != 0
+            {
+                return Err(StorageError::invalid_input(
+                    "History expiry completion counts differ from exact receipts",
                 ));
             }
         }

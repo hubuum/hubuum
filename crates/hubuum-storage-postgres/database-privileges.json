@@ -56,6 +56,7 @@
     "hubuum_history_lifecycle_capture",
     "hubuum_history_lifecycle_commit",
     "hubuum_history_expiry_admit",
+    "hubuum_history_expiry_remove",
     "hubuum_history_expiry_dependency",
     "hubuum_history_producers_fenced",
     "hubuum_history_read_authority",

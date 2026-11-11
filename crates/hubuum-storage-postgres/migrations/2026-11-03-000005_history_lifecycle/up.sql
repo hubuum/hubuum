@@ -801,6 +801,79 @@ END
 $function$;
 REVOKE ALL ON FUNCTION public.hubuum_history_expiry_admit(JSONB,JSONB,UUID,BIGINT) FROM PUBLIC;
 
+-- One exact physical outcome and its first receipt commit together. The trusted
+-- adapter rechecks policy/holds in this transaction before calling this function.
+-- No current/open copy, absence, clock expiry or missing runtime retires a producer.
+CREATE FUNCTION public.hubuum_history_expiry_remove(expected JSONB, batch UUID,
+    resource UUID, version UUID, checkpoint TEXT, expected_incarnation UUID, expected_deletion BIGINT)
+RETURNS JSONB LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog AS $function$
+DECLARE material JSONB; intent JSONB; member JSONB; source JSONB; source_table TEXT;
+    replacement JSONB; updated_intent JSONB; receipts JSONB; removed_at TIMESTAMPTZ;
+    affected BIGINT; family TEXT;
+BEGIN
+    IF public.hubuum_history_producers_fenced(expected_incarnation,expected_deletion) IS NOT TRUE THEN
+        RAISE EXCEPTION 'History producer fencing is unavailable';
+    END IF;
+    SELECT c.material INTO material FROM hubuum_control.history_lifecycle_control c WHERE id=1 FOR UPDATE;
+    IF material IS DISTINCT FROM expected OR checkpoint !~ '^[0-9a-f]{64}$' OR checkpoint IS NULL THEN
+        RAISE EXCEPTION 'History removal predecessor or checkpoint changed';
+    END IF;
+    SELECT value INTO STRICT intent FROM jsonb_array_elements(material #> '{authority,expiry}')
+        WHERE value #>> '{manifest,identity}'=batch::TEXT;
+    IF intent #>> '{manifest,fence,incarnation}'<>expected_incarnation::TEXT
+        OR intent #>> '{manifest,fence,deletion_revision}'<>expected_deletion::TEXT
+        OR EXISTS(SELECT 1 FROM hubuum_control.history_publication_owners p
+          WHERE p.incarnation<>expected_incarnation
+             OR p.history_revision<=(intent #>> '{manifest,fence,authority_revision}')::BIGINT) THEN
+        RAISE EXCEPTION 'Pre-exclusion publication has not positively retired';
+    END IF;
+    SELECT value INTO STRICT member FROM jsonb_array_elements(intent #> '{manifest,members}')
+        WHERE value #>> '{target,resource}'=resource::TEXT AND value #>> '{target,version}'=version::TEXT;
+    IF EXISTS(SELECT 1 FROM jsonb_array_elements(intent->'removals') receipt
+        WHERE receipt #>> '{target,resource}'=resource::TEXT AND receipt #>> '{target,version}'=version::TEXT) THEN
+        RAISE EXCEPTION 'History copy already has its first receipt';
+    END IF;
+    family:=member->>'family';
+    source_table:=CASE family
+        WHEN 'collection' THEN 'collections_history' WHEN 'class' THEN 'hubuumclass_history'
+        WHEN 'object' THEN 'hubuumobject_history' WHEN 'class_relation' THEN 'hubuumclass_relation_history'
+        WHEN 'object_relation' THEN 'hubuumobject_relation_history' WHEN 'export_template' THEN 'export_templates_history'
+        WHEN 'remote_target' THEN 'remote_targets_history' WHEN 'class_schema' THEN 'class_schema_history'
+        WHEN 'computed_definitions' THEN 'computed_field_history' ELSE NULL END;
+    IF source_table IS NULL THEN RAISE EXCEPTION 'Unsupported history family'; END IF;
+    EXECUTE format('SELECT to_jsonb(h.*) FROM public.%I h WHERE logical_identity #>> ''{subject,identity,identity}''=$1 AND logical_identity #>> ''{subject,version}''=$2 FOR UPDATE',source_table)
+        INTO STRICT source USING resource::TEXT,version::TEXT;
+    IF octet_length(source::TEXT)>16777216
+        OR (source->>CASE WHEN family='class_schema' THEN 'occurred_at' ELSE 'valid_from' END)::TIMESTAMPTZ
+            IS DISTINCT FROM (member #>> '{read_span,valid_from}')::TIMESTAMPTZ
+        OR (source->>'valid_to')::TIMESTAMPTZ IS DISTINCT FROM (member #>> '{read_span,valid_to}')::TIMESTAMPTZ
+        OR (family<>'class_schema' AND source->>'valid_to' IS NULL AND source->>'op' IS DISTINCT FROM 'D')
+        OR public.hubuum_history_expiry_dependency(family,source->'logical_identity') THEN
+        RAISE EXCEPTION 'History copy changed or has a protected dependency';
+    END IF;
+    EXECUTE format('DELETE FROM public.%I WHERE logical_identity #>> ''{subject,identity,identity}''=$1 AND logical_identity #>> ''{subject,version}''=$2',source_table)
+        USING resource::TEXT,version::TEXT;
+    GET DIAGNOSTICS affected=ROW_COUNT;
+    IF affected<>1 THEN RAISE EXCEPTION 'Exact history removal did not delete one copy'; END IF;
+    removed_at:=clock_timestamp();
+    IF removed_at<(intent #>> '{manifest,selected_at}')::TIMESTAMPTZ THEN
+        RAISE EXCEPTION 'History removal clock precedes selection';
+    END IF;
+    SELECT jsonb_agg(receipt ORDER BY receipt #>> '{target,resource}',receipt #>> '{target,version}') INTO receipts
+        FROM jsonb_array_elements((intent->'removals') || jsonb_build_array(jsonb_build_object(
+            'target',member->'target','checkpoint',checkpoint,'removed_at',removed_at))) receipt;
+    updated_intent:=jsonb_set(intent,'{removals}',receipts);
+    SELECT jsonb_set(material,'{authority,expiry}',jsonb_agg(CASE
+        WHEN value #>> '{manifest,identity}'=batch::TEXT THEN updated_intent ELSE value END ORDER BY ordinal))
+        INTO replacement FROM jsonb_array_elements(material #> '{authority,expiry}') WITH ORDINALITY entries(value,ordinal);
+    replacement:=jsonb_set(replacement,'{authority,revision}',to_jsonb(((material #>> '{authority,revision}')::BIGINT+1)::TEXT));
+    IF octet_length(replacement::TEXT)>4194304 THEN RAISE EXCEPTION 'History completion capacity exhausted'; END IF;
+    UPDATE hubuum_control.history_lifecycle_control SET material=replacement WHERE id=1;
+    RETURN jsonb_build_object('affected_rows',affected,'removed_at',removed_at,'control',replacement);
+END
+$function$;
+REVOKE ALL ON FUNCTION public.hubuum_history_expiry_remove(JSONB,UUID,UUID,UUID,TEXT,UUID,BIGINT) FROM PUBLIC;
+
 -- Capture policy attribution at version creation. Never derive an older
 -- historical version's scope from today's class/object location.
 CREATE FUNCTION public.hubuum_history_policy_references(relation_name TEXT, source_row JSONB, previous_row JSONB, captured JSONB)

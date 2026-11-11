@@ -1,4 +1,4 @@
-//! Native selection and intent admission only. No payload removal occurs here.
+//! Bounded native admission and exact protected removal.
 use super::*;
 
 #[derive(QueryableByName)]
@@ -224,6 +224,132 @@ pub(crate) async fn admit_on(
             .await?;
     }
     Ok::<_, PostgresStorageError>(result)
+}
+
+pub(crate) async fn remove_on(
+    connection: &mut PostgresConnection,
+    checkpoint: &HistoryExpiryTaskCheckpoint,
+    protection: &HistoryExposureProtection,
+) -> Result<(HistoryExpiryTaskCheckpoint, u32), PostgresStorageError> {
+    sql_query("SELECT set_config('statement_timeout', CASE WHEN current_setting('statement_timeout')::INTERVAL=INTERVAL '0' THEN '5000' ELSE GREATEST(1,FLOOR(LEAST(EXTRACT(EPOCH FROM current_setting('statement_timeout')::INTERVAL)*1000,5000)))::BIGINT::TEXT END,true)")
+        .execute(connection).await?;
+    let snapshot = capture_on(connection).await?;
+    let intent = checkpoint.protected_intent(&snapshot, protection)?;
+    if intent.is_complete() {
+        return checkpoint
+            .complete_batch(&snapshot, protection)
+            .map(|next| (next, intent.removals().len() as u32))
+            .map_err(Into::into);
+    }
+    let member = intent
+        .manifest()
+        .members()
+        .iter()
+        .find(|member| {
+            !intent
+                .removals()
+                .iter()
+                .any(|receipt| receipt.target() == member.target())
+        })
+        .expect("incomplete intent has pending membership");
+    let family = member.family();
+    let (table, _) = source(family);
+    let (from, until, deleted) = if family == StorageIdentityHistoryKind::ClassSchema {
+        ("occurred_at", "NULL::timestamptz", "FALSE")
+    } else if family == StorageIdentityHistoryKind::ComputedDefinitions {
+        ("valid_from", "valid_to", "FALSE")
+    } else {
+        ("valid_from", "valid_to", "op='D'")
+    };
+    #[derive(QueryableByName)]
+    struct NativeCopy {
+        #[diesel(sql_type = Timestamptz)]
+        valid_from: DateTime<Utc>,
+        #[diesel(sql_type = Nullable<Timestamptz>)]
+        valid_to: Option<DateTime<Utc>>,
+        #[diesel(sql_type = Jsonb)]
+        logical_identity: Value,
+        #[diesel(sql_type = Bool)]
+        deleted: bool,
+        #[diesel(sql_type = Bool)]
+        dependency: bool,
+    }
+    let row = sql_query(format!(
+        "SELECT {from} AS valid_from,{until} AS valid_to,logical_identity,{deleted} AS deleted,public.hubuum_history_expiry_dependency($3,logical_identity) AS dependency FROM public.{table} h WHERE logical_identity #>> '{{subject,identity,identity}}'=$1 AND logical_identity #>> '{{subject,version}}'=$2 AND octet_length(logical_identity::TEXT)<=1048576 AND octet_length(to_jsonb(h.*)::TEXT)<=16777216 FOR UPDATE"
+    ))
+        .bind::<Text, _>(member.target().resource().to_string())
+        .bind::<Text, _>(member.target().version().to_string())
+        .bind::<Text, _>(serde_json::to_value(family).map_err(|error| PostgresStorageError::invalid_persisted_value("expiry family", error))?.as_str().expect("family string"))
+        .get_result::<NativeCopy>(connection).await?;
+    let evidence: StorageIdentityEvidence =
+        serde_json::from_value(row.logical_identity).map_err(|error| {
+            PostgresStorageError::invalid_persisted_value("native removal identity", error)
+        })?;
+    let anchor =
+        if family == StorageIdentityHistoryKind::ClassSchema {
+            HistoryRetentionAnchor::SchemaEvent(row.valid_from)
+        } else if row.deleted {
+            HistoryRetentionAnchor::Deleted(row.valid_from)
+        } else {
+            HistoryRetentionAnchor::Closed(row.valid_to.ok_or_else(|| {
+                PostgresStorageError::conflict("History copy is no longer closed")
+            })?)
+        };
+    let candidate =
+        HistoryExpiryCandidate::from_evidence(family, &evidence, Some(anchor), row.dependency)?
+            .ok_or_else(|| {
+                PostgresStorageError::conflict("History removal identity is unresolved")
+            })?
+            .with_native_interval(row.valid_from, row.valid_to)?;
+    member.validate_removal(
+        &candidate,
+        snapshot.control().authority(),
+        snapshot.observed_at(),
+    )?;
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Outcome {
+        affected_rows: u64,
+        removed_at: DateTime<Utc>,
+        control: HistoryLifecycleControl,
+    }
+    let material =
+        sql_query("SELECT public.hubuum_history_expiry_remove($1,$2,$3,$4,$5,$6,$7) AS material")
+            .bind::<Jsonb, _>(serde_json::to_value(snapshot.control()).map_err(|error| {
+                PostgresStorageError::invalid_persisted_value("removal predecessor", error)
+            })?)
+            .bind::<SqlUuid, _>(checkpoint.batch())
+            .bind::<SqlUuid, _>(Uuid::from_bytes(*member.target().resource().as_bytes()))
+            .bind::<SqlUuid, _>(Uuid::from_bytes(*member.target().version().as_bytes()))
+            .bind::<Text, _>(protection.checkpoint().as_str())
+            .bind::<SqlUuid, _>(snapshot.fence().incarnation())
+            .bind::<BigInt, _>(snapshot.fence().deletion_revision().value() as i64)
+            .get_result::<MaterialRow>(connection)
+            .await?
+            .material;
+    let outcome: Outcome = serde_json::from_value(material).map_err(|error| {
+        PostgresStorageError::invalid_persisted_value("native removal outcome", error)
+    })?;
+    let deletion = HistoryExpiryExactDeletion::from_affected_rows(
+        member.target(),
+        protection.checkpoint().clone(),
+        outcome.removed_at,
+        outcome.affected_rows,
+    )?;
+    let change =
+        snapshot
+            .control()
+            .record_expiry_removal(checkpoint.batch(), deletion, snapshot.fence())?;
+    if change.next() != &outcome.control {
+        return Err(PostgresStorageError::conflict(
+            "Native removal receipt differs from exact outcome",
+        ));
+    }
+    for event in change.next().audit_events_since(change.expected())? {
+        crate::operations::event_record::append_retained_lifecycle_event(connection, &event)
+            .await?;
+    }
+    Ok((checkpoint.clone(), intent.removals().len() as u32 + 1))
 }
 
 pub(super) fn current_scope(

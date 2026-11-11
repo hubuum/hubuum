@@ -74,9 +74,21 @@ audit, exclusions, checkpoint and resident accounting must commit atomically;
 uncertain retries resolve the original retained manifest before selecting again.
 Preserve the separate `StorageTaskExecutionPhase::HistoryAuthority` across task
 cancellation and restore. Only an empty finished scan pass may complete without
-a removal phase; an admitted batch remains pending. Production workers use
+production activation; an admitted batch remains pending until protected execution succeeds. Production workers use
 `TaskWorkerKinds::STANDARD` until activation is qualified. Leave unknown expiry
 formats unclaimed even when a worker supports the kind.
+
+The gated expiry task request can carry trusted `HistoryExposureProtection` from
+independent authenticated read-back. This proof is not serialized task input.
+`process_history_expiry_task` then removes at most one retained exact closed copy,
+atomically with its first receipt, audit and checkpoint. Both adapters must
+recheck current policy, holds, native identity/interval, dependencies and original
+application/task ownership, and wait for positive settlement of all pre-exclusion
+publication owners. Receipted members are never reselected; absence cannot prove
+a first removal. A completed checkpoint requires independently protected receipts
+and finalization checks its exact counts against the ledger. One task processes
+one bounded batch or an empty finite scan pass; future tasks start fresh scans.
+This internal executor does not enable production registration or task producers.
 
 Stop older API, worker, restore and administrator processes, back up the database,
 and apply lifecycle 000005 with refreshed grants before starting matching binaries. Its
@@ -84,7 +96,7 @@ coordinated policy revision adds the eighth kind and weight without resetting
 existing configuration. Policy edits must include all eight entries. Rollback is
 refused after eighth-kind task/accounting/receipt evidence is retained; preserve
 independent recovery evidence and roll forward. Manual/periodic submission and
-physical removal remain disabled.
+production physical removal remain disabled.
 
 Upgrade complete adapters and refresh runtime grants from the existing new
 migration. Production registration, physical removal and scheduling stay gated.

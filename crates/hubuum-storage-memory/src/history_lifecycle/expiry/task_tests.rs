@@ -334,3 +334,290 @@ async fn unsupported_expiry_work_stays_queued(#[case] mode: &str) {
         .await;
     storage.unregister_runtime(runtime).await.unwrap();
 }
+
+fn protection(snapshot: &HistoryLifecycleSnapshot) -> HistoryExposureProtection {
+    HistoryExposureProtection::new(
+        snapshot.control().authority().clone(),
+        ApplicationFence::new(
+            snapshot.fence().incarnation(),
+            snapshot.fence().deletion_revision().value() as i64,
+        )
+        .unwrap(),
+        DeletionCheckpointIdentity::new("a".repeat(64)).unwrap(),
+    )
+}
+
+#[rstest]
+#[case::collection(StorageIdentityHistoryKind::Collection)]
+#[case::class(StorageIdentityHistoryKind::Class)]
+#[case::object(StorageIdentityHistoryKind::Object)]
+#[case::class_relation(StorageIdentityHistoryKind::ClassRelation)]
+#[case::object_relation(StorageIdentityHistoryKind::ObjectRelation)]
+#[case::template(StorageIdentityHistoryKind::ExportTemplate)]
+#[case::remote(StorageIdentityHistoryKind::RemoteTarget)]
+#[case::computed(StorageIdentityHistoryKind::ComputedDefinitions)]
+#[case::schema(StorageIdentityHistoryKind::ClassSchema)]
+#[tokio::test]
+async fn protected_batch_removes_native_copies_before_protected_completion(
+    #[case] family: StorageIdentityHistoryKind,
+) {
+    let storage = MemoryStorage::new();
+    let (runtime, scope, lease) = prepare(&storage, family).await;
+    storage
+        .run_in_scope(scope, async {
+            let first = storage
+                .process_history_expiry_task(HistoryExpiryTaskRequest::new(
+                    lease.clone(),
+                    Some(HistoryExpiryTaskAuthorization::scheduled()),
+                ))
+                .await
+                .unwrap();
+            let before = storage.capture_history_lifecycle().await.unwrap();
+            let manifest = first.retained_manifest(&before).unwrap().clone();
+            let original = protection(&before);
+            let copies = |state: &MemoryState| {
+                state.history.len()
+                    + state.schema_history.len()
+                    + state.computed_history.len()
+                    + state.relation_history.values().map(Vec::len).sum::<usize>()
+            };
+            for _ in manifest.members() {
+                let count = copies(&*storage.state.read_control().await);
+                let current = storage.capture_history_lifecycle().await.unwrap();
+                let next = storage
+                    .process_history_expiry_task(
+                        HistoryExpiryTaskRequest::new(lease.clone(), None)
+                            .with_protection(protection(&current)),
+                    )
+                    .await
+                    .unwrap();
+                assert!(next.admitted());
+                assert_eq!(copies(&*storage.state.read_control().await), count - 1);
+            }
+            let removed = storage.capture_history_lifecycle().await.unwrap();
+            assert!(
+                storage
+                    .process_history_expiry_task(
+                        HistoryExpiryTaskRequest::new(lease.clone(), None)
+                            .with_protection(original)
+                    )
+                    .await
+                    .is_err()
+            );
+            let completed = storage
+                .process_history_expiry_task(
+                    HistoryExpiryTaskRequest::new(lease.clone(), None)
+                        .with_protection(protection(&removed)),
+                )
+                .await
+                .unwrap();
+            completed.validate_completion(&removed).unwrap();
+            assert_eq!(completed.removed_count() as usize, manifest.members().len());
+            assert_eq!(
+                storage
+                    .process_history_expiry_task(HistoryExpiryTaskRequest::new(lease.clone(), None))
+                    .await
+                    .unwrap(),
+                completed
+            );
+            assert_eq!(
+                storage.capture_history_lifecycle().await.unwrap().control(),
+                removed.control()
+            );
+            let finish = |count| {
+                StorageTaskCompletion::new(
+                    StorageTaskTerminalUpdate::new(
+                        lease.clone(),
+                        StorageTaskTerminalStatus::Succeeded,
+                        StorageTaskResultCounts::try_new(count, count, 0).unwrap(),
+                    ),
+                    StorageTaskEventInput::new("succeeded", "Protected bounded batch complete"),
+                    StorageTaskCompletionPayload::HistoryExpiry,
+                )
+            };
+            assert!(
+                fixture_write(&storage, storage.complete_task(finish(0)))
+                    .await
+                    .is_err()
+            );
+            let finished = fixture_write(
+                &storage,
+                storage.complete_task(finish(completed.removed_count() as i32)),
+            )
+            .await
+            .unwrap();
+            assert_eq!(finished.status(), StorageTaskStatus::Succeeded);
+        })
+        .await;
+    storage.unregister_runtime(runtime).await.unwrap();
+}
+
+#[rstest]
+#[case::collection(StorageIdentityHistoryKind::Collection)]
+#[case::class(StorageIdentityHistoryKind::Class)]
+#[case::object(StorageIdentityHistoryKind::Object)]
+#[case::class_relation(StorageIdentityHistoryKind::ClassRelation)]
+#[case::object_relation(StorageIdentityHistoryKind::ObjectRelation)]
+#[case::template(StorageIdentityHistoryKind::ExportTemplate)]
+#[case::remote(StorageIdentityHistoryKind::RemoteTarget)]
+#[case::computed(StorageIdentityHistoryKind::ComputedDefinitions)]
+#[case::schema(StorageIdentityHistoryKind::ClassSchema)]
+#[tokio::test]
+async fn pre_exclusion_publication_requires_positive_settlement(
+    #[case] family: StorageIdentityHistoryKind,
+) {
+    let storage = MemoryStorage::new();
+    let (runtime, scope, lease) = prepare(&storage, family).await;
+    storage
+        .run_in_scope(scope, async {
+            let owner = storage
+                .admit_history_publication(HistoryPublicationKind::TaskOutput)
+                .await
+                .unwrap();
+            let first = storage
+                .process_history_expiry_task(HistoryExpiryTaskRequest::new(
+                    lease.clone(),
+                    Some(HistoryExpiryTaskAuthorization::scheduled()),
+                ))
+                .await
+                .unwrap();
+            let before = storage.capture_history_lifecycle().await.unwrap();
+            assert!(
+                storage
+                    .process_history_expiry_task(
+                        HistoryExpiryTaskRequest::new(lease.clone(), None)
+                            .with_protection(protection(&before))
+                    )
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                storage.capture_history_lifecycle().await.unwrap().control(),
+                before.control()
+            );
+            let settled = owner
+                .after_drained(std::future::ready(Ok(())), std::future::ready(Ok(())))
+                .await
+                .unwrap();
+            storage.settle_history_publication(settled).await.unwrap();
+            storage
+                .process_history_expiry_task(
+                    HistoryExpiryTaskRequest::new(lease, None).with_protection(protection(&before)),
+                )
+                .await
+                .unwrap();
+            let after = storage.capture_history_lifecycle().await.unwrap();
+            assert_eq!(
+                after
+                    .control()
+                    .authority()
+                    .expiry()
+                    .intent(first.batch())
+                    .unwrap()
+                    .removals()
+                    .len(),
+                1
+            );
+        })
+        .await;
+    storage.unregister_runtime(runtime).await.unwrap();
+}
+
+#[rstest]
+#[case::independent_membership("protection")]
+#[case::current_hold("hold")]
+#[case::canonical_audit("audit")]
+#[case::cancellation("cancel")]
+#[case::deadline("deadline")]
+#[tokio::test]
+async fn removal_failure_preserves_copy_receipt_and_checkpoint(#[case] mode: &str) {
+    let storage = MemoryStorage::new();
+    let (runtime, scope, lease) = prepare(&storage, StorageIdentityHistoryKind::Object).await;
+    storage
+        .run_in_scope(scope, async {
+            let checkpoint = storage
+                .process_history_expiry_task(HistoryExpiryTaskRequest::new(
+                    lease.clone(),
+                    Some(HistoryExpiryTaskAuthorization::scheduled()),
+                ))
+                .await
+                .unwrap();
+            let admitted = storage.capture_history_lifecycle().await.unwrap();
+            let mut proof = protection(&admitted);
+            if mode == "protection" {
+                proof = HistoryExposureProtection::new(
+                    HistoryLifecycleAuthority::empty(),
+                    proof.fence(),
+                    proof.checkpoint().clone(),
+                );
+            }
+            if mode == "hold" {
+                let hold = HistoryRetentionHold::new(
+                    Uuid::new_v4(),
+                    checkpoint.retained_manifest(&admitted).unwrap().key(),
+                    admitted.observed_at(),
+                    None,
+                    PrincipalIdentity::generate(),
+                )
+                .unwrap();
+                fixture_write(
+                    &storage,
+                    storage.commit_history_lifecycle(
+                        admitted
+                            .control()
+                            .create_hold(hold, admitted.fence())
+                            .unwrap(),
+                    ),
+                )
+                .await
+                .unwrap();
+            }
+            {
+                let mut state = storage.state.write_control().await;
+                if mode == "audit" {
+                    state.next_event_sequence = i64::MAX;
+                }
+                let task = state.tasks.get_mut(&lease.task_id().id()).unwrap();
+                if mode == "cancel" {
+                    task.control
+                        .request_cancellation(StorageTaskCancellation::new(Utc::now(), None, None));
+                }
+                if mode == "deadline" {
+                    task.control = StorageTaskControl::try_new(
+                        StorageTaskKind::HistoryExpiry,
+                        None,
+                        Some(Utc::now() - Duration::seconds(1)),
+                        StorageTaskExecutionPhase::HistoryAuthority,
+                        None,
+                    )
+                    .unwrap();
+                }
+            }
+            let before = storage.capture_history_lifecycle().await.unwrap();
+            let (copies, stored_checkpoint) = {
+                let state = storage.state.read_control().await;
+                (
+                    state.history.len(),
+                    state.tasks[&lease.task_id().id()].checkpoint.clone(),
+                )
+            };
+            assert!(
+                storage
+                    .process_history_expiry_task(
+                        HistoryExpiryTaskRequest::new(lease.clone(), None).with_protection(proof)
+                    )
+                    .await
+                    .is_err(),
+                "{mode}"
+            );
+            let state = storage.state.read_control().await;
+            assert_eq!(state.history.len(), copies);
+            assert_eq!(
+                state.tasks[&lease.task_id().id()].checkpoint,
+                stored_checkpoint
+            );
+            assert_eq!(&state.history_lifecycle, before.control());
+        })
+        .await;
+    storage.unregister_runtime(runtime).await.unwrap();
+}

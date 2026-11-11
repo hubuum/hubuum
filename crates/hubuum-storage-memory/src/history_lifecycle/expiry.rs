@@ -57,49 +57,63 @@ pub(super) async fn process_task(
     let checkpoint = HistoryExpiryTaskCheckpoint::from_task(&stored, &evidence)
         .map_err(invalid_contract_value)?;
     let snapshot = guard.history_lifecycle_snapshot()?;
-    if checkpoint.admitted() {
+    let mut state = guard.clone();
+    let next = if checkpoint.admitted() {
         checkpoint
             .retained_manifest(&snapshot)
             .map_err(invalid_contract_value)?;
-        return Ok(checkpoint);
-    }
-    if stored.checkpoint().is_none()
-        && snapshot
-            .control()
-            .authority()
-            .expiry()
-            .intents()
-            .iter()
-            .any(|intent| {
-                intent.manifest().run() == Uuid::from_bytes(*checkpoint.task_identity().as_bytes())
-            })
-    {
-        return Err(StorageError::unavailable(
-            "Recover the original history expiry task checkpoint",
-        ));
-    }
-    let Some(selection) = checkpoint
-        .selection_request(snapshot.fence())
-        .map_err(invalid_contract_value)?
-    else {
-        return Ok(checkpoint);
+        let Some(protection) = request.protection() else {
+            return Ok(checkpoint);
+        };
+        remove_on(&mut state, &checkpoint, protection)?
+    } else {
+        if stored.checkpoint().is_none()
+            && snapshot
+                .control()
+                .authority()
+                .expiry()
+                .intents()
+                .iter()
+                .any(|intent| {
+                    intent.manifest().run()
+                        == Uuid::from_bytes(*checkpoint.task_identity().as_bytes())
+                })
+        {
+            return Err(StorageError::unavailable(
+                "Recover the original history expiry task checkpoint",
+            ));
+        }
+        let Some(selection) = checkpoint
+            .selection_request(snapshot.fence())
+            .map_err(invalid_contract_value)?
+        else {
+            return Ok(checkpoint);
+        };
+        // Stage control, events, checkpoint and accounting together. Any failure
+        // leaves the original claim and exact retained membership unchanged.
+        request
+            .require_selection_authorization(&checkpoint)
+            .map_err(invalid_contract_value)?;
+        let page = admit_on(&mut state, selection)?;
+        checkpoint
+            .record_page(&page)
+            .map_err(invalid_contract_value)?
     };
-    // Stage control, events, checkpoint and accounting together. Any failure
-    // leaves the original claim and exact retained membership unchanged.
-    request
-        .require_selection_authorization(&checkpoint)
-        .map_err(invalid_contract_value)?;
-    let mut state = guard.clone();
-    let page = admit_on(&mut state, selection)?;
-    let next = checkpoint
-        .record_page(&page)
-        .map_err(invalid_contract_value)?;
     let encoded = next.encode().map_err(invalid_contract_value)?;
     task_for_expiry(&state, &lease)?;
+    let intent = state
+        .history_lifecycle
+        .authority()
+        .expiry()
+        .intent(next.batch());
+    let total = intent.map_or(0, |intent| intent.manifest().members().len() as i32);
+    let removed = intent.map_or(0, |intent| intent.removals().len() as i32);
     let task = state
         .tasks
         .get_mut(&lease.task_id().id())
         .expect("validated task");
+    task.progress =
+        StorageTaskProgress::try_new(total, removed, removed, 0).map_err(invalid_contract_value)?;
     task.checkpoint = Some(encoded);
     task.status = StorageTaskStatus::Running;
     task.updated_at = Utc::now();
@@ -109,13 +123,217 @@ pub(super) async fn process_task(
         StorageTaskEventInput::new("running", "History expiry continuation committed").with_data(
             Some(serde_json::json!({
                 "batch": next.batch(), "admitted": next.admitted(),
-                "pass_finished": next.pass_finished(), "scanned": page.scanned(),
+                "pass_finished": next.pass_finished(), "finished": next.finished(), "removed": removed,
             })),
         ),
     )?;
     task_for_expiry(&state, &lease)?;
     *guard = state;
     Ok(next)
+}
+
+fn remove_on(
+    state: &mut MemoryState,
+    checkpoint: &HistoryExpiryTaskCheckpoint,
+    protection: &HistoryExposureProtection,
+) -> Result<HistoryExpiryTaskCheckpoint, StorageError> {
+    let snapshot = state.history_lifecycle_snapshot()?;
+    let intent = checkpoint
+        .protected_intent(&snapshot, protection)
+        .map_err(invalid_contract_value)?;
+    if intent.is_complete() {
+        return checkpoint
+            .complete_batch(&snapshot, protection)
+            .map_err(invalid_contract_value);
+    }
+    if state
+        .runtime_registrations
+        .values()
+        .any(|runtime| !runtime.history_protocol.supports_online())
+        || state
+            .history_publications
+            .expiry_blocked(intent.manifest().fence())
+    {
+        return Err(StorageError::unavailable(
+            "Pre-exclusion publication has not positively retired",
+        ));
+    }
+    let member = intent
+        .manifest()
+        .members()
+        .iter()
+        .find(|member| {
+            !intent
+                .removals()
+                .iter()
+                .any(|receipt| receipt.target() == member.target())
+        })
+        .expect("incomplete intent has pending membership");
+    let family = member.family();
+    let target = member.target();
+    let matches = |evidence: &StorageIdentityEvidence| {
+        evidence
+            .subject()
+            .and_then(|subject| subject.record_identity())
+            == Some(target)
+    };
+    enum CopyLocation {
+        History(usize),
+        Schema(usize),
+        Computed(usize),
+        Relation(StorageBackupHistorySection, usize),
+    }
+    let matches_row = |row: &StorageBackupRow| {
+        row.get("logical_identity")
+            .cloned()
+            .and_then(|raw| serde_json::from_value::<StorageIdentityEvidence>(raw).ok())
+            .is_some_and(|evidence| matches(&evidence))
+    };
+    use StorageIdentityHistoryKind as F;
+    let (location, row) = match family {
+        F::ClassSchema => {
+            let index = state
+                .schema_history
+                .iter()
+                .position(matches_row)
+                .ok_or_else(|| StorageError::conflict("Exact history copy is missing"))?;
+            (
+                CopyLocation::Schema(index),
+                state.schema_history[index].clone(),
+            )
+        }
+        F::ComputedDefinitions => {
+            let index = state
+                .computed_history
+                .iter()
+                .position(|row| row.logical_identity().is_some_and(matches))
+                .ok_or_else(|| StorageError::conflict("Exact history copy is missing"))?;
+            let raw = serde_json::to_value(&state.computed_history[index]).map_err(|_| {
+                StorageError::backend_failure("Cannot encode computed history copy")
+            })?;
+            (
+                CopyLocation::Computed(index),
+                StorageBackupRow::try_from_value(raw).map_err(invalid_contract_value)?,
+            )
+        }
+        F::ClassRelation | F::ObjectRelation => {
+            let section = if family == F::ClassRelation {
+                StorageBackupHistorySection::ClassRelationHistory
+            } else {
+                StorageBackupHistorySection::ObjectRelationHistory
+            };
+            let rows = state
+                .relation_history
+                .get(&section)
+                .ok_or_else(|| StorageError::conflict("Exact relation history is missing"))?;
+            let index = rows
+                .iter()
+                .position(matches_row)
+                .ok_or_else(|| StorageError::conflict("Exact history copy is missing"))?;
+            (CopyLocation::Relation(section, index), rows[index].clone())
+        }
+        _ => {
+            let index = state
+                .history
+                .iter()
+                .position(|row| row.family() == family && matches(&row.logical_identity))
+                .ok_or_else(|| StorageError::conflict("Exact history copy is missing"))?;
+            (
+                CopyLocation::History(index),
+                state.history[index].backup_history_row()?.1,
+            )
+        }
+    };
+    if bounded_encoded_bytes(&row, u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES))?.is_none() {
+        return Err(StorageError::input_too_large(
+            "Exact history copy exceeds removal budget",
+        ));
+    }
+    let time = |field| {
+        row.get(field)
+            .filter(|value| !value.is_null())
+            .cloned()
+            .map(serde_json::from_value::<DateTime<Utc>>)
+            .transpose()
+            .map_err(|_| StorageError::backend_failure("Invalid native history interval"))
+    };
+    let from = time(if family == F::ClassSchema {
+        "occurred_at"
+    } else {
+        "valid_from"
+    })?
+    .ok_or_else(|| StorageError::conflict("Native history start is missing"))?;
+    let until = time("valid_to")?;
+    let deleted = row.get("operation").and_then(Value::as_str) == Some("delete");
+    let anchor = if family == F::ClassSchema {
+        HistoryRetentionAnchor::SchemaEvent(from)
+    } else if deleted {
+        HistoryRetentionAnchor::Deleted(from)
+    } else {
+        HistoryRetentionAnchor::Closed(
+            until.ok_or_else(|| StorageError::conflict("History copy is no longer closed"))?,
+        )
+    };
+    let evidence: StorageIdentityEvidence = serde_json::from_value(
+        row.get("logical_identity")
+            .cloned()
+            .ok_or_else(|| StorageError::conflict("Exact history identity is missing"))?,
+    )
+    .map_err(|_| StorageError::backend_failure("Invalid native history identity"))?;
+    let candidate = HistoryExpiryCandidate::from_evidence(
+        family,
+        &evidence,
+        Some(anchor),
+        state.history_candidate_has_dependency(family, &evidence),
+    )
+    .map_err(invalid_contract_value)?
+    .ok_or_else(|| StorageError::conflict("History removal identity is unresolved"))?
+    .with_native_interval(from, until)
+    .map_err(invalid_contract_value)?;
+    member
+        .validate_removal(
+            &candidate,
+            snapshot.control().authority(),
+            snapshot.observed_at(),
+        )
+        .map_err(invalid_contract_value)?;
+    match location {
+        CopyLocation::History(index) => {
+            state.history.remove(index);
+        }
+        CopyLocation::Schema(index) => {
+            state.schema_history.remove(index);
+        }
+        CopyLocation::Computed(index) => {
+            state.computed_history.remove(index);
+        }
+        CopyLocation::Relation(section, index) => {
+            state
+                .relation_history
+                .get_mut(&section)
+                .expect("validated history section")
+                .remove(index);
+        }
+    }
+    let deletion = HistoryExpiryExactDeletion::from_affected_rows(
+        target,
+        protection.checkpoint().clone(),
+        Utc::now(),
+        1,
+    )
+    .map_err(invalid_contract_value)?;
+    let change = snapshot
+        .control()
+        .record_expiry_removal(checkpoint.batch(), deletion, snapshot.fence())
+        .map_err(invalid_contract_value)?;
+    state.append_retained_lifecycle_events(
+        change
+            .next()
+            .audit_events_since(change.expected())
+            .map_err(invalid_contract_value)?,
+    )?;
+    state.history_lifecycle = change.next().clone();
+    Ok(checkpoint.clone())
 }
 
 fn task_for_expiry(

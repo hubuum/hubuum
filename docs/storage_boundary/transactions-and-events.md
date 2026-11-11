@@ -610,7 +610,7 @@ authority on every page. Persist the intent, read-exclusion projection and requi
 canonical audit facts together; append failure rolls back all of them. Existing
 publications stay charged after their original revision is fenced and require
 exact positive settlement. Primary commit grants no deletion authority: capture
-and independently publish its recovery authority before a future removal step.
+and independently publish its recovery authority before any removal step.
 
 `HistoryLifecycleStorage::process_history_expiry_task` requires that same
 independent original OnlineV1 control scope and the current task lease with its
@@ -621,5 +621,21 @@ exclusions, the original versioned checkpoint and resident accounting commit in
 one transaction. Any failure rolls back the entire step. Restart resolves an
 admitted checkpoint to its original retained manifest before selecting again;
 missing or changed correspondence is unavailable. Waiting and cancellation retain
-history obligations. The service independently protects admitted authority before
-any future physical-removal phase; this operation never removes source payloads.
+history obligations. The service independently publishes and reads back admitted authority. A trusted,
+nonserialized `HistoryExposureProtection` on the request permits at most one exact
+closed-copy removal per call. Recheck the original membership and native interval,
+current governing policy revisions, holds, dependencies, fleet and application
+fence under the same authority lock. Every publication owner admitted at or before
+the intent's predecessor revision must positively settle; clocks, lost runtimes
+and API-owner retirement cannot substitute. Newer owners obey exclusions and do
+not block this batch.
+
+The native DELETE, exact one-row receipt, canonical audit, task checkpoint,
+accounting and final live-lease/deadline/cancellation check commit together.
+Absence cannot create a receipt. A retry skips already receipted members and
+preserves first clocks and checkpoint identities. Independent read-back must cover
+all committed receipts before a completed checkpoint can be written. Finalization
+rechecks that checkpoint against the retained ledger and exact success count.
+One task completes after one bounded admitted batch, or after an empty finite
+pass; later tasks restart scanning to revisit late rows and closures. Production
+workers still exclude this kind and no submission trigger is enabled.

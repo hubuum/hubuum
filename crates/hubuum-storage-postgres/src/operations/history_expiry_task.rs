@@ -52,34 +52,40 @@ pub(crate) async fn process(
             }
             let checkpoint = checkpoint_for(connection, &row).await?;
             let snapshot = crate::backend::capture_history_lifecycle_on(connection).await?;
-            if checkpoint.admitted() {
-                checkpoint.retained_manifest(&snapshot)?;
-                return Ok(checkpoint);
-            }
-            // A retained original admission without its checkpoint is corruption or
-            // incomplete recovery, never permission to create a replacement batch.
-            if stored.checkpoint().is_none()
-                && snapshot
-                    .control()
-                    .authority()
-                    .expiry()
-                    .intents()
-                    .iter()
-                    .any(|intent| {
-                        intent.manifest().run()
-                            == Uuid::from_bytes(*checkpoint.task_identity().as_bytes())
-                    })
-            {
-                return Err(PostgresStorageError::unavailable(
-                    "Recover the original history expiry task checkpoint",
-                ));
-            }
-            let Some(selection) = checkpoint.selection_request(snapshot.fence())? else {
-                return Ok(checkpoint);
+            let (next, total, removed, scanned) = if checkpoint.admitted() {
+                let total = checkpoint.retained_manifest(&snapshot)?.members().len() as i32;
+                let Some(protection) = request.protection() else {
+                    return Ok(checkpoint);
+                };
+                let (next, removed) = crate::backend::remove_history_expiry_on(connection, &checkpoint, protection).await?;
+                (next, total, removed, 0)
+            } else {
+                // A retained original admission without its checkpoint is corruption or
+                // incomplete recovery, never permission to create a replacement batch.
+                if stored.checkpoint().is_none()
+                    && snapshot
+                        .control()
+                        .authority()
+                        .expiry()
+                        .intents()
+                        .iter()
+                        .any(|intent| {
+                            intent.manifest().run()
+                                == Uuid::from_bytes(*checkpoint.task_identity().as_bytes())
+                        })
+                {
+                    return Err(PostgresStorageError::unavailable(
+                        "Recover the original history expiry task checkpoint",
+                    ));
+                }
+                let Some(selection) = checkpoint.selection_request(snapshot.fence())? else {
+                    return Ok(checkpoint);
+                };
+                request.require_selection_authorization(&checkpoint)?;
+                let page = crate::backend::admit_history_expiry_on(connection, selection).await?;
+                let total = page.manifest().map_or(0, |manifest| manifest.members().len() as i32);
+                (checkpoint.record_page(&page)?, total, 0, page.scanned())
             };
-            request.require_selection_authorization(&checkpoint)?;
-            let page = crate::backend::admit_history_expiry_on(connection, selection).await?;
-            let next = checkpoint.record_page(&page)?;
             let encoded = next.encode()?;
             append_task_lifecycle_event(
                 connection,
@@ -87,7 +93,7 @@ pub(crate) async fn process(
                 StorageTaskEventInput::new("running", "History expiry continuation committed")
                     .with_data(Some(serde_json::json!({
                         "batch": next.batch(), "admitted": next.admitted(),
-                        "pass_finished": next.pass_finished(), "scanned": page.scanned(),
+                        "pass_finished": next.pass_finished(), "finished": next.finished(), "removed": removed, "scanned": scanned,
                     }))),
                 &worker_provenance(&row)?,
             )
@@ -108,6 +114,10 @@ pub(crate) async fn process(
             )
             .set((
                 tasks::status.eq("running"),
+                tasks::total_items.eq(total),
+                tasks::processed_items.eq(removed as i32),
+                tasks::success_items.eq(removed as i32),
+                tasks::failed_items.eq(0),
                 tasks::task_checkpoint.eq(Some(encoded.encoded())),
                 tasks::updated_at.eq(now),
             ))

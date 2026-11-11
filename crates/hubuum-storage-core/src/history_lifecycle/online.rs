@@ -401,6 +401,39 @@ impl HistoryExpiryMember {
     pub const fn input_bytes(&self) -> HistoryExpiryInputBytes {
         self.input_bytes
     }
+
+    /// Recheck native facts and current governing policy under the adapter's
+    /// removal lock. An exclusion is never evidence of continued eligibility.
+    pub fn validate_removal(
+        &self,
+        candidate: &HistoryExpiryCandidate,
+        authority: &HistoryLifecycleAuthority,
+        now: DateTime<Utc>,
+    ) -> Result<(), StorageValidationError> {
+        if candidate.family() != self.family
+            || candidate.target() != self.target
+            || candidate.anchor() != Some(self.anchor)
+            || candidate.read_span() != Some(&self.read_span)
+            || candidate.attributions() != self.attributions
+        {
+            return Err(invalid(
+                "Native expiry copy differs from retained membership",
+            ));
+        }
+        let decision = authority.inspect(candidate, now, &[])?;
+        if !decision.eligible()
+            || decision
+                .endpoints()
+                .iter()
+                .map(|endpoint| endpoint.policy().source())
+                .ne(self.policies.iter().map(Some))
+        {
+            return Err(invalid(
+                "Current policy, hold or dependency blocks history removal",
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Stable root initiation, retained independently of task and principal rows.

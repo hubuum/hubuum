@@ -9,6 +9,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Gated history expiry tasks can remove retained exact closed versions in bounded
+  transactions after independent membership protection and positive publication
+  retirement. Deletion, first receipts and canonical audit commit atomically;
+  completion requires independent protection of every receipt. Holds, changed
+  policies, dependencies, cancellation and stale ownership preserve pending
+  obligations. Production expiry and manual/periodic triggers remain disabled.
+
 - **Breaking storage SDK 0.20 isolation descriptors:** renderer subprocesses
   inherit configured runtime exclusion across exec. Parent
   crashes cannot release offline recovery while a renderer remains alive. HTTP
@@ -71,8 +78,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Pending batches wait for independently protected execution, and task
   cancellation preserves every retained history obligation. Unknown payload or
   checkpoint versions stay unclaimed. Production workers keep their existing
-  seven-kind support; manual/periodic admission and physical cleanup remain
-  disabled. Retained eighth-kind work prevents downgrade; preserve recovery
+  seven-kind support; manual/periodic admission and production physical cleanup
+  remain disabled. Retained eighth-kind work prevents downgrade; preserve recovery
   evidence and roll forward.
 - Historical population reads preserve explicitly selected logical class UUIDs.
   Retained expiry gaps require original authorization facts and configured

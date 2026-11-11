@@ -4,7 +4,8 @@ use std::collections::BTreeSet;
 
 use hubuum_domain::{PrincipalId, PrincipalIdentity};
 use hubuum_storage_core::{
-    HistoryAuthorityRevision, HistoryExpiryTaskCheckpoint, HistoryHoldTransition,
+    ApplicationFence, DeletionCheckpointIdentity, HistoryAuthorityRevision,
+    HistoryExpiryTaskCheckpoint, HistoryExposureProtection, HistoryHoldTransition,
     HistoryLifecycleControlChange, HistoryLifecycleOperationEvidence, HistoryLifecycleScan,
     HistoryLifecycleSnapshot, HistoryLifecycleStorage, HistoryPolicyApplyError,
     HistoryPolicyApplyRequest, HistoryPolicyChange, HistoryPolicyPreview, HistoryPolicyRecord,
@@ -166,14 +167,16 @@ async fn commit_protected(
 ) -> Result<HistoryLifecycleSnapshot, ApiError> {
     let storage = storage_handle(context);
     let applied = storage.commit_history_lifecycle(change).await?;
-    protect_snapshot(context, session, applied).await
+    protect_snapshot(context, session, applied)
+        .await
+        .map(|(snapshot, _)| snapshot)
 }
 
 async fn protect_snapshot(
     context: &AppContext,
     mut session: CheckpointSession,
     applied: HistoryLifecycleSnapshot,
-) -> Result<HistoryLifecycleSnapshot, ApiError> {
+) -> Result<(HistoryLifecycleSnapshot, CheckpointSession), ApiError> {
     let storage = storage_handle(context);
     let expected_authority = applied.control().authority().clone();
     let capture = storage.capture_control_checkpoint().await?;
@@ -185,7 +188,7 @@ async fn protect_snapshot(
             "Committed history authority was not captured for recovery protection",
         ));
     }
-    tokio::task::spawn_blocking(move || {
+    let session = tokio::task::spawn_blocking(move || {
         session.publish_control(&capture)?;
         if !session
             .checkpoint()
@@ -196,24 +199,36 @@ async fn protect_snapshot(
                 "Independent evidence does not cover committed history authority",
             ));
         }
-        Ok(())
+        Ok(session)
     })
     .await
     .map_err(|_| unavailable("History policy protection worker failed"))??;
-    Ok(applied)
+    Ok((applied, session))
 }
 
 pub(super) async fn protect_expiry(
     context: &AppContext,
     checkpoint: &HistoryExpiryTaskCheckpoint,
-) -> Result<(), ApiError> {
+) -> Result<HistoryExposureProtection, ApiError> {
     let session = protected_session(context, context.history_retention()).await?;
     let snapshot = storage_handle(context).capture_history_lifecycle().await?;
     checkpoint
         .retained_manifest(&snapshot)
         .map_err(|_| unavailable("History expiry lacks its original retained admission"))?;
-    protect_snapshot(context, session, snapshot).await?;
-    Ok(())
+    let (snapshot, session) = protect_snapshot(context, session, snapshot).await?;
+    let fence = ApplicationFence::new(
+        snapshot.fence().incarnation(),
+        snapshot.fence().deletion_revision().value() as i64,
+    )
+    .map_err(|_| unavailable("Invalid expiry application fence"))?;
+    let authority = session
+        .checkpoint()
+        .history_lifecycle()
+        .cloned()
+        .ok_or_else(|| unavailable("Independent history authority is absent"))?;
+    let identity = DeletionCheckpointIdentity::new(session.checkpoint().identity().to_owned())
+        .map_err(|_| unavailable("Invalid independently verified checkpoint identity"))?;
+    Ok(HistoryExposureProtection::new(authority, fence, identity))
 }
 
 pub(crate) async fn list(

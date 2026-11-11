@@ -311,10 +311,10 @@ without changing the source, restored copy or retained authority. These fixtures
 qualify native admission and exposure checks. Complete backup and logical-restore
 pipeline coverage and concurrent restore execution remain unfinished.
 Primary admission is not independent checkpoint protection:
-its authority must be captured and independently published before a future
-removal capability can use it. No removal capability is added here. Complete
-native concurrency qualification, complete restore execution, physical cleanup and
-measured resource/liveness acceptance remain unfinished.
+its authority must be captured and independently published before the gated
+executor can remove a copy. Complete
+native concurrency qualification, complete restore execution, production cleanup
+activation and measured resource/liveness acceptance remain unfinished.
 
 ### Executor implementation and acceptance map
 
@@ -330,8 +330,14 @@ does not become a watermark for a later run.
 Manual selection pages require current configured unscoped administrator
 authorization tied to the original principal UUID. Recovery can preserve an
 already admitted batch after that principal is deleted. The executor independently
-publishes and reads back authority, then durably waits for a future qualified
-removal phase. Failed protection keeps the original batch pending. Cancellation
+publishes and reads back authority before each bounded removal transaction. It
+removes at most one exact closed copy per transaction after current policy/hold,
+dependency and positive pre-exclusion publication retirement checks. Deletion,
+first receipt, canonical audit and task checkpoint commit atomically. Missing
+copies cannot manufacture a first-removal clock. Existing receipts are preserved
+on retry. Independent read-back must cover every receipt before a task completes
+its one admitted batch; a later task starts a fresh pass. Failed protection or a
+blocked removal keeps the original batch waiting. Cancellation
 does not undo exclusions, discharge copy obligations or imply physical cleanup.
 
 Lifecycle migration 000005 appends the new per-kind capacity and weight in one
@@ -341,7 +347,7 @@ and administrator processes, back up the database, apply the migration and
 refresh grants, then start matching eight-kind binaries. Include the new entries
 in policy edits; preserve recovery evidence and roll
 forward after new work is retained. Production workers still advertise their
-existing seven kinds. Manual/periodic submission, coalescing and physical removal
+existing seven kinds. Manual/periodic submission, coalescing and production activation
 remain disabled until the remaining gates pass; configuring an expiry policy
 alone does not enable either path.
 
