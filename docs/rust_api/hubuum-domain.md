@@ -39,6 +39,10 @@ validated constructors and explicit primitive accessors. Generic storage
 metadata uses `ResourceId`; operation-specific contracts use the corresponding
 resource ID type so an adapter cannot silently mix identity domains.
 
+`IdentityScopeName` preserves nonempty names without surrounding whitespace.
+Deployment authentication and runtime settings use its shared constructor;
+reserved provider names remain a consumer-specific policy.
+
 `BoundedJsonPatch` validates JSON Patch size, operation count, pointer depth,
 and cumulative application work before an adapter sees the document. Patch
 application and the portable storage-JSON envelope use crate-owned error

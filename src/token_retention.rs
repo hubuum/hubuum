@@ -64,7 +64,19 @@ async fn token_retention_worker_loop(
     config: TokenRetentionWorkerConfig,
     shutdown: ShutdownSignal,
 ) {
+    let mut changes = pool.subscribe_runtime_settings();
     loop {
+        let runtime = crate::config::runtime::for_storage(&pool);
+        let config = match runtime {
+            Ok(runtime) => {
+                TokenRetentionWorkerConfig::from_config(&runtime).unwrap_or_else(|_| config.clone())
+            }
+            Err(_) => config.clone(),
+        };
+        if !config.enabled || !pool.applied_runtime_settings().maintenance_allowed() {
+            tokio::select! { biased; _ = shutdown.requested() => break, _ = changes.changed() => {}, _ = sleep(config.interval) => {} }
+            continue;
+        }
         let result = tokio::select! {
             biased;
             _ = shutdown.requested() => break,
@@ -85,6 +97,7 @@ async fn token_retention_worker_loop(
         tokio::select! {
             biased;
             _ = shutdown.requested() => break,
+            _ = changes.changed() => {},
             _ = sleep(config.interval) => {}
         }
     }
@@ -122,9 +135,6 @@ where
             return;
         }
     };
-    if !config.enabled {
-        return;
-    }
 
     TOKEN_RETENTION_WORKER.call_once(move || {
         info!(
@@ -136,6 +146,18 @@ where
         );
         spawn_token_retention_worker_loop(pool, config);
     });
+}
+
+impl TokenRetentionWorkerConfig {
+    fn from_config(config: &crate::config::AppConfig) -> Result<Self, ApiError> {
+        let mut legacy = config.clone();
+        legacy.token_lifetime_hours = crate::config::get_config()?.token_lifetime_hours;
+        Ok(Self {
+            enabled: config.token_retention_purge_enabled,
+            settings: legacy.token_retention_settings()?,
+            interval: Duration::from_secs(config.token_retention_purge_interval_seconds),
+        })
+    }
 }
 
 #[cfg(test)]

@@ -21,6 +21,63 @@ pub const MANUAL_MEMBERSHIP_SOURCE: &str = "manual";
 /// Membership-source marker for directory-managed group assignments.
 pub const EXTERNAL_MEMBERSHIP_SOURCE: &str = "external";
 
+/// Nonempty identity namespace whose exact spelling is preserved across
+/// deployment configuration, runtime settings, and persisted identities.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String")]
+pub struct IdentityScopeName(String);
+
+impl IdentityScopeName {
+    pub fn new(value: impl Into<String>) -> Result<Self, IdentityScopeNameError> {
+        let value = value.into();
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Err(IdentityScopeNameError::Empty);
+        }
+        if trimmed != value {
+            return Err(IdentityScopeNameError::SurroundingWhitespace);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for IdentityScopeName {
+    type Error = IdentityScopeNameError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl fmt::Display for IdentityScopeName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentityScopeNameError {
+    Empty,
+    SurroundingWhitespace,
+}
+
+impl fmt::Display for IdentityScopeNameError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Empty => "identity scope name must not be empty",
+            Self::SurroundingWhitespace => {
+                "identity scope name must not contain leading or trailing whitespace"
+            }
+        })
+    }
+}
+
+impl std::error::Error for IdentityScopeNameError {}
+
 /// Closed set of principal kinds understood by every Hubuum layer.
 ///
 /// Adapters must parse persisted values into this type before returning a
@@ -93,7 +150,46 @@ impl std::error::Error for PrincipalKindParseError {}
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
+
+    #[rstest]
+    #[case::local("local".to_string())]
+    #[case::dotted("corp.example.org".to_string())]
+    #[case::unicode_with_space("Bedrift Øst".to_string())]
+    #[case::long("x".repeat(129))]
+    fn scope_name_preserves_valid_names(#[case] value: String) {
+        let scope = IdentityScopeName::new(value.clone()).unwrap();
+        let serialized = serde_json::to_string(&scope).unwrap();
+        let reloaded: IdentityScopeName = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(reloaded.as_str(), value);
+    }
+
+    #[rstest]
+    #[case::empty("", IdentityScopeNameError::Empty)]
+    #[case::whitespace(" \t", IdentityScopeNameError::Empty)]
+    #[case::leading(" ldap", IdentityScopeNameError::SurroundingWhitespace)]
+    #[case::trailing("ldap ", IdentityScopeNameError::SurroundingWhitespace)]
+    #[case::unicode("\u{2003}ldap", IdentityScopeNameError::SurroundingWhitespace)]
+    fn scope_name_rejects_invalid_names(
+        #[case] value: &str,
+        #[case] expected: IdentityScopeNameError,
+    ) {
+        assert_eq!(IdentityScopeName::new(value), Err(expected));
+    }
+
+    #[rstest]
+    #[case::empty("")]
+    #[case::whitespace(" \t")]
+    #[case::leading(" ldap")]
+    #[case::trailing("ldap ")]
+    fn deserialization_rejects_invalid_scope_names(#[case] value: &str) {
+        let serialized = serde_json::to_string(value).unwrap();
+
+        assert!(serde_json::from_str::<IdentityScopeName>(&serialized).is_err());
+    }
 
     #[test]
     fn principal_kind_round_trips_its_persisted_name() {

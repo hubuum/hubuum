@@ -34,12 +34,6 @@ pub(crate) async fn init(storage: &StorageHandle, settings: &InitializationSetti
         error!(message = &err_msg);
         return Err(err_msg);
     }
-    if let Err(e) = crate::auth::ensure_configured_identity_scopes(storage).await {
-        let err_msg = format!("Failed to ensure configured identity scopes: {}", e);
-        error!(message = &err_msg);
-        return Err(err_msg);
-    }
-
     let created = bootstrap_default_admin_if_required(storage, settings, || async {
         let default_password = generate_random_password(32);
         hash_password_async(

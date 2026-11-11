@@ -111,6 +111,11 @@ class rebuild tasks. Personal values are evaluated when their owner reads an
 object. The [functional corpus](https://github.com/hubuum/hubuum/blob/main/test-corpora/README.md#object-data-and-computed-fields)
 includes verified restore examples for both scopes.
 
+[Runtime settings](runtime_settings.md) and their audit records are deployment
+configuration. Backups exclude them, and a restore leaves the target
+deployment's runtime settings and history unchanged. Reapply runtime settings
+explicitly after restoring into a new deployment.
+
 The manifest does not carry partial-selection counts, import-planning
 warnings, a collection scope, or an embedded import request.
 

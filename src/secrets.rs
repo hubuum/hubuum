@@ -4,7 +4,7 @@ use std::time::Instant;
 use hubuum_secrets::{
     DEFAULT_MAX_SECRET_BYTES, EnvironmentProvider, FileProvider, FileSymlinkPolicy, ResolvedSecret,
     ResolvedSecretGroup, SecretError, SecretErrorKind, SecretName, SecretProviderKind, SecretRef,
-    SecretResolver,
+    SecretResolver, SecretVersion, SecretVersionSelector,
 };
 
 use crate::config::{CommandLineDatabaseUrl, SecretSourceOptions, SecretSourceSettings};
@@ -20,11 +20,22 @@ struct ConsumerSecrets {
 
 impl ConsumerSecrets {
     async fn resolve(&self, alias: &str) -> Result<ResolvedSecret, SecretError> {
+        self.resolve_version(alias, None).await
+    }
+
+    async fn resolve_version(
+        &self,
+        alias: &str,
+        version: Option<&SecretVersion>,
+    ) -> Result<ResolvedSecret, SecretError> {
         let started = Instant::now();
         crate::observability::metrics::secret_source_identity(self.provider_label);
         let result = match SecretName::new(alias) {
             Ok(name) => {
-                let reference = SecretRef::new(self.provider_kind, name);
+                let selector = version.map_or(SecretVersionSelector::Latest, |version| {
+                    SecretVersionSelector::Exact(version.clone())
+                });
+                let reference = SecretRef::new(self.provider_kind, name).with_version(selector);
                 self.resolver.resolve(&reference).await
             }
             Err(error) => Err(error),
@@ -74,6 +85,7 @@ struct ApplicationSecrets {
     event_sink: ConsumerSecrets,
     remote: ConsumerSecrets,
     ldap: ConsumerSecrets,
+    runtime_settings: ConsumerSecrets,
     token: ConsumerSecrets,
 }
 
@@ -113,6 +125,13 @@ impl ApplicationSecrets {
                 "remote_target",
             )?,
             ldap: consumer_resolver(&settings, "HUBUUM_LDAP_SECRET_", None, "ldap", "ldap")?,
+            runtime_settings: consumer_resolver(
+                &settings,
+                "HUBUUM_RUNTIME_SETTINGS_KEY_",
+                None,
+                "runtime-settings",
+                "runtime_settings",
+            )?,
             token: consumer_resolver(
                 &settings,
                 "HUBUUM_TOKEN_HASH_KEY_",
@@ -295,6 +314,16 @@ pub(crate) async fn resolve_ldap_secret(alias: &str) -> Result<ResolvedSecret, S
     configured()?.ldap.resolve(alias).await
 }
 
+pub(crate) async fn resolve_runtime_settings_key(
+    alias: &str,
+    version: Option<&SecretVersion>,
+) -> Result<ResolvedSecret, SecretError> {
+    configured()?
+        .runtime_settings
+        .resolve_version(alias, version)
+        .await
+}
+
 pub(crate) fn resolve_token_hash_key() -> Result<Vec<u8>, SecretError> {
     let secrets = configured()?;
     let resolved = futures::executor::block_on(secrets.token.resolve("key"))?;
@@ -351,6 +380,283 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn unavailable_authentication_provider_is_retried_at_same_revision() {
+        use crate::permissions::{AppContext, LocalPermissionBackend};
+        use crate::storage::StorageHandle;
+        use hubuum_domain::ResourceRevision;
+        use std::sync::Arc;
+
+        const CHILD: &str = "RUNTIME_SETTINGS_RETRY_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let root = std::env::temp_dir().join(format!(
+                "hubuum-runtime-auth-retry-{}",
+                uuid::Uuid::new_v4()
+            ));
+            std::fs::create_dir(&root).unwrap();
+            let run = |phase| {
+                std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "secrets::tests::unavailable_authentication_provider_is_retried_at_same_revision",
+                        "--nocapture",
+                    ])
+                    .env(CHILD, phase)
+                    .env("HUBUUM_SECRET_SOURCE", "file")
+                    .env("HUBUUM_SECRET_FILE_ROOT", &root)
+                    .env("HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF", "retry-key")
+                    .status()
+                    .unwrap()
+            };
+            let writer = run("writer");
+            let reader = if writer.success() {
+                std::fs::remove_file(root.join("runtime-settings").join("retry-key")).unwrap();
+                Some(run("reader"))
+            } else {
+                None
+            };
+            std::fs::remove_dir_all(root).unwrap();
+            assert!(writer.success());
+            assert!(reader.unwrap().success());
+            return;
+        }
+
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                use hubuum_storage_core::{
+                    RuntimeSettingsStorage, StorageAuthenticationProvider,
+                    StorageAuthenticationProviderKind, StorageAuthenticationProviders,
+                    StorageRuntimeSettingsAssignment, StorageRuntimeSettingsUpdate,
+                    StorageRuntimeSettingsValue,
+                };
+                use serde_json::json;
+
+                let root =
+                    std::path::PathBuf::from(std::env::var_os("HUBUUM_SECRET_FILE_ROOT").unwrap());
+                let key_path = root.join("runtime-settings").join("retry-key");
+                std::fs::create_dir_all(key_path.parent().unwrap()).unwrap();
+                let key = [b'k'; 32];
+                let config_path = root.join("provider.json");
+                if std::env::var(CHILD).unwrap() == "writer" {
+                    crate::observability::metrics::init().unwrap();
+                    std::fs::write(&key_path, key).unwrap();
+                    let config = json!({
+                        "scope": "directory",
+                        "url": "ldap://localhost",
+                        "bind_dn": "cn=service,dc=example,dc=org",
+                        "bind_password": "bind-password",
+                        "user_base_dn": "dc=example,dc=org",
+                        "user_filter": "(uid={username})"
+                    });
+                    let providers = crate::auth::protect_runtime_authentication_settings(
+                        vec![crate::models::runtime_settings::RuntimeAuthenticationProviderRequest::Runtime {
+                            name: "directory".to_string(),
+                            kind: crate::models::runtime_settings::RuntimeAuthenticationProviderKind::Ldap,
+                            configuration: config,
+                            enabled: true,
+                            adopt_deployment: false,
+                        }],
+                        None,
+                        &crate::auth::AuthProvidersConfig { ldap: Vec::new() },
+                    )
+                    .await
+                    .unwrap();
+                    std::fs::write(
+                        config_path,
+                        serde_json::to_vec(providers.providers()[0].configuration().unwrap()).unwrap(),
+                    )
+                    .unwrap();
+                    return;
+                }
+                let config = serde_json::from_slice(&std::fs::read(config_path).unwrap()).unwrap();
+                let providers = StorageAuthenticationProviders::try_new(vec![
+                    StorageAuthenticationProvider::try_new(
+                        "directory",
+                        StorageAuthenticationProviderKind::Ldap,
+                        config,
+                    )
+                    .unwrap(),
+                ])
+                .unwrap();
+                let storage = StorageHandle::memory();
+                let revision = storage
+                    .update_runtime_settings(StorageRuntimeSettingsUpdate::new(
+                        StorageRuntimeSettingsAssignment::Managed(
+                            StorageRuntimeSettingsValue::Authentication(providers),
+                        ),
+                        ResourceRevision::INITIAL,
+                        crate::events::EventContext::system(),
+                    ))
+                    .await
+                    .unwrap()
+                    .record()
+                    .revision();
+                let context = AppContext::new(
+                    storage.clone(),
+                    Arc::new(LocalPermissionBackend::new(storage, "admin".to_string())),
+                );
+                context.refresh_runtime_settings().await.unwrap();
+                assert_eq!(context.applied_authentication_revision(), None);
+                assert!(
+                    crate::auth::auth_provider_statuses()
+                        .unwrap()
+                        .iter().any(|provider| provider.name == "directory" && !provider.available)
+                );
+
+                std::fs::write(key_path, key).unwrap();
+                context.refresh_runtime_settings().await.unwrap();
+                assert_eq!(context.applied_authentication_revision(), Some(revision));
+                assert!(
+                    crate::auth::auth_provider_statuses()
+                        .unwrap()
+                        .iter().any(|provider| provider.name == "directory" && provider.available)
+                );
+            });
+    }
+
+    #[test]
+    fn startup_uses_authoritative_authentication_settings_before_provider_scopes() {
+        const CHILD: &str = "RUNTIME_AUTH_STARTUP_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let missing = std::env::temp_dir().join(format!(
+                "hubuum-missing-auth-config-{}.toml",
+                uuid::Uuid::new_v4()
+            ));
+            for ownership in ["managed", "deployment"] {
+                let status = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "secrets::tests::startup_uses_authoritative_authentication_settings_before_provider_scopes",
+                        "--nocapture",
+                    ])
+                    .env(CHILD, ownership)
+                    .env("HUBUUM_AUTH_CONFIG_PATH", &missing)
+                    .status()
+                    .unwrap();
+                assert!(status.success(), "{ownership} child failed");
+            }
+            return;
+        }
+
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                use crate::permissions::{AppContext, LocalPermissionBackend};
+                use crate::storage::StorageHandle;
+                use hubuum_domain::ResourceRevision;
+                use hubuum_storage_core::{
+                    RuntimeSettingsStorage, StorageAuthenticationProvider,
+                    StorageAuthenticationProviderKind, StorageAuthenticationProviders,
+                    StorageRuntimeSettingsAssignment, StorageRuntimeSettingsUpdate,
+                    StorageRuntimeSettingsValue,
+                };
+                use std::sync::Arc;
+
+                let managed = std::env::var(CHILD).unwrap() == "managed";
+                let storage = StorageHandle::memory();
+                if managed {
+                    let provider = StorageAuthenticationProvider::try_new(
+                        "directory",
+                        StorageAuthenticationProviderKind::Ldap,
+                        serde_json::json!({
+                            "scope": "directory",
+                            "url": "ldap://localhost",
+                            "user_base_dn": "dc=example,dc=org",
+                            "user_filter": "(uid={username})"
+                        }),
+                    )
+                    .unwrap();
+                    let providers =
+                        StorageAuthenticationProviders::try_new(vec![provider]).unwrap();
+                    storage
+                        .update_runtime_settings(StorageRuntimeSettingsUpdate::new(
+                            StorageRuntimeSettingsAssignment::Managed(
+                                StorageRuntimeSettingsValue::Authentication(providers),
+                            ),
+                            ResourceRevision::INITIAL,
+                            crate::events::EventContext::system(),
+                        ))
+                        .await
+                        .unwrap();
+                }
+
+                let settings =
+                    crate::utilities::init::InitializationSettings::new("admin").unwrap();
+                crate::utilities::init::init(&storage, &settings)
+                    .await
+                    .unwrap();
+                let context = AppContext::new(
+                    storage.clone(),
+                    Arc::new(LocalPermissionBackend::new(storage, "admin".to_string())),
+                );
+                context.refresh_runtime_settings().await.unwrap();
+                let result =
+                    crate::auth::ensure_configured_identity_scopes(context.backend()).await;
+                assert_eq!(result.is_ok(), managed);
+                if managed {
+                    assert!(
+                        crate::auth::auth_provider_statuses()
+                            .unwrap()
+                            .iter()
+                            .any(|provider| provider.name == "directory" && provider.available)
+                    );
+                }
+            });
+    }
+
+    #[test]
+    fn failed_authentication_release_discards_previous_runtime_providers() {
+        const CHILD: &str = "RUNTIME_AUTH_RELEASE_FAILURE_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let missing = std::env::temp_dir().join(format!(
+                "hubuum-missing-auth-release-{}.toml",
+                uuid::Uuid::new_v4(),
+            ));
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "secrets::tests::failed_authentication_release_discards_previous_runtime_providers"])
+                .env(CHILD, "1")
+                .env("HUBUUM_AUTH_CONFIG_PATH", missing)
+                .status().unwrap();
+            assert!(status.success());
+            return;
+        }
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                use hubuum_storage_core::{
+                    StorageAuthenticationProvider, StorageAuthenticationProviderKind,
+                    StorageAuthenticationProviders,
+                };
+                let providers =
+                    StorageAuthenticationProviders::try_new(
+                        vec![StorageAuthenticationProvider::try_new(
+                "directory", StorageAuthenticationProviderKind::Ldap,
+                serde_json::json!({
+                    "scope": "directory", "url": "ldap://localhost",
+                    "user_base_dn": "dc=example,dc=org", "user_filter": "(uid={username})"
+                }),
+            ).unwrap()],
+                    )
+                    .unwrap();
+                crate::auth::apply_runtime_authentication_settings(Some(&providers))
+                    .await
+                    .unwrap();
+                assert!(
+                    crate::auth::apply_runtime_authentication_settings(None)
+                        .await
+                        .is_err()
+                );
+                assert!(crate::auth::auth_provider_names().is_err());
+            });
     }
 
     #[actix_rt::test]

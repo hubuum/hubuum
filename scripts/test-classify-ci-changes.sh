@@ -85,7 +85,7 @@ for authorization_path in src/tests/permissions/candidate_paging.rs \
   assert_flag "$authorization_output" treetop_conformance true
 done
 
-for history_handler in src/models/history/computed.rs src/api/v1/handlers/classes/history_computed.rs src/api/v1/handlers/classes/history_population.rs src/api/v1/handlers/classes/history_relations.rs crates/hubuum-storage-core/src/api_request_admission.rs src/middlewares/api_request_admission.rs; do
+for history_handler in src/models/history/computed.rs src/api/v1/handlers/classes/history_computed.rs src/api/v1/handlers/classes/history_population.rs src/api/v1/handlers/classes/history_relations.rs crates/hubuum-storage-core/src/api_request_admission.rs src/middlewares/api_request_admission.rs src/models/runtime_settings/discovery.rs; do
   history_output="$(bash "$classifier" "$history_handler")"
   assert_flag "$history_output" openapi true
 done
@@ -785,7 +785,22 @@ if ((literal_include_count == 0)); then
   exit 1
 fi
 
-echo "CI change classifier tests passed."
+# The synchronized Legacy guard and its rollback/application-order regressions
+# require native adapter and production image validation.
+for archive_compatibility_path in \
+  crates/hubuum-storage-postgres/tests/archive_runtime_compatibility.rs \
+  crates/hubuum-storage-postgres/migrations/2026-11-11-000001_archive_runtime_compatibility/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-11-000001_archive_runtime_compatibility/down.sql; do
+  archive_compatibility_output="$(bash "$classifier" "$archive_compatibility_path")"
+  assert_flag "$archive_compatibility_output" code true
+  assert_flag "$archive_compatibility_output" rust true
+  assert_flag "$archive_compatibility_output" container true
+  case "$archive_compatibility_path" in
+    */migrations/*) assert_flag "$archive_compatibility_output" operational_contract false ;;
+    *) assert_flag "$archive_compatibility_output" operational_contract true ;;
+  esac
+done
+
 
 for scheduler_report in scheduling_acceptance scheduling_integration; do
   scheduler_report_output="$(bash "$classifier" "docs/performance/$scheduler_report.json")"
@@ -896,16 +911,22 @@ assert_flag "$label_output" openapi true
 budget_projection="$(bash "$classifier" src/config/running.rs)"
 assert_flag "$budget_projection" openapi true
 
-for observation_input in src/api/v1/handlers/runtime_config.rs src/models/query_usage.rs; do
+for observation_input in src/api/v1/handlers/runtime_config.rs src/models/query_usage.rs \
+  src/models/runtime_settings.rs src/api/v1/handlers/client_config.rs; do
   observation_output="$(bash "$classifier" "$observation_input")"
   assert_flag "$observation_output" rust true
   assert_flag "$observation_output" openapi true
 done
 
-for observation_test in src/storage/context/query_observation_control.rs \
-  src/tests/storage_contract/query_observation_control.rs \
-  crates/hubuum-storage-postgres/tests/query_observation_control.rs \
-  crates/hubuum-storage-postgres/migrations/2026-10-19-000001_query_observation_control/up.sql; do
+for observation_test in src/storage/context/runtime_settings.rs \
+  src/storage/runtime_settings.rs \
+  src/middlewares/runtime_settings.rs \
+  src/tests/storage_contract/runtime_settings.rs \
+  crates/hubuum-storage-core/src/runtime_settings.rs \
+  crates/hubuum-storage-postgres/tests/runtime_settings.rs \
+  crates/hubuum-storage-postgres/migrations/2026-10-19-000001_query_observation_control/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-06-000001_runtime_settings/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-06-000001_runtime_settings/down.sql; do
   observation_output="$(bash "$classifier" "$observation_test")"
   assert_flag "$observation_output" rust true
 done
@@ -1155,3 +1176,5 @@ done
 archive_test_output="$(bash "$classifier" src/tests/storage_contract/history_archive.rs)"
 assert_flag "$archive_test_output" code true
 assert_flag "$archive_test_output" rust true
+
+echo "CI change classifier tests passed."

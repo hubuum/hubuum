@@ -21,6 +21,11 @@ local max_keys = tonumber(ARGV[6])
 local scope_count = tonumber(ARGV[7])
 local index = prefix .. ':{login-rate-limit}:index'
 
+-- Overlapping permits and other scopes may still use a longer-lived policy.
+local function extend_expiry(key, ttl)
+  redis.call('PEXPIRE', key, math.max(ttl, redis.call('PTTL', key)))
+end
+
 local function keys(raw)
   local base = prefix .. ':{login-rate-limit}:scope:' .. raw
   return base .. ':attempts', base .. ':inflight', base .. ':state'
@@ -31,7 +36,7 @@ for i = 0, scope_count - 1 do
   local threshold = tonumber(ARGV[9 + (i * 2)])
   local attempts, inflight, state = keys(raw)
   redis.call('ZREMRANGEBYSCORE', attempts, '-inf', now - window)
-  redis.call('ZREMRANGEBYSCORE', inflight, '-inf', now - reservation_ttl)
+  redis.call('ZREMRANGEBYSCORE', inflight, '-inf', now)
   local locked_until = tonumber(redis.call('HGET', state, 'locked_until') or '0')
   if locked_until > 0 and now >= locked_until and now - locked_until >= window then
     redis.call('HDEL', state, 'locked_until', 'level')
@@ -73,7 +78,7 @@ while capacity_needed > 0 do
     if not incoming[candidate] then
       local attempts, inflight, state = keys(candidate)
       redis.call('ZREMRANGEBYSCORE', attempts, '-inf', now - window)
-      redis.call('ZREMRANGEBYSCORE', inflight, '-inf', now - reservation_ttl)
+      redis.call('ZREMRANGEBYSCORE', inflight, '-inf', now)
       local locked_until = tonumber(redis.call('HGET', state, 'locked_until') or '0')
       if locked_until > 0 and now >= locked_until and now - locked_until >= window then
         redis.call('HDEL', state, 'locked_until', 'level')
@@ -109,13 +114,14 @@ end
 for i = 0, scope_count - 1 do
   local raw = ARGV[8 + (i * 2)]
   local attempts, inflight, state = keys(raw)
-  redis.call('ZADD', inflight, now, reservation)
+  -- Each reservation keeps the deadline from its admission policy.
+  redis.call('ZADD', inflight, now + reservation_ttl, reservation)
   redis.call('ZADD', index, now, raw)
-  redis.call('PEXPIRE', attempts, state_ttl)
-  redis.call('PEXPIRE', inflight, state_ttl)
-  redis.call('PEXPIRE', state, state_ttl)
+  extend_expiry(attempts, state_ttl)
+  extend_expiry(inflight, state_ttl)
+  extend_expiry(state, state_ttl)
 end
-redis.call('PEXPIRE', index, state_ttl)
+extend_expiry(index, state_ttl)
 return 1
 "#;
 
@@ -131,10 +137,14 @@ local state_ttl = tonumber(ARGV[6])
 local reservation = ARGV[7]
 local scope_count = tonumber(ARGV[8])
 local user_key = ARGV[9 + (scope_count * 2)]
-local reservation_ttl = tonumber(ARGV[10 + (scope_count * 2)])
 local index = prefix .. ':{login-rate-limit}:index'
 local lockouts = {}
 local completed_user = false
+
+-- Overlapping permits and other scopes may still use a longer-lived policy.
+local function extend_expiry(key, ttl)
+  redis.call('PEXPIRE', key, math.max(ttl, redis.call('PTTL', key)))
+end
 
 local function keys(raw)
   local base = prefix .. ':{login-rate-limit}:scope:' .. raw
@@ -145,7 +155,7 @@ for i = 0, scope_count - 1 do
   local raw = ARGV[9 + (i * 2)]
   local threshold = tonumber(ARGV[10 + (i * 2)])
   local attempts, inflight, state = keys(raw)
-  redis.call('ZREMRANGEBYSCORE', inflight, '-inf', now - reservation_ttl)
+  redis.call('ZREMRANGEBYSCORE', inflight, '-inf', now)
   local owned = redis.call('ZREM', inflight, reservation) == 1
   if owned then
     if raw == user_key then completed_user = true end
@@ -176,9 +186,11 @@ for i = 0, scope_count - 1 do
     local cooling = locked_until > 0 and now - locked_until < window
     if attempt_count > 0 or inflight_count > 0 or locked_until > now or cooling then
       redis.call('ZADD', index, math.max(now, locked_until), raw)
-      redis.call('PEXPIRE', attempts, state_ttl)
-      redis.call('PEXPIRE', inflight, state_ttl)
-      redis.call('PEXPIRE', state, state_ttl)
+      extend_expiry(attempts, state_ttl)
+      extend_expiry(inflight, state_ttl)
+      local lockout_ttl = math.max(state_ttl, locked_until - now + window)
+      extend_expiry(state, lockout_ttl)
+      extend_expiry(index, lockout_ttl)
     else
       redis.call('ZREM', index, raw)
       redis.call('DEL', attempts, inflight, state)
@@ -196,7 +208,7 @@ if outcome == 'succeeded' and completed_user then
     redis.call('ZADD', index, now, user_key)
   end
 end
-redis.call('PEXPIRE', index, state_ttl)
+extend_expiry(index, state_ttl)
 return lockouts
 "#;
 
@@ -205,7 +217,6 @@ local time = redis.call('TIME')
 local now = (tonumber(time[1]) * 1000) + math.floor(tonumber(time[2]) / 1000)
 local prefix = ARGV[1]
 local window = tonumber(ARGV[2])
-local reservation_ttl = tonumber(ARGV[3])
 local index = prefix .. ':{login-rate-limit}:index'
 local result = {}
 
@@ -217,7 +228,7 @@ end
 for _, raw in ipairs(redis.call('ZRANGE', index, 0, -1)) do
   local attempts, inflight, state = keys(raw)
   redis.call('ZREMRANGEBYSCORE', attempts, '-inf', now - window)
-  redis.call('ZREMRANGEBYSCORE', inflight, '-inf', now - reservation_ttl)
+  redis.call('ZREMRANGEBYSCORE', inflight, '-inf', now)
   local locked_until = tonumber(redis.call('HGET', state, 'locked_until') or '0')
   local level = tonumber(redis.call('HGET', state, 'level') or '0')
   if locked_until > 0 and now >= locked_until and now - locked_until >= window then
@@ -395,7 +406,6 @@ impl LoginRateLimitStore for ValkeyLoginRateLimitStore {
             arguments.push(threshold.to_string());
         }
         arguments.push(permit.user_ip_key.clone());
-        arguments.push(Self::reservation_ttl_ms(config).to_string());
         self.eval("finish", FINISH_SCRIPT, arguments).await
     }
 
@@ -407,11 +417,7 @@ impl LoginRateLimitStore for ValkeyLoginRateLimitStore {
             .eval(
                 "snapshot",
                 SNAPSHOT_SCRIPT,
-                vec![
-                    self.prefix.clone(),
-                    Self::window_ms(config).to_string(),
-                    Self::reservation_ttl_ms(config).to_string(),
-                ],
+                vec![self.prefix.clone(), Self::window_ms(config).to_string()],
             )
             .await?;
         values

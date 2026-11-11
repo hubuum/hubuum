@@ -126,6 +126,10 @@ fn build_provider(registry: &Registry) -> Result<SdkMeterProvider, ApiError> {
 }
 
 pub fn init() -> Result<(), ApiError> {
+    static INITIALIZING: Mutex<()> = Mutex::new(());
+    let _guard = INITIALIZING
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     if METRICS.get().is_some() {
         return Ok(());
     }
