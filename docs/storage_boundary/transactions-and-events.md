@@ -611,3 +611,15 @@ canonical audit facts together; append failure rolls back all of them. Existing
 publications stay charged after their original revision is fenced and require
 exact positive settlement. Primary commit grants no deletion authority: capture
 and independently publish its recovery authority before a future removal step.
+
+`HistoryLifecycleStorage::process_history_expiry_task` requires that same
+independent original OnlineV1 control scope and the current task lease with its
+pinned deadline. Lock history authority before task capacity/accounting, the task
+row and native sources. Fresh selection also requires current initiation-bound
+authorization from the configured service. Native admission, required audit,
+exclusions, the original versioned checkpoint and resident accounting commit in
+one transaction. Any failure rolls back the entire step. Restart resolves an
+admitted checkpoint to its original retained manifest before selecting again;
+missing or changed correspondence is unavailable. Waiting and cancellation retain
+history obligations. The service independently protects admitted authority before
+any future physical-removal phase; this operation never removes source payloads.

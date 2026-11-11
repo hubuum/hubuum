@@ -55,6 +55,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Regenerate clients from OpenAPI or extend closed task-kind enums before
   upgrading. Complete task-policy updates must include its capacity and
   scheduling weight; public and periodic submission remain disabled.
+- Task execution accepts human submitters without querying a nonexistent
+  service-account record. Service-account submitters still require the current
+  enabled-state check before execution.
 - **Breaking storage SDK 0.20 task vocabulary:** `history_expiry` adds a closed
   task kind, versioned payload/checkpoint reader and required
   `HistoryLifecycleStorage::process_history_expiry_task` capability. Upgrade

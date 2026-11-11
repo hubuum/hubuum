@@ -214,6 +214,13 @@ mod tests {
         )
         .unwrap();
         let result = authorize_selection(&context, &task, &payload).await;
-        assert_eq!(result.is_ok(), allowed, "{mode}: {result:?}");
+        if allowed {
+            assert!(result.is_ok(), "{mode}: {result:?}");
+        } else {
+            assert!(
+                matches!(result, Err(ApiError::Forbidden(_))),
+                "{mode}: {result:?}"
+            );
+        }
     }
 }
