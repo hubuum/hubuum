@@ -1,0 +1,2243 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Hubuum external authentication proposal",
+    "version": "0.1.0-proposed",
+    "description": "Review artifact for #573, not the implemented or released API. See contract.md for conditional validation and security requirements."
+  },
+  "servers": [
+    {
+      "url": "https://hubuum.example.invalid"
+    }
+  ],
+  "paths": {
+    "/api/v1/auth/methods": {
+      "get": {
+        "operationId": "discoverAuthentication",
+        "summary": "Discover enabled public methods",
+        "tags": [
+          "Proposed authentication contract"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Methods"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                },
+                "description": "Do not cache authentication state or credentials."
+              }
+            }
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/interactions": {
+      "post": {
+        "operationId": "beginInteraction",
+        "summary": "Begin custom v1 interaction",
+        "tags": [
+          "Proposed authentication contract"
+        ],
+        "security": [
+          {},
+          {
+            "HumanBearer": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Begun"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                },
+                "description": "Do not cache authentication state or credentials."
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Begin"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/interactions/{id}/credentials": {
+      "post": {
+        "operationId": "continueCredentials",
+        "summary": "Submit local or LDAP credentials",
+        "tags": [
+          "Proposed authentication contract"
+        ],
+        "security": [
+          {
+            "InteractionSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                },
+                "description": "Do not cache authentication state or credentials."
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Credentials"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/interactions/{id}/status": {
+      "post": {
+        "operationId": "interactionStatus",
+        "summary": "Poll using independent redemption secret",
+        "tags": [
+          "Proposed authentication contract"
+        ],
+        "security": [
+          {
+            "InteractionSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                },
+                "description": "Do not cache authentication state or credentials."
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/interactions/{id}/complete": {
+      "post": {
+        "operationId": "completeInteraction",
+        "summary": "Consume once for purpose-bound result",
+        "tags": [
+          "Proposed authentication contract"
+        ],
+        "security": [
+          {
+            "InteractionSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "../openapi.json#/components/schemas/SessionResponse"
+                    },
+                    {
+                      "$ref": "../openapi.json#/components/schemas/CredentialApprovalResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/VerificationResult"
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                },
+                "description": "Do not cache authentication state or credentials."
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/interactions/{id}/cancel": {
+      "post": {
+        "operationId": "cancelInteraction",
+        "summary": "Cancel pending interaction",
+        "tags": [
+          "Proposed authentication contract"
+        ],
+        "security": [
+          {
+            "InteractionSecret": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/interactions/{id}/issued-session/revoke": {
+      "post": {
+        "operationId": "revokeUndeliveredSession",
+        "summary": "Idempotent orphan-session cleanup; never token recovery",
+        "tags": [
+          "Proposed authentication contract"
+        ],
+        "security": [
+          {
+            "InteractionSecret": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/callbacks/{provider_id}": {
+      "get": {
+        "operationId": "providerCallback",
+        "summary": "Bound provider query callback; returns HTML redirect",
+        "tags": [
+          "Proposed authentication contract"
+        ],
+        "security": [],
+        "responses": {
+          "303": {
+            "description": "Success",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "description": "Registered BFF completion or fixed Hubuum result page; no secret credentials."
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "200": {
+            "description": "Fixed Hubuum result HTML, with no secrets.",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "provider_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          },
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          },
+          {
+            "name": "iss",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/interactions/browser": {
+      "get": {
+        "operationId": "browserInteraction",
+        "summary": "User-code entry HTML page",
+        "tags": [
+          "Proposed authentication contract"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/runtime-settings/security-candidates": {
+      "post": {
+        "operationId": "verifySecurityCandidate",
+        "summary": "Non-activating local-admin verification",
+        "tags": [
+          "Proposed authentication contract"
+        ],
+        "security": [
+          {
+            "HumanBearer": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateReport"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                },
+                "description": "Do not cache authentication state or credentials."
+              }
+            }
+          },
+          "412": {
+            "$ref": "#/components/responses/Error412"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/AuthenticationCandidate"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AuthorizationCandidate"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/runtime-settings/security-candidates/{id}": {
+      "get": {
+        "operationId": "securityCandidateStatus",
+        "summary": "Owner-only sanitized verification checks",
+        "tags": [
+          "Proposed authentication contract"
+        ],
+        "security": [
+          {
+            "HumanBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateReport"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                },
+                "description": "Do not cache authentication state or credentials."
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/runtime-settings/security-candidates/{id}/activate": {
+      "post": {
+        "operationId": "activateSecurityCandidate",
+        "summary": "Atomic approved activation with no restart",
+        "tags": [
+          "Proposed authentication contract"
+        ],
+        "security": [
+          {
+            "HumanBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Activated"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                },
+                "description": "Do not cache authentication state or credentials."
+              }
+            }
+          },
+          "412": {
+            "$ref": "#/components/responses/Error412"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          {
+            "name": "X-Hubuum-Credential-Approval",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 43,
+              "maxLength": 512,
+              "writeOnly": true,
+              "description": "Opaque secret; redact representations, headers and bodies."
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Activate"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "InteractionSecret": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Authorization",
+        "description": "Hubuum-Interaction <redemption_secret>; not a normal API bearer."
+      },
+      "HumanBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Existing unscoped human credential; privileged purpose binds this exact credential."
+      }
+    },
+    "schemas": {
+      "ProviderMethod": {
+        "type": "object",
+        "properties": {
+          "provider_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "local",
+              "ldap",
+              "oidc",
+              "oauth"
+            ]
+          },
+          "interaction": {
+            "type": "string",
+            "enum": [
+              "credentials",
+              "browser"
+            ]
+          },
+          "fresh_authentication": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider_id",
+          "name",
+          "kind",
+          "interaction",
+          "fresh_authentication"
+        ],
+        "additionalProperties": false
+      },
+      "Methods": {
+        "type": "object",
+        "properties": {
+          "interaction_version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderMethod"
+            },
+            "maxItems": 64
+          }
+        },
+        "required": [
+          "interaction_version",
+          "methods"
+        ],
+        "additionalProperties": false
+      },
+      "CredentialNext": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "credentials"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "additionalProperties": false
+      },
+      "BrowserNext": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "browser"
+            ]
+          },
+          "verification_uri": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048
+          },
+          "user_code": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 16
+          }
+        },
+        "required": [
+          "kind",
+          "verification_uri",
+          "user_code"
+        ],
+        "additionalProperties": false
+      },
+      "Begin": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+          },
+          "provider_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "login",
+              "credential_approval",
+              "provider_verification"
+            ]
+          },
+          "delivery": {
+            "type": "string",
+            "enum": [
+              "poll",
+              "bff"
+            ]
+          },
+          "return_target_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "return_nonce": {
+            "type": "string",
+            "minLength": 32,
+            "maxLength": 128
+          },
+          "operation": {
+            "$ref": "#/components/schemas/ApprovalOperation"
+          },
+          "candidate_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "client_id",
+          "provider_id",
+          "purpose",
+          "delivery"
+        ],
+        "additionalProperties": false,
+        "description": "Approval requires the existing human bearer and exact operation; verification requires its local-admin owner and candidate_id. BFF requires registered return_target_id and per-login return_nonce. Other combinations are rejected; login cannot carry privileged fields."
+      },
+      "Begun": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "interaction_version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "redemption_secret": {
+            "type": "string",
+            "minLength": 43,
+            "maxLength": 512,
+            "description": "Returned once to initiating BFF/CLI; never browser JavaScript."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "interval_seconds": {
+            "type": "integer",
+            "minimum": 5
+          },
+          "next": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CredentialNext"
+              },
+              {
+                "$ref": "#/components/schemas/BrowserNext"
+              }
+            ],
+            "discriminator": {
+              "propertyName": "kind"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "interaction_version",
+          "redemption_secret",
+          "expires_at",
+          "interval_seconds",
+          "next"
+        ],
+        "additionalProperties": false
+      },
+      "ClientRequest": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+          }
+        },
+        "required": [
+          "client_id"
+        ],
+        "additionalProperties": false
+      },
+      "Credentials": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "client_id",
+          "name",
+          "password"
+        ],
+        "additionalProperties": false
+      },
+      "Status": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "ready",
+              "denied",
+              "expired",
+              "cancelled",
+              "consumed",
+              "failed"
+            ]
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "approval_id": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "expires_at"
+        ],
+        "additionalProperties": false
+      },
+      "Error": {
+        "$ref": "../openapi.json#/components/schemas/ApiErrorResponse"
+      },
+      "GroupPreview": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          }
+        },
+        "required": [
+          "key",
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "VerificationResult": {
+        "type": "object",
+        "properties": {
+          "candidate_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "provider_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "subject": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "admitted": {
+            "type": "boolean"
+          },
+          "membership": {
+            "type": "string",
+            "enum": [
+              "local_only",
+              "complete",
+              "invalid"
+            ]
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupPreview"
+            },
+            "maxItems": 1000
+          },
+          "issued_session": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "provisioned": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          }
+        },
+        "required": [
+          "candidate_id",
+          "provider_id",
+          "subject",
+          "admitted",
+          "membership",
+          "groups",
+          "issued_session",
+          "provisioned"
+        ],
+        "additionalProperties": false
+      },
+      "Check": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "configuration",
+              "secret",
+              "tls",
+              "connectivity",
+              "discovery",
+              "identity",
+              "membership",
+              "recovery_administrator"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "not_run"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 255
+          }
+        },
+        "required": [
+          "kind",
+          "status",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "CandidateReport": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "group": {
+            "type": "string",
+            "enum": [
+              "authentication",
+              "authorization"
+            ]
+          },
+          "base_revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Check"
+            },
+            "maxItems": 128
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "unverified",
+              "verified",
+              "failed",
+              "expired",
+              "activated"
+            ]
+          },
+          "verification_receipt": {
+            "type": "string",
+            "minLength": 43,
+            "maxLength": 512,
+            "description": "Returned only to the initiating administrator after all required checks pass; single-use, redacted."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "provider_id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "ldap",
+                    "oidc",
+                    "oauth"
+                  ]
+                }
+              },
+              "required": [
+                "provider_id",
+                "name",
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "id",
+          "group",
+          "base_revision",
+          "expires_at",
+          "checks",
+          "state"
+        ],
+        "additionalProperties": false
+      },
+      "SecretInput": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "keep"
+                ]
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "clear"
+                ]
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "reference"
+                ]
+              },
+              "alias": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              }
+            },
+            "required": [
+              "action",
+              "alias"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "replace"
+                ]
+              },
+              "value": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1048576,
+                "writeOnly": true
+              }
+            },
+            "required": [
+              "action",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "discriminator": {
+          "propertyName": "action"
+        }
+      },
+      "Membership": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "local_only",
+              "provider_groups"
+            ]
+          },
+          "claim_source": {
+            "type": "string",
+            "enum": [
+              "id_token",
+              "userinfo",
+              "profile"
+            ]
+          },
+          "claim_pointer": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "key_mode": {
+            "type": "string",
+            "enum": [
+              "full_path",
+              "immutable_id"
+            ]
+          },
+          "refresh_interval_seconds": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "max_stale_seconds": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "mode",
+          "refresh_interval_seconds",
+          "max_stale_seconds"
+        ],
+        "additionalProperties": false,
+        "description": "provider_groups requires claim_source, claim_pointer, key_mode and complete string-array data. Local-group mappings are unsupported. Deployment ceilings apply; max_stale must be >= refresh interval."
+      },
+      "Admission": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "existing_only",
+              "provision_without_grants",
+              "subject_allowlist"
+            ]
+          },
+          "subjects": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "maxItems": 1000
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "additionalProperties": false
+      },
+      "OidcDefinition": {
+        "type": "object",
+        "properties": {
+          "issuer": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048
+          },
+          "client_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "client_authentication": {
+            "type": "string",
+            "enum": [
+              "client_secret_basic"
+            ]
+          },
+          "credential": {
+            "$ref": "#/components/schemas/SecretInput"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "maxItems": 32
+          },
+          "signing_algorithms": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "RS256",
+                "ES256"
+              ]
+            },
+            "maxItems": 2
+          },
+          "membership": {
+            "$ref": "#/components/schemas/Membership"
+          },
+          "admission": {
+            "$ref": "#/components/schemas/Admission"
+          }
+        },
+        "required": [
+          "issuer",
+          "client_id",
+          "client_authentication",
+          "credential",
+          "scopes",
+          "signing_algorithms",
+          "membership",
+          "admission"
+        ],
+        "additionalProperties": false,
+        "description": "openid scope and S256 required; exact issuer; no algorithm downgrade or caller-selected endpoints. Optional methods/algorithms require explicit qualified adapter support."
+      },
+      "OauthDefinition": {
+        "type": "object",
+        "properties": {
+          "profile": {
+            "type": "string",
+            "enum": [
+              "github",
+              "json_user"
+            ]
+          },
+          "authorization_endpoint": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048
+          },
+          "token_endpoint": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048
+          },
+          "profile_endpoint": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048
+          },
+          "client_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "client_authentication": {
+            "type": "string",
+            "enum": [
+              "client_secret_basic",
+              "client_secret_post"
+            ]
+          },
+          "credential": {
+            "$ref": "#/components/schemas/SecretInput"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "maxItems": 32
+          },
+          "subject_pointer": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "subject_type": {
+            "type": "string",
+            "enum": [
+              "string",
+              "integer"
+            ]
+          },
+          "name_pointer": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "membership": {
+            "$ref": "#/components/schemas/Membership"
+          },
+          "admission": {
+            "$ref": "#/components/schemas/Admission"
+          }
+        },
+        "required": [
+          "profile",
+          "authorization_endpoint",
+          "token_endpoint",
+          "profile_endpoint",
+          "client_id",
+          "client_authentication",
+          "credential",
+          "scopes",
+          "subject_pointer",
+          "subject_type",
+          "name_pointer",
+          "membership",
+          "admission"
+        ],
+        "additionalProperties": false,
+        "description": "S256 mandatory. Built-in github pins GitHub.com endpoints and lossless integer /id; json_user is one HTTPS bearer-authenticated GET JSON response. Administrator field pointers only; no scripting or arbitrary headers."
+      },
+      "BrowserProvider": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "provider_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "deployment"
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "oidc",
+                  "oauth"
+                ]
+              }
+            },
+            "required": [
+              "provider_id",
+              "name",
+              "enabled",
+              "source",
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "provider_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "runtime"
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "oidc"
+                ]
+              },
+              "adopt_deployment": {
+                "type": "boolean"
+              },
+              "configuration": {
+                "$ref": "#/components/schemas/OidcDefinition"
+              }
+            },
+            "required": [
+              "name",
+              "enabled",
+              "source",
+              "kind",
+              "configuration"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "provider_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "runtime"
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "oauth"
+                ]
+              },
+              "adopt_deployment": {
+                "type": "boolean"
+              },
+              "configuration": {
+                "$ref": "#/components/schemas/OauthDefinition"
+              }
+            },
+            "required": [
+              "name",
+              "enabled",
+              "source",
+              "kind",
+              "configuration"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "description": "Existing provider IDs are immutable. Omit provider_id only for a new runtime definition; candidate creation allocates it once and reports it for test interactions."
+      },
+      "AuthenticationCandidate": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string",
+            "enum": [
+              "authentication"
+            ]
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "../openapi.json#/components/schemas/RuntimeAuthenticationProviderRequest"
+                },
+                {
+                  "$ref": "#/components/schemas/BrowserProvider"
+                }
+              ]
+            },
+            "maxItems": 64
+          }
+        },
+        "required": [
+          "group",
+          "expected_revision",
+          "providers"
+        ],
+        "additionalProperties": false
+      },
+      "AuthorizationCandidate": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string",
+            "enum": [
+              "authorization"
+            ]
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "backend": {
+            "type": "string",
+            "enum": [
+              "local",
+              "treetop"
+            ]
+          },
+          "connection": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string",
+                "format": "uri",
+                "maxLength": 2048
+              },
+              "connect_timeout_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "request_timeout_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "trust_profile_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": [
+              "url",
+              "connect_timeout_ms",
+              "request_timeout_ms",
+              "trust_profile_id"
+            ],
+            "additionalProperties": false
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "deployment",
+              "runtime"
+            ]
+          }
+        },
+        "required": [
+          "group",
+          "expected_revision",
+          "backend",
+          "source"
+        ],
+        "additionalProperties": false,
+        "description": "source deployment references current deployment settings and forbids connection. source runtime with backend treetop requires connection. Local forbids connection. Readiness and recovery administrator proof required; deployment trust/egress/timeout limits apply."
+      },
+      "Activate": {
+        "type": "object",
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "verification_receipt": {
+            "type": "string",
+            "minLength": 43,
+            "maxLength": 512,
+            "writeOnly": true,
+            "description": "Opaque secret; redact representations, headers and bodies."
+          }
+        },
+        "required": [
+          "expected_revision",
+          "verification_receipt"
+        ],
+        "additionalProperties": false
+      },
+      "Activated": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string",
+            "enum": [
+              "authentication",
+              "authorization"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "changed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "group",
+          "revision",
+          "changed"
+        ],
+        "additionalProperties": false
+      },
+      "ApprovalOperation": {
+        "oneOf": [
+          {
+            "$ref": "../openapi.json#/components/schemas/CredentialOperation"
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "candidate_id",
+              "group",
+              "expected_revision"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "activate_security_candidate"
+                ]
+              },
+              "candidate_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "group": {
+                "type": "string",
+                "enum": [
+                  "authentication",
+                  "authorization"
+                ]
+              },
+              "expected_revision": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "responses": {
+      "Error503": {
+        "description": "Sanitized stable reason; see contract.md",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "no-store"
+              ]
+            },
+            "description": "Do not cache authentication state or credentials."
+          },
+          "Retry-After": {
+            "schema": {
+              "type": "string"
+            },
+            "description": "Minimum delay before retry."
+          }
+        }
+      },
+      "Error400": {
+        "description": "Sanitized stable reason; see contract.md",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "no-store"
+              ]
+            },
+            "description": "Do not cache authentication state or credentials."
+          }
+        }
+      },
+      "Error401": {
+        "description": "Sanitized stable reason; see contract.md",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "no-store"
+              ]
+            },
+            "description": "Do not cache authentication state or credentials."
+          }
+        }
+      },
+      "Error403": {
+        "description": "Sanitized stable reason; see contract.md",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "no-store"
+              ]
+            },
+            "description": "Do not cache authentication state or credentials."
+          }
+        }
+      },
+      "Error409": {
+        "description": "Sanitized stable reason; see contract.md",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "no-store"
+              ]
+            },
+            "description": "Do not cache authentication state or credentials."
+          }
+        }
+      },
+      "Error410": {
+        "description": "Sanitized stable reason; see contract.md",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "no-store"
+              ]
+            },
+            "description": "Do not cache authentication state or credentials."
+          }
+        }
+      },
+      "Error422": {
+        "description": "Sanitized stable reason; see contract.md",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "no-store"
+              ]
+            },
+            "description": "Do not cache authentication state or credentials."
+          }
+        }
+      },
+      "Error429": {
+        "description": "Sanitized stable reason; see contract.md",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "no-store"
+              ]
+            },
+            "description": "Do not cache authentication state or credentials."
+          },
+          "Retry-After": {
+            "schema": {
+              "type": "string"
+            },
+            "description": "Minimum delay before retry."
+          }
+        }
+      },
+      "Error412": {
+        "description": "Sanitized stable reason; see contract.md",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "no-store"
+              ]
+            },
+            "description": "Do not cache authentication state or credentials."
+          }
+        }
+      }
+    }
+  }
+}

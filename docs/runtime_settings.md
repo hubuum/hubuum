@@ -1,5 +1,10 @@
 # Runtime settings
 
+The proposed [external authentication contract](authentication/contract.md)
+builds on this foundation for non-activating test sign-in and no-restart
+activation of external providers and remote authorization connections. Those
+extensions are under review; this page describes the implemented baseline.
+
 Most Hubuum configuration is read once when a process starts. Runtime settings
 are shared policies stored in the primary
 storage backend. Administrators change them through the versioned API, and every

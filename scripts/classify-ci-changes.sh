@@ -149,6 +149,10 @@ for path in "$@"; do
     docs/openapi.json)
       openapi=true
       ;;
+    docs/authentication/openapi.proposed.json | docs/authentication/fixtures.json)
+      # Dynamic Python wire inputs, separate from production OpenAPI.
+      code=true
+      ;;
     docs/export_template_guide.md | crates/hubuum-schema-diagnostics/README.md)
       code=true
       rust=true
