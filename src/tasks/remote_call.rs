@@ -1,3 +1,4 @@
+use crate::config::runtime::current as get_config;
 use crate::models::token_scope::TokenScope;
 use crate::services::authentication::ExecutionPrincipal;
 use crate::services::remote_targets::invocation::AuthorizedRemoteInvocation;
@@ -12,7 +13,7 @@ use tracing::warn;
 
 use crate::config::{
     DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS, DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES,
-    DEFAULT_REMOTE_CALL_TIMEOUT_MS, get_config,
+    DEFAULT_REMOTE_CALL_TIMEOUT_MS,
 };
 use crate::errors::ApiError;
 use crate::models::{

@@ -1,7 +1,7 @@
 # Runtime settings
 
 Most Hubuum configuration is read once when a process starts. Runtime settings
-are the exception: a small set of shared policy values is stored in the primary
+are shared policies stored in the primary
 storage backend. Administrators change them through the versioned API, and every
 replica applies the change without a restart.
 
@@ -11,14 +11,25 @@ UI share the same authorization, validation, revision checks, and audit trail.
 ## Ownership
 
 Each setting is owned either by deployment configuration or by the runtime
-settings store. The initial runtime-managed settings are listed below.
+settings store. The runtime-managed groups are listed below.
 
 | Group | Setting | Takes effect | Deployment ceiling |
 | --- | --- | --- | --- |
 | `authentication` | LDAP provider activation and runtime-owned definitions | On the next authentication request | 64 providers |
 | `authorization` | Permission backend selection | On the next API request | Available backend and deployment connection settings |
-| `pagination` | `default_page_limit` | When the next API request starts | `HUBUUM_MAX_PAGE_LIMIT` |
+| `pagination` | `default_page_limit`, `max_page_limit` | When the next API request starts | `HUBUUM_MAX_PAGE_LIMIT` |
 | `query_observations` | `enabled`, `sample_every`, `max_patterns`, `max_patterns_per_class`, `retention_seconds`, `max_predicates_per_query` | On the next eligible query | Query-observation ceiling variables |
+| `observability` | Log filter, metrics enablement and scrape path | On reconciliation | Literal non-conflicting scrape path |
+| `network` | Forwarded-header trust, proxy networks/hops and client allowlist | Next request | Updating local administrator must retain network access |
+| `query_limits` | Maximum transitive depth | Next query | 1–512 |
+| `tasks` | Polling, lease/heartbeat, recovery, reindex batch and per-user admission limits | Next claim or batch | Heartbeat below lease; reindex batch at most 1,000; worker counts stay fixed |
+| `remote_calls` | Timeout, response bytes and private destinations | Next dispatch | Deployment prohibition on private targets remains authoritative |
+| `tokens` | Default issuance lifetime, expired-token retention and purge policy | Next issuance or purge batch | Deployment maximum token lifetime; legacy cutoffs stay fixed |
+| `login_rate_limit` | Enablement, identity/account/IP/subnet attempts, window and backoff | Next login attempt | Backoff base no greater than maximum |
+| `events` | Fanout/delivery batches and polling, delivery attempts/timeout, retention and archive enablement | Next batch | Transport timeout below deployment lease; archive requires usable deployment path |
+| `exports` | Output retention/cleanup/size, stage/query budgets and template limits | Next export or cleanup pass | Existing expiry timestamps are preserved |
+| `backups` | Active backups per user, output/row limits and retention | Next admission or execution | Existing expiry timestamps are preserved |
+| `restores` | Upload limit and staging retention | Next upload | An upload retains its limit; existing expiry timestamps are preserved |
 
 Everything else remains deployment configuration. That includes:
 
@@ -28,15 +39,93 @@ Everything else remains deployment configuration. That includes:
   key reference;
 - LDAP secret-source selection and authorization backend connection settings;
 - machine resource ceilings and filesystem paths;
-- `HUBUUM_MAX_PAGE_LIMIT`, which caps `pagination.default_page_limit`; and
+- `HUBUUM_MAX_PAGE_LIMIT`, which caps both runtime pagination limits; and
 - query-observation sampling and capacity ceiling variables, which cap the
   runtime values above.
 
-Other candidates, such as retention, task admission, token lifetimes, and worker
-concurrency, will move only after their effect on running work and their failure
-behavior have been defined. Raw secrets never move into runtime settings. An
+Pool size/acquire timeout, database statement timeout, TLS/certificate reload,
+administrator-group selection, worker counts, token hash-key rotation, and
+Treetop connection settings remain deployment configuration. Raw secrets never
+move into runtime settings. An
 LDAP bind password supplied through the runtime API is encrypted before it is
 stored.
+
+### Operational policy updates
+
+Use the catalogue to discover field names, types, bounds and deployment defaults.
+The additional groups accept revision-checked `PATCH`, `GET`, history reads and
+`DELETE` to release ownership, through the same endpoints as pagination. Their
+state is also included under `policies` in the complete runtime-settings report.
+No raw secrets, filesystem locations or derived "configured" flags are editable.
+Network lists are comma-separated IP/CIDR strings; `client_allowlist` also accepts
+`*`. Counts in the administrator configuration remain derived displays.
+
+For example, send this to `PATCH /api/v1/admin/runtime-settings/tasks`:
+
+```json
+{
+  "expected_revision": 1,
+  "changes": {"lease_seconds": 120, "heartbeat_seconds": 30}
+}
+```
+
+Requests and task executions capture a configuration snapshot. Existing claims
+retain their lease and heartbeat pair; changes do not shorten an existing lease.
+Batch workers read a new policy between batches, and settings notifications wake
+sleeping workers. Retention loops remain present while disabled, then pause until
+enabled. API-only processes never start background workers. Per-user admission
+limits apply to new submissions and do not cancel accepted work. Delivery attempt
+changes retain attempt counts and do not revive terminal failures. Reindexing
+reads its validated batch size from shared storage before each batch.
+
+New output/stage retention applies when an artifact is created; stored expiry
+values do not change. Export stage timeouts remain post-completion checks, while
+storage query budgets are enforced during reads. Zero disables the storage query
+budget. Archive enablement requires a writable deployment archive directory;
+archive failure still prevents event deletion. Destructive retention pauses on
+stale replicas until reconciliation succeeds, including replicas missing a
+required archive-path configuration. New task claims and delivery batches also
+wait for current security policy. Webhook deliveries capture the
+remote-call timeout, response-size and private-destination policy for their
+batch while other transport connections remain in place.
+
+`network`, `tokens`, `login_rate_limit`, and `remote_calls` changes require a local
+password-capable human administrator, including release. Network edits and release
+also resolve the current connection through the candidate proxy policy and reject
+changes that would exclude it. All request consumers use the same network snapshot
+for allowlisting, tracing and login IP attribution. Deployment access is the
+recovery path if topology changes later.
+
+Token lifetime changes apply to new issuance, without altering explicit expiry
+or the deployment-derived legacy token cutoff. Login attempts retain the policy
+used to reserve capacity until they finish. Disabling the limiter does not reset
+its store. Existing lockout deadlines persist; retained failures are evaluated
+using the next attempt's window. Expired/pruned observations cannot be recovered
+by increasing that window. Zero disables the account, IP or subnet dimension.
+
+Metrics enablement and path changes use the `observability` group. The previous
+path stops serving metrics after reconciliation; update scraper configuration
+alongside the change. Disabled metrics retain their registry and counters.
+Worker-only processes keep their HTTP listener bound even while metrics are
+disabled, allowing later enablement. See [metrics](metrics.md) for deployment
+requirements. Log filters reload independently of distributed tracing sampling.
+
+### Upgrade and rollback
+
+**Breaking deployment change:** stop older API and worker binaries before applying
+migration `2026-11-10-000001_runtime_policies`, then deploy the upgraded binaries
+for every replica. Older readers cannot parse the new group rows, even before a
+policy is edited. Back up deployment configuration and the database before the
+upgrade. Existing policy ownership and audit history are retained.
+
+Worker-only processes now reserve `HUBUUM_BIND_IP:HUBUUM_PORT` even when metrics
+are disabled. Assign separate ports or network namespaces before upgrading
+workers that previously shared a host and port with another process.
+
+The new migration can be rolled back while its groups have no audit entries.
+After an edit, its foreign key deliberately prevents rollback from deleting the
+append-only audit trail; release to deployment ownership does not erase that
+history. Use an upgraded binary or a database backup for rollback after use.
 
 ### Groups and ownership states
 
@@ -102,8 +191,8 @@ it does not keep the previous runtime providers active.
 
 ## Adopting existing configuration
 
-Upgrading changes no behavior on its own. Pagination stays in the deployment
-state, and replicas whose startup values differ keep applying their own values.
+New groups start in the deployment state. Existing ownership is preserved, and
+replicas whose deployment-owned values differ keep applying their own values.
 `GET /api/v1/admin/runtime-settings` shows each responding replica's deployment
 values. Compare replicas before adopting a shared value.
 
@@ -116,15 +205,35 @@ curl --fail-with-body --request PUT \
   "$HUBUUM_URL/api/v1/admin/runtime-settings/pagination" \
   --header "Authorization: Bearer $HUBUUM_TOKEN" \
   --header 'Content-Type: application/json' \
-  --data '{"expected_revision":1,"default_page_limit":100}'
+  --data '{"expected_revision":1,"default_page_limit":100,"max_page_limit":200}'
 ```
+
+The default applies when a client omits `limit`; the maximum also clamps explicit
+client limits. Both values are committed in one revision and must satisfy
+`1 <= default_page_limit <= max_page_limit <= HUBUUM_MAX_PAGE_LIMIT`.
+For example, with the settings above, `?limit=500` returns at most 200 items.
+
+Existing default-only policies continue to inherit each replica's deployment
+maximum. Omitting `max_page_limit` (or setting it to `null`) on a replacement
+`PUT` restores that inheritance. Use `PATCH` to preserve an unchanged field:
+
+```sh
+curl --fail-with-body --request PATCH \
+  "$HUBUUM_URL/api/v1/admin/runtime-settings/pagination" \
+  --header "Authorization: Bearer $HUBUUM_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data '{"expected_revision":2,"changes":{"max_page_limit":150}}'
+```
+
+The merged values are validated together. Lowering the maximum below the current
+default requires changing both in the same request. `PATCH` rejects `null`.
 
 To give a group back to deployment configuration, delete its runtime value. The
 release is recorded as a new revision:
 
 ```sh
 curl --fail-with-body --request DELETE \
-  "$HUBUUM_URL/api/v1/admin/runtime-settings/pagination?expected_revision=2" \
+  "$HUBUUM_URL/api/v1/admin/runtime-settings/pagination?expected_revision=3" \
   --header "Authorization: Bearer $HUBUUM_TOKEN"
 ```
 
@@ -146,7 +255,7 @@ changing security settings.
 | `GET /api/v1/admin/runtime-settings` | Report every group as applied by the responding replica |
 | `POST /api/v1/admin/runtime-settings/authentication/preflight` | Validate and test LDAP providers; persist only after successful preflight |
 | `PUT /api/v1/admin/runtime-settings/authorization` | Select `local` or `treetop` authorization |
-| `PUT /api/v1/admin/runtime-settings/pagination` | Set the shared default page size |
+| `PUT /api/v1/admin/runtime-settings/pagination` | Set shared default and maximum page sizes |
 | `PUT /api/v1/admin/runtime-settings/query_observations` | Set shared query observation enablement, sampling, and capacity limits |
 | `DELETE /api/v1/admin/runtime-settings/{authentication,authorization,pagination,query_observations}` | Return the group to deployment configuration |
 | `GET /api/v1/admin/runtime-settings/history/{group}` | List durable audit records, newest first |
@@ -170,14 +279,18 @@ Requests are validated before anything is stored. Unknown fields, wrong types,
 non-positive values, and inconsistent combinations are rejected with `400 Bad
 Request`. Deployment and runtime configuration share the same LDAP definition,
 identity-scope-name, and pagination validators. `default_page_limit` must be
-between 1 and 4,294,967,295 and cannot exceed the responding replica's
-`HUBUUM_MAX_PAGE_LIMIT`. Query-observation values must fit the responding
+between 1 and 4,294,967,295 and cannot exceed the effective maximum.
+`max_page_limit` must be positive and cannot exceed the responding replica's
+`HUBUUM_MAX_PAGE_LIMIT`. With no runtime maximum, the deployment maximum applies.
+Query-observation values must fit the responding
 replica's ceilings: `sample_every` must be at least
 `HUBUUM_QUERY_OBSERVATIONS_MIN_SAMPLE_EVERY`, and each capacity/retention value
 must not exceed its corresponding `HUBUUM_QUERY_OBSERVATIONS_*_CEILING`.
 Omitted observation fields use the responding replica's deployment defaults.
 If another replica has a lower ceiling, it clamps the shared values and
 reports `constrained_by_ceiling: true`.
+For pagination this clamps the maximum first, then the default, preserving
+`default_page_limit <= max_page_limit`.
 
 Authentication updates use the preflight endpoint. It validates ownership and
 identity-scope bindings, tests enabled providers' configuration, connectivity,
@@ -311,9 +424,12 @@ available again after reconciliation succeeds.
 Both reads reconcile the replica before they report. Reports contain no secret
 values.
 
-`GET /api/v1/config` returns the effective default page size to unauthenticated
-clients. The committed OpenAPI document describes the default from deployment
-configuration.
+`GET /api/v1/config` returns the effective default and maximum page sizes to
+unauthenticated clients. Administrator pagination reports include both limits
+under `effective`, `runtime`, and `deployment`; legacy runtime values omit the
+inherited maximum. The top-level `pagination.max_page_limit` in the runtime
+settings report remains the deployment ceiling for compatibility. The committed
+OpenAPI document describes the default from deployment configuration.
 
 ## Backups, restores, and storage backends
 
@@ -329,6 +445,11 @@ store, has no notifications, and loses them on restart. Independent memory
 processes do not form a shared deployment.
 
 ## Upgrading
+
+Upgrade every API and worker replica before writing a runtime `max_page_limit`.
+Older binaries reject persisted pagination documents containing that field.
+Existing default-only documents and requests remain supported without a data
+migration.
 
 Apply the runtime settings migration, then upgrade every API and worker replica
 together. Upgraded replicas no longer read or write the legacy

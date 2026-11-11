@@ -1,3 +1,4 @@
+use actix_web::HttpMessage;
 use actix_web::{HttpRequest, web};
 use hubuum_auth_ldap::login_rate_limit_key;
 use ipnet::{Ipv4Net, Ipv6Net};
@@ -557,6 +558,7 @@ pub(crate) struct LoginAttemptPermit {
     user_ip_key: String,
     reservation: Reservation,
     enabled: bool,
+    config: LoginRateLimitConfig,
 }
 
 #[derive(Clone, Copy)]
@@ -582,6 +584,7 @@ pub(crate) async fn begin_login_attempt(
         user_ip_key,
         reservation: Reservation::new(Duration::from_secs(cfg.window_seconds)),
         enabled: cfg.enabled,
+        config: cfg,
     };
     if !cfg.enabled {
         return Ok(Some(permit));
@@ -604,8 +607,10 @@ pub(crate) async fn finish_login_attempt(
         return Ok(());
     }
 
-    let cfg = login_rate_limit_config();
-    for key in active_store().finish(&permit, outcome, &cfg).await? {
+    for key in active_store()
+        .finish(&permit, outcome, &permit.config)
+        .await?
+    {
         crate::observability::metrics::login_lockout(scope_kind(&key));
     }
     Ok(())
@@ -782,6 +787,9 @@ impl LoginRateLimitStore for MemoryLoginRateLimitStore {
 /// Resolve the trustworthy client IP for a login request, honoring the configured proxy
 /// trust policy. Returns `None` when no address can be determined.
 pub(crate) fn client_ip_for_request(req: &HttpRequest) -> Option<IpAddr> {
+    if let Some(policy) = req.extensions().get::<ProxyTrust>() {
+        return extract_client_ip_from_http_request(req, policy);
+    }
     match req.app_data::<web::Data<ProxyTrust>>() {
         Some(policy) => extract_client_ip_from_http_request(req, policy.get_ref()),
         None => extract_client_ip_from_http_request(req, &ProxyTrust::default()),

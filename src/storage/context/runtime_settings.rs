@@ -62,6 +62,10 @@ impl RuntimeSettingsStorage for StorageHandle {
 }
 
 impl StorageHandle {
+    pub(crate) fn subscribe_runtime_settings(&self) -> tokio::sync::watch::Receiver<()> {
+        self.inner.runtime_settings.subscribe()
+    }
+
     /// Settings this process currently applies, without a storage read.
     pub(crate) fn applied_runtime_settings(&self) -> AppliedRuntimeSettings {
         self.inner.runtime_settings.current()
@@ -73,7 +77,14 @@ impl StorageHandle {
     ) -> Result<AppliedRuntimeSettings, StorageError> {
         self.inner
             .runtime_settings
-            .refresh(self.load_runtime_settings())
+            .refresh(async {
+                let snapshot = self.load_runtime_settings().await?;
+                let deployment = crate::config::get_config()
+                    .map_err(|error| StorageError::invalid_input(error.to_string()))?;
+                crate::config::runtime::resolve(deployment.clone(), Some(&snapshot))
+                    .map_err(|error| StorageError::invalid_input(error.to_string()))?;
+                Ok(snapshot)
+            })
             .await
     }
 

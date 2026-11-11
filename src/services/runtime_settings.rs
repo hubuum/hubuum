@@ -1,4 +1,5 @@
 //! Administrator use cases for database-managed runtime settings.
+use crate::middlewares::client_allowlist::NetworkChangeOrigin;
 use chrono::Utc;
 use hubuum_domain::ResourceRevision;
 use hubuum_storage_core::{
@@ -45,11 +46,12 @@ pub fn catalogue(context: &AppContext) -> Result<RuntimeSettingsCatalogue, ApiEr
 
 /// Merge only supplied fields into authoritative requested values, then run the
 /// existing typed validation, authorization, audit and compare-and-swap path.
-pub async fn patch(
+pub(crate) async fn patch(
     context: &AppContext,
     group: RuntimeSettingsGroup,
     request: RuntimeSettingsPatch,
     event: EventContext,
+    origin: NetworkChangeOrigin,
 ) -> Result<RuntimeSettingsUpdateResponse, ApiError> {
     let storage = context.backend();
     let deployment = deployment(storage)?;
@@ -94,6 +96,11 @@ pub async fn patch(
             json!({"backend": deployment.authorization_backend.as_str()})
         }
         RuntimeSettingsGroup::Authentication => unreachable!("authentication uses preflight"),
+        group => crate::config::runtime::deployment_document(
+            &crate::config::get_config()?.clone(),
+            group.into(),
+        )
+        .expect("operational policy"),
     };
     if let Some(Value::Object(current)) = record.assignment().to_document() {
         for (name, value) in current {
@@ -126,8 +133,21 @@ pub async fn patch(
                 .into_update(event)
         }
         RuntimeSettingsGroup::Authentication => unreachable!("authentication uses preflight"),
+        group => {
+            merged
+                .as_object_mut()
+                .expect("policy object")
+                .remove("expected_revision");
+            let value = StorageRuntimeSettingsValue::from_document(group.into(), &merged)
+                .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+            StorageRuntimeSettingsUpdate::new(
+                StorageRuntimeSettingsAssignment::Managed(value),
+                request.expected_revision,
+                event,
+            )
+        }
     };
-    update(context, update_request).await
+    update_with_origin(context, update_request, Some(origin)).await
 }
 
 /// Reconcile the responding replica, then report what it applies.
@@ -139,14 +159,43 @@ pub async fn report(context: &AppContext) -> Result<RuntimeSettingsReport, ApiEr
     if let Err(error) = context.refresh_runtime_settings().await {
         tracing::warn!(%error, "Runtime settings refresh failed; reporting the retained snapshot");
     }
-    Ok(RuntimeSettingsReport::new(
-        &storage.applied_runtime_settings(),
+    let applied = storage.applied_runtime_settings();
+    let mut report = RuntimeSettingsReport::new(
+        &applied,
         deployment(&storage)?,
         Utc::now(),
         crate::auth::auth_provider_statuses()?,
         context.current_permission_backend_kind().to_string(),
         context.permission_backend_is_ready(),
-    ))
+    );
+    let deployment = crate::config::get_config()?.clone();
+    let effective = crate::config::runtime::resolve(deployment.clone(), applied.snapshot())?;
+    for group in StorageRuntimeSettingsGroup::ALL {
+        let Some(deployment) = crate::config::runtime::deployment_document(&deployment, group)
+        else {
+            continue;
+        };
+        let effective =
+            crate::config::runtime::deployment_document(&effective, group).expect("policy group");
+        let record = applied.snapshot().map(|snapshot| snapshot.record(group));
+        let runtime = record.and_then(|record| record.assignment().to_document());
+        report.policies.insert(
+            group.as_str().to_string(),
+            crate::models::runtime_settings::RuntimePolicyReport {
+                ownership: crate::models::runtime_settings::RuntimeSettingsOwnership::new(
+                    record,
+                    crate::models::runtime_settings::discovery::policy_effect(group),
+                ),
+                constrained_by_ceiling: runtime
+                    .as_ref()
+                    .is_some_and(|requested| *requested != effective),
+                effective,
+                runtime,
+                deployment,
+            },
+        );
+    }
+    Ok(report)
 }
 
 /// Commit a revision-checked update, then apply it to the responding replica.
@@ -157,9 +206,70 @@ pub async fn update(
     context: &AppContext,
     request: StorageRuntimeSettingsUpdate,
 ) -> Result<RuntimeSettingsUpdateResponse, ApiError> {
+    update_with_origin(context, request, None).await
+}
+
+pub(crate) async fn update_with_origin(
+    context: &AppContext,
+    request: StorageRuntimeSettingsUpdate,
+    origin: Option<NetworkChangeOrigin>,
+) -> Result<RuntimeSettingsUpdateResponse, ApiError> {
+    if request.group() == StorageRuntimeSettingsGroup::Network {
+        let mut candidate = crate::config::get_config()?.clone();
+        if let Some(value) = request.assignment().value() {
+            crate::config::runtime::apply(&mut candidate, value);
+        }
+        origin
+            .ok_or_else(|| {
+                ApiError::BadRequest(
+                    "Network changes require the administrator's connection provenance".into(),
+                )
+            })?
+            .ensure_allowed(&candidate)?;
+    }
+    if let Some(value) = request.assignment().value() {
+        let mut candidate = crate::config::runtime::for_storage(context.backend())?
+            .as_ref()
+            .clone();
+        crate::config::runtime::apply(&mut candidate, value);
+        crate::config::runtime::validate(&candidate)?;
+        if let StorageRuntimeSettingsValue::Tokens(policy) = value
+            && *policy.lifetime_hours() > candidate.max_token_lifetime_hours
+        {
+            return Err(ApiError::BadRequest(
+                "Token lifetime exceeds the deployment maximum".into(),
+            ));
+        }
+        if let StorageRuntimeSettingsValue::RemoteCalls(policy) = value
+            && *policy.allow_private_targets()
+            && !crate::config::get_config()?.remote_call_allow_private_targets
+        {
+            return Err(ApiError::BadRequest(
+                "Private remote targets are prohibited by this deployment".into(),
+            ));
+        }
+        if request.group() == StorageRuntimeSettingsGroup::Events
+            && candidate.event_retention_file_archive_enabled
+        {
+            let path = candidate
+                .event_retention_archive_path
+                .clone()
+                .expect("validated archive path");
+            tokio::task::spawn_blocking(move || {
+                crate::events::validate_file_archive_path(std::path::Path::new(&path))
+            })
+            .await
+            .map_err(|error| ApiError::InternalServerError(error.to_string()))??;
+        }
+    }
     if matches!(
         request.group(),
-        StorageRuntimeSettingsGroup::Authentication | StorageRuntimeSettingsGroup::Authorization
+        StorageRuntimeSettingsGroup::Authentication
+            | StorageRuntimeSettingsGroup::Authorization
+            | StorageRuntimeSettingsGroup::Network
+            | StorageRuntimeSettingsGroup::Tokens
+            | StorageRuntimeSettingsGroup::LoginRateLimit
+            | StorageRuntimeSettingsGroup::RemoteCalls
     ) {
         let administrator = LocalSettingsAdministrator::require(context, request.context()).await?;
         let current = storage_handle(context).load_runtime_settings().await?;
@@ -188,7 +298,9 @@ pub async fn update(
                 Some(_) => unreachable!("authorization group must contain authorization settings"),
             };
             administrator.check_backend(candidate.as_ref()).await?;
-        } else if request.assignment().value().is_none() {
+        } else if request.group() == StorageRuntimeSettingsGroup::Authentication
+            && request.assignment().value().is_none()
+        {
             crate::auth::preflight_deployment_authentication_settings(&context.clone_backend())
                 .await?;
         }

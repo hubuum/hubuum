@@ -1,3 +1,5 @@
+use crate::config::AppConfig;
+use hubuum_storage_core::StorageRuntimeSettingsGroup;
 mod maintenance;
 pub(crate) mod replay;
 use hubuum_storage_core::{
@@ -229,6 +231,18 @@ pub struct RestoreSettings {
 }
 
 impl RestoreSettings {
+    pub(crate) fn with_runtime(&self, config: &AppConfig) -> Result<Self, ApiError> {
+        if config.runtime_manages(StorageRuntimeSettingsGroup::Restores) {
+            Self::new(
+                config.restore_stage_retention_minutes,
+                config.restore_max_upload_bytes,
+            )
+            .map_err(ApiError::BadRequest)
+        } else {
+            Ok(self.clone())
+        }
+    }
+
     pub fn new(stage_retention_minutes: i64, max_upload_bytes: usize) -> Result<Self, String> {
         let stage_retention =
             FutureRetention::from_minutes(stage_retention_minutes, "restore stage retention")?;

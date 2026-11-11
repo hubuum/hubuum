@@ -249,3 +249,18 @@ The 0.7 SDK replaces legacy query-observation control with the mandatory
 snapshots, revision-checked writes with atomic audit records, bounded history,
 restore preservation, and runtime-settings notifications are part of the adapter
 contract. See the [0.7 upgrade guide](../storage_adapter_sdk.md#upgrading-from-06-to-07).
+
+`StoragePaginationPolicy::try_with_maximum` validates a shared default and
+maximum together. `try_new` retains the default-only form, whose maximum is
+inherited from deployment configuration. Adapters must round-trip both forms,
+including audit history; older documents remain valid. Upgrade every reader
+before persisting policies with a maximum.
+
+The runtime policy extension adds eleven `StorageRuntimeSettingsGroup` and
+`StorageRuntimeSettingsValue` variants. This is a breaking pre-1.0 exhaustive-enum
+change: adapters and consumers must handle every variant and persist complete
+15-group snapshots. Policy deserialization validates private-fielded types;
+`schema()` exposes their document constraints for discovery. Network/path types
+are shared across configuration and persistence; `TrustedProxies::nets()` and
+`ClientAllowlist::Nets` intentionally retain the existing `ipnet::IpNet`
+integration surface. Upgrade every reader before introducing new group rows.

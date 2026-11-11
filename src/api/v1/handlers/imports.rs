@@ -1,10 +1,11 @@
+use crate::config::runtime::current as get_config;
 use crate::extractors::AccessEventContext;
 use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
 
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::config::{DEFAULT_IMPORT_MAX_ACTIVE_TASKS_PER_USER, get_config};
+use crate::config::DEFAULT_IMPORT_MAX_ACTIVE_TASKS_PER_USER;
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::search::parse_query_parameter;

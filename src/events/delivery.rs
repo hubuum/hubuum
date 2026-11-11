@@ -19,7 +19,9 @@ use crate::config::{
 };
 use crate::errors::ApiError;
 use crate::events::EventDeliverySettings;
-use crate::events::sink::{DefaultSinkResolver, EventEnvelope, SinkError, SinkResolver};
+use crate::events::sink::{
+    DefaultSinkResolver, EventEnvelope, RuntimeSinkResolver, SinkError, SinkResolver,
+};
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::{EventWorkerHealth, EventWorkerWakeupStats};
 use crate::observability::{metrics, tracing as telemetry};
@@ -96,6 +98,9 @@ async fn process_event_delivery_batch_with_schedule(
 ) -> Result<EventDeliveryBatchOutcome, ApiError> {
     let _activity = MaintenanceActivityGuard::begin();
     let storage = storage_handle(pool);
+    storage
+        .applied_runtime_settings()
+        .ensure_security_current()?;
     let settings = settings.with_execution_capacity(
         NonZeroUsize::new(EVENT_DELIVERY_MAX_CONCURRENCY_PER_WORKER).unwrap(),
     );
@@ -309,7 +314,23 @@ async fn event_delivery_worker_loop(
     resolver: &'static dyn SinkResolver,
     shutdown: ShutdownSignal,
 ) {
+    let mut changes = pool.subscribe_runtime_settings();
     loop {
+        let runtime = crate::config::runtime::for_storage(&pool).ok();
+        let runtime_resolver = runtime
+            .as_ref()
+            .map(|config| RuntimeSinkResolver::new(resolver, config));
+        let resolver = runtime_resolver
+            .as_ref()
+            .map_or(resolver, |value| value as &dyn SinkResolver);
+        let settings = runtime
+            .as_ref()
+            .and_then(|config| config.event_delivery_settings().ok())
+            .unwrap_or(settings);
+        let poll_interval = runtime
+            .as_ref()
+            .map(|config| Duration::from_millis(config.event_delivery_poll_interval_ms))
+            .unwrap_or(poll_interval);
         let result = tokio::select! {
             biased;
             _ = shutdown.requested() => break,
@@ -326,7 +347,8 @@ async fn event_delivery_worker_loop(
         if delivery_worker_should_continue(&result) {
             continue;
         }
-        if !wait_for_event_delivery_wakeup(poll_interval, next_wakeup_in, &shutdown).await {
+        let keep_running = tokio::select! { result = wait_for_event_delivery_wakeup(poll_interval, next_wakeup_in, &shutdown) => result, _ = changes.changed() => true };
+        if !keep_running {
             break;
         }
     }
@@ -431,7 +453,7 @@ pub fn event_delivery_wakeup_stats() -> EventWorkerWakeupStats {
 }
 
 pub(crate) fn event_delivery_worker_health() -> EventWorkerHealth {
-    let config = get_config().ok();
+    let config = crate::config::runtime::current().ok();
     EventWorkerHealth {
         workers_configured: configured_event_delivery_worker_count(),
         batch_size: config

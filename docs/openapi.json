@@ -946,7 +946,7 @@
             }
           },
           "400": {
-            "description": "Invalid value or a default above the deployment max_page_limit",
+            "description": "Invalid page limits, default above maximum, or deployment ceiling exceeded",
             "content": {
               "application/json": {
                 "schema": {
@@ -1311,6 +1311,91 @@
           },
           "403": {
             "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete Api V1 Admin Runtime Settings By Group",
+        "description": "Auto-generated documentation for DELETE /api/v1/admin/runtime-settings/{group}.",
+        "operationId": "deleteApiV1AdminRuntimeSettingsByGroup",
+        "parameters": [
+          {
+            "name": "group",
+            "in": "path",
+            "description": "Discovered settings group",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/RuntimeSettingsGroup"
+            }
+          },
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "description": "Current revision of the group.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ResourceRevision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deployment ownership committed as a new audited revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or unavailable deployment configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator required; security settings require a local password-capable human administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; refetch before editing",
             "content": {
               "application/json": {
                 "schema": {
@@ -14678,7 +14763,7 @@
         "operationId": "getApiV1Config",
         "responses": {
           "200": {
-            "description": "Effective client-safe configuration, including runtime-managed defaults applied by the responding replica",
+            "description": "Effective client-safe configuration, including runtime-managed page limits applied by the responding replica",
             "content": {
               "application/json": {
                 "schema": {
@@ -35385,6 +35470,15 @@
           "default_page_limit": {
             "type": "integer",
             "minimum": 1
+          },
+          "max_page_limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Omitted for legacy policies that inherit each replica's deployment maximum.",
+            "minimum": 1
           }
         }
       },
@@ -35404,13 +35498,13 @@
             "properties": {
               "constrained_by_ceiling": {
                 "type": "boolean",
-                "description": "The runtime default exceeds this replica's ceiling and is clamped to it."
+                "description": "A runtime limit exceeds this replica's ceiling and is clamped to it."
               },
               "deployment": {
-                "$ref": "#/components/schemas/PaginationPolicyValue"
+                "$ref": "#/components/schemas/ClientPaginationConfig"
               },
               "effective": {
-                "$ref": "#/components/schemas/PaginationPolicyValue"
+                "$ref": "#/components/schemas/ClientPaginationConfig"
               },
               "max_page_limit": {
                 "type": "integer",
@@ -35433,7 +35527,7 @@
       },
       "PaginationSettingsRequest": {
         "type": "object",
-        "description": "Manage the default page size for every replica sharing storage.",
+        "description": "Manage page sizes for every replica sharing storage.",
         "required": [
           "expected_revision",
           "default_page_limit"
@@ -35442,13 +35536,22 @@
           "default_page_limit": {
             "type": "integer",
             "format": "int64",
-            "description": "Maximum items in a page when a request omits its limit. Requests with an\nexplicit limit keep that limit, subject to the deployment maximum. Larger\npages can use more memory and transfer more data. Must be at least 1 and\nmust not exceed this replica's deployment maximum page size.",
+            "description": "Maximum items in a page when a request omits its limit. Requests with an\nexplicit limit keep that limit, subject to the effective maximum. Larger\npages can use more memory and transfer more data. Must be at least 1 and\nmust not exceed max_page_limit or this replica's deployment ceiling.",
             "maximum": 4294967295,
             "minimum": 1
           },
           "expected_revision": {
             "$ref": "#/components/schemas/ResourceRevision",
             "description": "Current revision of the `pagination` group."
+          },
+          "max_page_limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Largest page size allowed, including requests with an explicit limit.\nMust be at least default_page_limit and no greater than this replica's\nHUBUUM_MAX_PAGE_LIMIT deployment ceiling. Larger pages can use more memory\nand transfer more data. Omit on PUT to inherit the deployment maximum;\nomit on PATCH to preserve the current value. Changes affect new requests.",
+            "minimum": 1
           }
         },
         "additionalProperties": false
@@ -38264,6 +38367,38 @@
           "treetop"
         ]
       },
+      "RuntimePolicyReport": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RuntimeSettingsOwnership"
+          },
+          {
+            "type": "object",
+            "required": [
+              "effective",
+              "deployment",
+              "constrained_by_ceiling"
+            ],
+            "properties": {
+              "constrained_by_ceiling": {
+                "type": "boolean"
+              },
+              "deployment": {
+                "type": "object"
+              },
+              "effective": {
+                "type": "object"
+              },
+              "runtime": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              }
+            }
+          }
+        ]
+      },
       "RuntimeSettingsApplicationStatus": {
         "type": "string",
         "enum": [
@@ -38409,7 +38544,9 @@
         "description": "When a changed value takes effect on a replica that has applied it.",
         "enum": [
           "next_request",
-          "next_query"
+          "next_query",
+          "next_operation",
+          "on_reconciliation"
         ]
       },
       "RuntimeSettingsGroup": {
@@ -38419,7 +38556,18 @@
           "authentication",
           "authorization",
           "query_observations",
-          "pagination"
+          "pagination",
+          "observability",
+          "network",
+          "query_limits",
+          "tasks",
+          "remote_calls",
+          "tokens",
+          "login_rate_limit",
+          "events",
+          "exports",
+          "backups",
+          "restores"
         ]
       },
       "RuntimeSettingsGroupState": {
@@ -38610,7 +38758,8 @@
           "authentication",
           "authorization",
           "query_observations",
-          "pagination"
+          "pagination",
+          "policies"
         ],
         "properties": {
           "authentication": {
@@ -38621,6 +38770,16 @@
           },
           "pagination": {
             "$ref": "#/components/schemas/PaginationSettingsReport"
+          },
+          "policies": {
+            "type": "object",
+            "description": "Additional policies, keyed by discovered group name.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RuntimePolicyReport"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           },
           "query_observations": {
             "$ref": "#/components/schemas/QueryObservationSettingsReport"

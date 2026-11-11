@@ -13,6 +13,7 @@ use serde_json::Value;
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
+use crate::config::running::ClientPaginationConfig;
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::pagination::PageLimits;
@@ -31,6 +32,17 @@ pub enum RuntimeSettingsGroup {
     Authorization,
     QueryObservations,
     Pagination,
+    Observability,
+    Network,
+    QueryLimits,
+    Tasks,
+    RemoteCalls,
+    Tokens,
+    LoginRateLimit,
+    Events,
+    Exports,
+    Backups,
+    Restores,
 }
 
 impl From<RuntimeSettingsGroup> for StorageRuntimeSettingsGroup {
@@ -40,6 +52,17 @@ impl From<RuntimeSettingsGroup> for StorageRuntimeSettingsGroup {
             RuntimeSettingsGroup::Authorization => Self::Authorization,
             RuntimeSettingsGroup::QueryObservations => Self::QueryObservations,
             RuntimeSettingsGroup::Pagination => Self::Pagination,
+            RuntimeSettingsGroup::Observability => Self::Observability,
+            RuntimeSettingsGroup::Network => Self::Network,
+            RuntimeSettingsGroup::QueryLimits => Self::QueryLimits,
+            RuntimeSettingsGroup::Tasks => Self::Tasks,
+            RuntimeSettingsGroup::RemoteCalls => Self::RemoteCalls,
+            RuntimeSettingsGroup::Tokens => Self::Tokens,
+            RuntimeSettingsGroup::LoginRateLimit => Self::LoginRateLimit,
+            RuntimeSettingsGroup::Events => Self::Events,
+            RuntimeSettingsGroup::Exports => Self::Exports,
+            RuntimeSettingsGroup::Backups => Self::Backups,
+            RuntimeSettingsGroup::Restores => Self::Restores,
         }
     }
 }
@@ -51,6 +74,17 @@ impl From<StorageRuntimeSettingsGroup> for RuntimeSettingsGroup {
             StorageRuntimeSettingsGroup::Authorization => Self::Authorization,
             StorageRuntimeSettingsGroup::QueryObservations => Self::QueryObservations,
             StorageRuntimeSettingsGroup::Pagination => Self::Pagination,
+            StorageRuntimeSettingsGroup::Observability => Self::Observability,
+            StorageRuntimeSettingsGroup::Network => Self::Network,
+            StorageRuntimeSettingsGroup::QueryLimits => Self::QueryLimits,
+            StorageRuntimeSettingsGroup::Tasks => Self::Tasks,
+            StorageRuntimeSettingsGroup::RemoteCalls => Self::RemoteCalls,
+            StorageRuntimeSettingsGroup::Tokens => Self::Tokens,
+            StorageRuntimeSettingsGroup::LoginRateLimit => Self::LoginRateLimit,
+            StorageRuntimeSettingsGroup::Events => Self::Events,
+            StorageRuntimeSettingsGroup::Exports => Self::Exports,
+            StorageRuntimeSettingsGroup::Backups => Self::Backups,
+            StorageRuntimeSettingsGroup::Restores => Self::Restores,
         }
     }
 }
@@ -126,18 +160,25 @@ impl QueryObservationSettingsRequest {
     }
 }
 
-/// Manage the default page size for every replica sharing storage.
+/// Manage page sizes for every replica sharing storage.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PaginationSettingsRequest {
     /// Current revision of the `pagination` group.
     pub expected_revision: ResourceRevision,
     /// Maximum items in a page when a request omits its limit. Requests with an
-    /// explicit limit keep that limit, subject to the deployment maximum. Larger
+    /// explicit limit keep that limit, subject to the effective maximum. Larger
     /// pages can use more memory and transfer more data. Must be at least 1 and
-    /// must not exceed this replica's deployment maximum page size.
+    /// must not exceed max_page_limit or this replica's deployment ceiling.
     #[schema(minimum = 1, maximum = 4_294_967_295u64)]
     pub default_page_limit: u64,
+    /// Largest page size allowed, including requests with an explicit limit.
+    /// Must be at least default_page_limit and no greater than this replica's
+    /// HUBUUM_MAX_PAGE_LIMIT deployment ceiling. Larger pages can use more memory
+    /// and transfer more data. Omit on PUT to inherit the deployment maximum;
+    /// omit on PATCH to preserve the current value. Changes affect new requests.
+    #[schema(minimum = 1)]
+    pub max_page_limit: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, ToSchema)]
@@ -250,10 +291,21 @@ impl PaginationSettingsRequest {
         ceiling: PageLimits,
         context: EventContext,
     ) -> Result<StorageRuntimeSettingsUpdate, ApiError> {
-        let policy = StoragePaginationPolicy::try_new_with_ceiling(
-            self.default_page_limit,
-            ceiling.maximum_limit() as u64,
-        )
+        let maximum = ceiling.maximum_limit() as u64;
+        let policy = match self.max_page_limit {
+            Some(limit) => {
+                if limit > maximum {
+                    return Err(ApiError::BadRequest(format!(
+                        "max_page_limit ({limit}) must not exceed this replica's deployment ceiling ({maximum})"
+                    )));
+                }
+                StoragePaginationPolicy::try_with_maximum(self.default_page_limit, limit)
+            }
+            None => StoragePaginationPolicy::try_new_with_ceiling(
+                self.default_page_limit,
+                maximum,
+            ),
+        }
         .map_err(|error| ApiError::BadRequest(error.message().to_string()))?;
         Ok(StorageRuntimeSettingsUpdate::new(
             StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Pagination(
@@ -323,6 +375,10 @@ pub enum RuntimeSettingsEffect {
     NextRequest,
     /// Sampling decisions read the value for each eligible query.
     NextQuery,
+    /// New jobs and batches capture the policy; existing work retains its snapshot.
+    NextOperation,
+    /// Applied by each replica when it reconciles shared settings.
+    OnReconciliation,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
@@ -375,7 +431,7 @@ pub struct RuntimeSettingsOwnership {
 }
 
 impl RuntimeSettingsOwnership {
-    fn new(
+    pub(crate) fn new(
         record: Option<&StorageRuntimeSettingsRecord>,
         takes_effect: RuntimeSettingsEffect,
     ) -> Self {
@@ -457,18 +513,22 @@ pub struct QueryObservationSettingsReport {
 pub struct PaginationPolicyValue {
     #[schema(minimum = 1)]
     pub default_page_limit: usize,
+    /// Omitted for legacy policies that inherit each replica's deployment maximum.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(minimum = 1)]
+    pub max_page_limit: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct PaginationSettingsReport {
     #[serde(flatten)]
     pub ownership: RuntimeSettingsOwnership,
-    pub effective: PaginationPolicyValue,
+    pub effective: ClientPaginationConfig,
     pub runtime: Option<PaginationPolicyValue>,
-    pub deployment: PaginationPolicyValue,
+    pub deployment: ClientPaginationConfig,
     /// Deployment resource ceiling of this replica. It is never runtime-managed.
     pub max_page_limit: usize,
-    /// The runtime default exceeds this replica's ceiling and is clamped to it.
+    /// A runtime limit exceeds this replica's ceiling and is clamped to it.
     pub constrained_by_ceiling: bool,
 }
 
@@ -514,6 +574,21 @@ pub struct RuntimeSettingsReport {
     pub authorization: AuthorizationSettingsReport,
     pub query_observations: QueryObservationSettingsReport,
     pub pagination: PaginationSettingsReport,
+    /// Additional policies, keyed by discovered group name.
+    pub policies: std::collections::BTreeMap<String, RuntimePolicyReport>,
+}
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct RuntimePolicyReport {
+    #[serde(flatten)]
+    pub ownership: RuntimeSettingsOwnership,
+    #[schema(value_type = Object)]
+    pub effective: Value,
+    #[schema(value_type = Option<Object>)]
+    pub runtime: Option<Value>,
+    #[schema(value_type = Object)]
+    pub deployment: Value,
+    pub constrained_by_ceiling: bool,
 }
 
 impl RuntimeSettingsReport {
@@ -560,10 +635,9 @@ impl RuntimeSettingsReport {
                 value
             });
         let pagination_policy = snapshot.and_then(|snapshot| snapshot.pagination());
-        let effective_pages = deployment
-            .pagination
-            .with_runtime_default(pagination_policy);
+        let effective_pages = deployment.pagination.with_runtime_policy(pagination_policy);
         Self {
+            policies: Default::default(),
             replica: RuntimeSettingsReplicaStatus {
                 status: applied.application(now).into(),
                 applied_at: applied.applied_at(),
@@ -608,18 +682,24 @@ impl RuntimeSettingsReport {
                     record(StorageRuntimeSettingsGroup::Pagination),
                     RuntimeSettingsEffect::NextRequest,
                 ),
-                effective: PaginationPolicyValue {
+                effective: ClientPaginationConfig {
                     default_page_limit: effective_pages.default_limit(),
+                    max_page_limit: effective_pages.maximum_limit(),
                 },
                 runtime: pagination_policy.map(|policy| PaginationPolicyValue {
                     default_page_limit: policy.default_page_limit() as usize,
+                    max_page_limit: policy.max_page_limit(),
                 }),
-                deployment: PaginationPolicyValue {
+                deployment: ClientPaginationConfig {
                     default_page_limit: deployment.pagination.default_limit(),
+                    max_page_limit: deployment.pagination.maximum_limit(),
                 },
                 max_page_limit: deployment.pagination.maximum_limit(),
                 constrained_by_ceiling: pagination_policy.is_some_and(|policy| {
                     policy.default_page_limit() as usize > deployment.pagination.maximum_limit()
+                        || policy.max_page_limit().is_some_and(|maximum| {
+                            maximum > deployment.pagination.maximum_limit() as u64
+                        })
                 }),
             },
         }
@@ -632,6 +712,10 @@ impl RuntimeSettingsReport {
             RuntimeSettingsGroup::Authorization => self.authorization.ownership.revision,
             RuntimeSettingsGroup::QueryObservations => self.query_observations.ownership.revision,
             RuntimeSettingsGroup::Pagination => self.pagination.ownership.revision,
+            group => self
+                .policies
+                .get(StorageRuntimeSettingsGroup::from(group).as_str())
+                .and_then(|policy| policy.ownership.revision),
         }
     }
 }
@@ -785,6 +869,7 @@ mod tests {
         let request = PaginationSettingsRequest {
             expected_revision: ResourceRevision::INITIAL,
             default_page_limit: limit,
+            max_page_limit: None,
         };
         assert!(matches!(
             request.into_update(ceiling(), EventContext::system()),
@@ -799,6 +884,7 @@ mod tests {
         let request = PaginationSettingsRequest {
             expected_revision: ResourceRevision::INITIAL,
             default_page_limit: limit,
+            max_page_limit: None,
         };
         let update = request
             .into_update(ceiling(), EventContext::system())

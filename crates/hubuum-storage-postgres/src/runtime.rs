@@ -22,7 +22,7 @@ use crate::revision::revision_owner_key;
 use crate::{PostgresConnection, PostgresPool, PostgresPooledConnection, PostgresStorageError};
 
 /// Latest migration required by this adapter.
-pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20261106000001";
+pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20261110000001";
 // These migrations were added on a parallel branch and precede the latest
 // checkpoint. Its presence alone does not prove that tracing is installed.
 const REQUIRED_DATABASE_MIGRATION_VERSIONS: &[&str] = &[
@@ -163,6 +163,25 @@ impl PostgresRuntime {
     #[must_use]
     pub fn pool(&self) -> &PostgresPool {
         &self.pool
+    }
+
+    pub(crate) async fn effective_computed_reindex_batch_size(
+        &self,
+    ) -> Result<usize, PostgresStorageError> {
+        use hubuum_storage_core::{StorageRuntimeSettingsGroup, StorageRuntimeSettingsValue};
+        let snapshot = crate::operations::runtime_settings::load_runtime_settings(self).await?;
+        Ok(
+            match snapshot
+                .record(StorageRuntimeSettingsGroup::Tasks)
+                .assignment()
+                .value()
+            {
+                Some(StorageRuntimeSettingsValue::Tasks(policy)) => {
+                    *policy.computed_reindex_batch_size()
+                }
+                _ => self.computed_reindex_batch_size(),
+            },
+        )
     }
 
     pub(crate) fn computed_reindex_batch_size(&self) -> usize {

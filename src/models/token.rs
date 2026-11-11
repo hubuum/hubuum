@@ -395,11 +395,11 @@ impl IssuedToken {
 }
 
 pub(crate) fn configured_token_issuance_policy() -> Result<TokenIssuancePolicy, ApiError> {
-    get_config()?.token_issuance_policy()
+    crate::config::runtime::current()?.token_issuance_policy()
 }
 
 pub(crate) fn configured_token_lifetime() -> Result<TokenLifetime, ApiError> {
-    Ok(configured_token_issuance_policy()?.default_lifetime())
+    Ok(get_config()?.token_issuance_policy()?.default_lifetime())
 }
 
 impl Token {

@@ -1,3 +1,4 @@
+use crate::config::runtime::current as get_config;
 use std::collections::{BTreeMap, btree_map::Entry};
 
 use chrono::{DateTime, Utc};
@@ -13,7 +14,7 @@ use uuid::Uuid;
 use crate::{
     config::{
         DEFAULT_EXPORT_MAX_OUTPUT_BYTES, DEFAULT_EXPORT_TEMPLATE_FUEL,
-        DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT, get_config,
+        DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT,
     },
     errors::ApiError,
     models::{ExportContentType, ExportMissingDataPolicy, ExportTemplate, schema_evolution::*},

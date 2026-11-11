@@ -99,15 +99,21 @@ impl PageLimits {
         limit.min(self.maximum)
     }
 
-    /// Apply a shared runtime default, clamped to this deployment's ceiling.
+    /// Apply shared runtime limits, clamped to this deployment's ceiling.
     #[must_use]
-    pub fn with_runtime_default(self, policy: Option<StoragePaginationPolicy>) -> Self {
+    pub fn with_runtime_policy(self, policy: Option<StoragePaginationPolicy>) -> Self {
         match policy {
-            Some(policy) => Self {
-                default: usize::try_from(policy.default_page_limit())
-                    .map_or(self.maximum, |limit| limit.min(self.maximum)),
-                maximum: self.maximum,
-            },
+            Some(policy) => {
+                let maximum = policy
+                    .max_page_limit()
+                    .and_then(|limit| usize::try_from(limit).ok())
+                    .map_or(self.maximum, |limit| limit.min(self.maximum));
+                Self {
+                    default: usize::try_from(policy.default_page_limit())
+                        .map_or(maximum, |limit| limit.min(maximum)),
+                    maximum,
+                }
+            }
             None => self,
         }
     }
@@ -154,9 +160,12 @@ pub async fn with_request_page_limits<F: Future>(limits: PageLimits, operation: 
 /// Effective limits: those fixed for the current API request, otherwise the
 /// deployment configuration.
 pub fn page_limits() -> Result<PageLimits, ApiError> {
-    REQUEST_PAGE_LIMITS
-        .try_with(|limits| *limits)
-        .or_else(|_| deployment_page_limits())
+    REQUEST_PAGE_LIMITS.try_with(|limits| *limits).or_else(
+        |_| match crate::config::runtime::scoped() {
+            Some(config) => PageLimits::new(config.default_page_limit, config.max_page_limit),
+            None => deployment_page_limits(),
+        },
+    )
 }
 
 pub fn page_limits_or_defaults() -> PageLimits {

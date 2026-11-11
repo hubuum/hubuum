@@ -1,6 +1,7 @@
-use hubuum_storage_core::StorageBackupBudget;
+use hubuum_storage_core::{StorageBackupBudget, StorageRuntimeSettingsGroup};
 pub mod environment;
 pub mod running;
+pub(crate) mod runtime;
 
 #[cfg(not(test))]
 use std::sync::OnceLock;
@@ -9,8 +10,8 @@ use std::sync::{LazyLock, Mutex};
 
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
-use std::str::FromStr;
 use std::time::Duration;
 
 use crate::errors::ApiError;
@@ -43,68 +44,7 @@ pub use token_hash::{
     token_hash_key_ring,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub struct MetricsPath(String);
-
-impl MetricsPath {
-    pub fn new(path: impl Into<String>) -> Result<Self, String> {
-        let path = path.into();
-        if !path.starts_with('/') || path.len() == 1 {
-            return Err("metrics_path must be an absolute non-root path".to_string());
-        }
-        if path.ends_with('/') || path.contains("//") {
-            return Err("metrics_path must not contain empty path segments".to_string());
-        }
-        if path
-            .chars()
-            .any(|character| character.is_whitespace() || character.is_control())
-            || path.contains(['{', '}', '*', '?', '#'])
-        {
-            return Err("metrics_path must be a literal HTTP path".to_string());
-        }
-        if path == "/api"
-            || path.starts_with("/api/")
-            || path == "/swagger-ui"
-            || path.starts_with("/swagger-ui/")
-            || matches!(
-                path.as_str(),
-                "/healthz" | "/readyz" | "/api-doc/openapi.json"
-            )
-        {
-            return Err(format!(
-                "metrics_path '{path}' collides with an existing application route"
-            ));
-        }
-        Ok(Self(path))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl FromStr for MetricsPath {
-    type Err = String;
-
-    fn from_str(path: &str) -> Result<Self, Self::Err> {
-        Self::new(path)
-    }
-}
-
-impl TryFrom<String> for MetricsPath {
-    type Error = String;
-
-    fn try_from(path: String) -> Result<Self, Self::Error> {
-        Self::new(path)
-    }
-}
-
-impl From<MetricsPath> for String {
-    fn from(path: MetricsPath) -> Self {
-        path.0
-    }
-}
+pub use hubuum_storage_core::MetricsPath;
 
 fn detected_cpu_count() -> usize {
     std::thread::available_parallelism()
@@ -240,6 +180,11 @@ impl LoginRateLimitBackendKind {
 #[derive(Parser, Deserialize, Clone)]
 #[command(version = env!("CARGO_PKG_VERSION"), about = "Hubuum server", long_about = None)]
 pub struct AppConfig {
+    // Ownership travels with resolved values across request/job boundaries.
+    #[clap(skip)]
+    #[serde(skip)]
+    runtime_managed_groups: BTreeSet<StorageRuntimeSettingsGroup>,
+
     #[command(flatten)]
     #[serde(default)]
     pub schema_validation: SchemaValidationOptions,
@@ -1772,6 +1717,9 @@ impl AppConfig {
 }
 
 pub fn max_transitive_depth() -> i32 {
+    if let Some(config) = runtime::scoped() {
+        return config.max_transitive_depth;
+    }
     #[cfg(test)]
     let depth = get_config_from_env()
         .map(|config| config.max_transitive_depth)
@@ -1837,6 +1785,9 @@ impl From<&AppConfig> for LoginRateLimitConfig {
 
 /// Resolve the active login rate-limit configuration.
 pub fn login_rate_limit_config() -> LoginRateLimitConfig {
+    if let Some(config) = runtime::scoped() {
+        return LoginRateLimitConfig::from(config.as_ref());
+    }
     #[cfg(test)]
     let config = get_config_from_env()
         .map(|config| LoginRateLimitConfig::from(&config))
@@ -1999,6 +1950,7 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
     }
 
     let config = AppConfig {
+        runtime_managed_groups: BTreeSet::new(),
         schema_validation: SchemaValidationOptions::from_environment()?,
         query_observations: QueryObservationOptions::from_environment()?,
         query_observation_settings: StorageQueryObservationSettings::default(),
@@ -2717,6 +2669,7 @@ mod tests {
         let runtime = PaginationSettingsRequest {
             expected_revision: ResourceRevision::INITIAL,
             default_page_limit: default,
+            max_page_limit: None,
         }
         .into_update(
             PageLimits::new(1, usize::try_from(maximum).unwrap()).unwrap(),

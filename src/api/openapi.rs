@@ -117,6 +117,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         runtime_config::release_authorization_settings,
         runtime_config::release_query_observation_settings,
         runtime_config::release_pagination_settings,
+        runtime_config::release_runtime_settings_group,
         runtime_config::get_runtime_settings_history,
         meta::get_db_state,
         meta::get_object_and_class_count,
