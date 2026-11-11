@@ -1,9 +1,21 @@
 use super::*;
 
+enum ExpirySource<'a> {
+    History(&'a MemoryHistoryEntry),
+    Backup(&'a StorageBackupRow),
+    Computed(&'a StorageComputedFieldHistory),
+}
+
+enum ScanStep {
+    Advance,
+    Oversized,
+    Defer,
+}
+
 pub(super) async fn admit(
     storage: &MemoryStorage,
     request: HistoryExpiryAdmissionRequest,
-) -> Result<Option<HistoryExpiryManifest>, StorageError> {
+) -> Result<HistoryExpiryAdmissionResult, StorageError> {
     let scope = storage.current_execution_scope();
     if scope.storage_callback_active() || scope.history_read_override().is_some() {
         return Err(StorageError::unavailable(
@@ -37,19 +49,65 @@ pub(super) async fn admit(
         StorageError::conflict("Expiry authority changed or batch already admitted")
     })?;
     let family = request.scan().key().family();
+    let rows: Box<dyn ExactSizeIterator<Item = ExpirySource<'_>>> = match family {
+        StorageIdentityHistoryKind::ClassSchema => {
+            Box::new(state.schema_history.iter().map(ExpirySource::Backup))
+        }
+        StorageIdentityHistoryKind::ComputedDefinitions => {
+            Box::new(state.computed_history.iter().map(ExpirySource::Computed))
+        }
+        StorageIdentityHistoryKind::ClassRelation | StorageIdentityHistoryKind::ObjectRelation => {
+            let section = if family == StorageIdentityHistoryKind::ClassRelation {
+                StorageBackupHistorySection::ClassRelationHistory
+            } else {
+                StorageBackupHistorySection::ObjectRelationHistory
+            };
+            Box::new(
+                state
+                    .relation_history
+                    .get(&section)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(ExpirySource::Backup),
+            )
+        }
+        StorageIdentityHistoryKind::Collection
+        | StorageIdentityHistoryKind::Class
+        | StorageIdentityHistoryKind::Object
+        | StorageIdentityHistoryKind::ExportTemplate
+        | StorageIdentityHistoryKind::RemoteTarget => {
+            Box::new(state.history.iter().map(ExpirySource::History))
+        }
+    };
+    let mut window = request
+        .scan_window(rows.len() as u64)
+        .map_err(invalid_contract_value)?;
+    let start = usize::try_from(window.after()).map_err(|_| {
+        StorageError::invalid_input("History scan position exceeds this adapter's range")
+    })?;
+    let span = usize::try_from(window.through() - window.after()).map_err(|_| {
+        StorageError::invalid_input("History scan boundary exceeds this adapter's range")
+    })?;
+    let remaining = rows.len().saturating_sub(start).min(span);
     let mut input_bytes = 0;
     let mut metadata_bytes = 0;
     let mut consider = |row: &StorageBackupRow,
                         source: Option<&MemoryHistoryEntry>|
-     -> Result<bool, StorageError> {
+     -> Result<ScanStep, StorageError> {
         let Some(bytes) = bounded_encoded_bytes(
             row,
             u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES) - input_bytes,
         )?
         else {
-            return Ok(false);
+            return Ok(if input_bytes == 0 {
+                ScanStep::Oversized
+            } else {
+                ScanStep::Defer
+            });
         };
         input_bytes += bytes;
+        let metadata_before_row = metadata_bytes;
         let raw = row.get("logical_identity").filter(|value| !value.is_null());
         if let Some(raw) = raw {
             let Some(bytes) = bounded_encoded_bytes(
@@ -57,7 +115,11 @@ pub(super) async fn admit(
                 HistoryLifecycleScan::MAX_INPUT_BYTES as u64 - metadata_bytes,
             )?
             else {
-                return Ok(false);
+                return Ok(if metadata_bytes == 0 {
+                    ScanStep::Oversized
+                } else {
+                    ScanStep::Defer
+                });
             };
             metadata_bytes += bytes;
         }
@@ -78,17 +140,17 @@ pub(super) async fn admit(
         let until = time("valid_to")?;
         let deleted = row.get("operation").and_then(Value::as_str) == Some("delete");
         if family != StorageIdentityHistoryKind::ClassSchema && until.is_none() && !deleted {
-            return Ok(true);
+            return Ok(ScanStep::Advance);
         }
         let Some(raw) = row.get("logical_identity").filter(|value| !value.is_null()) else {
-            return Ok(true);
+            return Ok(ScanStep::Advance);
         };
         let evidence: StorageIdentityEvidence = serde_json::from_value(raw.clone())
             .map_err(|_| StorageError::backend_failure("Invalid native expiry identity"))?;
         if evidence.has_unknown_restore_source()
             || !state.history_identity_visible(family, Some(&evidence))
         {
-            return Ok(true);
+            return Ok(ScanStep::Advance);
         }
         let anchor = if family == StorageIdentityHistoryKind::ClassSchema {
             HistoryRetentionAnchor::SchemaEvent(from)
@@ -105,10 +167,10 @@ pub(super) async fn admit(
         )
         .map_err(invalid_contract_value)?
         else {
-            return Ok(true);
+            return Ok(ScanStep::Advance);
         };
         if !request.scan().includes(&candidate) {
-            return Ok(true);
+            return Ok(ScanStep::Advance);
         }
         candidate = candidate
             .with_native_interval(from, until)
@@ -119,7 +181,7 @@ pub(super) async fn admit(
             // Capture authorization only after bounded identity/scope selection.
             // Missing older facts stay unresolved instead of poisoning a batch.
             if candidate.attributions().is_empty() || evidence.has_unknown_restore_source() {
-                return Ok(true);
+                return Ok(ScanStep::Advance);
             }
             let facts = HistoryObjectAuthorizationFacts::capture(
                 StorageObjectHistoryRecord::try_new(value.clone(), source.metadata()?)
@@ -128,7 +190,15 @@ pub(super) async fn admit(
             .map_err(invalid_contract_value)?;
             let bytes = u64::from(facts.encoded_bytes().value());
             if bytes > HistoryLifecycleScan::MAX_INPUT_BYTES as u64 - metadata_bytes {
-                return Ok(false);
+                return Ok(
+                    if metadata_bytes - metadata_before_row + bytes
+                        > HistoryLifecycleScan::MAX_INPUT_BYTES as u64
+                    {
+                        ScanStep::Oversized
+                    } else {
+                        ScanStep::Defer
+                    },
+                );
             }
             metadata_bytes += bytes;
             candidate = candidate
@@ -136,87 +206,77 @@ pub(super) async fn admit(
                 .map_err(invalid_contract_value)?;
         }
         let size = HistoryExpiryInputBytes::new(bytes).map_err(invalid_contract_value)?;
-        Ok(!matches!(
-            selection
-                .consider(candidate, size, &[])
-                .map_err(invalid_contract_value)?,
-            HistoryExpirySelectionOutcome::BudgetReached
-        ))
+        Ok(
+            if matches!(
+                selection
+                    .consider(candidate, size, &[])
+                    .map_err(invalid_contract_value)?,
+                HistoryExpirySelectionOutcome::BudgetReached
+            ) {
+                ScanStep::Defer
+            } else {
+                ScanStep::Advance
+            },
+        )
     };
     // Bound examined source rows before family, closure, scope, identity, visibility
     // or dependency filtering. Skipping an unselectable source never replenishes this budget.
-    match family {
-        StorageIdentityHistoryKind::ClassSchema => {
-            for row in state
-                .schema_history
-                .iter()
-                .take(request.scan().limit() as usize)
-            {
-                if !consider(row, None)? {
-                    break;
-                }
-            }
-        }
-        StorageIdentityHistoryKind::ComputedDefinitions => {
-            for row in state
-                .computed_history
-                .iter()
-                .take(request.scan().limit() as usize)
-            {
+    let mut stopped = false;
+    for (index, row) in rows
+        .enumerate()
+        .skip(start)
+        .take(span)
+        .take(request.scan().limit() as usize)
+    {
+        window
+            .observe(index as u64 + 1)
+            .map_err(invalid_contract_value)?;
+        let step = match row {
+            ExpirySource::History(row) if row.family() != family => ScanStep::Advance,
+            ExpirySource::History(row) => consider(&row.backup_history_row()?.1, Some(row))?,
+            ExpirySource::Backup(row) => consider(row, None)?,
+            ExpirySource::Computed(row) => {
                 if bounded_encoded_bytes(row, u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES))?
                     .is_none()
                 {
-                    break;
-                }
-                let raw = serde_json::to_value(row).map_err(|_| {
-                    StorageError::backend_failure("Cannot encode computed expiry source")
-                })?;
-                if !consider(
-                    &StorageBackupRow::try_from_value(raw).map_err(invalid_contract_value)?,
-                    None,
-                )? {
-                    break;
-                }
-            }
-        }
-        StorageIdentityHistoryKind::ClassRelation | StorageIdentityHistoryKind::ObjectRelation => {
-            let section = if family == StorageIdentityHistoryKind::ClassRelation {
-                StorageBackupHistorySection::ClassRelationHistory
-            } else {
-                StorageBackupHistorySection::ObjectRelationHistory
-            };
-            for row in state
-                .relation_history
-                .get(&section)
-                .into_iter()
-                .flatten()
-                .take(request.scan().limit() as usize)
-            {
-                if !consider(row, None)? {
-                    break;
+                    ScanStep::Oversized
+                } else {
+                    let raw = serde_json::to_value(row).map_err(|_| {
+                        StorageError::backend_failure("Cannot encode computed expiry source")
+                    })?;
+                    consider(
+                        &StorageBackupRow::try_from_value(raw).map_err(invalid_contract_value)?,
+                        None,
+                    )?
                 }
             }
-        }
-        _ => {
-            for row in state
-                .history
-                .iter()
-                .take(request.scan().limit() as usize)
-                .filter(|row| row.family() == family)
-            {
-                if !consider(&row.backup_history_row()?.1, Some(row))? {
-                    break;
-                }
+        };
+        match step {
+            ScanStep::Advance => window.advance(),
+            ScanStep::Oversized => {
+                window.advance();
+                stopped = true;
+                break;
+            }
+            ScanStep::Defer => {
+                stopped = true;
+                break;
             }
         }
     }
+    let exhausted = !stopped && remaining <= request.scan().limit() as usize;
     if selection.is_empty() {
-        return Ok(None);
+        return window
+            .finish(None, exhausted)
+            .map_err(invalid_contract_value);
     }
     let manifest = selection.finish().map_err(invalid_contract_value)?;
     let change = snapshot
         .control()
         .admit_expiry(manifest.clone(), snapshot.fence())
+        .map_err(invalid_contract_value)?;
+    let result = window
+        .finish(Some(manifest), exhausted)
         .map_err(invalid_contract_value)?;
     let pending = change
         .next()
@@ -224,7 +284,7 @@ pub(super) async fn admit(
         .map_err(invalid_contract_value)?;
     state.append_retained_lifecycle_events(pending)?;
     state.history_lifecycle = change.next().clone();
-    Ok(Some(manifest))
+    Ok(result)
 }
 
 fn bounded_encoded_bytes(
@@ -243,6 +303,9 @@ fn bounded_encoded_bytes(
         Err(error) => Err(error),
     }
 }
+
+#[cfg(test)]
+mod progress_tests;
 
 #[cfg(test)]
 mod tests {
@@ -399,7 +462,8 @@ mod tests {
         let bounded = storage
             .run_in_scope(scope.clone(), storage.admit_history_expiry(request(1)))
             .await
-            .unwrap();
+            .unwrap()
+            .into_manifest();
         assert!(
             bounded.is_none(),
             "A skipped first row must still consume the scan limit"
@@ -407,7 +471,8 @@ mod tests {
         let wider = storage
             .run_in_scope(scope, storage.admit_history_expiry(request(100)))
             .await
-            .unwrap();
+            .unwrap()
+            .into_manifest();
         assert!(
             wider.is_some(),
             "The wider scan must reach the eligible second source"
@@ -546,7 +611,8 @@ mod tests {
                 storage.admit_history_expiry(request),
             )
             .await
-            .unwrap();
+            .unwrap()
+            .into_manifest();
         assert_eq!(selected.is_some(), expected);
         let state = storage.state.read_control().await;
         if let Some(manifest) = selected {

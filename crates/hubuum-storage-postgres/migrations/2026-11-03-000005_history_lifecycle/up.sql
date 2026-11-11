@@ -753,8 +753,9 @@ BEGIN
     new_expiry:=replacement #> '{authority,expiry}';
     IF jsonb_typeof(new_expiry) IS DISTINCT FROM 'array' OR jsonb_array_length(new_expiry)<>jsonb_array_length(old_expiry)+1
        OR jsonb_array_length(new_expiry)>256 THEN RETURN FALSE; END IF;
-    SELECT jsonb_agg(value) INTO additions FROM jsonb_array_elements(new_expiry) value
-      WHERE NOT EXISTS(SELECT 1 FROM jsonb_array_elements(old_expiry) old WHERE old #>> '{manifest,identity}'=value #>> '{manifest,identity}');
+    SELECT jsonb_agg(candidate.value) INTO additions FROM jsonb_array_elements(new_expiry) candidate(value)
+      WHERE NOT EXISTS(SELECT 1 FROM jsonb_array_elements(old_expiry) retained(value)
+        WHERE retained.value #>> '{manifest,identity}'=candidate.value #>> '{manifest,identity}');
     IF jsonb_array_length(additions) IS DISTINCT FROM 1 THEN RETURN FALSE; END IF;
     intent:=additions->0; manifest:=intent->'manifest';
     IF (SELECT coalesce(jsonb_agg(value ORDER BY ordinal),'[]') FROM jsonb_array_elements(new_expiry) WITH ORDINALITY entries(value,ordinal)

@@ -78,7 +78,7 @@ impl HistoryLifecycleStorage for CompleteExternalAdapter {
     async fn admit_history_expiry(
         &self,
         request: HistoryExpiryAdmissionRequest,
-    ) -> Result<Option<HistoryExpiryManifest>, StorageError> {
+    ) -> Result<HistoryExpiryAdmissionResult, StorageError> {
         fixture_result()
     }
     async fn recover_history_lifecycle(

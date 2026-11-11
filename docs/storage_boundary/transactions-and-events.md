@@ -593,7 +593,14 @@ with runtime registration; a Legacy producer blocks admission. Recheck the
 captured policy/hold fence, native original intervals/identities and protected
 current/open copies. Keep complete-row input within 16 MiB, source rows within
 1000 and transferred metadata within 1 MiB. A bounded empty result does not prove
-source exhaustion. Persist the intent, read-exclusion projection and required
+source exhaustion. Return `HistoryExpiryAdmissionResult` with examined-row counts
+and a finite-pass continuation even without membership. Count every examined
+source row before filtering and advance after deciding it; preserve byte-deferred rows for a fresh page
+and skip individually oversized rows. Each pass keeps its original native bound;
+`PassFinished` requires a later pass to restart at the beginning. Neither native
+positions nor pass boundaries establish a committed-data watermark. Preserve the
+run, origin, scope and application/deletion fence while checking current policy
+authority on every page. Persist the intent, read-exclusion projection and required
 canonical audit facts together; append failure rolls back all of them. Existing
 publications stay charged after their original revision is fenced and require
 exact positive settlement. Primary commit grants no deletion authority: capture

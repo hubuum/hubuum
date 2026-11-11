@@ -616,7 +616,7 @@ impl HistoryLifecycleStorage for PostgresStorage {
     async fn admit_history_expiry(
         &self,
         request: HistoryExpiryAdmissionRequest,
-    ) -> Result<Option<HistoryExpiryManifest>, StorageError> {
+    ) -> Result<HistoryExpiryAdmissionResult, StorageError> {
         expiry::admit(self, request).await
     }
     async fn scan_history_lifecycle(

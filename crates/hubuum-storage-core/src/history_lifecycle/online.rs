@@ -8,6 +8,9 @@ use uuid::Uuid;
 use super::*;
 use crate::StorageRecordIdentity;
 
+mod scan;
+pub use scan::*;
+
 /// Stable batch identity and captured authority for native selection. This is
 /// not caller-supplied membership or independent checkpoint protection.
 #[derive(Clone, Debug)]
@@ -17,6 +20,7 @@ pub struct HistoryExpiryAdmissionRequest {
     origin: HistoryExpiryOrigin,
     scan: HistoryLifecycleScan,
     fence: HistoryReviewFence,
+    continuation: Option<HistoryExpiryScanCursor>,
 }
 
 impl HistoryExpiryAdmissionRequest {
@@ -39,6 +43,7 @@ impl HistoryExpiryAdmissionRequest {
             origin,
             scan,
             fence,
+            continuation: None,
         })
     }
     pub const fn identity(&self) -> Uuid {
@@ -49,6 +54,53 @@ impl HistoryExpiryAdmissionRequest {
     }
     pub const fn fence(&self) -> HistoryReviewFence {
         self.fence
+    }
+
+    pub fn continue_from(
+        mut self,
+        cursor: HistoryExpiryScanCursor,
+    ) -> Result<Self, StorageValidationError> {
+        cursor.validate_request(&self)?;
+        self.continuation = Some(cursor);
+        Ok(self)
+    }
+
+    /// Capture a finite native pass boundary under the adapter's authority
+    /// lock. A continuation preserves its original boundary despite new rows.
+    pub fn scan_window(
+        &self,
+        through: u64,
+    ) -> Result<HistoryExpiryScanWindow<'_>, StorageValidationError> {
+        HistoryExpiryScanWindow::new(self, through)
+    }
+
+    /// Retain the run and initiation while accepting current policy authority.
+    /// A finite pass always restarts; application/deletion fencing stops the run.
+    pub fn next_page(
+        &self,
+        identity: Uuid,
+        fence: HistoryReviewFence,
+        progress: HistoryExpiryScanProgress,
+    ) -> Result<Self, StorageValidationError> {
+        if identity == self.identity
+            || fence.incarnation() != self.fence.incarnation()
+            || fence.deletion_revision() != self.fence.deletion_revision()
+        {
+            return Err(invalid(
+                "Expiry page requires a fresh batch in the original application image",
+            ));
+        }
+        let request = Self::new(
+            identity,
+            self.run,
+            self.origin.clone(),
+            self.scan.clone(),
+            fence,
+        )?;
+        match progress {
+            HistoryExpiryScanProgress::Continue(cursor) => request.continue_from(cursor),
+            HistoryExpiryScanProgress::PassFinished => Ok(request),
+        }
     }
 
     /// Adapters call this under their authority lock. An uncertain retry must

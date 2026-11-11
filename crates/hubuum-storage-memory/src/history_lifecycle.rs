@@ -165,7 +165,7 @@ impl HistoryLifecycleStorage for MemoryStorage {
     async fn admit_history_expiry(
         &self,
         request: HistoryExpiryAdmissionRequest,
-    ) -> Result<Option<HistoryExpiryManifest>, StorageError> {
+    ) -> Result<HistoryExpiryAdmissionResult, StorageError> {
         expiry::admit(self, request).await
     }
     async fn scan_history_lifecycle(
@@ -3296,6 +3296,7 @@ mod online_read_tests {
                 .run_in_scope(scope, storage.admit_history_expiry(request))
                 .await
                 .unwrap()
+                .manifest()
                 .is_some()
         );
         storage.unregister_runtime(aware).await.unwrap();

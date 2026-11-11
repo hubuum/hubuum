@@ -89,6 +89,7 @@ decimal!(HistoryDeletionRevision, i64::MAX as u64);
 decimal!(HistoryRetentionSeconds, 315_360_000);
 decimal!(HistoryLogicalBytes, i64::MAX as u64);
 decimal!(HistoryPublicationGeneration, i64::MAX as u64);
+decimal!(HistoryExpiryScanPosition, i64::MAX as u64);
 
 /// Stable scope, independent of replaceable integer compatibility IDs.
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]

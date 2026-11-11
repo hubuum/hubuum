@@ -18,6 +18,30 @@ use uuid::Uuid;
 
 static CONTROL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+mod history_expiry;
+
+/// These fixtures assert one selected batch. Empty pages retain the same batch
+/// identity until selection; every bounded pass still terminates explicitly.
+async fn first_expiry_batch(
+    storage: &PostgresStorage,
+    mut request: HistoryExpiryAdmissionRequest,
+) -> Result<Option<HistoryExpiryManifest>, StorageError> {
+    loop {
+        let page = storage.admit_history_expiry(request.clone()).await?;
+        if page.manifest().is_some() {
+            return Ok(page.into_manifest());
+        }
+        match page.progress() {
+            HistoryExpiryScanProgress::Continue(cursor) => {
+                request = request
+                    .continue_from(cursor.clone())
+                    .map_err(|error| StorageError::invalid_input(error.to_string()))?;
+            }
+            HistoryExpiryScanProgress::PassFinished => return Ok(None),
+        }
+    }
+}
+
 #[tokio::test]
 async fn combined_archive_allows_online_registration() {
     let _guard = CONTROL_LOCK.lock().await;
@@ -1032,7 +1056,7 @@ mod runtime_protocol {
             .storage
             .run_in_scope(
                 StorageExecutionScope::default().with_application_access(application),
-                fixture.storage.admit_history_expiry(request),
+                first_expiry_batch(&fixture.storage, request),
             )
             .await
             .unwrap()
@@ -1270,8 +1294,7 @@ mod runtime_protocol {
                 first_storage.commit_history_lifecycle(change).await?;
             } else {
                 assert!(
-                    first_storage
-                        .admit_history_expiry(admission(batch))
+                    first_expiry_batch(&first_storage, admission(batch))
                         .await?
                         .is_some()
                 );
@@ -2440,7 +2463,7 @@ async fn native_expiry_retains_trigger_created_tombstone_gaps(
         .storage
         .run_in_scope(
             StorageExecutionScope::default().with_application_access(application),
-            fixture.storage.admit_history_expiry(request),
+            first_expiry_batch(&fixture.storage, request),
         )
         .await;
     let point = result
@@ -2664,7 +2687,7 @@ async fn native_expiry_admits_exact_trigger_created_membership(
         .storage
         .run_in_scope(
             StorageExecutionScope::default().with_application_access(application),
-            fixture.storage.admit_history_expiry(request),
+            first_expiry_batch(&fixture.storage, request),
         )
         .await;
     let after = fixture.storage.capture_history_lifecycle().await.unwrap();
@@ -2708,20 +2731,11 @@ async fn native_expiry_admits_exact_trigger_created_membership(
 #[case::held("held")]
 #[case::stale_hold("stale_hold")]
 #[case::legacy("legacy")]
-#[case::oversize("oversize")]
 #[case::audit("audit")]
 #[tokio::test]
 async fn native_expiry_refuses_unsafe_or_uncommitted_selection(#[case] mode: &str) {
     let _guard = CONTROL_LOCK.lock().await;
-    let (fixture, key, collection) = expiry_fixture(
-        StorageIdentityHistoryKind::Object,
-        if mode == "oversize" {
-            17 * 1024 * 1024
-        } else {
-            32
-        },
-    )
-    .await;
+    let (fixture, key, collection) = expiry_fixture(StorageIdentityHistoryKind::Object, 32).await;
     let runtime = fixture
         .storage
         .register_history_runtime(None)
@@ -2786,7 +2800,7 @@ async fn native_expiry_refuses_unsafe_or_uncommitted_selection(#[case] mode: &st
         .storage
         .run_in_scope(
             StorageExecutionScope::default().with_application_access(application),
-            fixture.storage.admit_history_expiry(request),
+            first_expiry_batch(&fixture.storage, request),
         )
         .await;
     if mode == "audit" {
@@ -2798,7 +2812,7 @@ async fn native_expiry_refuses_unsafe_or_uncommitted_selection(#[case] mode: &st
     }
     fixture.storage.unregister_runtime(runtime).await.unwrap();
     cleanup_expiry_fixture(fixture, collection, batch).await;
-    if matches!(mode, "held" | "oversize") {
+    if mode == "held" {
         assert!(result.unwrap().is_none());
     } else {
         assert!(result.is_err(), "{mode} unexpectedly admitted a batch");
@@ -2851,7 +2865,7 @@ async fn admitted_expiry_fences_old_publications_without_retiring_them() {
     .unwrap();
     let admitted = fixture
         .storage
-        .run_in_scope(scope.clone(), fixture.storage.admit_history_expiry(request))
+        .run_in_scope(scope.clone(), first_expiry_batch(&fixture.storage, request))
         .await;
     let stale = fixture
         .storage

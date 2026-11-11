@@ -3,6 +3,8 @@ use super::*;
 
 #[derive(QueryableByName)]
 struct SourceRow {
+    #[diesel(sql_type = BigInt)]
+    position: i64,
     #[diesel(sql_type = Timestamptz)]
     valid_from: DateTime<Utc>,
     #[diesel(sql_type = Nullable<Timestamptz>)]
@@ -16,6 +18,10 @@ struct SourceRow {
     #[diesel(sql_type = Bool)]
     within_budget: bool,
     #[diesel(sql_type = Bool)]
+    row_within_budget: bool,
+    #[diesel(sql_type = Bool)]
+    visible: bool,
+    #[diesel(sql_type = Bool)]
     dependency: bool,
     #[diesel(sql_type = Nullable<Jsonb>)]
     coordinates: Option<Value>,
@@ -24,7 +30,7 @@ struct SourceRow {
 pub(super) async fn admit(
     storage: &PostgresStorage,
     request: HistoryExpiryAdmissionRequest,
-) -> Result<Option<HistoryExpiryManifest>, StorageError> {
+) -> Result<HistoryExpiryAdmissionResult, StorageError> {
     let scope = current_scope(storage)?;
     storage.runtime().with_history_control_transaction(scope, async move |connection| {
         // Authority UPDATE is held before API/task validation or native rows.
@@ -43,22 +49,47 @@ pub(super) async fn admit(
         sql_query("SELECT set_config('statement_timeout', CASE WHEN current_setting('statement_timeout')::INTERVAL=INTERVAL '0' THEN '5000' ELSE GREATEST(1,FLOOR(LEAST(EXTRACT(EPOCH FROM current_setting('statement_timeout')::INTERVAL)*1000,5000)))::BIGINT::TEXT END,true)")
             .execute(connection).await?;
         let family = request.scan().key().family();
-        for row in rows(connection, request.scan()).await? {
-            if !row.within_budget { break; }
-            let Some(raw) = row.logical_identity else { continue; };
+        let (table, position) = source(family);
+        let upper = sql_query(format!("SELECT coalesce(max({position}),0)::bigint AS position FROM public.{table}"))
+            .get_result::<SourcePosition>(connection).await?.position;
+        let mut window = request.scan_window(u64::try_from(upper)
+            .map_err(|error| PostgresStorageError::invalid_persisted_value("native history scan boundary",error))?)?;
+        let rows = rows(connection, request.scan(), &window).await?;
+        let source_exhausted = rows.len() < request.scan().limit() as usize;
+        let mut stopped = false;
+        for row in rows {
+            window.observe(u64::try_from(row.position)
+                .map_err(|error| PostgresStorageError::invalid_persisted_value("native history scan position",error))?)?;
+            // Charge every returned source row, including suppressed metadata.
+            if stopped { continue; }
+            if !row.within_budget {
+                // Defer a row that can fit a fresh page. An individually
+                // oversized row cannot pin every later page to this prefix.
+                if !row.row_within_budget { window.advance(); }
+                stopped = true;
+                continue;
+            }
+            if !row.visible || (family != StorageIdentityHistoryKind::ClassSchema && row.valid_to.is_none() && !row.deleted) {
+                window.advance();
+                continue;
+            }
+            let Some(raw) = row.logical_identity else { window.advance(); continue; };
             let evidence: StorageIdentityEvidence = serde_json::from_value(raw)
                 .map_err(|error| PostgresStorageError::invalid_persisted_value("expiry source identity", error))?;
-            if evidence.has_unknown_restore_source() { continue; }
+            if evidence.has_unknown_restore_source() { window.advance(); continue; }
             let anchor = match family {
                 StorageIdentityHistoryKind::ClassSchema => HistoryRetentionAnchor::SchemaEvent(row.valid_from),
                 _ if row.deleted => HistoryRetentionAnchor::Deleted(row.valid_from),
                 _ => HistoryRetentionAnchor::Closed(row.valid_to.ok_or_else(|| PostgresStorageError::invalid_input("Expiry source must be closed"))?),
             };
-            let Some(mut candidate) = HistoryExpiryCandidate::from_evidence(family, &evidence, Some(anchor), row.dependency)? else { continue; };
-            if !request.scan().includes(&candidate) { continue; }
+            let Some(mut candidate) = HistoryExpiryCandidate::from_evidence(family, &evidence, Some(anchor), row.dependency)? else { window.advance(); continue; };
+            if !request.scan().includes(&candidate) {
+                window.advance();
+                continue;
+            }
             candidate = candidate.with_native_interval(row.valid_from, row.valid_to)?;
             if family == StorageIdentityHistoryKind::Object {
-                let Some(mut coordinates) = row.coordinates else { continue; };
+                let Some(mut coordinates) = row.coordinates.filter(|_| !candidate.attributions().is_empty()) else { window.advance(); continue; };
                 coordinates["target"] = serde_json::to_value(candidate.target()).map_err(|_| PostgresStorageError::invalid_input("Cannot encode expiry identity"))?;
                 coordinates["attribution"] = serde_json::to_value(candidate.attributions().first()).map_err(|_| PostgresStorageError::invalid_input("Cannot encode expiry scope"))?;
                 coordinates["read_span"] = serde_json::to_value(candidate.read_span()).map_err(|_| PostgresStorageError::invalid_input("Cannot encode expiry interval"))?;
@@ -67,11 +98,17 @@ pub(super) async fn admit(
                 let facts: HistoryObjectAuthorizationFacts = serde_json::from_value(coordinates).map_err(|error| PostgresStorageError::invalid_persisted_value("expiry object authorization",error))?;
                 candidate = candidate.with_object_authorization(facts)?;
             }
-            if matches!(selection.consider(candidate, HistoryExpiryInputBytes::new(row.input_bytes as u64)?, &[])?, HistoryExpirySelectionOutcome::BudgetReached) { break; }
+            if matches!(selection.consider(candidate, HistoryExpiryInputBytes::new(row.input_bytes as u64)?, &[])?, HistoryExpirySelectionOutcome::BudgetReached) {
+                stopped = true;
+            } else {
+                window.advance();
+            }
         }
-        if selection.is_empty() { return Ok(None); }
+        let exhausted = source_exhausted && !stopped;
+        if selection.is_empty() { return window.finish(None, exhausted).map_err(Into::into); }
         let manifest = selection.finish()?;
         let change = snapshot.control().admit_expiry(manifest.clone(), snapshot.fence())?;
+        let result = window.finish(Some(manifest), exhausted)?;
         let committed = sql_query("SELECT public.hubuum_history_expiry_admit($1,$2,$3,$4) AS committed")
             .bind::<Jsonb,_>(serde_json::to_value(change.expected()).map_err(|_| PostgresStorageError::invalid_input("Cannot encode expiry predecessor"))?)
             .bind::<Jsonb,_>(serde_json::to_value(change.next()).map_err(|_| PostgresStorageError::invalid_input("Cannot encode expiry intent"))?)
@@ -82,7 +119,7 @@ pub(super) async fn admit(
         for event in change.next().audit_events_since(change.expected())? {
             crate::operations::event_record::append_retained_lifecycle_event(connection, &event).await?;
         }
-        Ok::<_,PostgresStorageError>(Some(manifest))
+        Ok::<_,PostgresStorageError>(result)
     }).await.map_err(Into::into)
 }
 
@@ -108,114 +145,83 @@ fn current_scope(storage: &PostgresStorage) -> Result<StorageExecutionPermit, St
         })
 }
 
+#[derive(QueryableByName)]
+struct SourcePosition {
+    #[diesel(sql_type = BigInt)]
+    position: i64,
+}
+
+fn source(family: StorageIdentityHistoryKind) -> (&'static str, &'static str) {
+    use StorageIdentityHistoryKind as F;
+    let table = match family {
+        F::Collection => "collections_history",
+        F::Class => "hubuumclass_history",
+        F::Object => "hubuumobject_history",
+        F::ClassRelation => "hubuumclass_relation_history",
+        F::ObjectRelation => "hubuumobject_relation_history",
+        F::ExportTemplate => "export_templates_history",
+        F::RemoteTarget => "remote_targets_history",
+        F::ComputedDefinitions => "computed_field_history",
+        F::ClassSchema => "class_schema_history",
+    };
+    (
+        table,
+        if family == F::ClassSchema {
+            "id"
+        } else {
+            "history_id"
+        },
+    )
+}
+
 async fn rows(
     connection: &mut PostgresConnection,
     scan: &HistoryLifecycleScan,
+    window: &HistoryExpiryScanWindow<'_>,
 ) -> Result<Vec<SourceRow>, PostgresStorageError> {
     use StorageIdentityHistoryKind as F;
-    // These identifiers and projections are a closed adapter-owned vocabulary;
-    // all caller values remain parameters. No historical payload is transferred.
-    let (table, position, from, until, closed, deleted, coordinates) = match scan.key().family() {
-        F::Collection => (
-            "collections_history",
-            "history_id",
-            "valid_from",
-            "valid_to",
-            "valid_to IS NOT NULL OR op='D'",
-            "op='D'",
-            "NULL::jsonb",
-        ),
-        F::Class => (
-            "hubuumclass_history",
-            "history_id",
-            "valid_from",
-            "valid_to",
-            "valid_to IS NOT NULL OR op='D'",
-            "op='D'",
-            "NULL::jsonb",
-        ),
-        F::Object => (
-            "hubuumobject_history",
-            "history_id",
-            "valid_from",
-            "valid_to",
-            "valid_to IS NOT NULL OR op='D'",
-            "op='D'",
-            "jsonb_build_object('object_id',id,'name',name,'collection_id',collection_id,'class_id',hubuum_class_id,'revision',revision)",
-        ),
-        F::ClassRelation => (
-            "hubuumclass_relation_history",
-            "history_id",
-            "valid_from",
-            "valid_to",
-            "valid_to IS NOT NULL OR op='D'",
-            "op='D'",
-            "NULL::jsonb",
-        ),
-        F::ObjectRelation => (
-            "hubuumobject_relation_history",
-            "history_id",
-            "valid_from",
-            "valid_to",
-            "valid_to IS NOT NULL OR op='D'",
-            "op='D'",
-            "NULL::jsonb",
-        ),
-        F::ExportTemplate => (
-            "export_templates_history",
-            "history_id",
-            "valid_from",
-            "valid_to",
-            "valid_to IS NOT NULL OR op='D'",
-            "op='D'",
-            "NULL::jsonb",
-        ),
-        F::RemoteTarget => (
-            "remote_targets_history",
-            "history_id",
-            "valid_from",
-            "valid_to",
-            "valid_to IS NOT NULL OR op='D'",
-            "op='D'",
-            "NULL::jsonb",
-        ),
-        F::ComputedDefinitions => (
-            "computed_field_history",
-            "history_id",
-            "valid_from",
-            "valid_to",
-            "valid_to IS NOT NULL",
-            "FALSE",
-            "NULL::jsonb",
-        ),
-        F::ClassSchema => (
-            "class_schema_history",
-            "id",
-            "occurred_at",
-            "NULL::timestamptz",
-            "TRUE",
-            "FALSE",
-            "NULL::jsonb",
-        ),
+    // Closed adapter-owned identifiers; every caller value stays a parameter.
+    // Bound source rows before closure, scope, identity or visibility filtering.
+    let family = scan.key().family();
+    let (table, position) = source(family);
+    let (from, until) = if family == F::ClassSchema {
+        ("occurred_at", "NULL::timestamptz")
+    } else {
+        ("valid_from", "valid_to")
     };
-    let (scope, identity) = match scan.key().scope() {
-        HistoryPolicyScope::Deployment => ("deployment", None),
-        HistoryPolicyScope::Collection { identity } => {
-            ("collection", Some(Uuid::from_bytes(*identity.as_bytes())))
-        }
-        HistoryPolicyScope::Class { identity } => {
-            ("class", Some(Uuid::from_bytes(*identity.as_bytes())))
-        }
+    let deleted = if matches!(family, F::ClassSchema | F::ComputedDefinitions) {
+        "FALSE"
+    } else {
+        "op='D'"
     };
+    let coordinates = if family == F::Object {
+        "jsonb_build_object('object_id',id,'name',name,'collection_id',collection_id,'class_id',hubuum_class_id,'revision',revision)"
+    } else {
+        "NULL::jsonb"
+    };
+    let row_after = |after: &str| {
+        format!(
+            "SELECT {position}::bigint AS position, {from} AS valid_from, {until} AS valid_to, logical_identity, {deleted} AS deleted, octet_length(to_jsonb(h.*)::text)::bigint AS input_bytes, {coordinates} AS coordinates FROM public.{table} h WHERE {position}>{after} AND {position}<=$3 ORDER BY {position} LIMIT 1"
+        )
+    };
+    let measure = |query: String| {
+        format!(
+            "SELECT native.*, octet_length(coalesce(logical_identity::text,''))::bigint+octet_length(coalesce(coordinates::text,''))::bigint AS metadata_bytes FROM ({query}) native"
+        )
+    };
+    let first = measure(row_after("$2"));
+    let next = measure(row_after("previous.position"));
+    // Measure one row beyond the byte prefix to decide whether to defer or
+    // skip it. Do not encode an entire row-count window after an oversized row.
     let query = format!(
-        "WITH source AS MATERIALIZED (SELECT {position} AS position, {from} AS valid_from, {until} AS valid_to, logical_identity, {deleted} AS deleted, octet_length(to_jsonb(h.*)::text)::bigint AS input_bytes, {coordinates} AS coordinates FROM public.{table} h WHERE ({closed}) AND public.hubuum_history_version_visible($4,logical_identity) AND ($2='deployment' OR CASE WHEN $2='collection' AND $4='collection' THEN logical_identity #>> '{{subject,identity,identity}}'=$3::text ELSE logical_identity #>> ARRAY['references','/'||$2||'_id','reference','identity']=$3::text OR logical_identity #>> ARRAY['references','/lifecycle/from/'||$2,'reference','identity']=$3::text OR logical_identity #>> ARRAY['references','/lifecycle/to/'||$2,'reference','identity']=$3::text END) ORDER BY {position} LIMIT $1), bounded AS (SELECT *, sum(input_bytes) OVER (ORDER BY position)<=16777216 AND sum(octet_length(coalesce(logical_identity::text,''))+octet_length(coalesce(coordinates::text,''))) OVER (ORDER BY position)<=1048576 AS within_budget FROM source) SELECT valid_from,valid_to,CASE WHEN within_budget THEN logical_identity END AS logical_identity,deleted,input_bytes,within_budget,CASE WHEN within_budget THEN public.hubuum_history_expiry_dependency($4,logical_identity) ELSE TRUE END AS dependency,CASE WHEN within_budget THEN coordinates END AS coordinates FROM bounded ORDER BY position"
+        "WITH RECURSIVE bounded AS (SELECT native.*,1::bigint AS scanned,input_bytes AS total_input,metadata_bytes AS total_metadata FROM ({first}) native UNION ALL SELECT native.*,previous.scanned+1,previous.total_input+native.input_bytes,previous.total_metadata+native.metadata_bytes FROM bounded previous CROSS JOIN LATERAL ({next}) native WHERE previous.scanned<$1 AND previous.total_input<=16777216 AND previous.total_metadata<=1048576), measured AS (SELECT *, total_input<=16777216 AND total_metadata<=1048576 AS within_budget,input_bytes<=16777216 AND metadata_bytes<=1048576 AS row_within_budget FROM bounded) SELECT position,valid_from,valid_to,CASE WHEN within_budget THEN logical_identity END AS logical_identity,deleted,input_bytes,within_budget,row_within_budget,CASE WHEN within_budget THEN public.hubuum_history_version_visible($4,logical_identity) ELSE FALSE END AS visible,CASE WHEN within_budget THEN public.hubuum_history_expiry_dependency($4,logical_identity) ELSE TRUE END AS dependency,CASE WHEN within_budget THEN coordinates END AS coordinates FROM measured ORDER BY position"
     );
     sql_query(query)
         .bind::<BigInt, _>(i64::from(scan.limit()))
-        .bind::<Text, _>(scope)
-        .bind::<Nullable<SqlUuid>, _>(identity)
+        .bind::<BigInt, _>(window.after() as i64)
+        .bind::<BigInt, _>(window.through() as i64)
         .bind::<Text, _>(
-            serde_json::to_value(scan.key().family())
+            serde_json::to_value(family)
                 .map_err(|_| PostgresStorageError::invalid_input("Invalid expiry family"))?
                 .as_str()
                 .ok_or_else(|| PostgresStorageError::invalid_input("Invalid expiry family"))?,

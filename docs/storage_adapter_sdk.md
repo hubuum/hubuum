@@ -36,8 +36,29 @@ Measure complete native rows within the 1000-row/16-MiB input bound and transfer
 only bounded identity/authorization metadata. Preserve current/open copies and
 retained schema revisions. Keep admitted membership and object authorization facts
 through checkpoint capture and recovery; primary admission is not independent
-protection or removal permission. `None` is a bounded result, never an empty-source
-proof. Upgrade complete adapters and refresh runtime grants from the existing new
+protection or removal permission.
+
+**Breaking return type:** return `HistoryExpiryAdmissionResult` rather than
+`Option<HistoryExpiryManifest>`. It carries optional membership, the examined row
+count and `HistoryExpiryScanProgress`, including when no batch was admitted.
+Construct it through `request.scan_window(native_boundary)`, `observe`, `advance`
+and `finish`. Count examined rows before closure, scope, identity, visibility or
+dependency filtering. Stop at a byte boundary; defer a row that fits a fresh page,
+but advance past an individually oversized row. PostgreSQL measures only the
+bounded prefix and one over-budget row, suppressing its identity metadata before
+transfer. Size/resource qualification remains separate from these encoding bounds.
+
+Consumers use `next_page` with a fresh batch identity and current policy fence.
+Continue inside the original finite native boundary, then start a new pass after
+`PassFinished`. This revisits late commits, old versions closing later and changed
+protections; an allocated ID or timestamp is never a committed-data watermark.
+New rows cannot extend an existing pass indefinitely. Continuations preserve the
+original run, scope, origin, application incarnation and deletion revision;
+policy changes remain subject to fresh admission checks. Native positions use
+canonical unsigned decimal strings and remain adapter-owned traversal hints.
+They are neither immutable membership nor deletion/recovery authority.
+
+Upgrade complete adapters and refresh runtime grants from the existing new
 migration. Production registration, physical removal and scheduling stay gated.
 
 **Breaking error contract:** `ArtifactError` no longer implements `Clone`, `Eq`

@@ -89,6 +89,7 @@ for policy_input in src/models/history_lifecycle.rs src/api/v1/handlers/history_
   crates/hubuum-storage-core/src/history_lifecycle.rs crates/hubuum-storage-core/src/history_lifecycle/policy.rs \
   crates/hubuum-storage-core/src/history_lifecycle/authorization.rs \
   crates/hubuum-storage-core/src/history_lifecycle/authorization/tests.rs \
+  crates/hubuum-storage-core/src/history_lifecycle/online/scan.rs \
   crates/hubuum-storage-core/src/record_identity.rs crates/hubuum-storage-core/src/logical_identity.rs; do
   policy_output="$(bash "$classifier" "$policy_input")"
   assert_flag "$policy_output" code true
@@ -99,6 +100,9 @@ for policy_input in src/models/history_lifecycle.rs src/api/v1/handlers/history_
 done
 
 for policy_storage_input in crates/hubuum-storage-postgres/tests/history_lifecycle.rs \
+  crates/hubuum-storage-postgres/tests/history_expiry/mod.rs \
+  crates/hubuum-storage-postgres/tests/history_expiry/bounded_scan.rs \
+  crates/hubuum-storage-memory/src/history_lifecycle/expiry/progress_tests.rs \
   crates/hubuum-storage-postgres/src/runtime/history_publication.rs \
   crates/hubuum-storage-postgres/migrations/2026-11-03-000005_history_lifecycle/up.sql \
   crates/hubuum-storage-postgres/migrations/2026-11-03-000005_history_lifecycle/down.sql; do

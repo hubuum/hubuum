@@ -35,7 +35,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   and implement the required `HistoryLifecycleStorage` control, audit, scoped read,
   publication and recovery contracts, including bounded native
   `admit_history_expiry` with atomic membership/audit retention and no payload
-  removal, plus exact nonproductive
+  removal. Its return type is now `HistoryExpiryAdmissionResult`: update
+  adapters and consumers to handle bounded continuations even without an admitted
+  batch, finish each finite pass, and restart to revisit late commits and closures.
+  Holds, open/retained versions and oversized rows cannot pin every later page;
+  subsequent native batches preserve all earlier retained membership.
+  Implement exact nonproductive
   `TaskArtifactStore::abort_task` cleanup using the original attempt/task/claim. Deploy the new
   `2026-11-03-000005_history_lifecycle` migration after shipped archive 000004;
   refresh grants and preserve signed format-3 authority for roll-forward recovery.

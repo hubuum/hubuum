@@ -264,7 +264,8 @@ control state. Focused memory tests cover exact object list/as-of/backup exclusi
 and continued newer-version reads with a runtime registered. Both adapters now provide a separate bounded native selection/admission operation.
 It requires the original OnlineV1 application scope, a matching authority fence
 and an entirely history-aware fleet. PostgreSQL measures complete JSON-encoded
-rows inside a materialized, row-bounded query; only identity/authorization
+rows in a bounded recursive scan that stops after the first over-budget row;
+only identity/authorization
 metadata within 1 MiB crosses the adapter boundary. Selected native input is
 bounded to 16 MiB. Original intervals, UUIDs, policy revisions and object
 authorization facts are retained atomically with the canonical audit and read
@@ -276,6 +277,18 @@ current ownership. An uncertain retry must inspect the original batch identity; 
 cannot silently select another batch. No batch within a bounded scan is not proof
 that the source is empty.
 
+Admission returns optional immutable membership plus bounded scan progress, even
+when the page selects nothing. Both adapters advance past held, open, unresolved,
+already-admitted and individually oversized source rows without replenishing the
+examined-row budget. A row that can fit a fresh byte budget is deferred to the
+next page. A pass retains its original finite native boundary while new rows
+arrive, and starts again at the beginning after `PassFinished`. The boundary is
+a traversal hint, never a committed-data watermark or proof of an empty source.
+Later passes revisit late commits, older open versions that close later, and
+changed protections. Continuations retain their original run, scope, origin and
+application/deletion fence; every page rechecks current governing authority.
+This is a breaking SDK return-type change; see the adapter upgrade guidance.
+
 Native tests exercise trigger-created rows from all nine families, held/stale
 selection, mixed fleets, oversized payloads, required audit rollback and retained
 publication charging. Queued-admission races also cover all nine families: an
@@ -283,8 +296,10 @@ actual hold, policy edit or competing expiry batch retains the authority lock
 while its required audit append is blocked. After that transition commits, the
 waiting admission must reject its stale fence without publishing an exclusion
 or overwriting the winner. PostgreSQL lock observations establish both waits;
-elapsed time alone does not establish their order. Late-commit/closure races,
-dependency changes and restore descendants still require qualification.
+elapsed time alone does not establish their order. Bounded-pass tests cover held
+prefixes and later appends on both adapters across all nine families, plus native
+late commits for all nine and late closure for the eight interval families.
+Dependency changes and restore descendants still require qualification.
 Primary admission is not independent checkpoint protection:
 its authority must be captured and independently published before a future
 removal capability can use it. No removal capability is added here. Complete
