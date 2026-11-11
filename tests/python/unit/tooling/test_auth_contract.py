@@ -162,6 +162,18 @@ class AuthenticationContractTests(unittest.TestCase):
         self.assertEqual(cases["candidate_browser_verified"]["response"]["body"]["provider_id"],
                          provider["provider_id"])
 
+    def test_bff_flow_preserves_frontend_session_client_binding(self):
+        cases = {case["id"]: case for case in self.fixtures["cases"]}
+        completion = cases["bff_server_completion"]
+        self.assertEqual(completion["request"]["client_id"], "hubuum-frontend")
+        begin = cases["bff_begin"]["request"]
+        self.assertEqual(begin["client_id"], completion["request"]["client_id"])
+        self.assertEqual(begin["delivery"], "bff")
+        self.assertTrue(begin["return_target_id"])
+        self.assertGreaterEqual(len(begin["return_nonce"]), 32)
+        self.assertLessEqual(len(begin["return_nonce"]), 128)
+        self.assertIn("bff_return_matches_initiating_session", completion["requires"])
+
     def test_fixture_operations_and_statuses_exist(self):
         operations = {}
         for path, methods in self.spec["paths"].items():

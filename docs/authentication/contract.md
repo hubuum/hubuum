@@ -212,6 +212,9 @@ For BFF mode, begin runs server-side and the BFF stores the redemption secret pl
 a per-login nonce in its server session. A registered BFF return URI receives only
 an opaque interaction ID and that nonce; both are verified against the initiating
 HttpOnly session. The BFF redeems server-to-server and rotates `hubuum.sid`.
+Keep the same `client_id` from begin through every interaction request and
+subsequent session refresh: `hubuum-frontend` for the BFF and `hubuum-cli` for the
+CLI. Completion must install the session with that original client binding.
 No bearer, refresh, approval, redemption secret or upstream credential enters
 browser JavaScript, URLs, logs or local storage. The return nonce is not a bearer
 capability. Use no-store and no-referrer on HTML/redirect/token responses; exclude

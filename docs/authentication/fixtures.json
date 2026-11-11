@@ -92,6 +92,40 @@
       "effects": {}
     },
     {
+      "id": "bff_begin",
+      "operation_id": "beginInteraction",
+      "requires": [
+        "registered_frontend_return_target",
+        "server_side_pending_login"
+      ],
+      "request": {
+        "client_id": "hubuum-frontend",
+        "provider_id": "keycloak-fixture",
+        "purpose": "login",
+        "delivery": "bff",
+        "return_target_id": "frontend-fixture",
+        "return_nonce": "FIXTURE-BFF-RETURN-NONCE-NEVER-USE-IN-PRODUCTION"
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "bff-interaction-fixture",
+          "interaction_version": 1,
+          "redemption_secret": "FIXTURE-REDEMPTION-SECRET-NEVER-USE-IN-PRODUCTION",
+          "expires_at": "2026-11-11T12:05:00Z",
+          "interval_seconds": 5,
+          "next": {
+            "kind": "browser",
+            "verification_uri": "https://hubuum.example.invalid/api/v1/auth/interactions/browser",
+            "user_code": "ABCD-EFGH-JK"
+          }
+        }
+      },
+      "effects": {
+        "issued_sessions": 0
+      }
+    },
+    {
       "id": "status_pending",
       "operation_id": "interactionStatus",
       "requires": [
@@ -276,10 +310,12 @@
         "valid_interaction_secret",
         "same_client",
         "same_provider_revision",
-        "browser_approval_if_required"
+        "browser_approval_if_required",
+        "bff_begin",
+        "bff_return_matches_initiating_session"
       ],
       "request": {
-        "client_id": "hubuum-cli"
+        "client_id": "hubuum-frontend"
       },
       "response": {
         "status": 200,

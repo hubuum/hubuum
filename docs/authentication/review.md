@@ -2,7 +2,7 @@
 
 This is the author compatibility review for [#573](https://github.com/hubuum/hubuum/issues/573),
 not an independent approval or provider qualification. The [contract](contract.md),
-[OpenAPI proposal](openapi.proposed.json) and [46 shared vectors](fixtures.json)
+[OpenAPI proposal](openapi.proposed.json) and [47 shared vectors](fixtures.json)
 form one review unit.
 
 ## Reviewed baseline
@@ -23,6 +23,42 @@ the accepted #572 sources with released session/runtime-settings interfaces.
 | [BFF](https://github.com/hubuum/hubuum-frontend/blob/55e7f445356bb603d463fe5397bd71cfa0f14702/src/lib/auth/session.ts) | Retain Valkey credentials and HttpOnly `hubuum.sid`. Store pending login nonce/secret server-side, bind backend origin/revision, validate registered return and CSRF, redeem server-to-server and rotate session ID. Generate production models only from implemented OpenAPI. | [#196](https://github.com/hubuum/hubuum-frontend/issues/196), [#197](https://github.com/hubuum/hubuum-frontend/issues/197) |
 | [CLI](https://github.com/hubuum/hubuum-cli/blob/d2da4ac52232b00edb434d49cfda85f30d460cb4/src/app.rs) | Keep `hubuum-cli` client ID, hidden password prompt and protected store. Browser and SSH login share protected polling; no loopback listener or upstream OAuth code. Clean up lost completion before restarting. | [#159](https://github.com/hubuum/hubuum-cli/issues/159) |
 | Runtime administration and ecosystem docs | Expose candidate checks and exact activation inputs. Distinguish connectivity from successful test sign-in, preview identity/groups without writes, preserve live login until activation, report replica application. Distinguish deployed behavior from the proposal. | [CLI #160](https://github.com/hubuum/hubuum-cli/issues/160), [frontend #198](https://github.com/hubuum/hubuum-frontend/issues/198), [site #7](https://github.com/hubuum/hubuum.github.io/issues/7) |
+
+## Follow-up source review
+
+The 2026-11-11 follow-up compared the proposal and fixtures with the pinned
+implementations above, including both Rust and Python transports, session
+validation/storage, credential-approval handling, the BFF login/mutation routes
+and CLI persistence. No further contract blockers were found after correcting
+the BFF fixture's client binding. This is source compatibility review, not
+execution of the proposed flows in clients that have not implemented them.
+
+- **Server:** completion can return the existing session and approval response
+  shapes. Preserve the origin-token and exact-operation binding when extending
+  `CredentialActor` and the fresh-authentication proof; a rotated or expired
+  origin credential requires restarting approval, not silently rebinding it.
+- **Rust async/blocking:** the existing raw-request builder rejects Authorization
+  overrides. Add dedicated, origin-bound interaction transport; do not weaken
+  that general guard. Reuse session decoding and store installation with the
+  original `SessionClientId`, and keep completion/password submission single-attempt.
+- **Python sync/async:** authenticated transport overwrites Authorization with its
+  bearer. Interaction methods must bypass that injection and automatic session
+  refresh. Extend diagnostic redaction to the bare `Hubuum-Interaction` secret;
+  the current scheme-aware stripping recognizes only Basic/Bearer. Preserve
+  normalized approval expiry when sending the bound mutation.
+- **BFF:** [session storage](https://github.com/hubuum/hubuum-frontend/blob/55e7f445356bb603d463fe5397bd71cfa0f14702/src/lib/auth/session-credentials.ts)
+  fixes the client ID to `hubuum-frontend`. The former BFF completion vector used
+  `hubuum-cli`, which would create a session that cannot be refreshed using that
+  store. The corrected `bff_begin` → `bff_server_completion` pair includes the
+  registered return target, nonce and initiating-session precondition. A regression
+  now checks that binding against the pinned BFF convention.
+- **CLI:** the existing store scopes credentials and serializes writes. Keep
+  `hubuum-cli`, install completed credentials through the SDK's managed session
+  path, respect poll timing/cancellation, and perform orphan-session cleanup after
+  an ambiguous completion before restarting.
+
+These implementation requirements remain with the owning issues in the table;
+the source review does not qualify a provider or establish independent acceptance.
 
 ## Acceptance review requested
 
