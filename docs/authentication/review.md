@@ -1,7 +1,7 @@
 # External authentication contract review
 
-This is the author compatibility review for [#573](https://github.com/hubuum/hubuum/issues/573),
-not an independent approval or provider qualification. The [contract](contract.md),
+This record separates author compatibility review from independent source-review
+acceptance for [#573](https://github.com/hubuum/hubuum/issues/573). The [contract](contract.md),
 [OpenAPI proposal](openapi.proposed.json) and [47 shared vectors](fixtures.json)
 form one review unit.
 
@@ -58,9 +58,9 @@ execution of the proposed flows in clients that have not implemented them.
   an ambiguous completion before restarting.
 
 These implementation requirements remain with the owning issues in the table;
-the source review does not qualify a provider or establish independent acceptance.
+the author follow-up does not qualify a provider or establish independent acceptance.
 
-## Independent review iteration
+## Independent source-review acceptance
 
 A user-authorized separate Codex reviewer, with fresh context and no editing role,
 reviewed commit `6aa144b55070715eb932d5e7be3e4bd36e74213e` across all seven
@@ -69,18 +69,26 @@ one correction before acceptance: external provider IDs in the schema and
 positive fixtures must obey the prose's immutable UUID invariant. The correction
 uses shared local-or-UUID/external-UUID schemas, deterministic provider UUIDs and
 stdlib format checks. The throttled-poll vector also now advertises `Retry-After`
-to exercise the documented backoff. Independent re-review of the corrected
-source is pending; this is not human maintainer approval or provider qualification.
+to exercise the documented backoff.
 
-## Acceptance review requested
+On 2026-11-11, the separate reviewer accepted corrected commit
+`f2edaf93e15886440236cbb4bcbfa3b9c71f4e19` with no remaining findings for the
+server, Rust async, Rust blocking, Python sync, Python async, BFF and CLI.
+All eight #573 design criteria were covered and accepted. The reviewer inspected
+the complete correction delta, ran all 12 contract checks, independently checked
+the pattern-only provider-ID alternatives and all 11 fixture provider-ID
+occurrences, and verified these immutable inputs:
 
-Independent acceptance is **pending**. Review the PR as one shared contract for
-server, BFF, Rust async/blocking, Python sync/async and CLI, recording approval or
-requested revisions for each surface; one maintainer may cover several surfaces.
-This author review and green tooling do not establish independent acceptance.
-No real provider credentials are needed to review the inert fixtures.
+- Proposed OpenAPI SHA-256:
+  `03c5796e481302429467c461f4300f0c8dfbe7681f310f8885d52cd2bc532eba`.
+- Shared fixtures SHA-256:
+  `4f0bf9837ba705e32891f220140e5009e103350efd7ca81e86cee1828e8bde17`.
 
-Confirm these decisions before acceptance:
+This is user-authorized independent AI source-review evidence, not human
+maintainer approval, generated-client execution or real-provider qualification.
+The remaining final CI and project merge gates still apply.
+
+## Accepted design decisions
 
 - Runtime configure → non-activating verification → approved activation is required;
   Treetop connection metadata moves to runtime within deployment egress/trust bounds.
@@ -95,7 +103,7 @@ Confirm these decisions before acceptance:
 - Review OpenAPI/fixtures together, including candidate revisions, secret rotation,
   deployment locks and manual-membership survival.
 
-After review and merge into `project/auth-support`, pin the merge commit and JSON
+After merge into `project/auth-support`, pin the merge commit and JSON
 SHA-256 digests in #573 and Project 6, complete the eight criteria and only then
 make #574 Ready. Later dependencies retain their native blockers. No stable
 release or main promotion is authorized by contract acceptance.

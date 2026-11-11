@@ -1,6 +1,6 @@
 # External authentication contract
 
-Status: proposed for cross-client review under [#573](https://github.com/hubuum/hubuum/issues/573),
+Status: reviewed design under [#573](https://github.com/hubuum/hubuum/issues/573),
 on Project 6's `project/auth-support` branch. This document specifies delivery;
 it does not claim that these new endpoints or providers are implemented.
 The released [runtime settings](../runtime_settings.md),
@@ -401,7 +401,7 @@ inform profile differences; they do not substitute for the qualification gates.
 
 [Review record](review.md) maps the proposed contract to pinned current server,
 BFF, Rust async/blocking, Python sync/async and CLI surfaces. It records author
-compatibility review separately from requested acceptance. Do not close #573 or
+compatibility review separately from independent source-review acceptance. Do not close #573 or
 mark #574 Ready until the contract PR is reviewed, accepted and merged into
 `project/auth-support`; record its immutable commit and fixtures digest then.
 
