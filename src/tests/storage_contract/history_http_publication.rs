@@ -3,6 +3,7 @@
 use super::*;
 use futures_util::FutureExt;
 use hubuum_storage_core::{DeletionControlStorage, HistoryLifecycleStorage};
+use rstest::rstest;
 use std::panic::{AssertUnwindSafe, resume_unwind};
 
 use crate::middlewares::history_publication::tests::{
@@ -38,8 +39,14 @@ async fn buffered_http_keeps_its_postgres_publication_beyond_api_settlement() {
     cleanup.unwrap();
 }
 
+#[rstest]
+#[case::platform_witness(true)]
+#[case::missing_witness(false)]
 #[actix_web::test]
-async fn native_conditional_user_handler_retains_its_http_publication() {
+async fn native_conditional_user_handler_obeys_publication_platform_support(
+    #[case] install_witness: bool,
+) {
+    use crate::api::etag::RevisionedResource;
     use crate::middlewares::{actor_context, history_publication, reject_during_maintenance};
     use crate::permissions::{AppContext, LocalPermissionBackend};
     use actix_web::{App, HttpServer, middleware::from_fn, web};
@@ -63,7 +70,11 @@ async fn native_conditional_user_handler_retains_its_http_publication() {
                 web::scope("/api/v1/iam/users").configure(crate::api::v1::routes::users::config),
             )
     })
-    .on_connect(history_publication::on_connect)
+    .on_connect(move |io, extensions| {
+        if install_witness {
+            history_publication::on_connect(io, extensions);
+        }
+    })
     .disable_signals()
     .workers(1)
     .bind("127.0.0.1:0")
@@ -78,14 +89,25 @@ async fn native_conditional_user_handler_retains_its_http_publication() {
             .build()
             .unwrap();
         let url = format!("http://{address}/api/v1/iam/users/{}", test.normal_user.id);
+        let original = test.normal_user.to_point_response(&unbound).await.unwrap();
+        let qualified = install_witness && !cfg!(windows);
         let current = client
             .get(&url)
             .bearer_auth(&test.admin_token)
             .send()
             .await
             .unwrap();
-        assert_eq!(current.status(), reqwest::StatusCode::OK);
-        let etag = current.headers()[reqwest::header::ETAG].clone();
+        let etag = if qualified {
+            assert_eq!(current.status(), reqwest::StatusCode::OK);
+            current.headers()[reqwest::header::ETAG]
+                .to_str()
+                .unwrap()
+                .to_owned()
+        } else {
+            assert_eq!(current.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+            assert!(current.headers().get(reqwest::header::ETAG).is_none());
+            original.entity_tag().unwrap().to_string()
+        };
         let _ = current.bytes().await.unwrap();
         let response = client
             .patch(&url)
@@ -97,8 +119,15 @@ async fn native_conditional_user_handler_retains_its_http_publication() {
             .unwrap();
         let status = response.status();
         let body = response.text().await.unwrap();
-        observations.wait_for_settlements(2).await;
-        assert_eq!(status, reqwest::StatusCode::OK, "{body}");
+        if qualified {
+            observations.wait_for_settlements(2).await;
+            assert_eq!(status, reqwest::StatusCode::OK, "{body}");
+        } else {
+            assert_eq!(status, reqwest::StatusCode::SERVICE_UNAVAILABLE, "{body}");
+            let unchanged = test.normal_user.to_point_response(&unbound).await.unwrap();
+            assert_eq!(unchanged.revision, original.revision);
+            assert_eq!(unchanged.proper_name, original.proper_name);
+        }
     })
     .catch_unwind()
     .await;
