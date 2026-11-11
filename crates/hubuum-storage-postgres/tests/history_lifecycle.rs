@@ -168,7 +168,9 @@ struct Fixture {
 }
 impl Fixture {
     async fn new() -> Self {
-        let owner_pool = integration_test_migration_pool(2);
+        Self::with_pools(integration_test_pool(2), integration_test_migration_pool(2)).await
+    }
+    async fn with_pools(pool: PostgresPool, owner_pool: PostgresPool) -> Self {
         let before = with_transaction(&owner_pool, async |connection| {
             owner(connection).await?;
             Ok::<_, PostgresStorageError>(
@@ -183,7 +185,7 @@ impl Fixture {
         .await
         .unwrap();
         Self {
-            storage: PostgresStorage::unobserved(integration_test_pool(2)),
+            storage: PostgresStorage::unobserved(pool),
             owner_pool,
             before,
         }
@@ -2513,6 +2515,14 @@ async fn expiry_fixture(
     family: StorageIdentityHistoryKind,
     width: i32,
 ) -> (Fixture, HistoryPolicyKey, i32) {
+    expiry_fixture_on(Fixture::new().await, family, width).await
+}
+
+async fn expiry_fixture_on(
+    fixture: Fixture,
+    family: StorageIdentityHistoryKind,
+    width: i32,
+) -> (Fixture, HistoryPolicyKey, i32) {
     use diesel::sql_types::Integer;
     #[derive(QueryableByName)]
     struct Created {
@@ -2521,7 +2531,6 @@ async fn expiry_fixture(
         #[diesel(sql_type=Jsonb)]
         logical_identity: Value,
     }
-    let fixture = Fixture::new().await;
     let name = format!("expiry_native_{}", Uuid::new_v4().simple());
     let created=with_transaction(&fixture.owner_pool,async |connection| {
         owner(connection).await?;

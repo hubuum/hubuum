@@ -299,11 +299,21 @@ or overwriting the winner. PostgreSQL lock observations establish both waits;
 elapsed time alone does not establish their order. Bounded-pass tests cover held
 prefixes and later appends on both adapters across all nine families, plus native
 late commits for all nine and late closure for the eight interval families.
-Dependency changes and restore descendants still require qualification.
+Native dependency tests cover all nine families through current rows, protected
+open intervals and retained schema revisions. They restore descendants twice,
+also exercise missing derived-version ancestry, and require the bounded pass to
+skip the dependency without changing either copy. Clearing the protected copy
+lets a later finite pass select the original UUID and interval. Native restore
+exposure tests independently admit the batch first, then use the trusted restore
+identity branch in the runner's isolated restore database. A clean newer copy
+passes the gate; a descendant of admitted history keeps exposure quarantined
+without changing the source, restored copy or retained authority. These fixtures
+qualify native admission and exposure checks. Complete backup and logical-restore
+pipeline coverage and concurrent restore execution remain unfinished.
 Primary admission is not independent checkpoint protection:
 its authority must be captured and independently published before a future
 removal capability can use it. No removal capability is added here. Complete
-native dependency/race qualification, restored descendants, physical cleanup and
+native concurrency qualification, complete restore execution, physical cleanup and
 measured resource/liveness acceptance remain unfinished.
 
 ### Executor implementation and acceptance map

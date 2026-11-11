@@ -1,6 +1,7 @@
 use super::*;
 use chrono::DateTime;
 use diesel::sql_types::{BigInt, Integer, Nullable, Timestamptz};
+use hubuum_storage_postgres::test_support::IsolatedRestoreTarget;
 use rstest::rstest;
 
 fn source(family: StorageIdentityHistoryKind) -> (&'static str, &'static str) {
@@ -796,4 +797,382 @@ async fn cumulative_native_byte_limit_defers_individually_bounded_rows() {
             "every individually bounded version must survive a cumulative byte stop"
         );
     }
+}
+
+struct RestoredCopy {
+    source_table: &'static str,
+    position: &'static str,
+    target: Fact,
+    original: Value,
+    copy: Value,
+    clean_descendant: Value,
+    descendant: Value,
+    copy_table: &'static str,
+    open_filter: &'static str,
+    replace: String,
+}
+
+async fn restored_copy(
+    a: &Fixture,
+    b: &Fixture,
+    collection_a: i32,
+    collection_b: i32,
+    family: StorageIdentityHistoryKind,
+    open: bool,
+    unknown_ancestry: bool,
+) -> RestoredCopy {
+    use StorageIdentityHistoryKind as F;
+    live_edges(b, family, collection_b).await;
+    let (source_table, position) = source(family);
+    let (copy_table, filter) = match family {
+        F::Collection => ("collections", "id=$1"),
+        F::Class => ("hubuumclass", "collection_id=$1"),
+        F::Object => ("hubuumobject", "collection_id=$1"),
+        F::ClassRelation => (
+            "hubuumclass_relation",
+            "from_hubuum_class_id IN (SELECT id FROM public.hubuumclass WHERE collection_id=$1)",
+        ),
+        F::ObjectRelation => (
+            "hubuumobject_relation",
+            "from_hubuum_object_id IN (SELECT id FROM public.hubuumobject WHERE collection_id=$1)",
+        ),
+        F::ExportTemplate => ("export_templates", "collection_id=$1"),
+        F::RemoteTarget => ("remote_targets", "collection_id=$1"),
+        F::ComputedDefinitions => (
+            "computed_field_history",
+            "class_id IN (SELECT id FROM public.hubuumclass WHERE collection_id=$1)",
+        ),
+        F::ClassSchema => (
+            "class_schema_revisions",
+            "class_id IN (SELECT id FROM public.hubuumclass WHERE collection_id=$1)",
+        ),
+    };
+    let copy_table = if open { source_table } else { copy_table };
+    let open_filter = if open { "AND valid_to IS NULL" } else { "" };
+    // These resources still have a live row with the original UUID. Restore
+    // that row in place, respecting its live-resource uniqueness constraint.
+    let copy_collection =
+        if !open && matches!(family, F::Collection | F::ExportTemplate | F::RemoteTarget) {
+            collection_a
+        } else {
+            collection_b
+        };
+    let (target, original, copy) = with_transaction(&a.owner_pool, async |connection| {
+        owner(connection).await?;
+        let target = fact_on(connection, family, collection_a, false).await?;
+        let original = sql_query(format!("SELECT to_jsonb(h) AS material FROM public.{source_table} h WHERE {position}=$1"))
+            .bind::<BigInt,_>(target.position).get_result::<Material>(connection).await?.material;
+        let copy = sql_query(format!("SELECT logical_identity AS material FROM public.{copy_table} WHERE {filter} {open_filter} ORDER BY logical_identity::text LIMIT 1"))
+            .bind::<Integer,_>(copy_collection).get_result::<Material>(connection).await?.material;
+        Ok::<_,PostgresStorageError>((target, original, copy))
+    }).await.unwrap();
+    let derived = || {
+        let mut bytes = *hubuum_domain::VersionIdentity::generate().as_bytes();
+        bytes[6] = (bytes[6] & 0x0f) | 0x80;
+        hubuum_domain::VersionIdentity::from_bytes(bytes).unwrap()
+    };
+    let descendant =
+        serde_json::from_value::<StorageIdentityEvidence>(target.logical_identity.clone())
+            .unwrap()
+            .at_restore_baseline(derived())
+            .unwrap()
+            .at_restore_baseline(derived())
+            .unwrap();
+    assert!(
+        descendant
+            .restore_source_versions()
+            .contains(target.target().version())
+    );
+    let descendant = if unknown_ancestry {
+        StorageIdentityEvidence::try_new(
+            descendant.subject(),
+            descendant
+                .references()
+                .iter()
+                .filter(|(path, _)| !path.starts_with("/restore_source_versions/"))
+                .map(|(path, reference)| (path.clone(), *reference))
+                .collect(),
+        )
+        .unwrap()
+    } else {
+        descendant
+    };
+    let descendant = serde_json::to_value(descendant).unwrap();
+    let clean_descendant = serde_json::to_value(
+        serde_json::from_value::<StorageIdentityEvidence>(copy.clone())
+            .unwrap()
+            .at_restore_baseline(derived())
+            .unwrap()
+            .at_restore_baseline(derived())
+            .unwrap(),
+    )
+    .unwrap();
+    let replace = format!(
+        "UPDATE public.{copy_table} SET logical_identity=$2 WHERE logical_identity=$1 {open_filter}"
+    );
+    RestoredCopy {
+        source_table,
+        position,
+        target,
+        original,
+        copy,
+        clean_descendant,
+        descendant,
+        copy_table,
+        open_filter,
+        replace,
+    }
+}
+
+/// Restore can place a descendant of a closed source in a current row, a
+/// protected-open interval, or an independently retained schema revision.
+/// Exercise those inventories through the real identity trigger branch, then
+/// clear only the restored copy. Original source UUIDs and clocks stay intact.
+#[rstest]
+#[case::collection_current(StorageIdentityHistoryKind::Collection, false)]
+#[case::class_current(StorageIdentityHistoryKind::Class, false)]
+#[case::object_current(StorageIdentityHistoryKind::Object, false)]
+#[case::class_relation_current(StorageIdentityHistoryKind::ClassRelation, false)]
+#[case::object_relation_current(StorageIdentityHistoryKind::ObjectRelation, false)]
+#[case::template_current(StorageIdentityHistoryKind::ExportTemplate, false)]
+#[case::remote_current(StorageIdentityHistoryKind::RemoteTarget, false)]
+#[case::collection_open(StorageIdentityHistoryKind::Collection, true)]
+#[case::class_open(StorageIdentityHistoryKind::Class, true)]
+#[case::object_open(StorageIdentityHistoryKind::Object, true)]
+#[case::class_relation_open(StorageIdentityHistoryKind::ClassRelation, true)]
+#[case::object_relation_open(StorageIdentityHistoryKind::ObjectRelation, true)]
+#[case::template_open(StorageIdentityHistoryKind::ExportTemplate, true)]
+#[case::remote_open(StorageIdentityHistoryKind::RemoteTarget, true)]
+#[case::computed_open(StorageIdentityHistoryKind::ComputedDefinitions, true)]
+#[case::schema_revision(StorageIdentityHistoryKind::ClassSchema, false)]
+#[tokio::test]
+async fn finite_native_pass_revisits_restored_dependency_after_clearance(
+    #[case] family: StorageIdentityHistoryKind,
+    #[case] open: bool,
+    #[values(false, true)] unknown_ancestry: bool,
+) {
+    let _guard = CONTROL_LOCK.lock().await;
+    let (a, _, collection_a) = expiry_fixture(family, 32).await;
+    let (b, _, collection_b) = expiry_fixture(family, 32).await;
+    let RestoredCopy {
+        source_table,
+        position,
+        target,
+        original,
+        copy,
+        descendant,
+        copy_table,
+        open_filter,
+        replace,
+        ..
+    } = restored_copy(
+        &a,
+        &b,
+        collection_a,
+        collection_b,
+        family,
+        open,
+        unknown_ancestry,
+    )
+    .await;
+    with_transaction(&a.owner_pool, async |connection| {
+        owner(connection).await?;
+        connection.batch_execute("SELECT set_config('hubuum.restore_history','on',true),set_config('hubuum.restore_identities','on',true)").await?;
+        let changed = sql_query(&replace).bind::<Jsonb,_>(&copy).bind::<Jsonb,_>(&descendant).execute(connection).await?;
+        assert_eq!(changed, 1, "fixture must replace exactly one protected copy");
+        Ok::<_,PostgresStorageError>(())
+    }).await.unwrap();
+    let runtime = a.storage.register_history_runtime(None).await.unwrap();
+    let (outcome, admitted) = {
+        let mut run = BoundedRun::new(&a, &runtime, family, 1).await.unwrap();
+        let outcome = async {
+            let blocked = run.pass().await?;
+            // Inspect the committed copy before clearance: rejection must not
+            // mutate or delete the descendant to make the candidate eligible.
+            let preserved = with_transaction(&a.owner_pool, async |connection| {
+                owner(connection).await?;
+                let copies = sql_query(format!("SELECT count(*) AS value FROM public.{copy_table} WHERE logical_identity=$1 {open_filter}"))
+                    .bind::<Jsonb,_>(&descendant).get_result::<Count>(connection).await?.value;
+                connection.batch_execute("SELECT set_config('hubuum.restore_history','on',true),set_config('hubuum.restore_identities','on',true)").await?;
+                sql_query(&replace).bind::<Jsonb,_>(&descendant).bind::<Jsonb,_>(&copy).execute(connection).await?;
+                let unchanged = sql_query(format!("SELECT to_jsonb(h) AS material FROM public.{source_table} h WHERE {position}=$1"))
+                    .bind::<BigInt,_>(target.position).get_result::<Material>(connection).await?.material;
+                Ok::<_,PostgresStorageError>((copies, unchanged))
+            }).await?;
+            let eligible = run.pass().await?;
+            Ok::<_,StorageError>((blocked, preserved, eligible))
+        }.await;
+        (outcome, run.admitted)
+    };
+    cleanup(a, b, collection_a, collection_b, runtime, admitted).await;
+    let (blocked, (copies, unchanged), eligible) = outcome.unwrap();
+    assert!(
+        !blocked
+            .iter()
+            .any(|member| member.target() == target.target())
+    );
+    assert_eq!(
+        copies, 1,
+        "blocked selection must preserve its protected copy"
+    );
+    assert_eq!(
+        unchanged, original,
+        "restore must preserve source evidence and original clocks"
+    );
+    assert!(
+        eligible
+            .iter()
+            .any(|member| member.target() == target.target()),
+        "a later finite pass must revisit a dependency that was cleared"
+    );
+}
+
+// Use the runner's separately proven restore target: primary archive fixtures
+// may retain real publication owners and must never be erased to open this gate.
+async fn restore_fixture() -> (Fixture, IsolatedRestoreTarget) {
+    use hubuum_storage_postgres::test_support::{
+        integration_test_database_url, integration_test_restore_database_url,
+        integration_test_restore_migration_database_url,
+    };
+    use hubuum_storage_postgres::{PostgresPoolSettings, build_postgres_pool};
+    let runtime = integration_test_restore_database_url();
+    let migration = integration_test_restore_migration_database_url();
+    let target = IsolatedRestoreTarget::new(&migration, &integration_test_database_url()).unwrap();
+    IsolatedRestoreTarget::new(&runtime, &integration_test_database_url()).unwrap();
+    let pool = |url| {
+        build_postgres_pool(
+            &PostgresPoolSettings::builder(url)
+                .max_size(2)
+                .statement_timeout_ms(0)
+                .acquire_timeout_ms(5_000)
+                .build()
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    let runtime = pool(runtime);
+    let migration = pool(migration);
+    for pool in [&runtime, &migration] {
+        with_transaction(pool, async |connection| {
+            target.validate_connection(connection).await
+        })
+        .await
+        .unwrap();
+    }
+    (Fixture::with_pools(runtime, migration).await, target)
+}
+
+#[rstest]
+#[case::collection_current(StorageIdentityHistoryKind::Collection, false)]
+#[case::class_current(StorageIdentityHistoryKind::Class, false)]
+#[case::object_current(StorageIdentityHistoryKind::Object, false)]
+#[case::class_relation_current(StorageIdentityHistoryKind::ClassRelation, false)]
+#[case::object_relation_current(StorageIdentityHistoryKind::ObjectRelation, false)]
+#[case::template_current(StorageIdentityHistoryKind::ExportTemplate, false)]
+#[case::remote_current(StorageIdentityHistoryKind::RemoteTarget, false)]
+#[case::collection_open(StorageIdentityHistoryKind::Collection, true)]
+#[case::class_open(StorageIdentityHistoryKind::Class, true)]
+#[case::object_open(StorageIdentityHistoryKind::Object, true)]
+#[case::class_relation_open(StorageIdentityHistoryKind::ClassRelation, true)]
+#[case::object_relation_open(StorageIdentityHistoryKind::ObjectRelation, true)]
+#[case::template_open(StorageIdentityHistoryKind::ExportTemplate, true)]
+#[case::remote_open(StorageIdentityHistoryKind::RemoteTarget, true)]
+#[case::computed_open(StorageIdentityHistoryKind::ComputedDefinitions, true)]
+#[case::schema_revision(StorageIdentityHistoryKind::ClassSchema, false)]
+#[tokio::test]
+async fn retained_native_expiry_quarantines_restored_copies(
+    #[case] family: StorageIdentityHistoryKind,
+    #[case] open: bool,
+    #[values(false, true)] unknown_ancestry: bool,
+) {
+    use hubuum_storage_postgres::test_support::probe_history_restore_exposure;
+    let _guard = CONTROL_LOCK.lock().await;
+    let (a, restore_target) = restore_fixture().await;
+    let (a, _, collection_a) = expiry_fixture_on(a, family, 32).await;
+    let (b, _) = restore_fixture().await;
+    let (b, _, collection_b) = expiry_fixture_on(b, family, 32).await;
+    let RestoredCopy {
+        source_table,
+        position,
+        target,
+        original,
+        copy,
+        clean_descendant,
+        descendant,
+        copy_table,
+        open_filter,
+        replace,
+    } = restored_copy(
+        &a,
+        &b,
+        collection_a,
+        collection_b,
+        family,
+        open,
+        unknown_ancestry,
+    )
+    .await;
+    let runtime = a.storage.register_history_runtime(None).await.unwrap();
+    let (selection, admitted) = {
+        let mut run = BoundedRun::new(&a, &runtime, family, 1).await.unwrap();
+        let selection = run.pass().await;
+        (selection, run.admitted)
+    };
+    let outcome = if selection.as_ref().is_ok_and(|members| {
+        members
+            .iter()
+            .any(|member| member.target() == target.target())
+    }) {
+        with_transaction(&a.owner_pool, async |connection| {
+            owner(connection).await?;
+            connection.batch_execute("SAVEPOINT restored_expiry_fixture;
+                SELECT id FROM hubuum_control.deletion_authority WHERE id=1 FOR UPDATE;
+                SELECT id FROM hubuum_control.application_control WHERE id=1 FOR UPDATE;
+                SELECT id FROM hubuum_control.history_lifecycle_control WHERE id=1 FOR UPDATE;
+                SELECT public.hubuum_rotate_application_for_restore()").await?;
+            connection.batch_execute("SELECT set_config('hubuum.restore_history','on',true),set_config('hubuum.restore_identities','on',true)").await?;
+            let changed = sql_query(&replace).bind::<Jsonb,_>(&copy).bind::<Jsonb,_>(&clean_descendant).execute(connection).await?;
+            assert_eq!(changed, 1);
+            // A twice-restored newer copy has proven ancestry distinct from
+            // admitted membership. Quarantine must depend on that ancestry.
+            let clean = probe_history_restore_exposure(connection, &restore_target).await?;
+            let changed = sql_query(&replace).bind::<Jsonb,_>(&clean_descendant).bind::<Jsonb,_>(&descendant).execute(connection).await?;
+            assert_eq!(changed, 1);
+            connection.batch_execute("SELECT set_config('hubuum.restore_history','off',true),set_config('hubuum.restore_identities','off',true); SAVEPOINT exposure_probe").await?;
+            let rejected = probe_history_restore_exposure(connection, &restore_target).await;
+            connection.batch_execute("ROLLBACK TO SAVEPOINT exposure_probe").await?;
+            let preserved = sql_query(format!("SELECT count(*) AS value FROM public.{copy_table} WHERE logical_identity=$1 {open_filter}"))
+                .bind::<Jsonb,_>(&descendant).get_result::<Count>(connection).await?.value;
+            let unchanged = sql_query(format!("SELECT to_jsonb(h) AS material FROM public.{source_table} h WHERE {position}=$1"))
+                .bind::<BigInt,_>(target.position).get_result::<Material>(connection).await?.material;
+            let quarantined = sql_query("SELECT to_jsonb(NOT public.hubuum_deletion_exposure_allowed()) AS material")
+                .get_result::<Material>(connection).await?.material;
+            let retained = sql_query("SELECT material FROM hubuum_control.history_lifecycle_control WHERE id=1")
+                .get_result::<Material>(connection).await?.material;
+            connection.batch_execute("ROLLBACK TO SAVEPOINT restored_expiry_fixture").await?;
+            Ok::<_,PostgresStorageError>((rejected, preserved, unchanged, quarantined, clean, retained))
+        }).await
+    } else {
+        Err(PostgresStorageError::invalid_input(
+            "Fixture did not admit its original source",
+        ))
+    };
+    cleanup(a, b, collection_a, collection_b, runtime, admitted).await;
+    selection.unwrap();
+    let (rejected, preserved, unchanged, quarantined, clean, retained) = outcome.unwrap();
+    assert_eq!(rejected.unwrap_err().kind(), StorageErrorKind::Unavailable);
+    assert_eq!(
+        preserved, 1,
+        "exposure rejection must preserve the restored copy"
+    );
+    assert_eq!(
+        unchanged, original,
+        "exposure rejection must preserve original source facts"
+    );
+    assert_eq!(quarantined, Value::Bool(true));
+    assert_eq!(
+        retained,
+        serde_json::to_value(clean).unwrap(),
+        "rejection must preserve the retained authority"
+    );
 }

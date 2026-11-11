@@ -158,7 +158,7 @@ struct Capture {
 /// Caller holds deletion authority. Pin application/history authority before
 /// any task/control or exact-row locks. Failure leaves exposure quarantined;
 /// this path never removes a current or protected-open payload.
-pub(super) async fn require_history_exposure_safe_on(
+pub(crate) async fn require_history_exposure_safe_on(
     connection: &mut PostgresConnection,
 ) -> Result<HistoryLifecycleControl, PostgresStorageError> {
     sql_query("SELECT id FROM hubuum_control.application_control WHERE id=1 FOR UPDATE")
