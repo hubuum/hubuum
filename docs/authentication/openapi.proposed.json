@@ -1109,7 +1109,11 @@
               }
             ],
             "discriminator": {
-              "propertyName": "kind"
+              "propertyName": "kind",
+              "mapping": {
+                "credentials": "#/components/schemas/CredentialNext",
+                "browser": "#/components/schemas/BrowserNext"
+              }
             }
           }
         },
@@ -1395,7 +1399,8 @@
                 "kind"
               ],
               "additionalProperties": false
-            }
+            },
+            "description": "Every provider in an authentication candidate, including IDs allocated for new runtime definitions. Use these IDs to begin provider_verification interactions before activation. Empty for authorization candidates."
           }
         },
         "required": [
@@ -1404,88 +1409,107 @@
           "base_revision",
           "expires_at",
           "checks",
-          "state"
+          "state",
+          "providers"
         ],
         "additionalProperties": false
       },
       "SecretInput": {
         "oneOf": [
           {
-            "type": "object",
-            "properties": {
-              "action": {
-                "type": "string",
-                "enum": [
-                  "keep"
-                ]
-              }
-            },
-            "required": [
-              "action"
-            ],
-            "additionalProperties": false
+            "$ref": "#/components/schemas/KeepSecret"
           },
           {
-            "type": "object",
-            "properties": {
-              "action": {
-                "type": "string",
-                "enum": [
-                  "clear"
-                ]
-              }
-            },
-            "required": [
-              "action"
-            ],
-            "additionalProperties": false
+            "$ref": "#/components/schemas/ClearSecret"
           },
           {
-            "type": "object",
-            "properties": {
-              "action": {
-                "type": "string",
-                "enum": [
-                  "reference"
-                ]
-              },
-              "alias": {
-                "type": "string",
-                "pattern": "^[A-Za-z0-9_-]{1,128}$"
-              }
-            },
-            "required": [
-              "action",
-              "alias"
-            ],
-            "additionalProperties": false
+            "$ref": "#/components/schemas/ReferenceSecret"
           },
           {
-            "type": "object",
-            "properties": {
-              "action": {
-                "type": "string",
-                "enum": [
-                  "replace"
-                ]
-              },
-              "value": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 1048576,
-                "writeOnly": true
-              }
-            },
-            "required": [
-              "action",
-              "value"
-            ],
-            "additionalProperties": false
+            "$ref": "#/components/schemas/ReplaceSecret"
           }
         ],
         "discriminator": {
-          "propertyName": "action"
+          "propertyName": "action",
+          "mapping": {
+            "keep": "#/components/schemas/KeepSecret",
+            "clear": "#/components/schemas/ClearSecret",
+            "reference": "#/components/schemas/ReferenceSecret",
+            "replace": "#/components/schemas/ReplaceSecret"
+          }
         }
+      },
+      "KeepSecret": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "keep"
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "ClearSecret": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "clear"
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "ReferenceSecret": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "reference"
+            ]
+          },
+          "alias": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          }
+        },
+        "required": [
+          "action",
+          "alias"
+        ],
+        "additionalProperties": false
+      },
+      "ReplaceSecret": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "replace"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1048576,
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "action",
+          "value"
+        ],
+        "additionalProperties": false
       },
       "Membership": {
         "type": "object",

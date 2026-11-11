@@ -414,7 +414,11 @@
       "requires": [
         "wrong_provider"
       ],
-      "request": {},
+      "request": {
+        "state": "fixture-state",
+        "code": "fixture-authorization-code",
+        "iss": "https://idp.example.invalid/realms/hubuum"
+      },
       "response": {
         "status": 409,
         "body": {
@@ -434,7 +438,11 @@
       "requires": [
         "wrong_browser_binding"
       ],
-      "request": {},
+      "request": {
+        "state": "fixture-state",
+        "code": "fixture-authorization-code",
+        "iss": "https://idp.example.invalid/realms/hubuum"
+      },
       "response": {
         "status": 400,
         "body": {
@@ -477,7 +485,20 @@
         "github_actor",
         "purpose_credential_approval"
       ],
-      "request": {},
+      "request": {
+        "client_id": "hubuum-cli",
+        "provider_id": "github-fixture",
+        "purpose": "credential_approval",
+        "delivery": "poll",
+        "operation": {
+          "kind": "create_token",
+          "principal_id": 42,
+          "token": {
+            "name": "fixture-token",
+            "expires_at": "2026-11-12T12:00:00"
+          }
+        }
+      },
       "response": {
         "status": 422,
         "body": {
@@ -608,7 +629,10 @@
       "requires": [
         "candidate_base_revision_changed"
       ],
-      "request": {},
+      "request": {
+        "expected_revision": 7,
+        "verification_receipt": "FIXTURE-VERIFICATION-RECEIPT-NEVER-USE-IN-PRODUCTION"
+      },
       "response": {
         "status": 412,
         "body": {
@@ -628,7 +652,10 @@
       "requires": [
         "secret_version_changed"
       ],
-      "request": {},
+      "request": {
+        "expected_revision": 7,
+        "verification_receipt": "FIXTURE-VERIFICATION-RECEIPT-NEVER-USE-IN-PRODUCTION"
+      },
       "response": {
         "status": 409,
         "body": {
@@ -648,7 +675,10 @@
       "requires": [
         "deployment_lock_changed"
       ],
-      "request": {},
+      "request": {
+        "expected_revision": 7,
+        "verification_receipt": "FIXTURE-VERIFICATION-RECEIPT-NEVER-USE-IN-PRODUCTION"
+      },
       "response": {
         "status": 409,
         "body": {
@@ -668,7 +698,45 @@
       "requires": [
         "actor_is_external_admin"
       ],
-      "request": {},
+      "request": {
+        "group": "authentication",
+        "expected_revision": 7,
+        "providers": [
+          {
+            "name": "employees",
+            "kind": "oidc",
+            "enabled": true,
+            "source": "runtime",
+            "configuration": {
+              "issuer": "https://idp.example.invalid/realms/hubuum",
+              "client_id": "hubuum",
+              "client_authentication": "client_secret_basic",
+              "credential": {
+                "action": "reference",
+                "alias": "oidc-client-v1"
+              },
+              "scopes": [
+                "openid",
+                "profile"
+              ],
+              "signing_algorithms": [
+                "RS256"
+              ],
+              "membership": {
+                "mode": "provider_groups",
+                "claim_source": "id_token",
+                "claim_pointer": "/groups",
+                "key_mode": "full_path",
+                "refresh_interval_seconds": 300,
+                "max_stale_seconds": 900
+              },
+              "admission": {
+                "mode": "existing_only"
+              }
+            }
+          }
+        ]
+      },
       "response": {
         "status": 403,
         "body": {
@@ -688,7 +756,15 @@
       "requires": [
         "client_supplied_profile_or_token"
       ],
-      "request": {},
+      "request": {
+        "client_id": "hubuum-cli",
+        "provider_id": "github-fixture",
+        "purpose": "login",
+        "delivery": "poll",
+        "profile": {
+          "id": "client-supplied-subject"
+        }
+      },
       "response": {
         "status": 400,
         "body": {
@@ -700,7 +776,10 @@
       "effects": {
         "issued_sessions": 0,
         "activated": false
-      }
+      },
+      "invalid_request_fields": [
+        "/profile"
+      ]
     },
     {
       "id": "cancel",
@@ -809,7 +888,49 @@
               "reason": "browser_sign_in_required"
             }
           ],
-          "state": "unverified"
+          "state": "unverified",
+          "providers": [
+            {
+              "provider_id": "00000000-0000-4000-8000-000000000002",
+              "name": "employees",
+              "kind": "oidc"
+            }
+          ]
+        }
+      },
+      "effects": {
+        "activated": false,
+        "issued_sessions": 0,
+        "provisioned": false
+      }
+    },
+    {
+      "id": "candidate_verification_begin",
+      "operation_id": "beginInteraction",
+      "requires": [
+        "valid_local_admin",
+        "candidate_connectivity_only"
+      ],
+      "request": {
+        "client_id": "hubuum-cli",
+        "provider_id": "00000000-0000-4000-8000-000000000002",
+        "purpose": "provider_verification",
+        "delivery": "poll",
+        "candidate_id": "candidate-fixture"
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "verification-interaction-fixture",
+          "interaction_version": 1,
+          "redemption_secret": "FIXTURE-REDEMPTION-SECRET-NEVER-USE-IN-PRODUCTION",
+          "expires_at": "2026-11-11T12:05:00Z",
+          "interval_seconds": 5,
+          "next": {
+            "kind": "browser",
+            "verification_uri": "https://hubuum.example.invalid/api/v1/auth/interactions/browser",
+            "user_code": "ABCD-EFGH-JK"
+          }
         }
       },
       "effects": {
@@ -834,9 +955,9 @@
         "status": 200,
         "body": {
           "candidate_id": "candidate-fixture",
-          "provider_id": "keycloak-fixture",
+          "provider_id": "00000000-0000-4000-8000-000000000002",
           "subject": "fixture-subject",
-          "admitted": true,
+          "admitted": false,
           "membership": "complete",
           "groups": [
             {
@@ -969,7 +1090,51 @@
       "requires": [
         "direct_mapping_into_local_groups"
       ],
-      "request": {},
+      "request": {
+        "group": "authentication",
+        "expected_revision": 7,
+        "providers": [
+          {
+            "name": "employees",
+            "kind": "oidc",
+            "enabled": true,
+            "source": "runtime",
+            "configuration": {
+              "issuer": "https://idp.example.invalid/realms/hubuum",
+              "client_id": "hubuum",
+              "client_authentication": "client_secret_basic",
+              "credential": {
+                "action": "reference",
+                "alias": "oidc-client-v1"
+              },
+              "scopes": [
+                "openid",
+                "profile"
+              ],
+              "signing_algorithms": [
+                "RS256"
+              ],
+              "membership": {
+                "mode": "provider_groups",
+                "claim_source": "id_token",
+                "claim_pointer": "/groups",
+                "key_mode": "full_path",
+                "refresh_interval_seconds": 300,
+                "max_stale_seconds": 900,
+                "local_group_mappings": [
+                  {
+                    "key": "/engineering",
+                    "local_group_id": 1
+                  }
+                ]
+              },
+              "admission": {
+                "mode": "existing_only"
+              }
+            }
+          }
+        ]
+      },
       "response": {
         "status": 422,
         "body": {
@@ -980,7 +1145,10 @@
       },
       "effects": {
         "activated": false
-      }
+      },
+      "invalid_request_fields": [
+        "/providers/0/configuration/membership/local_group_mappings"
+      ]
     },
     {
       "id": "oauth_large_numeric_subject",
@@ -1087,7 +1255,10 @@
       "requires": [
         "replacement_treetop_denies_acting_local_admin"
       ],
-      "request": {},
+      "request": {
+        "expected_revision": 7,
+        "verification_receipt": "FIXTURE-VERIFICATION-RECEIPT-NEVER-USE-IN-PRODUCTION"
+      },
       "response": {
         "status": 403,
         "body": {

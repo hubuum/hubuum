@@ -2,7 +2,7 @@
 
 This is the author compatibility review for [#573](https://github.com/hubuum/hubuum/issues/573),
 not an independent approval or provider qualification. The [contract](contract.md),
-[OpenAPI proposal](openapi.proposed.json) and [45 shared vectors](fixtures.json)
+[OpenAPI proposal](openapi.proposed.json) and [46 shared vectors](fixtures.json)
 form one review unit.
 
 ## Reviewed baseline

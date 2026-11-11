@@ -47,6 +47,10 @@ must not change live login, provision an account or grant permissions.
    Resolve aliases through the existing secret source, validate TLS and endpoints,
    and test provider discovery/connectivity. Return bounded, redacted per-check
    results, with `not_run` distinct from `passed`.
+   Authentication candidate reports include every candidate provider and its ID,
+   including server-allocated IDs for new definitions. Use those IDs to begin
+   verification before activation; public discovery does not list draft providers.
+   Authorization candidate reports return an empty provider list.
 3. For LDAP, test a password bind and search with an administrator-supplied test
    identity. For OIDC/OAuth, run a real browser sign-in against the candidate,
    through the same callback/PKCE/identity rules as live login. The test result
@@ -404,4 +408,9 @@ all fixture timestamps by one common offset in the consumer harness, preserving
 durations and explicit expired-state preconditions. Never decode success examples
 against wall-clock expiry or submit these public deterministic credentials to a
 real server.
+Each fixture's `request` contains its JSON body or callback query parameters;
+path parameters and authentication setup follow its `requires` preconditions.
+`invalid_request_fields` lists JSON pointers to deliberately malformed or
+unsupported fields in negative cases. Removing only those fields must leave a
+structurally valid request; all other fixture requests conform without repair.
 Provider live qualification remains #577/#578 and ecosystem acceptance #581.
