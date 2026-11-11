@@ -17,8 +17,8 @@ The website opens the latest released documentation. Select a release version
 or explicitly choose `main` for development documentation, and check
 [client compatibility](docs/integrations/clients.md#choose-compatible-versions).
 
-The latest release is [Hubuum `0.0.21`](https://github.com/hubuum/hubuum/releases/tag/v0.0.21),
-published on October 26, 2026. Hubuum is suitable for evaluation and early deployments,
+The latest release is [Hubuum `0.0.22`](https://github.com/hubuum/hubuum/releases/tag/v0.0.22),
+published on November 9, 2026. Hubuum is suitable for evaluation and early deployments,
 but its API and configuration may change before `1.0.0`. Pin deployments to an explicit
 version instead of using the moving `main` image tag. See [Releases](#releases) for recent
 changes and upgrade guidance.
@@ -39,7 +39,7 @@ Install matching versions of all three together; template rendering and validati
 require the worker executable beside the server and administrator binaries.
 
 ```sh
-docker pull ghcr.io/hubuum/hubuum-server:v0.0.21
+docker pull ghcr.io/hubuum/hubuum-server:v0.0.22
 ```
 
 Run `hubuum-admin --migrate` as a one-shot workload before starting or upgrading the
@@ -308,6 +308,7 @@ Recent published releases:
 
 | Release | Date | Highlights |
 | --- | --- | --- |
+| [0.0.22](https://github.com/hubuum/hubuum/releases/tag/v0.0.22) | 2026-11-09 | Adds audited, revision-checked runtime settings for pagination, query observations, authentication providers, and authorization. Clients discover editable fields, types, limits, explanations, and enum help from the server. Requires a migration, coordinated process upgrades, and migration away from the legacy query-observation endpoints; advances the storage SDK source contract to 0.7. |
 | [0.0.21](https://github.com/hubuum/hubuum/releases/tag/v0.0.21) | 2026-10-26 | Adds bounded field discovery and asynchronous schema suggestions with policy presets and sampled replay. Streams backup/restore through disk spools, moves computed read repair to durable workers, and fixes deletion contention with those workers. Requires migrations, writable temporary storage, and clients that recognize profiling tasks; advances the storage SDK to 0.6. |
 | [0.0.20](https://github.com/hubuum/hubuum/releases/tag/v0.0.20) | 2026-10-22 | Adds rotating interactive sessions, credential provenance and source history, historical object populations, relationships and computed values, directional relation labels, and shared query-observation controls. Requires an offline migration and upgraded clients; introduces backup format 10. |
 | [0.0.19](https://github.com/hubuum/hubuum/releases/tag/v0.0.19) | 2026-10-13 | Adds successful-login notifications, query usage declarations and bounded PostgreSQL index preparation, and relation-aware audit timelines. Improves search performance and memory filtering. Introduces backup format 9 and breaking login, event-reader, and storage SDK requirements. |
@@ -320,7 +321,41 @@ Recent published releases:
 | [0.0.12](https://github.com/hubuum/hubuum/releases/tag/v0.0.12) | 2026-09-08 | Adds OpenTelemetry tracing, mounted-file secrets, token hash key rotation, backup verification, optional split database roles, and isolated template and restore execution. Includes breaking deployment and resource-limit changes. |
 | [0.0.11](https://github.com/hubuum/hubuum/releases/tag/v0.0.11) | 2026-08-30 | Adds the experimental memory storage backend and a coordinated public storage adapter SDK, with bounded authorization queries. |
 
-Before upgrading from `0.0.20` to `0.0.21`:
+Before upgrading from `0.0.21` to `0.0.22`:
+
+- Review existing export templates with MiniJinja 3.1. Fuel now covers data
+  processing, allocations, and filter work as well as instructions; reduce large
+  workloads or review and increase `HUBUUM_EXPORT_TEMPLATE_FUEL` when needed.
+  Check rendered output for upstream escaping, ordering, and null/undefined
+  handling changes. See [render guards](docs/export_api.md#render-guards-and-cleanup).
+- Apply the runtime-settings migration with matching `hubuum-admin --migrate`.
+  Upgrade every API, worker, and restore-executor process together before changing
+  runtime settings. The migration imports existing query-observation overrides;
+  old replicas do not follow subsequent runtime-setting changes.
+- Provision a local password-capable administrator before changing authentication
+  providers or authorization. Runtime LDAP credentials require
+  `HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF`; retain referenced encryption keys
+  while stored credentials depend on them. Provider changes require the dedicated
+  validation and connection-preflight workflow. See
+  [runtime settings](docs/runtime_settings.md).
+- Update query-observation clients: the old `/api/v1/admin/query-observations`
+  routes and `query_observations.runtime_override` configuration field are removed.
+  Discover groups through `/api/v1/admin/runtime-settings/schema` and send explicit
+  revisions with updates. Read ownership, revision, and replica application status
+  from the runtime-settings responses. Review conflicts instead of replaying edits.
+- Check that `HUBUUM_DEFAULT_PAGE_LIMIT` is between 1 and 4,294,967,295 and does
+  not exceed `HUBUUM_MAX_PAGE_LIMIT`. Update dashboards that filter on the removed
+  `query_observation_control` or `set_query_observation_control` storage-operation
+  labels to use the new runtime-settings operations.
+- External storage adapters must update all ten SDK dependencies to `0.7.0`
+  together and implement the audited runtime-settings capability and notification
+  topic. See the [0.7 migration guide](docs/storage_adapter_sdk.md#upgrading-from-06-to-07).
+- Installations that applied workload-capacity or data-lifecycle project migrations
+  must remain on `project/workload-lifecycle`; this stable release cannot downgrade
+  those databases or backups. See the
+  [project separation guidance](docs/development.md#separating-project-3-from-main).
+
+When upgrading from before `0.0.21`, also follow its requirements:
 
 - Apply the restore-chunk, computed-read-repair, schema-profiling, and computed-history deletion-lock migrations
   with matching `hubuum-admin --migrate` and reconcile database role grants.
@@ -340,9 +375,9 @@ Before upgrading from `0.0.20` to `0.0.21`:
 - Schema suggestions describe an authorized sample, never update classes
   automatically, and expire after 24 hours. Review the candidate, stage a schema
   revision, and analyze whole-class impact before activation.
-- External storage adapters must update all ten SDK crates to `0.6.0` together
-  and apply both the [0.5](docs/storage_adapter_sdk.md#upgrading-from-04-to-05)
-  and [0.6](docs/storage_adapter_sdk.md#upgrading-from-05-to-06) migration guides.
+- When upgrading adapters from before SDK 0.6, also apply the
+  [0.5](docs/storage_adapter_sdk.md#upgrading-from-04-to-05) and
+  [0.6](docs/storage_adapter_sdk.md#upgrading-from-05-to-06) migration guides.
 
 When upgrading from before `0.0.20`, also follow its requirements:
 

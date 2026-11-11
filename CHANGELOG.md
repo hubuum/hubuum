@@ -9,6 +9,24 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Administrators can change `pagination.max_page_limit` together with
+  `default_page_limit` through runtime settings, without restarting. Explicit
+  client limits are clamped to the runtime maximum, bounded by the deployment's
+  `HUBUUM_MAX_PAGE_LIMIT`. Discovery and client/admin configuration report the
+  effective limits. Partial edits preserve omitted fields, and in-flight
+  requests retain their original limits. Existing default-only settings and
+  requests remain supported. Upgrade all API and worker replicas before setting
+  a runtime maximum; older binaries cannot read the extended persisted policy.
+
+- Runtime policy groups now cover log filters; metrics enablement/path; proxy
+  trust and client allowlists; traversal depth; task lease/heartbeat, polling,
+  recovery and reindex batches; remote-call limits; token
+  issuance/retention; login limits; event batching/delivery/retention/archive;
+  export/template budgets; and backup/restore limits. Changes are validated,
+  revisioned, audited and exposed through discovery and effective configuration.
+  Requests/jobs retain their snapshots, batch changes wake idle workers, and
+  sensitive policy edits require a local administrator with recovery access.
+
 - **Breaking storage SDK 0.19:** all ten SDK crates advance together. Complete
   adapters must implement `HistoryArchiveStorage` with persisted catalogs,
   bounded captured hot inputs, generation-checked pins and original registered
@@ -128,6 +146,28 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   restore; stale claims cannot occupy capacity after reconciliation.
 
 ### Changed
+
+- **Breaking for project deployments using runtime admission overrides:** shared
+  task capacity remains authoritative. Runtime task/backup per-user fields are
+  read-only deployment seeds; update live limits through
+  `/api/v1/admin/task-capacity` with its current policy revision. Existing runtime
+  assignments do not overwrite shared capacity or reset accounted usage.
+
+- **Breaking (REST clients with closed runtime-setting enums):** runtime-setting responses and discovery add operational policy groups and effect values.
+  Regenerate administrator clients from the updated OpenAPI document or accept
+  the new runtime-setting group and effect values before upgrading the server.
+- **Breaking deployment change:** the runtime-policy migration adds group rows
+  older binaries cannot read. Stop older API and worker replicas before applying
+  `2026-11-10-000001_runtime_policies`, then deploy upgraded binaries everywhere.
+  Rollback after editing a new group requires an upgraded binary or database
+  backup because append-only audit history is preserved.
+- **Breaking deployment change:** worker-only processes now bind their HTTP
+  listener even with metrics disabled, supporting later runtime enablement.
+  Assign distinct `HUBUUM_BIND_IP:HUBUUM_PORT` endpoints or separate network
+  namespaces to workers that previously shared a host and port.
+- Runtime configuration uses common validated policy definitions for persistence
+  and discovery. Existing network/path validation is shared with storage;
+  deployment-only lifecycle settings and secrets remain outside runtime editing.
 
 - **Breaking storage SDK and operational change:** upgrade all ten SDK crates to
   `0.14.0` together; adapters must implement atomic
@@ -272,6 +312,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Shared login reservations retain their original expiry when runtime rate-limit
+  windows change, so in-flight failures still count toward the captured policy.
+- Shared login lockouts keep their expiry when overlapping requests finish under
+  shorter runtime policies. Backup and restore requests retain their captured
+  limits when runtime ownership changes during authentication.
+- Metrics remain available after runtime-settings refresh failures, with network
+  access controls still enforced. Runtime metrics paths retain their maintenance
+  exemption during destructive restores.
+- Stale-policy rejections remain visible in HTTP request metrics and tracing.
+
 - Task cleanup reports retain their exact verified checkpoint instead of
   reacquiring a contended repository or mixing it with newer database state.
   Receipt expiry reuses existing protection only when it covers the selected
@@ -288,7 +338,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   maintenance pass retains its application admission and recovery checks and
   pauses for the configured worker poll interval before reacquiring the
   repository, allowing other publishers to make progress.
-- Startup readiness requires the latest migration packaged with the adapter,
+- Startup readiness requires every migration packaged with the adapter,
   preventing an incomplete schema from passing after parallel migrations are
   integrated.
 - Artifact cleanup backs off after an empty batch using the configured output
@@ -314,6 +364,119 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Retained history and task-event actor names no longer attach to a different
   principal when a restore timeline reuses an integer ID. Historical relation
   endpoint hydration also requires the captured endpoint identity.
+
+## [0.0.22] - 2026-11-09
+
+### Added
+
+- Administrator clients can discover runtime settings through
+  `GET /api/v1/admin/runtime-settings/schema`, including JSON Schema types,
+  deployment bounds, defaults, and application timing. Generic group reads and
+  revision-checked `PATCH /api/v1/admin/runtime-settings/{group}` preserve omitted
+  fields. Authentication continues to require its dedicated preflight workflow.
+- Every discovered runtime setting includes a readable label and operational
+  explanation; enum choices include help for each supported value.
+
+- Administrators can change selected shared settings without restarting any
+  replica. The default page size (`pagination.default_page_limit`) and query
+  observation enablement, sampling interval, predicate budget, capacity, and
+  retention are runtime settings. Use `GET /api/v1/admin/runtime-settings`, then
+  `PUT /api/v1/admin/runtime-settings/{pagination,query_observations}` with an
+  `expected_revision`, or `DELETE` to return a group to deployment
+  configuration. Updates are validated against deployment ceilings,
+  revision-checked (stale revisions return `412` with `current_revision`), and
+  committed together with a durable audit record. Read the records through
+  `GET /api/v1/admin/runtime-settings/history/{group}`. Replicas apply committed
+  changes on notification or within 30 seconds. API requests resolve page
+  limits once, when they start, including deferred searches in streaming
+  responses. `GET /api/v1/admin/config` reports each group's
+  source, revision, mutability, and effective value, and whether the responding
+  replica's applied state is current or stale. `GET /api/v1/config` reports the
+  effective default page size. Runtime settings survive restores and are
+  excluded from portable backups. Startup configuration still applies until an
+  administrator adopts a value; replica startup never overwrites shared
+  settings. See [runtime settings](docs/runtime_settings.md).
+- Administrators can select authentication providers and the authorization
+  backend at runtime. Existing LDAP identity-scope names, including names with
+  dots, Unicode, or more than 128 bytes, remain valid for deployment references
+  and runtime adoption. Deployment and runtime providers share identity-scope
+  validation. LDAP provider updates are validated and connection-tested
+  before persistence; bind passwords are encrypted at rest using a
+  key identified by an immutable secret reference. New requests use
+  applied settings, and authorization initialization failures fail closed.
+  Configure `HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF` and retain prior key
+  references and key material while stored credentials depend on them. See
+  [runtime settings](docs/runtime_settings.md).
+
+### Changed
+
+- **Breaking (templates):** MiniJinja 3.1 charges fuel for string processing,
+  allocations, output, and work inside filters and operators, in addition to
+  instructions. Existing templates can exhaust their unchanged fuel allowance.
+  Reduce their processed data or review and increase `HUBUUM_EXPORT_TEMPLATE_FUEL`;
+  heap and output guards remain independent. Review rendered output for the
+  upstream changes to escaping, ordering, and null/undefined handling. See
+  [MiniJinja 3.1 release notes](https://github.com/mitsuhiko/minijinja/releases/tag/3.1.0).
+
+- **Breaking for deployments with oversized pagination defaults:** deployment
+  configuration and runtime settings now share default-page-size validation.
+  `HUBUUM_DEFAULT_PAGE_LIMIT` must be between 1 and 4,294,967,295 and cannot exceed
+  `HUBUUM_MAX_PAGE_LIMIT`. Reduce larger configured defaults before upgrading.
+
+- **Breaking for unreleased runtime-settings clients:** authentication provider
+  requests now require explicit `source` and `enabled` fields. Deployment
+  definitions are read-only through the API; activation persists across restart,
+  and editing a definition requires explicit runtime adoption. Existing stored
+  definitions remain runtime-owned and enabled. Update clients and provision a
+  local password-capable administrator before upgrading: authentication and
+  authorization changes, including releases, now require that recovery identity.
+  Authorization replacements must preserve its administrator access. Local
+  authentication cannot be disabled, and exactly one authorization backend stays
+  selected. Replicas reject new API requests and fail readiness when runtime
+  settings become stale. See [runtime settings](docs/runtime_settings.md).
+
+- **Breaking for unreleased main builds:** workload-capacity and data-lifecycle
+  development moves to `project/workload-lifecycle`. The stable line retains
+  `v0.0.21` behavior and independent testing/CI fixes. Project-only APIs, storage
+  SDK changes, backup formats and migrations remain on the project branch.
+  Installations that applied project migrations must stay on that branch and
+  preserve deletion authority and recovery material; this change provides no
+  database or backup downgrade. See the
+  [separation guidance](docs/development.md#separating-project-3-from-main).
+- Reject unknown applied migration versions during readiness and before the
+  migration command writes changes, even when a supported migration sorts after
+  an unsupported project migration.
+- **Breaking:** query observation settings are now runtime-managed.
+  `GET` and `PUT /api/v1/admin/query-observations` have been removed; use
+  `GET /api/v1/admin/runtime-settings` and
+  `PUT /api/v1/admin/runtime-settings/query_observations` with an
+  `expected_revision`. The `query_observations.runtime_override` field of
+  `GET /api/v1/admin/config` has been removed; read
+  `runtime_settings.query_observations` instead. The migration imports any
+  existing override as an audited revision. Apply it, then upgrade every API and
+  worker replica together: upgraded replicas no longer read or write the legacy
+  override, so previous-release replicas would not follow later changes.
+  Replicas no longer read the setting from storage on query paths. A replica
+  whose latest runtime settings refresh failed pauses collection until a
+  refresh succeeds.
+- **Breaking (metrics):** storage operation labels `query_observation_control`
+  and `set_query_observation_control` are replaced by `load_runtime_settings`,
+  `update_runtime_settings`, and `list_runtime_settings_changes` under the new
+  `runtime_settings` capability label. Update dashboards and alerts that filter
+  on the removed operation labels; metric names and other labels are unchanged.
+- **Breaking storage SDK changes:** update all ten SDK dependencies to `0.7.0`
+  together. Adapters must implement the new
+  `RuntimeSettingsStorage` capability, now part of `OperationalStorage`. It
+  requires complete snapshots, revision-checked updates that commit their audit
+  record atomically, and bounded newest-first audit pages, all preserved across
+  logical restores and excluded from portable backups.
+  `QueryUsageStorage::query_observation_control`,
+  `QueryUsageStorage::set_query_observation_control`, and
+  `StorageQueryObservationControl` are removed. The
+  `StorageNotification::QueryObservationControl` topic is renamed to
+  `StorageNotification::RuntimeSettings`, and notification providers must
+  support it. `StorageCapability::RuntimeSettings` is a new telemetry label. See
+  the [0.7 migration guide](docs/storage_adapter_sdk.md#upgrading-from-06-to-07).
 
 ## [0.0.21] - 2026-10-26
 

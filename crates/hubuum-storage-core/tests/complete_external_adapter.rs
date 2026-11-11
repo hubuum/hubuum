@@ -12,7 +12,6 @@ use hubuum_storage_core::StorageTaskClaimRequest;
 use hubuum_storage_core::{
     DeletionAuditObservation, DeletionControlState, HotObjectHistoryCleanup,
     HotObjectHistoryDeletion, RuntimeRegistration, StorageExternalSyncFailure,
-    StorageQueryObservationControl,
 };
 use std::future::Future;
 use std::pin::Pin;
@@ -2563,6 +2562,25 @@ impl LogicalIdentityStorage for CompleteExternalAdapter {
     }
 }
 
+#[async_trait]
+impl RuntimeSettingsStorage for CompleteExternalAdapter {
+    async fn load_runtime_settings(&self) -> Result<StorageRuntimeSettingsSnapshot, StorageError> {
+        fixture_result()
+    }
+    async fn update_runtime_settings(
+        &self,
+        _request: StorageRuntimeSettingsUpdate,
+    ) -> Result<StorageRuntimeSettingsUpdateOutcome, StorageError> {
+        fixture_result()
+    }
+    async fn list_runtime_settings_changes(
+        &self,
+        _query: StorageRuntimeSettingsHistoryQuery,
+    ) -> Result<Vec<StorageRuntimeSettingsChange>, StorageError> {
+        fixture_result()
+    }
+}
+
 #[test]
 fn an_external_crate_can_implement_the_complete_backend_contract() {
     fn assert_complete<T: StorageBackend + Clone + 'static>() {}
@@ -2571,18 +2589,6 @@ fn an_external_crate_can_implement_the_complete_backend_contract() {
 
 #[async_trait]
 impl QueryUsageStorage for CompleteExternalAdapter {
-    async fn query_observation_control(
-        &self,
-    ) -> Result<StorageQueryObservationControl, StorageError> {
-        unimplemented!("compile-only adapter")
-    }
-    async fn set_query_observation_control(
-        &self,
-        _control: StorageQueryObservationControl,
-    ) -> Result<(), StorageError> {
-        unimplemented!("compile-only adapter")
-    }
-
     async fn list_query_usage(
         &self,
         _request: StorageQueryUsageScope,

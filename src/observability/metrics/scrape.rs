@@ -1,6 +1,6 @@
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use actix_web::{HttpResponse, Responder, http::header};
+use actix_web::{HttpRequest, HttpResponse, Responder, http::header};
 use opentelemetry::KeyValue;
 use prometheus::{Encoder, TextEncoder};
 
@@ -40,6 +40,27 @@ impl RefreshSource {
             Self::TokenKeys => "token_keys",
         }
     }
+}
+
+/// The default service only matches the currently configured literal scrape path.
+pub async fn runtime_endpoint(
+    request: HttpRequest,
+    context: AppContext,
+) -> Result<HttpResponse, ApiError> {
+    let config = crate::config::runtime::current()?;
+    if !config.metrics_enabled || request.path() != config.metrics_path.as_str() {
+        return Ok(HttpResponse::NotFound().finish());
+    }
+    if request.method() != actix_web::http::Method::GET {
+        return Ok(HttpResponse::MethodNotAllowed()
+            .insert_header((header::ALLOW, "GET"))
+            .finish());
+    }
+    super::init()?;
+    Ok(scrape(context)
+        .await?
+        .respond_to(&request)
+        .map_into_boxed_body())
 }
 
 pub async fn scrape(context: AppContext) -> Result<impl Responder, ApiError> {

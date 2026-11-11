@@ -139,7 +139,19 @@ async fn event_retention_worker_loop(
     config: EventRetentionWorkerConfig,
     shutdown: ShutdownSignal,
 ) {
+    let mut changes = pool.subscribe_runtime_settings();
     loop {
+        let runtime = crate::config::runtime::for_storage(&pool);
+        let config = match runtime {
+            Ok(runtime) => {
+                EventRetentionWorkerConfig::from_config(&runtime).unwrap_or_else(|_| config.clone())
+            }
+            Err(_) => config.clone(),
+        };
+        if !config.enabled || !pool.applied_runtime_settings().maintenance_allowed() {
+            tokio::select! { biased; _ = shutdown.requested() => break, _ = changes.changed() => {}, _ = sleep(config.interval) => {} }
+            continue;
+        }
         let archive_path = config.file_archive_path().map(Path::new);
         let result = tokio::select! {
             biased;
@@ -156,6 +168,7 @@ async fn event_retention_worker_loop(
         tokio::select! {
             biased;
             _ = shutdown.requested() => break,
+            _ = changes.changed() => {},
             _ = sleep(config.interval) => {}
         }
     }
@@ -192,9 +205,6 @@ where
             return;
         }
     };
-    if !config.enabled {
-        return;
-    }
 
     EVENT_RETENTION_WORKER.call_once(move || {
         info!(
@@ -310,6 +320,26 @@ fn commit_event_archive_file(
     } else {
         Ok(())
     }
+}
+
+/// Check the same secure directory and write durability requirements used by archiving.
+pub(crate) fn validate_file_archive_path(path: &Path) -> Result<(), ApiError> {
+    secure_event_archive_directory(path)?;
+    let probe = path.join(format!(".hubuum-runtime-{}.tmp", uuid::Uuid::new_v4()));
+    let check = || -> io::Result<()> {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let file = options.open(&probe)?;
+        let result = file.sync_all();
+        drop(file);
+        let cleanup = fs::remove_file(&probe);
+        result.and(cleanup)
+    };
+    check().map_err(|error| {
+        ApiError::BadRequest(format!("Event archive directory is not writable: {error}"))
+    })
 }
 
 fn secure_event_archive_directory(path: &Path) -> Result<(), ApiError> {
@@ -445,6 +475,16 @@ impl EventRetentionWorkerConfig {
         self.file_archive_enabled
             .then_some(self.archive_path.as_deref())
             .flatten()
+    }
+
+    fn from_config(config: &crate::config::AppConfig) -> Result<Self, ApiError> {
+        Ok(Self {
+            enabled: config.event_retention_purge_enabled,
+            settings: config.event_retention_settings()?,
+            interval: Duration::from_secs(config.event_retention_purge_interval_seconds),
+            file_archive_enabled: config.event_retention_file_archive_enabled,
+            archive_path: config.event_retention_archive_path.clone(),
+        })
     }
 }
 

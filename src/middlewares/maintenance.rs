@@ -263,9 +263,14 @@ async fn reject_with_activity(
         .clone();
     let work_storage = storage.clone();
     with_storage_call_site(&storage, StorageCallSite::HttpRequest, async move {
-        let metrics_path = req
-            .app_data::<Data<RunningConfig>>()
-            .map(|config| config.server.metrics_path.as_str());
+        let runtime = crate::config::runtime::scoped();
+        let metrics_path = runtime
+            .as_ref()
+            .map(|config| config.metrics_path.as_str())
+            .or_else(|| {
+                req.app_data::<Data<RunningConfig>>()
+                    .map(|config| config.server.metrics_path.as_str())
+            });
         let allowed = allowed_during_maintenance(req.path(), metrics_path);
         // Operational requests must remain outside the drain count: status
         // polling must not keep the restore operation waiting for itself.

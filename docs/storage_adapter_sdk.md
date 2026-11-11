@@ -40,6 +40,36 @@ Public archive tasks/API routes and primary-copy retirement remain disabled.
 Broader families, durable task activation and full #514 performance qualification
 remain open. See [collection archive reads](history_archive_reads.md).
 
+## Runtime settings integration in the 0.19 train
+
+Keep all ten SDK dependencies on exactly `0.19.0` together. This is a breaking
+supported Rust crate change: `OperationalStorage` now requires
+`RuntimeSettingsStorage`. Implement `load_runtime_settings`,
+`update_runtime_settings`, and `list_runtime_settings_changes`; an adapter cannot
+substitute empty or unsupported implementations.
+
+Return complete snapshots for all supported settings groups. Persist each assignment
+with its revision, and commit a changed assignment and exactly one audit record
+atomically. Reject stale revisions with the current revision; an unchanged
+assignment must not advance the revision or append an audit record. History is
+bounded and newest-first. Keep runtime settings and their audit history across
+logical restores, and exclude both from portable backups.
+
+Replace `QueryUsageStorage::query_observation_control`,
+`QueryUsageStorage::set_query_observation_control`, and
+`StorageQueryObservationControl` with the runtime-settings capability and typed
+values. Replace `StorageNotification::QueryObservationControl` with
+`StorageNotification::RuntimeSettings`; notification providers must support the
+new topic. Diagnostics use `StorageCapability::RuntimeSettings` and the new
+operation names.
+
+The PostgreSQL adapter requires migration
+`2026-11-06-000001_runtime_settings`, which imports the existing query-observation
+override as an audited revision. Upgrade all API and worker replicas together
+before accepting runtime-setting changes. Run the shared runtime-settings and
+restore conformance tests, plus adapter-native atomicity, stale-revision, audit,
+and notification coverage. The SDK retains its Rust 1.88 minimum version.
+
 ## Upgrading from 0.17 to 0.18
 
 This is a breaking coordinated release of all ten storage SDK crates.

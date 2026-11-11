@@ -87,49 +87,34 @@ A `complete` review can contain zero suggestions. Neither missing observations
 nor zero native scans establishes that a resource is unused.
 
 Collection is disabled by default. `HUBUUM_QUERY_OBSERVATIONS_ENABLED=true`
-sets the startup default. An unscoped human administrator can enable or disable
-collection at runtime through `PUT /api/v1/admin/query-observations`:
+sets the deployment default. Enablement is a
+[runtime setting](runtime_settings.md): an unscoped human administrator can
+enable or disable collection for every replica sharing storage, without
+restarting:
 
 ```sh
-curl --fail-with-body --request PUT "$HUBUUM_URL/api/v1/admin/query-observations" \
+curl --fail-with-body --request PUT \
+  "$HUBUUM_URL/api/v1/admin/runtime-settings/query_observations" \
   --header "Authorization: Bearer $HUBUUM_TOKEN" \
-  --header 'Content-Type: application/json' --data '{"enabled":true}'
+  --header 'Content-Type: application/json' \
+  --data '{"expected_revision":1,"enabled":true}'
 ```
 
-Send `{"enabled":false}` to disable collection. The override applies to every
-upgraded API replica connected to the same PostgreSQL database, including replicas
-whose startup default differs. It survives restarts and logical backup restores;
-it is deployment configuration and is not copied into portable backups. Concurrent
-updates use the last committed value. Memory storage shares the setting only
-among handles using the same in-process store; independent memory processes do
-not form a shared deployment.
-
-The update commits the shared value and broadcasts a PostgreSQL notification in
-one transaction. Running replicas reload and apply it on notification, without
-waiting for another query or the next poll. New replicas load it before serving
-requests, and listeners reload it after reconnecting. Each process also refreshes
-every 30 seconds to recover missed notifications, including while collection is
-off. Queries that can contribute observations refresh an expired one-second
-control cache before collecting, so idle recovery does not add a database read
-every second on each replica.
-Delivery is asynchronous: a successful PUT confirms the commit and the responding
-replica's applied state, not an acknowledgement from every replica. Control refreshes
-have a 250 ms budget that includes waiting for another refresh. Failed or slow
-refreshes skip collection without failing ordinary queries. Requests already
-being observed can finish recording after disablement. Disabling retains existing
+Changes are revision-checked and audited. Replicas apply them on notification
+or within the 30-second reconcile interval. Sampling decisions read the applied
+value without a storage read. A replica whose latest runtime settings refresh
+failed pauses collection until a refresh succeeds. Requests already being
+observed can finish recording after disablement. Disabling retains existing
 observations until their normal expiry and leaves declarations and indexes intact.
 
-`GET /api/v1/admin/query-observations` returns the effective settings for the
-responding replica, including `enabled` and `runtime_override`. A null override
-means its startup default still applies. `GET /api/v1/admin/config` exposes the
-same effective settings. Both reads reconcile the live collector with the shared
-setting before reporting it, so `enabled` is the state applied on that replica. Sampling
-and capacity limits remain startup settings. CLI flags use the corresponding
-lowercase hyphenated names; TOML keys use lowercase underscores under
-`[query_observations]`.
-
-Apply the query observation control migration before starting the updated server,
-and upgrade all API replicas before relying on the deployment-wide toggle.
+`GET /api/v1/admin/runtime-settings` reports the responding replica's
+effective, runtime, and deployment settings, with the source and revision.
+`GET /api/v1/admin/config` also reports the effective observation settings.
+The existing observation variables are deployment defaults, used while the
+group is released and to fill omitted fields in an update. Runtime-managed
+sampling and capacity values are clamped by the additional deployment ceiling
+variables below. CLI flags use the corresponding lowercase hyphenated names;
+TOML keys use lowercase underscores under `[query_observations]`.
 
 | Environment suffix after `HUBUUM_QUERY_OBSERVATIONS_` | Default | Accepted range |
 | --- | --- | --- |
@@ -138,6 +123,14 @@ and upgrade all API replicas before relying on the deployment-wide toggle.
 | `MAX_PATTERNS_PER_CLASS` | 64 | 1–128, no greater than the process limit |
 | `RETENTION_SECONDS` | 86400 | 1–604,800 |
 | `MAX_PREDICATES_PER_QUERY` | 16 | 1–32 |
+
+| Ceiling suffix after `HUBUUM_QUERY_OBSERVATIONS_` | Default | Accepted range |
+| --- | --- | --- |
+| `MIN_SAMPLE_EVERY` | 1 | 1–1,000,000 |
+| `MAX_PATTERNS_CEILING` | 16384 | 1–16,384 |
+| `MAX_PATTERNS_PER_CLASS_CEILING` | 128 | 1–128, no greater than the total ceiling |
+| `MAX_RETENTION_SECONDS_CEILING` | 604800 | 1–604,800 |
+| `MAX_PREDICATES_PER_QUERY_CEILING` | 32 | 1–32 |
 
 Collection retains only class attribution, validated paths, scalar types,
 operations, successful sampled request counts, timestamps, and whole-query

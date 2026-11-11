@@ -11,7 +11,7 @@ use std::time::Duration;
 use diesel::sql_types::Text;
 use diesel_async::RunQueryDsl as _;
 use futures_util::StreamExt as _;
-use hubuum_storage_core::StorageNotification;
+use hubuum_storage_core::{StorageNotification, StorageRuntimeSettingsGroup};
 use tracing::{debug, error, info};
 
 use crate::{PostgresConnection, PostgresPool, PostgresStorageError};
@@ -25,14 +25,14 @@ impl NotificationChannel {
     const EVENT_FANOUT: Self = Self("hubuum_events_fanout");
     const EVENT_DELIVERY: Self = Self("hubuum_event_delivery");
     const TASK_QUEUE: Self = Self("hubuum_task_queue");
-    const QUERY_OBSERVATION_CONTROL: Self = Self("hubuum_query_observation_control");
+    const RUNTIME_SETTINGS: Self = Self("hubuum_runtime_settings");
 
     const fn for_topic(topic: StorageNotification) -> Self {
         match topic {
             StorageNotification::EventFanout => Self::EVENT_FANOUT,
             StorageNotification::EventDelivery => Self::EVENT_DELIVERY,
             StorageNotification::TaskQueue => Self::TASK_QUEUE,
-            StorageNotification::QueryObservationControl => Self::QUERY_OBSERVATION_CONTROL,
+            StorageNotification::RuntimeSettings => Self::RUNTIME_SETTINGS,
         }
     }
 
@@ -61,10 +61,13 @@ pub async fn notify_task_queue(
     notify_channel(conn, NotificationChannel::TASK_QUEUE, &task_id.to_string()).await
 }
 
-pub(crate) async fn notify_query_observation_control(
+/// Wake every replica after the caller's runtime settings transaction commits.
+pub(crate) async fn notify_runtime_settings(
     conn: &mut PostgresConnection,
-) -> Result<usize, PostgresStorageError> {
-    notify_channel(conn, NotificationChannel::QUERY_OBSERVATION_CONTROL, "").await
+    group: StorageRuntimeSettingsGroup,
+) -> Result<(), PostgresStorageError> {
+    notify_channel(conn, NotificationChannel::RUNTIME_SETTINGS, group.as_str()).await?;
+    Ok(())
 }
 
 async fn notify_channel(

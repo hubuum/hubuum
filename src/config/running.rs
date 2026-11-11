@@ -33,6 +33,9 @@ pub struct RunningConfig {
     pub pagination: PaginationConfig,
     pub network: NetworkConfig,
     pub tracing: TracingConfig,
+    /// Runtime-managed settings applied by the responding replica. Present in
+    /// administrator responses; startup projections omit it.
+    pub runtime_settings: Option<crate::models::runtime_settings::RuntimeSettingsReport>,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -614,6 +617,7 @@ impl RunningConfig {
                 trust_incoming_sampling: config.tracing_trust_incoming_sampling,
                 propagate_outbound: config.tracing_propagate_outbound,
             },
+            runtime_settings: None,
         }
     }
 }
@@ -706,9 +710,9 @@ mod tests {
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct QueryObservationConfig {
+    /// Effective enablement on the responding replica. See
+    /// `runtime_settings.query_observations` for its source and revision.
     pub enabled: bool,
-    /// Shared runtime override; null means the process startup setting applies.
-    pub runtime_override: Option<bool>,
     pub sample_every: u32,
     pub max_patterns: usize,
     pub max_patterns_per_class: usize,
@@ -719,7 +723,6 @@ impl From<hubuum_storage_core::StorageQueryObservationSettings> for QueryObserva
     fn from(value: hubuum_storage_core::StorageQueryObservationSettings) -> Self {
         Self {
             enabled: value.enabled(),
-            runtime_override: None,
             sample_every: value.sample_every(),
             max_patterns: value.max_patterns(),
             max_patterns_per_class: value.max_patterns_per_class(),

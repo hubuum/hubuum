@@ -105,7 +105,6 @@ maintenance = [
     "DeletionControlStorage::cleanup_hot_object_history",
     "TaskCapacityStorage::initialize_task_policy",
     "TaskCapacityStorage::replace_task_policy",
-    "QueryUsageStorage::set_query_observation_control",
     "RestoreStorage::stage_restore_artifact",
     "RestoreStorage::expire_restore_stage",
     "RestoreStorage::start_restore_draining",
@@ -376,6 +375,17 @@ native_scenarios = [
     "crates/hubuum-storage-postgres/tests/deletion_control.rs::registered_runtime_wins_race_but_intent_starts_a_drain",
     "crates/hubuum-storage-postgres/tests/deletion_control.rs::deletion_intent_wins_race_and_prevents_runtime_startup",
 ]
+[traits.RuntimeSettingsStorage]
+source = "crates/hubuum-storage-core/src/runtime_settings.rs"
+methods = ["load_runtime_settings", "update_runtime_settings", "list_runtime_settings_changes"]
+effects = { point_read = ["load_runtime_settings"], page_read = ["list_runtime_settings_changes"], audited_mutation = ["update_runtime_settings"] }
+shared_scenarios = ["src/tests/storage_contract/runtime_settings.rs::runtime_settings_are_revisioned_and_audited", "src/tests/storage_contract/runtime_settings.rs::concurrent_edits_of_one_revision_commit_exactly_once", "src/storage/context/runtime_settings.rs::replicas_apply_committed_changes_without_a_request"]
+native_scenarios = ["crates/hubuum-storage-postgres/tests/runtime_settings.rs::committed_values_are_shared_and_survive_reconnecting", "crates/hubuum-storage-postgres/tests/runtime_settings.rs::concurrent_edits_of_one_revision_commit_exactly_once", "crates/hubuum-storage-postgres/tests/runtime_settings.rs::a_failed_audit_insert_rolls_back_the_update", "crates/hubuum-storage-postgres/tests/runtime_settings.rs::migration_adopts_an_existing_override_as_an_audited_revision", "crates/hubuum-storage-postgres/tests/runtime_settings.rs::committed_changes_notify_every_connected_replica", "crates/hubuum-storage-postgres/tests/runtime_settings.rs::audit_records_are_append_only", "crates/hubuum-storage-postgres/tests/runtime_settings.rs::constraints_reject_invalid_persisted_state"]
+
+[enums.StorageRuntimeSettingsGroup]
+source = "crates/hubuum-storage-core/src/runtime_settings.rs"
+variants = ["Authentication", "Authorization", "QueryObservations", "Pagination", "Observability", "Network", "QueryLimits", "Tasks", "RemoteCalls", "Tokens", "LoginRateLimit", "Events", "Exports", "Backups", "Restores"]
+scenarios = ["crates/hubuum-storage-core/src/runtime_settings.rs::group_keys_are_stable", "src/tests/storage_contract/runtime_settings.rs::runtime_settings_are_revisioned_and_audited", "src/tests/storage_contract/runtime_settings.rs::releasing_operational_policy_restores_deployment_values"]
 
 [traits.TokenRetentionStorage]
 source = "crates/hubuum-storage-core/src/operational.rs"
@@ -547,7 +557,7 @@ scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_sup
 
 [enums.StorageNotification]
 source = "crates/hubuum-storage-core/src/worker_notifications.rs"
-variants = ["EventFanout", "EventDelivery", "TaskQueue", "QueryObservationControl"]
+variants = ["EventFanout", "EventDelivery", "TaskQueue", "RuntimeSettings"]
 scenarios = ["crates/hubuum-storage-core/src/worker_notifications.rs::notification_topics_have_stable_bounded_names", "crates/hubuum-storage-postgres/tests/notifications.rs::fanout_trigger_notifies_only_after_commit", "crates/hubuum-storage-postgres/tests/notifications.rs::task_queue_notification_is_delivered_only_after_commit"]
 
 [enums.TaskKind]
@@ -589,10 +599,10 @@ scenarios = ["src/tests/storage_contract/authorization_resources.rs::batched_aut
 
 [traits.QueryUsageStorage]
 source = "crates/hubuum-storage-core/src/query_usage.rs"
-methods = ["list_query_usage", "create_query_usage", "replace_query_usage", "delete_query_usage", "query_observation_control", "set_query_observation_control"]
-effects = { complete_read = ["list_query_usage"], point_read = ["query_observation_control"], workflow_mutation = ["set_query_observation_control"], audited_mutation = ["create_query_usage", "replace_query_usage", "delete_query_usage"] }
+methods = ["list_query_usage", "create_query_usage", "replace_query_usage", "delete_query_usage"]
+effects = { complete_read = ["list_query_usage"], audited_mutation = ["create_query_usage", "replace_query_usage", "delete_query_usage"] }
 shared_scenarios = ["src/tests/storage_contract/query_usage.rs::declarations_have_audited_revision_checked_lifecycle", "src/tests/storage_contract/query_usage.rs::declarations_recheck_the_authorized_collection", "src/tests/storage_contract/query_usage.rs::declaration_quota_is_serialized_with_concurrent_creates", "src/tests/storage_contract/query_usage.rs::declaration_noop_preserves_revision_and_has_no_audit", "src/tests/storage_contract/query_usage.rs::declaration_capture_preserves_intent_and_provenance"]
-native_scenarios = ["crates/hubuum-storage-postgres/tests/query_observation_control.rs::override_is_shared_and_survives_reconnecting", "crates/hubuum-storage-postgres/tests/query_observation_control.rs::committed_toggle_notifies_every_connected_replica", "src/tests/storage_contract/query_usage.rs::postgres_declaration_rolls_back_with_its_audit_event", "src/tests/storage_contract/query_usage.rs::postgres_declaration_constraints_reject_invalid_intent"]
+native_scenarios = ["src/tests/storage_contract/query_usage.rs::postgres_declaration_rolls_back_with_its_audit_event", "src/tests/storage_contract/query_usage.rs::postgres_declaration_constraints_reject_invalid_intent"]
 
 [enums.StorageRelationHistoryResource]
 source = "crates/hubuum-storage-core/src/history/relations.rs"

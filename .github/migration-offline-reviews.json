@@ -114,6 +114,17 @@
           "tasks_submitted_by_idempotency_key_key"
         ]
       }
+    },
+    {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-11-10-000001_runtime_policies/up.sql",
+      "sha256": "9974813acbe08b9b074f17f7c746ca4a73bb7fa7e30beb9e20e264f67db98856",
+      "reason": "The migration inserts runtime policy groups that older API and worker binaries cannot deserialize, even before an administrator edits a policy.",
+      "upgrade_action": "Stop all older API and worker replicas, back up the database, apply the migration, then start upgraded binaries everywhere. Restore the pre-upgrade database snapshot before reverting to older binaries. See docs/runtime_settings.md#upgrade-and-rollback.",
+      "drop_constraints": {
+        "runtime_settings": [
+          "runtime_settings_group_check"
+        ]
+      }
     }
   ]
 }

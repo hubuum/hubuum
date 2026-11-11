@@ -279,6 +279,15 @@ impl LdapIdentityProvider {
         })
     }
 
+    pub async fn test_connection(&self) -> Result<(), AuthProviderError> {
+        let mut ldap = self.ldap().await?;
+        self.bind_service(&mut ldap).await?;
+        ldap.unbind()
+            .await
+            .map_err(|error| AuthProviderError::Unavailable(error.to_string()))?;
+        Ok(())
+    }
+
     async fn ldap(&self) -> Result<ldap3::Ldap, AuthProviderError> {
         let settings = LdapConnSettings::new()
             .set_conn_timeout(self.connect_timeout())

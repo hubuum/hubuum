@@ -417,7 +417,56 @@ fn page_limits_resolve_defaults_and_clamp(
 }
 
 #[rstest]
-#[case(0, 100, "default_page_limit must be greater than 0")]
+#[case::deployment(None, (10, 100))]
+#[case::legacy(Some(StoragePaginationPolicy::try_new(20).unwrap()), (20, 100))]
+#[case::runtime(Some(StoragePaginationPolicy::try_with_maximum(20, 50).unwrap()), (20, 50))]
+#[case::maximum_clamped(Some(StoragePaginationPolicy::try_with_maximum(20, 200).unwrap()), (20, 100))]
+#[case::both_clamped(Some(StoragePaginationPolicy::try_with_maximum(150, 200).unwrap()), (100, 100))]
+fn runtime_page_limits_respect_the_deployment_ceiling(
+    #[case] policy: Option<StoragePaginationPolicy>,
+    #[case] expected: (usize, usize),
+) {
+    let limits = PageLimits::new(10, 100)
+        .unwrap()
+        .with_runtime_policy(policy);
+    assert_eq!((limits.default_limit(), limits.maximum_limit()), expected);
+}
+
+#[actix_web::test]
+async fn runtime_maximum_preserves_cursor_continuation() {
+    let limits = PageLimits::new(10, 100).unwrap().with_runtime_policy(Some(
+        StoragePaginationPolicy::try_with_maximum(1, 2).unwrap(),
+    ));
+    let mut cursor = None;
+    let mut ids = Vec::new();
+    let mut page_sizes = Vec::new();
+    for _ in 0..3 {
+        let query = QueryOptions::new(vec![], vec![], Some(9), cursor.take(), false).unwrap();
+        let page = with_request_page_limits(limits, async {
+            let prepared = prepare_db_pagination::<Collection>(&query).unwrap();
+            let rows = paginate_in_memory(
+                (1..=5).map(|id| collection(id, "item")).collect(),
+                &prepared,
+            )
+            .unwrap();
+            finalize_page(rows, &query).unwrap()
+        })
+        .await;
+        page_sizes.push(page.items.len());
+        ids.extend(page.items.into_iter().map(|item| item.id));
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(
+        (ids, page_sizes, cursor),
+        (vec![1, 2, 3, 4, 5], vec![2, 2, 1], None)
+    );
+}
+
+#[rstest]
+#[case(0, 100, "default_page_limit must be between 1 and 4294967295")]
 #[case(10, 0, "max_page_limit must be greater than 0")]
 #[case(
     101,

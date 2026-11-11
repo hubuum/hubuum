@@ -7,7 +7,7 @@
       "name": "MIT",
       "identifier": "MIT"
     },
-    "version": "0.0.21"
+    "version": "0.0.22"
   },
   "servers": [
     {
@@ -528,7 +528,7 @@
         "operationId": "getApiV1AdminConfig",
         "responses": {
           "200": {
-            "description": "Effective redacted process configuration",
+            "description": "Effective redacted process configuration, including runtime settings applied by the responding replica",
             "content": {
               "application/json": {
                 "schema": {
@@ -565,21 +565,858 @@
         ]
       }
     },
-    "/api/v1/admin/query-observations": {
+    "/api/v1/admin/runtime-settings": {
       "get": {
         "tags": [
           "admin"
         ],
-        "summary": "Get Api V1 Admin Query Observations",
-        "description": "Auto-generated documentation for GET /api/v1/admin/query-observations.",
-        "operationId": "getApiV1AdminQueryObservations",
+        "summary": "Get Api V1 Admin Runtime Settings",
+        "description": "Auto-generated documentation for GET /api/v1/admin/runtime-settings.",
+        "operationId": "getApiV1AdminRuntimeSettings",
         "responses": {
           "200": {
-            "description": "Shared override applied to the responding replica and its effective observation settings",
+            "description": "Runtime settings applied by the responding replica after reconciling with shared storage",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/QueryObservationConfig"
+                  "$ref": "#/components/schemas/RuntimeSettingsReport"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/runtime-settings/authentication": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete Api V1 Admin Runtime Settings Authentication",
+        "description": "Auto-generated documentation for DELETE /api/v1/admin/runtime-settings/authentication.",
+        "operationId": "deleteApiV1AdminRuntimeSettingsAuthentication",
+        "parameters": [
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "description": "Current revision of the group.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ResourceRevision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deployment authentication provider definitions restored as a new audited revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped local human administrator with password login required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; the response carries the current revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/runtime-settings/authentication/preflight": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Post Api V1 Admin Runtime Settings Authentication Preflight",
+        "description": "Auto-generated documentation for POST /api/v1/admin/runtime-settings/authentication/preflight.",
+        "operationId": "postApiV1AdminRuntimeSettingsAuthenticationPreflight",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthenticationSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Provider ownership and activation validated; enabled LDAP providers passed connectivity checks before the audited commit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid ownership transfer, provider configuration, or enabled-provider connectivity preflight",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped local human administrator with password login required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; no settings were persisted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Encryption key or secret source unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/runtime-settings/authorization": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Put Api V1 Admin Runtime Settings Authorization",
+        "description": "Auto-generated documentation for PUT /api/v1/admin/runtime-settings/authorization.",
+        "operationId": "putApiV1AdminRuntimeSettingsAuthorization",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthorizationSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorization backend selection committed with an audit record and applied by the responding replica",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unsupported backend, invalid deployment configuration, or administrator access would be lost",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped local human administrator with password login required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; the response carries the current revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Selected authorization backend is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete Api V1 Admin Runtime Settings Authorization",
+        "description": "Auto-generated documentation for DELETE /api/v1/admin/runtime-settings/authorization.",
+        "operationId": "deleteApiV1AdminRuntimeSettingsAuthorization",
+        "parameters": [
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "description": "Current revision of the group.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ResourceRevision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deployment ownership committed as a new audited revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or unsupported deployment backend",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped local human administrator with password login required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; the response carries the current revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Deployment authorization backend is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/runtime-settings/history/{group}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Api V1 Admin Runtime Settings History By Group",
+        "description": "Auto-generated documentation for GET /api/v1/admin/runtime-settings/history/{group}.",
+        "operationId": "getApiV1AdminRuntimeSettingsHistoryByGroup",
+        "parameters": [
+          {
+            "name": "group",
+            "in": "path",
+            "description": "Runtime settings group",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/RuntimeSettingsGroup"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Records to return, newest first. Defaults to 20; at most 100.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "before_revision",
+            "in": "query",
+            "description": "Return records with revisions older than this one.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ResourceRevision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Durable audit records for the group, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsHistoryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid group or paging parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/runtime-settings/pagination": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Put Api V1 Admin Runtime Settings Pagination",
+        "description": "Auto-generated documentation for PUT /api/v1/admin/runtime-settings/pagination.",
+        "operationId": "putApiV1AdminRuntimeSettingsPagination",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaginationSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Shared value committed with an audit record; applied by the responding replica, other replicas reconcile asynchronously",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid page limits, default above maximum, or deployment ceiling exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; the response carries the current revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete Api V1 Admin Runtime Settings Pagination",
+        "description": "Auto-generated documentation for DELETE /api/v1/admin/runtime-settings/pagination.",
+        "operationId": "deleteApiV1AdminRuntimeSettingsPagination",
+        "parameters": [
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "description": "Current revision of the group.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ResourceRevision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deployment ownership committed as a new audited revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; the response carries the current revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/runtime-settings/query_observations": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Put Api V1 Admin Runtime Settings Query Observations",
+        "description": "Auto-generated documentation for PUT /api/v1/admin/runtime-settings/query_observations.",
+        "operationId": "putApiV1AdminRuntimeSettingsQueryObservations",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryObservationSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Shared value committed with an audit record; applied by the responding replica, other replicas reconcile asynchronously",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; the response carries the current revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete Api V1 Admin Runtime Settings Query Observations",
+        "description": "Auto-generated documentation for DELETE /api/v1/admin/runtime-settings/query_observations.",
+        "operationId": "deleteApiV1AdminRuntimeSettingsQueryObservations",
+        "parameters": [
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "description": "Current revision of the group.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ResourceRevision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deployment ownership committed as a new audited revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; the response carries the current revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/runtime-settings/schema": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Api V1 Admin Runtime Settings Schema",
+        "description": "Auto-generated documentation for GET /api/v1/admin/runtime-settings/schema.",
+        "operationId": "getApiV1AdminRuntimeSettingsSchema",
+        "responses": {
+          "200": {
+            "description": "Versioned settings catalogue with this replica's deployment bounds; capability metadata is not a cluster-wide acknowledgement",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsCatalogue"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/runtime-settings/{group}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Api V1 Admin Runtime Settings By Group",
+        "description": "Auto-generated documentation for GET /api/v1/admin/runtime-settings/{group}.",
+        "operationId": "getApiV1AdminRuntimeSettingsByGroup",
+        "parameters": [
+          {
+            "name": "group",
+            "in": "path",
+            "description": "Discovered settings group",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/RuntimeSettingsGroup"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Uniform redacted state of one group on the responding replica",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsGroupState"
                 }
               }
             }
@@ -611,36 +1448,46 @@
           }
         ]
       },
-      "put": {
+      "delete": {
         "tags": [
           "admin"
         ],
-        "summary": "Put Api V1 Admin Query Observations",
-        "description": "Auto-generated documentation for PUT /api/v1/admin/query-observations.",
-        "operationId": "putApiV1AdminQueryObservations",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/QueryObservationUpdateRequest"
-              }
+        "summary": "Delete Api V1 Admin Runtime Settings By Group",
+        "description": "Auto-generated documentation for DELETE /api/v1/admin/runtime-settings/{group}.",
+        "operationId": "deleteApiV1AdminRuntimeSettingsByGroup",
+        "parameters": [
+          {
+            "name": "group",
+            "in": "path",
+            "description": "Discovered settings group",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/RuntimeSettingsGroup"
             }
           },
-          "required": true
-        },
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "description": "Current revision of the group.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ResourceRevision"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Shared override committed and broadcast; applied on this replica, other replicas reconcile asynchronously",
+            "description": "Deployment ownership committed as a new audited revision",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/QueryObservationConfig"
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "Invalid request or unavailable deployment configuration",
             "content": {
               "application/json": {
                 "schema": {
@@ -660,7 +1507,103 @@
             }
           },
           "403": {
-            "description": "Unscoped human administrator required",
+            "description": "Administrator required; security settings require a local password-capable human administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; refetch before editing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Patch Api V1 Admin Runtime Settings By Group",
+        "description": "Auto-generated documentation for PATCH /api/v1/admin/runtime-settings/{group}.",
+        "operationId": "patchApiV1AdminRuntimeSettingsByGroup",
+        "parameters": [
+          {
+            "name": "group",
+            "in": "path",
+            "description": "Discovered settings group with patch_supported=true",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/RuntimeSettingsGroup"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuntimeSettingsPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Supplied fields committed atomically; omitted fields preserved, replicas reconcile asynchronously",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid fields, values, combination, deployment ceiling or unsupported workflow",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator required; security settings require a local password-capable human administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale expected_revision; refetch before editing",
             "content": {
               "application/json": {
                 "schema": {
@@ -15598,7 +16541,7 @@
         "operationId": "getApiV1Config",
         "responses": {
           "200": {
-            "description": "Effective client-safe configuration",
+            "description": "Effective client-safe configuration, including runtime-managed page limits applied by the responding replica",
             "content": {
               "application/json": {
                 "schema": {
@@ -28062,6 +29005,98 @@
           }
         }
       },
+      "AuthenticationSettingsReport": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RuntimeSettingsOwnership"
+          },
+          {
+            "type": "object",
+            "required": [
+              "providers"
+            ],
+            "properties": {
+              "providers": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RuntimeAuthenticationProviderStatus"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "AuthenticationSettingsRequest": {
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "providers"
+        ],
+        "properties": {
+          "expected_revision": {
+            "$ref": "#/components/schemas/ResourceRevision",
+            "description": "Current revision of the `authentication` group."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeAuthenticationProviderRequest"
+            },
+            "description": "Authentication providers available for login. Provider activation,\nconfiguration and ownership changes require authentication preflight."
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthorizationSettingsReport": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RuntimeSettingsOwnership"
+          },
+          {
+            "type": "object",
+            "required": [
+              "effective_backend",
+              "deployment_backend",
+              "available"
+            ],
+            "properties": {
+              "available": {
+                "type": "boolean"
+              },
+              "deployment_backend": {
+                "type": "string"
+              },
+              "effective_backend": {
+                "type": "string"
+              },
+              "runtime_backend": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "AuthorizationSettingsRequest": {
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "backend"
+        ],
+        "properties": {
+          "backend": {
+            "$ref": "#/components/schemas/RuntimeAuthorizationBackend",
+            "description": "Backend used to evaluate permissions on subsequent requests. Changing\nthis can change access decisions. A local administrator with password\nlogin must make the change and retain administrator access afterward."
+          },
+          "expected_revision": {
+            "$ref": "#/components/schemas/ResourceRevision",
+            "description": "Current revision of the `authorization` group."
+          }
+        },
+        "additionalProperties": false
+      },
       "BackupConfig": {
         "type": "object",
         "required": [
@@ -37136,6 +38171,101 @@
           }
         }
       },
+      "PaginationPolicyValue": {
+        "type": "object",
+        "required": [
+          "default_page_limit"
+        ],
+        "properties": {
+          "default_page_limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "max_page_limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Omitted for legacy policies that inherit each replica's deployment maximum.",
+            "minimum": 1
+          }
+        }
+      },
+      "PaginationSettingsReport": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RuntimeSettingsOwnership"
+          },
+          {
+            "type": "object",
+            "required": [
+              "effective",
+              "deployment",
+              "max_page_limit",
+              "constrained_by_ceiling"
+            ],
+            "properties": {
+              "constrained_by_ceiling": {
+                "type": "boolean",
+                "description": "A runtime limit exceeds this replica's ceiling and is clamped to it."
+              },
+              "deployment": {
+                "$ref": "#/components/schemas/ClientPaginationConfig"
+              },
+              "effective": {
+                "$ref": "#/components/schemas/ClientPaginationConfig"
+              },
+              "max_page_limit": {
+                "type": "integer",
+                "description": "Deployment resource ceiling of this replica. It is never runtime-managed.",
+                "minimum": 0
+              },
+              "runtime": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/PaginationPolicyValue"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "PaginationSettingsRequest": {
+        "type": "object",
+        "description": "Manage page sizes for every replica sharing storage.",
+        "required": [
+          "expected_revision",
+          "default_page_limit"
+        ],
+        "properties": {
+          "default_page_limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Maximum items in a page when a request omits its limit. Requests with an\nexplicit limit keep that limit, subject to the effective maximum. Larger\npages can use more memory and transfer more data. Must be at least 1 and\nmust not exceed max_page_limit or this replica's deployment ceiling.",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "expected_revision": {
+            "$ref": "#/components/schemas/ResourceRevision",
+            "description": "Current revision of the `pagination` group."
+          },
+          "max_page_limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Largest page size allowed, including requests with an explicit limit.\nMust be at least default_page_limit and no greater than this replica's\nHUBUUM_MAX_PAGE_LIMIT deployment ceiling. Larger pages can use more memory\nand transfer more data. Omit on PUT to inherit the deployment maximum;\nomit on PATCH to preserve the current value. Changes affect new requests.",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
       "PatchOperation": {
         "oneOf": [
           {
@@ -38043,7 +39173,80 @@
           }
         }
       },
+      "QueryObservationCeilingsValue": {
+        "type": "object",
+        "required": [
+          "min_sample_every",
+          "max_patterns",
+          "max_patterns_per_class",
+          "max_retention_seconds",
+          "max_predicates_per_query"
+        ],
+        "properties": {
+          "max_patterns": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_patterns_per_class": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_predicates_per_query": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_retention_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "min_sample_every": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "QueryObservationConfig": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "sample_every",
+          "max_patterns",
+          "max_patterns_per_class",
+          "retention_seconds",
+          "max_predicates_per_query"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Effective enablement on the responding replica. See\n`runtime_settings.query_observations` for its source and revision."
+          },
+          "max_patterns": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_patterns_per_class": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_predicates_per_query": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "retention_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "sample_every": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "QueryObservationPolicyValue": {
         "type": "object",
         "required": [
           "enabled",
@@ -38073,13 +39276,6 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
-          },
-          "runtime_override": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "Shared runtime override; null means the process startup setting applies."
           },
           "sample_every": {
             "type": "integer",
@@ -38126,6 +39322,117 @@
           }
         }
       },
+      "QueryObservationSettingsReport": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RuntimeSettingsOwnership"
+          },
+          {
+            "type": "object",
+            "required": [
+              "effective",
+              "deployment",
+              "ceilings",
+              "constrained_by_ceiling",
+              "collection_paused"
+            ],
+            "properties": {
+              "ceilings": {
+                "$ref": "#/components/schemas/QueryObservationCeilingsValue"
+              },
+              "collection_paused": {
+                "type": "boolean",
+                "description": "Collection pauses while this replica's latest refresh has failed,\nrather than keep a possibly stale enablement."
+              },
+              "constrained_by_ceiling": {
+                "type": "boolean"
+              },
+              "deployment": {
+                "$ref": "#/components/schemas/QueryObservationPolicyValue"
+              },
+              "effective": {
+                "$ref": "#/components/schemas/QueryObservationPolicyValue"
+              },
+              "runtime": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/QueryObservationPolicyValue"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "QueryObservationSettingsRequest": {
+        "type": "object",
+        "description": "Manage query observation enablement for every replica sharing storage.",
+        "required": [
+          "expected_revision",
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Collect sampled query patterns for query-usage analysis. Turning this off\nstops new observations; retained observations remain subject to retention\nand capacity limits. This does not enable or disable query execution."
+          },
+          "expected_revision": {
+            "$ref": "#/components/schemas/ResourceRevision",
+            "description": "Current revision of the `query_observations` group."
+          },
+          "max_patterns": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Maximum distinct query patterns retained across all classes on each\nreplica. New patterns are dropped when capacity is full. Lowering this\nlimit can evict retained patterns; increasing it allows more memory use.",
+            "maximum": 16384,
+            "minimum": 1
+          },
+          "max_patterns_per_class": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Maximum distinct query patterns retained for one class on each replica.\nMust not exceed Total pattern limit. New patterns for a class are dropped\nwhen its capacity is full; lowering this limit can evict retained patterns.",
+            "maximum": 128,
+            "minimum": 1
+          },
+          "max_predicates_per_query": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Maximum filter predicates in a query eligible for observation. Queries\nabove this limit still execute but are not observed. Higher limits allow\nmore complex queries to be sampled and increase collection work.",
+            "maximum": 32,
+            "minimum": 1
+          },
+          "retention_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Retention window in seconds, starting when a pattern is first recorded\non a replica. Expired patterns are removed during collection or\ninspection. Longer windows retain observations longer, subject to\ncapacity limits. 0 is not allowed.",
+            "maximum": 604800,
+            "minimum": 1
+          },
+          "sample_every": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Sample one in every N eligible queries. Set to 1 to sample every eligible\nquery. Larger values reduce collection overhead and the number of samples;\n0 is not allowed. Use Collect query observations to turn collection off.",
+            "maximum": 1000000,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
       "QueryObservationSnapshot": {
         "type": "object",
         "required": [
@@ -38163,19 +39470,6 @@
             "type": "string"
           }
         }
-      },
-      "QueryObservationUpdateRequest": {
-        "type": "object",
-        "description": "Enable or disable observation collection across replicas sharing storage.",
-        "required": [
-          "enabled"
-        ],
-        "properties": {
-          "enabled": {
-            "type": "boolean"
-          }
-        },
-        "additionalProperties": false
       },
       "QueryPatternObservation": {
         "type": "object",
@@ -39668,6 +40962,17 @@
           "restores": {
             "$ref": "#/components/schemas/RestoreConfig"
           },
+          "runtime_settings": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RuntimeSettingsReport",
+                "description": "Runtime-managed settings applied by the responding replica. Present in\nadministrator responses; startup projections omit it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "schema_validation": {
             "$ref": "#/components/schemas/SchemaValidationConfig"
           },
@@ -39693,6 +40998,592 @@
           },
           "tracing": {
             "$ref": "#/components/schemas/TracingConfig"
+          }
+        }
+      },
+      "RuntimeAuthenticationProviderKind": {
+        "type": "string",
+        "enum": [
+          "ldap"
+        ]
+      },
+      "RuntimeAuthenticationProviderRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Deployment configuration stays read-only; only activation is persisted.",
+            "required": [
+              "name",
+              "kind",
+              "enabled",
+              "source"
+            ],
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "kind": {
+                "$ref": "#/components/schemas/RuntimeAuthenticationProviderKind"
+              },
+              "name": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "deployment"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "name",
+              "kind",
+              "enabled",
+              "configuration",
+              "source"
+            ],
+            "properties": {
+              "adopt_deployment": {
+                "type": "boolean",
+                "description": "Required when taking ownership of an existing deployment definition."
+              },
+              "configuration": {
+                "type": "object",
+                "description": "LDAP passwords are encrypted before persistence."
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "kind": {
+                "$ref": "#/components/schemas/RuntimeAuthenticationProviderKind"
+              },
+              "name": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "runtime"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "RuntimeAuthenticationProviderStatus": {
+        "type": "object",
+        "required": [
+          "name",
+          "source",
+          "enabled",
+          "definition_mutable",
+          "available"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "definition_mutable": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/RuntimeSettingsSource"
+          }
+        }
+      },
+      "RuntimeAuthorizationBackend": {
+        "type": "string",
+        "enum": [
+          "local",
+          "treetop"
+        ]
+      },
+      "RuntimePolicyReport": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RuntimeSettingsOwnership"
+          },
+          {
+            "type": "object",
+            "required": [
+              "effective",
+              "deployment",
+              "constrained_by_ceiling"
+            ],
+            "properties": {
+              "constrained_by_ceiling": {
+                "type": "boolean"
+              },
+              "deployment": {
+                "type": "object"
+              },
+              "effective": {
+                "type": "object"
+              },
+              "runtime": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "RuntimeSettingsApplicationStatus": {
+        "type": "string",
+        "enum": [
+          "not_loaded",
+          "current",
+          "stale"
+        ]
+      },
+      "RuntimeSettingsCatalogue": {
+        "type": "object",
+        "description": "Version 1 uses JSON Schema 2020-12 field descriptions. New groups and fields\nare additive. Clients must leave unsupported schemas read-only.",
+        "required": [
+          "schema_version",
+          "groups"
+        ],
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeSettingsDescriptor"
+            }
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "RuntimeSettingsChangeActor": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "`user`, `system` (for example a migration import), or `worker`."
+          },
+          "principal_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PrincipalID"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "RuntimeSettingsChangeResponse": {
+        "type": "object",
+        "description": "Durable audit record of one committed revision.",
+        "required": [
+          "group",
+          "revision",
+          "previous",
+          "current",
+          "changed_at",
+          "actor"
+        ],
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/RuntimeSettingsChangeActor"
+          },
+          "changed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "correlation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "current": {
+            "$ref": "#/components/schemas/RuntimeSettingsValueResponse"
+          },
+          "group": {
+            "$ref": "#/components/schemas/RuntimeSettingsGroup"
+          },
+          "previous": {
+            "$ref": "#/components/schemas/RuntimeSettingsValueResponse"
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          }
+        }
+      },
+      "RuntimeSettingsDescriptor": {
+        "type": "object",
+        "required": [
+          "key",
+          "title",
+          "description",
+          "schema",
+          "patch_supported",
+          "requires_local_admin",
+          "takes_effect"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "key": {
+            "$ref": "#/components/schemas/RuntimeSettingsGroup"
+          },
+          "patch_supported": {
+            "type": "boolean"
+          },
+          "read_only_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why a generic client cannot edit this group."
+          },
+          "requires_local_admin": {
+            "type": "boolean"
+          },
+          "schema": {
+            "type": "object",
+            "description": "Schema for the group's values, excluding revision metadata. Every field\nhas a plain-text title and description. String enums also provide\nx-enum-descriptions, mapping each wire value to its plain-text explanation."
+          },
+          "takes_effect": {
+            "$ref": "#/components/schemas/RuntimeSettingsEffect"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "RuntimeSettingsEffect": {
+        "type": "string",
+        "description": "When a changed value takes effect on a replica that has applied it.",
+        "enum": [
+          "next_request",
+          "next_query",
+          "next_operation",
+          "on_reconciliation"
+        ]
+      },
+      "RuntimeSettingsGroup": {
+        "type": "string",
+        "description": "Stable key of a group of correlated runtime settings.",
+        "enum": [
+          "authentication",
+          "authorization",
+          "query_observations",
+          "pagination",
+          "observability",
+          "network",
+          "query_limits",
+          "tasks",
+          "remote_calls",
+          "tokens",
+          "login_rate_limit",
+          "events",
+          "exports",
+          "backups",
+          "restores"
+        ]
+      },
+      "RuntimeSettingsGroupState": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RuntimeSettingsOwnership"
+          },
+          {
+            "type": "object",
+            "required": [
+              "group",
+              "replica",
+              "effective",
+              "constrained_by_ceiling"
+            ],
+            "properties": {
+              "constrained_by_ceiling": {
+                "type": "boolean"
+              },
+              "deployment": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "effective": {
+                "type": "object"
+              },
+              "group": {
+                "$ref": "#/components/schemas/RuntimeSettingsGroup"
+              },
+              "replica": {
+                "$ref": "#/components/schemas/RuntimeSettingsReplicaStatus"
+              },
+              "runtime": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "description": "Requested shared values, before deployment ceilings. Authentication\ndefinitions are deliberately omitted, including encrypted secrets."
+              }
+            }
+          }
+        ],
+        "description": "A uniform, redacted view of one group, applied by the responding replica."
+      },
+      "RuntimeSettingsHistoryResponse": {
+        "type": "object",
+        "description": "Newest-first audit records for one group.",
+        "required": [
+          "changes"
+        ],
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeSettingsChangeResponse"
+            }
+          },
+          "next_before_revision": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ResourceRevision",
+                "description": "Pass as `before_revision` to continue; null when no older records exist."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "RuntimeSettingsOwnership": {
+        "type": "object",
+        "description": "Ownership and revision metadata shared by every group.",
+        "required": [
+          "source",
+          "mutable",
+          "restart_required",
+          "takes_effect"
+        ],
+        "properties": {
+          "changed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "changed_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PrincipalID"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mutable": {
+            "type": "boolean",
+            "description": "Administrators can change this group without restarting processes."
+          },
+          "restart_required": {
+            "type": "boolean"
+          },
+          "revision": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ResourceRevision",
+                "description": "Revision applied by the responding replica; null before it first loads\nshared settings."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/RuntimeSettingsSource"
+          },
+          "takes_effect": {
+            "$ref": "#/components/schemas/RuntimeSettingsEffect"
+          }
+        }
+      },
+      "RuntimeSettingsPatch": {
+        "type": "object",
+        "description": "Partial replacement of named top-level fields. Omitted fields are preserved;\nnull is a value, never a reset command. Release uses the existing DELETE API.",
+        "required": [
+          "expected_revision",
+          "changes"
+        ],
+        "properties": {
+          "changes": {
+            "type": "object"
+          },
+          "expected_revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuntimeSettingsReplicaStatus": {
+        "type": "object",
+        "description": "Application state of the replica that answered this request. Other\nreplicas apply committed changes independently.",
+        "required": [
+          "status",
+          "reconcile_interval_seconds"
+        ],
+        "properties": {
+          "applied_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_refresh_attempt_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_refresh_failure_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "reconcile_interval_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Interval of the reconcile poll that recovers missed notifications.",
+            "minimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/RuntimeSettingsApplicationStatus"
+          }
+        }
+      },
+      "RuntimeSettingsReport": {
+        "type": "object",
+        "description": "Runtime-managed settings as applied by the responding replica.",
+        "required": [
+          "replica",
+          "authentication",
+          "authorization",
+          "query_observations",
+          "pagination",
+          "policies"
+        ],
+        "properties": {
+          "authentication": {
+            "$ref": "#/components/schemas/AuthenticationSettingsReport"
+          },
+          "authorization": {
+            "$ref": "#/components/schemas/AuthorizationSettingsReport"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationSettingsReport"
+          },
+          "policies": {
+            "type": "object",
+            "description": "Additional policies, keyed by discovered group name.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RuntimePolicyReport"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "query_observations": {
+            "$ref": "#/components/schemas/QueryObservationSettingsReport"
+          },
+          "replica": {
+            "$ref": "#/components/schemas/RuntimeSettingsReplicaStatus"
+          }
+        }
+      },
+      "RuntimeSettingsSource": {
+        "type": "string",
+        "description": "Owner of a group's effective value.",
+        "enum": [
+          "deployment",
+          "runtime"
+        ]
+      },
+      "RuntimeSettingsUpdateResponse": {
+        "type": "object",
+        "description": "A committed update is not a cluster-wide acknowledgement: other replicas\napply it on notification or within the reconcile interval.",
+        "required": [
+          "group",
+          "committed_revision",
+          "changed",
+          "applied_by_responding_replica",
+          "settings"
+        ],
+        "properties": {
+          "applied_by_responding_replica": {
+            "type": "boolean",
+            "description": "Whether the responding replica applies at least `committed_revision`."
+          },
+          "changed": {
+            "type": "boolean",
+            "description": "False when the requested value was already current; no revision or\naudit record was written."
+          },
+          "committed_revision": {
+            "$ref": "#/components/schemas/ResourceRevision",
+            "description": "Revision now current in shared storage."
+          },
+          "group": {
+            "$ref": "#/components/schemas/RuntimeSettingsGroup"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/RuntimeSettingsReport"
+          }
+        }
+      },
+      "RuntimeSettingsValueResponse": {
+        "type": "object",
+        "description": "One side of an audited change.",
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/RuntimeSettingsSource"
+          },
+          "value": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Managed value; null when deployment configuration owns the group."
           }
         }
       },

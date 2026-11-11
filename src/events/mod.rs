@@ -50,3 +50,5 @@ pub use hubuum_events_core::{
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) use retention::validate_file_archive_path;

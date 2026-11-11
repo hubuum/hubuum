@@ -59,6 +59,7 @@ fn cfg() -> LoginRateLimitConfig {
 
 fn permit_for(username: &str, config: &LoginRateLimitConfig) -> LoginAttemptPermit {
     LoginAttemptPermit {
+        config: *config,
         scopes: scopes_for("local", username, None, config),
         user_ip_key: user_ip_key("local", username, "unknown"),
         reservation: Reservation::new(Duration::from_secs(config.window_seconds)),
@@ -123,6 +124,7 @@ async fn assert_account_limit_across_networks(store: &impl LoginRateLimitStore) 
     let permit = |scope: &str, name: &str, ip: &str| {
         let ip = ip.parse().unwrap();
         LoginAttemptPermit {
+            config,
             scopes: scopes_for(scope, name, Some(ip), &config),
             user_ip_key: user_ip_key(scope, name, &ip_label(Some(ip))),
             reservation: Reservation::new(Duration::from_secs(config.window_seconds)),
@@ -220,6 +222,7 @@ async fn assert_distinct_account_success_preserves_failures(
     let permit = |(scope, name): (&str, &str), ip: &str| {
         let ip = Some(ip.parse().unwrap());
         LoginAttemptPermit {
+            config,
             scopes: scopes_for(scope, name, ip, &config),
             user_ip_key: user_ip_key(scope, name, &ip_label(ip)),
             reservation: Reservation::new(Duration::from_secs(config.window_seconds)),
@@ -307,6 +310,7 @@ async fn assert_directory_aliases_share_account_limit(
     let permit = |name: &str, ip: &str| {
         let ip = Some(ip.parse().unwrap());
         LoginAttemptPermit {
+            config,
             scopes: scopes_for("directory", name, ip, &config),
             user_ip_key: user_ip_key("directory", name, &ip_label(ip)),
             reservation: Reservation::new(Duration::from_secs(config.window_seconds)),
@@ -792,6 +796,7 @@ async fn unavailable_valkey_falls_back_to_local_enforcement() {
 
     for _ in 0..config.max_attempts {
         let permit = LoginAttemptPermit {
+            config,
             scopes: scopes_for("local", "fallback-user", None, &config),
             user_ip_key: user_ip_key("local", "fallback-user", "unknown"),
             reservation: Reservation::new(Duration::from_secs(config.window_seconds)),
@@ -805,6 +810,7 @@ async fn unavailable_valkey_falls_back_to_local_enforcement() {
     }
 
     let blocked = LoginAttemptPermit {
+        config,
         scopes: scopes_for("local", "fallback-user", None, &config),
         user_ip_key: user_ip_key("local", "fallback-user", "unknown"),
         reservation: Reservation::new(Duration::from_secs(config.window_seconds)),

@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::future::Future;
 
 #[cfg(test)]
 use base64::Engine as _;
@@ -7,6 +8,7 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 use hubuum_query::QueryContinuation;
+use hubuum_storage_core::StoragePaginationPolicy;
 
 use crate::config::{DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, get_config};
 use crate::errors::ApiError;
@@ -74,21 +76,13 @@ pub struct PageLimits {
 
 impl PageLimits {
     pub fn new(default: usize, maximum: usize) -> Result<Self, ApiError> {
-        if default == 0 {
-            return Err(ApiError::BadRequest(
-                "default_page_limit must be greater than 0".to_string(),
-            ));
-        }
         if maximum == 0 {
             return Err(ApiError::BadRequest(
                 "max_page_limit must be greater than 0".to_string(),
             ));
         }
-        if default > maximum {
-            return Err(ApiError::BadRequest(format!(
-                "default_page_limit ({default}) must be less than or equal to max_page_limit ({maximum})"
-            )));
-        }
+        StoragePaginationPolicy::try_new_with_ceiling(default as u64, maximum as u64)
+            .map_err(|error| ApiError::BadRequest(error.message().to_string()))?;
 
         Ok(Self { default, maximum })
     }
@@ -103,6 +97,25 @@ impl PageLimits {
 
     pub fn clamp(self, limit: usize) -> usize {
         limit.min(self.maximum)
+    }
+
+    /// Apply shared runtime limits, clamped to this deployment's ceiling.
+    #[must_use]
+    pub fn with_runtime_policy(self, policy: Option<StoragePaginationPolicy>) -> Self {
+        match policy {
+            Some(policy) => {
+                let maximum = policy
+                    .max_page_limit()
+                    .and_then(|limit| usize::try_from(limit).ok())
+                    .map_or(self.maximum, |limit| limit.min(self.maximum));
+                Self {
+                    default: usize::try_from(policy.default_page_limit())
+                        .map_or(maximum, |limit| limit.min(maximum)),
+                    maximum,
+                }
+            }
+            None => self,
+        }
     }
 
     pub fn resolve(self, requested: Option<usize>) -> Result<usize, ApiError> {
@@ -125,9 +138,34 @@ impl Default for PageLimits {
     }
 }
 
-pub fn page_limits() -> Result<PageLimits, ApiError> {
+tokio::task_local! {
+    static REQUEST_PAGE_LIMITS: PageLimits;
+}
+
+/// Page limits from this process's startup configuration.
+pub fn deployment_page_limits() -> Result<PageLimits, ApiError> {
     let config = get_config()?;
     PageLimits::new(config.default_page_limit, config.max_page_limit)
+}
+
+/// Run one request with page limits resolved when it started.
+///
+/// Every page-limit lookup inside the operation observes the same value, so a
+/// concurrent runtime settings change cannot make one request fetch with one
+/// default and truncate or report continuation with another.
+pub async fn with_request_page_limits<F: Future>(limits: PageLimits, operation: F) -> F::Output {
+    REQUEST_PAGE_LIMITS.scope(limits, operation).await
+}
+
+/// Effective limits: those fixed for the current API request, otherwise the
+/// deployment configuration.
+pub fn page_limits() -> Result<PageLimits, ApiError> {
+    REQUEST_PAGE_LIMITS.try_with(|limits| *limits).or_else(
+        |_| match crate::config::runtime::scoped() {
+            Some(config) => PageLimits::new(config.default_page_limit, config.max_page_limit),
+            None => deployment_page_limits(),
+        },
+    )
 }
 
 pub fn page_limits_or_defaults() -> PageLimits {

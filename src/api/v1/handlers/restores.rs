@@ -42,6 +42,8 @@ pub async fn create_restore_stage(
     admin: AdminAccess,
     mut payload: web::Payload,
 ) -> Result<impl Responder, ApiError> {
+    let config = crate::config::runtime::current()?;
+    let settings = settings.with_runtime(&config)?;
     let mut document = StorageRestoreArtifactBuilder::new(settings.max_upload_bytes())?;
     while let Some(chunk) = payload.next().await {
         let chunk = chunk.map_err(|error| {

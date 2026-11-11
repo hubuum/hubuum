@@ -82,5 +82,8 @@ mod operational {
         let _ = std::mem::size_of::<Option<StorageEventFanoutSnapshot>>();
         let _ = std::mem::size_of::<Option<StorageEventQueueSnapshot>>();
         let _ = std::mem::size_of::<Option<StorageReadinessSnapshot>>();
+        let _ = std::mem::size_of::<Option<StorageRuntimeSettingsSnapshot>>();
+        let _ = std::mem::size_of::<Option<StorageRuntimeSettingsUpdate>>();
+        let _ = std::mem::size_of::<Option<StorageRuntimeSettingsChange>>();
     }
 }

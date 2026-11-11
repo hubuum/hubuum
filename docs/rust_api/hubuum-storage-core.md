@@ -194,8 +194,8 @@ receipts, no-op behavior, rollback, outbox-to-sink delivery, telemetry, exact
 revision conflicts, retention retry identity, delivery recovery, restore
 coordination rollback, and lease-loss finalization, while each backend owns
 native query, transaction, migration, connection-loss, and failure tests.
-External-crate integration tests implement all 50 complete-backend traits,
-compile every one of their 349 methods, exercise every transaction port, and
+External-crate integration tests implement every complete-backend trait,
+compile every required method, exercise every transaction port, and
 name public construction paths for all current adapter-returned values. CI also
 packages the crate, builds rustdoc with warnings denied, and compares it with
 the latest crates.io release when a baseline exists.
@@ -272,3 +272,26 @@ Adapters return one consistent policy/usage snapshot and preserve policy and
 cumulative work outside logical restore. Admission requests carry no local
 quota override. See the [SDK upgrade notes](../storage_adapter_sdk.md#upgrading-from-07-to-08)
 and [restore ownership table](../task_admission.md#ownership-and-restore-reconciliation).
+
+## Audited runtime settings
+
+The combined 0.19 SDK replaces legacy query-observation control with the mandatory
+`RuntimeSettingsStorage` capability in `OperationalStorage`. Complete typed
+snapshots, revision-checked writes with atomic audit records, bounded history,
+restore preservation, and runtime-settings notifications are part of the adapter
+contract. See the [runtime settings integration guide](../storage_adapter_sdk.md#runtime-settings-integration-in-the-019-train).
+
+`StoragePaginationPolicy::try_with_maximum` validates a shared default and
+maximum together. `try_new` retains the default-only form, whose maximum is
+inherited from deployment configuration. Adapters must round-trip both forms,
+including audit history; older documents remain valid. Upgrade every reader
+before persisting policies with a maximum.
+
+The runtime policy extension adds eleven `StorageRuntimeSettingsGroup` and
+`StorageRuntimeSettingsValue` variants. This is a breaking pre-1.0 exhaustive-enum
+change: adapters and consumers must handle every variant and persist complete
+15-group snapshots. Policy deserialization validates private-fielded types;
+`schema()` exposes their document constraints for discovery. Network/path types
+are shared across configuration and persistence; `TrustedProxies::nets()` and
+`ClientAllowlist::Nets` intentionally retain the existing `ipnet::IpNet`
+integration surface. Upgrade every reader before introducing new group rows.
