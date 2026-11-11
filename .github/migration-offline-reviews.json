@@ -117,7 +117,7 @@
     },
     {
       "migration": "crates/hubuum-storage-postgres/migrations/2026-11-03-000005_history_lifecycle/up.sql",
-      "sha256": "d2a75bce34306130f64eea9275d06039e4ea4b1a472c3912adcb3765cc5e4c0e",
+      "sha256": "e9ea7f5a810bd104e7fc8cc693c4a669fd7c4fb52d5308b41199f0a3a4685272",
       "reason": "The closed history-expiry task vocabulary requires matching eight-kind policy validators and accounting across API, worker, restore and administrator processes. The accounting CHECK widens the seven existing values with history_expiry; all configured limits and scheduler lanes are retained. Older binaries cannot decode the upgraded policy. The private wait-shape constraint retains every existing deadline, lease, format and byte bound while allowing the new dedicated kind.",
       "upgrade_action": "Stop older API, worker, restore and administrator processes; back up the database, apply lifecycle migration 000005 and reconcile grants, then start only matching eight-kind binaries. Preserve retained expiry and task evidence and roll forward when eighth-kind work exists. See docs/history_retention.md and docs/storage_adapter_sdk.md.",
       "drop_constraints": {

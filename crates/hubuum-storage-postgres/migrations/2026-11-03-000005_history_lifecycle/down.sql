@@ -286,6 +286,7 @@ BEGIN
     INTO selected FROM groups g CROSS JOIN LATERAL (
             SELECT t.id,t.created_at FROM public.tasks t
             WHERE t.status='queued' AND t.kind=g.kind
+                AND public.hubuum_task_admission_allowed(t.id)
                 AND coalesce((t.logical_identity #>> '{references,/submitted_by,reference,identity}')::UUID,
                     '00000000-0000-0000-0000-000000000000'::UUID)=g.principal_identity
                 -- Keep eligibility as a per-row lookup so LIMIT can stop the

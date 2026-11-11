@@ -1228,6 +1228,7 @@ BEGIN
     INTO selected FROM groups g CROSS JOIN LATERAL (
             SELECT t.id,t.created_at FROM public.tasks t
             WHERE t.status='queued' AND t.kind=g.kind
+                AND public.hubuum_task_admission_allowed(t.id)
                 -- A kind advertisement never authorizes reinterpreting a future
                 -- payload or checkpoint. Rust validates its complete binding
                 -- before this claim transaction can commit.
