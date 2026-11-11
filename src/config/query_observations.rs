@@ -1,6 +1,6 @@
 use crate::errors::ApiError;
 use clap::Args;
-use hubuum_storage_core::StorageQueryObservationSettings;
+use hubuum_storage_core::{StorageQueryObservationCeilings, StorageQueryObservationSettings};
 use serde::Deserialize;
 
 /// Opt-in, bounded collection of query structure without values.
@@ -40,6 +40,36 @@ pub struct QueryObservationOptions {
         default_value_t = 16
     )]
     pub(super) query_observations_max_predicates_per_query: usize,
+    #[arg(
+        long,
+        env = "HUBUUM_QUERY_OBSERVATIONS_MIN_SAMPLE_EVERY",
+        default_value_t = 1
+    )]
+    pub(super) query_observations_min_sample_every: u32,
+    #[arg(
+        long,
+        env = "HUBUUM_QUERY_OBSERVATIONS_MAX_PATTERNS_CEILING",
+        default_value_t = 16_384
+    )]
+    pub(super) query_observations_max_patterns_ceiling: usize,
+    #[arg(
+        long,
+        env = "HUBUUM_QUERY_OBSERVATIONS_MAX_PATTERNS_PER_CLASS_CEILING",
+        default_value_t = 128
+    )]
+    pub(super) query_observations_max_patterns_per_class_ceiling: usize,
+    #[arg(
+        long,
+        env = "HUBUUM_QUERY_OBSERVATIONS_MAX_RETENTION_SECONDS_CEILING",
+        default_value_t = 604_800
+    )]
+    pub(super) query_observations_max_retention_seconds_ceiling: u32,
+    #[arg(
+        long,
+        env = "HUBUUM_QUERY_OBSERVATIONS_MAX_PREDICATES_PER_QUERY_CEILING",
+        default_value_t = 32
+    )]
+    pub(super) query_observations_max_predicates_per_query_ceiling: usize,
 }
 impl Default for QueryObservationOptions {
     fn default() -> Self {
@@ -50,18 +80,32 @@ impl Default for QueryObservationOptions {
             query_observations_max_patterns_per_class: 64,
             query_observations_retention_seconds: 86400,
             query_observations_max_predicates_per_query: 16,
+            query_observations_min_sample_every: 1,
+            query_observations_max_patterns_ceiling: 16_384,
+            query_observations_max_patterns_per_class_ceiling: 128,
+            query_observations_max_retention_seconds_ceiling: 604_800,
+            query_observations_max_predicates_per_query_ceiling: 32,
         }
     }
 }
 impl QueryObservationOptions {
     pub(crate) fn validate(&self) -> Result<StorageQueryObservationSettings, ApiError> {
-        StorageQueryObservationSettings::try_new(
+        let ceilings = StorageQueryObservationCeilings::try_new(
+            self.query_observations_min_sample_every,
+            self.query_observations_max_patterns_ceiling,
+            self.query_observations_max_patterns_per_class_ceiling,
+            self.query_observations_max_retention_seconds_ceiling,
+            self.query_observations_max_predicates_per_query_ceiling,
+        )
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        StorageQueryObservationSettings::try_new_with_ceilings(
             self.query_observations_enabled,
             self.query_observations_sample_every,
             self.query_observations_max_patterns,
             self.query_observations_max_patterns_per_class,
             self.query_observations_retention_seconds,
             self.query_observations_max_predicates_per_query,
+            ceilings,
         )
         .map_err(|error| ApiError::BadRequest(error.to_string()))
     }
@@ -95,6 +139,11 @@ mod tests {
     #[case("--query-observations-max-patterns-per-class", "129")]
     #[case("--query-observations-retention-seconds", "604801")]
     #[case("--query-observations-max-predicates-per-query", "33")]
+    #[case("--query-observations-min-sample-every", "1000001")]
+    #[case("--query-observations-max-patterns-ceiling", "16385")]
+    #[case("--query-observations-max-patterns-per-class-ceiling", "129")]
+    #[case("--query-observations-max-retention-seconds-ceiling", "604801")]
+    #[case("--query-observations-max-predicates-per-query-ceiling", "33")]
     fn invalid_budgets_fail_at_configuration(#[case] flag: &str, #[case] value: &str) {
         assert!(
             Command::try_parse_from(["test", flag, value])
@@ -103,6 +152,16 @@ mod tests {
                 .validate()
                 .is_err()
         );
+    }
+
+    #[test]
+    fn deployment_defaults_must_fit_their_resource_ceilings() {
+        let options = QueryObservationOptions {
+            query_observations_max_patterns: 100,
+            query_observations_max_patterns_ceiling: 50,
+            ..QueryObservationOptions::default()
+        };
+        assert!(options.validate().is_err());
     }
     #[test]
     fn collection_requires_explicit_enablement() {

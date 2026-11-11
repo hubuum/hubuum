@@ -383,6 +383,29 @@ fn every_adapter_returned_value_exposes_a_public_construction_path() {
     let _ = StorageUserListItem::builder(user, "local", "local", "user", ResourceRevision::INITIAL)
         .try_build()
         .unwrap();
+    let managed = StorageRuntimeSettingsAssignment::Managed(
+        StorageRuntimeSettingsValue::Pagination(StoragePaginationPolicy::try_new(25).unwrap()),
+    );
+    let runtime_settings = StorageRuntimeSettingsSnapshot::initial(now);
+    let _ = StorageRuntimeSettingsUpdateOutcome::Unchanged(
+        runtime_settings
+            .record(StorageRuntimeSettingsGroup::Pagination)
+            .clone(),
+    );
+    let _ = StorageRuntimeSettingsChange::try_new(
+        ResourceRevision::new(2).unwrap(),
+        StorageRuntimeSettingsAssignment::from_document(
+            StorageRuntimeSettingsGroup::Pagination,
+            None,
+        )
+        .unwrap(),
+        managed,
+        now,
+        StorageRuntimeSettingsActor::new(ActorKind::System, None, None, None),
+    )
+    .unwrap();
+    let _ =
+        StorageRuntimeSettingsValue::QueryObservations(StorageQueryObservationPolicy::new(true));
 
     // A public builder entrypoint is insufficient if its private fields cannot
     // be turned into the boundary value. Keep every terminal method nameable

@@ -69,7 +69,7 @@ for authorization_path in src/tests/permissions/candidate_paging.rs \
   assert_flag "$authorization_output" treetop_conformance true
 done
 
-for history_handler in src/models/history/computed.rs src/api/v1/handlers/classes/history_computed.rs src/api/v1/handlers/classes/history_population.rs src/api/v1/handlers/classes/history_relations.rs; do
+for history_handler in src/models/history/computed.rs src/api/v1/handlers/classes/history_computed.rs src/api/v1/handlers/classes/history_population.rs src/api/v1/handlers/classes/history_relations.rs src/models/runtime_settings/discovery.rs; do
   history_output="$(bash "$classifier" "$history_handler")"
   assert_flag "$history_output" openapi true
 done
@@ -752,16 +752,22 @@ assert_flag "$label_output" openapi true
 budget_projection="$(bash "$classifier" src/config/running.rs)"
 assert_flag "$budget_projection" openapi true
 
-for observation_input in src/api/v1/handlers/runtime_config.rs src/models/query_usage.rs; do
+for observation_input in src/api/v1/handlers/runtime_config.rs src/models/query_usage.rs \
+  src/models/runtime_settings.rs src/api/v1/handlers/client_config.rs; do
   observation_output="$(bash "$classifier" "$observation_input")"
   assert_flag "$observation_output" rust true
   assert_flag "$observation_output" openapi true
 done
 
-for observation_test in src/storage/context/query_observation_control.rs \
-  src/tests/storage_contract/query_observation_control.rs \
-  crates/hubuum-storage-postgres/tests/query_observation_control.rs \
-  crates/hubuum-storage-postgres/migrations/2026-10-19-000001_query_observation_control/up.sql; do
+for observation_test in src/storage/context/runtime_settings.rs \
+  src/storage/runtime_settings.rs \
+  src/middlewares/runtime_settings.rs \
+  src/tests/storage_contract/runtime_settings.rs \
+  crates/hubuum-storage-core/src/runtime_settings.rs \
+  crates/hubuum-storage-postgres/tests/runtime_settings.rs \
+  crates/hubuum-storage-postgres/migrations/2026-10-19-000001_query_observation_control/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-06-000001_runtime_settings/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-06-000001_runtime_settings/down.sql; do
   observation_output="$(bash "$classifier" "$observation_test")"
   assert_flag "$observation_output" rust true
 done

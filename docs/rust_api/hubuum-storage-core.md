@@ -1,6 +1,6 @@
 # `hubuum-storage-core` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.6` release train.
+Status: experimental public API in the storage SDK `0.7` release train.
 
 ## Purpose and Callers
 
@@ -241,3 +241,26 @@ variant. Every adapter implements `get_schema_profile_output` and
 `purge_expired_schema_profile_outputs`, fences publication with terminal task
 completion, and retains expiry metadata after removal. See the
 [0.6 upgrade guide](../storage_adapter_sdk.md#upgrading-from-05-to-06).
+
+## Audited runtime settings
+
+The 0.7 SDK replaces legacy query-observation control with the mandatory
+`RuntimeSettingsStorage` capability in `OperationalStorage`. Complete typed
+snapshots, revision-checked writes with atomic audit records, bounded history,
+restore preservation, and runtime-settings notifications are part of the adapter
+contract. See the [0.7 upgrade guide](../storage_adapter_sdk.md#upgrading-from-06-to-07).
+
+`StoragePaginationPolicy::try_with_maximum` validates a shared default and
+maximum together. `try_new` retains the default-only form, whose maximum is
+inherited from deployment configuration. Adapters must round-trip both forms,
+including audit history; older documents remain valid. Upgrade every reader
+before persisting policies with a maximum.
+
+The runtime policy extension adds eleven `StorageRuntimeSettingsGroup` and
+`StorageRuntimeSettingsValue` variants. This is a breaking pre-1.0 exhaustive-enum
+change: adapters and consumers must handle every variant and persist complete
+15-group snapshots. Policy deserialization validates private-fielded types;
+`schema()` exposes their document constraints for discovery. Network/path types
+are shared across configuration and persistence; `TrustedProxies::nets()` and
+`ClientAllowlist::Nets` intentionally retain the existing `ipnet::IpNet`
+integration surface. Upgrade every reader before introducing new group rows.

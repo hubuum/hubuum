@@ -45,7 +45,12 @@ async fn a_large_shared_context_is_encoded_only_once() {
     let mut batch = TemplateBatch::new(128);
     for _ in 0..2 {
         batch
-            .push(template("length", "{{ payload | length }}"))
+            // Fuel accounting is independent of the shared input-envelope limit.
+            .push(TemplateExecution::new(
+                "length",
+                "{{ payload | length }}",
+                TemplateLimits::new(64, u64::MAX),
+            ))
             .unwrap();
     }
 
@@ -224,9 +229,11 @@ async fn heap_failure_in_a_later_entry_is_contained_and_allows_recovery() {
     let mut batch = TemplateBatch::new(128);
     batch.push(template("first", "healthy")).unwrap();
     batch
-        .push(template(
+        // Exercise the heap guard without fuel admission stopping it first.
+        .push(TemplateExecution::new(
             "second",
             "{% set a = 'x' * 60000000 %}{% set b = a ~ a %}{{ b | length }}",
+            TemplateLimits::new(64, u64::MAX),
         ))
         .unwrap();
     let error = batch

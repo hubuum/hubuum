@@ -149,10 +149,15 @@ where
         };
         let method = req.method().to_string();
         let path = req.path().to_string();
-        let route = req
-            .match_pattern()
-            .map(Cow::Owned)
-            .unwrap_or_else(|| route_group(&path));
+        let route = if crate::config::runtime::scoped()
+            .is_some_and(|config| path == config.metrics_path.as_str())
+        {
+            Cow::Borrowed("/metrics")
+        } else {
+            req.match_pattern()
+                .map(Cow::Owned)
+                .unwrap_or_else(|| route_group(&path))
+        };
         let source = extract_client_source(&req, &self.proxy_trust);
         let client_ip = source.address();
         req.extensions_mut().insert(source);

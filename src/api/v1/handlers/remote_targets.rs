@@ -1,3 +1,4 @@
+use crate::config::runtime::current as get_config;
 use crate::services::remote_targets::invocation::AuthorizedRemoteInvocation;
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 use hubuum_task_core::IdempotencyKey;
@@ -9,7 +10,7 @@ use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::history::HistoryResponse;
 use crate::can;
-use crate::config::{DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER, get_config};
+use crate::config::DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::collection::user_can_on_any;

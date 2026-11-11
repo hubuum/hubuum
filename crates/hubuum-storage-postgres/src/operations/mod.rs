@@ -47,6 +47,7 @@ pub mod relation;
 pub mod relation_query;
 pub mod remote_target;
 pub mod restore_lifecycle;
+pub mod runtime_settings;
 pub mod schema_evolution;
 pub mod service_account;
 pub(crate) mod structured_search;

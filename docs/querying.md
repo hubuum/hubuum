@@ -340,12 +340,17 @@ Parameters:
 
 Limits:
 
-- default page size: `100`
-- maximum page size: `250`
+- default page size: `100`, unless configured otherwise
+- maximum page size: `250`, unless configured otherwise
 - maximum encoded cursor size: `64 KiB`
 - maximum JSON cursor nesting depth: `64`
 - a positive `limit` above the configured maximum is clamped to the maximum
 - `limit=0` remains a `400 Bad Request`
+
+Administrators can change both page sizes through [runtime settings](runtime_settings.md),
+within the deployment ceiling. Read the current effective values from
+`GET /api/v1/config`. Each request keeps the limits it started with; a later page
+may use newly applied limits with the same cursor.
 
 Behavior:
 

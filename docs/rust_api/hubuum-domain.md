@@ -1,6 +1,6 @@
 # `hubuum-domain` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.6` release train.
+Status: experimental public API in the storage SDK `0.7` release train.
 
 ## Purpose and Callers
 
@@ -33,6 +33,10 @@ Positive resource identifiers and `ResourceRevision` are opaque newtypes with
 validated constructors and explicit primitive accessors. Generic storage
 metadata uses `ResourceId`; operation-specific contracts use the corresponding
 resource ID type so an adapter cannot silently mix identity domains.
+
+`IdentityScopeName` preserves nonempty names without surrounding whitespace.
+Deployment authentication and runtime settings use its shared constructor;
+reserved provider names remain a consumer-specific policy.
 
 `BoundedJsonPatch` validates JSON Patch size, operation count, pointer depth,
 and cumulative application work before an adapter sees the document. Patch

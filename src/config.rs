@@ -1,6 +1,7 @@
-use hubuum_storage_core::StorageBackupBudget;
+use hubuum_storage_core::{StorageBackupBudget, StorageRuntimeSettingsGroup};
 pub mod environment;
 pub mod running;
+pub(crate) mod runtime;
 
 #[cfg(not(test))]
 use std::sync::OnceLock;
@@ -9,14 +10,15 @@ use std::sync::{LazyLock, Mutex};
 
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
-use std::str::FromStr;
 use std::time::Duration;
 
 use crate::errors::ApiError;
 use crate::events::{EventDeliverySettings, EventFanoutSettings, EventRetentionSettings};
 use crate::models::retention::FutureRetention;
 use crate::models::{TokenIssuancePolicy, TokenRetentionSettings};
+use crate::pagination::PageLimits;
 use crate::storage::StorageBackendKind;
 use crate::tasks::TaskWorkerSettings;
 use environment::{constraints, validate_configuration_bounds};
@@ -42,68 +44,7 @@ pub use token_hash::{
     token_hash_key_ring,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub struct MetricsPath(String);
-
-impl MetricsPath {
-    pub fn new(path: impl Into<String>) -> Result<Self, String> {
-        let path = path.into();
-        if !path.starts_with('/') || path.len() == 1 {
-            return Err("metrics_path must be an absolute non-root path".to_string());
-        }
-        if path.ends_with('/') || path.contains("//") {
-            return Err("metrics_path must not contain empty path segments".to_string());
-        }
-        if path
-            .chars()
-            .any(|character| character.is_whitespace() || character.is_control())
-            || path.contains(['{', '}', '*', '?', '#'])
-        {
-            return Err("metrics_path must be a literal HTTP path".to_string());
-        }
-        if path == "/api"
-            || path.starts_with("/api/")
-            || path == "/swagger-ui"
-            || path.starts_with("/swagger-ui/")
-            || matches!(
-                path.as_str(),
-                "/healthz" | "/readyz" | "/api-doc/openapi.json"
-            )
-        {
-            return Err(format!(
-                "metrics_path '{path}' collides with an existing application route"
-            ));
-        }
-        Ok(Self(path))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl FromStr for MetricsPath {
-    type Err = String;
-
-    fn from_str(path: &str) -> Result<Self, Self::Err> {
-        Self::new(path)
-    }
-}
-
-impl TryFrom<String> for MetricsPath {
-    type Error = String;
-
-    fn try_from(path: String) -> Result<Self, Self::Error> {
-        Self::new(path)
-    }
-}
-
-impl From<MetricsPath> for String {
-    fn from(path: MetricsPath) -> Self {
-        path.0
-    }
-}
+pub use hubuum_storage_core::MetricsPath;
 
 fn detected_cpu_count() -> usize {
     std::thread::available_parallelism()
@@ -239,6 +180,11 @@ impl LoginRateLimitBackendKind {
 #[derive(Parser, Deserialize, Clone)]
 #[command(version = env!("CARGO_PKG_VERSION"), about = "Hubuum server", long_about = None)]
 pub struct AppConfig {
+    // Ownership travels with resolved values across request/job boundaries.
+    #[clap(skip)]
+    #[serde(skip)]
+    runtime_managed_groups: BTreeSet<StorageRuntimeSettingsGroup>,
+
     #[command(flatten)]
     #[serde(default)]
     pub schema_validation: SchemaValidationOptions,
@@ -1168,6 +1114,15 @@ pub struct AppConfig {
     #[clap(long, env = "HUBUUM_AUTH_CONFIG_PATH", default_value = None)]
     pub auth_config_path: Option<String>,
 
+    /// Secret-source name of the active key for runtime-stored credentials.
+    #[clap(
+        long,
+        env = "HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF",
+        default_value = None,
+        hide_env_values = true
+    )]
+    pub runtime_settings_encryption_key_ref: Option<String>,
+
     /// Path to the TLS certificate chain file
     #[clap(long, env = "HUBUUM_TLS_CERT_PATH", default_value = None)]
     pub tls_cert_path: Option<String>,
@@ -1736,26 +1691,13 @@ impl AppConfig {
             ));
         }
 
-        if self.default_page_limit == 0 {
-            return Err(ApiError::BadRequest(
-                "default_page_limit must be greater than 0".to_string(),
-            ));
+        if let Some(key_ref) = &self.runtime_settings_encryption_key_ref {
+            hubuum_secrets::SecretName::new(key_ref.clone()).map_err(|_| {
+                ApiError::BadRequest("runtime_settings_encryption_key_ref is invalid".to_string())
+            })?;
         }
 
-        if self.max_page_limit == 0 {
-            return Err(ApiError::BadRequest(
-                "max_page_limit must be greater than 0".to_string(),
-            ));
-        }
-
-        if !constraints::PAGE_LIMITS
-            .ordered_values_satisfy(self.default_page_limit, self.max_page_limit)
-        {
-            return Err(ApiError::BadRequest(format!(
-                "default_page_limit ({}) must be less than or equal to max_page_limit ({})",
-                self.default_page_limit, self.max_page_limit
-            )));
-        }
+        PageLimits::new(self.default_page_limit, self.max_page_limit)?;
 
         if !constraints::TREETOP_BACKEND.requirement_is_satisfied(
             self.permission_backend == PermissionBackendKind::Treetop,
@@ -1775,6 +1717,9 @@ impl AppConfig {
 }
 
 pub fn max_transitive_depth() -> i32 {
+    if let Some(config) = runtime::scoped() {
+        return config.max_transitive_depth;
+    }
     #[cfg(test)]
     let depth = get_config_from_env()
         .map(|config| config.max_transitive_depth)
@@ -1840,6 +1785,9 @@ impl From<&AppConfig> for LoginRateLimitConfig {
 
 /// Resolve the active login rate-limit configuration.
 pub fn login_rate_limit_config() -> LoginRateLimitConfig {
+    if let Some(config) = runtime::scoped() {
+        return LoginRateLimitConfig::from(config.as_ref());
+    }
     #[cfg(test)]
     let config = get_config_from_env()
         .map(|config| LoginRateLimitConfig::from(&config))
@@ -2002,6 +1950,7 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
     }
 
     let config = AppConfig {
+        runtime_managed_groups: BTreeSet::new(),
         schema_validation: SchemaValidationOptions::from_environment()?,
         query_observations: QueryObservationOptions::from_environment()?,
         query_observation_settings: StorageQueryObservationSettings::default(),
@@ -2450,6 +2399,10 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         admin_groupname: env_or_default("HUBUUM_ADMIN_GROUPNAME", "admin"),
         admin_identity_scope: Some(env_or_default("HUBUUM_ADMIN_IDENTITY_SCOPE", "local")),
         auth_config_path: env_or_default_opt("HUBUUM_AUTH_CONFIG_PATH", None),
+        runtime_settings_encryption_key_ref: env_or_default_opt(
+            "HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF",
+            None,
+        ),
         tls_cert_path: env_or_default_opt("HUBUUM_TLS_CERT_PATH", None),
         tls_key_path: env_or_default_opt("HUBUUM_TLS_KEY_PATH", None),
         tls_key_passphrase: env_or_default_opt("HUBUUM_TLS_KEY_PASSPHRASE", None),
@@ -2501,7 +2454,12 @@ mod tests {
     use std::{collections::BTreeSet, env, ffi::OsString};
 
     use clap::Parser;
+    use hubuum_domain::ResourceRevision;
+    use hubuum_events_core::EventContext;
     use rstest::rstest;
+
+    use crate::models::runtime_settings::PaginationSettingsRequest;
+    use crate::pagination::PageLimits;
 
     #[cfg(feature = "login-rate-limit-valkey")]
     use super::LoginRateLimitBackendKind;
@@ -2687,6 +2645,41 @@ mod tests {
             error.to_string(),
             "default_page_limit (80) must be less than or equal to max_page_limit (40)"
         );
+    }
+
+    #[rstest]
+    #[case::minimum(1, 250, true)]
+    #[case::ceiling(250, 250, true)]
+    #[case::zero(0, 250, false)]
+    #[case::above_ceiling(251, 250, false)]
+    #[case::storage_maximum(u64::from(u32::MAX), u64::from(u32::MAX), true)]
+    #[case::above_storage_maximum(u64::from(u32::MAX) + 1, u64::from(u32::MAX) + 1, false)]
+    fn environment_and_runtime_share_pagination_validation(
+        #[case] default: u64,
+        #[case] maximum: u64,
+        #[case] accepted: bool,
+    ) {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _default_guard =
+            EnvVarGuard::set("HUBUUM_DEFAULT_PAGE_LIMIT", Some(&default.to_string()));
+        let _max_guard = EnvVarGuard::set("HUBUUM_MAX_PAGE_LIMIT", Some(&maximum.to_string()));
+        let environment = get_config_from_env()
+            .map(|_| ())
+            .map_err(|error| error.to_string());
+        let runtime = PaginationSettingsRequest {
+            expected_revision: ResourceRevision::INITIAL,
+            default_page_limit: default,
+            max_page_limit: None,
+        }
+        .into_update(
+            PageLimits::new(1, usize::try_from(maximum).unwrap()).unwrap(),
+            EventContext::system(),
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+
+        assert_eq!(environment.is_ok(), accepted);
+        assert_eq!(environment, runtime);
     }
 
     #[test]
