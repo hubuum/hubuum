@@ -1897,6 +1897,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#operational-policy-updates" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Operational policy updates
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#upgrade-and-rollback" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrade and rollback
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#groups-and-ownership-states" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4850,6 +4872,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#operational-policy-updates" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Operational policy updates
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#upgrade-and-rollback" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrade and rollback
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#groups-and-ownership-states" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5102,14 +5146,14 @@
 
 <h1 id="runtime-settings">Runtime settings<a class="headerlink" href="#runtime-settings" title="Permanent link">&para;</a></h1>
 <p>Most Hubuum configuration is read once when a process starts. Runtime settings
-are the exception: a small set of shared policy values is stored in the primary
+are shared policies stored in the primary
 storage backend. Administrators change them through the versioned API, and every
 replica applies the change without a restart.</p>
 <p>Changes go through one authenticated API and service layer, so the CLI and web
 UI share the same authorization, validation, revision checks, and audit trail.</p>
 <h2 id="ownership">Ownership<a class="headerlink" href="#ownership" title="Permanent link">&para;</a></h2>
 <p>Each setting is owned either by deployment configuration or by the runtime
-settings store. The initial runtime-managed settings are listed below.</p>
+settings store. The runtime-managed groups are listed below.</p>
 <table>
 <thead>
 <tr>
@@ -5134,7 +5178,7 @@ settings store. The initial runtime-managed settings are listed below.</p>
 </tr>
 <tr>
 <td><code>pagination</code></td>
-<td><code>default_page_limit</code></td>
+<td><code>default_page_limit</code>, <code>max_page_limit</code></td>
 <td>When the next API request starts</td>
 <td><code>HUBUUM_MAX_PAGE_LIMIT</code></td>
 </tr>
@@ -5143,6 +5187,72 @@ settings store. The initial runtime-managed settings are listed below.</p>
 <td><code>enabled</code>, <code>sample_every</code>, <code>max_patterns</code>, <code>max_patterns_per_class</code>, <code>retention_seconds</code>, <code>max_predicates_per_query</code></td>
 <td>On the next eligible query</td>
 <td>Query-observation ceiling variables</td>
+</tr>
+<tr>
+<td><code>observability</code></td>
+<td>Log filter, metrics enablement and scrape path</td>
+<td>On reconciliation</td>
+<td>Literal non-conflicting scrape path</td>
+</tr>
+<tr>
+<td><code>network</code></td>
+<td>Forwarded-header trust, proxy networks/hops and client allowlist</td>
+<td>Next request</td>
+<td>Updating local administrator must retain network access</td>
+</tr>
+<tr>
+<td><code>query_limits</code></td>
+<td>Maximum transitive depth</td>
+<td>Next query</td>
+<td>1–512</td>
+</tr>
+<tr>
+<td><code>tasks</code></td>
+<td>Polling, lease/heartbeat, recovery, reindex batch and per-user admission limits</td>
+<td>Next claim or batch</td>
+<td>Heartbeat below lease; reindex batch at most 1,000; worker counts stay fixed</td>
+</tr>
+<tr>
+<td><code>remote_calls</code></td>
+<td>Timeout, response bytes and private destinations</td>
+<td>Next dispatch</td>
+<td>Deployment prohibition on private targets remains authoritative</td>
+</tr>
+<tr>
+<td><code>tokens</code></td>
+<td>Default issuance lifetime, expired-token retention and purge policy</td>
+<td>Next issuance or purge batch</td>
+<td>Deployment maximum token lifetime; legacy cutoffs stay fixed</td>
+</tr>
+<tr>
+<td><code>login_rate_limit</code></td>
+<td>Enablement, identity/account/IP/subnet attempts, window and backoff</td>
+<td>Next login attempt</td>
+<td>Backoff base no greater than maximum</td>
+</tr>
+<tr>
+<td><code>events</code></td>
+<td>Fanout/delivery batches and polling, delivery attempts/timeout, retention and archive enablement</td>
+<td>Next batch</td>
+<td>Transport timeout below deployment lease; archive requires usable deployment path</td>
+</tr>
+<tr>
+<td><code>exports</code></td>
+<td>Output retention/cleanup/size, stage/query budgets and template limits</td>
+<td>Next export or cleanup pass</td>
+<td>Existing expiry timestamps are preserved</td>
+</tr>
+<tr>
+<td><code>backups</code></td>
+<td>Active backups per user, output/row limits and retention</td>
+<td>Next admission or execution</td>
+<td>Existing expiry timestamps are preserved</td>
+</tr>
+<tr>
+<td><code>restores</code></td>
+<td>Upload limit and staging retention</td>
+<td>Next upload</td>
+<td>An upload retains its limit; existing expiry timestamps are preserved</td>
 </tr>
 </tbody>
 </table>
@@ -5154,15 +5264,79 @@ settings store. The initial runtime-managed settings are listed below.</p>
   key reference;</li>
 <li>LDAP secret-source selection and authorization backend connection settings;</li>
 <li>machine resource ceilings and filesystem paths;</li>
-<li><code>HUBUUM_MAX_PAGE_LIMIT</code>, which caps <code>pagination.default_page_limit</code>; and</li>
+<li><code>HUBUUM_MAX_PAGE_LIMIT</code>, which caps both runtime pagination limits; and</li>
 <li>query-observation sampling and capacity ceiling variables, which cap the
   runtime values above.</li>
 </ul>
-<p>Other candidates, such as retention, task admission, token lifetimes, and worker
-concurrency, will move only after their effect on running work and their failure
-behavior have been defined. Raw secrets never move into runtime settings. An
+<p>Pool size/acquire timeout, database statement timeout, TLS/certificate reload,
+administrator-group selection, worker counts, token hash-key rotation, and
+Treetop connection settings remain deployment configuration. Raw secrets never
+move into runtime settings. An
 LDAP bind password supplied through the runtime API is encrypted before it is
 stored.</p>
+<h3 id="operational-policy-updates">Operational policy updates<a class="headerlink" href="#operational-policy-updates" title="Permanent link">&para;</a></h3>
+<p>Use the catalogue to discover field names, types, bounds and deployment defaults.
+The additional groups accept revision-checked <code>PATCH</code>, <code>GET</code>, history reads and
+<code>DELETE</code> to release ownership, through the same endpoints as pagination. Their
+state is also included under <code>policies</code> in the complete runtime-settings report.
+No raw secrets, filesystem locations or derived "configured" flags are editable.
+Network lists are comma-separated IP/CIDR strings; <code>client_allowlist</code> also accepts
+<code>*</code>. Counts in the administrator configuration remain derived displays.</p>
+<p>For example, send this to <code>PATCH /api/v1/admin/runtime-settings/tasks</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">{</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">"expected_revision"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">"changes"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"lease_seconds"</span><span class="p">:</span><span class="w"> </span><span class="mi">120</span><span class="p">,</span><span class="w"> </span><span class="nt">"heartbeat_seconds"</span><span class="p">:</span><span class="w"> </span><span class="mi">30</span><span class="p">}</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="p">}</span>
+</code></pre></div>
+<p>Requests and task executions capture a configuration snapshot. Existing claims
+retain their lease and heartbeat pair; changes do not shorten an existing lease.
+Batch workers read a new policy between batches, and settings notifications wake
+sleeping workers. Retention loops remain present while disabled, then pause until
+enabled. API-only processes never start background workers. Per-user admission
+limits apply to new submissions and do not cancel accepted work. Delivery attempt
+changes retain attempt counts and do not revive terminal failures. Reindexing
+reads its validated batch size from shared storage before each batch.</p>
+<p>New output/stage retention applies when an artifact is created; stored expiry
+values do not change. Export stage timeouts remain post-completion checks, while
+storage query budgets are enforced during reads. Zero disables the storage query
+budget. Archive enablement requires a writable deployment archive directory;
+archive failure still prevents event deletion. Destructive retention pauses on
+stale replicas until reconciliation succeeds, including replicas missing a
+required archive-path configuration. New task claims and delivery batches also
+wait for current security policy. Webhook deliveries capture the
+remote-call timeout, response-size and private-destination policy for their
+batch while other transport connections remain in place.</p>
+<p><code>network</code>, <code>tokens</code>, <code>login_rate_limit</code>, and <code>remote_calls</code> changes require a local
+password-capable human administrator, including release. Network edits and release
+also resolve the current connection through the candidate proxy policy and reject
+changes that would exclude it. All request consumers use the same network snapshot
+for allowlisting, tracing and login IP attribution. Deployment access is the
+recovery path if topology changes later.</p>
+<p>Token lifetime changes apply to new issuance, without altering explicit expiry
+or the deployment-derived legacy token cutoff. Login attempts retain the policy
+used to reserve capacity until they finish. Disabling the limiter does not reset
+its store. Existing lockout deadlines persist; retained failures are evaluated
+using the next attempt's window. Expired/pruned observations cannot be recovered
+by increasing that window. Zero disables the account, IP or subnet dimension.</p>
+<p>Metrics enablement and path changes use the <code>observability</code> group. The previous
+path stops serving metrics after reconciliation; update scraper configuration
+alongside the change. Disabled metrics retain their registry and counters.
+Worker-only processes keep their HTTP listener bound even while metrics are
+disabled, allowing later enablement. See <a href="../metrics/">metrics</a> for deployment
+requirements. Log filters reload independently of distributed tracing sampling.</p>
+<h3 id="upgrade-and-rollback">Upgrade and rollback<a class="headerlink" href="#upgrade-and-rollback" title="Permanent link">&para;</a></h3>
+<p><strong>Breaking deployment change:</strong> stop older API and worker binaries before applying
+migration <code>2026-11-10-000001_runtime_policies</code>, then deploy the upgraded binaries
+for every replica. Older readers cannot parse the new group rows, even before a
+policy is edited. Back up deployment configuration and the database before the
+upgrade. Existing policy ownership and audit history are retained.</p>
+<p>Worker-only processes now reserve <code>HUBUUM_BIND_IP:HUBUUM_PORT</code> even when metrics
+are disabled. Assign separate ports or network namespaces before upgrading
+workers that previously shared a host and port with another process.</p>
+<p>The new migration can be rolled back while its groups have no audit entries.
+After an edit, its foreign key deliberately prevents rollback from deleting the
+append-only audit trail; release to deployment ownership does not erase that
+history. Use an upgraded binary or a database backup for rollback after use.</p>
 <h3 id="groups-and-ownership-states">Groups and ownership states<a class="headerlink" href="#groups-and-ownership-states" title="Permanent link">&para;</a></h3>
 <p>Settings are updated in groups. A group's values change together and share a
 revision. A group is always in one of two states:</p>
@@ -5195,12 +5369,12 @@ login only.</p>
 </ul>
 <p>For example, this complete selection disables the deployment-defined corporate
 provider while retaining local login:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">{</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">"expected_revision"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">"providers"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="p">{</span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"deployment"</span><span class="p">,</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"corporate"</span><span class="p">,</span><span class="w"> </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ldap"</span><span class="p">,</span><span class="w"> </span><span class="nt">"enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">}</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="p">]</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">"expected_revision"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">"providers"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="p">{</span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"deployment"</span><span class="p">,</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"corporate"</span><span class="p">,</span><span class="w"> </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ldap"</span><span class="p">,</span><span class="w"> </span><span class="nt">"enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">}</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="p">}</span>
 </code></pre></div>
 <p>Send it to <code>POST /api/v1/admin/runtime-settings/authentication/preflight</code>.
 Include every external provider that should remain enabled. Omitted deployment
@@ -5217,24 +5391,39 @@ If releasing the group encounters an invalid deployment configuration on another
 replica, that replica stops authentication and fails readiness until repaired;
 it does not keep the previous runtime providers active.</p>
 <h2 id="adopting-existing-configuration">Adopting existing configuration<a class="headerlink" href="#adopting-existing-configuration" title="Permanent link">&para;</a></h2>
-<p>Upgrading changes no behavior on its own. Pagination stays in the deployment
-state, and replicas whose startup values differ keep applying their own values.
+<p>New groups start in the deployment state. Existing ownership is preserved, and
+replicas whose deployment-owned values differ keep applying their own values.
 <code>GET /api/v1/admin/runtime-settings</code> shows each responding replica's deployment
 values. Compare replicas before adopting a shared value.</p>
 <p>To adopt a value, an administrator writes it explicitly, for example the
 current deployment default. From then on the persisted value is authoritative
 on every replica:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>--request<span class="w"> </span>PUT<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/admin/runtime-settings/pagination"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--header<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>--data<span class="w"> </span><span class="s1">'{"expected_revision":1,"default_page_limit":100}'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>--request<span class="w"> </span>PUT<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/admin/runtime-settings/pagination"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>--header<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span>--data<span class="w"> </span><span class="s1">'{"expected_revision":1,"default_page_limit":100,"max_page_limit":200}'</span>
 </code></pre></div>
+<p>The default applies when a client omits <code>limit</code>; the maximum also clamps explicit
+client limits. Both values are committed in one revision and must satisfy
+<code>1 &lt;= default_page_limit &lt;= max_page_limit &lt;= HUBUUM_MAX_PAGE_LIMIT</code>.
+For example, with the settings above, <code>?limit=500</code> returns at most 200 items.</p>
+<p>Existing default-only policies continue to inherit each replica's deployment
+maximum. Omitting <code>max_page_limit</code> (or setting it to <code>null</code>) on a replacement
+<code>PUT</code> restores that inheritance. Use <code>PATCH</code> to preserve an unchanged field:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>--request<span class="w"> </span>PATCH<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/admin/runtime-settings/pagination"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>--header<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--data<span class="w"> </span><span class="s1">'{"expected_revision":2,"changes":{"max_page_limit":150}}'</span>
+</code></pre></div>
+<p>The merged values are validated together. Lowering the maximum below the current
+default requires changing both in the same request. <code>PATCH</code> rejects <code>null</code>.</p>
 <p>To give a group back to deployment configuration, delete its runtime value. The
 release is recorded as a new revision:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>--request<span class="w"> </span>DELETE<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/admin/runtime-settings/pagination?expected_revision=2"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>--request<span class="w"> </span>DELETE<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="s2">"</span><span class="nv">$HUBUUM_URL</span><span class="s2">/api/v1/admin/runtime-settings/pagination?expected_revision=3"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$HUBUUM_TOKEN</span><span class="s2">"</span>
 </code></pre></div>
 <p>The query observation override from earlier releases is imported once, by the
 migration that introduces runtime settings. If an override was set, the
@@ -5268,7 +5457,7 @@ changing security settings.</p>
 </tr>
 <tr>
 <td><code>PUT /api/v1/admin/runtime-settings/pagination</code></td>
-<td>Set the shared default page size</td>
+<td>Set shared default and maximum page sizes</td>
 </tr>
 <tr>
 <td><code>PUT /api/v1/admin/runtime-settings/query_observations</code></td>
@@ -5302,14 +5491,18 @@ restore effects it already had.</p>
 non-positive values, and inconsistent combinations are rejected with <code>400 Bad
 Request</code>. Deployment and runtime configuration share the same LDAP definition,
 identity-scope-name, and pagination validators. <code>default_page_limit</code> must be
-between 1 and 4,294,967,295 and cannot exceed the responding replica's
-<code>HUBUUM_MAX_PAGE_LIMIT</code>. Query-observation values must fit the responding
+between 1 and 4,294,967,295 and cannot exceed the effective maximum.
+<code>max_page_limit</code> must be positive and cannot exceed the responding replica's
+<code>HUBUUM_MAX_PAGE_LIMIT</code>. With no runtime maximum, the deployment maximum applies.
+Query-observation values must fit the responding
 replica's ceilings: <code>sample_every</code> must be at least
 <code>HUBUUM_QUERY_OBSERVATIONS_MIN_SAMPLE_EVERY</code>, and each capacity/retention value
 must not exceed its corresponding <code>HUBUUM_QUERY_OBSERVATIONS_*_CEILING</code>.
 Omitted observation fields use the responding replica's deployment defaults.
 If another replica has a lower ceiling, it clamps the shared values and
-reports <code>constrained_by_ceiling: true</code>.</p>
+reports <code>constrained_by_ceiling: true</code>.
+For pagination this clamps the maximum first, then the default, preserving
+<code>default_page_limit &lt;= max_page_limit</code>.</p>
 <p>Authentication updates use the preflight endpoint. It validates ownership and
 identity-scope bindings, tests enabled providers' configuration, connectivity,
 and service bind, and commits the new revision only after all checks succeed.
@@ -5430,9 +5623,12 @@ available again after reconciliation succeeds.</p>
 </ul>
 <p>Both reads reconcile the replica before they report. Reports contain no secret
 values.</p>
-<p><code>GET /api/v1/config</code> returns the effective default page size to unauthenticated
-clients. The committed OpenAPI document describes the default from deployment
-configuration.</p>
+<p><code>GET /api/v1/config</code> returns the effective default and maximum page sizes to
+unauthenticated clients. Administrator pagination reports include both limits
+under <code>effective</code>, <code>runtime</code>, and <code>deployment</code>; legacy runtime values omit the
+inherited maximum. The top-level <code>pagination.max_page_limit</code> in the runtime
+settings report remains the deployment ceiling for compatibility. The committed
+OpenAPI document describes the default from deployment configuration.</p>
 <h2 id="backups-restores-and-storage-backends">Backups, restores, and storage backends<a class="headerlink" href="#backups-restores-and-storage-backends" title="Permanent link">&para;</a></h2>
 <p>Runtime settings and their audit records are deployment configuration, not
 domain data. They are excluded from portable backups and survive logical
@@ -5444,6 +5640,10 @@ database. The memory backend shares them only among handles of one in-process
 store, has no notifications, and loses them on restart. Independent memory
 processes do not form a shared deployment.</p>
 <h2 id="upgrading">Upgrading<a class="headerlink" href="#upgrading" title="Permanent link">&para;</a></h2>
+<p>Upgrade every API and worker replica before writing a runtime <code>max_page_limit</code>.
+Older binaries reject persisted pagination documents containing that field.
+Existing default-only documents and requests remain supported without a data
+migration.</p>
 <p>Apply the runtime settings migration, then upgrade every API and worker replica
 together. Upgraded replicas no longer read or write the legacy
 <code>query_observation_control</code> table, so previous-release replicas that keep
@@ -5487,15 +5687,15 @@ Clients should show these explanations alongside the selector and associate
 field help with its input for assistive technologies. Render help as text, not
 HTML. Clients may ignore this additive annotation and continue displaying the
 raw enum values; the discovery version remains 1. For example:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"string"</span><span class="p">,</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">"title"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Authorization backend"</span><span class="p">,</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Backend used to evaluate permissions on subsequent requests."</span><span class="p">,</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">"enum"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"local"</span><span class="p">],</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="nt">"x-enum-descriptions"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="nt">"local"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Evaluate permissions using Hubuum's built-in authorization backend."</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"string"</span><span class="p">,</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">"title"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Authorization backend"</span><span class="p">,</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Backend used to evaluate permissions on subsequent requests."</span><span class="p">,</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span><span class="nt">"enum"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"local"</span><span class="p">],</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">  </span><span class="nt">"x-enum-descriptions"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">    </span><span class="nt">"local"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Evaluate permissions using Hubuum's built-in authorization backend."</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="p">}</span>
 </code></pre></div>
 <p><code>GET /api/v1/admin/runtime-settings/{group}</code> returns a uniform view with ownership,
 revision, replica application status, <code>effective</code>, <code>runtime</code>, <code>deployment</code>, and
@@ -5503,12 +5703,12 @@ revision, replica application status, <code>effective</code>, <code>runtime</cod
 <code>effective</code> can be lower because of a deployment ceiling. Authentication exposes
 only redacted provider status, with runtime/deployment definitions omitted.</p>
 <p>For groups with <code>patch_supported: true</code>, send only the edited top-level fields:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">{</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">"expected_revision"</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">"changes"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nt">"default_page_limit"</span><span class="p">:</span><span class="w"> </span><span class="mi">75</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">"expected_revision"</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">"changes"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span><span class="nt">"default_page_limit"</span><span class="p">:</span><span class="w"> </span><span class="mi">75</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="p">}</span>
 </code></pre></div>
 <p>Send that document to <code>PATCH /api/v1/admin/runtime-settings/pagination</code>. The server
 loads the authoritative group, preserves omitted fields, validates the complete

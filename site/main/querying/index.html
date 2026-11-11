@@ -5609,13 +5609,17 @@ narrow the target predicates or reduce the requested depth.</p>
 </ul>
 <p>Limits:</p>
 <ul>
-<li>default page size: <code>100</code></li>
-<li>maximum page size: <code>250</code></li>
+<li>default page size: <code>100</code>, unless configured otherwise</li>
+<li>maximum page size: <code>250</code>, unless configured otherwise</li>
 <li>maximum encoded cursor size: <code>64 KiB</code></li>
 <li>maximum JSON cursor nesting depth: <code>64</code></li>
 <li>a positive <code>limit</code> above the configured maximum is clamped to the maximum</li>
 <li><code>limit=0</code> remains a <code>400 Bad Request</code></li>
 </ul>
+<p>Administrators can change both page sizes through <a href="../runtime_settings/">runtime settings</a>,
+within the deployment ceiling. Read the current effective values from
+<code>GET /api/v1/config</code>. Each request keeps the limits it started with; a later page
+may use newly applied limits with the same cursor.</p>
 <p>Behavior:</p>
 <ul>
 <li>the current page is returned as a JSON array</li>

@@ -5040,9 +5040,19 @@ settings. Put it behind network-level access controls appropriate for
 operational data.</p>
 <p>Processes with the <code>all</code> or <code>api</code> runtime role serve metrics on the main HTTP
 listener. A <code>worker</code> process serves only the configured metrics path on
-<code>HUBUUM_BIND_IP:HUBUUM_PORT</code> when metrics are enabled; it does not expose the
+<code>HUBUUM_BIND_IP:HUBUUM_PORT</code>. This listener remains bound while metrics are
+disabled so runtime enablement works. It does not expose the
 application API or health probes. Give API and worker containers separate
 network namespaces or ports if they run on the same host.</p>
+<p>Administrators can change <code>metrics_enabled</code>, <code>metrics_path</code>, and <code>log_level</code> in
+<code>PATCH /api/v1/admin/runtime-settings/observability</code>. Environment variables are
+the defaults while this group is deployment-owned. Path and enablement changes
+apply after each replica reconciles; the old path returns 404, and disabled
+metrics return 404 at every path. Scraping accepts GET only. Counters are retained
+across disable/enable changes. Configure the scraper to follow a path change.
+The metrics route is labeled <code>/metrics</code> for instrumentation even when its actual
+path changes, avoiding a new label series for each administrator-selected path.
+See <a href="../runtime_settings/">runtime settings</a> for revision and ownership semantics.</p>
 <h2 id="scrape-each-process-directly">Scrape Each Process Directly<a class="headerlink" href="#scrape-each-process-directly" title="Permanent link">&para;</a></h2>
 <p>Counters, histograms, connection-pool gauges, and worker configuration describe
 one process. Configure Prometheus with a stable target for every API and worker
