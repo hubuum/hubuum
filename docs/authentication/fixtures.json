@@ -1,7 +1,7 @@
 {
   "version": 1,
   "status": "proposed",
-  "description": "Wire vectors and required Rust/client behavioral assertions; not an authentication simulator. All credentials are inert fixture markers.",
+  "description": "Wire vectors and required Rust/client behavioral assertions; not an authentication simulator. Credentials are deterministic public test values, never issued by a server.",
   "cases": [
     {
       "id": "discovery",
@@ -196,8 +196,8 @@
         "body": {
           "session_id": "00000000-0000-4000-8000-000000000001",
           "token_type": "Bearer",
-          "access_token": "FIXTURE-ACCESS-NOT-A-CREDENTIAL",
-          "refresh_token": "FIXTURE-REFRESH-NOT-A-CREDENTIAL",
+          "access_token": "hbt1.fixture.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "refresh_token": "hbr1.fixture.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "access_expires_at": "2026-11-11T12:15:00Z",
           "refresh_expires_at": "2026-11-11T13:00:00Z",
           "absolute_expires_at": "2026-11-12T12:00:00Z"
@@ -226,8 +226,8 @@
         "body": {
           "session_id": "00000000-0000-4000-8000-000000000001",
           "token_type": "Bearer",
-          "access_token": "FIXTURE-ACCESS-NOT-A-CREDENTIAL",
-          "refresh_token": "FIXTURE-REFRESH-NOT-A-CREDENTIAL",
+          "access_token": "hbt1.fixture.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "refresh_token": "hbr1.fixture.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "access_expires_at": "2026-11-11T12:15:00Z",
           "refresh_expires_at": "2026-11-11T13:00:00Z",
           "absolute_expires_at": "2026-11-12T12:00:00Z"
@@ -256,8 +256,8 @@
         "body": {
           "session_id": "00000000-0000-4000-8000-000000000001",
           "token_type": "Bearer",
-          "access_token": "FIXTURE-ACCESS-NOT-A-CREDENTIAL",
-          "refresh_token": "FIXTURE-REFRESH-NOT-A-CREDENTIAL",
+          "access_token": "hbt1.fixture.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "refresh_token": "hbr1.fixture.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "access_expires_at": "2026-11-11T12:15:00Z",
           "refresh_expires_at": "2026-11-11T13:00:00Z",
           "absolute_expires_at": "2026-11-12T12:00:00Z"
@@ -286,8 +286,8 @@
         "body": {
           "session_id": "00000000-0000-4000-8000-000000000001",
           "token_type": "Bearer",
-          "access_token": "FIXTURE-ACCESS-NOT-A-CREDENTIAL",
-          "refresh_token": "FIXTURE-REFRESH-NOT-A-CREDENTIAL",
+          "access_token": "hbt1.fixture.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "refresh_token": "hbr1.fixture.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "access_expires_at": "2026-11-11T12:15:00Z",
           "refresh_expires_at": "2026-11-11T13:00:00Z",
           "absolute_expires_at": "2026-11-12T12:00:00Z"
@@ -921,8 +921,8 @@
         "body": {
           "session_id": "00000000-0000-4000-8000-000000000001",
           "token_type": "Bearer",
-          "access_token": "FIXTURE-ACCESS-NOT-A-CREDENTIAL",
-          "refresh_token": "FIXTURE-REFRESH-NOT-A-CREDENTIAL",
+          "access_token": "hbt1.fixture.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "refresh_token": "hbr1.fixture.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "access_expires_at": "2026-11-11T12:15:00Z",
           "refresh_expires_at": "2026-11-11T13:00:00Z",
           "absolute_expires_at": "2026-11-12T12:00:00Z"
@@ -951,8 +951,8 @@
         "body": {
           "session_id": "00000000-0000-4000-8000-000000000001",
           "token_type": "Bearer",
-          "access_token": "FIXTURE-ACCESS-NOT-A-CREDENTIAL",
-          "refresh_token": "FIXTURE-REFRESH-NOT-A-CREDENTIAL",
+          "access_token": "hbt1.fixture.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "refresh_token": "hbr1.fixture.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "access_expires_at": "2026-11-11T12:15:00Z",
           "refresh_expires_at": "2026-11-11T13:00:00Z",
           "absolute_expires_at": "2026-11-12T12:00:00Z"
@@ -998,8 +998,8 @@
         "body": {
           "session_id": "00000000-0000-4000-8000-000000000001",
           "token_type": "Bearer",
-          "access_token": "FIXTURE-ACCESS-NOT-A-CREDENTIAL",
-          "refresh_token": "FIXTURE-REFRESH-NOT-A-CREDENTIAL",
+          "access_token": "hbt1.fixture.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "refresh_token": "hbr1.fixture.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "access_expires_at": "2026-11-11T12:15:00Z",
           "refresh_expires_at": "2026-11-11T13:00:00Z",
           "absolute_expires_at": "2026-11-12T12:00:00Z"
@@ -1117,7 +1117,7 @@
       "response": {
         "status": 200,
         "body": {
-          "approval": "FIXTURE-APPROVAL-NOT-A-CREDENTIAL",
+          "approval": "hca1.cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
           "record": {
             "id": 123,
             "actor_id": 7,

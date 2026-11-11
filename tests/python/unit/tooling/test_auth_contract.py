@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import re
 import unittest
 
 
@@ -88,6 +89,17 @@ class AuthenticationContractTests(unittest.TestCase):
         self.assertIn("proposed", self.spec["info"]["version"])
         self.assertEqual(self.fixtures["status"], "proposed")
         self.assertFalse(self.spec["paths"].keys() & current["paths"].keys())
+
+    def test_existing_result_examples_use_current_required_fields_and_approval_syntax(self):
+        schemas = load_json(ROOT / "docs/openapi.json")["components"]["schemas"]
+        for case in self.fixtures["cases"]:
+            body = case["response"].get("body", {})
+            with self.subTest(case=case["id"]):
+                if "access_token" in body:
+                    self.assertTrue(set(schemas["SessionResponse"]["required"]) <= body.keys())
+                if "approval" in body:
+                    self.assertTrue(set(schemas["CredentialApprovalResponse"]["required"]) <= body.keys())
+                    self.assertIsNotNone(re.fullmatch(schemas["CredentialApprovalSecret"]["pattern"], body["approval"]))
 
 
 if __name__ == "__main__":
