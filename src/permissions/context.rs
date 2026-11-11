@@ -4,6 +4,7 @@ use actix_web::{FromRequest, HttpMessage, HttpRequest, dev::Payload, web::Data};
 use futures_util::future::{Ready, ready};
 use hubuum_domain::ResourceRevision;
 
+use crate::config::PermissionBackendKind;
 use crate::errors::ApiError;
 use crate::services::deletion_recovery::TaskReceiptService;
 use crate::services::{
@@ -222,10 +223,28 @@ impl PermissionBackend for SwappablePermissionBackend {
     }
 }
 
+/// Keep explicit deployment selection distinct from runtime assignments.
+#[derive(Clone)]
+enum DeploymentAuthorization {
+    Supplied(Arc<dyn PermissionBackend>),
+    Configured(PermissionBackendKind),
+}
+
+impl DeploymentAuthorization {
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Supplied(backend) => backend.kind(),
+            Self::Configured(PermissionBackendKind::Local) => "local",
+            Self::Configured(PermissionBackendKind::Treetop) => "treetop",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct AppContext {
     backend: StorageHandle,
     permissions: Arc<SwappablePermissionBackend>,
+    deployment_authorization: DeploymentAuthorization,
     request_permissions: Option<Arc<dyn PermissionBackend>>,
     permission_revision: Arc<RwLock<Option<ResourceRevision>>>,
     authentication_revision: Arc<RwLock<Option<ResourceRevision>>>,
@@ -241,6 +260,7 @@ impl AppContext {
         let services = Services::from_storage(backend.clone());
         Self {
             backend,
+            deployment_authorization: DeploymentAuthorization::Supplied(permissions.clone()),
             permissions: Arc::new(SwappablePermissionBackend::new(permissions)),
             request_permissions: None,
             permission_revision: Arc::new(RwLock::new(None)),
@@ -251,6 +271,16 @@ impl AppContext {
             services,
             task_receipts: TaskReceiptService::default(),
         }
+    }
+
+    /// Production may start with a runtime-managed backend already selected.
+    /// Releasing that assignment must restore the configured deployment kind.
+    pub(crate) fn with_configured_deployment_authorization(
+        mut self,
+        kind: PermissionBackendKind,
+    ) -> Self {
+        self.deployment_authorization = DeploymentAuthorization::Configured(kind);
+        self
     }
 
     pub(crate) fn with_task_receipts(mut self, service: TaskReceiptService) -> Self {
@@ -423,19 +453,9 @@ impl AppContext {
             .permission_target_revision
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(revision);
-        let Ok(config) = crate::config::get_config() else {
-            self.mark_permission_backend_unavailable(
-                "authorization backend configuration is unavailable".to_string(),
-            );
-            return;
-        };
-        let config = config.clone();
         let selected = snapshot.authorization();
         let selected_name = selected.map_or_else(
-            || match config.permission_backend {
-                crate::config::PermissionBackendKind::Local => "local",
-                crate::config::PermissionBackendKind::Treetop => "treetop",
-            },
+            || self.deployment_authorization.kind(),
             hubuum_storage_core::StorageAuthorizationBackend::as_str,
         );
         let current_permission_revision = *self
@@ -448,17 +468,33 @@ impl AppContext {
         {
             return;
         }
-        let backend = match selected {
-            Some(selected) => {
-                crate::permissions::build_permission_backend_for_runtime(
-                    &config,
-                    self.backend.clone(),
-                    selected,
-                )
-                .await
-            }
-            None => {
-                crate::permissions::build_permission_backend(&config, self.backend.clone()).await
+        let backend = match (&self.deployment_authorization, selected) {
+            (DeploymentAuthorization::Supplied(backend), None) => Ok(backend.clone()),
+            (deployment, selected) => {
+                let Ok(config) = crate::config::get_config() else {
+                    self.mark_permission_backend_unavailable(
+                        "authorization backend configuration is unavailable".to_string(),
+                    );
+                    return;
+                };
+                let mut config = config.clone();
+                if let DeploymentAuthorization::Configured(kind) = deployment {
+                    config.permission_backend = *kind;
+                }
+                match selected {
+                    Some(selected) => {
+                        crate::permissions::build_permission_backend_for_runtime(
+                            &config,
+                            self.backend.clone(),
+                            selected,
+                        )
+                        .await
+                    }
+                    None => {
+                        crate::permissions::build_permission_backend(&config, self.backend.clone())
+                            .await
+                    }
+                }
             }
         };
         match backend {
@@ -570,6 +606,71 @@ impl FromRequest for AppContext {
 mod tests {
     use super::*;
     use crate::permissions::LocalPermissionBackend;
+
+    #[rstest::rstest]
+    #[case::supplied_unmanaged(false, false)]
+    #[case::supplied_released(false, true)]
+    #[case::configured_unmanaged(true, false)]
+    #[case::configured_released(true, true)]
+    #[actix_web::test]
+    async fn runtime_settings_restore_the_captured_deployment_authorization(
+        #[case] configured: bool,
+        #[case] release: bool,
+    ) {
+        use crate::events::EventContext;
+        use crate::permissions::test_support::MockTreetopBackend;
+        use hubuum_storage_core::{
+            RuntimeSettingsStorage, StorageAuthorizationBackend, StorageRuntimeSettingsAssignment,
+            StorageRuntimeSettingsGroup, StorageRuntimeSettingsUpdate, StorageRuntimeSettingsValue,
+        };
+
+        let storage = StorageHandle::memory();
+        let supplied: Arc<dyn PermissionBackend> = Arc::new(MockTreetopBackend::new());
+        let mut context = AppContext::new(storage.clone(), supplied.clone());
+        if configured {
+            context =
+                context.with_configured_deployment_authorization(PermissionBackendKind::Local);
+        }
+        if release {
+            storage
+                .update_runtime_settings(StorageRuntimeSettingsUpdate::new(
+                    StorageRuntimeSettingsAssignment::Managed(
+                        StorageRuntimeSettingsValue::Authorization(
+                            StorageAuthorizationBackend::Local,
+                        ),
+                    ),
+                    ResourceRevision::new(1).unwrap(),
+                    EventContext::system(),
+                ))
+                .await
+                .unwrap();
+            context.refresh_runtime_settings().await.unwrap();
+            assert!(
+                context.permission_backend().uses_local_permission_store(),
+                "managed precondition"
+            );
+            storage
+                .update_runtime_settings(StorageRuntimeSettingsUpdate::new(
+                    StorageRuntimeSettingsAssignment::Deployment(
+                        StorageRuntimeSettingsGroup::Authorization,
+                    ),
+                    ResourceRevision::new(2).unwrap(),
+                    EventContext::system(),
+                ))
+                .await
+                .unwrap();
+        }
+        context.refresh_runtime_settings().await.unwrap();
+        let selected = context.permissions.backend().unwrap();
+        if configured {
+            assert!(selected.uses_local_permission_store());
+        } else {
+            assert!(
+                Arc::ptr_eq(&selected, &supplied),
+                "Explicit external deployment policy must be retained"
+            );
+        }
+    }
 
     #[test]
     fn permission_backend_is_unavailable_after_failed_reinitialization() {

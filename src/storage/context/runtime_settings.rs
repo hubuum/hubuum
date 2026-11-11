@@ -75,18 +75,17 @@ impl StorageHandle {
     pub(crate) async fn refresh_runtime_settings(
         &self,
     ) -> Result<AppliedRuntimeSettings, StorageError> {
-        crate::restores::with_application_work(
-            self,
-            self.inner.runtime_settings.refresh(async {
+        self.inner
+            .runtime_settings
+            .refresh(crate::restores::with_application_work(self, async {
                 let snapshot = self.load_runtime_settings().await?;
                 let deployment = crate::config::get_config()
                     .map_err(|error| StorageError::invalid_input(error.to_string()))?;
                 crate::config::runtime::resolve(deployment.clone(), Some(&snapshot))
                     .map_err(|error| StorageError::invalid_input(error.to_string()))?;
                 Ok(snapshot)
-            }),
-        )
-        .await
+            }))
+            .await
     }
 
     /// Query observation settings from this process's startup configuration.
@@ -166,13 +165,25 @@ impl StorageHandle {
                 }
                 // Failures are logged and reported as staleness; the next
                 // notification or poll retries.
-                let _: Result<(), StorageError> =
+                let admission: Result<(), StorageError> =
                     crate::restores::with_application_work(self, async {
-                        let applied = self.refresh_runtime_settings().await?;
-                        on_applied(applied).await;
+                        // The loader records its own failures. Waiting for
+                        // another refresh must not invalidate that caller's work.
+                        if let Ok(applied) = self.refresh_runtime_settings().await {
+                            on_applied(applied).await;
+                        }
                         Ok(())
                     })
                     .await;
+                if let Err(error) = admission {
+                    // Admission can fail before the loader is polled. Retain
+                    // the last snapshot, but never report that attempt current.
+                    let _ = self
+                        .inner
+                        .runtime_settings
+                        .refresh(async { Err(error) })
+                        .await;
+                }
             }
         };
         if let Some(listener) = listener {
@@ -209,6 +220,13 @@ mod tests {
         }
         let result = bound.refresh_runtime_settings().await;
         assert_eq!(result.is_err(), retired, "{result:?}");
+        assert_eq!(
+            bound
+                .applied_runtime_settings()
+                .ensure_security_current()
+                .is_err(),
+            retired
+        );
     }
 
     struct Notifications {

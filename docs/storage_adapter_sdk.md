@@ -27,8 +27,9 @@ captured identities, intervals, generation, owner and deadline. Never refresh an
 old permit after external work. Catalog replacement must not rebind existing
 pins. Keep capture/catalog allocations and cumulative physical work bounded.
 
-Deploy migration `2026-11-03-000004_history_archive_reads` and refresh runtime
-function grants before running this server. It installs a protected fixed-true
+Deploy migrations `2026-11-03-000004_history_archive_reads` and
+`2026-11-11-000001_archive_runtime_compatibility`, then refresh runtime function
+grants before running this server. It installs a protected fixed-true
 `hubuum_archive_history_requires_legacy_runtime()` hook. A combined runtime must
 refuse OnlineV1 registration while this hook is true; this archive slice cannot
 participate in retained online expiry until a later reviewed migration integrates

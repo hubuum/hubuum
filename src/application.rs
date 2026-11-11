@@ -518,8 +518,9 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
                 EXIT_CODE_CONFIG_ERROR,
             )
         });
-        let app_context =
-            AppContext::new(storage, permission_backend).with_task_receipts(task_receipts);
+        let app_context = AppContext::new(storage, permission_backend)
+            .with_task_receipts(task_receipts)
+            .with_configured_deployment_authorization(config.permission_backend);
         app_context.apply_runtime_settings(&applied).await;
         if let Err(error) =
             crate::auth::ensure_configured_identity_scopes(app_context.backend()).await

@@ -312,6 +312,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Runtime-settings refresh failures during application admission mark security
+  policy stale. Reconciliation preserves an explicitly selected external
+  permission backend when runtime ownership is released, rather than replacing
+  it with a different global deployment default.
+
+- Collection archive captures remain available after project synchronization
+  brings in newer runtime-setting migrations. Apply
+  `2026-11-11-000001_archive_runtime_compatibility`; it qualifies the known Legacy
+  registry layout without enabling online expiry or replacing an installed
+  versioned history protocol. Unknown future checkpoints still fail closed.
+
 - Shared login reservations retain their original expiry when runtime rate-limit
   windows change, so in-flight failures still count toward the captured policy.
 - Shared login lockouts keep their expiry when overlapping requests finish under

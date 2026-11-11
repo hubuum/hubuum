@@ -785,7 +785,22 @@ if ((literal_include_count == 0)); then
   exit 1
 fi
 
-echo "CI change classifier tests passed."
+# The synchronized Legacy guard and its rollback/application-order regressions
+# require native adapter and production image validation.
+for archive_compatibility_path in \
+  crates/hubuum-storage-postgres/tests/archive_runtime_compatibility.rs \
+  crates/hubuum-storage-postgres/migrations/2026-11-11-000001_archive_runtime_compatibility/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-11-000001_archive_runtime_compatibility/down.sql; do
+  archive_compatibility_output="$(bash "$classifier" "$archive_compatibility_path")"
+  assert_flag "$archive_compatibility_output" code true
+  assert_flag "$archive_compatibility_output" rust true
+  assert_flag "$archive_compatibility_output" container true
+  case "$archive_compatibility_path" in
+    */migrations/*) assert_flag "$archive_compatibility_output" operational_contract false ;;
+    *) assert_flag "$archive_compatibility_output" operational_contract true ;;
+  esac
+done
+
 
 for scheduler_report in scheduling_acceptance scheduling_integration; do
   scheduler_report_output="$(bash "$classifier" "docs/performance/$scheduler_report.json")"
@@ -1161,3 +1176,5 @@ done
 archive_test_output="$(bash "$classifier" src/tests/storage_contract/history_archive.rs)"
 assert_flag "$archive_test_output" code true
 assert_flag "$archive_test_output" rust true
+
+echo "CI change classifier tests passed."
