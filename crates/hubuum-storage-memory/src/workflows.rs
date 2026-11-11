@@ -859,7 +859,9 @@ impl TaskExecutionStorage for MemoryStorage {
                 .tasks
                 .get_mut(&task_id.id())
                 .expect("selected task remains present");
-            if task.kind == StorageTaskKind::SchemaValidation && has_schema_work {
+            if (task.kind == StorageTaskKind::SchemaValidation && has_schema_work)
+                || task.kind == StorageTaskKind::HistoryExpiry
+            {
                 task.status = StorageTaskStatus::Queued;
                 task.lease_expires_at = None;
                 task.claim_token = None;
@@ -869,7 +871,7 @@ impl TaskExecutionStorage for MemoryStorage {
                     task_id,
                     StorageTaskEventInput::new(
                         "queued",
-                        "Schema validation resumed from durable checkpoint after lease expiry",
+                        "Internal work resumed from durable checkpoint after lease expiry",
                     ),
                 )?;
                 continue;
@@ -1002,6 +1004,7 @@ impl TaskExecutionStorage for MemoryStorage {
         let produces_output = !matches!(
             &payload,
             StorageTaskCompletionPayload::Import
+                | StorageTaskCompletionPayload::HistoryExpiry
                 | StorageTaskCompletionPayload::Reindex
                 | StorageTaskCompletionPayload::SchemaValidation
         );
@@ -1042,8 +1045,22 @@ impl TaskExecutionStorage for MemoryStorage {
             *guard = state;
             return Ok(stopped);
         }
+        if stored.kind == StorageTaskKind::HistoryExpiry {
+            let evidence = state
+                .logical_identities
+                .record(StorageIdentityTarget::Task(lease.task_id()))?;
+            let checkpoint =
+                HistoryExpiryTaskCheckpoint::from_task(&stored.projection()?, &evidence)
+                    .map_err(invalid_contract_value)?;
+            if status.as_status() != StorageTaskStatus::Succeeded || !checkpoint.pass_finished() {
+                return Err(StorageError::invalid_input(
+                    "History expiry task cannot complete while its admitted batch remains pending",
+                ));
+            }
+        }
         match payload {
             StorageTaskCompletionPayload::Import
+            | StorageTaskCompletionPayload::HistoryExpiry
             | StorageTaskCompletionPayload::Reindex
             | StorageTaskCompletionPayload::SchemaValidation => {}
             StorageTaskCompletionPayload::RemoteCall(artifact) => {

@@ -51,7 +51,9 @@ impl TaskOwner {
     fn internal(&self) -> bool {
         matches!(
             self.kind,
-            StorageTaskKind::Reindex | StorageTaskKind::SchemaValidation
+            StorageTaskKind::Reindex
+                | StorageTaskKind::SchemaValidation
+                | StorageTaskKind::HistoryExpiry
         )
     }
 }
@@ -226,6 +228,27 @@ impl MemoryTaskCapacity {
                 others().collect(),
                 TaskCapacityRejection::Internal,
             )?;
+            if candidate.owner.kind == StorageTaskKind::HistoryExpiry {
+                let kind = policy.for_kind(candidate.owner.kind);
+                let scope = others()
+                    .filter(|entry| entry.owner.kind == candidate.owner.kind)
+                    .collect::<Vec<_>>();
+                check(kind.capacity(), scope.clone(), TaskCapacityRejection::Kind)?;
+                if matches!(change, CapacityChange::Admission)
+                    && scope
+                        .iter()
+                        .filter(|entry| {
+                            entry.outstanding && entry.owner.principal == candidate.owner.principal
+                        })
+                        .count() as u64
+                        >= kind.principal_outstanding().get()
+                {
+                    return Err(StorageError::task_capacity(
+                        TaskCapacityRejection::PrincipalKind,
+                    ));
+                }
+                return Ok(());
+            }
             return if matches!(change, CapacityChange::Claim) {
                 check(
                     policy.for_kind(candidate.owner.kind).capacity(),

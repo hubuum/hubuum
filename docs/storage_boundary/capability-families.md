@@ -474,6 +474,7 @@ only terminal updates (`succeeded`, `failed`, `partially_succeeded`, or
 | `export` | Export artifact |
 | `backup` | Backup artifact |
 | `remote_call` | Remote-call artifact |
+| `history_expiry` | None for a finished empty pass; an admitted batch must remain pending |
 
 The completion DTO validates the matrix before adapter dispatch. The adapter
 must additionally verify that the DTO's declared task kind matches the claimed

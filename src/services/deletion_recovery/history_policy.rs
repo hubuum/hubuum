@@ -4,12 +4,13 @@ use std::collections::BTreeSet;
 
 use hubuum_domain::{PrincipalId, PrincipalIdentity};
 use hubuum_storage_core::{
-    HistoryAuthorityRevision, HistoryHoldTransition, HistoryLifecycleControlChange,
-    HistoryLifecycleOperationEvidence, HistoryLifecycleScan, HistoryLifecycleSnapshot,
-    HistoryLifecycleStorage, HistoryPolicyApplyError, HistoryPolicyApplyRequest,
-    HistoryPolicyChange, HistoryPolicyPreview, HistoryPolicyRecord, HistoryPolicyReviewConflict,
-    HistoryPreviewCoverage, HistoryPreviewImpact, HistoryRetentionHold, LogicalIdentityStorage,
-    StorageIdentitySubject, StorageIdentityTarget, TaskRetentionStorage,
+    HistoryAuthorityRevision, HistoryExpiryTaskCheckpoint, HistoryHoldTransition,
+    HistoryLifecycleControlChange, HistoryLifecycleOperationEvidence, HistoryLifecycleScan,
+    HistoryLifecycleSnapshot, HistoryLifecycleStorage, HistoryPolicyApplyError,
+    HistoryPolicyApplyRequest, HistoryPolicyChange, HistoryPolicyPreview, HistoryPolicyRecord,
+    HistoryPolicyReviewConflict, HistoryPreviewCoverage, HistoryPreviewImpact,
+    HistoryRetentionHold, LogicalIdentityStorage, StorageIdentitySubject, StorageIdentityTarget,
+    TaskRetentionStorage,
 };
 
 use super::repository::{CheckpointRepository, CheckpointSession};
@@ -160,11 +161,20 @@ pub(crate) async fn apply(
 
 async fn commit_protected(
     context: &AppContext,
-    mut session: CheckpointSession,
+    session: CheckpointSession,
     change: HistoryLifecycleControlChange,
 ) -> Result<HistoryLifecycleSnapshot, ApiError> {
     let storage = storage_handle(context);
     let applied = storage.commit_history_lifecycle(change).await?;
+    protect_snapshot(context, session, applied).await
+}
+
+async fn protect_snapshot(
+    context: &AppContext,
+    mut session: CheckpointSession,
+    applied: HistoryLifecycleSnapshot,
+) -> Result<HistoryLifecycleSnapshot, ApiError> {
+    let storage = storage_handle(context);
     let expected_authority = applied.control().authority().clone();
     let capture = storage.capture_control_checkpoint().await?;
     if !capture
@@ -191,6 +201,19 @@ async fn commit_protected(
     .await
     .map_err(|_| unavailable("History policy protection worker failed"))??;
     Ok(applied)
+}
+
+pub(super) async fn protect_expiry(
+    context: &AppContext,
+    checkpoint: &HistoryExpiryTaskCheckpoint,
+) -> Result<(), ApiError> {
+    let session = protected_session(context, context.history_retention()).await?;
+    let snapshot = storage_handle(context).capture_history_lifecycle().await?;
+    checkpoint
+        .retained_manifest(&snapshot)
+        .map_err(|_| unavailable("History expiry lacks its original retained admission"))?;
+    protect_snapshot(context, session, snapshot).await?;
+    Ok(())
 }
 
 pub(crate) async fn list(

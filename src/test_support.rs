@@ -448,6 +448,9 @@ pub fn persisted_test_task_request(
     submitted_by: i32,
 ) -> Result<hubuum_storage_postgres::test_support::TestTaskCreate, ApiError> {
     let kind = match kind {
+        crate::models::TaskKind::HistoryExpiry => {
+            hubuum_storage_core::StorageTaskKind::HistoryExpiry
+        }
         crate::models::TaskKind::Import => hubuum_storage_core::StorageTaskKind::Import,
         crate::models::TaskKind::Export => hubuum_storage_core::StorageTaskKind::Export,
         crate::models::TaskKind::Backup => hubuum_storage_core::StorageTaskKind::Backup,

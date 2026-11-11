@@ -491,6 +491,14 @@ pub trait HistoryLifecycleStorage: Send + Sync {
         &self,
         request: HistoryExpiryAdmissionRequest,
     ) -> Result<HistoryExpiryAdmissionResult, StorageError>;
+    /// Advance one bounded page under the original task lease. Admission,
+    /// canonical audit, exclusion projection and the checkpoint commit together.
+    /// A retry resolves its admitted batch before any fresh selection. This
+    /// grants neither independent protection nor physical removal authority.
+    async fn process_history_expiry_task(
+        &self,
+        request: HistoryExpiryTaskRequest,
+    ) -> Result<HistoryExpiryTaskCheckpoint, StorageError>;
     async fn recover_history_lifecycle(
         &self,
         recovery: HistoryLifecycleRecovery,

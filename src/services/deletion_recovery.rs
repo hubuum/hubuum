@@ -5,6 +5,7 @@
 //! narrower restrictions; importing authority never releases those restrictions.
 
 mod cleanup;
+pub(crate) mod history_expiry;
 pub(crate) mod history_policy;
 mod reapplication;
 mod repository;

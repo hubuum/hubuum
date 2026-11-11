@@ -222,7 +222,7 @@ impl<'a> BoundedRun<'a> {
     }
 }
 
-async fn schema_collection_policy(
+pub(super) async fn schema_collection_policy(
     fixture: &Fixture,
     family: StorageIdentityHistoryKind,
     collection: i32,
@@ -277,7 +277,11 @@ async fn schema_collection_policy(
         .unwrap();
 }
 
-async fn live_edges(fixture: &Fixture, family: StorageIdentityHistoryKind, collection: i32) {
+pub(super) async fn live_edges(
+    fixture: &Fixture,
+    family: StorageIdentityHistoryKind,
+    collection: i32,
+) {
     if !matches!(
         family,
         StorageIdentityHistoryKind::ClassRelation | StorageIdentityHistoryKind::ObjectRelation
@@ -385,6 +389,19 @@ async fn create_closed(
         }
     }
     fact_on(connection, family, collection, false).await
+}
+
+pub(super) async fn append_closed_source(
+    fixture: &Fixture,
+    family: StorageIdentityHistoryKind,
+    collection: i32,
+) -> Result<(), PostgresStorageError> {
+    with_transaction(&fixture.owner_pool, async |connection| {
+        owner(connection).await?;
+        create_closed(connection, collection, family).await?;
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
 }
 
 async fn cleanup(
@@ -1029,7 +1046,7 @@ async fn finite_native_pass_revisits_restored_dependency_after_clearance(
 
 // Use the runner's separately proven restore target: primary archive fixtures
 // may retain real publication owners and must never be erased to open this gate.
-async fn restore_fixture() -> (Fixture, IsolatedRestoreTarget) {
+pub(super) async fn restore_fixture() -> (Fixture, IsolatedRestoreTarget) {
     use hubuum_storage_postgres::test_support::{
         integration_test_database_url, integration_test_restore_database_url,
         integration_test_restore_migration_database_url,

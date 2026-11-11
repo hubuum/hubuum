@@ -30,7 +30,7 @@ Access rules:
 
 ## Task kinds
 
-Current task kinds:
+Enabled task kinds:
 
 - `import`
 - `export`
@@ -39,6 +39,10 @@ Current task kinds:
 - `remote_call`
 - `schema_validation`
 - `schema_profiling`
+
+The closed task vocabulary also includes `history_expiry` for the gated history
+lifecycle foundation. Production workers do not claim it, and no public or
+periodic producer submits it. See [history retention](history_retention.md).
 
 Public task-producing endpoints today:
 
@@ -62,7 +66,7 @@ Public task-producing endpoints today:
 
 `waiting` is a durable, nonterminal state with no execution lease. Its original
 execution deadline continues to apply. The initial storage foundation supports
-private checkpoints for export and backup work; current built-in producers do
+private checkpoints for export, backup, and gated history expiry work; current built-in producers do
 not enter this state, and there is no public wait/resume endpoint or provider
 integration. Checkpoint contents and wake tokens are never part of task responses.
 See [durable waiting](task_admission.md#durable-waiting-foundation).

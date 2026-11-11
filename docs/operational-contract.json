@@ -2309,6 +2309,7 @@
             "prepare_object_relation",
             "prepare_task_details_purge",
             "process_event_fanout_batch",
+            "process_history_expiry_task",
             "process_schema_work",
             "publish",
             "publish_history_archive",
@@ -2816,6 +2817,7 @@
             "prepare_object_relation",
             "prepare_task_details_purge",
             "process_event_fanout_batch",
+            "process_history_expiry_task",
             "process_schema_work",
             "publish",
             "publish_history_archive",
@@ -2993,7 +2995,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         },
         {
@@ -3043,7 +3046,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         },
         {
@@ -3077,7 +3081,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         }
       ],
@@ -3101,7 +3106,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         },
         {
@@ -3135,7 +3141,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         },
         {
@@ -3187,7 +3194,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         },
         {
@@ -3221,7 +3229,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         }
       ],
@@ -3245,7 +3254,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         },
         {
@@ -3347,7 +3357,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         }
       ],
@@ -3389,7 +3400,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         },
         {
@@ -3451,7 +3463,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         },
         {

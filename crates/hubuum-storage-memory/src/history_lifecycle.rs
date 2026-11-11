@@ -4,6 +4,12 @@ use serde_json::Value;
 
 #[async_trait]
 impl HistoryLifecycleStorage for MemoryStorage {
+    async fn process_history_expiry_task(
+        &self,
+        request: HistoryExpiryTaskRequest,
+    ) -> Result<HistoryExpiryTaskCheckpoint, StorageError> {
+        expiry::process_task(self, request).await
+    }
     async fn admit_history_archive_execution(
         &self,
     ) -> Result<HistoryArchiveExecutionOwner, StorageError> {

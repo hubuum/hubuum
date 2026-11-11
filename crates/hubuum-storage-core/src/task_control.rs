@@ -66,6 +66,9 @@ impl StorageTaskCancellation {
 pub enum StorageTaskExecutionPhase {
     #[default]
     Uncommitted,
+    /// Expiry effects belong to retained history authority, independently of
+    /// task cancellation, detail retention and physical cleanup completion.
+    HistoryAuthority,
     ImportCommitted {
         at: DateTime<Utc>,
     },
@@ -91,7 +94,11 @@ impl StorageTaskControl {
             kind,
             cancellation: None,
             deadline: None,
-            phase: StorageTaskExecutionPhase::Uncommitted,
+            phase: if matches!(kind, StorageTaskKind::HistoryExpiry) {
+                StorageTaskExecutionPhase::HistoryAuthority
+            } else {
+                StorageTaskExecutionPhase::Uncommitted
+            },
             terminal_reason: None,
         }
     }
@@ -165,6 +172,13 @@ impl StorageTaskControl {
         phase: StorageTaskExecutionPhase,
         terminal_reason: Option<TaskStopReason>,
     ) -> Result<Self, StorageValidationError> {
+        if (kind == StorageTaskKind::HistoryExpiry)
+            != (phase == StorageTaskExecutionPhase::HistoryAuthority)
+        {
+            return Err(StorageValidationError::invalid(
+                "History expiry effects must retain their separate authority",
+            ));
+        }
         match phase {
             StorageTaskExecutionPhase::ImportCommitted { .. }
                 if kind != StorageTaskKind::Import =>

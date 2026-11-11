@@ -16,12 +16,29 @@ impl MemoryStorage {
             .get(&lease.task_id().id())
             .filter(|task| task.status.is_active() && task.lease_matches(&lease))
             .ok_or_else(invalid_task_lease)?;
-        if !matches!(task.kind, StorageTaskKind::Export | StorageTaskKind::Backup)
-            || task.control.phase() != StorageTaskExecutionPhase::Uncommitted
-        {
+        if !matches!(
+            task.kind,
+            StorageTaskKind::Export | StorageTaskKind::Backup | StorageTaskKind::HistoryExpiry
+        ) || !matches!(
+            task.control.phase(),
+            StorageTaskExecutionPhase::Uncommitted | StorageTaskExecutionPhase::HistoryAuthority
+        ) {
             return Err(StorageError::invalid_input(
-                "Only uncommitted export and backup tasks may wait",
+                "Only uncommitted export, backup or checkpointed history expiry tasks may wait",
             ));
+        }
+        if task.kind == StorageTaskKind::HistoryExpiry {
+            let evidence = guard
+                .logical_identities
+                .record(StorageIdentityTarget::Task(lease.task_id()))?;
+            let original = HistoryExpiryTaskCheckpoint::from_task(&task.projection()?, &evidence)
+                .and_then(|checkpoint| checkpoint.encode())
+                .map_err(invalid_contract_value)?;
+            if task.checkpoint.as_ref() != Some(&checkpoint) || original != checkpoint {
+                return Err(StorageError::invalid_input(
+                    "History expiry wait must preserve its committed checkpoint",
+                ));
+            }
         }
         let now = Utc::now();
         if let Some(reason) = task.control.stop_reason(now) {

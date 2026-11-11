@@ -11,13 +11,21 @@ It is intentionally implementation-focused. For public API behavior, see:
 
 The task system provides a generic framework for long-running server-side work.
 
-Current task kinds:
+Enabled task kinds:
 
 - `import`
 - `export`
 - `backup`
 - `reindex`
 - `remote_call`
+- `schema_validation`
+- `schema_profiling`
+
+The closed storage vocabulary also includes `history_expiry`. Its durable
+checkpoint and retained admission flow is implemented behind activation gates;
+production workers advertise only the seven enabled kinds. No public or periodic
+expiry submission or physical removal is enabled. See
+[history retention](history_retention.md).
 
 The goal is to keep task lifecycle, queueing, polling, and audit history generic, while letting each task kind supply its own execution logic and its own typed result storage.
 

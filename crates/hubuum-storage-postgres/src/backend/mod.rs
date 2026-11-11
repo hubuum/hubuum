@@ -32,6 +32,7 @@ pub(crate) mod deletion_control;
 pub(crate) use deletion_control::acknowledge_coordinator_drain_on;
 mod export_templates;
 mod history_lifecycle;
+pub(crate) use history_lifecycle::admit_history_expiry_on;
 pub(crate) use history_lifecycle::capture_on as capture_history_lifecycle_on;
 #[cfg(feature = "integration-test-support")]
 pub(crate) use history_lifecycle::require_history_exposure_safe_on;

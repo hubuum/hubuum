@@ -173,6 +173,12 @@ pub async fn claim_next_task(
             .await
             .optional()?;
             let Some(row) = row else { return Ok(None); };
+            if stored_task_kind(&row)? == StorageTaskKind::HistoryExpiry {
+                // Reader validation shares the claim transaction. Corrupt or
+                // unsupported continuation cannot become a failed task whose
+                // terminal cleanup would discard the original checkpoint.
+                super::history_expiry_task::checkpoint_for(connection, &row).await?;
+            }
             append_task_lifecycle_event(
                 connection,
                 &row,
@@ -340,9 +346,9 @@ pub async fn recover_expired_task_leases(
                     recovered.push(super::task_control::finish_stopped_on(connection, stale_task, reason, &provenance).await?);
                     continue;
                 }
-                if stale_task.status != "queued" && kind == StorageTaskKind::SchemaValidation && diesel::select(diesel::dsl::exists(crate::schema::schema_validation_work::table.filter(crate::schema::schema_validation_work::task_id.eq(stale_task.id)))).get_result::<bool>(connection).await? {
+                if stale_task.status != "queued" && (kind == StorageTaskKind::HistoryExpiry || (kind == StorageTaskKind::SchemaValidation && diesel::select(diesel::dsl::exists(crate::schema::schema_validation_work::table.filter(crate::schema::schema_validation_work::task_id.eq(stale_task.id)))).get_result::<bool>(connection).await?)) {
                     append_task_lifecycle_event(connection, &stale_task,
-                        StorageTaskEventInput::new("queued", "Schema validation resumed from durable checkpoint after lease expiry"),
+                        StorageTaskEventInput::new("queued", "Internal work resumed from durable checkpoint after lease expiry"),
                         &system_provenance(&stale_task)?).await?;
                     let row = diesel::update(tasks::tasks.filter(tasks::id.eq(stale_task.id))).set((
                         tasks::status.eq("queued"), tasks::lease_token.eq::<Option<Uuid>>(None),
@@ -474,6 +480,7 @@ pub async fn complete_task(
     }
     let row = match payload {
         StorageTaskCompletionPayload::Import
+        | StorageTaskCompletionPayload::HistoryExpiry
         | StorageTaskCompletionPayload::Reindex
         | StorageTaskCompletionPayload::SchemaValidation => {
             finalize_task(runtime, claimed, update, event, None).await?
@@ -563,6 +570,11 @@ pub async fn fail_task(
         | StorageTaskKind::Export
         | StorageTaskKind::Backup
         | StorageTaskKind::RemoteCall => validated_counts(1, 0, 1)?,
+        StorageTaskKind::HistoryExpiry => validated_counts(
+            stored.processed_items,
+            stored.success_items,
+            stored.failed_items,
+        )?,
         StorageTaskKind::Reindex | StorageTaskKind::SchemaValidation => {
             validated_counts(stored.processed_items, stored.success_items, 1)?
         }
@@ -745,6 +757,19 @@ async fn finalize_task_connection(
     {
         let provenance = worker_provenance(&row)?;
         return super::task_control::finish_stopped_on(connection, row, reason, &provenance).await;
+    }
+    if stored_task_kind(&row)? == StorageTaskKind::HistoryExpiry
+        && matches!(
+            update.status,
+            StorageTaskStatus::Succeeded | StorageTaskStatus::PartiallySucceeded
+        )
+    {
+        let checkpoint = super::history_expiry_task::checkpoint_for(connection, &row).await?;
+        if update.status != StorageTaskStatus::Succeeded || !checkpoint.pass_finished() {
+            return Err(PostgresStorageError::invalid_input(
+                "History expiry task cannot complete while its admitted batch remains pending",
+            ));
+        }
     }
     let recorded =
         append_task_lifecycle_event(connection, &row, event, &worker_provenance(&row)?).await?;
@@ -1071,7 +1096,9 @@ async fn recovered_counts(
         | StorageTaskKind::Export
         | StorageTaskKind::Backup
         | StorageTaskKind::RemoteCall => validated_counts(1, 0, 1),
-        StorageTaskKind::Reindex | StorageTaskKind::SchemaValidation => {
+        StorageTaskKind::Reindex
+        | StorageTaskKind::SchemaValidation
+        | StorageTaskKind::HistoryExpiry => {
             validated_counts(task.processed_items, task.success_items, task.failed_items)
         }
     }

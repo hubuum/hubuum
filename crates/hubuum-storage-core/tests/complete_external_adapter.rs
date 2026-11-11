@@ -33,6 +33,12 @@ struct CompleteExternalAdapter;
 
 #[async_trait]
 impl HistoryLifecycleStorage for CompleteExternalAdapter {
+    async fn process_history_expiry_task(
+        &self,
+        request: HistoryExpiryTaskRequest,
+    ) -> Result<HistoryExpiryTaskCheckpoint, StorageError> {
+        fixture_result()
+    }
     async fn admit_history_archive_execution(
         &self,
     ) -> Result<HistoryArchiveExecutionOwner, StorageError> {

@@ -67,13 +67,25 @@ pub async fn wait_task(
             let row = live_claimed_task(connection, claimed).await?;
             if !matches!(
                 stored_task_kind(&row)?,
-                StorageTaskKind::Export | StorageTaskKind::Backup
+                StorageTaskKind::Export | StorageTaskKind::Backup | StorageTaskKind::HistoryExpiry
             ) || row.import_effects_committed_at.is_some()
                 || row.remote_dispatched_at.is_some()
             {
                 return Err(PostgresStorageError::invalid_input(
-                    "Only uncommitted export and backup tasks may wait",
+                    "Only uncommitted export, backup or checkpointed history expiry tasks may wait",
                 ));
+            }
+            if stored_task_kind(&row)? == StorageTaskKind::HistoryExpiry {
+                let original = super::history_expiry_task::checkpoint_for(connection, &row)
+                    .await?
+                    .encode()?;
+                if row.task_checkpoint.as_deref() != Some(checkpoint.encoded())
+                    || original != checkpoint
+                {
+                    return Err(PostgresStorageError::invalid_input(
+                        "History expiry wait must preserve its committed checkpoint",
+                    ));
+                }
             }
             runnable_claimed_task(connection, claimed).await?;
             if row.execution_deadline_at.is_none() {
@@ -522,7 +534,7 @@ pub(super) async fn finish_stopped_on(
                 diesel::sql_query("UPDATE remote_call_results SET error=$2, side_effect_state=CASE WHEN response_status IS NULL THEN 'possibly_sent' ELSE 'response_received' END WHERE task_id=$1")
                     .bind::<Integer,_>(row.id).bind::<Text,_>(&summary).execute(connection).await?;
             }
-            StorageTaskKind::Import => {}
+            StorageTaskKind::Import | StorageTaskKind::HistoryExpiry => {}
         }
     }
     if kind == StorageTaskKind::Import && unattempted > 0 {

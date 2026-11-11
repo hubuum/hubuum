@@ -210,7 +210,7 @@ pub struct TaskAdmissionPolicy {
     principal: TaskScopeCapacity,
     collection: TaskScopeCapacity,
     internal: TaskScopeCapacity,
-    kinds: [TaskKindCapacity; 7],
+    kinds: [TaskKindCapacity; 8],
     cumulative_input_bytes_per_task: TaskByteLimit,
 }
 
@@ -222,7 +222,7 @@ struct PolicyWire {
     principal: TaskScopeCapacity,
     collection: TaskScopeCapacity,
     internal: TaskScopeCapacity,
-    kinds: [TaskKindCapacity; 7],
+    kinds: [TaskKindCapacity; 8],
     cumulative_input_bytes_per_task: TaskByteLimit,
 }
 
@@ -270,10 +270,15 @@ impl Default for TaskAdmissionPolicy {
             kinds: StorageTaskKind::ALL.map(|kind| {
                 TaskKindCapacity::new(
                     kind,
-                    scope(5_000, 64, 4 * 1024 * 1024 * 1024),
+                    if kind == StorageTaskKind::HistoryExpiry {
+                        scope(64, 1, 64 * 1024 * 1024)
+                    } else {
+                        scope(5_000, 64, 4 * 1024 * 1024 * 1024)
+                    },
                     limit(match kind {
                         StorageTaskKind::Backup => 1,
                         StorageTaskKind::SchemaProfiling => 2,
+                        StorageTaskKind::HistoryExpiry => 1,
                         _ => 100,
                     }),
                 )

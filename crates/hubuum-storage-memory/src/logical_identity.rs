@@ -373,9 +373,9 @@ impl IdentityRecord for MemoryTaskRecord {
                     target,
                     remote_target_id,
                 } => (None, None, *target, None, *remote_target_id),
-                TaskMetadataDetails::Import { .. } | TaskMetadataDetails::Backup { .. } => {
-                    (None, None, None, None, None)
-                }
+                TaskMetadataDetails::Import { .. }
+                | TaskMetadataDetails::Backup { .. }
+                | TaskMetadataDetails::HistoryExpiry => (None, None, None, None, None),
             };
             refs.extend(references([
                 (

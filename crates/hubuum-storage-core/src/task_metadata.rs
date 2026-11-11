@@ -117,6 +117,7 @@ impl TaskOutputMetadata {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TaskMetadataDetails {
+    HistoryExpiry,
     Import {
         dry_run: Option<bool>,
         atomicity: Option<TaskImportAtomicity>,
@@ -164,6 +165,7 @@ impl TaskMetadataDetails {
     #[must_use]
     pub const fn kind(&self) -> StorageTaskKind {
         match self {
+            Self::HistoryExpiry => StorageTaskKind::HistoryExpiry,
             Self::Import { .. } => StorageTaskKind::Import,
             Self::Export { .. } => StorageTaskKind::Export,
             Self::Backup { .. } => StorageTaskKind::Backup,
@@ -260,6 +262,7 @@ impl StorageTaskMetadata {
                 class_id: None,
                 computation_revision: None,
             },
+            StorageTaskKind::HistoryExpiry => TaskMetadataDetails::HistoryExpiry,
             StorageTaskKind::RemoteCall => TaskMetadataDetails::RemoteCall {
                 remote_target_id: None,
                 target: None,

@@ -466,6 +466,37 @@
         "eba9e7bae2e6",
         "ec148ae56749"
       ]
+    },
+    {
+      "id": "v0.0.22-gated-history-expiry-task-kind",
+      "baseline": "v0.0.22",
+      "expires": "2027-01-31",
+      "reason": "The closed task-kind vocabulary gains history_expiry for the gated durable history lifecycle. The shared schema also describes task responses, task-policy settings and subscription filters. Existing kinds remain supported; production workers and submission remain disabled for the new kind.",
+      "migration": "Regenerate clients from OpenAPI or extend closed task-kind enums before upgrading.",
+      "changelog_entry": "**Breaking (REST clients with closed task-kind enums):** the task vocabulary adds `history_expiry`.",
+      "fingerprints": [
+        "03369afa7aed",
+        "0cfa683284dd",
+        "150337ef6ab4",
+        "27a29fb5efd5",
+        "28a802668e0f",
+        "3a88a9cc1381",
+        "5c1fcaea43b9",
+        "6d452794c8fa",
+        "73d63ef3dc71",
+        "82707253cb27",
+        "9b27eb7bce97",
+        "9baf04980caa",
+        "a27a0640aa8d",
+        "ab992888208f",
+        "c0817b6b4d23",
+        "cb0a82fa9902",
+        "d84a51d2ff11",
+        "de567c38f7dc",
+        "e2f3c64138c4",
+        "e85b56ad1875",
+        "ed115ed42983"
+      ]
     }
   ]
 }

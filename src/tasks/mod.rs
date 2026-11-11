@@ -1,7 +1,7 @@
 pub(crate) mod control;
 mod execution;
 mod helpers;
-mod history;
+pub(crate) mod history;
 mod planning;
 mod preload;
 mod remote_call;

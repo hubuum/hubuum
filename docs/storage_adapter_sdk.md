@@ -65,6 +65,27 @@ policy changes remain subject to fresh admission checks. Native positions use
 canonical unsigned decimal strings and remain adapter-owned traversal hints.
 They are neither immutable membership nor deletion/recovery authority.
 
+**Breaking expiry task contract:** add `TaskKind::HistoryExpiry` to exhaustive
+matches and implement `HistoryLifecycleStorage::process_history_expiry_task`.
+Read `HistoryExpiryTaskPayload` and the bounded version-1 checkpoint without
+reinterpreting unknown actions, versions, task UUIDs or application images.
+Require initiation-bound authorization for fresh selection. Admission, required
+audit, exclusions, checkpoint and resident accounting must commit atomically;
+uncertain retries resolve the original retained manifest before selecting again.
+Preserve the separate `StorageTaskExecutionPhase::HistoryAuthority` across task
+cancellation and restore. Only an empty finished scan pass may complete without
+a removal phase; an admitted batch remains pending. Production workers use
+`TaskWorkerKinds::STANDARD` until activation is qualified. Leave unknown expiry
+formats unclaimed even when a worker supports the kind.
+
+Stop older API, worker, restore and administrator processes, back up the database,
+and apply lifecycle 000005 with refreshed grants before starting matching binaries. Its
+coordinated policy revision adds the eighth kind and weight without resetting
+existing configuration. Policy edits must include all eight entries. Rollback is
+refused after eighth-kind task/accounting/receipt evidence is retained; preserve
+independent recovery evidence and roll forward. Manual/periodic submission and
+physical removal remain disabled.
+
 Upgrade complete adapters and refresh runtime grants from the existing new
 migration. Production registration, physical removal and scheduling stay gated.
 

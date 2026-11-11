@@ -829,6 +829,7 @@ fn task_kind_to_storage(kind: TaskKind) -> StorageTaskKind {
         TaskKind::RemoteCall => StorageTaskKind::RemoteCall,
         TaskKind::SchemaValidation => StorageTaskKind::SchemaValidation,
         TaskKind::SchemaProfiling => StorageTaskKind::SchemaProfiling,
+        TaskKind::HistoryExpiry => StorageTaskKind::HistoryExpiry,
     }
 }
 
@@ -1063,7 +1064,9 @@ pub(crate) async fn cancel_task(
         .is_some_and(|id| id.id() == principal.user_id);
     let internal = matches!(
         stored.kind(),
-        StorageTaskKind::Reindex | StorageTaskKind::SchemaValidation
+        StorageTaskKind::Reindex
+            | StorageTaskKind::SchemaValidation
+            | StorageTaskKind::HistoryExpiry
     );
     if requestor.scopes().is_some()
         && (!is_owner || stored.scope_snapshot().token_id() != Some(requestor.token_meta.id()))

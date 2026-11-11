@@ -51,6 +51,26 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   adapter upgrade guidance.
   Upgrade every API, backup and publication producer before enabling expiry;
   retained expiry refuses subsequent Legacy startup.
+- **Breaking (REST clients with closed task-kind enums):** the task vocabulary adds `history_expiry`.
+  Regenerate clients from OpenAPI or extend closed task-kind enums before
+  upgrading. Complete task-policy updates must include its capacity and
+  scheduling weight; public and periodic submission remain disabled.
+- **Breaking storage SDK 0.20 task vocabulary:** `history_expiry` adds a closed
+  task kind, versioned payload/checkpoint reader and required
+  `HistoryLifecycleStorage::process_history_expiry_task` capability. Upgrade
+  adapters and exhaustive kind matches together. Stop older API, worker, restore
+  and administrator processes, back up the database, apply lifecycle migration
+  000005 and refresh grants before starting matching binaries. Include the eighth kind and scheduling
+  weight when editing task policy. Migration preserves all existing limits and
+  adds one execution, 64 outstanding runs, 64 MiB resident capacity, one run per
+  principal and weight one. Admission, required audit, exclusions and the original
+  task checkpoint commit atomically; restart retains exact batch membership.
+  Pending batches wait for independently protected execution, and task
+  cancellation preserves every retained history obligation. Unknown payload or
+  checkpoint versions stay unclaimed. Production workers keep their existing
+  seven-kind support; manual/periodic admission and physical cleanup remain
+  disabled. Retained eighth-kind work prevents downgrade; preserve recovery
+  evidence and roll forward.
 - Historical population reads preserve explicitly selected logical class UUIDs.
   Retained expiry gaps require original authorization facts and configured
   permission checks; unproved correspondence remains unavailable. Supported

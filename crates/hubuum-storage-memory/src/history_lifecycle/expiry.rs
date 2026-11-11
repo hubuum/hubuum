@@ -16,6 +16,12 @@ pub(super) async fn admit(
     storage: &MemoryStorage,
     request: HistoryExpiryAdmissionRequest,
 ) -> Result<HistoryExpiryAdmissionResult, StorageError> {
+    let application = current_scope(storage)?;
+    let mut state = storage.state.write_history_control(&application).await?;
+    admit_on(&mut state, request)
+}
+
+fn current_scope(storage: &MemoryStorage) -> Result<StorageExecutionPermit, StorageError> {
     let scope = storage.current_execution_scope();
     if scope.storage_callback_active() || scope.history_read_override().is_some() {
         return Err(StorageError::unavailable(
@@ -34,7 +40,109 @@ pub(super) async fn admit(
                 "Expiry selection requires original history-aware application admission",
             )
         })?;
-    let mut state = storage.state.write_history_control(application).await?;
+    Ok(application.clone())
+}
+
+pub(super) async fn process_task(
+    storage: &MemoryStorage,
+    request: HistoryExpiryTaskRequest,
+) -> Result<HistoryExpiryTaskCheckpoint, StorageError> {
+    let lease = request.lease().clone();
+    let application = current_scope(storage)?;
+    let mut guard = storage.state.write_history_control(&application).await?;
+    let stored = task_for_expiry(&guard, &lease)?;
+    let evidence = guard
+        .logical_identities
+        .record(StorageIdentityTarget::Task(lease.task_id()))?;
+    let checkpoint = HistoryExpiryTaskCheckpoint::from_task(&stored, &evidence)
+        .map_err(invalid_contract_value)?;
+    let snapshot = guard.history_lifecycle_snapshot()?;
+    if checkpoint.admitted() {
+        checkpoint
+            .retained_manifest(&snapshot)
+            .map_err(invalid_contract_value)?;
+        return Ok(checkpoint);
+    }
+    if stored.checkpoint().is_none()
+        && snapshot
+            .control()
+            .authority()
+            .expiry()
+            .intents()
+            .iter()
+            .any(|intent| {
+                intent.manifest().run() == Uuid::from_bytes(*checkpoint.task_identity().as_bytes())
+            })
+    {
+        return Err(StorageError::unavailable(
+            "Recover the original history expiry task checkpoint",
+        ));
+    }
+    let Some(selection) = checkpoint
+        .selection_request(snapshot.fence())
+        .map_err(invalid_contract_value)?
+    else {
+        return Ok(checkpoint);
+    };
+    // Stage control, events, checkpoint and accounting together. Any failure
+    // leaves the original claim and exact retained membership unchanged.
+    request
+        .require_selection_authorization(&checkpoint)
+        .map_err(invalid_contract_value)?;
+    let mut state = guard.clone();
+    let page = admit_on(&mut state, selection)?;
+    let next = checkpoint
+        .record_page(&page)
+        .map_err(invalid_contract_value)?;
+    let encoded = next.encode().map_err(invalid_contract_value)?;
+    task_for_expiry(&state, &lease)?;
+    let task = state
+        .tasks
+        .get_mut(&lease.task_id().id())
+        .expect("validated task");
+    task.checkpoint = Some(encoded);
+    task.status = StorageTaskStatus::Running;
+    task.updated_at = Utc::now();
+    state.account_task_checkpoint(lease.task_id())?;
+    state.append_task_event_record(
+        lease.task_id(),
+        StorageTaskEventInput::new("running", "History expiry continuation committed").with_data(
+            Some(serde_json::json!({
+                "batch": next.batch(), "admitted": next.admitted(),
+                "pass_finished": next.pass_finished(), "scanned": page.scanned(),
+            })),
+        ),
+    )?;
+    task_for_expiry(&state, &lease)?;
+    *guard = state;
+    Ok(next)
+}
+
+fn task_for_expiry(
+    state: &MemoryState,
+    lease: &StorageTaskLease,
+) -> Result<StorageTask, StorageError> {
+    state.ensure_task_lease_current(lease)?;
+    let task = state
+        .tasks
+        .get(&lease.task_id().id())
+        .filter(|task| task.status.is_active() && task.lease_matches(lease))
+        .ok_or_else(invalid_task_lease)?;
+    if task.control.deadline().is_none() {
+        return Err(StorageError::conflict(
+            "History expiry requires a pinned task deadline",
+        ));
+    }
+    if let Some(reason) = task.control.stop_reason(Utc::now()) {
+        return Err(StorageError::task_stopped(reason));
+    }
+    task.projection()
+}
+
+fn admit_on(
+    state: &mut MemoryState,
+    request: HistoryExpiryAdmissionRequest,
+) -> Result<HistoryExpiryAdmissionResult, StorageError> {
     if state
         .runtime_registrations
         .values()
@@ -306,6 +414,8 @@ fn bounded_encoded_bytes(
 
 #[cfg(test)]
 mod progress_tests;
+#[cfg(test)]
+mod task_tests;
 
 #[cfg(test)]
 mod tests {

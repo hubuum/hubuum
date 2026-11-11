@@ -10,7 +10,7 @@ use crate::errors::ApiError;
 use crate::restores::ApplicationWorkCompletion;
 use crate::storage::{ExecutionStorage, StorageHandle};
 
-pub(super) async fn run<F, T>(storage: &StorageHandle, future: F) -> Result<T, ApiError>
+pub(crate) async fn run<F, T>(storage: &StorageHandle, future: F) -> Result<T, ApiError>
 where
     F: Future<Output = Result<T, ApiError>>,
 {

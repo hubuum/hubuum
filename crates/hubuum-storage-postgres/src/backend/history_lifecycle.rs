@@ -11,6 +11,7 @@ use diesel::{
     sql_query,
 };
 use diesel_async::RunQueryDsl;
+pub(crate) use expiry::admit_on as admit_history_expiry_on;
 use hubuum_storage_core::*;
 use serde::Deserialize;
 use serde_json::Value;
@@ -618,6 +619,15 @@ impl HistoryLifecycleStorage for PostgresStorage {
         request: HistoryExpiryAdmissionRequest,
     ) -> Result<HistoryExpiryAdmissionResult, StorageError> {
         expiry::admit(self, request).await
+    }
+    async fn process_history_expiry_task(
+        &self,
+        request: HistoryExpiryTaskRequest,
+    ) -> Result<HistoryExpiryTaskCheckpoint, StorageError> {
+        let scope = expiry::current_scope(self)?;
+        crate::operations::history_expiry_task::process(self.runtime(), scope, request)
+            .await
+            .map_err(Into::into)
     }
     async fn scan_history_lifecycle(
         &self,

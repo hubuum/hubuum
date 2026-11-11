@@ -3,7 +3,7 @@ use rstest::rstest;
 use serde_json::json;
 use std::future::{Future, ready};
 
-async fn fixture_write<T>(storage: &MemoryStorage, work: impl Future<Output = T>) -> T {
+pub(super) async fn fixture_write<T>(storage: &MemoryStorage, work: impl Future<Output = T>) -> T {
     let scope = storage.current_execution_scope();
     if scope.application_access_override().is_none() {
         return work.await;
@@ -24,7 +24,7 @@ async fn fixture_write<T>(storage: &MemoryStorage, work: impl Future<Output = T>
     result
 }
 
-async fn seed(
+pub(super) async fn seed(
     storage: &MemoryStorage,
     family: StorageIdentityHistoryKind,
     name: &str,

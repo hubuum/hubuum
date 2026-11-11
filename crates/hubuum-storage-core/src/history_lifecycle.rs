@@ -15,6 +15,8 @@ mod online_intent;
 pub use online_intent::*;
 mod online;
 pub use online::*;
+mod task;
+pub use task::*;
 mod publication;
 pub use publication::*;
 mod producer;

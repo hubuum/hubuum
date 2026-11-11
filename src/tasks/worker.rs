@@ -3,7 +3,7 @@ use crate::services::artifacts::TaskPublication;
 use hubuum_storage_core::HistoryPublicationKind;
 use hubuum_storage_core::{
     StorageBackupBudget, StorageTaskClaimRequest, StorageTaskLeaseDuration, TaskExecutionStorage,
-    TaskWorkerId,
+    TaskWorkerId, TaskWorkerKinds,
 };
 use std::future::Future;
 use std::sync::{LazyLock, Mutex, Once, OnceLock};
@@ -383,7 +383,8 @@ async fn process_admitted_task(
         worker,
         StorageTaskLeaseDuration::from_milliseconds(settings.lease_duration().as_millis() as i64)
             .expect("validated worker lease"),
-    );
+    )
+    .with_kinds(TaskWorkerKinds::STANDARD);
     let task = match super::history::run(context.backend(), claim_next_task(context, request)).await
     {
         Ok(task) => task,
@@ -927,12 +928,15 @@ async fn process_claimed_task(
     task: &ClaimedTask,
     backup_settings: &BackupSettings,
 ) -> Result<TaskStatus, ApiError> {
+    let task_kind = task_kind_from_db(&task.kind)?;
+    if task_kind == TaskKind::HistoryExpiry {
+        return crate::services::deletion_recovery::history_expiry::execute(context, task).await;
+    }
     if task.checkpoint.is_some() {
         return Err(ApiError::BadRequest(
             "This worker does not support the task's stored checkpoint".to_string(),
         ));
     }
-    let task_kind = task_kind_from_db(&task.kind)?;
     if task_kind == TaskKind::SchemaValidation {
         return crate::services::tasks::execute_schema_validation(context, task).await;
     }
@@ -1022,7 +1026,7 @@ async fn dispatch_claimed_task(
             .await
         }
         TaskKind::RemoteCall => execute_remote_call_task(context, task, &principal, scopes).await,
-        TaskKind::Reindex | TaskKind::SchemaValidation => {
+        TaskKind::Reindex | TaskKind::SchemaValidation | TaskKind::HistoryExpiry => {
             unreachable!("reindex tasks are dispatched before principal loading")
         }
     }

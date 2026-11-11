@@ -58,7 +58,8 @@
     "reindex",
     "remote_call",
     "schema_validation",
-    "schema_profiling"
+    "schema_profiling",
+    "history_expiry"
   ],
   "binaries": [
     "hubuum-admin",

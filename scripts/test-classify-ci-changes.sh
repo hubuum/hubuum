@@ -90,6 +90,9 @@ for policy_input in src/models/history_lifecycle.rs src/api/v1/handlers/history_
   crates/hubuum-storage-core/src/history_lifecycle/authorization.rs \
   crates/hubuum-storage-core/src/history_lifecycle/authorization/tests.rs \
   crates/hubuum-storage-core/src/history_lifecycle/online/scan.rs \
+  crates/hubuum-storage-core/src/history_lifecycle/task.rs \
+  crates/hubuum-storage-core/src/history_lifecycle/task/tests.rs \
+  crates/hubuum-domain/src/task_kind.rs \
   crates/hubuum-storage-core/src/record_identity.rs crates/hubuum-storage-core/src/logical_identity.rs; do
   policy_output="$(bash "$classifier" "$policy_input")"
   assert_flag "$policy_output" code true
@@ -102,6 +105,10 @@ done
 for policy_storage_input in crates/hubuum-storage-postgres/tests/history_lifecycle.rs \
   crates/hubuum-storage-postgres/tests/history_expiry/mod.rs \
   crates/hubuum-storage-postgres/tests/history_expiry/bounded_scan.rs \
+  crates/hubuum-storage-postgres/tests/history_expiry/task.rs \
+  crates/hubuum-storage-postgres/src/operations/history_expiry_task.rs \
+  crates/hubuum-storage-memory/src/history_lifecycle/expiry/task_tests.rs \
+  src/services/deletion_recovery/history_expiry.rs \
   crates/hubuum-storage-memory/src/history_lifecycle/expiry/progress_tests.rs \
   crates/hubuum-storage-postgres/src/runtime/history_publication.rs \
   crates/hubuum-storage-postgres/migrations/2026-11-03-000005_history_lifecycle/up.sql \

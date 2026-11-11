@@ -79,6 +79,7 @@ for path in "$@"; do
       src/config/running.rs | src/api/v1/handlers/runtime_config.rs | src/models/query_usage.rs | src/models/credential_approval.rs | \
       src/models/runtime_settings.rs | src/models/runtime_settings/* | src/api/v1/handlers/client_config.rs | \
       src/api/v1/handlers/credential_approvals.rs | crates/hubuum-events-core/src/* | \
+      crates/hubuum-domain/src/task_kind.rs | \
       crates/hubuum-domain/src/relation_label.rs | crates/hubuum-domain/src/relation_limit.rs | \
       crates/hubuum-domain/src/template_alias.rs)
       openapi=true

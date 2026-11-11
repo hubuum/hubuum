@@ -318,18 +318,40 @@ measured resource/liveness acceptance remain unfinished.
 
 ### Executor implementation and acceptance map
 
-The dedicated `history_expiry` task kind and payload are planned closed-vocabulary
-SDK changes. The action remains `expire_configured_hot_history`. Admission and
-periodic scheduling remain disabled until the online gates pass; configuring an
-expiry policy alone does not enable either path.
+The dedicated `history_expiry` kind now has a closed version-1 payload and
+checkpoint reader in SDK 0.20. The action is `expire_configured_hot_history`.
+`process_history_expiry_task` commits native admission, canonical audit, read
+exclusions, task checkpoint and resident accounting together. Its run UUID is the
+original task UUID. A replacement lease resolves that exact retained batch before
+any further selection; missing or changed correspondence fails closed. Unknown
+payload/checkpoint versions remain queued on both adapters. A finished empty pass
+does not become a watermark for a later run.
+
+Manual selection pages require current configured unscoped administrator
+authorization tied to the original principal UUID. Recovery can preserve an
+already admitted batch after that principal is deleted. The executor independently
+publishes and reads back authority, then durably waits for a future qualified
+removal phase. Failed protection keeps the original batch pending. Cancellation
+does not undo exclusions, discharge copy obligations or imply physical cleanup.
+
+Lifecycle migration 000005 appends the new per-kind capacity and weight in one
+policy revision while preserving all existing limits, lanes and reservations.
+Persisted eighth-kind work prevents downgrade. Stop older API, worker, restore
+and administrator processes, back up the database, apply the migration and
+refresh grants, then start matching eight-kind binaries. Include the new entries
+in policy edits; preserve recovery evidence and roll
+forward after new work is retained. Production workers still advertise their
+existing seven kinds. Manual/periodic submission, coalescing and physical removal
+remain disabled until the remaining gates pass; configuring an expiry policy
+alone does not enable either path.
 
 | Area | Implementation target and required evidence |
 | --- | --- |
 | Admission and authorization | Manual runs require the configured unscoped administrator authorization; periodic work uses its retained policy/root initiation. Preserve UUID authority after principal/task deletion, and reject stale application incarnations. |
 | Scheduling class | Both triggers use the existing internal-work lane and shared persisted scheduling policy. Keep ordinary slots and the existing internal reservation unchanged; one-slot deployments retain shared mode. Exercise mixed ordinary/internal backlogs and fairness under replenished work. |
-| Initial per-kind policy | Target one execution, 64 outstanding runs, 64 MiB resident reservation and one outstanding run per principal; weight one. Existing deployment/principal/collection/internal limits remain additional constraints. Apply the coordinated policy revision atomically, preserving all configured limits for existing kinds. These defaults are not measured H1/H4 acceptance. |
+| Initial per-kind policy | One execution, 64 outstanding runs, 64 MiB resident capacity and one outstanding run per principal; weight one. The internal lane budget also applies; ordinary deployment/principal/collection lane budgets remain separate. The coordinated migration preserves configured limits for existing kinds. These defaults are not measured H1/H4 acceptance. |
 | Coalescing | One active task per exact family/stable scope key, shared by manual and periodic triggers. Concurrent/retried submissions return the authorized existing reference without replacing its original trigger/principal/clock. No allocated-ID or timestamp cursor proves completion. |
-| Ownership and restart | Durable task lease/checkpoint owns a fixed admitted batch. Restart resumes that membership before selecting new work. Lost producers/publications require positive fencing; deadlines alone cannot release obligations or reservations. |
+| Ownership and restart | Native admission and the task checkpoint commit together. Replacement claims resume fixed membership and original clocks; an absent/mismatched checkpoint cannot replace an admitted batch. Lost producers/publications still require positive fencing; deadlines alone cannot release obligations or reservations. |
 | Cancellation | Stop new selection and settle execution ownership while retaining every committed exclusion, pending copy obligation and original receipt. Terminal task cancellation does not prove physical cleanup complete. |
 | Workers and downgrade | Advertise support only with the implemented payload/checkpoint reader. Older workers must leave unsupported work unclaimed. Upgrade SDK adapters and all producers/workers before enabling the kind; do not silently reinterpret or discard it on downgrade. |
 | Metadata and discovery | Bounded payload-free progress identifies scope, run/batch, actual governing revisions, blockers and remaining obligations. Advertise enabled/configured state and effective limits only when supported; regenerate OpenAPI/classifier coverage with the kind. |
