@@ -24,7 +24,8 @@ CREATE TABLE hubuum_control.history_expiry_members (
     valid_to TIMESTAMPTZ CHECK (valid_to IS NULL OR valid_to >= valid_from),
     PRIMARY KEY (family,resource_uuid,version_uuid)
 );
-CREATE INDEX history_expiry_members_as_of ON hubuum_control.history_expiry_members(family,resource_uuid,valid_from);
+-- The table is new and empty in this transaction; the timeouts above bound DDL waits.
+CREATE INDEX history_expiry_members_as_of ON hubuum_control.history_expiry_members(family,resource_uuid,valid_from); -- hubuum-compat: bounded-transactional-index
 REVOKE ALL ON hubuum_control.history_expiry_members FROM PUBLIC;
 
 ALTER TABLE hubuum_control.runtime_registrations ADD COLUMN history_protocol SMALLINT NOT NULL DEFAULT 0 CHECK (history_protocol IN (0,1));
@@ -87,8 +88,9 @@ REVOKE ALL ON hubuum_control.history_archive_publication_claims FROM PUBLIC;
 ALTER TABLE hubuum_control.history_publication_producers ADD COLUMN publication_claimed BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE hubuum_control.history_archive_captures ADD COLUMN publication_claimed BOOLEAN NOT NULL DEFAULT FALSE;
 
-CREATE INDEX history_publication_runtime ON hubuum_control.history_publication_owners(runtime_id);
-CREATE INDEX history_publication_generation ON hubuum_control.history_publication_owners(generation);
+-- Both indexes cover the new, still-empty owner table under the same DDL timeouts.
+CREATE INDEX history_publication_runtime ON hubuum_control.history_publication_owners(runtime_id); -- hubuum-compat: bounded-transactional-index
+CREATE INDEX history_publication_generation ON hubuum_control.history_publication_owners(generation); -- hubuum-compat: bounded-transactional-index
 REVOKE ALL ON hubuum_control.history_publication_control,hubuum_control.history_publication_owners FROM PUBLIC;
 
 -- Productive entry takes this gate AFTER application/deletion authority and
