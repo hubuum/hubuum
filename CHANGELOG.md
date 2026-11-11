@@ -312,6 +312,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- The runtime permission proxy preserves external task-read, bulk-read and
+  cancellation decisions instead of substituting default owner/admin behavior.
+
 - Runtime-settings refresh failures during application admission mark security
   policy stale. Reconciliation preserves an explicitly selected external
   permission backend when runtime ownership is released, rather than replacing

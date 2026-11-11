@@ -17,7 +17,9 @@ use crate::storage::runtime_settings::AppliedRuntimeSettings;
 use crate::traits::PrincipalIdAccessor;
 
 use super::backend::{CompleteCollectionCandidateLimit, PermissionBackend};
-use super::types::{PermissionDecision, PermissionRequest, PrincipalRef};
+use super::types::{
+    AuthorizationResult, PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef,
+};
 
 /// Authorization policy selected for one permission-aware application call.
 #[derive(Clone, Copy)]
@@ -128,6 +130,50 @@ impl PermissionBackend for SwappablePermissionBackend {
         requests: Vec<PermissionRequest>,
     ) -> Result<Vec<PermissionDecision>, ApiError> {
         self.backend()?.authorize_many(principal, requests).await
+    }
+
+    async fn authorize(
+        &self,
+        principal: &PrincipalRef,
+        request: PermissionRequest,
+    ) -> Result<PermissionDecision, ApiError> {
+        self.backend()?.authorize(principal, request).await
+    }
+
+    async fn authorize_candidates(
+        &self,
+        principal: &PrincipalRef,
+        requests: Vec<PermissionRequest>,
+    ) -> Result<Vec<AuthorizationResult>, ApiError> {
+        self.backend()?
+            .authorize_candidates(principal, requests)
+            .await
+    }
+
+    async fn authorize_task(
+        &self,
+        principal: &PrincipalRef,
+        task: &ResourceRef,
+    ) -> Result<PermissionDecision, ApiError> {
+        self.backend()?.authorize_task(principal, task).await
+    }
+
+    async fn authorize_task_cancellation(
+        &self,
+        principal: &PrincipalRef,
+        task: &ResourceRef,
+    ) -> Result<PermissionDecision, ApiError> {
+        self.backend()?
+            .authorize_task_cancellation(principal, task)
+            .await
+    }
+
+    async fn authorize_tasks(
+        &self,
+        principal: &PrincipalRef,
+        tasks: &[ResourceRef],
+    ) -> Result<Vec<PermissionDecision>, ApiError> {
+        self.backend()?.authorize_tasks(principal, tasks).await
     }
 
     async fn collections_user_can(
@@ -670,6 +716,36 @@ mod tests {
                 "Explicit external deployment policy must be retained"
             );
         }
+    }
+
+    #[rstest::rstest]
+    #[case::single(false)]
+    #[case::batch(true)]
+    #[actix_web::test]
+    async fn external_task_policy_can_deny_its_owner_through_the_runtime_proxy(
+        #[case] batch: bool,
+    ) {
+        use crate::permissions::test_support::MockTreetopBackend;
+
+        let context = AppContext::new(StorageHandle::memory(), Arc::new(MockTreetopBackend::new()));
+        let principal = PrincipalRef::new(7, []);
+        let task = ResourceRef::task(5, Some(principal.user_id));
+        let decisions = if batch {
+            context
+                .permission_backend()
+                .authorize_tasks(&principal, &[task])
+                .await
+                .unwrap()
+        } else {
+            vec![
+                context
+                    .permission_backend()
+                    .authorize_task(&principal, &task)
+                    .await
+                    .unwrap(),
+            ]
+        };
+        assert_eq!(decisions, vec![PermissionDecision::Deny]);
     }
 
     #[test]
