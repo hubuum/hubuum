@@ -178,6 +178,8 @@
   agreed release milestone. Enable correctness and container CI on project
   branches without publishing them as stable or `main` artifacts.
 - Project #3 in this repository targets `project/workload-lifecycle`.
+- Project #6 targets `project/auth-support`; follow `CONTRIBUTING.md` for its
+  prerequisite review gates and candidate acceptance policy.
 
 ### Stacked Pull Requests
 

@@ -16,6 +16,7 @@ mod observed;
 mod operational;
 mod query_observations;
 mod registry;
+pub(crate) mod runtime_settings;
 
 pub use context::StorageContext;
 #[cfg(feature = "postgres-bench")]

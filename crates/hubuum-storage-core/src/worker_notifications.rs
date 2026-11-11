@@ -10,7 +10,7 @@ pub enum StorageNotification {
     EventFanout,
     EventDelivery,
     TaskQueue,
-    QueryObservationControl,
+    RuntimeSettings,
 }
 
 impl StorageNotification {
@@ -19,7 +19,7 @@ impl StorageNotification {
         Self::EventFanout,
         Self::EventDelivery,
         Self::TaskQueue,
-        Self::QueryObservationControl,
+        Self::RuntimeSettings,
     ];
 
     #[must_use]
@@ -28,7 +28,7 @@ impl StorageNotification {
             Self::EventFanout => "event_fanout",
             Self::EventDelivery => "event_delivery",
             Self::TaskQueue => "task_queue",
-            Self::QueryObservationControl => "query_observation_control",
+            Self::RuntimeSettings => "runtime_settings",
         }
     }
 }
@@ -68,7 +68,7 @@ mod tests {
                 StorageNotification::EventFanout,
                 StorageNotification::EventDelivery,
                 StorageNotification::TaskQueue,
-                StorageNotification::QueryObservationControl,
+                StorageNotification::RuntimeSettings,
             ]
         );
         assert_eq!(StorageNotification::EventFanout.as_str(), "event_fanout");
@@ -77,5 +77,9 @@ mod tests {
             "event_delivery"
         );
         assert_eq!(StorageNotification::TaskQueue.as_str(), "task_queue");
+        assert_eq!(
+            StorageNotification::RuntimeSettings.as_str(),
+            "runtime_settings"
+        );
     }
 }

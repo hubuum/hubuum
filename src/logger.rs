@@ -14,6 +14,25 @@ use tracing_subscriber::{
 
 use crate::models::Permissions;
 
+type LogReload = tracing_subscriber::reload::Handle<EnvFilter, tracing_subscriber::Registry>;
+static LOG_RELOAD: std::sync::OnceLock<std::sync::Mutex<(String, LogReload)>> =
+    std::sync::OnceLock::new();
+
+pub(crate) fn reload_log_filter(value: &str) -> Result<(), String> {
+    let Some(state) = LOG_RELOAD.get() else {
+        return Ok(());
+    };
+    let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
+    if state.0 != value {
+        state
+            .1
+            .reload(EnvFilter::try_new(value).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+        state.0 = value.to_string();
+    }
+    Ok(())
+}
+
 pub struct HubuumLoggingFormat;
 
 impl HubuumLoggingFormat {}
@@ -43,6 +62,7 @@ where
 {
     let filter = EnvFilter::try_new(log_level)
         .map_err(|err| format!("Error parsing log level '{log_level}': {err}"))?;
+    let (filter, reload) = tracing_subscriber::reload::Layer::new(filter);
     let telemetry_layer = tracer.map(|tracer| {
         tracing_opentelemetry::layer()
             .with_tracer(tracer)
@@ -66,7 +86,9 @@ where
         )
         .with(telemetry_layer)
         .try_init()
-        .map_err(|err| format!("Failed to initialize logging: {err}"))
+        .map_err(|err| format!("Failed to initialize logging: {err}"))?;
+    let _ = LOG_RELOAD.set(std::sync::Mutex::new((log_level.to_string(), reload)));
+    Ok(())
 }
 
 pub fn build_git_sha() -> &'static str {

@@ -382,10 +382,16 @@ as token issuance and external synchronization. The operation retains
 These are synchronization metadata
 and credential invalidation effects, with no independent lifecycle audit event.
 
-## Runtime observation control
+## Runtime settings
 
-`QueryUsageStorage::set_query_observation_control` changes deployment configuration,
-not a domain resource. It atomically replaces the shared override and publishes a
-commit-ordered wake-up on notification-capable adapters. The administrator handler
-logs the actor and enabled state; this operation does not create a domain audit
-event. Logical restores preserve the setting and portable backups exclude it.
+`RuntimeSettingsStorage::update_runtime_settings` changes deployment
+configuration, not a domain resource. In one atomic operation it checks the
+group's expected revision, replaces the group's assignment, advances its
+revision, and appends one runtime settings audit record with the actor,
+request, correlation, previous value, and new value. Notification-capable
+adapters publish a commit-ordered `RuntimeSettings` wake-up in the same
+transaction. A stale revision returns `RevisionConflict` with the current
+revision; requesting the current assignment returns `Unchanged` without a
+revision, audit record, or notification. These records are separate from the
+domain event stream. Logical restores preserve settings and their audit
+records, and portable backups exclude them.

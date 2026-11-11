@@ -72,6 +72,7 @@ for path in "$@"; do
       src/api/v1/handlers/auth.rs | src/models/auth_session.rs | src/models/credential_activity.rs | \
       src/models/history/computed.rs | src/api/v1/handlers/classes/history_computed.rs | src/api/v1/handlers/classes/history_population.rs | src/api/v1/handlers/classes/history_relations.rs | \
       src/config/running.rs | src/api/v1/handlers/runtime_config.rs | src/models/query_usage.rs | src/models/credential_approval.rs | \
+      src/models/runtime_settings.rs | src/models/runtime_settings/* | src/api/v1/handlers/client_config.rs | \
       src/api/v1/handlers/credential_approvals.rs | crates/hubuum-events-core/src/* | \
       crates/hubuum-domain/src/relation_label.rs | crates/hubuum-domain/src/relation_limit.rs | \
       crates/hubuum-domain/src/template_alias.rs)

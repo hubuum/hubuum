@@ -5,6 +5,13 @@ notification workers as one process lifecycle. Workers start only after database
 initialization and HTTP binding succeed. Every worker thread is named, retained,
 and given the same cancellation signal.
 
+Worker counts remain deployment settings. Runtime policies change polling,
+batches, lease/heartbeat pairs for new claims, recovery, admission and retention.
+Settings notifications wake idle loops; existing operations retain their policy.
+Token and event retention loops stay present while disabled so they can be
+enabled without spawning a new worker. API-only processes do not start these
+loops. See [runtime settings](runtime_settings.md) for application boundaries.
+
 The generic task workers also execute bounded computed-field `reindex` tasks.
 These tasks are internal: definition mutations and manual class rebuild requests
 create them transactionally, and clients inspect them through the normal task

@@ -1,3 +1,4 @@
+use crate::config::runtime::current as get_config;
 mod query;
 use query::*;
 mod hydration;
@@ -27,7 +28,7 @@ use serde_json::json;
 use crate::config::{
     DEFAULT_EXPORT_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_EXPORT_MAX_OUTPUT_BYTES,
     DEFAULT_EXPORT_OUTPUT_RETENTION_HOURS, DEFAULT_EXPORT_STAGE_TIMEOUT_MS,
-    DEFAULT_EXPORT_STORAGE_QUERY_BUDGET_MS, DEFAULT_EXPORT_TEMPLATE_MAX_OBJECTS, get_config,
+    DEFAULT_EXPORT_STORAGE_QUERY_BUDGET_MS, DEFAULT_EXPORT_TEMPLATE_MAX_OBJECTS,
 };
 use crate::errors::ApiError;
 use crate::models::retention::FutureRetention;

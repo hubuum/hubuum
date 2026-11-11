@@ -1045,6 +1045,23 @@ snapshot = "class authorization binding and declarations share a locked mutation
 invalid_error = "InvalidInput"
 unsupported_error = "InvalidInput"
 
+[methods."RuntimeSettingsStorage::list_runtime_settings_changes"]
+effect = "page_read"
+carrier = "StorageRuntimeSettingsHistoryQuery"
+profile = "runtime_settings_changes"
+
+[query_profiles.runtime_settings_changes]
+shape = "page"
+filters = ["group", "revision strictly before the optional bound"]
+sorts = ["revision descending"]
+cursor = "caller-supplied revision bound; the last returned revision continues the page"
+visibility = "every audit record of the group; the application restricts callers to unscoped administrators"
+count = "none"
+snapshot = "one read"
+bounds = "1 to MAX_RUNTIME_SETTINGS_HISTORY_PAGE records"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
 [methods."QueryUsageStorage::list_query_usage"]
 effect = "complete_read"
 carrier = "StorageQueryUsageScope"

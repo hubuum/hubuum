@@ -2,6 +2,17 @@
   "schema_version": 1,
   "exceptions": [
     {
+      "id": "shared-pagination-default-validation",
+      "baseline": "v0.0.21",
+      "expires": "2027-03-31",
+      "reason": "Deployment and runtime configuration now share the same default-page-size validator, including the runtime storage format's u32 range.",
+      "migration": "Reduce HUBUUM_DEFAULT_PAGE_LIMIT values above 4294967295 before upgrading and keep the default no greater than HUBUUM_MAX_PAGE_LIMIT.",
+      "changelog_entry": "**Breaking for deployments with oversized pagination defaults:** deployment",
+      "fingerprints": [
+        "4e08f20deffe"
+      ]
+    },
+    {
       "id": "webhook-notification-backup-format-7",
       "baseline": "v0.0.16",
       "expires": "2027-01-31",
@@ -50,6 +61,20 @@
         "e7e7b51d81ab",
         "fcd69d051cc0",
         "ff98d88823ea"
+      ]
+    },
+    {
+      "id": "runtime-settings-operation-labels",
+      "baseline": "v0.0.21",
+      "expires": "2027-03-31",
+      "reason": "Query observation enablement moves into the revisioned, audited runtime settings capability. Common storage metrics identify the runtime settings operations instead of the removed query observation control operations.",
+      "migration": "Update operation-label filters from query_observation_control to load_runtime_settings and from set_query_observation_control to update_runtime_settings. Audit reads use list_runtime_settings_changes. Metric names and other labels are unchanged.",
+      "changelog_entry": "**Breaking (metrics):** storage operation labels `query_observation_control`",
+      "fingerprints": [
+        "8c36f68e3f18",
+        "912cb1c4f65c",
+        "dd08e5930364",
+        "ea12393ffe1a"
       ]
     }
   ]

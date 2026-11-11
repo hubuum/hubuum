@@ -1447,6 +1447,29 @@ jobs:
           overwrite: true
           if-no-files-found: error
 
+
+      - name: Prepare authentication candidate
+        if: github.ref == 'refs/heads/project/auth-support' || github.base_ref == 'project/auth-support'
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/auth-candidate"
+          cp "$RUNNER_TEMP/production-container.tar" "$RUNNER_TEMP/auth-candidate/"
+          git archive --format=tar.gz --output="$RUNNER_TEMP/auth-candidate/source.tar.gz" HEAD
+          git rev-parse HEAD > "$RUNNER_TEMP/auth-candidate/TESTED_COMMIT"
+          printf '%s\n' "$SOURCE_SHA" > "$RUNNER_TEMP/auth-candidate/SOURCE_COMMIT"
+          printf '%s/actions/runs/%s/attempts/%s\n' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/auth-candidate/WORKFLOW_RUN"
+          (cd "$RUNNER_TEMP/auth-candidate" && sha256sum ./* > SHA256SUMS)
+      - name: Retain authentication candidate
+        if: github.ref == 'refs/heads/project/auth-support' || github.base_ref == 'project/auth-support'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: auth-candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/auth-candidate/
+          if-no-files-found: error
+          retention-days: 30
+
   container-monitoring:
     name: Container monitoring acceptance
     needs: container-build
