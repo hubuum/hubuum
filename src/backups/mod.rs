@@ -1,6 +1,8 @@
+use crate::config::AppConfig;
 use crate::models::token_scope::TokenScope;
 use crate::services::authentication::ExecutionPrincipal;
 use chrono::Utc;
+use hubuum_storage_core::StorageRuntimeSettingsGroup;
 
 use crate::errors::ApiError;
 use crate::models::retention::FutureRetention;
@@ -22,6 +24,18 @@ pub struct BackupSettings {
 }
 
 impl BackupSettings {
+    pub(crate) fn with_runtime(&self, config: &AppConfig) -> Result<Self, ApiError> {
+        if config.runtime_manages(StorageRuntimeSettingsGroup::Backups) {
+            Self::new(
+                config.backup_output_retention_hours,
+                config.backup_budget()?,
+            )
+            .map_err(ApiError::BadRequest)
+        } else {
+            Ok(self.clone())
+        }
+    }
+
     pub fn new(output_retention_hours: i64, budget: StorageBackupBudget) -> Result<Self, String> {
         let output_retention =
             FutureRetention::from_hours(output_retention_hours, "backup output retention")?;

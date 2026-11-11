@@ -7450,6 +7450,6 @@ pub(crate) fn prefix(label: &str) -> String {
     format!("storage_contract_{label}_{suffix}")
 }
 
-mod query_observation_control;
 mod query_usage;
 mod query_usage_analysis;
+mod runtime_settings;

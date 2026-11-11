@@ -330,7 +330,7 @@ compile dependency. No broader CI labels or deployment activation follow from
 this plan. The final combined tree must revalidate entry modes, lock cycles and
 publication settlement after API occupancy has already settled.
 Native socket probes cover plain HTTP/1, Rustls and OpenSSL body completion and
-backpressure. They retain a connection-data witness beyond body EOF and require
+backpressure on Unix. They retain a connection-data witness beyond body EOF and require
 a same-worker deferred dispatcher-release signal after requesting socket abort.
 These probes are development evidence for a transport mechanism, not production
 publication retirement: upgrade rejection, producer ownership, pipelining,
@@ -340,6 +340,15 @@ actual dispatcher write buffer, with either both bodies at EOF or the second
 body still pending. Awaited dispatcher cancellation must positively release the
 body, I/O and deferred driver witness. This covers local dispatcher cancellation;
 production publication ownership and crash retirement remain unqualified.
+Windows backpressure did not confirm bounded retirement after socket shutdown.
+History-aware HTTP therefore installs no connection witness on Windows and
+rejects productive publication with HTTP 503 before admitting history ownership.
+Native Windows endpoint tests require that rejection for plain HTTP and both TLS
+backends. Legacy HTTP remains available. The failing local-abort mechanism is not
+treated as qualified by peer disconnect or a longer fixture deadline.
+A fixed-length controlled-I/O case also retains a large chunk in Actix's direct
+vectored-write path, separately from its buffered response header. Cancellation
+requires the same positive body, I/O and deferred driver release witnesses.
 The embedded TLS certificate and key are public loopback test fixtures, never
 deployment credentials or production trust material.
 History-aware registration retains the existing deletion SHARE/application UPDATE

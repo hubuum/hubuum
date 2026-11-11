@@ -518,7 +518,8 @@ async fn native_delivery(tls: Option<crate::config::TlsBackend>, response: Nativ
         "GET"
     };
     client.write_all(format!("{method} /api/v1/classes/42/history HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\n\r\n").as_bytes()).await.unwrap();
-    let expected_body: &[u8] = if matches!(response, NativeResponse::Payload) {
+    let qualified = !cfg!(windows);
+    let expected_body: &[u8] = if qualified && matches!(response, NativeResponse::Payload) {
         b"complete-native-publication"
     } else {
         b""
@@ -531,24 +532,33 @@ async fn native_delivery(tls: Option<crate::config::TlsBackend>, response: Nativ
             if let Some(start) = received.windows(4).position(|bytes| bytes == b"\r\n\r\n")
                 && received.len() >= start + 4 + expected_body.len()
             {
-                assert_eq!(&received[start + 4..], expected_body);
+                if qualified {
+                    assert_eq!(&received[start + 4..], expected_body);
+                }
                 break;
             }
         }
     })
     .await
     .unwrap();
-    let status = if matches!(response, NativeResponse::Empty) {
+    let status = if !qualified {
+        503
+    } else if matches!(response, NativeResponse::Empty) {
         204
     } else {
         200
     };
     assert!(received.starts_with(format!("HTTP/1.1 {status}").as_bytes()));
-    observations.wait_for_settlements(1).await;
-    assert_eq!(
-        observations.api_settled.load(Ordering::SeqCst),
-        usize::from(!matches!(response, NativeResponse::Head))
-    );
+    if qualified {
+        observations.wait_for_settlements(1).await;
+        assert_eq!(
+            observations.api_settled.load(Ordering::SeqCst),
+            usize::from(!matches!(response, NativeResponse::Head))
+        );
+    } else {
+        assert_eq!(observations.admitted.load(Ordering::SeqCst), 0);
+        assert_eq!(observations.settled.load(Ordering::SeqCst), 0);
+    }
     drop(client);
     handle.stop(true).await;
     server.await.unwrap().unwrap();

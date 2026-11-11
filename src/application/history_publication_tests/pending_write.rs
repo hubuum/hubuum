@@ -29,6 +29,7 @@ struct Body {
     progressed: Arc<AtomicUsize>,
     observed: bool,
     pending: bool,
+    fixed_length: bool,
     dropped: Option<oneshot::Sender<ThreadId>>,
 }
 
@@ -44,7 +45,11 @@ impl MessageBody for Body {
     type Error = Infallible;
 
     fn size(&self) -> BodySize {
-        BodySize::Stream
+        if self.fixed_length {
+            BodySize::Sized(64 * 1024)
+        } else {
+            BodySize::Stream
+        }
     }
 
     fn poll_next(
@@ -52,7 +57,15 @@ impl MessageBody for Body {
         _cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Bytes, Self::Error>>> {
         match self.payload.take() {
-            Some(bytes) => Poll::Ready(Some(Ok(bytes))),
+            Some(bytes) => {
+                // A pending direct write prevents the dispatcher from polling
+                // body EOF. Observe production of that chunk instead.
+                if self.fixed_length {
+                    self.observed = true;
+                    self.progressed.fetch_add(1, Ordering::AcqRel);
+                }
+                Poll::Ready(Some(Ok(bytes)))
+            }
             None => {
                 if !self.observed {
                     self.observed = true;
@@ -72,7 +85,8 @@ struct PendingWrite {
     socket: TcpStream,
     progressed: Arc<AtomicUsize>,
     responses: usize,
-    pending: Option<oneshot::Sender<Vec<u8>>>,
+    pending: Option<oneshot::Sender<(Vec<u8>, bool)>>,
+    vectored: bool,
     dropped: Option<oneshot::Sender<ThreadId>>,
 }
 
@@ -95,10 +109,29 @@ impl AsyncWrite for PendingWrite {
         if self.progressed.load(Ordering::Acquire) == self.responses
             && let Some(pending) = self.pending.take()
         {
-            let _ = pending.send(bytes.to_vec());
+            let _ = pending.send((bytes.to_vec(), false));
         }
         // Deliberately retain all writes. There is no timer or synthetic EOF
         // that can make the dispatcher or its owned payload disappear.
+        Poll::Pending
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.vectored
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buffers: &[io::IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        if self.progressed.load(Ordering::Acquire) == self.responses
+            && let Some(pending) = self.pending.take()
+        {
+            assert_eq!(buffers.len(), 2, "separate pending header and direct body");
+            let bytes = buffers.iter().flat_map(|buf| buf.iter().copied()).collect();
+            let _ = pending.send((bytes, true));
+        }
         Poll::Pending
     }
 
@@ -120,13 +153,15 @@ impl Drop for PendingWrite {
 }
 
 #[rstest]
-#[case::body_eof(1, false)]
-#[case::pipelined_eof(2, false)]
-#[case::pipelined_pending_body(2, true)]
+#[case::body_eof(1, false, false)]
+#[case::pipelined_eof(2, false, false)]
+#[case::pipelined_pending_body(2, true, false)]
+#[case::fixed_length_vectored(1, true, true)]
 #[actix_web::test]
 async fn cancellation_retires_pending_dispatcher_and_pipelined_bodies(
     #[case] responses: usize,
     #[case] pending_body: bool,
+    #[case] vectored: bool,
 ) {
     let deadline = Instant::now() + Duration::from_secs(5);
     let worker = thread::current().id();
@@ -156,11 +191,16 @@ async fn cancellation_retires_pending_dispatcher_and_pipelined_bodies(
                 *issued
             };
             assert!(ordinal <= responses);
+            let mut payload = format!("publication-{ordinal}").into_bytes();
+            if vectored {
+                payload.resize(64 * 1024, b'x');
+            }
             let body = Body {
-                payload: Some(Bytes::from(format!("publication-{ordinal}"))),
+                payload: Some(Bytes::from(payload)),
                 progressed: Arc::clone(&body_progress),
                 observed: false,
                 pending: pending_body && ordinal == responses,
+                fixed_length: vectored,
                 dropped: (ordinal == responses).then(|| body_dropped.borrow_mut().take().unwrap()),
             };
             async move { Ok::<_, actix_http::Error>(Response::ok().set_body(body)) }
@@ -175,6 +215,7 @@ async fn cancellation_retires_pending_dispatcher_and_pipelined_bodies(
         progressed,
         responses,
         pending: Some(pending),
+        vectored,
         dropped: Some(dropped),
     };
     let dispatcher = actix_web::rt::spawn(service.call((io, Some(peer))));
@@ -183,7 +224,9 @@ async fn cancellation_retires_pending_dispatcher_and_pipelined_bodies(
     let requests = b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n".repeat(responses);
     client.write_all(&requests).await.unwrap();
 
-    let pending_bytes = timeout_at(deadline, write_pending).await.unwrap().unwrap();
+    let (pending_bytes, used_vectored) =
+        timeout_at(deadline, write_pending).await.unwrap().unwrap();
+    assert_eq!(used_vectored, vectored);
     for ordinal in 1..=responses {
         let payload = format!("publication-{ordinal}");
         assert!(

@@ -63,6 +63,7 @@ nav = [
       { "Single-host deployment" = "deployment.md" },
       { "Distributed deployment" = "distributed_deployment.md" },
       { "Configuration reference" = "quick_start.md" },
+      { "Runtime settings" = "runtime_settings.md" },
       { "PostgreSQL roles" = "database_roles.md" },
       { "Backup & restore" = "backup-restore.md" },
       { "Deletion recovery checkpoints" = "deletion_recovery.md" },

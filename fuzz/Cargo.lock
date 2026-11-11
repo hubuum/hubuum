@@ -818,6 +818,7 @@ dependencies = [
  "hubuum-events-core",
  "hubuum-query",
  "hubuum-task-core",
+ "ipnet",
  "serde",
  "serde_json",
  "sha2",

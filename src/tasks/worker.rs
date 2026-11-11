@@ -89,6 +89,11 @@ fn recovery_state() -> &'static Mutex<Option<Instant>> {
 }
 
 fn task_worker_settings() -> TaskWorkerSettings {
+    if let Some(config) = crate::config::runtime::scoped() {
+        return config
+            .task_worker_settings()
+            .expect("validated runtime task settings");
+    }
     TASK_WORKER_SETTINGS.get().copied().unwrap_or_else(|| {
         TaskWorkerSettings::builder()
             .worker_count(1)
@@ -105,7 +110,11 @@ fn task_worker_settings() -> TaskWorkerSettings {
 }
 
 fn configured_task_worker_count() -> usize {
-    task_worker_settings().worker_count()
+    // Worker counts belong to process startup, even inside a runtime policy scope.
+    TASK_WORKER_SETTINGS.get().map_or_else(
+        || task_worker_settings().worker_count(),
+        |settings| settings.worker_count(),
+    )
 }
 
 fn configured_task_poll_interval() -> Duration {
@@ -139,6 +148,7 @@ async fn task_worker_loop(
     shutdown: ShutdownSignal,
 ) {
     let worker = TaskWorkerId::generate();
+    let mut changes = context.backend().subscribe_runtime_settings();
     loop {
         if shutdown.is_requested() {
             break;
@@ -159,7 +169,14 @@ async fn task_worker_loop(
         match background_worker_action(&result) {
             WorkerLoopAction::Continue => continue,
             WorkerLoopAction::Sleep => {
-                if !wait_for_task_worker_wakeup(poll_interval, &shutdown).await {
+                let poll_interval = crate::config::runtime::for_storage(context.backend())
+                    .map(|config| Duration::from_millis(config.task_poll_interval_ms))
+                    .unwrap_or(poll_interval);
+                let keep_running = tokio::select! {
+                    result = wait_for_task_worker_wakeup(poll_interval, &shutdown) => result,
+                    _ = changes.changed() => true,
+                };
+                if !keep_running {
                     break;
                 }
             }
@@ -289,6 +306,32 @@ pub(super) async fn process_claimed_task_for_test(
 }
 
 async fn process_one_task_with_settings(
+    context: &AppContext,
+    worker: TaskWorkerId,
+    shutdown: Option<&ShutdownSignal>,
+    backup_settings: &BackupSettings,
+) -> Result<bool, ApiError> {
+    context
+        .backend()
+        .applied_runtime_settings()
+        .ensure_security_current()?;
+    let config = crate::config::runtime::for_storage(context.backend())?;
+    let backup_settings = backup_settings.with_runtime(&config)?;
+    // Task execution has a large future; keep the policy scope from embedding it
+    // in another worker-thread stack frame.
+    crate::config::runtime::scope(
+        config,
+        Box::pin(process_one_task_snapshot(
+            context,
+            worker,
+            shutdown,
+            &backup_settings,
+        )),
+    )
+    .await
+}
+
+async fn process_one_task_snapshot(
     context: &AppContext,
     worker: TaskWorkerId,
     shutdown: Option<&ShutdownSignal>,

@@ -179,7 +179,11 @@ BEGIN
         EXECUTE 'SELECT history_protocol=0 FROM hubuum_control.runtime_registrations WHERE id=$1 AND ownership_token=$2 FOR SHARE'
             INTO STRICT legacy USING registration,ownership;
     ELSE
-        IF (SELECT max(version) FROM public.__diesel_schema_migrations) <> '20261103000004' THEN
+        -- Both checkpoints qualify the same unversioned Legacy registry. The
+        -- synchronized runtime-settings migrations can remain applied when
+        -- this earlier lifecycle migration is rolled back independently.
+        IF COALESCE((SELECT max(version) FROM public.__diesel_schema_migrations), '')
+            NOT IN ('20261103000004', '20261111000001') THEN
             RAISE EXCEPTION 'Unversioned archive runtime schema is not supported';
         END IF;
         SELECT TRUE INTO STRICT legacy FROM hubuum_control.runtime_registrations

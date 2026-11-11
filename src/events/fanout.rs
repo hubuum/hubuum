@@ -99,7 +99,17 @@ async fn event_fanout_worker_loop(
     poll_interval: Duration,
     shutdown: ShutdownSignal,
 ) {
+    let mut changes = pool.subscribe_runtime_settings();
     loop {
+        let runtime = crate::config::runtime::for_storage(&pool).ok();
+        let settings = runtime
+            .as_ref()
+            .and_then(|config| config.event_fanout_settings().ok())
+            .unwrap_or(settings);
+        let poll_interval = runtime
+            .as_ref()
+            .map(|config| Duration::from_millis(config.event_fanout_poll_interval_ms))
+            .unwrap_or(poll_interval);
         let result = tokio::select! {
             biased;
             _ = shutdown.requested() => break,
@@ -108,7 +118,8 @@ async fn event_fanout_worker_loop(
         if fanout_worker_should_continue(&result) {
             continue;
         }
-        if !wait_for_event_fanout_wakeup(poll_interval, &shutdown).await {
+        let keep_running = tokio::select! { result = wait_for_event_fanout_wakeup(poll_interval, &shutdown) => result, _ = changes.changed() => true };
+        if !keep_running {
             break;
         }
     }
@@ -230,7 +241,7 @@ pub fn event_fanout_wakeup_stats() -> EventWorkerWakeupStats {
 }
 
 pub(crate) fn event_fanout_worker_health() -> EventWorkerHealth {
-    let config = get_config().ok();
+    let config = crate::config::runtime::current().ok();
     EventWorkerHealth {
         workers_configured: configured_event_fanout_worker_count(),
         batch_size: config

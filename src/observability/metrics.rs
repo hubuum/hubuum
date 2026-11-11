@@ -67,7 +67,7 @@ pub use self::login::login_limiter_backend_failure;
 pub use self::login::{login_attempt, login_lockout};
 pub use self::registry::{init, runtime_identity};
 pub use self::remote_call::remote_call_finished;
-pub use self::scrape::scrape;
+pub use self::scrape::{runtime_endpoint, scrape};
 pub(crate) use self::secret::{secret_resolution_finished, secret_source_identity};
 pub use self::security::{client_allowlist_rejected, revision_condition};
 pub use self::storage::{storage_backend_identity, storage_operation_finished};
@@ -84,6 +84,54 @@ pub(crate) use self::tracing::{
 };
 
 static METRICS: OnceLock<Metrics> = OnceLock::new();
+static METRICS_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+fn set_enabled(enabled: bool) -> Result<(), ApiError> {
+    if enabled {
+        init()?;
+    }
+    #[cfg(not(test))]
+    METRICS_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+
+/// Enablement can initialize metrics after startup, so seed the same identity gauges.
+pub(crate) fn apply_runtime_config(
+    config: &crate::config::AppConfig,
+    backend: &'static str,
+) -> Result<(), ApiError> {
+    set_enabled(config.metrics_enabled)?;
+    if config.metrics_enabled {
+        runtime_identity(config.runtime_role);
+        storage_backend_identity(backend);
+        secret_source_identity(config.secrets.provider_label());
+        let tasks = config.task_worker_settings()?;
+        task_worker_config(tasks.worker_count(), tasks.poll_interval());
+        tracing_config(
+            if config.tracing_enabled {
+                config.tracing_sampling_mode.as_str()
+            } else {
+                "off"
+            },
+            config.tracing_sample_ratio,
+            config.tracing_queue_capacity,
+        );
+        if let Ok(keys) = crate::config::token_hash_key_ring() {
+            token_hash_key_ring(
+                if keys.is_stable() {
+                    "stable"
+                } else {
+                    "ephemeral"
+                },
+                keys.active_key_id().as_str(),
+                keys.identity(),
+                1,
+                keys.previous_key_ids().count() as u64,
+            );
+        }
+    }
+    Ok(())
+}
 
 struct CheckedMetric<T> {
     instrument: T,
@@ -178,7 +226,7 @@ impl HttpInFlightGuard {
 
 impl Drop for HttpInFlightGuard {
     fn drop(&mut self) {
-        if let (Some(metrics), Some(route)) = (current(), self.route.as_ref()) {
+        if let (Some(metrics), Some(route)) = (METRICS.get(), self.route.as_ref()) {
             metrics
                 .http_in_flight
                 .add(-1, &[opentelemetry::KeyValue::new("route", route.clone())]);
@@ -298,6 +346,17 @@ struct Metrics {
 }
 
 fn current() -> Option<&'static Metrics> {
+    // Unit tests host independent replicas in one process; production has one registry.
+    #[cfg(not(test))]
+    let enabled = METRICS_ENABLED.load(std::sync::atomic::Ordering::Relaxed);
+    #[cfg(test)]
+    let enabled = crate::config::runtime::scoped().map_or_else(
+        || METRICS_ENABLED.load(std::sync::atomic::Ordering::Relaxed),
+        |config| config.metrics_enabled,
+    );
+    if !enabled {
+        return None;
+    }
     METRICS.get()
 }
 

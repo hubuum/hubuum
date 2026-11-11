@@ -18,7 +18,10 @@ pub(super) async fn run(context: AppContext, poll_interval: Duration, shutdown: 
         if shutdown.is_requested() {
             break;
         }
-        let work = Box::pin(iteration(&context, &tasks, &artifacts));
+        let work = Box::pin(async {
+            let config = crate::config::runtime::for_storage(context.backend())?;
+            crate::config::runtime::scope(config, iteration(&context, &tasks, &artifacts)).await
+        });
         let retry_soon =
             match with_storage_call_site(&context, StorageCallSite::TaskWorker, work).await {
                 Ok(retry_soon) => retry_soon,

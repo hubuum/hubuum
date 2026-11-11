@@ -26,18 +26,13 @@ use crate::{PostgresConnection, PostgresPool, PostgresPooledConnection, Postgres
 mod history_publication;
 use history_publication::HistoryEntryMode;
 
-/// Latest migration required by this adapter.
-pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = env!("PACKAGED_POSTGRES_MIGRATION_VERSION");
-// These migrations were added on a parallel branch and precede the latest
-// checkpoint. Its presence alone does not prove that tracing is installed.
-const REQUIRED_DATABASE_MIGRATION_VERSIONS: &[&str] = &[
-    "20260903000002",
-    "20260903000003",
-    "20261027000002",
-    "20261027000003",
-    "20261029000001",
-    REQUIRED_DATABASE_MIGRATION_VERSION,
-];
+/// Latest packaged checkpoint used by readiness regressions.
+#[cfg(test)]
+const REQUIRED_DATABASE_MIGRATION_VERSION: &str = env!("PACKAGED_POSTGRES_MIGRATION_VERSION");
+// Parallel branch checkpoints cannot prove that every predecessor is present.
+// Require the complete packaged set and reject migrations unknown to this binary.
+include!(concat!(env!("OUT_DIR"), "/migration_versions.rs"));
+const REQUIRED_DATABASE_MIGRATION_VERSIONS: &[&str] = KNOWN_DATABASE_MIGRATION_VERSIONS;
 pub const DEFAULT_COMPUTED_REINDEX_BATCH_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 
 /// Adapter-level observation hook supplied by the application composition root.
@@ -219,6 +214,25 @@ impl PostgresRuntime {
     #[must_use]
     pub fn pool(&self) -> &PostgresPool {
         &self.pool
+    }
+
+    pub(crate) async fn effective_computed_reindex_batch_size(
+        &self,
+    ) -> Result<usize, PostgresStorageError> {
+        use hubuum_storage_core::{StorageRuntimeSettingsGroup, StorageRuntimeSettingsValue};
+        let snapshot = crate::operations::runtime_settings::load_runtime_settings(self).await?;
+        Ok(
+            match snapshot
+                .record(StorageRuntimeSettingsGroup::Tasks)
+                .assignment()
+                .value()
+            {
+                Some(StorageRuntimeSettingsValue::Tasks(policy)) => {
+                    *policy.computed_reindex_batch_size()
+                }
+                _ => self.computed_reindex_batch_size(),
+            },
+        )
     }
 
     pub(crate) fn computed_reindex_batch_size(&self) -> usize {
@@ -1360,9 +1374,13 @@ pub(crate) async fn postgres_schema_is_ready(
         "SELECT NOT EXISTS (\
             SELECT unnest($1::text[]) \
             EXCEPT SELECT version::text FROM __diesel_schema_migrations\
+        ) AND NOT EXISTS (\
+            SELECT version::text FROM __diesel_schema_migrations \
+            EXCEPT SELECT unnest($2::text[])\
         ) AS ready",
     )
     .bind::<diesel::sql_types::Array<Text>, _>(REQUIRED_DATABASE_MIGRATION_VERSIONS)
+    .bind::<diesel::sql_types::Array<Text>, _>(KNOWN_DATABASE_MIGRATION_VERSIONS)
     .get_result::<DatabaseSchemaReadiness>(connection)
     .await?
     .ready)
@@ -1480,6 +1498,11 @@ mod tests {
     #[case::trace_schema(Some("20260903000002"))]
     #[case::trace_validation(Some("20260903000003"))]
     #[case::artifact_outputs(Some("20261029000001"))]
+    #[case::project_waiting(Some("20261101000001"))]
+    #[case::project_archive(Some("20261103000004"))]
+    #[case::project_history_lifecycle(Some("20261103000005"))]
+    #[case::runtime_settings(Some("20261106000001"))]
+    #[case::runtime_policies(Some("20261110000001"))]
     #[case::latest(Some(REQUIRED_DATABASE_MIGRATION_VERSION))]
     #[tokio::test]
     async fn readiness_requires_every_schema_checkpoint(#[case] missing: Option<&str>) {
@@ -1511,6 +1534,39 @@ mod tests {
         .unwrap();
 
         assert_eq!(ready, missing.is_none());
+    }
+
+    #[cfg(feature = "integration-test-support")]
+    #[rstest::rstest]
+    #[case::historical_unknown("20000101000001")]
+    #[case::future("20990101000001")]
+    #[tokio::test]
+    async fn readiness_rejects_unknown_schema_versions(#[case] version: &str) {
+        use diesel::sql_types::Text;
+        use diesel_async::RunQueryDsl;
+
+        use crate::test_support::{database_role_tests_enabled, integration_test_migration_pool};
+        use crate::with_connection;
+
+        if !database_role_tests_enabled() {
+            return;
+        }
+        let pool = integration_test_migration_pool(1);
+        let ready = with_connection(&pool, async |connection| {
+            diesel::sql_query("BEGIN").execute(&mut *connection).await?;
+            diesel::sql_query("INSERT INTO __diesel_schema_migrations (version) VALUES ($1)")
+                .bind::<Text, _>(version)
+                .execute(&mut *connection)
+                .await?;
+            let result = super::postgres_schema_is_ready(connection).await;
+            diesel::sql_query("ROLLBACK")
+                .execute(&mut *connection)
+                .await?;
+            result
+        })
+        .await
+        .unwrap();
+        assert!(!ready);
     }
 
     #[test]

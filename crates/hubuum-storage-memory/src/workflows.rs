@@ -1483,7 +1483,8 @@ impl RestoreStorage for MemoryStorage {
             crate::backup::enqueue_restored_repairs(&mut replacement)?;
         }
         replacement.runtime_registrations = state.runtime_registrations.clone();
-        replacement.query_observation_control = state.query_observation_control;
+        // Runtime settings are deployment configuration and survive restores.
+        replacement.runtime_settings = state.runtime_settings.clone();
         for (_, approval) in replacement.credential_approvals.values_mut() {
             approval.invalidate(Utc::now());
         }

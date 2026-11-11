@@ -16,9 +16,20 @@ operational data.
 
 Processes with the `all` or `api` runtime role serve metrics on the main HTTP
 listener. A `worker` process serves only the configured metrics path on
-`HUBUUM_BIND_IP:HUBUUM_PORT` when metrics are enabled; it does not expose the
+`HUBUUM_BIND_IP:HUBUUM_PORT`. This listener remains bound while metrics are
+disabled so runtime enablement works. It does not expose the
 application API or health probes. Give API and worker containers separate
 network namespaces or ports if they run on the same host.
+
+Administrators can change `metrics_enabled`, `metrics_path`, and `log_level` in
+`PATCH /api/v1/admin/runtime-settings/observability`. Environment variables are
+the defaults while this group is deployment-owned. Path and enablement changes
+apply after each replica reconciles; the old path returns 404, and disabled
+metrics return 404 at every path. Scraping accepts GET only. Counters are retained
+across disable/enable changes. Configure the scraper to follow a path change.
+The metrics route is labeled `/metrics` for instrumentation even when its actual
+path changes, avoiding a new label series for each administrator-selected path.
+See [runtime settings](runtime_settings.md) for revision and ownership semantics.
 
 ## Scrape Each Process Directly
 

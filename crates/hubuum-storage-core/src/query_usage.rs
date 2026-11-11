@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
-    StorageError, StorageIdentityEvidence, StorageMutationOutcome, StorageQueryObservationControl,
-    StorageRecordMetadata, StorageValidationError,
+    StorageError, StorageIdentityEvidence, StorageMutationOutcome, StorageRecordMetadata,
+    StorageValidationError,
 };
 
 pub const MAX_QUERY_USAGE_DECLARATIONS: usize = 32;
@@ -398,16 +398,6 @@ impl StorageQueryUsageDelete {
 /// Mandatory declaration management; optional native optimization is composed separately.
 #[async_trait]
 pub trait QueryUsageStorage: Send + Sync {
-    /// Load the deployment override, independently of process-local observations.
-    async fn query_observation_control(
-        &self,
-    ) -> Result<StorageQueryObservationControl, StorageError>;
-    /// Atomically replace the shared override. Concurrent writes are last-commit-wins.
-    async fn set_query_observation_control(
-        &self,
-        control: StorageQueryObservationControl,
-    ) -> Result<(), StorageError>;
-
     /// Complete class-local list, bounded by MAX_QUERY_USAGE_DECLARATIONS.
     async fn list_query_usage(
         &self,

@@ -1,3 +1,4 @@
+use crate::config::runtime::current as get_config;
 use hubuum_storage_core::StorageIdentityEvidence;
 use std::{fmt, str::FromStr};
 
@@ -7,9 +8,7 @@ use hubuum_templates::{TemplateBatch, TemplateExecution, TemplateLimits};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::config::{
-    DEFAULT_EXPORT_TEMPLATE_FUEL, DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT, get_config,
-};
+use crate::config::{DEFAULT_EXPORT_TEMPLATE_FUEL, DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{

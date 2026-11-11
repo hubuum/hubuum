@@ -22,6 +22,13 @@ intervals and read epochs through typed error evidence and restore remapping.
 Preserve both archive-budget and lifecycle-gap evidence through adapter errors;
 API request rejection reasons keep their existing priority.
 
+The synchronized 0.20 train also includes the mandatory audited
+`RuntimeSettingsStorage` capability introduced on the parallel main line. Implement
+complete snapshots, atomic revision-checked updates and audit history, preserve
+settings during restore, and emit runtime-settings notifications. The
+[runtime settings integration contract](#runtime-settings-integration-in-the-019-train)
+applies with all ten exact dependencies pinned to `0.20.0`.
+
 **Breaking expiry-admission capability:** implement
 `HistoryLifecycleStorage::admit_history_expiry` using native selection under the
 same authority transaction as intent and canonical-audit retention. Require the
@@ -136,8 +143,9 @@ captured identities, intervals, generation, owner and deadline. Never refresh an
 old permit after external work. Catalog replacement must not rebind existing
 pins. Keep capture/catalog allocations and cumulative physical work bounded.
 
-Deploy migration `2026-11-03-000004_history_archive_reads` and refresh runtime
-function grants before running this server. It installs a protected fixed-true
+Deploy migrations `2026-11-03-000004_history_archive_reads` and
+`2026-11-11-000001_archive_runtime_compatibility`, then refresh runtime function
+grants before running this server. It installs a protected fixed-true
 `hubuum_archive_history_requires_legacy_runtime()` hook. A combined runtime must
 refuse OnlineV1 registration while this hook is true; this archive slice cannot
 participate in retained online expiry until a later reviewed migration integrates
@@ -148,6 +156,36 @@ old application fences invalidate access. Rollback refuses retained catalog/pins
 Public archive tasks/API routes and primary-copy retirement remain disabled.
 Broader families, durable task activation and full #514 performance qualification
 remain open. See [collection archive reads](history_archive_reads.md).
+
+## Runtime settings integration in the 0.19 train
+
+Keep all ten SDK dependencies on exactly `0.19.0` together. This is a breaking
+supported Rust crate change: `OperationalStorage` now requires
+`RuntimeSettingsStorage`. Implement `load_runtime_settings`,
+`update_runtime_settings`, and `list_runtime_settings_changes`; an adapter cannot
+substitute empty or unsupported implementations.
+
+Return complete snapshots for all supported settings groups. Persist each assignment
+with its revision, and commit a changed assignment and exactly one audit record
+atomically. Reject stale revisions with the current revision; an unchanged
+assignment must not advance the revision or append an audit record. History is
+bounded and newest-first. Keep runtime settings and their audit history across
+logical restores, and exclude both from portable backups.
+
+Replace `QueryUsageStorage::query_observation_control`,
+`QueryUsageStorage::set_query_observation_control`, and
+`StorageQueryObservationControl` with the runtime-settings capability and typed
+values. Replace `StorageNotification::QueryObservationControl` with
+`StorageNotification::RuntimeSettings`; notification providers must support the
+new topic. Diagnostics use `StorageCapability::RuntimeSettings` and the new
+operation names.
+
+The PostgreSQL adapter requires migration
+`2026-11-06-000001_runtime_settings`, which imports the existing query-observation
+override as an audited revision. Upgrade all API and worker replicas together
+before accepting runtime-setting changes. Run the shared runtime-settings and
+restore conformance tests, plus adapter-native atomicity, stale-revision, audit,
+and notification coverage. The SDK retains its Rust 1.88 minimum version.
 
 ## Upgrading from 0.17 to 0.18
 

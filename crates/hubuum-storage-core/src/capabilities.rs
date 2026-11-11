@@ -73,7 +73,6 @@ pub mod workflows {
     pub use crate::export_template_lifecycle::*;
     pub use crate::import_workflow::*;
     pub use crate::query_usage::*;
-    pub use crate::query_usage_analysis::StorageQueryObservationControl;
     pub use crate::remote_target::*;
     pub use crate::restore::*;
     pub use crate::schema_evolution::*;
@@ -120,6 +119,7 @@ pub mod operational {
         StorageOperationalTaskStatusCounts, StorageOperationalTaskTerminalCounts,
         StorageReadinessSnapshot, TokenRetentionStorage,
     };
+    pub use crate::runtime_settings::*;
     pub use crate::telemetry::*;
     pub use crate::worker_notifications::*;
     pub use crate::{OperationalStorage, StorageQueryBudget, StorageTaskKind, StorageTaskStatus};

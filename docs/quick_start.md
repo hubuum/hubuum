@@ -211,8 +211,11 @@ locking behavior, and export/import alternative for selective transfers.
 | `HUBUUM_MAX_PAGE_LIMIT` | `250` | Maximum number of items per page |
 | `HUBUUM_MAX_TRANSITIVE_DEPTH` | `100` | Maximum recursion depth for transitive relation graph walks |
 
-Clients can discover the effective pagination values, including deployment
-overrides, without authentication:
+Administrators can manage default and maximum page sizes for every replica as a
+[runtime setting](runtime_settings.md), without restarting.
+`HUBUUM_MAX_PAGE_LIMIT` stays a deployment ceiling. Clients can discover the
+effective pagination values, including runtime and deployment overrides,
+without authentication:
 
 ```text
 GET /api/v1/config

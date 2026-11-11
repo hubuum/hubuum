@@ -140,7 +140,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> ClientStream for T {}
 
 #[rstest]
 #[case::body_eof(false)]
-#[case::backpressure(true)]
+#[cfg_attr(not(windows), case::backpressure(true))]
 #[actix_web::test]
 async fn http1_publication_waits_for_driver_release(#[case] backpressure: bool) {
     exercise_driver_release(Transport::Plain, backpressure).await;
@@ -149,7 +149,7 @@ async fn http1_publication_waits_for_driver_release(#[case] backpressure: bool) 
 #[cfg(feature = "tls-rustls")]
 #[rstest]
 #[case::body_eof(false)]
-#[case::backpressure(true)]
+#[cfg_attr(not(windows), case::backpressure(true))]
 #[actix_web::test]
 async fn http1_publication_rustls_waits_for_driver_release(#[case] backpressure: bool) {
     exercise_driver_release(Transport::Rustls, backpressure).await;
@@ -158,7 +158,7 @@ async fn http1_publication_rustls_waits_for_driver_release(#[case] backpressure:
 #[cfg(feature = "tls-openssl")]
 #[rstest]
 #[case::body_eof(false)]
-#[case::backpressure(true)]
+#[cfg_attr(not(windows), case::backpressure(true))]
 #[actix_web::test]
 async fn http1_publication_openssl_waits_for_driver_release(#[case] backpressure: bool) {
     exercise_driver_release(Transport::Openssl, backpressure).await;

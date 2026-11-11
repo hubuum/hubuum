@@ -3,48 +3,9 @@
 mod credential;
 pub use credential::{BearerCredential, CredentialError, VersionedCredential, keyed_digest};
 
+pub use hubuum_domain::IdentityScopeName;
+use hubuum_domain::IdentityScopeNameError;
 use serde::{Deserialize, Serialize};
-use std::fmt;
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(try_from = "String")]
-pub struct IdentityScopeName(String);
-
-impl TryFrom<String> for IdentityScopeName {
-    type Error = AuthProviderError;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        Self::new(value)
-    }
-}
-
-impl IdentityScopeName {
-    pub fn new(value: impl Into<String>) -> Result<Self, AuthProviderError> {
-        let value = value.into();
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            return Err(AuthProviderError::Config(
-                "identity scope name must not be empty".to_string(),
-            ));
-        }
-        if trimmed != value {
-            return Err(AuthProviderError::Config(
-                "identity scope name must not contain leading or trailing whitespace".to_string(),
-            ));
-        }
-        Ok(Self(value))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for IdentityScopeName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExternalUserProfile {
@@ -147,6 +108,12 @@ pub enum AuthProviderError {
     Protocol(String),
 }
 
+impl From<IdentityScopeNameError> for AuthProviderError {
+    fn from(error: IdentityScopeNameError) -> Self {
+        Self::Config(error.to_string())
+    }
+}
+
 pub trait ExternalIdentityProvider: Send + Sync {
     fn scope_name(&self) -> &IdentityScopeName;
 
@@ -167,15 +134,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn deserialization_rejects_empty_scope_names() {
-        let value = serde::de::value::StrDeserializer::<serde::de::value::Error>::new("");
-        assert!(IdentityScopeName::deserialize(value).is_err());
-    }
+    fn scope_name_validation_maps_to_configuration_errors() {
+        let error = AuthProviderError::from(IdentityScopeName::new("").unwrap_err());
 
-    #[test]
-    fn deserialization_rejects_padded_scope_names() {
-        let value = serde::de::value::StrDeserializer::<serde::de::value::Error>::new(" ldap ");
-        assert!(IdentityScopeName::deserialize(value).is_err());
+        assert!(matches!(error, AuthProviderError::Config(message)
+            if message == "identity scope name must not be empty"));
     }
 
     #[test]

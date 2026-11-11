@@ -220,7 +220,9 @@ pub(super) async fn reindex_batch(
     payload: &ComputedReindexPayload,
     cursor: i32,
 ) -> Result<ReindexBatch, PostgresStorageError> {
-    with_computed_transaction(runtime, async move |transaction| {
+    let batch_size = runtime.effective_computed_reindex_batch_size().await?;
+    with_computed_transaction(runtime, async move |mut transaction| {
+        transaction.batch_size = batch_size;
         transaction
             .lock_reindex_class(payload.class_id, claimed)
             .await?
@@ -240,7 +242,7 @@ pub(super) async fn repair_queue_batch(
     lease: StorageTaskLease,
 ) -> Result<BatchResult, PostgresStorageError> {
     let claimed = task_execution::claimed_task(&lease)?;
-    let batch_size = runtime.computed_reindex_batch_size();
+    let batch_size = runtime.effective_computed_reindex_batch_size().await?;
     runtime
         .with_transaction(async move |connection| {
             require_deletion_execution(connection).await?;

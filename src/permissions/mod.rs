@@ -127,7 +127,27 @@ pub(crate) async fn build_permission_backend(
     cfg: &AppConfig,
     storage: StorageHandle,
 ) -> Result<Arc<dyn PermissionBackend>, ApiError> {
-    match cfg.permission_backend {
+    build_permission_backend_for_kind(cfg, storage, cfg.permission_backend).await
+}
+
+pub(crate) async fn build_permission_backend_for_runtime(
+    cfg: &AppConfig,
+    storage: StorageHandle,
+    selected: hubuum_storage_core::StorageAuthorizationBackend,
+) -> Result<Arc<dyn PermissionBackend>, ApiError> {
+    let kind = match selected {
+        hubuum_storage_core::StorageAuthorizationBackend::Local => PermissionBackendKind::Local,
+        hubuum_storage_core::StorageAuthorizationBackend::Treetop => PermissionBackendKind::Treetop,
+    };
+    build_permission_backend_for_kind(cfg, storage, kind).await
+}
+
+async fn build_permission_backend_for_kind(
+    cfg: &AppConfig,
+    storage: StorageHandle,
+    kind: PermissionBackendKind,
+) -> Result<Arc<dyn PermissionBackend>, ApiError> {
+    match kind {
         PermissionBackendKind::Local => Ok(Arc::new(LocalPermissionBackend::new(
             storage,
             cfg.admin_groupname.clone(),
@@ -154,3 +174,21 @@ pub(crate) async fn build_permission_backend(
 }
 
 // Subsequent tasks add: treetop, test_support modules.
+
+#[cfg(all(test, feature = "permissions-treetop"))]
+mod tests {
+    use super::*;
+
+    #[actix_web::test]
+    async fn runtime_treetop_selection_requires_deployment_url() {
+        let mut config = crate::tests::integration_test_config().unwrap();
+        config.treetop_url = None;
+        let result = build_permission_backend_for_runtime(
+            &config,
+            StorageHandle::memory(),
+            hubuum_storage_core::StorageAuthorizationBackend::Treetop,
+        )
+        .await;
+        assert!(matches!(result, Err(ApiError::BadRequest(_))));
+    }
+}

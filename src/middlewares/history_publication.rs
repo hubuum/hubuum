@@ -91,6 +91,12 @@ fn attach(socket: &TcpStream, extensions: &mut Extensions) -> io::Result<()> {
 /// Install only for a history-aware runtime. Unsupported transports have no
 /// witness and cannot enter owned productive HTTP work.
 pub(crate) fn on_connect(io: &dyn Any, extensions: &mut Extensions) {
+    // Windows socket shutdown has not demonstrated bounded driver retirement
+    // under backpressure. Do not issue productive HTTP ownership without that
+    // platform proof; ordinary Legacy HTTP remains independent of this hook.
+    if cfg!(windows) {
+        return;
+    }
     let socket = io.downcast_ref::<TcpStream>();
     #[cfg(feature = "tls-rustls")]
     let socket = socket.or_else(|| {

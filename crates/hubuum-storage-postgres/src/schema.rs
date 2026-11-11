@@ -976,6 +976,30 @@ diesel::table! {
 }
 
 diesel::table! {
+    runtime_setting_changes (setting_group, revision) {
+        setting_group -> Text,
+        revision -> Int8,
+        previous_value -> Nullable<Jsonb>,
+        value -> Nullable<Jsonb>,
+        changed_at -> Timestamptz,
+        actor_kind -> Text,
+        actor_principal_id -> Nullable<Int4>,
+        request_id -> Nullable<Uuid>,
+        correlation_id -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
+    runtime_settings (setting_group) {
+        setting_group -> Text,
+        revision -> Int8,
+        value -> Nullable<Jsonb>,
+        changed_at -> Timestamptz,
+        changed_by -> Nullable<Int4>,
+    }
+}
+
+diesel::table! {
     schema_impact_findings (task_id, object_id) {
         task_id -> Int4,
         object_id -> Int4,
@@ -1228,6 +1252,7 @@ diesel::joinable!(remote_call_results -> tasks (task_id));
 diesel::joinable!(remote_targets -> collections (collection_id));
 diesel::joinable!(remote_targets -> hubuumclass (class_id));
 diesel::joinable!(restore_artifact_chunks -> restore_jobs (restore_job_id));
+diesel::joinable!(runtime_setting_changes -> runtime_settings (setting_group));
 diesel::joinable!(schema_impact_findings -> schema_validation_work (task_id));
 diesel::joinable!(schema_profile_outputs -> tasks (task_id));
 diesel::joinable!(schema_repair_reports -> schema_validation_work (task_id));
@@ -1306,6 +1331,8 @@ diesel::allow_tables_to_appear_in_same_query!(
     restore_artifact_chunks,
     restore_jobs,
     restore_success_receipts,
+    runtime_setting_changes,
+    runtime_settings,
     schema_impact_findings,
     schema_profile_outputs,
     schema_repair_reports,

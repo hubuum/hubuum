@@ -17,9 +17,9 @@ use crate::{
     LocalIdentityCredentialStorage, LogicalIdentityStorage, MetricsStorage, ObjectAggregateStorage,
     ObjectRelationStorage, ObjectStorage, OperationalStateStorage, PrincipalStorage,
     QueryUsageStorage, RelationQueryStorage, RemoteTargetStorage, RestoreStorage,
-    SchemaEvolutionStorage, ServiceAccountStorage, TaskCapacityStorage, TaskExecutionStorage,
-    TaskQueueStorage, TaskRetentionStorage, TokenRetentionStorage, TokenStorage,
-    TransactionStorage, UnifiedSearchStorage, UserStorage,
+    RuntimeSettingsStorage, SchemaEvolutionStorage, ServiceAccountStorage, TaskCapacityStorage,
+    TaskExecutionStorage, TaskQueueStorage, TaskRetentionStorage, TokenRetentionStorage,
+    TokenStorage, TransactionStorage, UnifiedSearchStorage, UserStorage,
 };
 
 /// Atomic domain-resource lifecycle and transaction behavior.
@@ -170,10 +170,11 @@ impl<T> EventStorage for T where
 {
 }
 
-/// Cross-cutting execution, metrics, operational state, and token retention.
+/// Cross-cutting execution, metrics, operational state, runtime settings, and token retention.
 pub trait OperationalStorage:
     MetricsStorage
     + OperationalStateStorage
+    + RuntimeSettingsStorage
     + TokenRetentionStorage
     + ExecutionStorage
     + DeletionControlStorage
@@ -184,6 +185,7 @@ pub trait OperationalStorage:
 impl<T> OperationalStorage for T where
     T: MetricsStorage
         + OperationalStateStorage
+        + RuntimeSettingsStorage
         + TokenRetentionStorage
         + ExecutionStorage
         + DeletionControlStorage

@@ -20,10 +20,9 @@ use hubuum_storage_core::capabilities::{
 };
 use hubuum_storage_core::{
     ApplicationControlState, ApplicationFence, RuntimeIsolationDomain, RuntimeOwner,
-    StorageAuthenticationCredential, StorageIdentityEvidence, StorageQueryObservationControl,
-    StorageTaskMetadata, StorageTokenDigest, StorageTokenFormat, StorageTokenHashAlgorithm,
-    StorageTokenHashKeyId, StorageTokenMigrationOutcome, StorageValidationError,
-    TaskMetadataDetails,
+    StorageAuthenticationCredential, StorageIdentityEvidence, StorageTaskMetadata,
+    StorageTokenDigest, StorageTokenFormat, StorageTokenHashAlgorithm, StorageTokenHashKeyId,
+    StorageTokenMigrationOutcome, StorageValidationError, TaskMetadataDetails,
 };
 use uuid::Uuid;
 
@@ -459,7 +458,7 @@ struct MemoryState {
     computed_fields: BTreeMap<i32, StorageComputedFieldDefinition>,
     computed_history: Vec<StorageComputedFieldHistory>,
     query_usage: BTreeMap<i32, StorageQueryUsageDeclaration>,
-    query_observation_control: StorageQueryObservationControl,
+    runtime_settings: runtime_settings::MemoryRuntimeSettings,
     next_query_usage_id: i32,
     computation_states: BTreeMap<i32, StorageClassComputationState>,
     computed_rebuild_tasks: BTreeMap<i32, ClassId>,
@@ -913,6 +912,7 @@ mod operational;
 mod queries;
 mod query_usage;
 mod resources;
+mod runtime_settings;
 mod schema_evolution;
 mod state;
 mod state_lock;
