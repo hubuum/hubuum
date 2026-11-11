@@ -1,0 +1,1354 @@
+{
+  "version": 1,
+  "status": "proposed",
+  "description": "Wire vectors and required Rust/client behavioral assertions; not an authentication simulator. Credentials are deterministic public test values, never issued by a server.",
+  "cases": [
+    {
+      "id": "discovery",
+      "operation_id": "discoverAuthentication",
+      "requires": [],
+      "request": {},
+      "response": {
+        "status": 200,
+        "body": {
+          "interaction_version": 1,
+          "methods": [
+            {
+              "provider_id": "local",
+              "name": "Local",
+              "kind": "local",
+              "interaction": "credentials",
+              "fresh_authentication": true
+            },
+            {
+              "provider_id": "00000000-0000-4000-8000-000000000003",
+              "name": "Employees",
+              "kind": "oidc",
+              "interaction": "browser",
+              "fresh_authentication": true
+            },
+            {
+              "provider_id": "00000000-0000-4000-8000-000000000004",
+              "name": "GitHub",
+              "kind": "oauth",
+              "interaction": "browser",
+              "fresh_authentication": false
+            }
+          ]
+        }
+      },
+      "effects": {}
+    },
+    {
+      "id": "local_begin",
+      "operation_id": "beginInteraction",
+      "requires": [],
+      "request": {
+        "client_id": "hubuum-cli",
+        "provider_id": "local",
+        "purpose": "login",
+        "delivery": "poll"
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "interaction-fixture",
+          "interaction_version": 1,
+          "redemption_secret": "FIXTURE-REDEMPTION-SECRET-NEVER-USE-IN-PRODUCTION",
+          "expires_at": "2026-11-11T12:05:00Z",
+          "interval_seconds": 5,
+          "next": {
+            "kind": "credentials"
+          }
+        }
+      },
+      "effects": {}
+    },
+    {
+      "id": "external_begin",
+      "operation_id": "beginInteraction",
+      "requires": [],
+      "request": {
+        "client_id": "hubuum-cli",
+        "provider_id": "00000000-0000-4000-8000-000000000003",
+        "purpose": "login",
+        "delivery": "poll"
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "interaction-fixture",
+          "interaction_version": 1,
+          "redemption_secret": "FIXTURE-REDEMPTION-SECRET-NEVER-USE-IN-PRODUCTION",
+          "expires_at": "2026-11-11T12:05:00Z",
+          "interval_seconds": 5,
+          "next": {
+            "kind": "browser",
+            "verification_uri": "https://hubuum.example.invalid/api/v1/auth/interactions/browser",
+            "user_code": "ABCD-EFGH-JK"
+          }
+        }
+      },
+      "effects": {}
+    },
+    {
+      "id": "bff_begin",
+      "operation_id": "beginInteraction",
+      "requires": [
+        "registered_frontend_return_target",
+        "server_side_pending_login"
+      ],
+      "request": {
+        "client_id": "hubuum-frontend",
+        "provider_id": "00000000-0000-4000-8000-000000000003",
+        "purpose": "login",
+        "delivery": "bff",
+        "return_target_id": "frontend-fixture",
+        "return_nonce": "FIXTURE-BFF-RETURN-NONCE-NEVER-USE-IN-PRODUCTION"
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "bff-interaction-fixture",
+          "interaction_version": 1,
+          "redemption_secret": "FIXTURE-REDEMPTION-SECRET-NEVER-USE-IN-PRODUCTION",
+          "expires_at": "2026-11-11T12:05:00Z",
+          "interval_seconds": 5,
+          "next": {
+            "kind": "browser",
+            "verification_uri": "https://hubuum.example.invalid/api/v1/auth/interactions/browser",
+            "user_code": "ABCD-EFGH-JK"
+          }
+        }
+      },
+      "effects": {
+        "issued_sessions": 0
+      }
+    },
+    {
+      "id": "status_pending",
+      "operation_id": "interactionStatus",
+      "requires": [
+        "valid_interaction_secret"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "interaction-fixture",
+          "state": "pending",
+          "expires_at": "2026-11-11T12:05:00Z"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0
+      }
+    },
+    {
+      "id": "status_ready",
+      "operation_id": "interactionStatus",
+      "requires": [
+        "valid_interaction_secret"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "interaction-fixture",
+          "state": "ready",
+          "expires_at": "2026-11-11T12:05:00Z"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0
+      }
+    },
+    {
+      "id": "status_consumed",
+      "operation_id": "interactionStatus",
+      "requires": [
+        "valid_interaction_secret"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "interaction-fixture",
+          "state": "consumed",
+          "expires_at": "2026-11-11T12:05:00Z"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0
+      }
+    },
+    {
+      "id": "local_credentials",
+      "operation_id": "continueCredentials",
+      "requires": [
+        "valid_interaction_secret",
+        "local_password_verified"
+      ],
+      "request": {
+        "client_id": "hubuum-cli",
+        "name": "fixture-user",
+        "password": "FIXTURE-PASSWORD"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "interaction-fixture",
+          "state": "ready",
+          "expires_at": "2026-11-11T12:05:00Z"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0
+      }
+    },
+    {
+      "id": "local_success",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "ready",
+        "valid_interaction_secret",
+        "same_client",
+        "same_provider_revision",
+        "browser_approval_if_required"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "token_type": "Bearer",
+          "access_token": "hbt1.fixture.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "refresh_token": "hbr1.fixture.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "access_expires_at": "2026-11-11T12:15:00Z",
+          "refresh_expires_at": "2026-11-11T13:00:00Z",
+          "absolute_expires_at": "2026-11-12T12:00:00Z"
+        }
+      },
+      "effects": {
+        "issued_sessions": 1,
+        "consumed": true
+      }
+    },
+    {
+      "id": "external_success",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "ready",
+        "valid_interaction_secret",
+        "same_client",
+        "same_provider_revision",
+        "browser_approval_if_required"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "token_type": "Bearer",
+          "access_token": "hbt1.fixture.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "refresh_token": "hbr1.fixture.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "access_expires_at": "2026-11-11T12:15:00Z",
+          "refresh_expires_at": "2026-11-11T13:00:00Z",
+          "absolute_expires_at": "2026-11-12T12:00:00Z"
+        }
+      },
+      "effects": {
+        "issued_sessions": 1,
+        "consumed": true
+      }
+    },
+    {
+      "id": "remote_browser_cli_success",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "ready",
+        "valid_interaction_secret",
+        "same_client",
+        "same_provider_revision",
+        "browser_approval_if_required"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "token_type": "Bearer",
+          "access_token": "hbt1.fixture.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "refresh_token": "hbr1.fixture.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "access_expires_at": "2026-11-11T12:15:00Z",
+          "refresh_expires_at": "2026-11-11T13:00:00Z",
+          "absolute_expires_at": "2026-11-12T12:00:00Z"
+        }
+      },
+      "effects": {
+        "issued_sessions": 1,
+        "consumed": true
+      }
+    },
+    {
+      "id": "bff_server_completion",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "ready",
+        "valid_interaction_secret",
+        "same_client",
+        "same_provider_revision",
+        "browser_approval_if_required",
+        "bff_begin",
+        "bff_return_matches_initiating_session"
+      ],
+      "request": {
+        "client_id": "hubuum-frontend"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "token_type": "Bearer",
+          "access_token": "hbt1.fixture.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "refresh_token": "hbr1.fixture.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "access_expires_at": "2026-11-11T12:15:00Z",
+          "refresh_expires_at": "2026-11-11T13:00:00Z",
+          "absolute_expires_at": "2026-11-12T12:00:00Z"
+        }
+      },
+      "effects": {
+        "issued_sessions": 1,
+        "consumed": true
+      }
+    },
+    {
+      "id": "denial",
+      "operation_id": "interactionStatus",
+      "requires": [
+        "denied"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "access_denied"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "expiry",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "expired"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 410,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "interaction_expired"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "replay",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "consumed"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "interaction_consumed"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "cross_client",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "different_client"
+      ],
+      "request": {
+        "client_id": "different-client"
+      },
+      "response": {
+        "status": 401,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "interaction_invalid"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "wrong_secret",
+      "operation_id": "interactionStatus",
+      "requires": [
+        "wrong_interaction_secret"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 401,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "interaction_invalid"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "cross_provider",
+      "operation_id": "providerCallback",
+      "requires": [
+        "wrong_provider"
+      ],
+      "request": {
+        "state": "fixture-state",
+        "code": "fixture-authorization-code",
+        "iss": "https://idp.example.invalid/realms/hubuum"
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "configuration_changed"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "wrong_browser",
+      "operation_id": "providerCallback",
+      "requires": [
+        "wrong_browser_binding"
+      ],
+      "request": {
+        "state": "fixture-state",
+        "code": "fixture-authorization-code",
+        "iss": "https://idp.example.invalid/realms/hubuum"
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "interaction_invalid"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "configuration_changed",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "provider_revision_changed"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "configuration_changed"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "unsupported_freshness",
+      "operation_id": "beginInteraction",
+      "requires": [
+        "github_actor",
+        "purpose_credential_approval"
+      ],
+      "request": {
+        "client_id": "hubuum-cli",
+        "provider_id": "00000000-0000-4000-8000-000000000004",
+        "purpose": "credential_approval",
+        "delivery": "poll",
+        "operation": {
+          "kind": "create_token",
+          "principal_id": 42,
+          "token": {
+            "name": "fixture-token",
+            "expires_at": "2026-11-12T12:00:00"
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "capability_unsupported"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "missing_group_claim",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "required_group_claim_absent"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "access_denied"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "malformed_group_claim",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "group_claim_not_string_array"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "access_denied"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "stale_group_data",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "upstream_outage",
+        "membership_older_than_max_stale"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 503,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "provider_unavailable"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "throttled_poll",
+      "operation_id": "interactionStatus",
+      "requires": [
+        "poll_before_interval"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "Retry-After": "10"
+        },
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "slow_down"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "subject_mismatch",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "reauth_subject_differs_from_actor"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "access_denied"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "candidate_revision_conflict",
+      "operation_id": "activateSecurityCandidate",
+      "requires": [
+        "candidate_base_revision_changed"
+      ],
+      "request": {
+        "expected_revision": 7,
+        "verification_receipt": "FIXTURE-VERIFICATION-RECEIPT-NEVER-USE-IN-PRODUCTION"
+      },
+      "response": {
+        "status": 412,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "revision_conflict"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "candidate_secret_rotated",
+      "operation_id": "activateSecurityCandidate",
+      "requires": [
+        "secret_version_changed"
+      ],
+      "request": {
+        "expected_revision": 7,
+        "verification_receipt": "FIXTURE-VERIFICATION-RECEIPT-NEVER-USE-IN-PRODUCTION"
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "configuration_changed"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "candidate_lock_changed",
+      "operation_id": "activateSecurityCandidate",
+      "requires": [
+        "deployment_lock_changed"
+      ],
+      "request": {
+        "expected_revision": 7,
+        "verification_receipt": "FIXTURE-VERIFICATION-RECEIPT-NEVER-USE-IN-PRODUCTION"
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "configuration_changed"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "candidate_external_actor",
+      "operation_id": "verifySecurityCandidate",
+      "requires": [
+        "actor_is_external_admin"
+      ],
+      "request": {
+        "group": "authentication",
+        "expected_revision": 7,
+        "providers": [
+          {
+            "name": "employees",
+            "kind": "oidc",
+            "enabled": true,
+            "source": "runtime",
+            "configuration": {
+              "issuer": "https://idp.example.invalid/realms/hubuum",
+              "client_id": "hubuum",
+              "client_authentication": "client_secret_basic",
+              "credential": {
+                "action": "reference",
+                "alias": "oidc-client-v1"
+              },
+              "scopes": [
+                "openid",
+                "profile"
+              ],
+              "signing_algorithms": [
+                "RS256"
+              ],
+              "membership": {
+                "mode": "provider_groups",
+                "claim_source": "id_token",
+                "claim_pointer": "/groups",
+                "key_mode": "full_path",
+                "refresh_interval_seconds": 300,
+                "max_stale_seconds": 900
+              },
+              "admission": {
+                "mode": "existing_only"
+              }
+            }
+          }
+        ]
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "access_denied"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "oauth_supplied_profile",
+      "operation_id": "beginInteraction",
+      "requires": [
+        "client_supplied_profile_or_token"
+      ],
+      "request": {
+        "client_id": "hubuum-cli",
+        "provider_id": "00000000-0000-4000-8000-000000000004",
+        "purpose": "login",
+        "delivery": "poll",
+        "profile": {
+          "id": "client-supplied-subject"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "invalid_request"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      },
+      "invalid_request_fields": [
+        "/profile"
+      ]
+    },
+    {
+      "id": "cancel",
+      "operation_id": "cancelInteraction",
+      "requires": [
+        "valid_interaction_secret",
+        "pending"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 204
+      },
+      "effects": {
+        "state": "cancelled",
+        "issued_sessions": 0
+      }
+    },
+    {
+      "id": "lost_completion_cleanup",
+      "operation_id": "revokeUndeliveredSession",
+      "requires": [
+        "consumed",
+        "response_lost",
+        "valid_interaction_secret"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 204
+      },
+      "effects": {
+        "revoked_issued_session": true,
+        "redisclosed_secrets": false,
+        "issued_sessions": 0
+      }
+    },
+    {
+      "id": "candidate_connectivity_only",
+      "operation_id": "verifySecurityCandidate",
+      "requires": [
+        "valid_local_admin"
+      ],
+      "request": {
+        "group": "authentication",
+        "expected_revision": 7,
+        "providers": [
+          {
+            "name": "employees",
+            "kind": "oidc",
+            "enabled": true,
+            "source": "runtime",
+            "configuration": {
+              "issuer": "https://idp.example.invalid/realms/hubuum",
+              "client_id": "hubuum",
+              "client_authentication": "client_secret_basic",
+              "credential": {
+                "action": "reference",
+                "alias": "oidc-client-v1"
+              },
+              "scopes": [
+                "openid",
+                "profile"
+              ],
+              "signing_algorithms": [
+                "RS256"
+              ],
+              "membership": {
+                "mode": "provider_groups",
+                "claim_source": "id_token",
+                "claim_pointer": "/groups",
+                "key_mode": "full_path",
+                "refresh_interval_seconds": 300,
+                "max_stale_seconds": 900
+              },
+              "admission": {
+                "mode": "existing_only"
+              }
+            }
+          }
+        ]
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "candidate-fixture",
+          "group": "authentication",
+          "base_revision": 7,
+          "expires_at": "2026-11-11T12:05:00Z",
+          "checks": [
+            {
+              "kind": "configuration",
+              "status": "passed",
+              "reason": "valid"
+            },
+            {
+              "kind": "connectivity",
+              "status": "passed",
+              "reason": "reachable"
+            },
+            {
+              "kind": "identity",
+              "status": "not_run",
+              "reason": "browser_sign_in_required"
+            }
+          ],
+          "state": "unverified",
+          "providers": [
+            {
+              "provider_id": "00000000-0000-4000-8000-000000000002",
+              "name": "employees",
+              "kind": "oidc"
+            }
+          ]
+        }
+      },
+      "effects": {
+        "activated": false,
+        "issued_sessions": 0,
+        "provisioned": false
+      }
+    },
+    {
+      "id": "candidate_verification_begin",
+      "operation_id": "beginInteraction",
+      "requires": [
+        "valid_local_admin",
+        "candidate_connectivity_only"
+      ],
+      "request": {
+        "client_id": "hubuum-cli",
+        "provider_id": "00000000-0000-4000-8000-000000000002",
+        "purpose": "provider_verification",
+        "delivery": "poll",
+        "candidate_id": "candidate-fixture"
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "verification-interaction-fixture",
+          "interaction_version": 1,
+          "redemption_secret": "FIXTURE-REDEMPTION-SECRET-NEVER-USE-IN-PRODUCTION",
+          "expires_at": "2026-11-11T12:05:00Z",
+          "interval_seconds": 5,
+          "next": {
+            "kind": "browser",
+            "verification_uri": "https://hubuum.example.invalid/api/v1/auth/interactions/browser",
+            "user_code": "ABCD-EFGH-JK"
+          }
+        }
+      },
+      "effects": {
+        "activated": false,
+        "issued_sessions": 0,
+        "provisioned": false
+      }
+    },
+    {
+      "id": "candidate_browser_verified",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "valid_interaction_secret",
+        "purpose_provider_verification",
+        "valid_local_admin",
+        "candidate_browser_sign_in"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "candidate_id": "candidate-fixture",
+          "provider_id": "00000000-0000-4000-8000-000000000002",
+          "subject": "fixture-subject",
+          "admitted": false,
+          "membership": "complete",
+          "groups": [
+            {
+              "key": "/engineering",
+              "name": "engineering"
+            }
+          ],
+          "issued_session": false,
+          "provisioned": false
+        }
+      },
+      "effects": {
+        "activated": false,
+        "issued_sessions": 0,
+        "provisioned": false,
+        "membership_writes": 0
+      }
+    },
+    {
+      "id": "runtime_activation",
+      "operation_id": "activateSecurityCandidate",
+      "requires": [
+        "all_checks_passed",
+        "same_candidate_digest",
+        "same_secret_versions",
+        "same_policy_fingerprint",
+        "fresh_local_admin_approval"
+      ],
+      "request": {
+        "expected_revision": 7,
+        "verification_receipt": "FIXTURE-VERIFICATION-RECEIPT-NEVER-USE-IN-PRODUCTION"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "group": "authentication",
+          "revision": 8,
+          "changed": true
+        }
+      },
+      "effects": {
+        "activated": true,
+        "audit_and_revision_atomic": true,
+        "server_restart": false
+      }
+    },
+    {
+      "id": "provider_disabled",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "provider_disabled_after_begin"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "configuration_changed"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "revoke_provider_sessions": true
+      }
+    },
+    {
+      "id": "complete_empty_groups",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "valid_interaction_secret",
+        "ready",
+        "authoritative_empty_group_array"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "token_type": "Bearer",
+          "access_token": "hbt1.fixture.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "refresh_token": "hbr1.fixture.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "access_expires_at": "2026-11-11T12:15:00Z",
+          "refresh_expires_at": "2026-11-11T13:00:00Z",
+          "absolute_expires_at": "2026-11-12T12:00:00Z"
+        }
+      },
+      "effects": {
+        "issued_sessions": 1,
+        "remove_only_owning_provider_grants": true,
+        "preserve_manual_membership": true
+      }
+    },
+    {
+      "id": "missing_optional_groups",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "valid_interaction_secret",
+        "ready",
+        "local_only_membership",
+        "no_groups_claim"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "token_type": "Bearer",
+          "access_token": "hbt1.fixture.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "refresh_token": "hbr1.fixture.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "access_expires_at": "2026-11-11T12:15:00Z",
+          "refresh_expires_at": "2026-11-11T13:00:00Z",
+          "absolute_expires_at": "2026-11-12T12:00:00Z"
+        }
+      },
+      "effects": {
+        "issued_sessions": 1,
+        "preserve_manual_membership": true
+      }
+    },
+    {
+      "id": "local_group_mapping_unsupported",
+      "operation_id": "verifySecurityCandidate",
+      "requires": [
+        "direct_mapping_into_local_groups"
+      ],
+      "request": {
+        "group": "authentication",
+        "expected_revision": 7,
+        "providers": [
+          {
+            "name": "employees",
+            "kind": "oidc",
+            "enabled": true,
+            "source": "runtime",
+            "configuration": {
+              "issuer": "https://idp.example.invalid/realms/hubuum",
+              "client_id": "hubuum",
+              "client_authentication": "client_secret_basic",
+              "credential": {
+                "action": "reference",
+                "alias": "oidc-client-v1"
+              },
+              "scopes": [
+                "openid",
+                "profile"
+              ],
+              "signing_algorithms": [
+                "RS256"
+              ],
+              "membership": {
+                "mode": "provider_groups",
+                "claim_source": "id_token",
+                "claim_pointer": "/groups",
+                "key_mode": "full_path",
+                "refresh_interval_seconds": 300,
+                "max_stale_seconds": 900,
+                "local_group_mappings": [
+                  {
+                    "key": "/engineering",
+                    "local_group_id": 1
+                  }
+                ]
+              },
+              "admission": {
+                "mode": "existing_only"
+              }
+            }
+          }
+        ]
+      },
+      "response": {
+        "status": 422,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "capability_unsupported"
+        }
+      },
+      "effects": {
+        "activated": false
+      },
+      "invalid_request_fields": [
+        "/providers/0/configuration/membership/local_group_mappings"
+      ]
+    },
+    {
+      "id": "oauth_large_numeric_subject",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "ready",
+        "valid_interaction_secret",
+        "profile_integer_subject_9007199254740993"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "token_type": "Bearer",
+          "access_token": "hbt1.fixture.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "refresh_token": "hbr1.fixture.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "access_expires_at": "2026-11-11T12:15:00Z",
+          "refresh_expires_at": "2026-11-11T13:00:00Z",
+          "absolute_expires_at": "2026-11-12T12:00:00Z"
+        }
+      },
+      "effects": {
+        "issued_sessions": 1,
+        "canonical_subject": "9007199254740993"
+      }
+    },
+    {
+      "id": "treetop_runtime_activation",
+      "operation_id": "activateSecurityCandidate",
+      "requires": [
+        "treetop_ready",
+        "recovery_admin_preserved",
+        "fresh_local_admin_approval",
+        "deployment_egress_and_trust_allowed"
+      ],
+      "request": {
+        "expected_revision": 8,
+        "verification_receipt": "FIXTURE-VERIFICATION-RECEIPT-NEVER-USE-IN-PRODUCTION"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "group": "authorization",
+          "revision": 9,
+          "changed": true
+        }
+      },
+      "effects": {
+        "activated": true,
+        "server_restart": false,
+        "automatic_local_fallback": false
+      }
+    },
+    {
+      "id": "wrong_approval_operation",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "approval_operation_changed"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "error": "Forbidden",
+          "message": "Operation could not be approved.",
+          "reason": "access_denied"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "wrong_originating_credential",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "originating_token_replaced"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "error": "Forbidden",
+          "message": "Operation could not be approved.",
+          "reason": "access_denied"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "recovery_administrator_denied",
+      "operation_id": "activateSecurityCandidate",
+      "requires": [
+        "replacement_treetop_denies_acting_local_admin"
+      ],
+      "request": {
+        "expected_revision": 7,
+        "verification_receipt": "FIXTURE-VERIFICATION-RECEIPT-NEVER-USE-IN-PRODUCTION"
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "error": "Forbidden",
+          "message": "Operation could not be approved.",
+          "reason": "access_denied"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "fresh_approval_success",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "same_actor_subject",
+        "same_originating_token",
+        "same_exact_operation",
+        "verified_signed_auth_time",
+        "valid_interaction_secret"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "approval": "hca1.cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "record": {
+            "id": 123,
+            "actor_id": 7,
+            "token_id": 18,
+            "operation": "create_token",
+            "target_id": 42,
+            "restore_job_id": null,
+            "invalidated_at": null,
+            "authenticated_at": "2026-11-11T12:00:00Z",
+            "expires_at": "2026-11-11T12:02:00Z",
+            "consumed_at": null
+          },
+          "token_expires_at": "2026-11-12T12:00:00"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "issued_approvals": 1,
+        "session_wide_elevation": false
+      }
+    }
+  ],
+  "clock": "2026-11-11T12:00:00Z"
+}

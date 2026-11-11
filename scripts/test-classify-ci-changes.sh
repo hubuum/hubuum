@@ -44,6 +44,15 @@ assert_literal_include_is_code() {
   assert_flag "$output" rust true
 }
 
+for auth_contract_input in docs/authentication/openapi.proposed.json docs/authentication/fixtures.json; do
+  auth_contract_output="$(bash "$classifier" "$auth_contract_input")"
+  assert_flag "$auth_contract_output" code true
+  assert_flag "$auth_contract_output" documentation true
+  assert_flag "$auth_contract_output" rust false
+  assert_flag "$auth_contract_output" container false
+  assert_flag "$auth_contract_output" openapi false
+done
+
 for operator_path in observability/prometheus/alerts.json observability/prometheus/tests.json \
   observability/dashboards/overview.json scripts/observability.py; do
   operator_output="$(bash "$classifier" "$operator_path")"
