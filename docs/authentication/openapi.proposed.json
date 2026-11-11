@@ -573,9 +573,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 64
+              "$ref": "#/components/schemas/ExternalProviderId"
             }
           },
           {
@@ -910,13 +908,31 @@
       }
     },
     "schemas": {
+      "ProviderId": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "local"
+            ]
+          },
+          {
+            "$ref": "#/components/schemas/ExternalProviderId"
+          }
+        ],
+        "description": "Reserved local provider ID or a server-issued immutable external provider UUID."
+      },
+      "ExternalProviderId": {
+        "type": "string",
+        "format": "uuid",
+        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+        "description": "Server-issued immutable UUID for an LDAP, OIDC or OAuth provider; local is not valid here."
+      },
       "ProviderMethod": {
         "type": "object",
         "properties": {
           "provider_id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 64
+            "$ref": "#/components/schemas/ProviderId"
           },
           "name": {
             "type": "string",
@@ -1024,9 +1040,7 @@
             "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
           },
           "provider_id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 64
+            "$ref": "#/components/schemas/ProviderId"
           },
           "purpose": {
             "type": "string",
@@ -1238,9 +1252,7 @@
             "maxLength": 64
           },
           "provider_id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 64
+            "$ref": "#/components/schemas/ExternalProviderId"
           },
           "subject": {
             "type": "string",
@@ -1379,7 +1391,7 @@
               "type": "object",
               "properties": {
                 "provider_id": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/ExternalProviderId"
                 },
                 "name": {
                   "type": "string"
@@ -1740,9 +1752,7 @@
             "type": "object",
             "properties": {
               "provider_id": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 64
+                "$ref": "#/components/schemas/ExternalProviderId"
               },
               "name": {
                 "type": "string",
@@ -1779,9 +1789,7 @@
             "type": "object",
             "properties": {
               "provider_id": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 64
+                "$ref": "#/components/schemas/ExternalProviderId"
               },
               "name": {
                 "type": "string",
@@ -1823,9 +1831,7 @@
             "type": "object",
             "properties": {
               "provider_id": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 64
+                "$ref": "#/components/schemas/ExternalProviderId"
               },
               "name": {
                 "type": "string",

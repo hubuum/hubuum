@@ -175,8 +175,11 @@ Do not generate clients against proposed paths as if a released server supports 
 | `GET /admin/runtime-settings/security-candidates/{id}` | Sanitized checks and browser-test outcome, visible only to its initiating local administrator |
 | `POST /admin/runtime-settings/security-candidates/{id}/activate` | Approved atomic revisioned activation of exact verified candidate |
 
-The local provider has a reserved stable ID `local`. Existing
-`GET /auth/providers`, `POST /auth/login` and session refresh/logout retain their
+The local provider has a reserved stable ID `local`.
+LDAP/OIDC/OAuth providers use server-issued UUIDs in discovery, interactions,
+callbacks and candidate reports; names are display metadata, never provider IDs.
+Shared fixtures use deterministic valid UUIDs for those external providers.
+Existing `GET /auth/providers`, `POST /auth/login` and session refresh/logout retain their
 wire behavior. Old clients see the existing password-provider list, not names
 they cannot authenticate by password. New clients use typed discovery; a genuine
 404/unsupported-version falls back to existing password login, while a timeout,

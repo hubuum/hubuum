@@ -60,6 +60,18 @@ execution of the proposed flows in clients that have not implemented them.
 These implementation requirements remain with the owning issues in the table;
 the source review does not qualify a provider or establish independent acceptance.
 
+## Independent review iteration
+
+A user-authorized separate Codex reviewer, with fresh context and no editing role,
+reviewed commit `6aa144b55070715eb932d5e7be3e4bd36e74213e` across all seven
+surfaces. It found substantive coverage of all eight #573 criteria and requested
+one correction before acceptance: external provider IDs in the schema and
+positive fixtures must obey the prose's immutable UUID invariant. The correction
+uses shared local-or-UUID/external-UUID schemas, deterministic provider UUIDs and
+stdlib format checks. The throttled-poll vector also now advertises `Retry-After`
+to exercise the documented backoff. Independent re-review of the corrected
+source is pending; this is not human maintainer approval or provider qualification.
+
 ## Acceptance review requested
 
 Independent acceptance is **pending**. Review the PR as one shared contract for

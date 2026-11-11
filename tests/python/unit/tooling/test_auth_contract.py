@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import unittest
+from uuid import UUID
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -54,7 +55,7 @@ class AuthenticationContractTests(unittest.TestCase):
         return value, document
 
     def shape_errors(self, value, schema, document, path="$"):
-        """Check fixture structure, not formats, domain rules or authentication."""
+        """Check fixture structure and UUIDs, not other formats or domain behavior."""
         if "$ref" in schema:
             schema, document = self.resolve(schema["$ref"], document)
         if "oneOf" in schema:
@@ -70,6 +71,13 @@ class AuthenticationContractTests(unittest.TestCase):
         if "enum" in schema and value not in schema["enum"]:
             return [f"{path}: unexpected enum value"]
         errors = []
+        if isinstance(value, str) and schema.get("format") == "uuid":
+            try:
+                valid = str(UUID(value)) == value.lower()
+            except ValueError:
+                valid = False
+            if not valid:
+                errors.append(f"{path}: expected a hyphenated UUID")
         if isinstance(value, dict):
             properties = schema.get("properties", {})
             errors.extend(f"{path}/{key}: missing required property"
@@ -173,6 +181,31 @@ class AuthenticationContractTests(unittest.TestCase):
         self.assertGreaterEqual(len(begin["return_nonce"]), 32)
         self.assertLessEqual(len(begin["return_nonce"]), 128)
         self.assertIn("bff_return_matches_initiating_session", completion["requires"])
+
+    def test_provider_id_fields_reject_symbolic_identifiers(self):
+        for node in objects(self.spec):
+            schema = node.get("properties", {}).get("provider_id")
+            if node.get("name") == "provider_id" and node.get("in") == "path":
+                schema = node["schema"]
+            if schema is None:
+                continue
+            for value, valid in (("00000000-0000-4000-8000-000000000003", True),
+                                 ("keycloak-fixture", False), ("github-fixture", False),
+                                 ("00000000000040008000000000000003", False)):
+                with self.subTest(schema=schema, value=value):
+                    self.assertEqual(not self.shape_errors(value, schema, self.spec), valid)
+        for name, valid in (("ProviderMethod", True), ("Begin", True),
+                            ("VerificationResult", False)):
+            with self.subTest(schema=name, value="local"):
+                schema = self.spec["components"]["schemas"][name]["properties"]["provider_id"]
+                self.assertEqual(not self.shape_errors("local", schema, self.spec), valid)
+
+    def test_throttled_poll_advertises_backoff(self):
+        cases = {case["id"]: case for case in self.fixtures["cases"]}
+        response = cases["throttled_poll"]["response"]
+        self.assertEqual(response["status"], 429)
+        interval = cases["external_begin"]["response"]["body"]["interval_seconds"]
+        self.assertGreaterEqual(int(response["headers"]["Retry-After"]), interval + 5)
 
     def test_fixture_operations_and_statuses_exist(self):
         operations = {}

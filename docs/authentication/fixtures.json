@@ -21,14 +21,14 @@
               "fresh_authentication": true
             },
             {
-              "provider_id": "keycloak-fixture",
+              "provider_id": "00000000-0000-4000-8000-000000000003",
               "name": "Employees",
               "kind": "oidc",
               "interaction": "browser",
               "fresh_authentication": true
             },
             {
-              "provider_id": "github-fixture",
+              "provider_id": "00000000-0000-4000-8000-000000000004",
               "name": "GitHub",
               "kind": "oauth",
               "interaction": "browser",
@@ -70,7 +70,7 @@
       "requires": [],
       "request": {
         "client_id": "hubuum-cli",
-        "provider_id": "keycloak-fixture",
+        "provider_id": "00000000-0000-4000-8000-000000000003",
         "purpose": "login",
         "delivery": "poll"
       },
@@ -100,7 +100,7 @@
       ],
       "request": {
         "client_id": "hubuum-frontend",
-        "provider_id": "keycloak-fixture",
+        "provider_id": "00000000-0000-4000-8000-000000000003",
         "purpose": "login",
         "delivery": "bff",
         "return_target_id": "frontend-fixture",
@@ -523,7 +523,7 @@
       ],
       "request": {
         "client_id": "hubuum-cli",
-        "provider_id": "github-fixture",
+        "provider_id": "00000000-0000-4000-8000-000000000004",
         "purpose": "credential_approval",
         "delivery": "poll",
         "operation": {
@@ -626,6 +626,9 @@
       },
       "response": {
         "status": 429,
+        "headers": {
+          "Retry-After": "10"
+        },
         "body": {
           "error": "AuthenticationFailed",
           "message": "Authentication could not be completed.",
@@ -794,7 +797,7 @@
       ],
       "request": {
         "client_id": "hubuum-cli",
-        "provider_id": "github-fixture",
+        "provider_id": "00000000-0000-4000-8000-000000000004",
         "purpose": "login",
         "delivery": "poll",
         "profile": {
