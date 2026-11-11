@@ -399,4 +399,9 @@ Shared fixture validation is a repository-tool check, not proof of runtime
 authentication security. The implementing Rust services/adapters own behavior,
 authorization, transaction/race and production-adapter tests. Each client consumes
 the same fixtures for decoding/state handling in its own implementation issue.
+The corpus declares its logical UTC `clock`. Freeze a test clock there, or rebase
+all fixture timestamps by one common offset in the consumer harness, preserving
+durations and explicit expired-state preconditions. Never decode success examples
+against wall-clock expiry or submit these public deterministic credentials to a
+real server.
 Provider live qualification remains #577/#578 and ecosystem acceptance #581.
