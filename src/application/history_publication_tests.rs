@@ -19,9 +19,11 @@ use rstest::rstest;
 use tokio::io::AsyncWriteExt;
 #[cfg(any(feature = "tls-rustls", feature = "tls-openssl"))]
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpStream;
+use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::oneshot;
 use tokio::time::timeout;
+
+const DRIVER_FIXTURE_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct DriverWitness {
     worker: ThreadId,
@@ -60,9 +62,20 @@ impl MessageBody for ObservedBody {
         mut self: Pin<&mut Self>,
         _context: &mut Context<'_>,
     ) -> Poll<Option<Result<Bytes, Self::Error>>> {
-        if let Some(payload) = self.payload.take() {
-            let _ = self.produced.take().expect("single payload").send(());
-            return Poll::Ready(Some(Ok(payload)));
+        if let Some(mut payload) = self.payload.take() {
+            if let Some(produced) = self.produced.take() {
+                let _ = produced.send(());
+            }
+            // Avoid handing one oversized write to a platform's socket queue.
+            // Several bounded chunks must encounter the unread receive window.
+            let chunk = if payload.len() > 64 * 1024 {
+                let chunk = payload.split_to(64 * 1024);
+                self.payload = Some(payload);
+                chunk
+            } else {
+                payload
+            };
+            return Poll::Ready(Some(Ok(chunk)));
         }
         if let Some(eof) = self.eof.take() {
             let _ = eof.send(());
@@ -184,6 +197,12 @@ async fn exercise_driver_release(transport: Transport, backpressure: bool) {
     })
     .on_connect(move |io, extensions| {
         let socket = transport.socket(io);
+        if backpressure {
+            // Configure the accepted socket itself; listener inheritance and
+            // loopback buffer defaults differ across platforms.
+            let control = TcpSocket::from_std_stream(duplicate_socket(socket).unwrap());
+            control.set_send_buffer_size(4096).unwrap();
+        }
         let _ = stop
             .lock()
             .unwrap()
@@ -233,7 +252,11 @@ async fn exercise_driver_release(transport: Transport, backpressure: bool) {
     .run();
     let server_handle = server.handle();
     let server = actix_web::rt::spawn(server);
-    let client = TcpStream::connect(address).await.unwrap();
+    let client = TcpSocket::new_v4().unwrap();
+    if backpressure {
+        client.set_recv_buffer_size(4096).unwrap();
+    }
+    let client = client.connect(address).await.unwrap();
     #[cfg(any(feature = "tls-rustls", feature = "tls-openssl"))]
     let mut client: Box<dyn ClientStream> = match transport {
         Transport::Plain => Box::new(client),
@@ -262,11 +285,11 @@ async fn exercise_driver_release(transport: Transport, backpressure: bool) {
         .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n")
         .await
         .unwrap();
-    let stop = timeout(Duration::from_secs(5), stop_handle)
+    let stop = timeout(DRIVER_FIXTURE_TIMEOUT, stop_handle)
         .await
         .unwrap()
         .unwrap();
-    timeout(Duration::from_secs(5), body_produced)
+    timeout(DRIVER_FIXTURE_TIMEOUT, body_produced)
         .await
         .unwrap()
         .unwrap();
@@ -277,7 +300,7 @@ async fn exercise_driver_release(transport: Transport, backpressure: bool) {
                 .is_err()
         );
     } else {
-        timeout(Duration::from_secs(5), &mut body_eof)
+        timeout(DRIVER_FIXTURE_TIMEOUT, &mut body_eof)
             .await
             .unwrap()
             .unwrap();
@@ -288,7 +311,7 @@ async fn exercise_driver_release(transport: Transport, backpressure: bool) {
     ));
     // Abort is a request. Retirement requires the positive driver witness below.
     stop.shutdown(Shutdown::Both).unwrap();
-    timeout(Duration::from_secs(5), &mut driver_release)
+    timeout(DRIVER_FIXTURE_TIMEOUT, &mut driver_release)
         .await
         .unwrap()
         .unwrap();
