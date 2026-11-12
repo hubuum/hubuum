@@ -362,9 +362,27 @@ and administrator processes, back up the database, apply the migration and
 refresh grants, then start matching eight-kind binaries. Include the new entries
 in policy edits; preserve recovery evidence and roll
 forward after new work is retained. Production workers still advertise their
-existing seven kinds. Manual/periodic submission, coalescing and production activation
-remain disabled until the remaining gates pass; configuring an expiry policy
-alone does not enable either path.
+existing seven kinds. Production manual/periodic admission and execution remain
+gated until the remaining qualifications pass; configuring an expiry policy alone
+does not enable either path.
+
+The gated administrator `POST /api/v1/admin/history-lifecycle/runs` operation
+accepts the same bounded family/scope/limit request as inspection. It returns 202
+for a new task or 200 for the existing active scope owner, after rechecking
+configured unscoped administrator authority. Both adapters serialize it with the
+periodic producer and retained cleanup. A duplicate preserves the original task
+and consumes no additional capacity. Discovery retains the stable scope through
+terminal payload redaction, and PostgreSQL enforces active scope uniqueness with
+a partial index. A busy owner requires retry; an unsupported owner is never
+reinterpreted as permission to create another task.
+
+Periodic admission examines at most 16 retained expiry policy roots per recovery
+pass in round-robin order. It retains the immutable policy revision and original
+initiator without requiring a new human approval. Later prospective overrides do
+not erase earlier closure obligations; actual selection and removal still recheck
+governing rules and holds. Retained cleanup takes priority over a fresh scan for
+the same key. Both producers require original OnlineV1 admission; the production
+fleet continues to register Legacy and does not enable them.
 
 | Area | Implementation target and required evidence |
 | --- | --- |

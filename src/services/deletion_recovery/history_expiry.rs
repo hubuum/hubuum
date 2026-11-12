@@ -2,18 +2,93 @@
 //! independently protected before removal and task completion respectively.
 use hubuum_domain::PrincipalId;
 use hubuum_storage_core::{
-    HistoryExpiryOrigin, HistoryExpiryTaskAuthorization, HistoryExpiryTaskPayload,
-    HistoryExpiryTaskRequest, HistoryLifecycleStorage, LogicalIdentityStorage,
-    StorageIdentitySubject, StorageIdentityTarget, StorageTaskCompletionPayload,
-    StorageTaskWaitRequest, TaskExecutionStorage,
+    ApplicationFence, HistoryExpiryOrigin, HistoryExpiryTaskAdmission,
+    HistoryExpiryTaskAuthorization, HistoryExpiryTaskPayload, HistoryExpiryTaskRequest,
+    HistoryExpiryTaskSubmission, HistoryLifecycleScan, HistoryLifecycleStorage,
+    HistoryPolicyBinding, HistoryPolicyReference, LogicalIdentityStorage, StorageIdentitySubject,
+    StorageIdentityTarget, StorageTaskCompletionPayload, StorageTaskWaitRequest,
+    TaskExecutionStorage,
 };
 
 use crate::errors::ApiError;
+use crate::extractors::AdminAccess;
 use crate::models::{NewTaskEventRecord, TaskResultCounts, TaskStatus};
 use crate::permissions::{AppContext, require_unscoped_runtime_admin};
 use crate::services::authentication::ExecutionPrincipal;
 use crate::services::tasks::{ClaimedTask, TaskStateChange, complete_task};
 use crate::storage::storage_handle;
+
+/// Authorization is evaluated before either creation or coalescing. This path
+/// requires original OnlineV1 admission just like the executor.
+pub(crate) async fn submit_manual(
+    context: &AppContext,
+    admin: &AdminAccess,
+    scan: HistoryLifecycleScan,
+) -> Result<HistoryExpiryTaskAdmission, ApiError> {
+    let storage = storage_handle(context);
+    let (principal, snapshot) = crate::tasks::history::run(&storage, async {
+        let principal = super::history_policy::principal(context, admin).await?;
+        Ok((principal, storage.capture_history_lifecycle().await?))
+    })
+    .await?;
+    let request = HistoryExpiryTaskSubmission::manual(
+        scan,
+        ApplicationFence::new(
+            snapshot.fence().incarnation(),
+            snapshot.fence().deletion_revision().value() as i64,
+        )
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+        PrincipalId::new(admin.user.id)?,
+        principal,
+    );
+    Ok(storage.submit_history_expiry_task(request).await?)
+}
+
+/// Bounded round-robin admission over retained expiry policy roots. A newer
+/// prospective override does not erase an older closure's governing rule.
+/// The shared adapter path coalesces with manual work and retained cleanup.
+pub(crate) async fn submit_periodic(context: &AppContext) -> Result<(), ApiError> {
+    use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    const PER_PASS: usize = 16;
+    let storage = storage_handle(context);
+    let snapshot = crate::tasks::history::run(&storage, async {
+        Ok(storage.capture_history_lifecycle().await?)
+    })
+    .await?;
+    let mut roots = BTreeMap::new();
+    for record in snapshot.control().authority().policies().records() {
+        if matches!(
+            record.proposal().binding(),
+            HistoryPolicyBinding::Expire { .. }
+        ) {
+            roots.insert(record.proposal().key(), record);
+        }
+    }
+    let roots: Vec<_> = roots.into_values().collect();
+    if roots.is_empty() {
+        return Ok(());
+    }
+    let start = NEXT.fetch_add(PER_PASS, Ordering::Relaxed);
+    let application = ApplicationFence::new(
+        snapshot.fence().incarnation(),
+        snapshot.fence().deletion_revision().value() as i64,
+    )
+    .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
+    for offset in 0..roots.len().min(PER_PASS) {
+        crate::tasks::control::checkpoint()?;
+        let root = roots[start.wrapping_add(offset) % roots.len()];
+        let scan = HistoryLifecycleScan::new(root.proposal().key(), 1000)
+            .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
+        let request = HistoryExpiryTaskSubmission::periodic(scan, application, root)
+            .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
+        if let Err(error) = storage.submit_history_expiry_task(request).await {
+            tracing::warn!(message = "Periodic history admission remains pending", key = ?root.proposal().key(), error = %error);
+        }
+    }
+    Ok(())
+}
 
 /// Called only by an expiry-capable qualified worker. The retained journal is
 /// bounded (256 batches), and each adapter serializes one batch with its owner.
@@ -159,7 +234,35 @@ async fn authorize_selection(
             }
             Ok(HistoryExpiryTaskAuthorization::manual(*original))
         }
-        HistoryExpiryOrigin::Scheduled { .. } => Ok(HistoryExpiryTaskAuthorization::scheduled()),
+        HistoryExpiryOrigin::Scheduled {
+            policy: Some(root),
+            initiator,
+        } => {
+            let snapshot = storage_handle(context).capture_history_lifecycle().await?;
+            if !snapshot
+                .control()
+                .authority()
+                .policies()
+                .records()
+                .iter()
+                .any(|record| {
+                    HistoryPolicyReference::from(record) == *root
+                        && Some(record.principal()) == *initiator
+                        && matches!(
+                            record.proposal().binding(),
+                            HistoryPolicyBinding::Expire { .. }
+                        )
+                })
+            {
+                return Err(ApiError::Forbidden(
+                    "Periodic expiry policy root is unavailable".into(),
+                ));
+            }
+            Ok(HistoryExpiryTaskAuthorization::periodic(root.clone()))
+        }
+        HistoryExpiryOrigin::Scheduled { policy: None, .. } => {
+            Ok(HistoryExpiryTaskAuthorization::scheduled())
+        }
     }
 }
 

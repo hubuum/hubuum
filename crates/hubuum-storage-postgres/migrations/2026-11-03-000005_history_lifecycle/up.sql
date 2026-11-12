@@ -1539,7 +1539,7 @@ BEGIN
        OR (metadata - ARRAY['version','data']) <> '{}'::jsonb OR jsonb_typeof(data) IS DISTINCT FROM 'object'
        OR data->>'kind' IS DISTINCT FROM task_kind THEN RETURN false; END IF;
     allowed := CASE task_kind
-        WHEN 'history_expiry' THEN ARRAY['kind','recovery_batch']
+        WHEN 'history_expiry' THEN ARRAY['kind','recovery_batch','admission_scope']
         WHEN 'import' THEN ARRAY['kind','dry_run','atomicity','collision_policy','permission_policy','has_failed_items']
         WHEN 'export' THEN ARRAY['kind','scope_kind','target','template_id','missing_data_policy','max_items','max_output_bytes','warning_count','truncated','output']
         WHEN 'backup' THEN ARRAY['kind','include_history','output']
@@ -1554,6 +1554,26 @@ BEGIN
         OR data->>'recovery_batch' !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
         OR data->>'recovery_batch' = '00000000-0000-0000-0000-000000000000'
     ) THEN RETURN false; END IF;
+    IF data->>'admission_scope' IS NOT NULL THEN
+        IF jsonb_typeof(data->'admission_scope') <> 'object'
+           OR ((data->'admission_scope') - ARRAY['family','scope']) <> '{}'::jsonb
+           OR jsonb_typeof(data #> '{admission_scope,family}') IS DISTINCT FROM 'string'
+           OR data #>> '{admission_scope,family}' NOT IN ('collection','class','object','class_relation','object_relation','export_template','remote_target','computed_definitions','class_schema')
+           OR jsonb_typeof(data #> '{admission_scope,scope}') IS DISTINCT FROM 'object'
+        THEN RETURN false; END IF;
+        target := data #> '{admission_scope,scope}';
+        IF target->>'kind' = 'deployment' THEN
+            IF target - 'kind' <> '{}'::jsonb THEN RETURN false; END IF;
+        ELSIF target->>'kind' IN ('collection','class') THEN
+            IF target - ARRAY['kind','identity'] <> '{}'::jsonb
+               OR jsonb_typeof(target->'identity') IS DISTINCT FROM 'string'
+               OR target->>'identity' !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+               OR target->>'identity' = '00000000-0000-0000-0000-000000000000'
+               OR (target->>'kind' = 'class' AND data #>> '{admission_scope,family}' = 'collection')
+            THEN RETURN false; END IF;
+        ELSE RETURN false; END IF;
+        target := data->'target';
+    END IF;
     FOREACH field IN ARRAY ARRAY['dry_run','has_failed_items','truncated','include_history'] LOOP
         IF data->>field IS NOT NULL AND jsonb_typeof(data->field) <> 'boolean' THEN RETURN false; END IF;
     END LOOP;
@@ -1607,3 +1627,8 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN RETURN false;
 END;
 $$;
+
+-- Coalescing covers fresh work and cleanup, with legacy payload fallback.
+CREATE UNIQUE INDEX tasks_history_expiry_scope_active ON public.tasks
+    ((coalesce(nullif(discovery_metadata #> '{data,admission_scope}','null'::jsonb), request_payload #> '{scan,key}')))
+    WHERE kind='history_expiry' AND status IN ('queued','validating','running','waiting'); -- hubuum-compat: bounded-transactional-index

@@ -120,6 +120,8 @@ pub enum TaskMetadataDetails {
     HistoryExpiry {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         recovery_batch: Option<uuid::Uuid>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        admission_scope: Option<crate::HistoryPolicyKey>,
     },
     Import {
         dry_run: Option<bool>,
@@ -267,6 +269,7 @@ impl StorageTaskMetadata {
             },
             StorageTaskKind::HistoryExpiry => TaskMetadataDetails::HistoryExpiry {
                 recovery_batch: None,
+                admission_scope: None,
             },
             StorageTaskKind::RemoteCall => TaskMetadataDetails::RemoteCall {
                 remote_target_id: None,
@@ -280,6 +283,7 @@ impl StorageTaskMetadata {
         match &data {
             TaskMetadataDetails::HistoryExpiry {
                 recovery_batch: Some(batch),
+                ..
             } if batch.is_nil() => {
                 return Err(invalid("History cleanup batch must not be nil"));
             }

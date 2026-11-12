@@ -763,6 +763,8 @@ async fn maybe_recover_expired_task_leases(backend: &AppContext) -> Result<(), A
             if TaskWorkerKinds::STANDARD.contains(TaskKind::HistoryExpiry) {
                 crate::services::deletion_recovery::history_expiry::recover_pending(backend)
                     .await?;
+                crate::services::deletion_recovery::history_expiry::submit_periodic(backend)
+                    .await?;
             }
             for task in recovered {
                 metrics::task_lease_recovered(&task.kind);

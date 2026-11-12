@@ -8,7 +8,8 @@ use uuid::Uuid;
 use super::*;
 use crate::{
     ApplicationFence, StorageCapturedIdentity, StorageIdentityEvidence, StorageIdentitySubject,
-    StorageTask, StorageTaskCheckpoint, StorageTaskKind, StorageTaskLease, TaskMetadataDetails,
+    StorageTask, StorageTaskCheckpoint, StorageTaskEventInput, StorageTaskKind, StorageTaskLease,
+    TaskMetadataDetails,
 };
 
 #[cfg(test)]
@@ -22,7 +23,7 @@ pub struct HistoryExpiryTaskAuthorization(ExpiryAuthorization);
 #[derive(Clone, Debug)]
 enum ExpiryAuthorization {
     Manual(PrincipalIdentity),
-    Scheduled,
+    Scheduled(Option<HistoryPolicyReference>),
 }
 
 impl HistoryExpiryTaskAuthorization {
@@ -31,7 +32,11 @@ impl HistoryExpiryTaskAuthorization {
     }
 
     pub const fn scheduled() -> Self {
-        Self(ExpiryAuthorization::Scheduled)
+        Self(ExpiryAuthorization::Scheduled(None))
+    }
+
+    pub const fn periodic(policy: HistoryPolicyReference) -> Self {
+        Self(ExpiryAuthorization::Scheduled(Some(policy)))
     }
 
     fn matches(&self, origin: &HistoryExpiryOrigin) -> bool {
@@ -39,7 +44,10 @@ impl HistoryExpiryTaskAuthorization {
             (ExpiryAuthorization::Manual(expected), HistoryExpiryOrigin::Manual { principal }) => {
                 expected == principal
             }
-            (ExpiryAuthorization::Scheduled, HistoryExpiryOrigin::Scheduled { .. }) => true,
+            (
+                ExpiryAuthorization::Scheduled(expected),
+                HistoryExpiryOrigin::Scheduled { policy, .. },
+            ) => expected == policy,
             _ => false,
         }
     }
@@ -132,14 +140,21 @@ struct PayloadInput {
     scan: HistoryLifecycleScan,
     origin: HistoryExpiryOrigin,
     application: ApplicationFence,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_recovery")]
     recovery: Option<RetainedBatch>,
+}
+
+fn deserialize_recovery<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<RetainedBatch>, D::Error> {
+    RetainedBatch::deserialize(deserializer).map(Some)
 }
 
 impl TryFrom<PayloadInput> for HistoryExpiryTaskPayload {
     type Error = StorageValidationError;
 
     fn try_from(input: PayloadInput) -> Result<Self, Self::Error> {
+        input.origin.validate_key(input.scan.key())?;
         let supported = match (input.version, input.action, input.recovery) {
             (1, ExpiryAction::ExpireConfiguredHotHistory, None) => true,
             (2, ExpiryAction::ResumeRetainedBatch, Some(binding)) => {
@@ -200,6 +215,21 @@ impl HistoryExpiryTaskPayload {
 
     pub fn recovery_batch(&self) -> Option<Uuid> {
         self.recovery.map(|binding| binding.batch)
+    }
+
+    /// Shared queued audit input, preserving the retained-cleanup event contract.
+    pub fn admission_event(&self) -> StorageTaskEventInput {
+        match self.recovery {
+            Some(binding) => {
+                StorageTaskEventInput::new("queued", "Retained history batch adopted for cleanup")
+                    .with_data(Some(
+                        serde_json::json!({"batch": binding.batch, "original_run": binding.run}),
+                    ))
+            }
+            None => StorageTaskEventInput::new("queued", "History expiry task admitted").with_data(
+                Some(serde_json::json!({"key": self.scan.key(), "origin": self.origin})),
+            ),
+        }
     }
 
     pub const fn scan(&self) -> &HistoryLifecycleScan {
@@ -280,7 +310,17 @@ impl HistoryExpiryTaskCheckpoint {
                 .ok_or_else(|| invalid("History expiry task payload is absent"))?,
         )?;
         let owner_batch = match task.metadata().map(|metadata| metadata.details()) {
-            Some(TaskMetadataDetails::HistoryExpiry { recovery_batch }) => *recovery_batch,
+            Some(TaskMetadataDetails::HistoryExpiry {
+                recovery_batch,
+                admission_scope,
+            }) => {
+                if admission_scope.is_some_and(|key| key != payload.scan().key()) {
+                    return Err(invalid(
+                        "History task scope differs from its durable admission binding",
+                    ));
+                }
+                *recovery_batch
+            }
             _ => None,
         };
         if owner_batch != payload.recovery_batch() {

@@ -492,6 +492,13 @@ pub trait HistoryLifecycleStorage: Send + Sync {
         &self,
         request: HistoryExpiryAdmissionRequest,
     ) -> Result<HistoryExpiryAdmissionResult, StorageError>;
+    /// Atomically coalesce both triggers by exact stable family/scope. Retained
+    /// cleanup takes priority over fresh selection. A duplicate consumes no new
+    /// quota and preserves the original initiation, deadline and payload.
+    async fn submit_history_expiry_task(
+        &self,
+        request: HistoryExpiryTaskSubmission,
+    ) -> Result<HistoryExpiryTaskAdmission, StorageError>;
     /// Recover one retained batch under original OnlineV1 application admission.
     /// Wake its waiting owner without changing checkpoint/deadline, or atomically
     /// adopt a terminal/deleted owner's obligation into one internal cleanup task.

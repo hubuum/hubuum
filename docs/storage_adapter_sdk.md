@@ -106,13 +106,29 @@ and remains gated with production expiry. Original clocks and receipts survive
 every ownership change; a changed application image requires separate recovery
 qualification.
 
+**Breaking shared admission capability:** implement
+`HistoryLifecycleStorage::submit_history_expiry_task` atomically under the history
+control and task-capacity locks. Preserve one active task per exact stable
+family/scope across both triggers and cleanup adoption. Coalescing returns the
+original owner without charging admission again or refreshing its clocks. Retain
+`TaskMetadataDetails::HistoryExpiry::admission_scope` through payload redaction;
+legacy requests derive the same key from their payload. A busy owner requires
+retry. Resolve retained cleanup before creating fresh work. Periodic origins may
+carry their immutable retained `policy` reference; preserve it and the original
+initiator through task/principal deletion. Validate its retained expiry binding,
+and recheck actual member eligibility at execution. Manual services must recheck
+configured administrator authority even when returning an existing task.
+Update Rust constructors and exhaustive field patterns: `HistoryExpiryOrigin::Scheduled`
+gains `policy`, and `TaskMetadataDetails::HistoryExpiry` gains `admission_scope`.
+Use `None` for legacy origins/metadata; new periodic requests should use
+`HistoryExpiryTaskSubmission::periodic` with their retained policy record.
+
 Stop older API, worker, restore and administrator processes, back up the database,
 and apply lifecycle 000005 with refreshed grants before starting matching binaries. Its
 coordinated policy revision adds the eighth kind and weight without resetting
 existing configuration. Policy edits must include all eight entries. Rollback is
 refused after eighth-kind task/accounting/receipt evidence is retained; preserve
-independent recovery evidence and roll forward. Manual/periodic submission and
-production physical removal remain disabled.
+independent recovery evidence and roll forward. Production manual/periodic admission and physical removal remain gated pending qualification.
 
 Upgrade complete adapters and refresh runtime grants from the existing new
 migration. Production registration, physical removal and scheduling stay gated.

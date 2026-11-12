@@ -42,6 +42,52 @@ struct TaskFixture {
 }
 
 #[rstest::rstest]
+#[case::collection(StorageIdentityHistoryKind::Collection)]
+#[case::class(StorageIdentityHistoryKind::Class)]
+#[case::object(StorageIdentityHistoryKind::Object)]
+#[case::class_relation(StorageIdentityHistoryKind::ClassRelation)]
+#[case::object_relation(StorageIdentityHistoryKind::ObjectRelation)]
+#[case::template(StorageIdentityHistoryKind::ExportTemplate)]
+#[case::remote(StorageIdentityHistoryKind::RemoteTarget)]
+#[case::computed(StorageIdentityHistoryKind::ComputedDefinitions)]
+#[case::schema(StorageIdentityHistoryKind::ClassSchema)]
+#[tokio::test]
+async fn native_discovery_accepts_typed_expiry_scope(
+    #[case] family: StorageIdentityHistoryKind,
+    #[values(false, true)] collection: bool,
+) {
+    let _guard = CONTROL_LOCK.lock().await;
+    let scope = if collection {
+        HistoryPolicyScope::Collection {
+            identity: hubuum_domain::ResourceIdentity::generate(),
+        }
+    } else {
+        HistoryPolicyScope::Deployment
+    };
+    let metadata = StorageTaskMetadata::new(TaskMetadataDetails::HistoryExpiry {
+        recovery_batch: Some(Uuid::new_v4()),
+        admission_scope: Some(HistoryPolicyKey::new(family, scope).unwrap()),
+    })
+    .unwrap();
+    #[derive(QueryableByName)]
+    struct Validity {
+        #[diesel(sql_type = diesel::sql_types::Bool)]
+        valid: bool,
+    }
+    let valid =
+        hubuum_storage_postgres::with_connection(&integration_test_pool(1), async |connection| {
+            sql_query("SELECT public.valid_task_discovery($1,'history_expiry') AS valid")
+                .bind::<Jsonb, _>(metadata.to_value())
+                .get_result::<Validity>(connection)
+                .await
+        })
+        .await
+        .unwrap()
+        .valid;
+    assert!(valid);
+}
+
+#[rstest::rstest]
 #[case::kind_outstanding(true)]
 #[case::principal_outstanding(false)]
 #[tokio::test]
@@ -76,6 +122,8 @@ async fn native_expiry_admission_enforces_internal_lane_kind_limits(#[case] kind
     )
     .await
     .unwrap();
+    let mut payload = test.task.request_payload().cloned().unwrap();
+    payload["scan"]["key"]["family"] = serde_json::json!("class");
     let result = create_task(
         &test.fixture.owner_pool,
         TestTaskCreate::new(
@@ -83,7 +131,7 @@ async fn native_expiry_admission_enforces_internal_lane_kind_limits(#[case] kind
             StorageTaskStatus::Queued,
             test.task.submitted_by().unwrap(),
         )
-        .request_payload(test.task.request_payload().cloned()),
+        .request_payload(Some(payload)),
     )
     .await;
     phase(
@@ -145,7 +193,10 @@ impl TaskFixture {
                 1000,
             )
             .unwrap(),
-            HistoryExpiryOrigin::Scheduled { initiator: None },
+            HistoryExpiryOrigin::Scheduled {
+                initiator: None,
+                policy: None,
+            },
             application.fence(),
         );
         let task = create_task(
@@ -1028,6 +1079,104 @@ async fn native_recovery_adopts_partial_batch_and_preserves_original_receipts(#[
         }
         Ok::<_,StorageError>(())
     }.await;
+    test.cleanup().await;
+    result.unwrap();
+}
+
+#[rstest::rstest]
+#[case::manual_first(true)]
+#[case::periodic_first(false)]
+#[tokio::test]
+async fn native_concurrent_triggers_preserve_the_shared_scope_owner(#[case] manual_first: bool) {
+    use hubuum_storage_core::{HistoryExpiryTaskSubmission, HistoryPolicyReference};
+    let _guard = CONTROL_LOCK.lock().await;
+    let mut test = TaskFixture::new(StorageIdentityHistoryKind::Object).await;
+    let result = async {
+        phase(
+            &test.fixture,
+            &test.scope,
+            test.fixture.storage.fail_task(StorageTaskFailure::new(
+                test.lease.clone(),
+                "Admission fixture retires its seed task",
+                StorageTaskEventInput::new("failed", "Fixture task retired"),
+            )),
+        )
+        .await?;
+        let snapshot = test.fixture.storage.capture_history_lifecycle().await?;
+        let root = snapshot
+            .control()
+            .authority()
+            .policies()
+            .records()
+            .last()
+            .expect("seed policy");
+        let principal = phase(
+            &test.fixture,
+            &test.scope,
+            test.fixture
+                .storage
+                .resolve_logical_identity(StorageIdentityTarget::Principal(
+                    PrincipalId::new(test.user.id()).unwrap(),
+                )),
+        )
+        .await?;
+        let Some(StorageIdentitySubject::Principal { identity }) = principal.subject() else {
+            panic!("fixture principal")
+        };
+        let application = ApplicationFence::new(
+            snapshot.fence().incarnation(),
+            snapshot.fence().deletion_revision().value() as i64,
+        )
+        .unwrap();
+        let scan = HistoryLifecycleScan::new(root.proposal().key(), 1000).unwrap();
+        let manual = HistoryExpiryTaskSubmission::manual(
+            scan.clone(),
+            application,
+            PrincipalId::new(test.user.id()).unwrap(),
+            identity.known_identity().unwrap(),
+        );
+        let periodic = HistoryExpiryTaskSubmission::periodic(scan, application, root).unwrap();
+        assert_eq!(
+            periodic.payload().origin(),
+            &HistoryExpiryOrigin::Scheduled {
+                initiator: Some(root.principal()),
+                policy: Some(HistoryPolicyReference::from(root))
+            }
+        );
+        let (first, second) = if manual_first {
+            (manual, periodic)
+        } else {
+            (periodic, manual)
+        };
+        let original = test
+            .fixture
+            .storage
+            .run_in_scope(
+                test.scope.clone(),
+                test.fixture.storage.submit_history_expiry_task(first),
+            )
+            .await?;
+        test.cleanup_task = Some(original.task().id());
+        assert!(original.created());
+        let (left, right) = tokio::join!(
+            test.fixture.storage.run_in_scope(
+                test.scope.clone(),
+                test.fixture
+                    .storage
+                    .submit_history_expiry_task(second.clone())
+            ),
+            test.fixture.storage.run_in_scope(
+                test.scope.clone(),
+                test.fixture.storage.submit_history_expiry_task(second)
+            )
+        );
+        for result in [left?, right?] {
+            assert!(!result.created());
+            assert_eq!(result.task(), original.task());
+        }
+        Ok::<_, StorageError>(())
+    }
+    .await;
     test.cleanup().await;
     result.unwrap();
 }

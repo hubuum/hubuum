@@ -1,3 +1,4 @@
+DROP INDEX IF EXISTS public.tasks_history_expiry_scope_active;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 

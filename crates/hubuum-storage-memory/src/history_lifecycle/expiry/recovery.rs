@@ -7,7 +7,17 @@ pub(crate) async fn recover_task(
 ) -> Result<Option<StorageTask>, StorageError> {
     let application = current_scope(storage)?;
     let mut guard = storage.state.write_history_control(&application).await?;
-    let snapshot = guard.history_lifecycle_snapshot()?;
+    let mut state = guard.clone();
+    let result = recover_on(&mut state, batch)?;
+    *guard = state;
+    Ok(result)
+}
+
+pub(super) fn recover_on(
+    state: &mut MemoryState,
+    batch: Uuid,
+) -> Result<Option<StorageTask>, StorageError> {
+    let snapshot = state.history_lifecycle_snapshot()?;
     let intent = snapshot
         .control()
         .authority()
@@ -23,29 +33,28 @@ pub(crate) async fn recover_task(
             "History recovery requires the original application image",
         ));
     }
-    if guard.maintenance_state != MaintenanceState::Normal {
+    if state.maintenance_state != MaintenanceState::Normal {
         return Err(StorageError::unavailable(
             "History task recovery is paused during maintenance",
         ));
     }
-    guard.ensure_task_execution_allowed()?;
-    let original = guard
+    state.ensure_task_execution_allowed()?;
+    let original = state
         .tasks
         .values()
         .find(|task| {
-            guard.task_identity(task.id).ok().is_some_and(|identity| {
+            state.task_identity(task.id).ok().is_some_and(|identity| {
                 Uuid::from_bytes(*identity.as_bytes()) == intent.manifest().run()
             })
         })
         .map(|task| task.id);
-    let cleanup = guard
+    let cleanup = state
         .tasks
         .values()
         .filter(|task| matches!(task.metadata.as_ref().map(StorageTaskMetadata::details),
-            Some(TaskMetadataDetails::HistoryExpiry { recovery_batch: Some(owner_batch) }) if *owner_batch == batch))
+            Some(TaskMetadataDetails::HistoryExpiry { recovery_batch: Some(owner_batch), .. }) if *owner_batch == batch))
         .map(|task| task.id)
         .max_by_key(|id| id.id());
-    let mut state = guard.clone();
     for id in original.into_iter().chain(cleanup) {
         let task = state.tasks.get(&id.id()).expect("selected owner");
         if task.kind != StorageTaskKind::HistoryExpiry {
@@ -89,18 +98,43 @@ pub(crate) async fn recover_task(
         }
         match state.resume_history_wait_on(id)? {
             StorageTaskResumeOutcome::Queued(task) => {
-                *guard = state;
                 return Ok(Some(task));
             }
             StorageTaskResumeOutcome::Stopped(_) => {}
             StorageTaskResumeOutcome::Unchanged => unreachable!("locked waiting owner"),
         }
     }
+    if super::admission::active_on(state, payload.scan().key())?.is_some() {
+        return Ok(None);
+    }
+    let task = create_on(
+        state,
+        &payload,
+        None,
+        intent.manifest().members().len() as i32,
+        intent.removals().len() as i32,
+    )?;
+    let evidence = state
+        .logical_identities
+        .record(StorageIdentityTarget::Task(task.id()))?;
+    HistoryExpiryTaskCheckpoint::from_task(&task, &evidence)
+        .map_err(invalid_contract_value)?
+        .retained_manifest(&snapshot)
+        .map_err(invalid_contract_value)?;
+    Ok(Some(task))
+}
+
+pub(super) fn create_on(
+    state: &mut MemoryState,
+    payload: &HistoryExpiryTaskPayload,
+    submitter: Option<PrincipalId>,
+    total: i32,
+    removed: i32,
+) -> Result<StorageTask, StorageError> {
     let id = TaskId::new(state.next_task_id)
         .map_err(|error| StorageError::internal(error.to_string()))?;
     state.next_task_id += 1;
     let now = Utc::now();
-    let removed = intent.removals().len() as i32;
     let record = MemoryTaskRecord {
         checkpoint: None,
         wait_token: None,
@@ -108,7 +142,7 @@ pub(crate) async fn recover_task(
         id,
         kind: StorageTaskKind::HistoryExpiry,
         status: StorageTaskStatus::Queued,
-        submitted_by: None,
+        submitted_by: submitter,
         idempotency_key: None,
         request_hash: None,
         request_payload: Some(
@@ -117,18 +151,14 @@ pub(crate) async fn recover_task(
         ),
         metadata: Some(
             StorageTaskMetadata::new(TaskMetadataDetails::HistoryExpiry {
-                recovery_batch: Some(batch),
+                recovery_batch: payload.recovery_batch(),
+                admission_scope: Some(payload.scan().key()),
             })
             .map_err(invalid_contract_value)?,
         ),
         summary: None,
-        progress: StorageTaskProgress::try_new(
-            intent.manifest().members().len() as i32,
-            removed,
-            removed,
-            0,
-        )
-        .map_err(invalid_contract_value)?,
+        progress: StorageTaskProgress::try_new(total, removed, removed, 0)
+            .map_err(invalid_contract_value)?,
         scope_snapshot: StorageTaskScopeSnapshot::unscoped(),
         request_redacted_at: None,
         started_at: None,
@@ -139,7 +169,7 @@ pub(crate) async fn recover_task(
         updated_at: now,
         lease_expires_at: None,
         attempt_count: 0,
-        initiator_principal_id: None,
+        initiator_principal_id: submitter,
         trace_link: None,
         claim_token: None,
         execution_fence: None,
@@ -150,27 +180,13 @@ pub(crate) async fn recover_task(
         invocation: None,
     };
     state.store_task(id.id(), record)?;
-    let task = state
-        .tasks
-        .get(&id.id())
-        .expect("new cleanup task")
-        .projection()?;
-    let evidence = state
-        .logical_identities
-        .record(StorageIdentityTarget::Task(id))?;
-    let checkpoint =
-        HistoryExpiryTaskCheckpoint::from_task(&task, &evidence).map_err(invalid_contract_value)?;
-    checkpoint
-        .retained_manifest(&snapshot)
-        .map_err(invalid_contract_value)?;
-    state.append_task_event_record(
-        id,
-        StorageTaskEventInput::new("queued", "Retained history batch adopted for cleanup")
-            .with_data(Some(
-                serde_json::json!({"batch": batch,"original_run":intent.manifest().run()}),
-            )),
-    )?;
-    let result = state.tasks.get(&id.id()).expect("new task").projection()?;
-    *guard = state;
-    Ok(Some(result))
+    let actor = submitter.map(|principal| {
+        EventContext::from_mutation(MutationProvenance::user_for_task(
+            principal,
+            Some(principal),
+            id,
+        ))
+    });
+    state.append_task_event_record_with_context(id, payload.admission_event(), actor.as_ref())?;
+    state.tasks.get(&id.id()).expect("new task").projection()
 }

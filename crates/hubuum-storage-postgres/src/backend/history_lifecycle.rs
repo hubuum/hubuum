@@ -157,6 +157,41 @@ struct Capture {
     incarnation: Uuid,
     deletion_revision: HistoryDeletionRevision,
 }
+pub(crate) async fn scope_known_on(
+    connection: &mut PostgresConnection,
+    scope: HistoryPolicyScope,
+) -> Result<bool, PostgresStorageError> {
+    macro_rules! known_scope {
+        ($current:ident, $history:ident, $identity:expr) => {{
+            use crate::schema::{$current, $history};
+            let identity = $identity.to_string();
+            let current = $current::table.filter(
+                $current::logical_identity
+                    .retrieve_by_path_as_text(resource_identity_path())
+                    .eq(&identity),
+            );
+            let history = $history::table.filter(
+                $history::logical_identity
+                    .retrieve_by_path_as_text(resource_identity_path())
+                    .eq(&identity),
+            );
+            diesel::select(exists(current).or(exists(history)))
+                .get_result::<bool>(connection)
+                .await?
+        }};
+    }
+    let exists = match scope {
+        HistoryPolicyScope::Deployment => return Ok(true),
+        HistoryPolicyScope::Collection { identity } => {
+            known_scope!(collections, collections_history, identity)
+        }
+        HistoryPolicyScope::Class { identity } => {
+            known_scope!(hubuumclass, hubuumclass_history, identity)
+        }
+    };
+    Ok(exists)
+}
+
 /// Caller holds deletion authority. Pin application/history authority before
 /// any task/control or exact-row locks. Failure leaves exposure quarantined;
 /// this path never removes a current or protected-open payload.
@@ -621,6 +656,15 @@ impl HistoryLifecycleStorage for PostgresStorage {
     ) -> Result<HistoryExpiryAdmissionResult, StorageError> {
         expiry::admit(self, request).await
     }
+    async fn submit_history_expiry_task(
+        &self,
+        request: HistoryExpiryTaskSubmission,
+    ) -> Result<HistoryExpiryTaskAdmission, StorageError> {
+        let scope = expiry::current_scope(self)?;
+        crate::operations::history_expiry_task::submit(self.runtime(), scope, request)
+            .await
+            .map_err(Into::into)
+    }
     async fn recover_history_expiry_task(
         &self,
         batch: Uuid,
@@ -775,40 +819,12 @@ impl HistoryLifecycleStorage for PostgresStorage {
         self.runtime()
             .with_history_control_transaction(fallback, async move |connection| {
                 for scope in change.scopes_to_validate() {
-                    if !change.expected().retains_scope(scope) {
-                        macro_rules! known_scope {
-                            ($current:ident, $history:ident, $identity:expr) => {{
-                                use crate::schema::{$current, $history};
-                                let identity = $identity.to_string();
-                                let current = $current::table.filter(
-                                    $current::logical_identity
-                                        .retrieve_by_path_as_text(resource_identity_path())
-                                        .eq(&identity),
-                                );
-                                let history = $history::table.filter(
-                                    $history::logical_identity
-                                        .retrieve_by_path_as_text(resource_identity_path())
-                                        .eq(&identity),
-                                );
-                                diesel::select(exists(current).or(exists(history)))
-                                    .get_result::<bool>(connection)
-                                    .await?
-                            }};
-                        }
-                        let exists = match scope {
-                            HistoryPolicyScope::Deployment => continue,
-                            HistoryPolicyScope::Collection { identity } => {
-                                known_scope!(collections, collections_history, identity)
-                            }
-                            HistoryPolicyScope::Class { identity } => {
-                                known_scope!(hubuumclass, hubuumclass_history, identity)
-                            }
-                        };
-                        if !exists {
-                            return Err(PostgresStorageError::not_found(
-                                "History policy scope was not found",
-                            ));
-                        }
+                    if !change.expected().retains_scope(scope)
+                        && !scope_known_on(connection, scope).await?
+                    {
+                        return Err(PostgresStorageError::not_found(
+                            "History policy scope was not found",
+                        ));
                     }
                 }
                 let expected = serde_json::to_value(change.expected()).map_err(|_| {

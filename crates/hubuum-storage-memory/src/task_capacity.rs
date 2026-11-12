@@ -557,6 +557,39 @@ impl MemoryState {
         let owner = self.task_owner(&task)?;
         let candidate = TaskAccounting::new(owner, &task)?;
         capacity.check(&candidate, CapacityChange::Admission)?;
+        if task.kind == StorageTaskKind::HistoryExpiry && !task.status.is_terminal() {
+            let scope = |task: &MemoryTaskRecord| {
+                task.metadata
+                    .as_ref()
+                    .and_then(|metadata| match metadata.details() {
+                        TaskMetadataDetails::HistoryExpiry {
+                            admission_scope: Some(scope),
+                            ..
+                        } => serde_json::to_value(scope).ok(),
+                        _ => None,
+                    })
+                    .or_else(|| {
+                        task.request_payload
+                            .as_ref()?
+                            .get("scan")?
+                            .get("key")
+                            .filter(|value| !value.is_null())
+                            .cloned()
+                    })
+            };
+            if let Some(key) = scope(&task)
+                && self.tasks.values().any(|other| {
+                    other.id != task.id
+                        && other.kind == StorageTaskKind::HistoryExpiry
+                        && !other.status.is_terminal()
+                        && scope(other).as_ref() == Some(&key)
+                })
+            {
+                return Err(StorageError::conflict(
+                    "History scope already has an active task",
+                ));
+            }
+        }
         let task_id = task.id;
         self.store_task_record(id, task);
         let identity = self.task_identity(task_id)?;

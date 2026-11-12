@@ -287,6 +287,14 @@ Complete adapters must implement `register_history_runtime`, `capture_history_li
 `scan_history_lifecycle`, `admit_history_expiry`,
 `commit_history_lifecycle` and `recover_history_lifecycle`. Capture returns the
 adapter clock with application incarnation and history/deletion revision fences.
+The unreleased 0.20 contract also requires `submit_history_expiry_task`,
+`process_history_expiry_task` and `recover_history_expiry_task`. Shared admission
+accepts trusted `HistoryExpiryTaskSubmission`, coalesces exact stable scopes
+atomically, and resolves retained cleanup before creating fresh scans. Preserve
+the durable discovery scope and optional immutable scheduled policy root through
+ownership changes. Coalescing consumes no additional admission capacity and
+never replaces the original initiation or clocks. See the
+[shared admission contract](../storage_boundary/transactions-and-events.md#shared-history-task-admission).
 Scanning covers all nine history families using captured UUID ownership and
 original closure/deletion/schema-event anchors, without reading payloads. Missing
 captured identity or ownership remains unresolved; never infer it from a current

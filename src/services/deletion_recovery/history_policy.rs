@@ -26,7 +26,7 @@ use crate::models::history_lifecycle::{
 use crate::permissions::AppContext;
 use crate::storage::storage_handle;
 
-async fn principal(
+pub(super) async fn principal(
     context: &AppContext,
     admin: &AdminAccess,
 ) -> Result<PrincipalIdentity, ApiError> {

@@ -1,4 +1,6 @@
 //! Exact task ownership and native admission share one authority transaction.
+mod admission;
+pub(crate) use admission::submit;
 mod recovery;
 pub(crate) use recovery::recover;
 

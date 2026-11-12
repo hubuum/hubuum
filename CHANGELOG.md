@@ -9,6 +9,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Gated manual and periodic history expiry admission share one active task per
+  exact stable family/scope. Coalesced requests preserve the original initiation
+  and clocks; retained cleanup precedes fresh scans. Manual admission rechecks
+  configured administrator authority, and periodic work retains its policy root.
+  Production admission remains disabled pending restore and resource qualification.
+
 - Gated history expiry tasks can remove retained exact closed versions in bounded
   transactions after independent membership protection and positive publication
   retirement. Deletion, first receipts and canonical audit commit atomically;
@@ -71,8 +77,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking storage SDK 0.20 task vocabulary:** `history_expiry` adds a closed
   task kind, versioned payload/checkpoint reader and required
   `HistoryLifecycleStorage::process_history_expiry_task` and
-  `HistoryLifecycleStorage::recover_history_expiry_task` capabilities. Upgrade
-  adapters and exhaustive kind matches together. Stop older API, worker, restore
+  `HistoryLifecycleStorage::recover_history_expiry_task` capabilities. Complete
+  adapters must also implement shared
+  `HistoryLifecycleStorage::submit_history_expiry_task` admission.
+  Preserve durable admission scope and optional scheduled policy roots through
+  cleanup ownership changes. Add `policy` to scheduled-origin constructors and
+  `admission_scope` to expiry discovery constructors (`None` for legacy values).
+  Upgrade adapters and exhaustive kind matches
+  together. Stop older API, worker, restore
   and administrator processes, back up the database, apply lifecycle migration
   000005 and refresh grants before starting matching binaries. Include the eighth kind and scheduling
   weight when editing task policy. Migration preserves all existing limits and

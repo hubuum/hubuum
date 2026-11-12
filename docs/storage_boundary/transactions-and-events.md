@@ -657,3 +657,24 @@ rechecks that checkpoint against the retained ledger and exact success count.
 One task completes after one bounded admitted batch, or after an empty finite
 pass; later tasks restart scanning to revisit late rows and closures. Production
 workers still exclude this kind and no submission trigger is enabled.
+
+### Shared history task admission
+
+`HistoryLifecycleStorage::submit_history_expiry_task` takes trusted typed service
+input, never a serialized permission grant. Acquire history authority, task
+capacity, then the existing task row in that order. Serialize both manual and
+periodic triggers by their exact stable family/scope key. Return the original
+active owner without replacing its origin, payload, creation time, checkpoint,
+deadline or accounting. A busy owner requires retry. Retained cleanup for the key
+precedes a fresh scan. New tasks atomically retain discovery scope, bounded
+payload, capacity accounting and canonical queued audit. A partial unique index
+protects active scopes in PostgreSQL, including legacy payload-only owners.
+
+Manual services recheck configured unscoped administrator authorization before
+coalescing. Bind manual input to the original stable principal identity. Periodic
+input names an immutable retained expiry policy revision and its original
+principal; it requires no new human approval. Preserve that root through batch
+admission and cleanup adoption. A later prospective override does not erase older
+closure obligations. Both adapters reject stale application images, maintenance,
+unknown scopes and unavailable admission capacity. Production workers remain
+gated until restore and resource qualification is complete.

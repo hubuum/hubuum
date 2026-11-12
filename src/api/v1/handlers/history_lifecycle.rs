@@ -47,6 +47,27 @@ pub async fn inspect(
     ))
 }
 
+#[utoipa::path(post, path = "/api/v1/admin/history-lifecycle/runs", tag = "admin", security(("bearer_auth" = [])), request_body = HistoryLifecycleInspectionRequest, responses((status = 202, description = "Bounded expiry task admitted", body = crate::models::TaskResponse), (status = 200, description = "Existing task for this exact stable family/scope; original initiation preserved", body = crate::models::TaskResponse), (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse), (status = 503, description = "Expiry runtime is unqualified or capacity unavailable", body = ApiErrorResponse)))]
+#[post("/runs")]
+pub async fn run(
+    context: AppContext,
+    admin: AdminAccess,
+    request: web::Json<HistoryLifecycleInspectionRequest>,
+) -> Result<impl Responder, ApiError> {
+    let scan = request.into_inner().resolve(&context).await?;
+    let admission =
+        crate::services::deletion_recovery::history_expiry::submit_manual(&context, &admin, scan)
+            .await?;
+    let status = if admission.created() {
+        StatusCode::ACCEPTED
+    } else {
+        StatusCode::OK
+    };
+    let response =
+        crate::services::tasks::task_from_storage(admission.task().clone())?.to_response()?;
+    Ok(ApiResponse::new_no_store(response, status))
+}
+
 #[utoipa::path(post, path = "/api/v1/admin/history-lifecycle/policy-previews", tag = "admin", security(("bearer_auth" = [])), request_body = HistoryPolicyPreviewRequest, responses((status = 200, description = "Issued principal/revision-bound review with fixed expiry and bounded impact coverage; reserves no execution capacity", body = HistoryPolicyPreview), (status = 400, description = "Invalid proposed policy", body = ApiErrorResponse), (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse), (status = 409, description = "Policy or protection authority changed", body = ApiErrorResponse)))]
 #[post("/policy-previews")]
 pub async fn preview(
@@ -146,6 +167,7 @@ pub fn config(config: &mut web::ServiceConfig) {
     config
         .service(policies)
         .service(inspect)
+        .service(run)
         .service(preview)
         .service(apply)
         .service(create_hold)

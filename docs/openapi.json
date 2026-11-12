@@ -1034,6 +1034,73 @@
         ]
       }
     },
+    "/api/v1/admin/history-lifecycle/runs": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Post Api V1 Admin History Lifecycle Runs",
+        "description": "Auto-generated documentation for POST /api/v1/admin/history-lifecycle/runs.",
+        "operationId": "postApiV1AdminHistoryLifecycleRuns",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HistoryLifecycleInspectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Existing task for this exact stable family/scope; original initiation preserved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Bounded expiry task admitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Expiry runtime is unqualified or capacity unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/admin/runtime-settings": {
       "get": {
         "tags": [
@@ -34216,6 +34283,16 @@
                 "type": "string",
                 "enum": [
                   "scheduled"
+                ]
+              },
+              "policy": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/HistoryPolicyReference"
+                  },
+                  {
+                    "type": "null"
+                  }
                 ]
               }
             }

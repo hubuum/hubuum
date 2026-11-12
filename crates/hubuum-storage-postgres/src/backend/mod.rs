@@ -147,3 +147,5 @@ impl PostgresStorage {
 }
 
 impl StorageBackend for PostgresStorage {}
+
+pub(crate) use history_lifecycle::scope_known_on as history_scope_known_on;

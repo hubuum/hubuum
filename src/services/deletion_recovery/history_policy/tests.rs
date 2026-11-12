@@ -15,6 +15,99 @@ use super::*;
 use crate::permissions::LocalPermissionBackend;
 use crate::storage::StorageHandle;
 
+#[rstest::rstest]
+#[case::manual_first(true)]
+#[case::periodic_first(false)]
+#[actix_web::test]
+async fn both_admission_services_share_the_original_initiation(#[case] manual_first: bool) {
+    use hubuum_storage_core::{
+        DeletionControlStorage, ExecutionStorage, HistoryExpiryOrigin, HistoryExpiryTaskPayload,
+        HistoryExpiryTrigger, HistoryRetentionSeconds, StorageExecutionScope,
+    };
+    let mut fixture = Fixture::new().await;
+    let key = fixture.proposal().key();
+    let proposal = HistoryPolicyChange::new(
+        key,
+        HistoryPolicyRevision::new(0).unwrap(),
+        HistoryPolicyBinding::Expire {
+            trigger: HistoryExpiryTrigger::Age {
+                age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+                deleted_age_seconds: None,
+            },
+            minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+        },
+        HistoryPolicyApplication::Prospective,
+    )
+    .unwrap();
+    apply(
+        &fixture.context,
+        &fixture.admin,
+        &fixture.options,
+        HistoryPolicyApplyRequest::new(proposal, None),
+    )
+    .await
+    .unwrap();
+    let unbound = storage_handle(&fixture.context);
+    let registration = unbound.register_history_runtime(None).await.unwrap();
+    let storage = unbound.with_runtime_owner(registration.owner());
+    fixture.context = AppContext::new(
+        storage.clone(),
+        Arc::new(LocalPermissionBackend::new(storage.clone(), "admin".into())),
+    )
+    .with_history_retention(fixture.options.clone());
+    let application = storage
+        .capture_application_execution(Some(registration.owner()))
+        .await
+        .unwrap();
+    let scope = StorageExecutionScope::default().with_application_access(application);
+    storage
+        .run_in_scope(scope, async {
+            let scan = HistoryLifecycleScan::new(key, 1000).unwrap();
+            if !manual_first {
+                super::super::history_expiry::submit_periodic(&fixture.context)
+                    .await
+                    .unwrap();
+            }
+            let original = super::super::history_expiry::submit_manual(
+                &fixture.context,
+                &fixture.admin,
+                scan.clone(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(original.created(), manual_first);
+            let payload =
+                HistoryExpiryTaskPayload::decode(original.task().request_payload().unwrap())
+                    .unwrap();
+            assert_eq!(
+                matches!(payload.origin(), HistoryExpiryOrigin::Manual { .. }),
+                manual_first
+            );
+            super::super::history_expiry::submit_periodic(&fixture.context)
+                .await
+                .unwrap();
+            let repeated = super::super::history_expiry::submit_manual(
+                &fixture.context,
+                &fixture.admin,
+                scan.clone(),
+            )
+            .await
+            .unwrap();
+            assert!(!repeated.created());
+            assert_eq!(repeated.task(), original.task());
+            let denied = AppContext::new(
+                storage.clone(),
+                Arc::new(crate::permissions::test_support::MockTreetopBackend::new()),
+            );
+            assert!(matches!(
+                super::super::history_expiry::submit_manual(&denied, &fixture.admin, scan).await,
+                Err(ApiError::Forbidden(_))
+            ));
+        })
+        .await;
+    storage.unregister_runtime(registration).await.unwrap();
+}
+
 struct Fixture {
     root: PathBuf,
     context: AppContext,

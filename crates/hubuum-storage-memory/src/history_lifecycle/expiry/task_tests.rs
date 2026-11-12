@@ -45,10 +45,11 @@ async fn expiry_admission_enforces_its_own_internal_lane_limits(#[case] kind_lim
             )
             .await
             .unwrap();
-            let payload = storage.state.read_control().await.tasks[&lease.task_id().id()]
+            let mut payload = storage.state.read_control().await.tasks[&lease.task_id().id()]
                 .request_payload
                 .clone()
                 .unwrap();
+            payload["scan"]["key"]["family"] = serde_json::json!("class");
             let result = fixture_write(
                 &storage,
                 storage.create_task(
@@ -101,7 +102,10 @@ async fn prepare(
             1000,
         )
         .unwrap(),
-        HistoryExpiryOrigin::Scheduled { initiator: None },
+        HistoryExpiryOrigin::Scheduled {
+            initiator: None,
+            policy: None,
+        },
         application.fence(),
     );
     let scope = StorageExecutionScope::default().with_application_access(application);
@@ -695,6 +699,7 @@ async fn recovery_wakes_wait_once_and_preserves_original_deadline() {
 #[case::deadline("deadline")]
 #[case::purged("purged")]
 #[case::audit_rollback("audit")]
+#[case::fresh_admission("admission")]
 #[tokio::test]
 async fn recovery_adopts_partial_batch_without_reviving_original_task(#[case] mode: &str) {
     let storage = MemoryStorage::new();
@@ -787,6 +792,41 @@ async fn recovery_adopts_partial_batch_without_reviving_original_task(#[case] mo
                     "failed audit must roll back adoption"
                 );
                 state.next_event_sequence = sequence;
+            }
+            if mode == "admission" {
+                let evidence = fixture_write(
+                    &storage,
+                    storage.resolve_logical_identity(StorageIdentityTarget::Principal(
+                        PrincipalId::new(1).unwrap(),
+                    )),
+                )
+                .await
+                .unwrap();
+                let Some(StorageIdentitySubject::Principal { identity }) = evidence.subject()
+                else {
+                    panic!("fixture principal")
+                };
+                let request = HistoryExpiryTaskSubmission::manual(
+                    HistoryLifecycleScan::new(original.manifest().key(), 1000).unwrap(),
+                    ApplicationFence::new(
+                        before.fence().incarnation(),
+                        before.fence().deletion_revision().value() as i64,
+                    )
+                    .unwrap(),
+                    PrincipalId::new(1).unwrap(),
+                    identity.known_identity().unwrap(),
+                );
+                let admission = storage.submit_history_expiry_task(request).await.unwrap();
+                assert!(
+                    admission.created(),
+                    "new cleanup ownership precedes fresh selection"
+                );
+                assert_eq!(
+                    HistoryExpiryTaskPayload::decode(admission.task().request_payload().unwrap())
+                        .unwrap()
+                        .recovery_batch(),
+                    Some(checkpoint.batch())
+                );
             }
             let (left, right) = tokio::join!(
                 storage.recover_history_expiry_task(checkpoint.batch()),
@@ -892,6 +932,172 @@ async fn recovery_adopts_partial_batch_without_reviving_original_task(#[case] mo
                         .is_terminal()
                 );
             }
+        })
+        .await;
+    storage.unregister_runtime(runtime).await.unwrap();
+}
+
+#[rstest]
+#[case::manual_first(true)]
+#[case::periodic_first(false)]
+#[tokio::test]
+async fn concurrent_triggers_share_scope_without_refreshing_original_task(
+    #[case] manual_first: bool,
+) {
+    let storage = MemoryStorage::new();
+    let key = seed(
+        &storage,
+        StorageIdentityHistoryKind::Object,
+        "shared admission",
+        "closed",
+    )
+    .await;
+    let runtime = storage.register_history_runtime(None).await.unwrap();
+    let application = storage
+        .capture_application_execution(Some(runtime.owner()))
+        .await
+        .unwrap();
+    let scope = StorageExecutionScope::default().with_application_access(application.clone());
+    storage
+        .run_in_scope(scope, async {
+            let snapshot = storage.capture_history_lifecycle().await.unwrap();
+            let principal = fixture_write(
+                &storage,
+                storage.resolve_logical_identity(StorageIdentityTarget::Principal(
+                    PrincipalId::new(1).unwrap(),
+                )),
+            )
+            .await
+            .unwrap();
+            let Some(StorageIdentitySubject::Principal { identity }) = principal.subject() else {
+                panic!("fixture principal")
+            };
+            let scan = HistoryLifecycleScan::new(key, 1000).unwrap();
+            let manual = HistoryExpiryTaskSubmission::manual(
+                scan.clone(),
+                application.fence(),
+                PrincipalId::new(1).unwrap(),
+                identity.known_identity().unwrap(),
+            );
+            let periodic = HistoryExpiryTaskSubmission::periodic(
+                scan,
+                application.fence(),
+                snapshot
+                    .control()
+                    .authority()
+                    .policies()
+                    .records()
+                    .last()
+                    .unwrap(),
+            )
+            .unwrap();
+            let (first, second) = if manual_first {
+                (manual, periodic)
+            } else {
+                (periodic, manual)
+            };
+            let original = storage.submit_history_expiry_task(first).await.unwrap();
+            assert!(original.created());
+            let (left, right) = tokio::join!(
+                storage.submit_history_expiry_task(second.clone()),
+                storage.submit_history_expiry_task(second)
+            );
+            for result in [left.unwrap(), right.unwrap()] {
+                assert!(!result.created());
+                assert_eq!(result.task(), original.task());
+            }
+            assert_eq!(storage.state.read_control().await.tasks.len(), 1);
+        })
+        .await;
+    storage.unregister_runtime(runtime).await.unwrap();
+}
+
+#[rstest]
+#[case::stale_image("image")]
+#[case::changed_principal("principal")]
+#[case::unknown_scope("scope")]
+#[case::deleted_principal("deleted")]
+#[tokio::test]
+async fn rejected_shared_admission_leaves_no_task_or_capacity_charge(#[case] mode: &str) {
+    let storage = MemoryStorage::new();
+    let key = seed(
+        &storage,
+        StorageIdentityHistoryKind::Object,
+        "rejected admission",
+        "closed",
+    )
+    .await;
+    let runtime = storage.register_history_runtime(None).await.unwrap();
+    let application = storage
+        .capture_application_execution(Some(runtime.owner()))
+        .await
+        .unwrap();
+    let scope = StorageExecutionScope::default().with_application_access(application.clone());
+    storage
+        .run_in_scope(scope, async {
+            let evidence = fixture_write(
+                &storage,
+                storage.resolve_logical_identity(StorageIdentityTarget::Principal(
+                    PrincipalId::new(1).unwrap(),
+                )),
+            )
+            .await
+            .unwrap();
+            let Some(StorageIdentitySubject::Principal { identity }) = evidence.subject() else {
+                panic!("fixture principal")
+            };
+            let principal = if mode == "principal" {
+                PrincipalIdentity::generate()
+            } else {
+                identity.known_identity().unwrap()
+            };
+            if mode == "deleted" {
+                fixture_write(
+                    &storage,
+                    storage.delete_user(StorageUserDelete::new(
+                        UserId::new(1).unwrap(),
+                        EventContext::system(),
+                    )),
+                )
+                .await
+                .unwrap()
+                .into_value();
+            }
+            let fence = if mode == "image" {
+                ApplicationFence::new(Uuid::new_v4(), 0).unwrap()
+            } else {
+                application.fence()
+            };
+            let key = if mode == "scope" {
+                HistoryPolicyKey::new(
+                    key.family(),
+                    HistoryPolicyScope::Collection {
+                        identity: ResourceIdentity::generate(),
+                    },
+                )
+                .unwrap()
+            } else {
+                key
+            };
+            let request = HistoryExpiryTaskSubmission::manual(
+                HistoryLifecycleScan::new(key, 1000).unwrap(),
+                fence,
+                PrincipalId::new(1).unwrap(),
+                principal,
+            );
+            let before = fixture_write(&storage, storage.task_capacity_snapshot())
+                .await
+                .unwrap();
+            assert!(storage.submit_history_expiry_task(request).await.is_err());
+            let state = storage.state.read_control().await;
+            assert!(state.tasks.is_empty());
+            drop(state);
+            assert_eq!(
+                fixture_write(&storage, storage.task_capacity_snapshot())
+                    .await
+                    .unwrap(),
+                before
+            );
         })
         .await;
     storage.unregister_runtime(runtime).await.unwrap();

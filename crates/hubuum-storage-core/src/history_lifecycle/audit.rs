@@ -374,7 +374,7 @@ fn expiry_event(
     });
     let (initiator, trigger) = match manifest.origin() {
         HistoryExpiryOrigin::Manual { principal } => (Some(*principal), "manual"),
-        HistoryExpiryOrigin::Scheduled { initiator } => (*initiator, "scheduled"),
+        HistoryExpiryOrigin::Scheduled { initiator, .. } => (*initiator, "scheduled"),
     };
     let versions = if removal.is_some() { 1 } else { pairs.len() };
     HistoryAuditRecord {

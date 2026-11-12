@@ -1049,7 +1049,10 @@ mod runtime_protocol {
         let request = HistoryExpiryAdmissionRequest::new(
             batch,
             Uuid::new_v4(),
-            HistoryExpiryOrigin::Scheduled { initiator: None },
+            HistoryExpiryOrigin::Scheduled {
+                initiator: None,
+                policy: None,
+            },
             HistoryLifecycleScan::new(key, 1).unwrap(),
             before.fence(),
         )
@@ -2456,7 +2459,10 @@ async fn native_expiry_retains_trigger_created_tombstone_gaps(
     let request = HistoryExpiryAdmissionRequest::new(
         batch,
         Uuid::new_v4(),
-        HistoryExpiryOrigin::Scheduled { initiator: None },
+        HistoryExpiryOrigin::Scheduled {
+            initiator: None,
+            policy: None,
+        },
         HistoryLifecycleScan::new(key, 1000).unwrap(),
         snapshot.fence(),
     )

@@ -7509,3 +7509,47 @@ pub(crate) fn prefix(label: &str) -> String {
 mod query_usage;
 mod query_usage_analysis;
 mod runtime_settings;
+
+#[actix_web::test]
+async fn every_backend_refuses_expiry_task_submission_without_original_online_admission() {
+    use hubuum_storage_core::{
+        ApplicationFence, HistoryExpiryTaskSubmission, HistoryLifecycleScan,
+        HistoryLifecycleStorage, HistoryPolicyKey, HistoryPolicyScope, StorageIdentityHistoryKind,
+    };
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
+        let before = backend.capture_history_lifecycle().await.unwrap();
+        let scan = HistoryLifecycleScan::new(
+            HistoryPolicyKey::new(
+                StorageIdentityHistoryKind::Object,
+                HistoryPolicyScope::Deployment,
+            )
+            .unwrap(),
+            1000,
+        )
+        .unwrap();
+        let request = HistoryExpiryTaskSubmission::manual(
+            scan,
+            ApplicationFence::new(
+                before.fence().incarnation(),
+                before.fence().deletion_revision().value() as i64,
+            )
+            .unwrap(),
+            hubuum_domain::PrincipalId::new(1).unwrap(),
+            hubuum_domain::PrincipalIdentity::generate(),
+        );
+        assert_eq!(
+            backend
+                .submit_history_expiry_task(request)
+                .await
+                .unwrap_err()
+                .kind(),
+            hubuum_storage_core::StorageErrorKind::Unavailable
+        );
+        assert_eq!(
+            backend.capture_history_lifecycle().await.unwrap().control(),
+            before.control()
+        );
+    }
+}

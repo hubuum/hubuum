@@ -17,7 +17,10 @@ fn initial() -> HistoryExpiryTaskCheckpoint {
                 2,
             )
             .unwrap(),
-            HistoryExpiryOrigin::Scheduled { initiator: None },
+            HistoryExpiryOrigin::Scheduled {
+                initiator: None,
+                policy: None,
+            },
             ApplicationFence::new(Uuid::new_v4(), 0).unwrap(),
         ),
     )
@@ -37,9 +40,23 @@ fn fence(checkpoint: &HistoryExpiryTaskCheckpoint) -> HistoryReviewFence {
 #[case::future_version("version", serde_json::json!(2))]
 #[case::unknown_action("action", serde_json::json!("remove_all_history"))]
 #[case::unknown_field("remove", serde_json::json!(true))]
+#[case::null_recovery("recovery", serde_json::Value::Null)]
 fn payload_refuses_unsupported_execution(#[case] field: &str, #[case] value: Value) {
     let mut payload = serde_json::to_value(initial().0.payload).unwrap();
     payload[field] = value;
+    assert!(HistoryExpiryTaskPayload::decode(&payload).is_err());
+}
+
+#[rstest]
+#[case::wrong_scope(true)]
+#[case::missing_initiator(false)]
+fn periodic_payload_preserves_policy_scope_and_initiator(#[case] wrong_scope: bool) {
+    let mut payload = serde_json::to_value(initial().0.payload).unwrap();
+    let mut key = payload["scan"]["key"].clone();
+    if wrong_scope {
+        key["family"] = serde_json::json!("object");
+    }
+    payload["origin"] = serde_json::json!({"kind":"scheduled", "initiator": if wrong_scope {Some(PrincipalIdentity::generate())} else {None}, "policy":{"key":key,"revision":"1"}});
     assert!(HistoryExpiryTaskPayload::decode(&payload).is_err());
 }
 
@@ -443,6 +460,7 @@ fn cleanup_task_keeps_manual_origin_after_original_principal_and_task_deletion()
     .metadata(Some(
         crate::StorageTaskMetadata::new(TaskMetadataDetails::HistoryExpiry {
             recovery_batch: Some(retained.identity()),
+            admission_scope: None,
         })
         .unwrap(),
     ))

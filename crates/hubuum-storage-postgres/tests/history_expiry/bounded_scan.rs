@@ -121,7 +121,10 @@ impl<'a> BoundedRun<'a> {
             request: HistoryExpiryAdmissionRequest::new(
                 Uuid::new_v4(),
                 Uuid::new_v4(),
-                HistoryExpiryOrigin::Scheduled { initiator: None },
+                HistoryExpiryOrigin::Scheduled {
+                    initiator: None,
+                    policy: None,
+                },
                 HistoryLifecycleScan::new(
                     HistoryPolicyKey::new(family, HistoryPolicyScope::Deployment).unwrap(),
                     limit,

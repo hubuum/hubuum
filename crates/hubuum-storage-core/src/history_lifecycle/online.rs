@@ -31,6 +31,7 @@ impl HistoryExpiryAdmissionRequest {
         scan: HistoryLifecycleScan,
         fence: HistoryReviewFence,
     ) -> Result<Self, StorageValidationError> {
+        origin.validate_key(scan.key())?;
         if [identity, run]
             .iter()
             .any(|id| id.get_variant() != uuid::Variant::RFC4122 || id.get_version().is_none())
@@ -449,7 +450,25 @@ pub enum HistoryExpiryOrigin {
     Scheduled {
         #[cfg_attr(feature = "openapi", schema(value_type = Option<String>, format = "uuid"))]
         initiator: Option<PrincipalIdentity>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        policy: Option<HistoryPolicyReference>,
     },
+}
+
+impl HistoryExpiryOrigin {
+    pub(super) fn validate_key(&self, key: HistoryPolicyKey) -> Result<(), StorageValidationError> {
+        if let Self::Scheduled {
+            policy: Some(root),
+            initiator,
+        } = self
+            && (root.key() != key || initiator.is_none())
+        {
+            return Err(invalid(
+                "Periodic history expiry requires its exact policy scope and original initiator",
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Finite membership, not a timestamp/allocated-ID progress watermark. No new
@@ -509,6 +528,7 @@ impl HistoryExpiryManifest {
         serde_json::from_slice(bytes).map_err(|_| invalid("Invalid retained expiry manifest"))
     }
     fn validate(&self) -> Result<(), StorageValidationError> {
+        self.origin.validate_key(self.key)?;
         if [self.identity, self.run]
             .iter()
             .any(|id| id.get_variant() != uuid::Variant::RFC4122 || id.get_version().is_none())
@@ -753,7 +773,10 @@ mod tests {
                 } else {
                     Uuid::nil()
                 },
-                HistoryExpiryOrigin::Scheduled { initiator: None },
+                HistoryExpiryOrigin::Scheduled {
+                    initiator: None,
+                    policy: None
+                },
                 HistoryLifecycleScan::new(key(), 1).unwrap(),
                 before.fence(),
             )
@@ -768,7 +791,10 @@ mod tests {
         let request = HistoryExpiryAdmissionRequest::new(
             identity,
             Uuid::new_v4(),
-            HistoryExpiryOrigin::Scheduled { initiator: None },
+            HistoryExpiryOrigin::Scheduled {
+                initiator: None,
+                policy: None,
+            },
             HistoryLifecycleScan::new(key(), 1).unwrap(),
             before.fence(),
         )

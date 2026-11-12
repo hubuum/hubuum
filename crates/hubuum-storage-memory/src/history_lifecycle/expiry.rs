@@ -1,3 +1,5 @@
+mod admission;
+pub(super) use admission::submit;
 mod recovery;
 pub(super) use recovery::recover_task;
 
