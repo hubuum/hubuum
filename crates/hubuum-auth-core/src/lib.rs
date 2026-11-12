@@ -3,6 +3,18 @@
 mod credential;
 pub use credential::{BearerCredential, CredentialError, VersionedCredential, keyed_digest};
 
+pub use hubuum_domain::{
+    DEFAULT_INTERACTION_LIFETIME_SECONDS, INITIAL_INTERACTION_POLL_SECONDS,
+    INTERACTION_AUTHENTICATION_CLAIM_SECONDS, InteractionAuthenticationClaim,
+    InteractionBrowserBinding, InteractionIssuedResult, InteractionLifecycle, InteractionMode,
+    InteractionState, InteractionTransitionError, MAX_INTERACTION_LIFETIME_SECONDS,
+};
+pub use hubuum_domain::{
+    InteractionActor, InteractionAuthority, InteractionBinding, InteractionClientId,
+    InteractionDigest, InteractionId, InteractionProviderId, InteractionPurpose,
+    InteractionValidationError, VerifiedInteractionSubject,
+};
+
 use hubuum_domain::IdentityScopeNameError;
 pub use hubuum_domain::{IdentityScopeName, OAuthProviderDefinition, OidcProviderDefinition};
 use serde::{Deserialize, Serialize};

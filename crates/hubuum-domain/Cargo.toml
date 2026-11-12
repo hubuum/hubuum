@@ -24,6 +24,8 @@ lru = "0.19"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 sha2 = "0.11"
+thiserror = "2"
+uuid = { version = "1", features = ["serde"] }
 url = "2"
 utoipa = { version = "6", optional = true }
 

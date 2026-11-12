@@ -38,6 +38,24 @@ resource ID type so an adapter cannot silently mix identity domains.
 Deployment authentication and runtime settings use its shared constructor;
 reserved provider names remain a consumer-specific policy.
 
+Authentication interaction values preserve the provider UUID, client, settings
+revision and purpose together. Privileged purposes retain the initiating actor
+and credential plus the exact operation or candidate digest. `hubuum-auth-core`
+re-exports these values for provider adapters. Subject proofs redact their subject
+in debug output and require the same complete binding when consumed; adapters
+remain responsible for verifying the upstream protocol before constructing them.
+
+`InteractionLifecycle` applies bounded lifetimes, polling backoff, leased
+authentication attempts, browser binding and explicit approval, purpose-specific
+consumption and terminal replay rules using a caller-supplied clock. Its consumed
+state retains only issuance metadata for orphan-session cleanup. Consumers must
+authenticate redemption/browser capabilities, fence configuration and initiating
+credentials, persist each transition under a lock, and commit consumption with
+issuance in the same transaction. A polling slowdown is a committed state change.
+These primitives are the first #575 implementation increment; durable storage,
+HTTP handlers, provider adapters and live browser authentication are subsequent
+implementation work.
+
 `BoundedJsonPatch` validates JSON Patch size, operation count, pointer depth,
 and cumulative application work before an adapter sees the document. Patch
 application and the portable storage-JSON envelope use crate-owned error
