@@ -19,6 +19,25 @@ REPLICA_TEST = "restore_contract::history_expiry_qualification::replica::qualifi
 CEILING = 512 * 1024 ** 2
 
 
+def measurement_environment(environment, database_url, report_name, shape, profile):
+    """Forward only disposable fixture authority, never the host's credentials."""
+    allowed = (
+        "HUBUUM_RESTORE_TEST_DATABASE_URL", "HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL",
+        "HUBUUM_ARCHIVE_TEST_DATABASE_URL", "HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL",
+    )
+    return {**{key: environment[key] for key in allowed},
+            "HUBUUM_DATABASE_URL": database_url,
+            "HUBUUM_MIGRATION_DATABASE_URL": database_url,
+            # All processes must hash the fixture's bearer token with the same
+            # key. This public test material is never a deployment credential.
+            "HUBUUM_TOKEN_HASH_KEY": "history-expiry-qualification-fixture-only",
+            "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY": "true",
+            "HUBUUM_TEST_HISTORY_QUALIFICATION_SHAPE": shape,
+            "HUBUUM_TEST_HISTORY_QUALIFICATION_REPORT": "/reports/" + report_name,
+            "HUBUUM_TEST_HISTORY_QUALIFICATION_SLOTS": "1" if profile == "local" else "2",
+            "HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICAS": "1" if profile == "local" else "2"}
+
+
 def assess(report, resources):
     """Incomplete measurements cannot qualify a worker, even with small numbers."""
     h1 = (resources["samples"] > 0
@@ -170,19 +189,8 @@ def run(args):
                 test = PUBLISHER_TEST if shape == "authority" else TEST
 
                 def execute(command, environment):
-                    allowed = {
-                        "HUBUUM_RESTORE_TEST_DATABASE_URL", "HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL",
-                        "HUBUUM_ARCHIVE_TEST_DATABASE_URL", "HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL",
-                    }
-                    measured_env = {key: environment[key] for key in allowed}
-                    measured_env.update({
-                        "HUBUUM_DATABASE_URL": fixture.url("template_fixture"),
-                        "HUBUUM_MIGRATION_DATABASE_URL": fixture.url("template_fixture"),
-                        "HUBUUM_TEST_HISTORY_QUALIFICATION_SHAPE": shape,
-                        "HUBUUM_TEST_HISTORY_QUALIFICATION_REPORT": "/reports/" + destination.name,
-                        "HUBUUM_TEST_HISTORY_QUALIFICATION_SLOTS": "1" if args.profile == "local" else "2",
-                        "HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICAS": "2" if args.profile == "shared" else "1",
-                    })
+                    measured_env = measurement_environment(
+                        environment, fixture.url("template_fixture"), destination.name, shape, args.profile)
                     try:
                         if shape != "authority":
                             output = replica_run(fixture, binary, command[1:], name, measured_env, destination)

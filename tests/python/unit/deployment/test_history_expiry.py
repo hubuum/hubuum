@@ -5,7 +5,7 @@ import tempfile
 import threading
 import unittest
 
-from integration.history_expiry import assess, replica_run
+from integration.history_expiry import assess, measurement_environment, replica_run
 
 
 class HistoryExpiryQualificationTests(unittest.TestCase):
@@ -25,6 +25,22 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
 
     def test_complete_evidence_passes(self):
         self.assertTrue(all(assess(*self.fixture()).values()))
+
+    def test_processes_share_only_the_fixture_hash_key_and_database_authority(self):
+        source = {key: "fixture-" + key for key in (
+            "HUBUUM_RESTORE_TEST_DATABASE_URL", "HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL",
+            "HUBUUM_ARCHIVE_TEST_DATABASE_URL", "HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL")}
+        source.update(GITHUB_TOKEN="host-token", HUBUUM_TOKEN_HASH_KEY="host-key",
+                      HUBUUM_SECRET_SOURCE="host-provider")
+        first = measurement_environment(source, "fixture-primary", "rows.json", "rows", "shared")
+        second = measurement_environment(source, "fixture-primary", "rows.json", "rows", "shared")
+        self.assertEqual(first["HUBUUM_TOKEN_HASH_KEY"], second["HUBUUM_TOKEN_HASH_KEY"])
+        self.assertGreaterEqual(len(first["HUBUUM_TOKEN_HASH_KEY"]), 32)
+        self.assertNotEqual(first["HUBUUM_TOKEN_HASH_KEY"], source["HUBUUM_TOKEN_HASH_KEY"])
+        self.assertEqual(first["HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY"], "true")
+        self.assertNotIn("GITHUB_TOKEN", first)
+        self.assertNotIn("HUBUUM_SECRET_SOURCE", first)
+        self.assertEqual(first["HUBUUM_RESTORE_TEST_DATABASE_URL"], source["HUBUUM_RESTORE_TEST_DATABASE_URL"])
 
     def test_shared_topology_requires_both_measured_active_replicas(self):
         report, resources = self.fixture()
