@@ -75,7 +75,7 @@ where
     S: Future<Output = ()>,
 {
     let storage = storage_handle(context);
-    let control = super::history::run(&storage, async {
+    let control = super::history::retry_control(&storage, || async {
         Ok(storage
             .admit_task_execution(StorageTaskExecutionAdmission::new(
                 task.lease().clone(),

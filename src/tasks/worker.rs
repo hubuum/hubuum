@@ -491,9 +491,9 @@ async fn process_admitted_task(
                 )),
                 None => result,
             };
-            let persisted_terminal = super::history::run(
+            let persisted_terminal = super::history::retry_control(
                 context.backend(),
-                crate::services::tasks::find_task(context, task.lease().task_id()),
+                || crate::services::tasks::find_task(context, task.lease().task_id()),
             )
             .await
             .ok()
@@ -517,9 +517,9 @@ async fn process_admitted_task(
                 )
                 .await?;
                 if finalized {
-                    let finished = super::history::run(
+                    let finished = super::history::retry_control(
                         context.backend(),
-                        crate::services::tasks::find_task(context, task.lease().task_id()),
+                        || crate::services::tasks::find_task(context, task.lease().task_id()),
                     )
                     .await?;
                     terminal_status = Some(TaskStatus::from_db(&finished.status)?);

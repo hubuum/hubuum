@@ -172,9 +172,12 @@ pub(crate) async fn execute(
                     tracing::warn!(message = "History expiry batch remains pending", task_id = task.id, error = %error)
                 }
             }
-            return crate::tasks::history::run(&storage, async {
+            return crate::tasks::history::retry_control(&storage, || async {
                 storage
-                    .wait_task(StorageTaskWaitRequest::new(task.lease().clone(), encoded))
+                    .wait_task(StorageTaskWaitRequest::new(
+                        task.lease().clone(),
+                        encoded.clone(),
+                    ))
                     .await?;
                 Ok(TaskStatus::Waiting)
             })
@@ -186,8 +189,7 @@ pub(crate) async fn execute(
             } else {
                 "History expiry bounded batch completed with independently protected receipts"
             };
-            let finished = crate::tasks::history::run(
-                &storage,
+            let finished = crate::tasks::history::retry_control(&storage, || async {
                 complete_task(
                     context,
                     task,
@@ -202,8 +204,9 @@ pub(crate) async fn execute(
                         data: None,
                     },
                     StorageTaskCompletionPayload::HistoryExpiry,
-                ),
-            )
+                )
+                .await
+            })
             .await?;
             return TaskStatus::from_db(&finished.status);
         }
