@@ -436,19 +436,14 @@ impl AppContext {
         {
             return;
         }
-        let backend = match selected {
-            Some(selected) => {
-                crate::permissions::build_permission_backend_for_runtime(
-                    &config,
-                    self.backend.clone(),
-                    selected,
-                )
-                .await
-            }
-            None => {
-                crate::permissions::build_permission_backend(&config, self.backend.clone()).await
-            }
-        };
+        let backend = crate::permissions::build_permission_backend_for_assignment(
+            &config,
+            self.backend.clone(),
+            snapshot
+                .record(hubuum_storage_core::StorageRuntimeSettingsGroup::Authorization)
+                .assignment(),
+        )
+        .await;
         match backend {
             Ok(backend) => {
                 self.replace_permission_backend(backend);

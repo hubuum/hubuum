@@ -1520,6 +1520,8 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             "event_sink",
             "remote_target",
             "ldap",
+            "oidc",
+            "oauth",
             "runtime_settings",
             "token_hash",
         ]),
@@ -2219,6 +2221,8 @@ fn cli_requirements(command: &str, argument: &str) -> &'static [&'static str] {
     match (command, argument) {
         ("hubuum-admin", "backup_without_history") => &["backup"],
         ("hubuum-admin", "query_usage_class") => &["reconcile_query_usage"],
+        ("hubuum-admin", "recover_security") => &["recovery_administrator_id", "writes_quiesced"],
+        ("hubuum-admin", "recovery_administrator_id" | "writes_quiesced") => &["recover_security"],
         ("hubuum-admin", "restore_test_database_url") => &["verify_backup"],
         ("hubuum-admin", "keep_restore_test_database") => &["restore_test_database_url"],
         ("hubuum-admin", "restore_confirmation") => &["restore"],

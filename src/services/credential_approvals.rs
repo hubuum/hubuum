@@ -44,8 +44,15 @@ impl CredentialActor {
     pub fn id(&self) -> i32 {
         self.user.id
     }
-    fn claim(
+    pub(crate) fn owner(&self) -> hubuum_storage_core::StorageSecurityCandidateOwner {
+        hubuum_storage_core::StorageSecurityCandidateOwner::new(
+            PrincipalID::new(self.user.id).expect("user ID"),
+            self.token_id,
+        )
+    }
+    async fn claim(
         &self,
+        context: &AppContext,
         secret: &CredentialApprovalSecret,
         operation: &CredentialOperation,
     ) -> Result<StorageCredentialClaim, ApiError> {
@@ -56,10 +63,18 @@ impl CredentialActor {
             self.token_id,
             operation.kind(),
             secret.digest(),
-            secret.bind(operation)?,
+            match super::security_candidates::approval_binding(context, self, operation).await? {
+                Some(binding) => secret.bind_value(
+                    &serde_json::json!({"operation": operation, "candidate": binding}),
+                )?,
+                None => secret.bind(operation)?,
+            },
             cutoff,
         )
         .target(operation.target());
+        if let CredentialOperation::ActivateSecurityCandidate { candidate_id, .. } = operation {
+            claim = claim.security_candidate(*candidate_id);
+        }
         if let CredentialOperation::ConfirmRestore { restore_id, .. } = operation {
             claim = claim.restore_job(*restore_id);
         }
@@ -72,7 +87,8 @@ impl CredentialActor {
     ) -> Result<(), ApiError> {
         let admin = context.is_admin(&self.user).await?;
         match operation {
-            CredentialOperation::CreateUser { .. }
+            CredentialOperation::ActivateSecurityCandidate { .. }
+            | CredentialOperation::CreateUser { .. }
             | CredentialOperation::UpdateUser { .. }
             | CredentialOperation::ImportCredentials { .. }
             | CredentialOperation::ConfirmRestore { .. } => {
@@ -173,7 +189,7 @@ pub async fn issue(
         token.clone().into_create_request(*principal_id)?;
     }
     let secret = CredentialApprovalSecret::generate();
-    let claim = actor.claim(&secret, &operation)?;
+    let claim = actor.claim(context, &secret, &operation).await?;
     let authenticated_at = proof.authenticated_at;
     let metadata = storage_handle(context)
         .create_credential_approval(StorageCredentialApprovalCreate::new(
@@ -205,7 +221,7 @@ pub async fn approve(
     actor.authorize(context, &operation).await?;
     // Defaults were resolved when approving. Omitting expiry now changes the
     // fingerprint and cannot silently extend a previously authorized lifetime.
-    let claim = actor.claim(&secret, &operation)?;
+    let claim = actor.claim(context, &secret, &operation).await?;
     Ok(ApprovedCredentialOperation { operation, claim })
 }
 
@@ -414,4 +430,16 @@ pub(crate) async fn confirm_restore(
             "Invalid approved restore operation".into(),
         )),
     }
+}
+
+pub(crate) fn approved_security_candidate(
+    approved: ApprovedCredentialOperation,
+) -> Result<StorageCredentialClaim, ApiError> {
+    if !matches!(
+        approved.operation,
+        CredentialOperation::ActivateSecurityCandidate { .. }
+    ) {
+        return Err(ApiError::ReauthenticationRequired);
+    }
+    Ok(approved.claim)
 }

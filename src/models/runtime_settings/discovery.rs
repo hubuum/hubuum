@@ -18,6 +18,7 @@ use crate::errors::ApiError;
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RuntimeSettingsCatalogue {
     pub schema_version: u32,
+    pub security: SecurityConfigurationCapabilities,
     pub groups: Vec<RuntimeSettingsDescriptor>,
 }
 
@@ -97,9 +98,13 @@ impl RuntimeSettingsGroupState {
                 (
                     value.ownership,
                     json!({"backend": value.effective_backend}),
-                    value
-                        .runtime_backend
-                        .map(|backend| json!({"backend": backend})),
+                    value.runtime_backend.map(|backend| {
+                        let mut definition = json!({"backend": backend});
+                        if let Some(connection) = value.runtime_connection {
+                            definition["connection"] = json!(connection);
+                        }
+                        definition
+                    }),
                     Some(json!({"backend": value.deployment_backend})),
                     false,
                 )
@@ -150,6 +155,7 @@ impl RuntimeSettingsCatalogue {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             schema_version: 1,
+            security: SecurityConfigurationCapabilities::configured()?,
             groups,
         })
     }
@@ -248,7 +254,7 @@ fn descriptor(
         ),
         RuntimeSettingsGroup::Authentication => (
             "Authentication",
-            "Provider activation and ownership require the authentication preflight workflow.",
+            "Provider activation and ownership require the verified security candidate workflow.",
             value_schema::<AuthenticationSettingsRequest>()?,
             json!({}),
             RuntimeSettingsEffect::NextRequest,
@@ -332,7 +338,7 @@ fn descriptor(
         RuntimeSettingsGroup::Authentication => {
             // Do not publish dangling references to the full OpenAPI document.
             // Generic clients inspect the redacted state; specialized clients
-            // use the separately documented preflight request schema.
+            // use the separately documented candidate request schema.
             let title = schema["properties"]["providers"]["title"].clone();
             let description = schema["properties"]["providers"]["description"].clone();
             schema = json!({"$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -352,11 +358,11 @@ fn descriptor(
     }
     Ok(RuntimeSettingsDescriptor {
         key: group, title: title.into(), description: description.into(), schema,
-        patch_supported: group != RuntimeSettingsGroup::Authentication,
+        patch_supported: !matches!(group, RuntimeSettingsGroup::Authentication | RuntimeSettingsGroup::Authorization),
         requires_local_admin: matches!(group, RuntimeSettingsGroup::Authentication | RuntimeSettingsGroup::Authorization),
         takes_effect: effect,
-        read_only_reason: (group == RuntimeSettingsGroup::Authentication).then(||
-            "Use POST /api/v1/admin/runtime-settings/authentication/preflight to validate provider ownership, secrets, and connectivity before committing.".into()),
+        read_only_reason: matches!(group, RuntimeSettingsGroup::Authentication | RuntimeSettingsGroup::Authorization).then(||
+            "Use POST /api/v1/admin/runtime-settings/security-candidates, verify the proposed configuration, then activate with fresh local-administrator approval.".into()),
     })
 }
 
@@ -368,5 +374,43 @@ pub(crate) fn policy_effect(group: StorageRuntimeSettingsGroup) -> RuntimeSettin
         | StorageRuntimeSettingsGroup::LoginRateLimit
         | StorageRuntimeSettingsGroup::Tokens => RuntimeSettingsEffect::NextRequest,
         _ => RuntimeSettingsEffect::NextOperation,
+    }
+}
+
+/// Non-secret deployment bounds and supported stages for specialized clients.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SecurityConfigurationCapabilities {
+    pub candidate_endpoint: &'static str,
+    pub configurable_provider_kinds: Vec<&'static str>,
+    pub activatable_provider_kinds: Vec<&'static str>,
+    pub deployment_locked_providers: Vec<String>,
+    pub private_targets_allowed: bool,
+    pub replacement_credentials_available: bool,
+    pub candidate_lifetime_seconds: i64,
+    pub ldap_verification_timeout_seconds: u64,
+    pub treetop_connect_timeout_ceiling_ms: u64,
+    pub treetop_request_timeout_ceiling_ms: u64,
+    pub trust_profiles: Vec<&'static str>,
+}
+impl SecurityConfigurationCapabilities {
+    fn configured() -> Result<Self, ApiError> {
+        let config = crate::config::get_config()?;
+        let mut trust_profiles = vec!["system"];
+        if config.treetop_ca_cert.is_some() {
+            trust_profiles.push("deployment");
+        }
+        Ok(Self {
+            candidate_endpoint: "/api/v1/admin/runtime-settings/security-candidates",
+            configurable_provider_kinds: vec!["ldap", "oidc", "oauth"],
+            activatable_provider_kinds: vec!["ldap"],
+            deployment_locked_providers: config.auth_runtime_locked_providers.clone(),
+            private_targets_allowed: config.auth_runtime_allow_private_targets,
+            replacement_credentials_available: config.runtime_settings_encryption_key_ref.is_some(),
+            candidate_lifetime_seconds: hubuum_storage_core::SECURITY_CANDIDATE_LIFETIME_SECONDS,
+            ldap_verification_timeout_seconds: 30,
+            treetop_connect_timeout_ceiling_ms: config.treetop_connect_timeout_ms,
+            treetop_request_timeout_ceiling_ms: config.treetop_request_timeout_ms,
+            trust_profiles,
+        })
     }
 }

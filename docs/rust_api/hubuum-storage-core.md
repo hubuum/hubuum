@@ -1,6 +1,6 @@
 # `hubuum-storage-core` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.7` release train.
+Status: experimental public API in the storage SDK `0.8` release train.
 
 ## Purpose and Callers
 
@@ -264,3 +264,9 @@ change: adapters and consumers must handle every variant and persist complete
 are shared across configuration and persistence; `TrustedProxies::nets()` and
 `ClientAllowlist::Nets` intentionally retain the existing `ipnet::IpNet`
 integration surface. Upgrade every reader before introducing new group rows.
+
+The 0.8 SDK adds mandatory candidate verification/activation, expiry cleanup,
+immutable provider binding and offline recovery operations to
+`RuntimeSettingsStorage`. External `StorageLogin` evidence requires a pinned
+configuration revision. See the [0.8 adapter migration guide](../storage_adapter_sdk.md#upgrading-from-07-to-08)
+for transactional guarantees and new closed configuration variants.

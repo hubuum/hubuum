@@ -254,6 +254,8 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_ADMIN_GROUPNAME", Authentication),
     option!("HUBUUM_ADMIN_IDENTITY_SCOPE", Authentication),
     option!("HUBUUM_AUTH_CONFIG_PATH", Authentication, metadata),
+    option!("HUBUUM_AUTH_RUNTIME_ALLOW_PRIVATE_TARGETS", Authentication),
+    option!("HUBUUM_AUTH_RUNTIME_LOCKED_PROVIDERS", Authentication),
     option!(
         "HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF",
         Authentication,
@@ -309,6 +311,8 @@ pub const DYNAMIC_SECRET_PREFIXES: &[(&str, EnvironmentOwner)] = &[
     ("HUBUUM_REMOTE_SECRET_", EnvironmentOwner::RemoteCalls),
     ("HUBUUM_EVENT_SINK_SECRET_", EnvironmentOwner::Events),
     ("HUBUUM_LDAP_SECRET_", EnvironmentOwner::Authentication),
+    ("HUBUUM_OIDC_SECRET_", EnvironmentOwner::Authentication),
+    ("HUBUUM_OAUTH_SECRET_", EnvironmentOwner::Authentication),
 ];
 
 /// A numeric configuration bound together with the runtime value it validates.

@@ -27,6 +27,9 @@ bootstrap_and_provider_reconciliation = [
     "ExternalIdentityStorage::sync_external_user",
 ]
 workflow_state_machine = [
+    "RuntimeSettingsStorage::create_security_candidate",
+    "RuntimeSettingsStorage::verify_security_candidate",
+    "RuntimeSettingsStorage::purge_security_candidates",
     "SchemaEvolutionStorage::process_schema_work",
     "SchemaEvolutionStorage::save_schema_repair_report",
     "ComputedFieldStorage::request_computed_field_rebuild",
@@ -273,10 +276,10 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.RuntimeSettingsStorage]
 source = "crates/hubuum-storage-core/src/runtime_settings.rs"
-methods = ["load_runtime_settings", "update_runtime_settings", "list_runtime_settings_changes"]
-effects = { point_read = ["load_runtime_settings"], page_read = ["list_runtime_settings_changes"], audited_mutation = ["update_runtime_settings"] }
+methods = ["load_runtime_settings", "update_runtime_settings", "list_runtime_settings_changes", "recover_security_settings", "purge_security_candidates", "authentication_provider_binding", "create_security_candidate", "get_security_candidate", "verify_security_candidate", "activate_security_candidate"]
+effects = { point_read = ["load_runtime_settings", "authentication_provider_binding", "get_security_candidate"], page_read = ["list_runtime_settings_changes"], audited_mutation = ["update_runtime_settings", "activate_security_candidate", "recover_security_settings"], workflow_mutation = ["create_security_candidate", "verify_security_candidate", "purge_security_candidates"] }
 shared_scenarios = ["src/tests/storage_contract/runtime_settings.rs::runtime_settings_are_revisioned_and_audited", "src/tests/storage_contract/runtime_settings.rs::concurrent_edits_of_one_revision_commit_exactly_once", "src/storage/context/runtime_settings.rs::replicas_apply_committed_changes_without_a_request"]
-native_scenarios = ["crates/hubuum-storage-postgres/tests/runtime_settings.rs::committed_values_are_shared_and_survive_reconnecting", "crates/hubuum-storage-postgres/tests/runtime_settings.rs::concurrent_edits_of_one_revision_commit_exactly_once", "crates/hubuum-storage-postgres/tests/runtime_settings.rs::a_failed_audit_insert_rolls_back_the_update", "crates/hubuum-storage-postgres/tests/runtime_settings.rs::migration_adopts_an_existing_override_as_an_audited_revision", "crates/hubuum-storage-postgres/tests/runtime_settings.rs::committed_changes_notify_every_connected_replica", "crates/hubuum-storage-postgres/tests/runtime_settings.rs::audit_records_are_append_only", "crates/hubuum-storage-postgres/tests/runtime_settings.rs::constraints_reject_invalid_persisted_state"]
+native_scenarios = ["crates/hubuum-storage-postgres/tests/security_candidates.rs::competing_replicas_consume_candidate_and_approval_once", "crates/hubuum-storage-postgres/tests/security_candidates.rs::failed_settings_audit_rolls_back_approval_and_receipt_consumption", "crates/hubuum-storage-postgres/tests/security_candidates.rs::offline_recovery_discards_authority_and_persists_across_replica_restart", "crates/hubuum-storage-postgres/tests/security_candidates.rs::verification_updates_reject_a_stale_replica", "crates/hubuum-storage-postgres/tests/security_candidates.rs::expiry_cleanup_discards_candidate_authority", "crates/hubuum-storage-postgres/tests/security_candidates.rs::provider_identity_bindings_survive_restart_and_reject_reassignment", "crates/hubuum-storage-postgres/tests/runtime_settings.rs::committed_values_are_shared_and_survive_reconnecting", "crates/hubuum-storage-postgres/tests/runtime_settings.rs::concurrent_edits_of_one_revision_commit_exactly_once", "crates/hubuum-storage-postgres/tests/runtime_settings.rs::a_failed_audit_insert_rolls_back_the_update", "crates/hubuum-storage-postgres/tests/runtime_settings.rs::migration_adopts_an_existing_override_as_an_audited_revision", "crates/hubuum-storage-postgres/tests/runtime_settings.rs::committed_changes_notify_every_connected_replica", "crates/hubuum-storage-postgres/tests/runtime_settings.rs::audit_records_are_append_only", "crates/hubuum-storage-postgres/tests/runtime_settings.rs::constraints_reject_invalid_persisted_state"]
 
 [enums.StorageRuntimeSettingsGroup]
 source = "crates/hubuum-storage-core/src/runtime_settings.rs"

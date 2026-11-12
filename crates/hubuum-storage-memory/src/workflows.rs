@@ -1213,6 +1213,7 @@ impl RestoreStorage for MemoryStorage {
         replacement.credential_approvals = state.credential_approvals.clone();
         // Runtime settings are deployment configuration and survive restores.
         replacement.runtime_settings = state.runtime_settings.clone();
+        replacement.runtime_settings.discard_candidates();
         for (_, approval) in replacement.credential_approvals.values_mut() {
             approval.invalidate(Utc::now());
         }

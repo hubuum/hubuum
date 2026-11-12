@@ -761,7 +761,8 @@ assert_flag "$label_output" openapi true
 budget_projection="$(bash "$classifier" src/config/running.rs)"
 assert_flag "$budget_projection" openapi true
 
-for observation_input in src/api/v1/handlers/runtime_config.rs src/models/query_usage.rs \
+for observation_input in src/models/security_candidate.rs src/api/v1/handlers/security_candidates.rs \
+  crates/hubuum-domain/src/authentication_configuration.rs src/api/v1/handlers/runtime_config.rs src/models/query_usage.rs \
   src/models/runtime_settings.rs src/api/v1/handlers/client_config.rs; do
   observation_output="$(bash "$classifier" "$observation_input")"
   assert_flag "$observation_output" rust true

@@ -85,11 +85,22 @@ struct ApplicationSecrets {
     event_sink: ConsumerSecrets,
     remote: ConsumerSecrets,
     ldap: ConsumerSecrets,
+    oidc: ConsumerSecrets,
+    oauth: ConsumerSecrets,
     runtime_settings: ConsumerSecrets,
     token: ConsumerSecrets,
 }
 
 impl ApplicationSecrets {
+    async fn invalidate_security_candidates(&self) {
+        for consumer in [&self.ldap, &self.oidc, &self.oauth, &self.runtime_settings] {
+            consumer
+                .resolver
+                .invalidate_provider(&consumer.provider_kind)
+                .await;
+        }
+    }
+
     fn from_environment() -> Result<Self, SecretError> {
         Self::new(SecretSourceOptions::from_environment()?.settings()?)
     }
@@ -125,6 +136,8 @@ impl ApplicationSecrets {
                 "remote_target",
             )?,
             ldap: consumer_resolver(&settings, "HUBUUM_LDAP_SECRET_", None, "ldap", "ldap")?,
+            oidc: consumer_resolver(&settings, "HUBUUM_OIDC_SECRET_", None, "oidc", "oidc")?,
+            oauth: consumer_resolver(&settings, "HUBUUM_OAUTH_SECRET_", None, "oauth", "oauth")?,
             runtime_settings: consumer_resolver(
                 &settings,
                 "HUBUUM_RUNTIME_SETTINGS_KEY_",
@@ -352,6 +365,30 @@ pub(crate) fn token_hash_secrets_are_text() -> Result<bool, SecretError> {
     Ok(configured()?.settings == SecretSourceSettings::Environment)
 }
 
+pub(crate) async fn resolve_browser_provider_secret(
+    kind: hubuum_storage_core::StorageAuthenticationProviderKind,
+    alias: &str,
+) -> Result<ResolvedSecret, SecretError> {
+    match kind {
+        hubuum_storage_core::StorageAuthenticationProviderKind::Oidc => {
+            configured()?.oidc.resolve(alias).await
+        }
+        hubuum_storage_core::StorageAuthenticationProviderKind::Oauth => {
+            configured()?.oauth.resolve(alias).await
+        }
+        hubuum_storage_core::StorageAuthenticationProviderKind::Ldap => {
+            configured()?.ldap.resolve(alias).await
+        }
+    }
+}
+
+/// Candidate approval/activation must observe source rotation rather than accept
+/// an otherwise valid receipt against a still-cached superseded secret.
+pub(crate) async fn refresh_security_candidate_secrets() -> Result<(), SecretError> {
+    configured()?.invalidate_security_candidates().await;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -380,6 +417,41 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[rstest::rstest]
+    #[case("ldap")]
+    #[case("oidc")]
+    #[case("oauth")]
+    #[case("runtime-settings")]
+    #[actix_rt::test]
+    async fn security_candidate_checks_observe_rotation_before_cache_expiry(
+        #[case] namespace: &str,
+    ) {
+        let directory = TestDirectory::new();
+        fs::create_dir(directory.0.join(namespace)).unwrap();
+        let path = directory.0.join(namespace).join("candidate-secret");
+        fs::write(&path, b"first-value").unwrap();
+        let secrets =
+            ApplicationSecrets::new(SecretSourceSettings::File(directory.0.clone())).unwrap();
+        let consumer = match namespace {
+            "ldap" => &secrets.ldap,
+            "oidc" => &secrets.oidc,
+            "oauth" => &secrets.oauth,
+            _ => &secrets.runtime_settings,
+        };
+        consumer.resolve("candidate-secret").await.unwrap();
+        fs::write(&path, b"rotated-value").unwrap();
+        secrets.invalidate_security_candidates().await;
+        assert_eq!(
+            consumer
+                .resolve("candidate-secret")
+                .await
+                .unwrap()
+                .value()
+                .expose(),
+            b"rotated-value"
+        );
     }
 
     #[test]
@@ -455,6 +527,7 @@ mod tests {
                     });
                     let providers = crate::auth::protect_runtime_authentication_settings(
                         vec![crate::models::runtime_settings::RuntimeAuthenticationProviderRequest::Runtime {
+                            provider_id: None,
                             name: "directory".to_string(),
                             kind: crate::models::runtime_settings::RuntimeAuthenticationProviderKind::Ldap,
                             configuration: config,

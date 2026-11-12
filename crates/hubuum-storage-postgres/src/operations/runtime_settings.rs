@@ -128,62 +128,67 @@ pub async fn update_runtime_settings(
     runtime: &PostgresRuntime,
     request: StorageRuntimeSettingsUpdate,
 ) -> Result<StorageRuntimeSettingsUpdateOutcome, PostgresStorageError> {
+    runtime
+        .with_transaction(async |connection| update_on_connection(connection, &request).await)
+        .await
+}
+
+pub(super) async fn update_on_connection(
+    connection: &mut crate::PostgresConnection,
+    request: &StorageRuntimeSettingsUpdate,
+) -> Result<StorageRuntimeSettingsUpdateOutcome, PostgresStorageError> {
     use crate::schema::runtime_setting_changes::dsl as changes;
     use crate::schema::runtime_settings::dsl as settings;
-    runtime
-        .with_transaction(async |connection| -> Result<_, PostgresStorageError> {
-            let group = request.group();
-            let current = settings::runtime_settings
-                .filter(settings::setting_group.eq(group.as_str()))
-                .for_update()
-                .select(RuntimeSettingsRow::as_select())
-                .first(connection)
-                .await?
-                .record()?;
-            if current.revision() != request.expected_revision() {
-                return Err(PostgresStorageError::revision_conflict(
-                    format!("The {} runtime settings revision changed", group.as_str()),
-                    current.revision(),
-                ));
-            }
-            if current.assignment() == request.assignment() {
-                return Ok(StorageRuntimeSettingsUpdateOutcome::Unchanged(current));
-            }
-            let next = current
-                .revision()
-                .checked_advance()
-                .map_err(|error| PostgresStorageError::internal(error.to_string()))?;
-            let context = request.context();
-            let record = diesel::update(settings::runtime_settings)
-                .filter(settings::setting_group.eq(group.as_str()))
-                .set((
-                    settings::revision.eq(next.get()),
-                    settings::value.eq(request.assignment().to_document()),
-                    settings::changed_at.eq(diesel::dsl::now),
-                    settings::changed_by.eq(context.actor_user_id().map(PrincipalId::id)),
-                ))
-                .returning(RuntimeSettingsRow::as_returning())
-                .get_result(connection)
-                .await?
-                .record()?;
-            diesel::insert_into(changes::runtime_setting_changes)
-                .values((
-                    changes::setting_group.eq(group.as_str()),
-                    changes::revision.eq(next.get()),
-                    changes::previous_value.eq(current.assignment().to_document()),
-                    changes::value.eq(request.assignment().to_document()),
-                    changes::changed_at.eq(record.changed_at()),
-                    changes::actor_kind.eq(context.actor_kind().as_str()),
-                    changes::actor_principal_id.eq(context.actor_user_id().map(PrincipalId::id)),
-                    changes::request_id.eq(context.request_id()),
-                    changes::correlation_id.eq(context.correlation_id().map(CorrelationId::as_str)),
-                ))
-                .execute(connection)
-                .await?;
-            crate::worker_notifications::notify_runtime_settings(connection, group).await?;
-            Ok(StorageRuntimeSettingsUpdateOutcome::Committed(record))
-        })
-        .await
+    let group = request.group();
+    let current = settings::runtime_settings
+        .filter(settings::setting_group.eq(group.as_str()))
+        .for_update()
+        .select(RuntimeSettingsRow::as_select())
+        .first(connection)
+        .await?
+        .record()?;
+    if current.revision() != request.expected_revision() {
+        return Err(PostgresStorageError::revision_conflict(
+            format!("The {} runtime settings revision changed", group.as_str()),
+            current.revision(),
+        ));
+    }
+    if current.assignment() == request.assignment() {
+        return Ok(StorageRuntimeSettingsUpdateOutcome::Unchanged(current));
+    }
+    let next = current
+        .revision()
+        .checked_advance()
+        .map_err(|error| PostgresStorageError::internal(error.to_string()))?;
+    let context = request.context();
+    let record = diesel::update(settings::runtime_settings)
+        .filter(settings::setting_group.eq(group.as_str()))
+        .set((
+            settings::revision.eq(next.get()),
+            settings::value.eq(request.assignment().to_document()),
+            settings::changed_at.eq(diesel::dsl::now),
+            settings::changed_by.eq(context.actor_user_id().map(PrincipalId::id)),
+        ))
+        .returning(RuntimeSettingsRow::as_returning())
+        .get_result(connection)
+        .await?
+        .record()?;
+    diesel::insert_into(changes::runtime_setting_changes)
+        .values((
+            changes::setting_group.eq(group.as_str()),
+            changes::revision.eq(next.get()),
+            changes::previous_value.eq(current.assignment().to_document()),
+            changes::value.eq(request.assignment().to_document()),
+            changes::changed_at.eq(record.changed_at()),
+            changes::actor_kind.eq(context.actor_kind().as_str()),
+            changes::actor_principal_id.eq(context.actor_user_id().map(PrincipalId::id)),
+            changes::request_id.eq(context.request_id()),
+            changes::correlation_id.eq(context.correlation_id().map(CorrelationId::as_str)),
+        ))
+        .execute(connection)
+        .await?;
+    crate::worker_notifications::notify_runtime_settings(connection, group).await?;
+    Ok(StorageRuntimeSettingsUpdateOutcome::Committed(record))
 }
 
 pub async fn list_runtime_settings_changes(

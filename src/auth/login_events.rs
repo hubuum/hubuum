@@ -3,7 +3,8 @@ use hubuum_domain::PrincipalId;
 use hubuum_events_core::EventEntityId;
 use hubuum_query::QueryOptions;
 use hubuum_storage_core::{
-    AuditEventStorage, StorageAuditEventFilters, StorageAuditEventListQuery,
+    AuditEventStorage, RuntimeSettingsStorage, StorageAuditEventFilters,
+    StorageAuditEventListQuery, StorageRuntimeSettingsGroup,
 };
 use hubuum_storage_postgres::diesel_async_prelude::*;
 use hubuum_storage_postgres::with_transaction;
@@ -105,7 +106,13 @@ async fn configured_external_login_snapshots_synced_identity_and_policy(#[case] 
             }),
         })
         .unwrap();
-    let authenticated = login_with_registry(
+    let authentication_revision = storage_handle(&context.pool)
+        .load_runtime_settings()
+        .await
+        .unwrap()
+        .record(StorageRuntimeSettingsGroup::Authentication)
+        .revision();
+    let mut authenticated = login_with_registry(
         &context.pool,
         LoginUser {
             identity_scope: Some(scope.clone()),
@@ -118,6 +125,7 @@ async fn configured_external_login_snapshots_synced_identity_and_policy(#[case] 
     )
     .await
     .unwrap();
+    authenticated.authentication_revision = Some(authentication_revision);
     let user = authenticated.user();
     let storage = storage_handle(&context.pool);
     let synced = storage

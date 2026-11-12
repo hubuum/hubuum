@@ -1,9 +1,8 @@
 # Runtime settings
 
-The proposed [external authentication contract](authentication/contract.md)
-builds on this foundation for non-activating test sign-in and no-restart
-activation of external providers and remote authorization connections. Those
-extensions are under review; this page describes the implemented baseline.
+Authentication and authorization changes use the
+[security candidate workflow](security_candidates.md): non-live validation,
+real provider verification and fresh local-administrator approval before activation.
 
 Most Hubuum configuration is read once when a process starts. Runtime settings
 are shared policies stored in the primary
@@ -20,8 +19,8 @@ settings store. The runtime-managed groups are listed below.
 
 | Group | Setting | Takes effect | Deployment ceiling |
 | --- | --- | --- | --- |
-| `authentication` | LDAP provider activation and runtime-owned definitions | On the next authentication request | 64 providers |
-| `authorization` | Permission backend selection | On the next API request | Available backend and deployment connection settings |
+| `authentication` | Verified LDAP activation and typed browser definitions | On the next authentication request | 64 providers |
+| `authorization` | Verified backend and runtime Treetop connection profile | On the next API request | Deployment egress, trust and timeout ceilings |
 | `pagination` | `default_page_limit`, `max_page_limit` | When the next API request starts | `HUBUUM_MAX_PAGE_LIMIT` |
 | `query_observations` | `enabled`, `sample_every`, `max_patterns`, `max_patterns_per_class`, `retention_seconds`, `max_predicates_per_query` | On the next eligible query | Query-observation ceiling variables |
 | `observability` | Log filter, metrics enablement and scrape path | On reconciliation | Literal non-conflicting scrape path |
@@ -42,7 +41,7 @@ Everything else remains deployment configuration. That includes:
 - bind address, TLS, runtime role, and worker counts;
 - the secret provider, signing keys, hash keys, and runtime-settings encryption
   key reference;
-- LDAP secret-source selection and authorization backend connection settings;
+- LDAP/browser secret-source selection and Treetop trust roots and timeout ceilings;
 - machine resource ceilings and filesystem paths;
 - `HUBUUM_MAX_PAGE_LIMIT`, which caps both runtime pagination limits; and
 - query-observation sampling and capacity ceiling variables, which cap the
@@ -117,6 +116,9 @@ requirements. Log filters reload independently of distributed tracing sampling.
 
 ### Upgrade and rollback
 
+Security configuration additionally requires the coordinated
+[candidate migration and client upgrade](security_candidates.md#upgrade-and-recovery).
+
 **Breaking deployment change:** stop older API and worker binaries before applying
 migration `2026-11-10-000001_runtime_policies`, then deploy the upgraded binaries
 for every replica. Older readers cannot parse the new group rows, even before a
@@ -144,7 +146,7 @@ revision. A group is always in one of two states:
 
 Process startup never writes runtime settings. A replica's environment can
 change the active selection only while the group is in the deployment state.
-Deployment-owned provider definitions and authorization connection settings still
+Deployment-owned provider definitions and referenced authorization connections still
 come from deployment configuration.
 
 ### Authentication provider ownership
@@ -178,12 +180,14 @@ provider while retaining local login:
 }
 ```
 
-Send it to `POST /api/v1/admin/runtime-settings/authentication/preflight`.
+Add `"group": "authentication"` and send it to
+`POST /api/v1/admin/runtime-settings/security-candidates`, then complete verification
+and approved activation as described in [security candidates](security_candidates.md).
 Include every external provider that should remain enabled. Omitted deployment
 providers stay disabled while the group is runtime-owned; newly added deployment
 providers also need explicit activation. Omitted runtime definitions are removed.
-Restart never resets these activation decisions. Releasing the whole group with
-`DELETE` explicitly restores the complete deployment selection, after preflight.
+Restart never resets these activation decisions. Releasing the whole group requires an approved `release_ownership` candidate
+that verifies the complete deployment selection.
 A disabled reference can be retained when its deployment definition is missing;
 enabling it requires the definition to exist.
 
@@ -258,11 +262,11 @@ changing security settings.
 | Method and path | Purpose |
 | --- | --- |
 | `GET /api/v1/admin/runtime-settings` | Report every group as applied by the responding replica |
-| `POST /api/v1/admin/runtime-settings/authentication/preflight` | Validate and test LDAP providers; persist only after successful preflight |
-| `PUT /api/v1/admin/runtime-settings/authorization` | Select `local` or `treetop` authorization |
+| `POST /api/v1/admin/runtime-settings/security-candidates` | Prepare a non-live security change; verify and approve before activation |
+| `POST /api/v1/admin/runtime-settings/security-candidates/{id}/activate` | Atomically consume verification and fresh approval and commit the security revision |
 | `PUT /api/v1/admin/runtime-settings/pagination` | Set shared default and maximum page sizes |
 | `PUT /api/v1/admin/runtime-settings/query_observations` | Set shared query observation enablement, sampling, and capacity limits |
-| `DELETE /api/v1/admin/runtime-settings/{authentication,authorization,pagination,query_observations}` | Return the group to deployment configuration |
+| `DELETE /api/v1/admin/runtime-settings/{pagination,query_observations}` | Return the group to deployment configuration |
 | `GET /api/v1/admin/runtime-settings/history/{group}` | List durable audit records, newest first |
 | `GET /api/v1/admin/config` | Effective process configuration, including `runtime_settings` |
 
@@ -297,12 +301,14 @@ reports `constrained_by_ceiling: true`.
 For pagination this clamps the maximum first, then the default, preserving
 `default_page_limit <= max_page_limit`.
 
-Authentication updates use the preflight endpoint. It validates ownership and
-identity-scope bindings, tests enabled providers' configuration, connectivity,
-and service bind, and commits the new revision only after all checks succeed.
+Authentication updates create non-live security candidates. Validation checks
+ownership and immutable identity-scope bindings. Changed enabled LDAP providers
+require a real test sign-in before the candidate can receive a verification
+receipt. Activation consumes that receipt and fresh local-admin approval in the
+same transaction as the revision and audit record.
 Disabled providers do not require connectivity or decryption, so an unavailable
 provider or key does not prevent disabling it. Their configuration is checked
-before they can be enabled. A stale revision discovered after preflight
+before they can be enabled. A stale revision discovered after verification
 still prevents the write. Omitting `configuration.bind_password` for an
 existing provider of the same name preserves its encrypted password; setting it
 to `null` clears it. A supplied password is encrypted using AES-256-GCM with a
@@ -316,12 +322,13 @@ rewrapping. API reports and audit responses never return encrypted envelopes,
 password values, or secret references.
 
 Passwords stored by earlier unreleased builds used process-local key versions.
-Re-enter those passwords through the preflight API after upgrading; preserving
+Re-enter those passwords through the candidate API after upgrading; preserving
 an existing envelope does not convert it to the durable reference format.
 
 Authorization updates select a backend that is already supported by the
-running binary. Backend-specific connection options, such as the Treetop URL
-and TLS settings, remain deployment configuration. Before committing an
+running binary. Bounded non-secret Treetop connection profiles can be runtime
+owned; trust material, egress policy, and timeout ceilings remain deployment
+owned. Before committing an
 authorization update or release, the responding replica initializes and checks
 the selected backend and verifies that the local administrator making the change
 is also an administrator under the replacement. A backend that is reachable but
@@ -381,9 +388,12 @@ successfully and applies it without a storage read on request paths.
   Disabled providers are excluded from public discovery. After a replica applies
   a disable, new logins, bearer-token requests, and session refreshes for that
   scope are rejected even if cached identity data is fresh. Requests already in
-  progress may finish. Disablement suspends access; it does not permanently revoke
-  stored credentials, and re-enabling may restore unexpired credentials. Use
-  credential revocation when permanent invalidation is required.
+  progress may finish. Activation permanently revokes stored credentials and
+  session families for removed, disabled, or changed providers. Re-enabling
+  requires new sign-in. Unchanged enabled definitions retain their sessions;
+  first adoption and ownership release conservatively revoke external sessions.
+  External login completion checks its pinned authentication revision in storage
+  so a login started before a settings change cannot issue fresh credentials.
 - **Query observations**: sampling and predicate budgets read the applied value
   for each eligible query. Capacity and retention changes apply as the next
   observation is recorded or reported; existing entries over a newly lowered
@@ -523,7 +533,9 @@ raw enum values; the discovery version remains 1. For example:
 revision, replica application status, `effective`, `runtime`, `deployment`, and
 `constrained_by_ceiling`. Prefer requested `runtime` values when preparing an edit;
 `effective` can be lower because of a deployment ceiling. Authentication exposes
-only redacted provider status, with runtime/deployment definitions omitted.
+redacted provider status and validated non-secret runtime definitions. Protected
+credentials are represented only by `credential_configured`; values and envelopes
+are never returned. Deployment definitions remain deployment owned.
 
 For groups with `patch_supported: true`, send only the edited top-level fields:
 
@@ -542,16 +554,16 @@ candidate using the same typed constructors as PUT, and commits it with an audit
 record and revision check. Empty changes, unknown fields, null values, incorrect
 types, invalid combinations, and deployment-ceiling violations are rejected.
 A stale revision returns `412`; refetch and let the administrator review the
-conflict rather than silently retrying the mutation. DELETE remains the explicit
-operation for returning an entire group to deployment ownership.
+conflict rather than silently retrying the mutation. DELETE returns ordinary
+groups to deployment ownership. Authentication and authorization instead require
+a verified and approved `release_ownership` security candidate.
 
-The initial generic editors cover pagination, query observations, and authorization
-backend selection. Authorization retains the local recovery-administrator check.
-Authentication is advertised read-only to generic editors because its existing
-preflight workflow validates ownership transfer, secrets, and connectivity before
-committing. Discovery never relaxes server authorization or makes deployment-only
-settings mutable. None of these additive endpoints changes persistence or backup
-semantics.
+Generic editors can patch pagination and query observations. Authentication and
+authorization are advertised read-only to generic editors and use the security
+candidate workflow. The catalogue's `security` capabilities describe configurable
+and activatable provider kinds, deployment locks, supported trust profiles, and
+resource ceilings. Discovery never relaxes authorization or makes deployment-only
+settings mutable. Both security groups retain the tested local recovery path.
 
 Clients must discover group and field names at runtime. An older generic client
 can then edit a newly added scalar field without recompilation, while partial

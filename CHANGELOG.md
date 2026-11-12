@@ -9,6 +9,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Verified security configuration candidates, fresh local-administrator activation
+  approvals, immutable provider UUID/scope bindings, bounded runtime Treetop
+  profiles and explicit offline `hubuum-admin --recover-security` recovery.
+  LDAP test sign-ins return bounded identity/group previews without provisioning
+  or session effects. OIDC/OAuth definitions can be staged disabled; browser
+  activation remains gated on the later provider implementation.
+
 - Administrators can change `pagination.max_page_limit` together with
   `default_page_limit` through runtime settings, without restarting. Explicit
   client limits are clamped to the runtime maximum, bounded by the deployment's
@@ -28,6 +35,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   sensitive policy edits require a local administrator with recovery access.
 
 ### Changed
+
+- **Breaking (storage SDK 0.8):** update all ten SDK dependencies to exactly
+  `0.8.0`, implement candidate activation/recovery and provider-binding storage,
+  and construct external login evidence with its authentication revision. See
+  the [adapter migration guide](docs/storage_adapter_sdk.md#upgrading-from-07-to-08).
+
+- **Breaking (deployment and administrator clients):** authentication preflight
+  writes and direct authorization/security-group edits now require the candidate
+  workflow. Stop all older replicas before the security-candidates migration,
+  upgrade OpenAPI clients and complete Rust storage adapters, and explicitly allow
+  private authentication targets when needed. Provider changes revoke affected
+  external credentials while retaining manual grants. See
+  [upgrade and recovery](docs/security_candidates.md#upgrade-and-recovery).
 
 - **Breaking (REST clients with closed runtime-setting enums):** runtime-setting responses and discovery add operational policy groups and effect values.
   Regenerate administrator clients from the updated OpenAPI document or accept

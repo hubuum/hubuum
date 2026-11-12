@@ -17,12 +17,43 @@ use crate::{
 pub struct StorageLogin {
     subject: EventSubject,
     user: StorageUser,
+    authentication_revision: Option<hubuum_domain::ResourceRevision>,
 }
 
 impl StorageLogin {
+    /// Local login does not depend on an external provider revision.
     pub fn try_new(
         subject: EventSubject,
         user: StorageUser,
+    ) -> Result<Self, StorageValidationError> {
+        if subject.identity_scope() != "local" || subject.authentication_provider_kind() != "local"
+        {
+            return Err(StorageValidationError::invalid(
+                "External login requires an authentication revision",
+            ));
+        }
+        Self::validated(subject, user, None)
+    }
+
+    /// External evidence must carry the revision used for provider authentication.
+    pub fn external(
+        subject: EventSubject,
+        user: StorageUser,
+        revision: hubuum_domain::ResourceRevision,
+    ) -> Result<Self, StorageValidationError> {
+        if subject.identity_scope() == "local" || subject.authentication_provider_kind() == "local"
+        {
+            return Err(StorageValidationError::invalid(
+                "External login requires an external identity scope",
+            ));
+        }
+        Self::validated(subject, user, Some(revision))
+    }
+
+    fn validated(
+        subject: EventSubject,
+        user: StorageUser,
+        authentication_revision: Option<hubuum_domain::ResourceRevision>,
     ) -> Result<Self, StorageValidationError> {
         let parts = user.clone().into_parts();
         if subject.principal_id().id() != parts.id().id()
@@ -33,7 +64,15 @@ impl StorageLogin {
                 "invalid authenticated login subject",
             ));
         }
-        Ok(Self { subject, user })
+        Ok(Self {
+            subject,
+            user,
+            authentication_revision,
+        })
+    }
+
+    pub const fn authentication_revision(&self) -> Option<hubuum_domain::ResourceRevision> {
+        self.authentication_revision
     }
 
     pub fn subject(&self) -> &EventSubject {
