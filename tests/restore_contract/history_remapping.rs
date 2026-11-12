@@ -321,7 +321,7 @@ fn restore_reset_rejects_unrelated_empty_authority(
 
 // Test-only teardown after acceptance, signed restore_original and owner
 // settlement, exclusively in the runner's destructive restore DB under its lock.
-async fn restore_fixture_authority(
+pub(super) async fn restore_fixture_authority(
     pool: &PostgresPool,
     previous: &HistoryLifecycleControl,
     previous_deletion: &DeletionControlState,

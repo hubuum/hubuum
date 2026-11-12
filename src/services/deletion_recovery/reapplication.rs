@@ -2,10 +2,10 @@ use std::path::Path;
 
 use hubuum_storage_core::{
     ApplicationExposureProof, ControlCheckpointCapture, DeletionAuditProtection,
-    DeletionCheckpointIdentity, DeletionControlStorage, HistoryExposureProtection,
-    HistoryLifecycleRecovery, HistoryLifecycleStorage, ProtectedTaskReapplication,
-    TaskControlCheckpoint, TaskControlReapplication, TaskReapplicationProgress,
-    TaskReceiptActivation, TaskRetentionStorage,
+    DeletionCheckpointIdentity, DeletionControlStorage, HistoryExpiryReapplication,
+    HistoryExposureProtection, HistoryLifecycleRecovery, HistoryLifecycleStorage,
+    ProtectedTaskReapplication, TaskControlCheckpoint, TaskControlReapplication,
+    TaskReapplicationProgress, TaskReceiptActivation, TaskRetentionStorage,
 };
 
 use super::cleanup::protect_audit;
@@ -77,6 +77,7 @@ pub(crate) async fn reapply(
     };
     let (session, expected) =
         protect_audit(&storage, session, DeletionAuditProtection::Intent).await?;
+    let session = reapply_history(context, session).await?;
     let application = storage.read_application_control().await?;
     let mut receipt = storage
         .reapply_deletion_decisions(expected, application.fence(), identity(&session)?)
@@ -140,6 +141,39 @@ pub(crate) async fn reapply(
         ));
     }
     Ok(result)
+}
+
+async fn reapply_history(
+    context: &impl StorageContext,
+    mut session: CheckpointSession,
+) -> Result<CheckpointSession, ApiError> {
+    let storage = storage_handle(context);
+    let Some(authority) = session.checkpoint().history_lifecycle().cloned() else {
+        return Ok(session);
+    };
+    // The finite retained manifest is the entire replay worklist. Never select
+    // additional history or widen an exact source version to its descendants.
+    for intent in authority.expiry().intents() {
+        for member in intent.manifest().members() {
+            let current = session
+                .checkpoint()
+                .history_lifecycle()
+                .cloned()
+                .ok_or_else(|| unavailable("History recovery evidence disappeared"))?;
+            let fence = storage.read_application_control().await?.fence();
+            let protection = HistoryExposureProtection::new(current, fence, identity(&session)?);
+            let request = HistoryExpiryReapplication::new(
+                protection,
+                intent.manifest().identity(),
+                member.target(),
+            )
+            .map_err(invalid_control)?;
+            if storage.reapply_history_expiry(request).await? {
+                session = publish(session, storage.capture_control_checkpoint().await?).await?;
+            }
+        }
+    }
+    Ok(session)
 }
 
 async fn reapply_tasks(

@@ -175,6 +175,22 @@ fn remove_on(
                 .any(|receipt| receipt.target() == member.target())
         })
         .expect("incomplete intent has pending membership");
+    remove_member_on(state, member, checkpoint.batch(), &snapshot, protection)?;
+    Ok(checkpoint.clone())
+}
+
+pub(super) fn has_exact_copy(state: &MemoryState, member: &HistoryExpiryMember) -> bool {
+    find_copy(state, member).is_some()
+}
+
+enum CopyLocation {
+    History(usize),
+    Schema(usize),
+    Computed(usize),
+    Relation(StorageBackupHistorySection, usize),
+}
+
+fn find_copy(state: &MemoryState, member: &HistoryExpiryMember) -> Option<CopyLocation> {
     let family = member.family();
     let target = member.target();
     let matches = |evidence: &StorageIdentityEvidence| {
@@ -183,12 +199,6 @@ fn remove_on(
             .and_then(|subject| subject.record_identity())
             == Some(target)
     };
-    enum CopyLocation {
-        History(usize),
-        Schema(usize),
-        Computed(usize),
-        Relation(StorageBackupHistorySection, usize),
-    }
     let matches_row = |row: &StorageBackupRow| {
         row.get("logical_identity")
             .cloned()
@@ -196,60 +206,78 @@ fn remove_on(
             .is_some_and(|evidence| matches(&evidence))
     };
     use StorageIdentityHistoryKind as F;
-    let (location, row) = match family {
-        F::ClassSchema => {
-            let index = state
-                .schema_history
-                .iter()
-                .position(matches_row)
-                .ok_or_else(|| StorageError::conflict("Exact history copy is missing"))?;
-            (
-                CopyLocation::Schema(index),
-                state.schema_history[index].clone(),
-            )
-        }
-        F::ComputedDefinitions => {
-            let index = state
-                .computed_history
-                .iter()
-                .position(|row| row.logical_identity().is_some_and(matches))
-                .ok_or_else(|| StorageError::conflict("Exact history copy is missing"))?;
-            let raw = serde_json::to_value(&state.computed_history[index]).map_err(|_| {
-                StorageError::backend_failure("Cannot encode computed history copy")
-            })?;
-            (
-                CopyLocation::Computed(index),
-                StorageBackupRow::try_from_value(raw).map_err(invalid_contract_value)?,
-            )
-        }
+    match family {
+        F::ClassSchema => state
+            .schema_history
+            .iter()
+            .position(matches_row)
+            .map(CopyLocation::Schema),
+        F::ComputedDefinitions => state
+            .computed_history
+            .iter()
+            .position(|row| row.logical_identity().is_some_and(matches))
+            .map(CopyLocation::Computed),
         F::ClassRelation | F::ObjectRelation => {
             let section = if family == F::ClassRelation {
                 StorageBackupHistorySection::ClassRelationHistory
             } else {
                 StorageBackupHistorySection::ObjectRelationHistory
             };
-            let rows = state
+            state
                 .relation_history
-                .get(&section)
-                .ok_or_else(|| StorageError::conflict("Exact relation history is missing"))?;
-            let index = rows
+                .get(&section)?
                 .iter()
                 .position(matches_row)
-                .ok_or_else(|| StorageError::conflict("Exact history copy is missing"))?;
-            (CopyLocation::Relation(section, index), rows[index].clone())
+                .map(|index| CopyLocation::Relation(section, index))
         }
-        _ => {
-            let index = state
-                .history
-                .iter()
-                .position(|row| row.family() == family && matches(&row.logical_identity))
-                .ok_or_else(|| StorageError::conflict("Exact history copy is missing"))?;
-            (
-                CopyLocation::History(index),
-                state.history[index].backup_history_row()?.1,
-            )
+        _ => state
+            .history
+            .iter()
+            .position(|row| row.family() == family && matches(&row.logical_identity))
+            .map(CopyLocation::History),
+    }
+}
+
+pub(super) fn remove_member_on(
+    state: &mut MemoryState,
+    member: &HistoryExpiryMember,
+    batch: Uuid,
+    snapshot: &HistoryLifecycleSnapshot,
+    protection: &HistoryExposureProtection,
+) -> Result<bool, StorageError> {
+    let Some(location) = find_copy(state, member) else {
+        if snapshot
+            .control()
+            .authority()
+            .expiry()
+            .intent(batch)
+            .is_some_and(|intent| {
+                intent
+                    .removals()
+                    .iter()
+                    .any(|receipt| receipt.target() == member.target())
+            })
+        {
+            return Ok(false);
         }
+        return Err(StorageError::conflict(
+            "Exact history copy is missing without its first receipt",
+        ));
     };
+    let row = match location {
+        CopyLocation::History(index) => state.history[index].backup_history_row()?.1,
+        CopyLocation::Schema(index) => state.schema_history[index].clone(),
+        CopyLocation::Relation(section, index) => state.relation_history[&section][index].clone(),
+        CopyLocation::Computed(index) => StorageBackupRow::try_from_value(
+            serde_json::to_value(&state.computed_history[index]).map_err(|_| {
+                StorageError::backend_failure("Cannot encode computed history copy")
+            })?,
+        )
+        .map_err(invalid_contract_value)?,
+    };
+    let family = member.family();
+    let target = member.target();
+    use StorageIdentityHistoryKind as F;
     if bounded_encoded_bytes(&row, u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES))?.is_none() {
         return Err(StorageError::input_too_large(
             "Exact history copy exceeds removal budget",
@@ -330,7 +358,7 @@ fn remove_on(
     .map_err(invalid_contract_value)?;
     let change = snapshot
         .control()
-        .record_expiry_removal(checkpoint.batch(), deletion, snapshot.fence())
+        .record_expiry_removal(batch, deletion, snapshot.fence())
         .map_err(invalid_contract_value)?;
     state.append_retained_lifecycle_events(
         change
@@ -339,7 +367,7 @@ fn remove_on(
             .map_err(invalid_contract_value)?,
     )?;
     state.history_lifecycle = change.next().clone();
-    Ok(checkpoint.clone())
+    Ok(true)
 }
 
 fn task_for_expiry(

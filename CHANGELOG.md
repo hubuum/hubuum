@@ -9,6 +9,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- **Breaking storage SDK 0.20 recovery capability:** complete adapters must
+  implement `HistoryLifecycleStorage::reapply_history_expiry` for quarantined,
+  independently protected exact-copy replay. Restore preserves first-removal
+  clocks and refuses exposure while excluded or unresolved copies remain.
+  Upgrade external adapters and refresh lifecycle migration grants together.
 - Gated manual and periodic history expiry admission share one active task per
   exact stable family/scope. Coalesced requests preserve the original initiation
   and clocks; retained cleanup precedes fresh scans. Manual admission rechecks

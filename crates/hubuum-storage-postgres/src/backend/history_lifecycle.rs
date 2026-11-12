@@ -13,6 +13,7 @@ use diesel::{
 use diesel_async::RunQueryDsl;
 pub(crate) use expiry::admit_on as admit_history_expiry_on;
 pub(crate) use expiry::remove_on as remove_history_expiry_on;
+pub(crate) use expiry::require_reapplied_on as require_history_expiry_reapplied_on;
 use hubuum_storage_core::*;
 use serde::Deserialize;
 use serde_json::Value;
@@ -480,6 +481,43 @@ async fn admit_producer_on(
 
 #[async_trait]
 impl HistoryLifecycleStorage for PostgresStorage {
+    async fn reapply_history_expiry(
+        &self,
+        request: HistoryExpiryReapplication,
+    ) -> Result<bool, StorageError> {
+        let scope = self.current_execution_scope();
+        if scope.storage_callback_active() || scope.history_read_override().is_some() {
+            return Err(StorageError::unavailable(
+                "History reapplication requires an independent control scope",
+            ));
+        }
+        self.runtime()
+            .with_control_transaction(async move |connection| {
+                sql_query(
+                    "SELECT material FROM hubuum_control.deletion_authority WHERE id=1 FOR UPDATE",
+                )
+                .get_result::<MaterialRow>(connection)
+                .await?;
+                let exposed =
+                    sql_query("SELECT public.hubuum_deletion_exposure_allowed() AS committed")
+                        .get_result::<CommittedRow>(connection)
+                        .await?
+                        .committed;
+                if exposed {
+                    return Err(PostgresStorageError::unavailable(
+                        "History expiry reapplication requires quarantine",
+                    ));
+                }
+                let snapshot = capture_on(connection).await?;
+                request.validate(&snapshot)?;
+                let fence = request.protection().fence();
+                super::deletion_control::require_drained(connection, fence).await?;
+                require_history_exposure_safe_on(connection).await?;
+                expiry::reapply_on(connection, &request, &snapshot).await
+            })
+            .await
+            .map_err(Into::into)
+    }
     async fn admit_history_archive_execution(
         &self,
     ) -> Result<HistoryArchiveExecutionOwner, StorageError> {

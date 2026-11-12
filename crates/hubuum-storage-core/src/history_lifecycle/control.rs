@@ -519,6 +519,16 @@ pub trait HistoryLifecycleStorage: Send + Sync {
         &self,
         request: HistoryExpiryTaskRequest,
     ) -> Result<HistoryExpiryTaskCheckpoint, StorageError>;
+    /// Quarantine-only, independently protected replay of one retained exact
+    /// copy, after positive runtime/publication drain. Recheck current policy,
+    /// holds, native interval and dependencies; never erase a derived version.
+    /// Return true only for one actual deletion. An absent copy is accepted only
+    /// with its retained first receipt. Preserve that receipt and original clock
+    /// when replay removes a reintroduced exact copy. No fresh selection occurs.
+    async fn reapply_history_expiry(
+        &self,
+        request: HistoryExpiryReapplication,
+    ) -> Result<bool, StorageError>;
     async fn recover_history_lifecycle(
         &self,
         recovery: HistoryLifecycleRecovery,

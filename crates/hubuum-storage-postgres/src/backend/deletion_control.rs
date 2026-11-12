@@ -550,6 +550,7 @@ impl DeletionControlStorage for PostgresStorage {
                 return Err(PostgresStorageError::conflict("Required deletion audit completion remains unprotected"));
             }
             let history=super::history_lifecycle::require_history_exposure_safe_on(connection).await?;
+            super::history_lifecycle::require_history_expiry_reapplied_on(connection, &history).await?;
             let receipt=proof.deletion();
             let history_required=!history.authority().expiry().is_empty();
             if (history_required && proof.history().is_none()) || proof.history().is_some_and(|protected| {

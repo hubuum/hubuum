@@ -822,10 +822,27 @@ CREATE FUNCTION public.hubuum_history_expiry_remove(expected JSONB, batch UUID,
 RETURNS JSONB LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog AS $function$
 DECLARE material JSONB; intent JSONB; member JSONB; source JSONB; source_table TEXT;
     replacement JSONB; updated_intent JSONB; receipts JSONB; removed_at TIMESTAMPTZ;
-    affected BIGINT; family TEXT;
+    affected BIGINT; family TEXT; quarantined BOOLEAN; already_removed BOOLEAN;
 BEGIN
-    IF public.hubuum_history_producers_fenced(expected_incarnation,expected_deletion) IS NOT TRUE THEN
+    -- Lock the same authority row as restore and runtime registration before
+    -- inspecting quarantine. Replay never relies on an old task lease.
+    PERFORM 1 FROM hubuum_control.deletion_authority WHERE id=1 FOR UPDATE;
+    quarantined:=public.hubuum_deletion_exposure_allowed() IS FALSE;
+    IF NOT quarantined AND public.hubuum_history_producers_fenced(expected_incarnation,expected_deletion) IS NOT TRUE THEN
         RAISE EXCEPTION 'History producer fencing is unavailable';
+    END IF;
+    IF quarantined THEN
+        PERFORM 1 FROM hubuum_control.deletion_authority c WHERE id=1
+            AND (c.material->>'revision')::BIGINT=expected_deletion;
+        IF NOT FOUND THEN RAISE EXCEPTION 'History replay deletion image changed'; END IF;
+        PERFORM 1 FROM hubuum_control.application_control WHERE id=1
+            AND incarnation=expected_incarnation FOR SHARE;
+        IF NOT FOUND THEN RAISE EXCEPTION 'History replay application image changed'; END IF;
+    END IF;
+    IF quarantined AND (EXISTS(SELECT 1 FROM hubuum_control.runtime_registrations
+        WHERE drained_incarnation IS DISTINCT FROM expected_incarnation OR drained_revision IS DISTINCT FROM expected_deletion)
+        OR EXISTS(SELECT 1 FROM hubuum_control.history_publication_owners)) THEN
+        RAISE EXCEPTION 'History replay requires positive runtime and publication drain';
     END IF;
     SELECT c.material INTO material FROM hubuum_control.history_lifecycle_control c WHERE id=1 FOR UPDATE;
     IF material IS DISTINCT FROM expected OR checkpoint !~ '^[0-9a-f]{64}$' OR checkpoint IS NULL THEN
@@ -833,17 +850,18 @@ BEGIN
     END IF;
     SELECT value INTO STRICT intent FROM jsonb_array_elements(material #> '{authority,expiry}')
         WHERE value #>> '{manifest,identity}'=batch::TEXT;
-    IF intent #>> '{manifest,fence,incarnation}'<>expected_incarnation::TEXT
+    IF NOT quarantined AND (intent #>> '{manifest,fence,incarnation}'<>expected_incarnation::TEXT
         OR intent #>> '{manifest,fence,deletion_revision}'<>expected_deletion::TEXT
         OR EXISTS(SELECT 1 FROM hubuum_control.history_publication_owners p
           WHERE p.incarnation<>expected_incarnation
-             OR p.history_revision<=(intent #>> '{manifest,fence,authority_revision}')::BIGINT) THEN
+             OR p.history_revision<=(intent #>> '{manifest,fence,authority_revision}')::BIGINT)) THEN
         RAISE EXCEPTION 'Pre-exclusion publication has not positively retired';
     END IF;
     SELECT value INTO STRICT member FROM jsonb_array_elements(intent #> '{manifest,members}')
         WHERE value #>> '{target,resource}'=resource::TEXT AND value #>> '{target,version}'=version::TEXT;
-    IF EXISTS(SELECT 1 FROM jsonb_array_elements(intent->'removals') receipt
-        WHERE receipt #>> '{target,resource}'=resource::TEXT AND receipt #>> '{target,version}'=version::TEXT) THEN
+    already_removed:=EXISTS(SELECT 1 FROM jsonb_array_elements(intent->'removals') receipt
+        WHERE receipt #>> '{target,resource}'=resource::TEXT AND receipt #>> '{target,version}'=version::TEXT);
+    IF already_removed AND NOT quarantined THEN
         RAISE EXCEPTION 'History copy already has its first receipt';
     END IF;
     family:=member->>'family';
@@ -855,7 +873,10 @@ BEGIN
         WHEN 'computed_definitions' THEN 'computed_field_history' ELSE NULL END;
     IF source_table IS NULL THEN RAISE EXCEPTION 'Unsupported history family'; END IF;
     EXECUTE format('SELECT to_jsonb(h.*) FROM public.%I h WHERE logical_identity #>> ''{subject,identity,identity}''=$1 AND logical_identity #>> ''{subject,version}''=$2 FOR UPDATE',source_table)
-        INTO STRICT source USING resource::TEXT,version::TEXT;
+        INTO source USING resource::TEXT,version::TEXT;
+    IF source IS NULL THEN
+        RAISE EXCEPTION 'History copy is absent without an exact physical outcome';
+    END IF;
     IF octet_length(source::TEXT)>16777216
         OR (source->>CASE WHEN family='class_schema' THEN 'occurred_at' ELSE 'valid_from' END)::TIMESTAMPTZ
             IS DISTINCT FROM (member #>> '{read_span,valid_from}')::TIMESTAMPTZ
@@ -871,6 +892,11 @@ BEGIN
     removed_at:=clock_timestamp();
     IF removed_at<(intent #>> '{manifest,selected_at}')::TIMESTAMPTZ THEN
         RAISE EXCEPTION 'History removal clock precedes selection';
+    END IF;
+    IF already_removed THEN
+        -- A restored exact copy is removed again, but its first receipt and
+        -- canonical audit identity remain byte-for-byte unchanged.
+        RETURN jsonb_build_object('affected_rows',affected,'removed_at',removed_at,'control',material);
     END IF;
     SELECT jsonb_agg(receipt ORDER BY receipt #>> '{target,resource}',receipt #>> '{target,version}') INTO receipts
         FROM jsonb_array_elements((intent->'removals') || jsonb_build_array(jsonb_build_object(

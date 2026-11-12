@@ -305,11 +305,45 @@ pub(super) async fn process_claimed_task_for_test(
     Ok(())
 }
 
+/// Qualification follows production claim, heartbeat, dispatch and finalization.
+/// This hook cannot enable the eighth kind in the standard worker loop.
+#[cfg(feature = "integration-test-support")]
+pub(crate) async fn qualify_history_expiry_iteration(
+    context: &AppContext,
+) -> Result<bool, ApiError> {
+    process_one_task_with_kinds(
+        context,
+        TaskWorkerId::generate(),
+        None,
+        &configured_backup_settings(),
+        TaskWorkerKinds::new(&[crate::models::TaskKind::HistoryExpiry])
+            .expect("qualification kind"),
+    )
+    .await
+}
+
 async fn process_one_task_with_settings(
     context: &AppContext,
     worker: TaskWorkerId,
     shutdown: Option<&ShutdownSignal>,
     backup_settings: &BackupSettings,
+) -> Result<bool, ApiError> {
+    process_one_task_with_kinds(
+        context,
+        worker,
+        shutdown,
+        backup_settings,
+        TaskWorkerKinds::STANDARD,
+    )
+    .await
+}
+
+async fn process_one_task_with_kinds(
+    context: &AppContext,
+    worker: TaskWorkerId,
+    shutdown: Option<&ShutdownSignal>,
+    backup_settings: &BackupSettings,
+    kinds: TaskWorkerKinds,
 ) -> Result<bool, ApiError> {
     context
         .backend()
@@ -326,6 +360,7 @@ async fn process_one_task_with_settings(
             worker,
             shutdown,
             &backup_settings,
+            kinds,
         )),
     )
     .await
@@ -336,6 +371,7 @@ async fn process_one_task_snapshot(
     worker: TaskWorkerId,
     shutdown: Option<&ShutdownSignal>,
     backup_settings: &BackupSettings,
+    kinds: TaskWorkerKinds,
 ) -> Result<bool, ApiError> {
     let storage = context.backend();
     let _activity = MaintenanceActivityGuard::begin();
@@ -357,6 +393,7 @@ async fn process_one_task_snapshot(
         worker,
         shutdown,
         backup_settings,
+        kinds,
     ));
     storage
         .run_in_scope(scope, track_application_completion(work))
@@ -374,8 +411,9 @@ async fn process_admitted_task(
     worker: TaskWorkerId,
     shutdown: Option<&ShutdownSignal>,
     backup_settings: &BackupSettings,
+    kinds: TaskWorkerKinds,
 ) -> Result<bool, ApiError> {
-    maybe_recover_expired_task_leases(context).await?;
+    maybe_recover_expired_task_leases(context, kinds).await?;
 
     let settings = task_worker_settings();
     let claim_started_at = TokioInstant::now();
@@ -384,7 +422,7 @@ async fn process_admitted_task(
         StorageTaskLeaseDuration::from_milliseconds(settings.lease_duration().as_millis() as i64)
             .expect("validated worker lease"),
     )
-    .with_kinds(TaskWorkerKinds::STANDARD);
+    .with_kinds(kinds);
     let task = match super::history::run(context.backend(), claim_next_task(context, request)).await
     {
         Ok(task) => task,
@@ -743,7 +781,10 @@ where
     }
 }
 
-async fn maybe_recover_expired_task_leases(backend: &AppContext) -> Result<(), ApiError> {
+async fn maybe_recover_expired_task_leases(
+    backend: &AppContext,
+    kinds: TaskWorkerKinds,
+) -> Result<(), ApiError> {
     let recovery_interval = task_worker_settings().recovery_interval();
     let previous_last_run = {
         let mut state = recovery_state().lock().map_err(|_| {
@@ -760,7 +801,7 @@ async fn maybe_recover_expired_task_leases(backend: &AppContext) -> Result<(), A
 
     match recover_expired_task_leases(backend, 100).await {
         Ok(recovered) => {
-            if TaskWorkerKinds::STANDARD.contains(TaskKind::HistoryExpiry) {
+            if kinds.contains(TaskKind::HistoryExpiry) {
                 crate::services::deletion_recovery::history_expiry::recover_pending(backend)
                     .await?;
                 crate::services::deletion_recovery::history_expiry::submit_periodic(backend)

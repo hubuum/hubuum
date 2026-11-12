@@ -92,6 +92,28 @@ throughput. RSS includes process baseline; a two-slot worker still has one
 Resident space and cumulative transferred bytes have different lifetimes.
 Artifacts larger than H4 stream across bounded batches without memory aggregation.
 
+### Gated scoped-history worker qualification
+
+`tests/python/run.py integration history-expiry` runs the production task claim,
+heartbeat, dispatch and finalization pipeline through a test-only integration
+entry point. Production registration and the standard worker kind set stay
+gated. The dedicated workflow uses `ci:validate` temporarily to measure local
+and shared profiles, with one warm-up and five fresh processes per input shape.
+Each process has two CPUs, a 512 MiB memory ceiling and pool size eight; shared
+processes exercise two slots. PostgreSQL has the declared profile resources.
+The two-replica shared topology requires its own run; a successful single-process
+measurement establishes only the worker H1/H4 bounds.
+
+The row shape reaches 1,000 members. The byte shape approaches 16 MiB using full
+native encoded-row sizes, independently summed before deletion. The oversized
+shape retains and reports a row above that ceiling without a false receipt.
+Each run also restores the actual full-history image through signed coordinator
+replay and checks original receipts and quarantine release. Raw samples retain
+20 ms RSS and kernel high-water measurements, including process baseline, and
+reject unexpected child processes. Build features and binary digests accompany
+the results. These finite runs do not establish P6's steady-state lag or orphan
+cleanup target, which remains explicitly deferred to #561.
+
 ## Performance targets
 
 Use five fresh runs after declared warm-up; report all samples and median/p95

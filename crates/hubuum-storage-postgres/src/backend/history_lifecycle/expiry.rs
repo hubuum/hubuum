@@ -1,5 +1,6 @@
 //! Bounded native admission and exact protected removal.
 use super::*;
+use diesel::OptionalExtension;
 
 #[derive(QueryableByName)]
 struct SourceRow {
@@ -252,6 +253,44 @@ pub(crate) async fn remove_on(
                 .any(|receipt| receipt.target() == member.target())
         })
         .expect("incomplete intent has pending membership");
+    remove_member_on(
+        connection,
+        member,
+        checkpoint.batch(),
+        &snapshot,
+        protection,
+        false,
+    )
+    .await?;
+    Ok((checkpoint.clone(), intent.removals().len() as u32 + 1))
+}
+
+pub(super) async fn reapply_on(
+    connection: &mut PostgresConnection,
+    request: &HistoryExpiryReapplication,
+    snapshot: &HistoryLifecycleSnapshot,
+) -> Result<bool, PostgresStorageError> {
+    remove_member_on(
+        connection,
+        request.member(),
+        request.batch(),
+        snapshot,
+        request.protection(),
+        request.has_receipt(),
+    )
+    .await
+}
+
+async fn remove_member_on(
+    connection: &mut PostgresConnection,
+    member: &HistoryExpiryMember,
+    batch: Uuid,
+    snapshot: &HistoryLifecycleSnapshot,
+    protection: &HistoryExposureProtection,
+    may_be_absent: bool,
+) -> Result<bool, PostgresStorageError> {
+    sql_query("SELECT set_config('statement_timeout', CASE WHEN current_setting('statement_timeout')::INTERVAL=INTERVAL '0' THEN '5000' ELSE GREATEST(1,FLOOR(LEAST(EXTRACT(EPOCH FROM current_setting('statement_timeout')::INTERVAL)*1000,5000)))::BIGINT::TEXT END,true)")
+        .execute(connection).await?;
     let family = member.family();
     let (table, _) = source(family);
     let (from, until, deleted) = if family == StorageIdentityHistoryKind::ClassSchema {
@@ -267,8 +306,10 @@ pub(crate) async fn remove_on(
         valid_from: DateTime<Utc>,
         #[diesel(sql_type = Nullable<Timestamptz>)]
         valid_to: Option<DateTime<Utc>>,
-        #[diesel(sql_type = Jsonb)]
-        logical_identity: Value,
+        #[diesel(sql_type = Nullable<Jsonb>)]
+        logical_identity: Option<Value>,
+        #[diesel(sql_type = Bool)]
+        within_budget: bool,
         #[diesel(sql_type = Bool)]
         deleted: bool,
         #[diesel(sql_type = Bool)]
@@ -278,16 +319,29 @@ pub(crate) async fn remove_on(
     // native writers; the SECURITY DEFINER removal function acquires the exact
     // row lock and rechecks its interval before deleting in this transaction.
     let row = sql_query(format!(
-        "SELECT {from} AS valid_from,{until} AS valid_to,logical_identity,{deleted} AS deleted,public.hubuum_history_expiry_dependency($3,logical_identity) AS dependency FROM public.{table} h WHERE logical_identity #>> '{{subject,identity,identity}}'=$1 AND logical_identity #>> '{{subject,version}}'=$2 AND octet_length(logical_identity::TEXT)<=1048576 AND octet_length(to_jsonb(h.*)::TEXT)<=16777216"
+        "SELECT {from} AS valid_from,{until} AS valid_to,CASE WHEN octet_length(logical_identity::TEXT)<=1048576 THEN logical_identity END AS logical_identity,octet_length(to_jsonb(h.*)::TEXT)<=16777216 AS within_budget,{deleted} AS deleted,public.hubuum_history_expiry_dependency($3,logical_identity) AS dependency FROM public.{table} h WHERE logical_identity #>> '{{subject,identity,identity}}'=$1 AND logical_identity #>> '{{subject,version}}'=$2"
     ))
         .bind::<Text, _>(member.target().resource().to_string())
         .bind::<Text, _>(member.target().version().to_string())
         .bind::<Text, _>(serde_json::to_value(family).map_err(|error| PostgresStorageError::invalid_persisted_value("expiry family", error))?.as_str().expect("family string"))
-        .get_result::<NativeCopy>(connection).await?;
+        .get_result::<NativeCopy>(connection).await.optional()?;
+    let Some(row) = row else {
+        if may_be_absent {
+            return Ok(false);
+        }
+        return Err(PostgresStorageError::conflict(
+            "Absent history copy has no verified first receipt",
+        ));
+    };
+    if !row.within_budget || row.logical_identity.is_none() {
+        return Err(PostgresStorageError::conflict(
+            "History removal exceeds the bounded input budget",
+        ));
+    }
     let evidence: StorageIdentityEvidence =
-        serde_json::from_value(row.logical_identity).map_err(|error| {
-            PostgresStorageError::invalid_persisted_value("native removal identity", error)
-        })?;
+        serde_json::from_value(row.logical_identity.expect("bounded identity")).map_err(
+            |error| PostgresStorageError::invalid_persisted_value("native removal identity", error),
+        )?;
     let anchor =
         if family == StorageIdentityHistoryKind::ClassSchema {
             HistoryRetentionAnchor::SchemaEvent(row.valid_from)
@@ -321,7 +375,7 @@ pub(crate) async fn remove_on(
             .bind::<Jsonb, _>(serde_json::to_value(snapshot.control()).map_err(|error| {
                 PostgresStorageError::invalid_persisted_value("removal predecessor", error)
             })?)
-            .bind::<SqlUuid, _>(checkpoint.batch())
+            .bind::<SqlUuid, _>(batch)
             .bind::<SqlUuid, _>(Uuid::from_bytes(*member.target().resource().as_bytes()))
             .bind::<SqlUuid, _>(Uuid::from_bytes(*member.target().version().as_bytes()))
             .bind::<Text, _>(protection.checkpoint().as_str())
@@ -339,10 +393,9 @@ pub(crate) async fn remove_on(
         outcome.removed_at,
         outcome.affected_rows,
     )?;
-    let change =
-        snapshot
-            .control()
-            .record_expiry_removal(checkpoint.batch(), deletion, snapshot.fence())?;
+    let change = snapshot
+        .control()
+        .record_expiry_removal(batch, deletion, snapshot.fence())?;
     if change.next() != &outcome.control {
         return Err(PostgresStorageError::conflict(
             "Native removal receipt differs from exact outcome",
@@ -352,7 +405,51 @@ pub(crate) async fn remove_on(
         crate::operations::event_record::append_retained_lifecycle_event(connection, &event)
             .await?;
     }
-    Ok((checkpoint.clone(), intent.removals().len() as u32 + 1))
+    Ok(true)
+}
+
+pub(crate) async fn require_reapplied_on(
+    connection: &mut PostgresConnection,
+    control: &HistoryLifecycleControl,
+) -> Result<(), PostgresStorageError> {
+    if control
+        .authority()
+        .expiry()
+        .intents()
+        .iter()
+        .any(|intent| !intent.is_complete())
+    {
+        return Err(PostgresStorageError::unavailable(
+            "History expiry lacks a verified first receipt; keep quarantine",
+        ));
+    }
+    sql_query("SELECT set_config('statement_timeout', CASE WHEN current_setting('statement_timeout')::INTERVAL=INTERVAL '0' THEN '5000' ELSE GREATEST(1,FLOOR(LEAST(EXTRACT(EPOCH FROM current_setting('statement_timeout')::INTERVAL)*1000,5000)))::BIGINT::TEXT END,true)")
+        .execute(connection).await?;
+    let families: std::collections::BTreeSet<_> = control
+        .authority()
+        .expiry()
+        .intents()
+        .iter()
+        .flat_map(|intent| {
+            intent
+                .manifest()
+                .members()
+                .iter()
+                .map(HistoryExpiryMember::family)
+        })
+        .collect();
+    for family in families {
+        let (table, _) = source(family);
+        let family_name = serde_json::to_value(family).map_err(|error| {
+            PostgresStorageError::invalid_persisted_value("expiry family", error)
+        })?;
+        if sql_query(format!("SELECT EXISTS(SELECT 1 FROM public.{table} h WHERE NOT public.hubuum_history_version_visible($1,h.logical_identity)) AS committed"))
+            .bind::<Text,_>(family_name.as_str().expect("family string"))
+            .get_result::<CommittedRow>(connection).await?.committed {
+            return Err(PostgresStorageError::unavailable("Restored excluded history remains; keep quarantine"));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn current_scope(

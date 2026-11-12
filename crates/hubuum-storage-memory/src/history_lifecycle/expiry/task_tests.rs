@@ -362,6 +362,110 @@ fn protection(snapshot: &HistoryLifecycleSnapshot) -> HistoryExposureProtection 
 #[case::computed(StorageIdentityHistoryKind::ComputedDefinitions)]
 #[case::schema(StorageIdentityHistoryKind::ClassSchema)]
 #[tokio::test]
+async fn quarantined_replay_removes_restored_exact_copies_without_refreshing_receipts(
+    #[case] family: StorageIdentityHistoryKind,
+) {
+    let storage = MemoryStorage::new();
+    let (runtime, scope, lease) = prepare(&storage, family).await;
+    let first = storage
+        .run_in_scope(
+            scope,
+            storage.process_history_expiry_task(HistoryExpiryTaskRequest::new(
+                lease,
+                Some(HistoryExpiryTaskAuthorization::scheduled()),
+            )),
+        )
+        .await
+        .unwrap();
+    let original = storage.capture_history_lifecycle().await.unwrap();
+    let manifest = first.retained_manifest(&original).unwrap().clone();
+    let restored = storage.state.read_control().await.clone();
+    let request = HistoryExpiryReapplication::new(
+        protection(&original),
+        manifest.identity(),
+        manifest.members()[0].target(),
+    )
+    .unwrap();
+    assert!(
+        storage.reapply_history_expiry(request).await.is_err(),
+        "released application cannot replay"
+    );
+    storage.unregister_runtime(runtime).await.unwrap();
+    {
+        let mut state = storage.state.write_control().await;
+        let fence =
+            ApplicationFence::new(Uuid::new_v4(), state.deletion_control.revision()).unwrap();
+        state.application_control = ApplicationControlState::quarantined(fence);
+    }
+    // Pending first receipts require actual deletion after recovery.
+    for member in manifest.members() {
+        let snapshot = storage.capture_history_lifecycle().await.unwrap();
+        let request = HistoryExpiryReapplication::new(
+            protection(&snapshot),
+            manifest.identity(),
+            member.target(),
+        )
+        .unwrap();
+        assert!(storage.reapply_history_expiry(request).await.unwrap());
+    }
+    let completed = storage.capture_history_lifecycle().await.unwrap();
+    storage
+        .state
+        .read_control()
+        .await
+        .require_history_expiry_reapplied()
+        .unwrap();
+    {
+        let mut state = storage.state.write_control().await;
+        state.history = restored.history;
+        state.schema_history = restored.schema_history;
+        state.computed_history = restored.computed_history;
+        state.relation_history = restored.relation_history;
+        assert!(
+            state.require_history_expiry_reapplied().is_err(),
+            "receipts alone cannot release restored copies"
+        );
+    }
+    for member in manifest.members() {
+        let request = HistoryExpiryReapplication::new(
+            protection(&completed),
+            manifest.identity(),
+            member.target(),
+        )
+        .unwrap();
+        assert!(
+            storage
+                .reapply_history_expiry(request.clone())
+                .await
+                .unwrap()
+        );
+        assert!(!storage.reapply_history_expiry(request).await.unwrap());
+    }
+    let after = storage.capture_history_lifecycle().await.unwrap();
+    assert_eq!(
+        after.control(),
+        completed.control(),
+        "replay preserves every first clock and canonical audit identity"
+    );
+    storage
+        .state
+        .read_control()
+        .await
+        .require_history_expiry_reapplied()
+        .unwrap();
+}
+
+#[rstest]
+#[case::collection(StorageIdentityHistoryKind::Collection)]
+#[case::class(StorageIdentityHistoryKind::Class)]
+#[case::object(StorageIdentityHistoryKind::Object)]
+#[case::class_relation(StorageIdentityHistoryKind::ClassRelation)]
+#[case::object_relation(StorageIdentityHistoryKind::ObjectRelation)]
+#[case::template(StorageIdentityHistoryKind::ExportTemplate)]
+#[case::remote(StorageIdentityHistoryKind::RemoteTarget)]
+#[case::computed(StorageIdentityHistoryKind::ComputedDefinitions)]
+#[case::schema(StorageIdentityHistoryKind::ClassSchema)]
+#[tokio::test]
 async fn protected_batch_removes_native_copies_before_protected_completion(
     #[case] family: StorageIdentityHistoryKind,
 ) {

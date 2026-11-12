@@ -287,6 +287,11 @@ Complete adapters must implement `register_history_runtime`, `capture_history_li
 `scan_history_lifecycle`, `admit_history_expiry`,
 `commit_history_lifecycle` and `recover_history_lifecycle`. Capture returns the
 adapter clock with application incarnation and history/deletion revision fences.
+The unreleased 0.20 contract also requires `reapply_history_expiry`, a trusted
+quarantined exact-copy recovery operation taking `HistoryExpiryReapplication`.
+External adapters must implement positive drain, current protection, preserved
+first receipts, and fail-closed exposure checks; this is a breaking trait addition.
+
 The unreleased 0.20 contract also requires `submit_history_expiry_task`,
 `process_history_expiry_task` and `recover_history_expiry_task`. Shared admission
 accepts trusted `HistoryExpiryTaskSubmission`, coalesces exact stable scopes

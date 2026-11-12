@@ -1,0 +1,118 @@
+name: History expiry qualification
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  workflow_dispatch:
+
+concurrency:
+  group: history-expiry-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (contains(github.event.pull_request.labels.*.name, 'ci:validate') &&
+       ((github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+        github.event.label.name == 'ci:validate'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_PROFILE_RELEASE_LTO: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable 2026-10-22
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: history-expiry-qualification
+      - name: Build the real worker integration driver and administrator
+        run: |
+          sudo apt-get update --yes
+          sudo apt-get install --yes libssl-dev libpq-dev
+          cargo test --locked --release --test restore_roundtrip --no-run \
+            --features embedded-migrations,integration-test-support,tls-rustls,tls-openssl \
+            --message-format=json > target/history-expiry-build.jsonl
+          python3 - <<'PY'
+          import json, pathlib, shutil
+          records = [json.loads(line) for line in pathlib.Path('target/history-expiry-build.jsonl').read_text().splitlines()]
+          binaries = [row['executable'] for row in records if row.get('reason') == 'compiler-artifact'
+                      and row.get('executable') and row['target']['name'] == 'restore_roundtrip']
+          assert len(binaries) == 1
+          shutil.copy2(binaries[0], 'target/release/history-expiry-driver')
+          PY
+          cargo build --locked --release --bin hubuum-admin \
+            --features embedded-migrations,integration-test-support,tls-rustls,tls-openssl
+          {
+            git rev-parse HEAD
+            rustc -Vv
+            cargo -V
+            echo 'release opt-level=3; LTO=false; embedded-migrations,integration-test-support,tls-rustls,tls-openssl'
+            sha256sum Cargo.lock target/release/history-expiry-driver target/release/hubuum-admin
+          } > target/history-expiry-build.txt
+          tar -C target/release -czf target/history-expiry-binaries.tar.gz history-expiry-driver hubuum-admin
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: history-expiry-binaries
+          path: |
+            target/history-expiry-binaries.tar.gz
+            target/history-expiry-build.txt
+          retention-days: 7
+
+  measure:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [local, shared]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: history-expiry-binaries
+          path: target
+      - name: Restore binaries and record runner resources
+        run: |
+          sudo apt-get update --yes
+          sudo apt-get install --yes postgresql-client
+          mkdir -p target/release
+          tar -xzf target/history-expiry-binaries.tar.gz -C target/release
+          {
+            python3 --version
+            lscpu
+            free -b
+            df -h .
+            docker version
+          } > target/history-expiry-runner.txt
+      - name: Measure warm-up and five fresh repeats for every shape
+        env:
+          HISTORY_PROFILE: ${{ matrix.profile }}
+        run: >-
+          sudo "$(command -v python3)" -I -S tests/python/run.py integration history-expiry
+          --profile "$HISTORY_PROFILE" --binary target/release/history-expiry-driver
+          --admin-binary target/release/hubuum-admin --output target/history-expiry-report
+      - name: Retain raw measurements including failures
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: history-expiry-${{ matrix.profile }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            target/history-expiry-report
+            target/history-expiry-build.txt
+            target/history-expiry-runner.txt
+          if-no-files-found: error
+          retention-days: 30

@@ -46,6 +46,14 @@ assert_literal_include_is_code() {
 
 # Filesystem adapter implementation and native fault tests remain production
 # inputs even though selecting it for task outputs is a separate activation.
+for expiry_input in .github/workflows/history-expiry-qualification.yml \
+  tests/python/integration/history_expiry.py tests/restore_contract/history_expiry_qualification.rs; do
+  expiry_output="$(bash "$classifier" "$expiry_input")"
+  assert_flag "$expiry_output" code true
+  assert_flag "$expiry_output" rust true
+  assert_flag "$expiry_output" container true
+done
+
 for filesystem_path in crates/hubuum-artifacts/src/filesystem.rs \
   crates/hubuum-artifacts/src/filesystem/tests.rs crates/hubuum-artifacts/Cargo.toml; do
   filesystem_output="$(bash "$classifier" "$filesystem_path")"

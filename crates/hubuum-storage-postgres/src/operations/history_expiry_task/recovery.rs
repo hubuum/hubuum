@@ -39,6 +39,9 @@ pub(super) async fn recover_on(
     if payload.application().incarnation() != snapshot.fence().incarnation()
         || payload.application().revision() as u64 != snapshot.fence().deletion_revision().value()
     {
+        if intent.is_complete() {
+            return Ok(None);
+        }
         return Err(PostgresStorageError::unavailable(
             "History recovery requires the original application image",
         ));

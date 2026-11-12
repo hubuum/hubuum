@@ -17,6 +17,8 @@ mod online;
 pub use online::*;
 mod admission;
 pub use admission::*;
+mod reapplication;
+pub use reapplication::*;
 mod task;
 pub use task::*;
 mod publication;

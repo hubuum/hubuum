@@ -9,6 +9,8 @@ mod resolution;
 mod settings;
 mod types;
 mod worker;
+#[cfg(feature = "integration-test-support")]
+pub(crate) use worker::qualify_history_expiry_iteration;
 
 #[cfg(all(test, unix))]
 pub(crate) use worker::{cleanup_task_outputs_for_test, run_task_maintenance_for_test};

@@ -1,9 +1,11 @@
 use super::*;
 use diesel::sql_types::Integer;
+use futures_util::FutureExt;
 use hubuum_domain::{PrincipalId, TaskId, TaskIdentity, UserId};
 use hubuum_events_core::EventContext;
 use hubuum_task_core::TaskExecutionLimit;
 use std::future::{Future, ready};
+use std::panic::{AssertUnwindSafe, resume_unwind};
 
 async fn phase<T>(
     fixture: &Fixture,
@@ -669,6 +671,81 @@ fn protection(snapshot: &HistoryLifecycleSnapshot) -> HistoryExposureProtection 
         .unwrap(),
         DeletionCheckpointIdentity::new("a".repeat(64)).unwrap(),
     )
+}
+
+#[rstest::rstest]
+#[case::collection(StorageIdentityHistoryKind::Collection)]
+#[case::class(StorageIdentityHistoryKind::Class)]
+#[case::object(StorageIdentityHistoryKind::Object)]
+#[case::class_relation(StorageIdentityHistoryKind::ClassRelation)]
+#[case::object_relation(StorageIdentityHistoryKind::ObjectRelation)]
+#[case::template(StorageIdentityHistoryKind::ExportTemplate)]
+#[case::remote(StorageIdentityHistoryKind::RemoteTarget)]
+#[case::computed(StorageIdentityHistoryKind::ComputedDefinitions)]
+#[case::schema(StorageIdentityHistoryKind::ClassSchema)]
+#[tokio::test]
+async fn native_quarantined_replay_preserves_first_receipts(
+    #[case] family: StorageIdentityHistoryKind,
+) {
+    let _guard = CONTROL_LOCK.lock().await;
+    let test = TaskFixture::new(family).await;
+    let result = AssertUnwindSafe(async {
+        let checkpoint = test.process(true).await?;
+        let recovery = PostgresStorage::unobserved(test.fixture.owner_pool.clone());
+        let snapshot = test.fixture.storage.capture_history_lifecycle().await?;
+        let manifest = checkpoint.retained_manifest(&snapshot).unwrap().clone();
+        let (table, _) = bounded_scan::source(family);
+        #[derive(QueryableByName)]
+        struct Material { #[diesel(sql_type = Jsonb)] material: Value }
+        let copies = with_transaction(&test.fixture.owner_pool, async |connection| {
+            owner(connection).await?;
+            test.restore_target.validate_connection(connection).await?;
+            let copies = sql_query(format!("SELECT to_jsonb(h.*) AS material FROM public.{table} h JOIN hubuum_control.history_expiry_members m ON m.resource_uuid::text=h.logical_identity #>> '{{subject,identity,identity}}' AND m.version_uuid::text=h.logical_identity #>> '{{subject,version}}' WHERE m.intent_uuid=$1"))
+                .bind::<SqlUuid,_>(manifest.identity()).load::<Material>(connection).await?;
+            sql_query("UPDATE hubuum_control.application_control SET released_revision=NULL WHERE id=1").execute(connection).await?;
+            Ok::<_,PostgresStorageError>(copies)
+        }).await?;
+        let fence = protection(&snapshot).fence();
+        test.fixture.storage.acknowledge_runtime_drain(test.runtime.owner(), fence).await?;
+        assert_eq!(copies.len(), manifest.members().len());
+        for member in manifest.members() {
+            let current = test.fixture.storage.capture_history_lifecycle().await?;
+            let request = HistoryExpiryReapplication::new(protection(&current), manifest.identity(), member.target()).unwrap();
+            assert!(recovery.reapply_history_expiry(request).await?);
+        }
+        let completed = test.fixture.storage.capture_history_lifecycle().await?;
+        with_transaction(&test.fixture.owner_pool, async |connection| {
+            owner(connection).await?;
+            test.restore_target.validate_connection(connection).await?;
+            connection.batch_execute("SELECT set_config('hubuum.restore_history','on',true),set_config('hubuum.restore_identities','on',true)").await?;
+            for copy in copies {
+                sql_query(format!("INSERT INTO public.{table} SELECT * FROM jsonb_populate_record(NULL::public.{table},$1)"))
+                    .bind::<Jsonb,_>(copy.material).execute(connection).await?;
+            }
+            Ok::<_,PostgresStorageError>(())
+        }).await?;
+        for member in manifest.members() {
+            assert_eq!(copy_count(&test, family, member.target()).await, 1);
+            let request = HistoryExpiryReapplication::new(protection(&completed), manifest.identity(), member.target()).unwrap();
+            assert!(recovery.reapply_history_expiry(request.clone()).await?);
+            assert!(!recovery.reapply_history_expiry(request).await?);
+        }
+        assert_eq!(test.fixture.storage.capture_history_lifecycle().await?.control(), completed.control());
+        Ok::<_,StorageError>(())
+    }).catch_unwind().await;
+    // Fixture-only quarantine restoration in the proven isolated database, after
+    // all operations have returned. Production release is exercised separately.
+    with_transaction(&test.fixture.owner_pool, async |connection| {
+        owner(connection).await?;
+        test.restore_target.validate_connection(connection).await?;
+        sql_query("UPDATE hubuum_control.application_control SET released_revision=(SELECT (material->>'revision')::bigint FROM hubuum_control.deletion_authority WHERE id=1) WHERE id=1").execute(connection).await?;
+        Ok::<_,PostgresStorageError>(())
+    }).await.unwrap();
+    test.cleanup().await;
+    match result {
+        Ok(result) => result.unwrap(),
+        Err(panic) => resume_unwind(panic),
+    }
 }
 
 async fn remove(

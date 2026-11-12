@@ -33,6 +33,7 @@ INTEGRATION = {
     "artifact-pipeline": "integration.artifact_pipeline",
     "s3-artifacts": "integration.s3_artifacts",
     "rust-tests": "integration.rust_tests",
+    "history-expiry": "integration.history_expiry",
     "class-field-discovery": "integration.class_field_discovery",
     "treetop-server": "support.treetop_server",
 }

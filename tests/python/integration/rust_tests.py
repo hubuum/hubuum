@@ -11,7 +11,7 @@ import uuid
 from support import ROOT
 
 
-def run_tests(command, admin, database_url):
+def run_tests(command, admin, database_url, *, execute=None):
     suffix = uuid.uuid4().hex[:16]
     database = f"hubuum_restore_{suffix}"
     archive_database = f"hubuum_archive_{suffix}"
@@ -58,6 +58,8 @@ def run_tests(command, admin, database_url):
                     "HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL": url(migrator),
                     "HUBUUM_ARCHIVE_TEST_DATABASE_URL": url(runtime, archive_database),
                     "HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL": url(migrator, archive_database)}
+        if execute is not None:
+            return execute(command, test_env)
         return subprocess.run(command, env=test_env, cwd=ROOT, check=False).returncode
     finally:
         sql(f"DROP DATABASE IF EXISTS {archive_database} WITH (FORCE);\n"

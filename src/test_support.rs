@@ -31,6 +31,32 @@ use hubuum_storage_postgres::{PostgresPool, PostgresStorage};
 pub use crate::logger::test_support::JsonLogWriter;
 pub use crate::middlewares::rate_limit::LOGIN_RATE_LIMIT_TEST_LOCK;
 
+/// Bind a qualification-only online runtime to the ordinary local authorization
+/// backend and independently protected history repository.
+pub fn history_expiry_qualification_context(
+    storage: StorageHandle,
+    owner: hubuum_storage_core::RuntimeOwner,
+    options: crate::config::ControlRecoveryOptions,
+) -> (StorageHandle, crate::permissions::AppContext) {
+    let storage = storage.with_runtime_owner(owner);
+    let permissions = std::sync::Arc::new(crate::permissions::LocalPermissionBackend::new(
+        storage.clone(),
+        "admin".into(),
+    ));
+    (
+        storage.clone(),
+        crate::permissions::AppContext::new(storage, permissions).with_history_retention(options),
+    )
+}
+
+/// Run one explicitly opted-in expiry iteration through the real worker.
+/// The production STANDARD kind set and runtime protocol remain unchanged.
+pub async fn qualify_history_expiry_iteration(
+    context: &crate::permissions::AppContext,
+) -> Result<bool, ApiError> {
+    crate::tasks::qualify_history_expiry_iteration(context).await
+}
+
 static TEST_TRACING_BASELINE: OnceLock<()> = OnceLock::new();
 
 fn ensure_test_tracing_baseline() {

@@ -227,6 +227,7 @@ impl DeletionControlStorage for MemoryStorage {
         let mut guard = self.state.write_control().await;
         let mut state = guard.clone();
         state.require_history_exposure_safe()?;
+        state.require_history_expiry_reapplied()?;
         let receipt = proof.deletion();
         let history_required = !state.history_lifecycle.authority().expiry().is_empty();
         if (history_required && proof.history().is_none())

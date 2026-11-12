@@ -4,6 +4,42 @@ use serde_json::Value;
 
 #[async_trait]
 impl HistoryLifecycleStorage for MemoryStorage {
+    async fn reapply_history_expiry(
+        &self,
+        request: HistoryExpiryReapplication,
+    ) -> Result<bool, StorageError> {
+        let scope = self.current_execution_scope();
+        if scope.storage_callback_active() || scope.history_read_override().is_some() {
+            return Err(StorageError::unavailable(
+                "History reapplication requires an independent control scope",
+            ));
+        }
+        let mut guard = self.state.write_control().await;
+        if guard
+            .application_control
+            .is_released_for(&guard.deletion_control)
+        {
+            return Err(StorageError::unavailable(
+                "History expiry reapplication requires quarantine",
+            ));
+        }
+        guard.require_runtime_drain()?;
+        guard.require_history_exposure_safe()?;
+        let mut state = guard.clone();
+        let snapshot = state.history_lifecycle_snapshot()?;
+        request
+            .validate(&snapshot)
+            .map_err(invalid_contract_value)?;
+        let removed = expiry::remove_member_on(
+            &mut state,
+            request.member(),
+            request.batch(),
+            &snapshot,
+            request.protection(),
+        )?;
+        *guard = state;
+        Ok(removed)
+    }
     async fn submit_history_expiry_task(
         &self,
         request: HistoryExpiryTaskSubmission,
@@ -2717,6 +2753,91 @@ mod audit_tests {
 }
 
 impl MemoryState {
+    pub(super) fn require_history_expiry_reapplied(&self) -> Result<(), StorageError> {
+        let journal = self.history_lifecycle.authority().expiry();
+        if journal.is_empty() {
+            return Ok(());
+        }
+        let families = journal
+            .intents()
+            .iter()
+            .flat_map(|intent| intent.manifest().members())
+            .map(HistoryExpiryMember::family)
+            .collect::<BTreeSet<_>>();
+        if journal.intents().iter().any(|intent| !intent.is_complete()) {
+            return Err(StorageError::unavailable(
+                "History expiry lacks a verified first receipt; keep quarantine",
+            ));
+        }
+        for intent in journal.intents() {
+            for member in intent.manifest().members() {
+                if expiry::has_exact_copy(self, member) {
+                    return Err(StorageError::unavailable(
+                        "Retained exact history copy has not been reapplied; keep quarantine",
+                    ));
+                }
+            }
+        }
+        let excluded_row = |family, row: &StorageBackupRow| -> Result<bool, StorageError> {
+            if !families.contains(&family) {
+                return Ok(false);
+            }
+            let evidence = row
+                .get("logical_identity")
+                .filter(|raw| !raw.is_null())
+                .cloned()
+                .map(serde_json::from_value::<StorageIdentityEvidence>)
+                .transpose()
+                .map_err(|_| {
+                    StorageError::unavailable(
+                        "Restored history correspondence is unresolved; keep quarantine",
+                    )
+                })?;
+            Ok(journal.excludes_evidence(family, evidence.as_ref()))
+        };
+        let ordinary = self
+            .history
+            .iter()
+            .any(|row| journal.excludes_evidence(row.family(), Some(&row.logical_identity)));
+        let computed = self.computed_history.iter().any(|row| {
+            journal.excludes_evidence(
+                StorageIdentityHistoryKind::ComputedDefinitions,
+                row.logical_identity(),
+            )
+        });
+        if ordinary || computed {
+            return Err(StorageError::unavailable(
+                "Restored history descendant remains outside exact cleanup; keep quarantine",
+            ));
+        }
+        for row in &self.schema_history {
+            if excluded_row(StorageIdentityHistoryKind::ClassSchema, row)? {
+                return Err(StorageError::unavailable(
+                    "Restored schema history remains restricted; keep quarantine",
+                ));
+            }
+        }
+        for (section, family) in [
+            (
+                StorageBackupHistorySection::ClassRelationHistory,
+                StorageIdentityHistoryKind::ClassRelation,
+            ),
+            (
+                StorageBackupHistorySection::ObjectRelationHistory,
+                StorageIdentityHistoryKind::ObjectRelation,
+            ),
+        ] {
+            for row in self.relation_history.get(&section).into_iter().flatten() {
+                if excluded_row(family, row)? {
+                    return Err(StorageError::unavailable(
+                        "Restored relation history remains restricted; keep quarantine",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn history_policy_scope_known(&self, scope: HistoryPolicyScope) -> Result<bool, StorageError> {
         if self.history_lifecycle.retains_scope(scope) {
             return Ok(true);

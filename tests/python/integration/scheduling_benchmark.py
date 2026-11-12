@@ -433,7 +433,7 @@ class Fixture:
         if result.returncode:
             raise RuntimeError("Candidate plan probe failed; inspect its retained log")
 
-    def binary(self, binary, arguments, name, *, worker=False, worker_process=0):
+    def binary(self, binary, arguments, name, *, worker=False, worker_process=0, environment=None):
         container = self.name + "-" + name
         self.containers.append(container)
         binary = binary.resolve()
@@ -446,6 +446,8 @@ class Fixture:
                    "--entrypoint", "/usr/bin/taskset" if worker and self.cpu_masks else executable]
         if worker:
             command += self.limits(2, "512m")
+        for key, value in sorted((environment or {}).items()):
+            command += ["--env", f"{key}={value}"]
         mask = self.cpu_masks["workers"][worker_process] if worker and self.cpu_masks else None
         prefix = ["--cpu-list", mask, executable] if mask else []
         resources = {"samples": 0, "peak_rss_bytes": 0, "peak_hwm_bytes": 0, "cpu_affinity": mask}

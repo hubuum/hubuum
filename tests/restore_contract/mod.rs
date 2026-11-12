@@ -3,6 +3,10 @@ mod artifacts;
 mod history_remapping;
 
 mod history_archive;
+#[cfg(unix)]
+mod history_expiry;
+#[cfg(unix)]
+mod history_expiry_qualification;
 mod task_capacity;
 mod task_scheduling;
 use std::collections::BTreeSet;

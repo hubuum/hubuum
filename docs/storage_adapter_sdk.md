@@ -106,6 +106,15 @@ and remains gated with production expiry. Original clocks and receipts survive
 every ownership change; a changed application image requires separate recovery
 qualification.
 
+**Breaking recovery capability:**
+`HistoryLifecycleStorage::reapply_history_expiry` is a required, trusted recovery
+operation. It removes only one retained exact version under current independently
+protected authority, application quarantine, and positive runtime/publication
+drain. An absent copy is accepted only with its retained first-removal receipt.
+Reintroduced copies preserve that receipt and its original clock. Recheck policy,
+holds, intervals and dependencies; never widen removal to a derived version.
+Exposure release must reject incomplete receipts or remaining excluded copies.
+
 **Breaking shared admission capability:** implement
 `HistoryLifecycleStorage::submit_history_expiry_task` atomically under the history
 control and task-capacity locks. Preserve one active task per exact stable

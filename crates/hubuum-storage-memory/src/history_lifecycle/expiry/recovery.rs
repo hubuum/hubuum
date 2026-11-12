@@ -29,6 +29,11 @@ pub(super) fn recover_on(
     if payload.application().incarnation() != snapshot.fence().incarnation()
         || payload.application().revision() as u64 != snapshot.fence().deletion_revision().value()
     {
+        // Original application admission proves that quarantined replay and
+        // release completed. An old complete batch cannot acquire a new owner.
+        if intent.is_complete() {
+            return Ok(None);
+        }
         return Err(StorageError::unavailable(
             "History recovery requires the original application image",
         ));

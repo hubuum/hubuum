@@ -1,17 +1,34 @@
 use super::*;
 use hubuum_storage_core::{
     HistoryArchiveExecutionOwner, HistoryExpiryAdmissionRequest, HistoryExpiryAdmissionResult,
-    HistoryExpiryTaskAdmission, HistoryExpiryTaskCheckpoint, HistoryExpiryTaskRequest,
-    HistoryExpiryTaskSubmission, HistoryLifecycleControlChange, HistoryLifecycleRecovery,
-    HistoryLifecycleScan, HistoryLifecycleScanResult, HistoryLifecycleSnapshot,
-    HistoryLifecycleStorage, HistoryProducerOwner, HistoryProducerSettlement,
-    HistoryPublicationKind, HistoryPublicationOwner, HistoryPublicationSettlement,
-    HistoryReadContext, RuntimeIsolationDomain, RuntimeRegistration, StorageTask,
+    HistoryExpiryReapplication, HistoryExpiryTaskAdmission, HistoryExpiryTaskCheckpoint,
+    HistoryExpiryTaskRequest, HistoryExpiryTaskSubmission, HistoryLifecycleControlChange,
+    HistoryLifecycleRecovery, HistoryLifecycleScan, HistoryLifecycleScanResult,
+    HistoryLifecycleSnapshot, HistoryLifecycleStorage, HistoryProducerOwner,
+    HistoryProducerSettlement, HistoryPublicationKind, HistoryPublicationOwner,
+    HistoryPublicationSettlement, HistoryReadContext, RuntimeIsolationDomain, RuntimeRegistration,
+    StorageTask,
 };
 use uuid::Uuid;
 
 #[async_trait]
 impl HistoryLifecycleStorage for StorageHandle {
+    async fn reapply_history_expiry(
+        &self,
+        request: HistoryExpiryReapplication,
+    ) -> Result<bool, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::History,
+            "reapply_history_expiry",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .reapply_history_expiry(request)
+                    .await)
+            },
+        )
+        .await
+    }
     async fn submit_history_expiry_task(
         &self,
         request: HistoryExpiryTaskSubmission,

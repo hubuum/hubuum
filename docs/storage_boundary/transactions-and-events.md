@@ -660,6 +660,15 @@ workers still exclude this kind and no submission trigger is enabled.
 
 ### Shared history task admission
 
+`HistoryLifecycleStorage::reapply_history_expiry` takes trusted authenticated
+recovery evidence and exact retained membership. Serialize authority, quarantine,
+positive runtime/publication drain, policy/hold/dependency revalidation, native
+deletion, first receipt and required audit in one transaction. Return `true` only
+for one physical deletion; return `false` only for an absent already-receipted
+copy. Replay preserves original receipts and canonical audit identities. A new
+application image cannot resume the old task. Release independently verifies
+complete first receipts and absence of every excluded exact or derived copy.
+
 `HistoryLifecycleStorage::submit_history_expiry_task` takes trusted typed service
 input, never a serialized permission grant. Acquire history authority, task
 capacity, then the existing task row in that order. Serialize both manual and

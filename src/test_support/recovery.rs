@@ -99,6 +99,44 @@ impl RestoreContractFixture {
             .into_value())
     }
 
+    pub async fn create_collection(
+        &self,
+        name: &str,
+        description: &str,
+    ) -> Result<StorageCollection, ApiError> {
+        Ok(self
+            .storage
+            .collection_store()
+            .create_collection(
+                StorageCollectionCreate::new(
+                    name,
+                    description,
+                    hubuum_domain::GroupId::new(1)?,
+                    None,
+                ),
+                &EventContext::system(),
+            )
+            .await?
+            .into_value())
+    }
+
+    pub async fn update_collection_description(
+        &self,
+        id: CollectionId,
+        description: String,
+    ) -> Result<(), ApiError> {
+        self.storage
+            .collection_store()
+            .update_collection(
+                id,
+                StorageCollectionUpdate::new(None, Some(description)),
+                &EventContext::system(),
+            )
+            .await?
+            .into_value();
+        Ok(())
+    }
+
     pub async fn new(kind: StorageBackendKind, pool: PostgresPool) -> Result<Self, ApiError> {
         let storage = super::restore_contract_storage(kind, pool);
         let original = storage
