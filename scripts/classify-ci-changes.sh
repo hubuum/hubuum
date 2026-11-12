@@ -68,7 +68,9 @@ for path in "$@"; do
   done <<< "$declared_policy_documents"
 
   case "$path" in
-    src/models/class_fields.rs | src/models/class_fields/* | src/api/v1/handlers/classes/field_discovery.rs | \
+    src/models/security_candidate.rs | src/api/v1/handlers/security_candidates.rs | \
+      crates/hubuum-domain/src/authentication_configuration.rs | \
+      src/models/class_fields.rs | src/models/class_fields/* | src/api/v1/handlers/classes/field_discovery.rs | \
       src/api/v1/handlers/auth.rs | src/models/auth_session.rs | src/models/credential_activity.rs | \
       src/models/history/computed.rs | src/api/v1/handlers/classes/history_computed.rs | src/api/v1/handlers/classes/history_population.rs | src/api/v1/handlers/classes/history_relations.rs | \
       src/config/running.rs | src/api/v1/handlers/runtime_config.rs | src/models/query_usage.rs | src/models/credential_approval.rs | \

@@ -171,6 +171,7 @@ pub async fn create(
 ) -> Result<StorageMutationOutcome<StorageSessionIssued>, PostgresStorageError> {
     runtime
         .with_transaction(async move |connection| -> Result<_, PostgresStorageError> {
+            super::security_candidates::fence_login(connection, request.login()).await?;
             let subject = request.login().subject();
             let principal_id = subject.principal_id().id();
             if !lock_principal(connection, principal_id).await? {

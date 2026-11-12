@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.7`.
+Status: accepted; current experimental release train is `0.8`.
 
 ## Supported Crate Graph
 
@@ -446,3 +446,32 @@ override as an audited revision. Upgrade all API and worker replicas together
 before accepting runtime-setting changes. Run the shared runtime-settings and
 restore conformance tests, plus adapter-native atomicity, stale-revision, audit,
 and notification coverage. The SDK retains its Rust 1.88 minimum version.
+
+## Upgrading from 0.7 to 0.8
+
+Update all ten SDK dependencies to exactly `0.8.0` together. The closed runtime
+configuration vocabulary adds browser provider kinds and a validated remote
+authorization connection. Runtime snapshots also include all operational policy
+groups described in the [runtime settings guide](runtime_settings.md).
+
+Implement the complete candidate, provider-binding, expiry-cleanup and offline
+recovery methods in `RuntimeSettingsStorage`. Candidates are short-lived,
+credential-owned verification state, separate from the authoritative settings.
+Use their typed verification revision to reject concurrent stale check updates.
+Activation consumes the exact candidate and fresh approval, rechecks local
+recovery grants, updates the expected settings revision and audit, records
+immutable provider bindings, and revokes affected external credentials atomically.
+A failed transaction must preserve both approval and receipt authority.
+
+Use `StorageLogin::try_new` for local login evidence and `StorageLogin::external`
+with the authenticated configuration revision for external evidence. Fence that
+revision against configuration activation before issuing tokens or sessions.
+Preserve runtime settings, audit and provider bindings across logical restore;
+discard candidates and unused approvals. Offline recovery atomically selects
+local-only authentication and local authorization, revokes external credentials,
+and records recovery evidence without calling remote policy.
+
+Run the shared API/storage contracts and adapter-native activation race,
+transaction rollback, recovery restart and login fencing tests. PostgreSQL
+requires the coordinated offline migration documented in
+[security candidates](security_candidates.md#upgrade-and-recovery).

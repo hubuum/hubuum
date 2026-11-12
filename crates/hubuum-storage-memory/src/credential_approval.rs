@@ -87,6 +87,7 @@ impl MemoryState {
             || stored.operation() != expected
             || stored.target_id() != target
             || stored.restore_job_id() != claim.restore_job_id()
+            || stored.security_candidate_id() != claim.security_candidate_id()
             || stored.request_digest() != claim.request_digest()
         {
             return Err(denied());

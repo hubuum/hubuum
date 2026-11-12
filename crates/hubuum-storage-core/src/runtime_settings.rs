@@ -5,6 +5,13 @@
 //! the whole deployment. Values cross this boundary as validated types; adapters
 //! may persist them as JSON documents but never expose arbitrary keys.
 
+mod provider_binding;
+pub use provider_binding::*;
+mod security_candidates;
+mod security_recovery;
+pub use security_candidates::*;
+pub use security_recovery::StorageSecurityRecovery;
+
 mod client_network;
 mod metrics_path;
 mod policies;
@@ -276,18 +283,24 @@ impl StorageAuthorizationBackend {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StorageAuthenticationProviderKind {
     Ldap,
+    Oidc,
+    Oauth,
 }
 
 impl StorageAuthenticationProviderKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Ldap => "ldap",
+            Self::Oidc => "oidc",
+            Self::Oauth => "oauth",
         }
     }
 
-    fn parse(value: &str) -> Result<Self, StorageValidationError> {
+    pub fn parse(value: &str) -> Result<Self, StorageValidationError> {
         match value {
             "ldap" => Ok(Self::Ldap),
+            "oidc" => Ok(Self::Oidc),
+            "oauth" => Ok(Self::Oauth),
             _ => Err(StorageValidationError::invalid(format!(
                 "Unknown authentication provider kind '{value}'"
             ))),
@@ -297,6 +310,7 @@ impl StorageAuthenticationProviderKind {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct StorageAuthenticationProvider {
+    id: Option<Uuid>,
     name: IdentityScopeName,
     kind: StorageAuthenticationProviderKind,
     enabled: bool,
@@ -306,7 +320,14 @@ pub struct StorageAuthenticationProvider {
 #[derive(Clone, PartialEq, Eq)]
 enum AuthenticationProviderDefinition {
     Deployment,
-    Runtime(Value),
+    Runtime(Value, Option<Box<StorageBrowserProviderDefinition>>),
+}
+
+/// Validated browser configuration, preserved across application/storage boundaries.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StorageBrowserProviderDefinition {
+    Oidc(hubuum_domain::OidcProviderDefinition),
+    Oauth(hubuum_domain::OAuthProviderDefinition),
 }
 
 impl StorageAuthenticationProvider {
@@ -321,11 +342,44 @@ impl StorageAuthenticationProvider {
                 "Runtime authentication providers require object configuration without plaintext passwords",
             ));
         }
+        let browser = if kind != StorageAuthenticationProviderKind::Ldap {
+            let mut definition = configuration.clone();
+            let fields = definition.as_object_mut().expect("validated object");
+            let credential = fields.remove("protected_credential");
+            if let Some(credential) = credential {
+                let object = credential.as_object().ok_or_else(|| {
+                    StorageValidationError::invalid("Invalid protected provider credential")
+                })?;
+                if object.len() != 1
+                    || !(object.contains_key("alias") || object.contains_key("envelope"))
+                {
+                    return Err(StorageValidationError::invalid(
+                        "Invalid protected provider credential",
+                    ));
+                }
+            }
+            let invalid =
+                |_| StorageValidationError::invalid("Invalid browser provider definition");
+            Some(Box::new(match kind {
+                StorageAuthenticationProviderKind::Oidc => StorageBrowserProviderDefinition::Oidc(
+                    serde_json::from_value(definition).map_err(invalid)?,
+                ),
+                StorageAuthenticationProviderKind::Oauth => {
+                    StorageBrowserProviderDefinition::Oauth(
+                        serde_json::from_value(definition).map_err(invalid)?,
+                    )
+                }
+                StorageAuthenticationProviderKind::Ldap => unreachable!(),
+            }))
+        } else {
+            None
+        };
         Ok(Self {
+            id: None,
             name,
             kind,
             enabled: true,
-            definition: AuthenticationProviderDefinition::Runtime(configuration),
+            definition: AuthenticationProviderDefinition::Runtime(configuration, browser),
         })
     }
 
@@ -335,6 +389,7 @@ impl StorageAuthenticationProvider {
         enabled: bool,
     ) -> Result<Self, StorageValidationError> {
         Ok(Self {
+            id: None,
             name: Self::validate_name(name.into())?,
             kind,
             enabled,
@@ -351,6 +406,20 @@ impl StorageAuthenticationProvider {
             ));
         }
         Ok(name)
+    }
+
+    pub fn with_id(mut self, id: Uuid) -> Result<Self, StorageValidationError> {
+        if id.is_nil() {
+            return Err(StorageValidationError::invalid(
+                "Provider ID must not be nil",
+            ));
+        }
+        self.id = Some(id);
+        Ok(self)
+    }
+
+    pub const fn id(&self) -> Option<Uuid> {
+        self.id
     }
 
     pub fn name(&self) -> &str {
@@ -370,10 +439,17 @@ impl StorageAuthenticationProvider {
         self.enabled
     }
 
+    pub fn browser_definition(&self) -> Option<&StorageBrowserProviderDefinition> {
+        match &self.definition {
+            AuthenticationProviderDefinition::Runtime(_, definition) => definition.as_deref(),
+            AuthenticationProviderDefinition::Deployment => None,
+        }
+    }
+
     pub fn configuration(&self) -> Option<&Value> {
         match &self.definition {
             AuthenticationProviderDefinition::Deployment => None,
-            AuthenticationProviderDefinition::Runtime(configuration) => Some(configuration),
+            AuthenticationProviderDefinition::Runtime(configuration, _) => Some(configuration),
         }
     }
 }
@@ -414,6 +490,16 @@ impl StorageAuthenticationProviders {
                 "Authentication provider names must be unique",
             ));
         }
+        let mut ids = std::collections::HashSet::new();
+        if providers
+            .iter()
+            .filter_map(StorageAuthenticationProvider::id)
+            .any(|id| !ids.insert(id))
+        {
+            return Err(StorageValidationError::invalid(
+                "Authentication provider IDs must be unique",
+            ));
+        }
         Ok(Self(providers))
     }
 
@@ -425,6 +511,8 @@ impl StorageAuthenticationProviders {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct AuthenticationProviderDocument {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    provider_id: Option<Uuid>,
     name: String,
     kind: String,
     #[serde(default)]
@@ -457,6 +545,10 @@ struct AuthenticationProvidersDocument {
 #[serde(deny_unknown_fields)]
 struct AuthorizationDocument {
     backend: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    connection: Option<hubuum_domain::AuthorizationConnection>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -490,6 +582,7 @@ pub enum StorageRuntimeSettingsValue {
     Pagination(StoragePaginationPolicy),
     Authentication(StorageAuthenticationProviders),
     Authorization(StorageAuthorizationBackend),
+    RemoteAuthorization(hubuum_domain::AuthorizationConnection),
     Observability(StorageObservabilityPolicy),
     Network(StorageNetworkPolicy),
     QueryLimits(StorageQueryLimitsPolicy),
@@ -510,7 +603,9 @@ impl StorageRuntimeSettingsValue {
             Self::QueryObservations(_) => StorageRuntimeSettingsGroup::QueryObservations,
             Self::Pagination(_) => StorageRuntimeSettingsGroup::Pagination,
             Self::Authentication(_) => StorageRuntimeSettingsGroup::Authentication,
-            Self::Authorization(_) => StorageRuntimeSettingsGroup::Authorization,
+            Self::Authorization(_) | Self::RemoteAuthorization(_) => {
+                StorageRuntimeSettingsGroup::Authorization
+            }
             Self::Observability(_) => StorageRuntimeSettingsGroup::Observability,
             Self::Network(_) => StorageRuntimeSettingsGroup::Network,
             Self::QueryLimits(_) => StorageRuntimeSettingsGroup::QueryLimits,
@@ -559,6 +654,7 @@ impl StorageRuntimeSettingsValue {
                         .providers()
                         .iter()
                         .map(|provider| AuthenticationProviderDocument {
+                            provider_id: provider.id(),
                             name: provider.name().to_string(),
                             kind: provider.kind().as_str().to_string(),
                             source: if provider.configuration().is_some() {
@@ -574,6 +670,13 @@ impl StorageRuntimeSettingsValue {
             }
             Self::Authorization(backend) => serde_json::to_value(AuthorizationDocument {
                 backend: backend.as_str().to_string(),
+                source: None,
+                connection: None,
+            }),
+            Self::RemoteAuthorization(connection) => serde_json::to_value(AuthorizationDocument {
+                backend: "treetop".into(),
+                source: Some("runtime".into()),
+                connection: Some(connection.clone()),
             }),
         };
         document.expect("runtime settings documents contain only scalar fields")
@@ -640,7 +743,7 @@ impl StorageRuntimeSettingsValue {
                     .into_iter()
                     .map(|provider| {
                         let kind = StorageAuthenticationProviderKind::parse(&provider.kind)?;
-                        match (provider.source, provider.configuration) {
+                        let stored = match (provider.source, provider.configuration) {
                             (AuthenticationProviderSource::Runtime, Some(configuration)) => {
                                 StorageAuthenticationProvider::try_new(
                                     provider.name,
@@ -659,6 +762,10 @@ impl StorageRuntimeSettingsValue {
                             _ => Err(StorageValidationError::invalid(
                                 "Only runtime-owned providers may contain a configuration",
                             )),
+                        }?;
+                        match provider.provider_id {
+                            Some(id) => stored.with_id(id),
+                            None => Ok(stored),
                         }
                     })
                     .collect::<Result<Vec<_>, _>>()?;
@@ -668,9 +775,21 @@ impl StorageRuntimeSettingsValue {
             }
             StorageRuntimeSettingsGroup::Authorization => {
                 let document = AuthorizationDocument::deserialize(document).map_err(invalid)?;
-                Ok(Self::Authorization(StorageAuthorizationBackend::parse(
-                    &document.backend,
-                )?))
+                match (
+                    document.backend.as_str(),
+                    document.source.as_deref(),
+                    document.connection,
+                ) {
+                    ("treetop", Some("runtime"), Some(connection)) => {
+                        Ok(Self::RemoteAuthorization(connection))
+                    }
+                    (_, None | Some("deployment"), None) => Ok(Self::Authorization(
+                        StorageAuthorizationBackend::parse(&document.backend)?,
+                    )),
+                    _ => Err(StorageValidationError::invalid(
+                        "Invalid authorization connection ownership",
+                    )),
+                }
             }
             StorageRuntimeSettingsGroup::QueryObservations => {
                 let document = QueryObservationDocument::deserialize(document).map_err(invalid)?;
@@ -924,6 +1043,17 @@ impl StorageRuntimeSettingsSnapshot {
     }
 
     #[must_use]
+    pub fn authorization_connection(&self) -> Option<&hubuum_domain::AuthorizationConnection> {
+        match self
+            .record(StorageRuntimeSettingsGroup::Authorization)
+            .assignment()
+            .value()
+        {
+            Some(StorageRuntimeSettingsValue::RemoteAuthorization(connection)) => Some(connection),
+            _ => None,
+        }
+    }
+
     pub fn authorization(&self) -> Option<StorageAuthorizationBackend> {
         match self
             .record(StorageRuntimeSettingsGroup::Authorization)
@@ -931,6 +1061,9 @@ impl StorageRuntimeSettingsSnapshot {
             .value()
         {
             Some(StorageRuntimeSettingsValue::Authorization(backend)) => Some(*backend),
+            Some(StorageRuntimeSettingsValue::RemoteAuthorization(_)) => {
+                Some(StorageAuthorizationBackend::Treetop)
+            }
             _ => None,
         }
     }
@@ -1183,6 +1316,44 @@ impl StorageRuntimeSettingsHistoryQuery {
 /// them from portable backups.
 #[async_trait]
 pub trait RuntimeSettingsStorage: Send + Sync {
+    /// Explicit privileged offline recovery; never an HTTP authorization fallback.
+    async fn recover_security_settings(
+        &self,
+        request: StorageSecurityRecovery,
+    ) -> Result<[StorageRuntimeSettingsUpdateOutcome; 2], StorageError>;
+
+    async fn purge_security_candidates(&self) -> Result<usize, StorageError>;
+
+    async fn authentication_provider_binding(
+        &self,
+        name: IdentityScopeName,
+    ) -> Result<Option<StorageProviderIdentityBinding>, StorageError>;
+
+    /// Persist an expiring, owner-bound candidate without changing live settings.
+    async fn create_security_candidate(
+        &self,
+        candidate: StorageSecurityCandidate,
+    ) -> Result<(), StorageError>;
+
+    /// Read a candidate only for its initiating credential.
+    async fn get_security_candidate(
+        &self,
+        id: Uuid,
+        owner: StorageSecurityCandidateOwner,
+    ) -> Result<StorageSecurityCandidate, StorageError>;
+
+    /// Replace verification checks without changing the immutable candidate inputs.
+    async fn verify_security_candidate(
+        &self,
+        candidate: StorageSecurityCandidate,
+    ) -> Result<(), StorageError>;
+
+    /// Consume candidate and fresh approval with the settings revision and audit.
+    async fn activate_security_candidate(
+        &self,
+        request: StorageSecurityCandidateActivation,
+    ) -> Result<StorageRuntimeSettingsUpdateOutcome, StorageError>;
+
     /// Load every group's current record. Never returns a partial snapshot.
     async fn load_runtime_settings(&self) -> Result<StorageRuntimeSettingsSnapshot, StorageError>;
 

@@ -1,7 +1,7 @@
 use chrono::Utc;
 use hubuum_domain::PrincipalKind;
 use hubuum_events_core::{EventSubject, EventSubscriptionFilter};
-use hubuum_storage_core::StorageLogin;
+use hubuum_storage_core::{RuntimeSettingsStorage, StorageLogin, StorageRuntimeSettingsGroup};
 use rstest::rstest;
 
 use super::*;
@@ -178,4 +178,42 @@ async fn postgres_rolls_back_login_token_and_both_events_before_commit() {
         "token.created rolls back too"
     );
     delete_backend_user(&backend, user).await;
+}
+
+#[actix_web::test]
+async fn every_backend_rejects_external_login_evidence_from_another_revision() {
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        let user = create_backend_user(&backend, &prefix("stale_external_login")).await;
+        let subject = EventSubject::try_new(
+            user.principal_id,
+            "external".into(),
+            PrincipalKind::Human,
+            "directory".into(),
+            "ldap".into(),
+            false,
+        )
+        .unwrap();
+        let credential = backend.get_user(user.id).await.unwrap();
+        assert!(StorageLogin::try_new(subject.clone(), credential.clone()).is_err());
+        let revision = backend
+            .load_runtime_settings()
+            .await
+            .unwrap()
+            .record(StorageRuntimeSettingsGroup::Authentication)
+            .revision()
+            .checked_advance()
+            .unwrap();
+        let login = StorageLogin::external(subject, credential, revision).unwrap();
+        let request = StorageTokenCreate::for_login(
+            login,
+            StorageTokenDigest::legacy_unidentified(prefix("stale_login_digest")),
+            StorageTokenIssuancePolicy::try_new(24, 24).unwrap(),
+            &EventContext::system(),
+        );
+        let error = backend.create_token(request).await.unwrap_err();
+        assert_eq!(error.kind(), StorageErrorKind::AuthenticationRequired);
+        assert!(login_events(&backend, &user).await.is_empty());
+        delete_backend_user(&backend, user).await;
+    }
 }

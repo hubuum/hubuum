@@ -302,6 +302,7 @@ pub async fn create_token(
                 PostgresStorageError,
             > {
                 if let Some(login) = &login {
+                    super::security_candidates::fence_login(connection, login).await?;
                     // Password changes/anonymization take this same lock before
                     // updating the user and revoking tokens. Either issuance wins
                     // and is revoked, or it observes the changed credential.

@@ -1114,6 +1114,22 @@ pub struct AppConfig {
     #[clap(long, env = "HUBUUM_AUTH_CONFIG_PATH", default_value = None)]
     pub auth_config_path: Option<String>,
 
+    /// Permit private destinations for runtime authentication and authorization profiles.
+    #[clap(
+        long,
+        env = "HUBUUM_AUTH_RUNTIME_ALLOW_PRIVATE_TARGETS",
+        default_value_t = false
+    )]
+    pub auth_runtime_allow_private_targets: bool,
+
+    /// Comma-separated provider scope names whose definitions and activation are deployment-locked.
+    #[clap(
+        long,
+        env = "HUBUUM_AUTH_RUNTIME_LOCKED_PROVIDERS",
+        value_delimiter = ','
+    )]
+    pub auth_runtime_locked_providers: Vec<String>,
+
     /// Secret-source name of the active key for runtime-stored credentials.
     #[clap(
         long,
@@ -2399,6 +2415,18 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         admin_groupname: env_or_default("HUBUUM_ADMIN_GROUPNAME", "admin"),
         admin_identity_scope: Some(env_or_default("HUBUUM_ADMIN_IDENTITY_SCOPE", "local")),
         auth_config_path: env_or_default_opt("HUBUUM_AUTH_CONFIG_PATH", None),
+        auth_runtime_allow_private_targets: env_or_default(
+            "HUBUUM_AUTH_RUNTIME_ALLOW_PRIVATE_TARGETS",
+            "false",
+        )
+        .parse()
+        .unwrap(),
+        auth_runtime_locked_providers: env_or_default_opt(
+            "HUBUUM_AUTH_RUNTIME_LOCKED_PROVIDERS",
+            None,
+        )
+        .map(|value| value.split(',').map(str::to_owned).collect())
+        .unwrap_or_default(),
         runtime_settings_encryption_key_ref: env_or_default_opt(
             "HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF",
             None,

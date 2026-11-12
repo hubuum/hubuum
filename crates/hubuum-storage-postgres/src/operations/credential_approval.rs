@@ -2,7 +2,7 @@
 use super::event_record::append_event;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 use chrono::{NaiveDateTime, Utc};
-use diesel::sql_types::{BigInt, Integer, Nullable, Text, Timestamp};
+use diesel::sql_types::{BigInt, Integer, Nullable, Text, Timestamp, Uuid as SqlUuid};
 use diesel::{OptionalExtension, QueryableByName, sql_query};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{PrincipalId, RestoreJobId, TokenId};
@@ -32,6 +32,8 @@ struct ApprovalRow {
     secret_digest: String,
     #[diesel(sql_type = Nullable<BigInt>)]
     restore_job_id: Option<i64>,
+    #[diesel(sql_type = Nullable<SqlUuid>)]
+    security_candidate_id: Option<uuid::Uuid>,
     #[diesel(sql_type = Nullable<Timestamp>)]
     invalidated_at: Option<NaiveDateTime>,
     #[diesel(sql_type = Text)]
@@ -58,6 +60,9 @@ impl ApprovalRow {
             self.authenticated_at.and_utc(),
         )
         .target(self.target_id.map(PrincipalId::new).transpose()?);
+        if let Some(id) = self.security_candidate_id {
+            claim = claim.security_candidate(id);
+        }
         if let Some(id) = self.restore_job_id {
             claim = claim.restore_job(RestoreJobId::new(id)?);
         }
@@ -144,13 +149,14 @@ pub async fn create(
         let mut expiry = authenticated_at + chrono::Duration::seconds(CREDENTIAL_APPROVAL_LIFETIME_SECONDS);
         if let Some(token_expiry) = token_expiry { expiry = expiry.min(token_expiry.and_utc()); }
         if authenticated_at > Utc::now() || expiry <= Utc::now() { return Err(denied()); }
-        let row = sql_query("INSERT INTO credential_approvals (actor_id,token_id,operation,target_id,secret_digest,request_digest,authenticated_at,expires_at,restore_job_id) \
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *")
+        let row = sql_query("INSERT INTO credential_approvals (actor_id,token_id,operation,target_id,secret_digest,request_digest,authenticated_at,expires_at,restore_job_id,security_candidate_id) \
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *")
             .bind::<Integer,_>(claim.actor_id().id()).bind::<Integer,_>(claim.token_id().id())
             .bind::<Text,_>(claim.operation().as_str()).bind::<Nullable<Integer>,_>(claim.target_id().map(PrincipalId::id))
             .bind::<Text,_>(claim.secret_digest().as_str()).bind::<Text,_>(claim.request_digest().as_str())
             .bind::<Timestamp,_>(authenticated_at.naive_utc()).bind::<Timestamp,_>(expiry.naive_utc())
             .bind::<Nullable<BigInt>,_>(claim.restore_job_id().map(RestoreJobId::id))
+            .bind::<Nullable<SqlUuid>,_>(claim.security_candidate_id())
             .get_result::<ApprovalRow>(connection).await?;
         let metadata = row.metadata()?;
         let receipt = audit(connection, &metadata, Action::Created, &context).await?;
@@ -193,12 +199,13 @@ pub(crate) async fn consume(
     let row = sql_query("WITH approval_clock AS MATERIALIZED (SELECT timezone('UTC', clock_timestamp()) AS observed_at) \
         UPDATE credential_approvals SET consumed_at=approval_clock.observed_at FROM approval_clock \
         WHERE secret_digest=$1 AND request_digest=$2 AND actor_id=$3 AND token_id=$4 AND operation=$5 \
-        AND target_id IS NOT DISTINCT FROM $6 AND restore_job_id IS NOT DISTINCT FROM $7 AND consumed_at IS NULL AND invalidated_at IS NULL \
+        AND target_id IS NOT DISTINCT FROM $6 AND restore_job_id IS NOT DISTINCT FROM $7 AND security_candidate_id IS NOT DISTINCT FROM $8 AND consumed_at IS NULL AND invalidated_at IS NULL \
         AND authenticated_at <= approval_clock.observed_at AND expires_at > approval_clock.observed_at RETURNING credential_approvals.*")
         .bind::<Text,_>(claim.secret_digest().as_str()).bind::<Text,_>(claim.request_digest().as_str())
         .bind::<Integer,_>(claim.actor_id().id()).bind::<Integer,_>(claim.token_id().id())
         .bind::<Text,_>(claim.operation().as_str()).bind::<Nullable<Integer>,_>(target)
         .bind::<Nullable<BigInt>,_>(claim.restore_job_id().map(RestoreJobId::id))
+        .bind::<Nullable<SqlUuid>,_>(claim.security_candidate_id())
         .get_result::<ApprovalRow>(connection).await.optional()?.ok_or_else(denied)?;
     Ok(Some(
         audit(connection, &row.metadata()?, Action::Succeeded, context).await?,

@@ -67,3 +67,5 @@ pub mod credential_approval;
 pub mod auth_sessions;
 
 pub mod credential_activity;
+
+pub mod security_candidates;

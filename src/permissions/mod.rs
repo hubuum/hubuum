@@ -142,6 +142,31 @@ pub(crate) async fn build_permission_backend_for_runtime(
     build_permission_backend_for_kind(cfg, storage, kind).await
 }
 
+pub(crate) async fn build_permission_backend_for_assignment(
+    cfg: &AppConfig,
+    storage: StorageHandle,
+    assignment: &hubuum_storage_core::StorageRuntimeSettingsAssignment,
+) -> Result<Arc<dyn PermissionBackend>, ApiError> {
+    use hubuum_storage_core::StorageRuntimeSettingsValue;
+    match assignment.value() {
+        Some(StorageRuntimeSettingsValue::Authorization(selected)) => {
+            build_permission_backend_for_runtime(cfg, storage, *selected).await
+        }
+        #[cfg(feature = "permissions-treetop")]
+        Some(StorageRuntimeSettingsValue::RemoteAuthorization(connection)) => Ok(Arc::new(
+            treetop::TreetopPermissionBackend::connect_runtime(connection, cfg, storage).await?,
+        )),
+        #[cfg(not(feature = "permissions-treetop"))]
+        Some(StorageRuntimeSettingsValue::RemoteAuthorization(_)) => Err(ApiError::BadRequest(
+            "Binary built without permissions-treetop".into(),
+        )),
+        None => build_permission_backend(cfg, storage).await,
+        _ => Err(ApiError::BadRequest(
+            "Authorization assignment required".into(),
+        )),
+    }
+}
+
 async fn build_permission_backend_for_kind(
     cfg: &AppConfig,
     storage: StorageHandle,

@@ -3,8 +3,8 @@
 mod credential;
 pub use credential::{BearerCredential, CredentialError, VersionedCredential, keyed_digest};
 
-pub use hubuum_domain::IdentityScopeName;
 use hubuum_domain::IdentityScopeNameError;
+pub use hubuum_domain::{IdentityScopeName, OAuthProviderDefinition, OidcProviderDefinition};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -244,11 +244,17 @@ class AuthenticationContractTests(unittest.TestCase):
         }
         self.assertFalse(required - identifiers, required - identifiers)
 
-    def test_proposal_stays_separate_from_implemented_api(self):
+    def test_unimplemented_browser_routes_remain_outside_the_live_api(self):
         current = load_json(ROOT / "docs/openapi.json")
         self.assertIn("proposed", self.spec["info"]["version"])
         self.assertEqual(self.fixtures["status"], "proposed")
-        self.assertFalse(self.spec["paths"].keys() & current["paths"].keys())
+        # #574 delivers configuration candidates; browser interactions remain
+        # reserved for the subsequent implementation issues.
+        self.assertEqual(self.spec["paths"].keys() & current["paths"].keys(), {
+            "/api/v1/admin/runtime-settings/security-candidates",
+            "/api/v1/admin/runtime-settings/security-candidates/{id}",
+            "/api/v1/admin/runtime-settings/security-candidates/{id}/activate",
+        })
 
     def test_existing_result_examples_use_current_required_fields_and_approval_syntax(self):
         schemas = load_json(ROOT / "docs/openapi.json")["components"]["schemas"]

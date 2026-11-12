@@ -510,26 +510,6 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "Deployment authentication provider definitions restored as a new audited revision",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
           "401": {
             "description": "Unauthorized",
             "content": {
@@ -541,7 +521,7 @@
             }
           },
           "403": {
-            "description": "Unscoped local human administrator with password login required",
+            "description": "Unscoped local recovery administrator required",
             "content": {
               "application/json": {
                 "schema": {
@@ -550,8 +530,8 @@
               }
             }
           },
-          "412": {
-            "description": "Stale expected_revision; the response carries the current revision",
+          "409": {
+            "description": "Use a verified release_ownership security candidate",
             "content": {
               "application/json": {
                 "schema": {
@@ -587,26 +567,6 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "Provider ownership and activation validated; enabled LDAP providers passed connectivity checks before the audited commit",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid ownership transfer, provider configuration, or enabled-provider connectivity preflight",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
           "401": {
             "description": "Unauthorized",
             "content": {
@@ -618,7 +578,7 @@
             }
           },
           "403": {
-            "description": "Unscoped local human administrator with password login required",
+            "description": "Administrator required",
             "content": {
               "application/json": {
                 "schema": {
@@ -627,18 +587,8 @@
               }
             }
           },
-          "412": {
-            "description": "Stale expected_revision; no settings were persisted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Encryption key or secret source unavailable",
+          "409": {
+            "description": "Use the verified security candidate workflow",
             "content": {
               "application/json": {
                 "schema": {
@@ -674,26 +624,6 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "Authorization backend selection committed with an audit record and applied by the responding replica",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Unsupported backend, invalid deployment configuration, or administrator access would be lost",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
           "401": {
             "description": "Unauthorized",
             "content": {
@@ -705,7 +635,7 @@
             }
           },
           "403": {
-            "description": "Unscoped local human administrator with password login required",
+            "description": "Unscoped local recovery administrator required",
             "content": {
               "application/json": {
                 "schema": {
@@ -714,18 +644,8 @@
               }
             }
           },
-          "412": {
-            "description": "Stale expected_revision; the response carries the current revision",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Selected authorization backend is unavailable",
+          "409": {
+            "description": "Use the verified security candidate workflow, including release_ownership for releases",
             "content": {
               "application/json": {
                 "schema": {
@@ -760,26 +680,6 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "Deployment ownership committed as a new audited revision",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RuntimeSettingsUpdateResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request or unsupported deployment backend",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
           "401": {
             "description": "Unauthorized",
             "content": {
@@ -791,7 +691,7 @@
             }
           },
           "403": {
-            "description": "Unscoped local human administrator with password login required",
+            "description": "Unscoped local recovery administrator required",
             "content": {
               "application/json": {
                 "schema": {
@@ -800,18 +700,8 @@
               }
             }
           },
-          "412": {
-            "description": "Stale expected_revision; the response carries the current revision",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Deployment authorization backend is unavailable",
+          "409": {
+            "description": "Use the verified security candidate workflow, including release_ownership for releases",
             "content": {
               "application/json": {
                 "schema": {
@@ -1253,6 +1143,319 @@
           },
           "403": {
             "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/runtime-settings/security-candidates": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Post Api V1 Admin Runtime Settings Security Candidates",
+        "description": "Auto-generated documentation for POST /api/v1/admin/runtime-settings/security-candidates.",
+        "operationId": "postApiV1AdminRuntimeSettingsSecurityCandidates",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecurityCandidateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Non-live candidate; receipt only after every required check passes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityCandidateReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid candidate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Local unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Settings revision changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Provider or secret unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/runtime-settings/security-candidates/{id}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Api V1 Admin Runtime Settings Security Candidates By Id",
+        "description": "Auto-generated documentation for GET /api/v1/admin/runtime-settings/security-candidates/{id}.",
+        "operationId": "getApiV1AdminRuntimeSettingsSecurityCandidatesById",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Candidate ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Owner-only sanitized checks; verification secrets are never redisclosed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityCandidateReport"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown candidate or different initiating credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/runtime-settings/security-candidates/{id}/activate": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Post Api V1 Admin Runtime Settings Security Candidates By Id Activate",
+        "description": "Auto-generated documentation for POST /api/v1/admin/runtime-settings/security-candidates/{id}/activate.",
+        "operationId": "postApiV1AdminRuntimeSettingsSecurityCandidatesByIdActivate",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Candidate ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Hubuum-Credential-Approval",
+            "in": "header",
+            "description": "Fresh exact-operation approval",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecurityCandidateActivationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Candidate, approval, revision and audit committed atomically",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityCandidateActivated"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Fresh approval or verification receipt required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Candidate changed or consumed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Candidate expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Settings revision changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/runtime-settings/security-candidates/{id}/verify-ldap": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Post Api V1 Admin Runtime Settings Security Candidates By Id Verify Ldap",
+        "description": "Auto-generated documentation for POST /api/v1/admin/runtime-settings/security-candidates/{id}/verify-ldap.",
+        "operationId": "postApiV1AdminRuntimeSettingsSecurityCandidatesByIdVerifyLdap",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Candidate ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecurityCandidateLdapVerification"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "LDAP sign-in checked without provisioning, membership writes or session issuance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityCandidateLdapVerificationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Verification failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Candidate changed or consumed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Candidate expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Verification throttled",
             "content": {
               "application/json": {
                 "schema": {
@@ -26296,6 +26499,11 @@
           }
         }
       },
+      "AuthenticationEndpoint": {
+        "type": "string",
+        "format": "uri",
+        "maxLength": 2048
+      },
       "AuthenticationSettingsReport": {
         "allOf": [
           {
@@ -26338,6 +26546,33 @@
         },
         "additionalProperties": false
       },
+      "AuthorizationConnection": {
+        "type": "object",
+        "required": [
+          "url",
+          "connect_timeout_ms",
+          "request_timeout_ms",
+          "trust_profile_id"
+        ],
+        "properties": {
+          "connect_timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "request_timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "trust_profile_id": {
+            "type": "string"
+          },
+          "url": {
+            "$ref": "#/components/schemas/AuthenticationEndpoint"
+          }
+        }
+      },
       "AuthorizationSettingsReport": {
         "allOf": [
           {
@@ -26364,6 +26599,17 @@
                 "type": [
                   "string",
                   "null"
+                ]
+              },
+              "runtime_connection": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/AuthorizationConnection",
+                    "description": "Requested non-secret runtime connection, applied only when available is true."
+                  },
+                  {
+                    "type": "null"
+                  }
                 ]
               }
             }
@@ -26558,6 +26804,98 @@
             ]
           }
         }
+      },
+      "BrowserProviderConfiguration": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OidcProviderDefinition"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "credential"
+                ],
+                "properties": {
+                  "credential": {
+                    "$ref": "#/components/schemas/ProviderCredentialInput"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OAuthProviderDefinition"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "credential"
+                ],
+                "properties": {
+                  "credential": {
+                    "$ref": "#/components/schemas/ProviderCredentialInput"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "BrowserProviderKind": {
+        "type": "string",
+        "enum": [
+          "oidc",
+          "oauth"
+        ]
+      },
+      "BrowserProviderRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "enabled",
+          "source",
+          "kind"
+        ],
+        "properties": {
+          "adopt_deployment": {
+            "type": "boolean"
+          },
+          "configuration": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BrowserProviderConfiguration",
+                "description": "Validated OIDC or OAuth definition and a write-only credential action."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/BrowserProviderKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "provider_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SecurityConfigurationSource"
+          }
+        },
+        "additionalProperties": false
       },
       "ClassComputationState": {
         "type": "object",
@@ -27562,6 +27900,13 @@
               }
             ]
           },
+          "security_candidate_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
           "target_id": {
             "oneOf": [
               {
@@ -27656,6 +28001,33 @@
       },
       "CredentialOperation": {
         "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "candidate_id",
+              "group",
+              "expected_revision",
+              "kind"
+            ],
+            "properties": {
+              "candidate_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "expected_revision": {
+                "$ref": "#/components/schemas/ResourceRevision"
+              },
+              "group": {
+                "$ref": "#/components/schemas/RuntimeSettingsGroup"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "activate_security_candidate"
+                ]
+              }
+            }
+          },
           {
             "type": "object",
             "required": [
@@ -34257,6 +34629,21 @@
           }
         }
       },
+      "MembershipClaimSource": {
+        "type": "string",
+        "enum": [
+          "id_token",
+          "userinfo",
+          "profile"
+        ]
+      },
+      "MembershipKeyMode": {
+        "type": "string",
+        "enum": [
+          "full_path",
+          "immutable_id"
+        ]
+      },
       "MembershipPrincipalResponse": {
         "type": "object",
         "description": "Public principal details nested in a membership entity. Its revision is the\nprincipal revision, independent of the enclosing membership revision.",
@@ -35071,6 +35458,78 @@
           "proper_name": "Alice Doe"
         }
       },
+      "OAuthProfile": {
+        "type": "string",
+        "enum": [
+          "github",
+          "json_user"
+        ]
+      },
+      "OAuthProviderDefinition": {
+        "type": "object",
+        "required": [
+          "profile",
+          "authorization_endpoint",
+          "token_endpoint",
+          "profile_endpoint",
+          "client_id",
+          "client_authentication",
+          "scopes",
+          "subject_pointer",
+          "subject_type",
+          "name_pointer",
+          "membership",
+          "admission"
+        ],
+        "properties": {
+          "admission": {
+            "$ref": "#/components/schemas/ProviderAdmission"
+          },
+          "authorization_endpoint": {
+            "$ref": "#/components/schemas/AuthenticationEndpoint"
+          },
+          "client_authentication": {
+            "$ref": "#/components/schemas/ProviderClientAuthentication"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "membership": {
+            "$ref": "#/components/schemas/ProviderMembership"
+          },
+          "name_pointer": {
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/OAuthProfile"
+          },
+          "profile_endpoint": {
+            "$ref": "#/components/schemas/AuthenticationEndpoint"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "subject_pointer": {
+            "type": "string"
+          },
+          "subject_type": {
+            "$ref": "#/components/schemas/OAuthSubjectType"
+          },
+          "token_endpoint": {
+            "$ref": "#/components/schemas/AuthenticationEndpoint"
+          }
+        }
+      },
+      "OAuthSubjectType": {
+        "type": "string",
+        "enum": [
+          "string",
+          "integer"
+        ]
+      },
       "ObjectAggregateDimensionValue": {
         "type": "object",
         "required": [
@@ -35433,6 +35892,54 @@
             "format": "int32"
           }
         }
+      },
+      "OidcProviderDefinition": {
+        "type": "object",
+        "required": [
+          "issuer",
+          "client_id",
+          "client_authentication",
+          "scopes",
+          "signing_algorithms",
+          "membership",
+          "admission"
+        ],
+        "properties": {
+          "admission": {
+            "$ref": "#/components/schemas/ProviderAdmission"
+          },
+          "client_authentication": {
+            "$ref": "#/components/schemas/ProviderClientAuthentication"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "issuer": {
+            "$ref": "#/components/schemas/AuthenticationEndpoint"
+          },
+          "membership": {
+            "$ref": "#/components/schemas/ProviderMembership"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "signing_algorithms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OidcSigningAlgorithm"
+            }
+          }
+        }
+      },
+      "OidcSigningAlgorithm": {
+        "type": "string",
+        "enum": [
+          "RS256",
+          "ES256"
+        ]
       },
       "PaginationConfig": {
         "type": "object",
@@ -36462,6 +36969,203 @@
             "$ref": "#/components/schemas/PrincipalID"
           }
         }
+      },
+      "ProviderAdmission": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "existing_only"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "provision_without_grants"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "subjects",
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "subject_allowlist"
+                ]
+              },
+              "subjects": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "ProviderClientAuthentication": {
+        "type": "string",
+        "enum": [
+          "client_secret_basic",
+          "client_secret_post"
+        ]
+      },
+      "ProviderCredentialInput": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "keep"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "clear"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "alias",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "reference"
+                ]
+              },
+              "alias": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "value",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "replace"
+                ]
+              },
+              "value": {
+                "type": "string",
+                "writeOnly": true
+              }
+            }
+          }
+        ]
+      },
+      "ProviderMembership": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "refresh_interval_seconds",
+              "max_stale_seconds",
+              "mode"
+            ],
+            "properties": {
+              "max_stale_seconds": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "local_only"
+                ]
+              },
+              "refresh_interval_seconds": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "refresh_interval_seconds",
+              "max_stale_seconds",
+              "claim_source",
+              "claim_pointer",
+              "key_mode",
+              "mode"
+            ],
+            "properties": {
+              "claim_pointer": {
+                "type": "string"
+              },
+              "claim_source": {
+                "$ref": "#/components/schemas/MembershipClaimSource"
+              },
+              "key_mode": {
+                "$ref": "#/components/schemas/MembershipKeyMode"
+              },
+              "max_stale_seconds": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "provider_groups"
+                ]
+              },
+              "refresh_interval_seconds": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          }
+        ]
       },
       "QueryObservationCeilingsValue": {
         "type": "object",
@@ -38288,6 +38992,13 @@
               "name": {
                 "type": "string"
               },
+              "provider_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uuid"
+              },
               "source": {
                 "type": "string",
                 "enum": [
@@ -38323,6 +39034,13 @@
               "name": {
                 "type": "string"
               },
+              "provider_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uuid"
+              },
               "source": {
                 "type": "string",
                 "enum": [
@@ -38336,14 +39054,19 @@
       "RuntimeAuthenticationProviderStatus": {
         "type": "object",
         "required": [
+          "kind",
           "name",
           "source",
           "enabled",
           "definition_mutable",
+          "credential_configured",
           "available"
         ],
         "properties": {
           "available": {
+            "type": "boolean"
+          },
+          "credential_configured": {
             "type": "boolean"
           },
           "definition_mutable": {
@@ -38352,8 +39075,25 @@
           "enabled": {
             "type": "boolean"
           },
+          "kind": {
+            "type": "string"
+          },
           "name": {
             "type": "string"
+          },
+          "provider_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "runtime_definition": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Requested runtime definition with credential material removed."
           },
           "source": {
             "$ref": "#/components/schemas/RuntimeSettingsSource"
@@ -38412,6 +39152,7 @@
         "description": "Version 1 uses JSON Schema 2020-12 field descriptions. New groups and fields\nare additive. Clients must leave unsupported schemas read-only.",
         "required": [
           "schema_version",
+          "security",
           "groups"
         ],
         "properties": {
@@ -38425,6 +39166,9 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          },
+          "security": {
+            "$ref": "#/components/schemas/SecurityConfigurationCapabilities"
           }
         }
       },
@@ -40003,6 +40747,399 @@
             "description": "Whether a value is configured. The value itself is never returned."
           }
         }
+      },
+      "SecurityCandidateActivated": {
+        "type": "object",
+        "required": [
+          "group",
+          "revision",
+          "changed"
+        ],
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "group": {
+            "$ref": "#/components/schemas/RuntimeSettingsGroup"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          }
+        }
+      },
+      "SecurityCandidateActivationRequest": {
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "verification_receipt"
+        ],
+        "properties": {
+          "expected_revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
+          "verification_receipt": {
+            "$ref": "#/components/schemas/SecurityVerificationReceipt"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SecurityCandidateCheck": {
+        "type": "object",
+        "required": [
+          "kind",
+          "status",
+          "reason"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "provider_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "SecurityCandidateGroupPreview": {
+        "type": "object",
+        "required": [
+          "key",
+          "name"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "SecurityCandidateLdapVerification": {
+        "type": "object",
+        "required": [
+          "provider_id",
+          "username",
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "description": "Used only for this test; never stored or logged.",
+            "writeOnly": true
+          },
+          "provider_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SecurityCandidateLdapVerificationResponse": {
+        "type": "object",
+        "required": [
+          "candidate",
+          "verification"
+        ],
+        "properties": {
+          "candidate": {
+            "$ref": "#/components/schemas/SecurityCandidateReport"
+          },
+          "verification": {
+            "$ref": "#/components/schemas/SecurityCandidateVerificationPreview"
+          }
+        }
+      },
+      "SecurityCandidateProvider": {
+        "type": "object",
+        "required": [
+          "provider_id",
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "provider_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "SecurityCandidateProviderRequest": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/RuntimeAuthenticationProviderRequest"
+          },
+          {
+            "$ref": "#/components/schemas/BrowserProviderRequest"
+          }
+        ]
+      },
+      "SecurityCandidateReport": {
+        "type": "object",
+        "required": [
+          "id",
+          "group",
+          "base_revision",
+          "expires_at",
+          "checks",
+          "state",
+          "providers"
+        ],
+        "properties": {
+          "base_revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SecurityCandidateCheck"
+            }
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "group": {
+            "$ref": "#/components/schemas/RuntimeSettingsGroup"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SecurityCandidateProvider"
+            }
+          },
+          "state": {
+            "type": "string"
+          },
+          "verification_receipt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SecurityVerificationReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "SecurityCandidateRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "expected_revision",
+              "group"
+            ],
+            "properties": {
+              "expected_revision": {
+                "$ref": "#/components/schemas/ResourceRevision"
+              },
+              "group": {
+                "type": "string",
+                "enum": [
+                  "authentication"
+                ]
+              },
+              "providers": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SecurityCandidateProviderRequest"
+                }
+              },
+              "release_ownership": {
+                "type": "boolean"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "expected_revision",
+              "backend",
+              "source",
+              "group"
+            ],
+            "properties": {
+              "backend": {
+                "$ref": "#/components/schemas/RuntimeAuthorizationBackend"
+              },
+              "connection": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/AuthorizationConnection"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected_revision": {
+                "$ref": "#/components/schemas/ResourceRevision"
+              },
+              "group": {
+                "type": "string",
+                "enum": [
+                  "authorization"
+                ]
+              },
+              "release_ownership": {
+                "type": "boolean"
+              },
+              "source": {
+                "$ref": "#/components/schemas/SecurityConfigurationSource"
+              }
+            }
+          }
+        ]
+      },
+      "SecurityCandidateVerificationPreview": {
+        "type": "object",
+        "required": [
+          "candidate_id",
+          "provider_id",
+          "subject",
+          "admitted",
+          "membership",
+          "groups",
+          "issued_session",
+          "provisioned"
+        ],
+        "properties": {
+          "admitted": {
+            "type": "boolean"
+          },
+          "candidate_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SecurityCandidateGroupPreview"
+            }
+          },
+          "issued_session": {
+            "type": "boolean"
+          },
+          "membership": {
+            "type": "string"
+          },
+          "provider_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "provisioned": {
+            "type": "boolean"
+          },
+          "subject": {
+            "type": "string"
+          }
+        }
+      },
+      "SecurityConfigurationCapabilities": {
+        "type": "object",
+        "description": "Non-secret deployment bounds and supported stages for specialized clients.",
+        "required": [
+          "candidate_endpoint",
+          "configurable_provider_kinds",
+          "activatable_provider_kinds",
+          "deployment_locked_providers",
+          "private_targets_allowed",
+          "replacement_credentials_available",
+          "candidate_lifetime_seconds",
+          "ldap_verification_timeout_seconds",
+          "treetop_connect_timeout_ceiling_ms",
+          "treetop_request_timeout_ceiling_ms",
+          "trust_profiles"
+        ],
+        "properties": {
+          "activatable_provider_kinds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "candidate_endpoint": {
+            "type": "string"
+          },
+          "candidate_lifetime_seconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "configurable_provider_kinds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "deployment_locked_providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ldap_verification_timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "private_targets_allowed": {
+            "type": "boolean"
+          },
+          "replacement_credentials_available": {
+            "type": "boolean"
+          },
+          "treetop_connect_timeout_ceiling_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "treetop_request_timeout_ceiling_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "trust_profiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "SecurityConfigurationSource": {
+        "type": "string",
+        "enum": [
+          "deployment",
+          "runtime"
+        ]
+      },
+      "SecurityVerificationReceipt": {
+        "type": "string",
+        "pattern": "^hcv1\\.[0-9a-f]{64}$"
       },
       "ServerConfig": {
         "type": "object",

@@ -36,6 +36,17 @@
           "runtime_settings_group_check"
         ]
       }
+    },
+    {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-11-12-000001_security_candidates/up.sql",
+      "sha256": "746f472886c6d5ae936c3a5bf66b9f9ae735337533d9885c01f96dc7ec7428f1",
+      "reason": "Older replicas bypass candidate verification and cannot read browser provider definitions or runtime Treetop profiles. Security activation must use matching binaries everywhere.",
+      "upgrade_action": "Stop all API and worker replicas and back up the database. Apply migrations and role grants, upgrade administrator clients to the candidate workflow, then start matching binaries everywhere. Configure explicit private authentication egress where required. See docs/security_candidates.md#upgrade-and-recovery.",
+      "drop_constraints": {
+        "credential_approvals": [
+          "credential_approvals_operation_check"
+        ]
+      }
     }
   ]
 }

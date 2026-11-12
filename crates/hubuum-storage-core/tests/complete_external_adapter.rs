@@ -2265,6 +2265,47 @@ impl StorageBackend for CompleteExternalAdapter {}
 
 #[async_trait]
 impl RuntimeSettingsStorage for CompleteExternalAdapter {
+    async fn recover_security_settings(
+        &self,
+        request: StorageSecurityRecovery,
+    ) -> Result<[StorageRuntimeSettingsUpdateOutcome; 2], StorageError> {
+        fixture_result()
+    }
+    async fn purge_security_candidates(&self) -> Result<usize, StorageError> {
+        fixture_result()
+    }
+    async fn authentication_provider_binding(
+        &self,
+        name: IdentityScopeName,
+    ) -> Result<Option<StorageProviderIdentityBinding>, StorageError> {
+        fixture_result()
+    }
+    async fn create_security_candidate(
+        &self,
+        candidate: StorageSecurityCandidate,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn get_security_candidate(
+        &self,
+        id: Uuid,
+        owner: StorageSecurityCandidateOwner,
+    ) -> Result<StorageSecurityCandidate, StorageError> {
+        fixture_result()
+    }
+    async fn verify_security_candidate(
+        &self,
+        candidate: StorageSecurityCandidate,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn activate_security_candidate(
+        &self,
+        request: StorageSecurityCandidateActivation,
+    ) -> Result<StorageRuntimeSettingsUpdateOutcome, StorageError> {
+        fixture_result()
+    }
+
     async fn load_runtime_settings(&self) -> Result<StorageRuntimeSettingsSnapshot, StorageError> {
         unimplemented!("compile-only adapter")
     }

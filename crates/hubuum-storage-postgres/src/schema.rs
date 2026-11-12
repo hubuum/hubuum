@@ -19,6 +19,15 @@ diesel::table! {
 }
 
 diesel::table! {
+    authentication_provider_bindings (name) {
+        name -> Text,
+        provider_id -> Uuid,
+        kind -> Text,
+        namespace -> Text,
+    }
+}
+
+diesel::table! {
     backup_task_outputs (id) {
         id -> Int4,
         task_id -> Int4,
@@ -187,6 +196,7 @@ diesel::table! {
         authenticated_at -> Timestamp,
         expires_at -> Timestamp,
         consumed_at -> Nullable<Timestamp>,
+        security_candidate_id -> Nullable<Uuid>,
     }
 }
 
@@ -948,6 +958,16 @@ diesel::table! {
 }
 
 diesel::table! {
+    security_candidates (id) {
+        id -> Uuid,
+        actor_id -> Int4,
+        token_id -> Int4,
+        expires_at -> Timestamptz,
+        document -> Jsonb,
+    }
+}
+
+diesel::table! {
     server_instances (instance_id) {
         instance_id -> Uuid,
         maintenance_generation -> Int8,
@@ -1162,6 +1182,7 @@ diesel::joinable!(tokens -> principals (principal_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     auth_sessions,
+    authentication_provider_bindings,
     backup_task_outputs,
     class_computation_state,
     class_schema_history,
@@ -1223,6 +1244,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     schema_profile_outputs,
     schema_repair_reports,
     schema_validation_work,
+    security_candidates,
     server_instances,
     service_accounts,
     system_maintenance,

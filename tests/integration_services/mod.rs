@@ -1,8 +1,33 @@
 use hubuum_auth_core::{AuthProviderError, ExternalIdentityProvider, ExternalUserRefreshRequest};
-use hubuum_auth_ldap::{LdapIdentityProvider, LdapScopeConfig};
+use hubuum_auth_ldap::{LdapIdentityProvider, LdapScopeConfig, LdapTransport};
 use hubuum_event_sink_email::EmailSink;
 
 use super::*;
+
+/// Exercise the same screened-socket entry point used by application LDAP.
+struct ScreenedFixtureTransport;
+
+#[async_trait::async_trait]
+impl LdapTransport for ScreenedFixtureTransport {
+    async fn connect(
+        &self,
+        host: &str,
+        port: u16,
+        deadline: Duration,
+    ) -> Result<std::net::TcpStream, AuthProviderError> {
+        timeout(deadline, async {
+            let addresses = hubuum_outbound_http::screen_host(host, port, true, false)
+                .await
+                .map_err(|_| AuthProviderError::Unavailable("Fixture resolution failed".into()))?;
+            tokio::net::TcpStream::connect(addresses.as_slice())
+                .await
+                .and_then(|stream| stream.into_std())
+                .map_err(|_| AuthProviderError::Unavailable("Fixture connection failed".into()))
+        })
+        .await
+        .map_err(|_| AuthProviderError::Unavailable("Fixture connection timed out".into()))?
+    }
+}
 
 fn ldap(endpoint: &str) -> LdapIdentityProvider {
     let config: LdapScopeConfig = serde_json::from_value(json!({
@@ -15,7 +40,9 @@ fn ldap(endpoint: &str) -> LdapIdentityProvider {
         "group_rules": [{"pattern": "^(.+)$", "name": "$1", "key": "$1"}]
     }))
     .unwrap();
-    LdapIdentityProvider::new(config).unwrap()
+    LdapIdentityProvider::new(config)
+        .unwrap()
+        .with_transport(std::sync::Arc::new(ScreenedFixtureTransport))
 }
 
 #[rstest]

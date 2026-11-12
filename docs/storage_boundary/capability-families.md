@@ -502,7 +502,11 @@ snapshot, never a partial one. Values cross the boundary as validated group
 types; adapters may persist them as JSON documents. Settings and audit records
 are deployment configuration: they survive logical restores, and portable
 backups exclude them. Native memory instances remain independent process-local
-stores. `WorkerNotificationProvider` is an
+stores. Candidates are separate, short-lived verification state with credential
+ownership and bounded admission. Every adapter implements atomic approved
+activation and offline recovery, preserves immutable provider namespaces, fences
+external login completion by revision, and discards candidates on restore.
+`WorkerNotificationProvider` is an
 optional application-composition provider: adapters may implement it for
 lower-latency wake-ups, but it is not part of `StorageBackend`.
 

@@ -2,9 +2,11 @@ use std::{sync::Arc, time::Duration};
 
 use futures_util::future::BoxFuture;
 use hubuum_storage_core::{
-    RuntimeSettingsStorage, StorageQueryObservationSettings, StorageRuntimeSettingsChange,
-    StorageRuntimeSettingsHistoryQuery, StorageRuntimeSettingsSnapshot,
-    StorageRuntimeSettingsUpdate, StorageRuntimeSettingsUpdateOutcome,
+    RuntimeSettingsStorage, StorageProviderIdentityBinding, StorageQueryObservationSettings,
+    StorageRuntimeSettingsChange, StorageRuntimeSettingsHistoryQuery,
+    StorageRuntimeSettingsSnapshot, StorageRuntimeSettingsUpdate,
+    StorageRuntimeSettingsUpdateOutcome, StorageSecurityCandidate,
+    StorageSecurityCandidateActivation, StorageSecurityCandidateOwner, StorageSecurityRecovery,
 };
 use tokio::sync::Notify;
 
@@ -16,6 +18,119 @@ use crate::storage::runtime_settings::{
 
 #[async_trait]
 impl RuntimeSettingsStorage for StorageHandle {
+    async fn recover_security_settings(
+        &self,
+        request: StorageSecurityRecovery,
+    ) -> Result<[StorageRuntimeSettingsUpdateOutcome; 2], StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::RuntimeSettings,
+            "recover_security_settings",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .recover_security_settings(request)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn purge_security_candidates(&self) -> Result<usize, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::RuntimeSettings,
+            "purge_security_candidates",
+            async { dispatch_backend!(self, |backend| backend.purge_security_candidates().await) },
+        )
+        .await
+    }
+
+    async fn authentication_provider_binding(
+        &self,
+        name: hubuum_domain::IdentityScopeName,
+    ) -> Result<Option<StorageProviderIdentityBinding>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::RuntimeSettings,
+            "authentication_provider_binding",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .authentication_provider_binding(name)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn create_security_candidate(
+        &self,
+        candidate: StorageSecurityCandidate,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::RuntimeSettings,
+            "create_security_candidate",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .create_security_candidate(candidate)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn get_security_candidate(
+        &self,
+        id: uuid::Uuid,
+        owner: StorageSecurityCandidateOwner,
+    ) -> Result<StorageSecurityCandidate, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::RuntimeSettings,
+            "get_security_candidate",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .get_security_candidate(id, owner)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn verify_security_candidate(
+        &self,
+        candidate: StorageSecurityCandidate,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::RuntimeSettings,
+            "verify_security_candidate",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .verify_security_candidate(candidate)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn activate_security_candidate(
+        &self,
+        request: StorageSecurityCandidateActivation,
+    ) -> Result<StorageRuntimeSettingsUpdateOutcome, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::RuntimeSettings,
+            "activate_security_candidate",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .activate_security_candidate(request)
+                    .await)
+            },
+        )
+        .await
+    }
+
     async fn load_runtime_settings(&self) -> Result<StorageRuntimeSettingsSnapshot, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -78,6 +193,7 @@ impl StorageHandle {
         self.inner
             .runtime_settings
             .refresh(async {
+                self.purge_security_candidates().await?;
                 let snapshot = self.load_runtime_settings().await?;
                 let deployment = crate::config::get_config()
                     .map_err(|error| StorageError::invalid_input(error.to_string()))?;

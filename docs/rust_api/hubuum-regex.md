@@ -1,6 +1,6 @@
 # `hubuum-regex` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.7` release train.
+Status: experimental public API in the storage SDK `0.8` release train.
 
 ## Purpose and Callers
 

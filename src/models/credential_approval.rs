@@ -57,6 +57,11 @@ pub struct RenewTokenRequest {
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CredentialOperation {
+    ActivateSecurityCandidate {
+        candidate_id: uuid::Uuid,
+        group: crate::models::runtime_settings::RuntimeSettingsGroup,
+        expected_revision: hubuum_domain::ResourceRevision,
+    },
     ImportCredentials {
         import: Box<ImportRequest>,
     },
@@ -89,6 +94,9 @@ impl std::fmt::Debug for CredentialOperation {
 impl CredentialOperation {
     pub fn kind(&self) -> StorageCredentialOperation {
         match self {
+            Self::ActivateSecurityCandidate { .. } => {
+                StorageCredentialOperation::ActivateSecurityCandidate
+            }
             Self::ImportCredentials { .. } => StorageCredentialOperation::ImportCredentials,
             Self::ConfirmRestore { .. } => StorageCredentialOperation::ConfirmRestore,
             Self::CreateToken { .. } => StorageCredentialOperation::CreateToken,
@@ -105,7 +113,8 @@ impl CredentialOperation {
             Self::UpdateUser { user_id, .. } => {
                 Some(PrincipalID::new(user_id.id()).expect("validated user ID"))
             }
-            Self::CreateUser { .. }
+            Self::ActivateSecurityCandidate { .. }
+            | Self::CreateUser { .. }
             | Self::ImportCredentials { .. }
             | Self::ConfirmRestore { .. } => None,
         }
@@ -185,10 +194,16 @@ impl CredentialApprovalSecret {
         &self,
         operation: &CredentialOperation,
     ) -> Result<StorageCredentialFingerprint, ApiError> {
+        self.bind_value(operation)
+    }
+    pub(crate) fn bind_value(
+        &self,
+        value: &impl Serialize,
+    ) -> Result<StorageCredentialFingerprint, ApiError> {
         let mut mac =
             Hmac::<Sha256>::new_from_slice(self.0.as_bytes()).expect("HMAC accepts any key length");
         mac.update(b"hubuum:credential-operation:v1:");
-        let bytes = serde_json::to_vec(operation).map_err(|_| {
+        let bytes = serde_json::to_vec(value).map_err(|_| {
             ApiError::InternalServerError("Could not bind credential operation".into())
         })?;
         mac.update(&bytes);
@@ -210,6 +225,8 @@ pub struct CredentialApprovalRecord {
     pub operation: String,
     pub target_id: Option<PrincipalID>,
     pub restore_job_id: Option<RestoreJobID>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub security_candidate_id: Option<uuid::Uuid>,
     pub invalidated_at: Option<DateTime<Utc>>,
     pub authenticated_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
@@ -224,6 +241,7 @@ impl From<StorageCredentialApprovalMetadata> for CredentialApprovalRecord {
             operation: m.operation().as_str().to_string(),
             target_id: m.target_id(),
             restore_job_id: m.restore_job_id(),
+            security_candidate_id: m.security_candidate_id(),
             invalidated_at: m.invalidated_at(),
             authenticated_at: m.authenticated_at(),
             expires_at: m.expires_at(),
