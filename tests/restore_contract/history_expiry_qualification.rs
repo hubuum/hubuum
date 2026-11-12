@@ -281,22 +281,25 @@ async fn measure() {
     let mut batches = Vec::new();
     let mut oversized_deferred_rows = 0;
     for (key, input) in &sources {
-        let intent = completed
+        let intents = completed
             .control()
             .authority()
             .expiry()
             .intents()
             .iter()
-            .find(|intent| intent.manifest().key() == *key)
-            .unwrap();
-        let native_input_bytes: u64 = intent
-            .manifest()
-            .members()
-            .iter()
-            .map(|member| input[&member.target().version().to_string()])
-            .sum();
-        batches.push(json!({"rows":intent.manifest().members().len(), "input_bytes":intent.manifest().input_bytes(),
-            "native_input_bytes":native_input_bytes, "removed_rows":intent.removals().len()}));
+            .filter(|intent| intent.manifest().key() == *key);
+        // Periodic production may admit another finite batch while a different
+        // scope waits. Account for every admitted batch, independent of UUID order.
+        for intent in intents {
+            let native_input_bytes: u64 = intent
+                .manifest()
+                .members()
+                .iter()
+                .map(|member| input[&member.target().version().to_string()])
+                .sum();
+            batches.push(json!({"rows":intent.manifest().members().len(), "input_bytes":intent.manifest().input_bytes(),
+                "native_input_bytes":native_input_bytes, "removed_rows":intent.removals().len()}));
+        }
         oversized_deferred_rows += input
             .values()
             .filter(|bytes| **bytes > 16 * 1024 * 1024)

@@ -29,8 +29,8 @@ def assess(report, resources):
                             and batch["input_bytes"] == batch["native_input_bytes"]
                             and batch["removed_rows"] == batch["rows"]
                             for batch in batches)
-                    and (report["shape"] != "rows" or batches[0]["rows"] == 1000)
-                    and (report["shape"] != "bytes" or batches[0]["input_bytes"] >= 15 * 1024 ** 2)
+                    and (report["shape"] != "rows" or any(batch["rows"] == 1000 for batch in batches))
+                    and (report["shape"] != "bytes" or any(batch["input_bytes"] >= 15 * 1024 ** 2 for batch in batches))
                     and (report["shape"] != "oversized" or report["oversized_deferred_rows"] == report["slots"])),
         "replay_pass": report["replay_preserved_receipts"] and report["quarantine_released"],
     }

@@ -36,6 +36,7 @@ jobs:
         run: |
           sudo apt-get update --yes
           sudo apt-get install --yes libssl-dev libpq-dev
+          mkdir -p target
           cargo test --locked --release --test restore_roundtrip --no-run \
             --features embedded-migrations,integration-test-support,tls-rustls,tls-openssl \
             --message-format=json > target/history-expiry-build.jsonl

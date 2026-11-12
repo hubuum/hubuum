@@ -16,6 +16,12 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
     def test_complete_evidence_passes(self):
         self.assertTrue(all(assess(*self.fixture()).values()))
 
+    def test_multiple_periodic_batches_do_not_depend_on_uuid_order(self):
+        report, resources = self.fixture()
+        report["batches"].insert(0, {"rows": 1, "removed_rows": 1,
+                                     "input_bytes": 100, "native_input_bytes": 100})
+        self.assertTrue(assess(report, resources)["h4_pass"])
+
     def test_missing_or_exceeded_physical_evidence_fails(self):
         for field, value in [("native_input_bytes", 999_999), ("rows", 1001),
                              ("input_bytes", 16 * 1024 ** 2 + 1), ("removed_rows", 999)]:
