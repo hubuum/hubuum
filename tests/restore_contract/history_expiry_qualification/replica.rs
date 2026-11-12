@@ -1,5 +1,6 @@
 //! Two independently limited processes share the real queue and signed repository.
 use super::*;
+use hubuum_task_core::TaskExecutionContext;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -77,64 +78,81 @@ async fn task_observations(
     scope: &StorageExecutionScope,
     tasks: &[TaskId],
 ) -> TaskObservations {
+    let (execution, _) = TaskExecutionContext::new(Duration::from_secs(60)).unwrap();
+    let scope = scope.clone().with_task_execution(Some(execution.clone()));
     storage
         .run_in_scope(scope.clone(), async {
-            let owner = storage
-                .admit_history_publication(HistoryPublicationKind::TaskOutput)
-                .await
-                .unwrap();
-            let result = storage
-                .run_in_scope(scope.clone().with_history_read(owner.context()), async {
-                    let mut observations = TaskObservations::default();
-                    for id in tasks {
-                        let task = storage.get_task_access(*id).await.unwrap().into_parts().0;
-                        if task.status().is_terminal()
-                            && task.status() != StorageTaskStatus::Succeeded
-                        {
-                            eprintln!(
-                                "Shared task {id:?} ended {:?}: {:?}",
-                                task.status(),
-                                task.summary()
-                            );
+            loop {
+                execution
+                    .check()
+                    .expect("Task observation deadline elapsed");
+                let owner = storage
+                    .admit_history_publication(HistoryPublicationKind::TaskOutput)
+                    .await
+                    .unwrap();
+                let result = storage
+                    .run_in_scope(scope.clone().with_history_read(owner.context()), async {
+                        let mut observations = TaskObservations::default();
+                        for id in tasks {
+                            let task = storage.get_task_access(*id).await?.into_parts().0;
+                            if task.status().is_terminal()
+                                && task.status() != StorageTaskStatus::Succeeded
+                            {
+                                eprintln!(
+                                    "Shared task {id:?} ended {:?}: {:?}",
+                                    task.status(),
+                                    task.summary()
+                                );
+                            }
+                            observations.statuses.push(task.status());
+                            let events = storage
+                                .list_task_events(StorageTaskChildListQuery::new(
+                                    *id,
+                                    QueryOptions::new(vec![], vec![], Some(100), None, false)
+                                        .unwrap(),
+                                ))
+                                .await?
+                                .into_parts()
+                                .0;
+                            observations.oversized_source_rows += events
+                                .iter()
+                                .filter_map(|event| {
+                                    event.data()?.get("oversized_source_rows")?.as_u64()
+                                })
+                                .sum::<u64>();
+                            observations.max_scanned_source_rows =
+                                observations.max_scanned_source_rows.max(
+                                    events
+                                        .iter()
+                                        .filter_map(|event| event.data()?.get("scanned")?.as_u64())
+                                        .max()
+                                        .unwrap_or(0),
+                                );
                         }
-                        observations.statuses.push(task.status());
-                        let events = storage
-                            .list_task_events(StorageTaskChildListQuery::new(
-                                *id,
-                                QueryOptions::new(vec![], vec![], Some(100), None, false).unwrap(),
-                            ))
+                        Ok::<_, StorageError>(observations)
+                    })
+                    .await;
+                storage
+                    .settle_history_publication(
+                        owner
+                            .after_drained(std::future::ready(Ok(())), std::future::ready(Ok(())))
                             .await
-                            .unwrap()
-                            .into_parts()
-                            .0;
-                        observations.oversized_source_rows += events
-                            .iter()
-                            .filter_map(|event| {
-                                event.data()?.get("oversized_source_rows")?.as_u64()
-                            })
-                            .sum::<u64>();
-                        observations.max_scanned_source_rows =
-                            observations.max_scanned_source_rows.max(
-                                events
-                                    .iter()
-                                    .filter_map(|event| event.data()?.get("scanned")?.as_u64())
-                                    .max()
-                                    .unwrap_or(0),
-                            );
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                match result {
+                    Ok(observations) => return observations,
+                    // Expiry may fence an observation between its task and event
+                    // reads. Drain and settle that owner before starting a fresh
+                    // capture, retaining this observation's original deadline.
+                    Err(error) if error.kind() == StorageErrorKind::Unavailable => {
+                        tokio::time::sleep(Duration::from_millis(25).min(execution.remaining()))
+                            .await;
                     }
-                    observations
-                })
-                .await;
-            storage
-                .settle_history_publication(
-                    owner
-                        .after_drained(std::future::ready(Ok(())), std::future::ready(Ok(())))
-                        .await
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            result
+                    Err(error) => panic!("Task observation failed: {error}"),
+                }
+            }
         })
         .await
 }
