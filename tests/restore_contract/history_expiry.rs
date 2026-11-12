@@ -168,6 +168,10 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
     })
     .catch_unwind()
     .await;
+    fixture
+        .resume_restore_with_recovery(&repository, &key_file)
+        .await
+        .expect("settle any committed fixture restore before replacing its source image");
     let restored = fixture
         .restore_original_with_recovery(&repository, &key_file)
         .await;

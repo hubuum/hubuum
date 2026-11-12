@@ -20,9 +20,152 @@ fn id(value: u128) -> Uuid {
     Uuid::from_u128((4 << 76) | (2 << 62) | value)
 }
 
+fn completion_reserved_history() -> hubuum_storage_core::HistoryLifecycleAuthority {
+    use hubuum_domain::{ResourceIdentity, VersionIdentity};
+    use hubuum_storage_core::{
+        DeletionCheckpointIdentity, HistoryDeletionRevision, HistoryExpiryCandidate,
+        HistoryExpiryExactDeletion, HistoryExpiryInputBytes, HistoryExpiryJournal,
+        HistoryExpiryOrigin, HistoryExpiryReadSpan, HistoryExpirySelection,
+        HistoryExpirySelectionOutcome, HistoryExpiryTrigger, HistoryLifecycleControl,
+        HistoryLifecycleScan, HistoryLifecycleSnapshot, HistoryPolicyApplication,
+        HistoryPolicyApplyRequest, HistoryPolicyBinding, HistoryPolicyChange, HistoryPolicyKey,
+        HistoryPolicyScope, HistoryRetentionAnchor, HistoryRetentionSeconds,
+        HistoryScopeAttribution, StorageIdentityHistoryKind, StorageRecordIdentity,
+    };
+    let at = |seconds| Utc.timestamp_opt(seconds, 0).unwrap();
+    let principal = PrincipalIdentity::generate();
+    let key = HistoryPolicyKey::new(
+        StorageIdentityHistoryKind::Collection,
+        HistoryPolicyScope::Deployment,
+    )
+    .unwrap();
+    let initial = HistoryLifecycleSnapshot::new(
+        HistoryLifecycleControl::empty(),
+        id(6_000_000),
+        HistoryDeletionRevision::new(0).unwrap(),
+        at(100),
+    )
+    .unwrap();
+    let proposal = HistoryPolicyChange::new(
+        key,
+        initial
+            .control()
+            .authority()
+            .policies()
+            .current_revision(key),
+        HistoryPolicyBinding::Expire {
+            trigger: HistoryExpiryTrigger::Age {
+                age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+                deleted_age_seconds: None,
+            },
+            minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+        },
+        HistoryPolicyApplication::Prospective,
+    )
+    .unwrap();
+    let mut control = initial
+        .control()
+        .apply(
+            HistoryPolicyApplyRequest::new(proposal, None),
+            principal,
+            initial.fence(),
+            at(100),
+        )
+        .unwrap()
+        .next()
+        .clone();
+    let mut exhausted = false;
+    for batch in 0..HistoryExpiryJournal::MAX_INTENTS {
+        let snapshot = HistoryLifecycleSnapshot::new(
+            control.clone(),
+            initial.fence().incarnation(),
+            initial.fence().deletion_revision(),
+            at(200),
+        )
+        .unwrap();
+        let mut selection = HistoryExpirySelection::new(
+            id(7_000_000 + batch as u128),
+            HistoryExpiryOrigin::Manual { principal },
+            HistoryLifecycleScan::new(key, 1000).unwrap(),
+            &snapshot,
+        )
+        .unwrap();
+        for offset in 0..1000 {
+            let sequence = (batch * 1000 + offset) as u128;
+            let resource =
+                ResourceIdentity::from_bytes(*id(8_000_000 + sequence).as_bytes()).unwrap();
+            let target = StorageRecordIdentity::new(
+                resource,
+                VersionIdentity::from_bytes(*id(9_000_000 + sequence).as_bytes()).unwrap(),
+            );
+            let candidate = HistoryExpiryCandidate::new(
+                StorageIdentityHistoryKind::Collection,
+                target,
+                Some(HistoryRetentionAnchor::Closed(at(150))),
+                vec![HistoryScopeAttribution::new(resource, None)],
+                false,
+            )
+            .unwrap()
+            .with_read_span(HistoryExpiryReadSpan::closed(at(110), at(150)).unwrap())
+            .unwrap();
+            assert!(matches!(
+                selection
+                    .consider(candidate, HistoryExpiryInputBytes::new(1).unwrap(), &[])
+                    .unwrap(),
+                HistoryExpirySelectionOutcome::Selected
+            ));
+        }
+        match control.admit_expiry(selection.finish().unwrap(), snapshot.fence()) {
+            Ok(change) => control = change.next().clone(),
+            Err(_) => {
+                exhausted = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        exhausted,
+        "Fixture must reach the actual completion-reserved admission ceiling"
+    );
+    // Populate the reserved terminal shape with validated exact-outcome values.
+    // This is an encoding/RSS fixture, never native physical-removal evidence.
+    let mut material = serde_json::to_value(control.authority()).unwrap();
+    for intent in material["expiry"].as_array_mut().unwrap() {
+        let original: hubuum_storage_core::HistoryExpiryIntent =
+            serde_json::from_value(intent.clone()).unwrap();
+        let mut completed = original.clone();
+        for member in original.manifest().members() {
+            completed = completed
+                .record_removed(
+                    HistoryExpiryExactDeletion::from_affected_rows(
+                        member.target(),
+                        DeletionCheckpointIdentity::new("a".repeat(64)).unwrap(),
+                        at(220),
+                        1,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        *intent = serde_json::to_value(completed).unwrap();
+    }
+    let removals = control
+        .authority()
+        .expiry()
+        .intents()
+        .iter()
+        .map(|intent| intent.manifest().members().len() as u64)
+        .sum::<u64>();
+    material["revision"] =
+        serde_json::json!((control.authority().revision().value() + removals).to_string());
+    serde_json::from_value(material).unwrap()
+}
+
 #[test]
 fn production_composite_publisher_round_trips_ten_thousand_receipts_and_bounds_live_files() {
     let fixture = Fixture::new();
+    let history = completion_reserved_history();
+    let history_bytes = serde_json::to_vec(&history).unwrap().len();
     let mut deletion = fixture.initial.clone();
     let lineage = deletion.state().lineage();
     let epoch = deletion.state().epoch();
@@ -165,7 +308,9 @@ fn production_composite_publisher_round_trips_ten_thousand_receipts_and_bounds_l
         .purge_batches(purges)
         .build()
         .unwrap();
-    let capture = ControlCheckpointCapture::new(deletion.clone(), state.clone()).unwrap();
+    let capture = ControlCheckpointCapture::new(deletion.clone(), state.clone())
+        .unwrap()
+        .with_history_lifecycle(history.clone());
     let first = fixture.repository.publish_control(&capture, false).unwrap();
     let released_holds = state
         .holds()
@@ -192,7 +337,9 @@ fn production_composite_publisher_round_trips_ten_thousand_receipts_and_bounds_l
     let release_checkpoint = fixture
         .repository
         .publish_control(
-            &ControlCheckpointCapture::new(deletion.clone(), released.clone()).unwrap(),
+            &ControlCheckpointCapture::new(deletion.clone(), released.clone())
+                .unwrap()
+                .with_history_lifecycle(history.clone()),
             false,
         )
         .unwrap();
@@ -229,7 +376,9 @@ fn production_composite_publisher_round_trips_ten_thousand_receipts_and_bounds_l
     let second = fixture
         .repository
         .publish_control(
-            &ControlCheckpointCapture::new(deletion.clone(), completed.clone()).unwrap(),
+            &ControlCheckpointCapture::new(deletion.clone(), completed.clone())
+                .unwrap()
+                .with_history_lifecycle(history.clone()),
             false,
         )
         .unwrap();
@@ -238,7 +387,9 @@ fn production_composite_publisher_round_trips_ten_thousand_receipts_and_bounds_l
     let last = fixture
         .repository
         .publish_control(
-            &ControlCheckpointCapture::new(deletion, advanced.clone()).unwrap(),
+            &ControlCheckpointCapture::new(deletion, advanced.clone())
+                .unwrap()
+                .with_history_lifecycle(history),
             false,
         )
         .unwrap();
@@ -284,7 +435,7 @@ fn production_composite_publisher_round_trips_ten_thousand_receipts_and_bounds_l
             .is_err()
     );
     eprintln!(
-        "composite_size_proof receipts=10000 manifests=157 policies=64 released_holds=1024 deletion_bytes={deletion_bytes} signed_checkpoint_bytes={} live_repository_bytes={live_bytes} files={} repository_limit={}",
+        "composite_size_proof receipts=10000 manifests=157 policies=64 released_holds=1024 deletion_bytes={deletion_bytes} history_bytes={history_bytes} signed_checkpoint_bytes={} live_repository_bytes={live_bytes} files={} repository_limit={}",
         fs::metadata(
             fixture
                 .repository
@@ -296,4 +447,29 @@ fn production_composite_publisher_round_trips_ten_thousand_receipts_and_bounds_l
         files.len(),
         3 * MAX_FILE_BYTES + 64 * 1024
     );
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "explicit Linux 512 MiB maximum composite checkpoint qualification"]
+fn maximum_composite_checkpoint_resource_probe() {
+    assert_eq!(std::env::consts::OS, "linux");
+    let started = std::time::Instant::now();
+    production_composite_publisher_round_trips_ten_thousand_receipts_and_bounds_live_files();
+    let peak = |who| {
+        let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+        // SAFETY: successful getrusage initializes the valid out-pointer;
+        // the explicit Linux driver reports ru_maxrss in KiB.
+        assert_eq!(unsafe { libc::getrusage(who, usage.as_mut_ptr()) }, 0);
+        u64::try_from(unsafe { usage.assume_init() }.ru_maxrss).unwrap() * 1024
+    };
+    let report = serde_json::json!({"shape":"authority", "maximum_composite_verified":true,
+        "publisher_fixture_seconds":started.elapsed().as_secs_f64(),
+        "kernel_peak_rss_bytes":peak(libc::RUSAGE_SELF),
+        "kernel_child_peak_rss_bytes":peak(libc::RUSAGE_CHILDREN)});
+    fs::write(
+        std::env::var("HUBUUM_TEST_HISTORY_QUALIFICATION_REPORT").unwrap(),
+        serde_json::to_vec_pretty(&report).unwrap(),
+    )
+    .unwrap();
 }

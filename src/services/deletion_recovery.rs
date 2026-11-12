@@ -380,7 +380,8 @@ pub(crate) async fn prepare_history_read_fixture(
     directory: &Path,
     key: &Path,
 ) -> Result<(), ApiError> {
-    // This is test-owned restriction preparation, never irreversible cleanup.
+    // This prepares restrictions and protected exact replay for fixture-owned
+    // history. It is not native selection/input-budget qualification.
     // Use genuine isolation/quarantine and sign the actual native capture;
     // never override a captured component or initialize acknowledged authority.
     let isolation = runtime_isolation(directory, key, true).await?;

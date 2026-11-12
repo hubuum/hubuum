@@ -185,15 +185,19 @@ pub async fn recover_expired_task_leases(
     backend: &impl StorageContext,
     batch_size: usize,
 ) -> Result<Vec<TaskRecord>, ApiError> {
-    storage_handle(backend)
-        .recover_expired_task_leases(batch_size)
-        .await?
-        .into_iter()
-        .map(|task| {
-            crate::observability::metrics::task_stop_acknowledged(&task);
-            task_from_storage(task)
-        })
-        .collect()
+    let storage = storage_handle(backend);
+    crate::tasks::history::run(&storage, async {
+        storage
+            .recover_expired_task_leases(batch_size)
+            .await?
+            .into_iter()
+            .map(|task| {
+                crate::observability::metrics::task_stop_acknowledged(&task);
+                task_from_storage(task)
+            })
+            .collect()
+    })
+    .await
 }
 
 pub(crate) async fn append_task_event(
@@ -1128,4 +1132,20 @@ pub(crate) async fn cancel_task(
         .await?;
     crate::observability::metrics::task_cancellation_requested(&outcome);
     find_task(backend, outcome.task().id()).await
+}
+
+#[cfg(test)]
+mod lease_recovery_publication_tests {
+    use super::*;
+    use hubuum_storage_core::{DeletionControlStorage, HistoryLifecycleStorage};
+
+    #[actix_web::test]
+    async fn lease_recovery_admits_and_retires_its_online_publication() {
+        let raw = crate::storage::StorageHandle::memory();
+        let registration = raw.register_history_runtime(None).await.unwrap();
+        let storage = raw.clone().with_runtime_owner(registration.owner());
+        let recovered = recover_expired_task_leases(&storage, 100).await;
+        raw.unregister_runtime(registration).await.unwrap();
+        assert!(recovered.unwrap().is_empty());
+    }
 }

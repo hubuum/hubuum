@@ -45,8 +45,8 @@ async fn qualified_history_expiry_worker() {
 
 async fn measure() {
     let _guard = RESTORE_TEST_LOCK.lock().await;
-    let shape = std::env::var("HUBUUM_HISTORY_QUALIFICATION_SHAPE").unwrap();
-    let slots: usize = std::env::var("HUBUUM_HISTORY_QUALIFICATION_SLOTS")
+    let shape = std::env::var("HUBUUM_TEST_HISTORY_QUALIFICATION_SHAPE").unwrap();
+    let slots: usize = std::env::var("HUBUUM_TEST_HISTORY_QUALIFICATION_SLOTS")
         .unwrap()
         .parse()
         .unwrap();
@@ -54,6 +54,7 @@ async fn measure() {
     let (updates, payload_bytes) = match shape.as_str() {
         "rows" => (1001, 128),
         "bytes" => (1001, 32 * 1024),
+        "large_row" => (4, 4 * 1024 * 1024 - 8192),
         "oversized" => (2, 17 * 1024 * 1024),
         _ => panic!("Unknown qualification shape"),
     };
@@ -155,7 +156,9 @@ async fn measure() {
             fixture
                 .update_collection_description(
                     collection.id(),
-                    if shape == "oversized" && update == 1 {
+                    if (shape == "oversized" && update == 1)
+                        || (shape == "large_row" && update % 2 == 1)
+                    {
                         "closed oversized source".into()
                     } else {
                         format!("{update}:{payload}")
@@ -166,7 +169,18 @@ async fn measure() {
         }
         sources.push((key, native_input(&pool, resource).await));
     }
-    let backup = fixture.capture(true).await.unwrap();
+    let backup = if shape == "oversized" {
+        assert!(
+            matches!(
+                fixture.capture(true).await,
+                Err(hubuum::errors::ApiError::PayloadTooLarge(_))
+            ),
+            "An unsupported source row must fail backup before publication"
+        );
+        None
+    } else {
+        Some(fixture.capture(true).await.unwrap())
+    };
     let registration = storage.register_history_runtime(None).await.unwrap();
     let runtime = fixture.runtime_read_storage(postgres_test_pool_with_timeout(
         &runtime_database_url(),
@@ -276,10 +290,57 @@ async fn measure() {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     let worker_seconds = started.elapsed().as_secs_f64();
+    let oversized_reported_rows = if shape == "oversized" {
+        bound
+            .run_in_scope(scope.clone(), async {
+                let owner = bound
+                    .admit_history_publication(HistoryPublicationKind::TaskOutput)
+                    .await
+                    .unwrap();
+                let count = bound
+                    .run_in_scope(scope.clone().with_history_read(owner.context()), async {
+                        let mut count = 0;
+                        for task in &tasks {
+                            let events = bound
+                                .list_task_events(StorageTaskChildListQuery::new(
+                                    *task,
+                                    QueryOptions::new(vec![], vec![], Some(100), None, false)
+                                        .unwrap(),
+                                ))
+                                .await
+                                .unwrap()
+                                .into_parts()
+                                .0;
+                            count += events
+                                .iter()
+                                .filter_map(|event| {
+                                    event.data()?.get("oversized_source_rows")?.as_u64()
+                                })
+                                .sum::<u64>();
+                        }
+                        count
+                    })
+                    .await;
+                bound
+                    .settle_history_publication(
+                        owner
+                            .after_drained(std::future::ready(Ok(())), std::future::ready(Ok(())))
+                            .await
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                count
+            })
+            .await
+    } else {
+        0
+    };
     bound.unregister_runtime(registration).await.unwrap();
     let completed = storage.capture_history_lifecycle().await.unwrap();
     let mut batches = Vec::new();
     let mut oversized_deferred_rows = 0;
+    let mut oversized_preserved_rows = 0;
     for (key, input) in &sources {
         let intents = completed
             .control()
@@ -297,31 +358,63 @@ async fn measure() {
                 .iter()
                 .map(|member| input[&member.target().version().to_string()])
                 .sum();
+            let largest_claimed_row_bytes = intent
+                .manifest()
+                .members()
+                .iter()
+                .map(|member| input[&member.target().version().to_string()])
+                .max()
+                .unwrap();
             batches.push(json!({"rows":intent.manifest().members().len(), "input_bytes":intent.manifest().input_bytes(),
+                "largest_claimed_row_bytes":largest_claimed_row_bytes,
                 "native_input_bytes":native_input_bytes, "removed_rows":intent.removals().len()}));
         }
         oversized_deferred_rows += input
             .values()
             .filter(|bytes| **bytes > 16 * 1024 * 1024)
             .count();
+        if shape == "oversized" {
+            let HistoryPolicyScope::Collection { identity } = key.scope() else {
+                unreachable!("fixture collection scope")
+            };
+            let remaining = native_input(&pool, identity).await;
+            for (version, bytes) in input.iter().filter(|(_, bytes)| **bytes > 16 * 1024 * 1024) {
+                assert_eq!(
+                    remaining.get(version),
+                    Some(bytes),
+                    "Oversized rows must survive the worker unchanged"
+                );
+                oversized_preserved_rows += 1;
+            }
+        }
     }
     let receipts = completed.control().authority().expiry().clone();
-    fixture
-        .restore_with_recovery(backup, &repository, &signing_key)
-        .await
-        .unwrap();
-    let replayed = storage.capture_history_lifecycle().await.unwrap();
-    let replay_preserved_receipts = replayed.control().authority().expiry() == &receipts;
-    let quarantine_released = storage
-        .read_application_control()
-        .await
-        .unwrap()
-        .is_released_for(&storage.read_deletion_control().await.unwrap());
+    let (replay_preserved_receipts, quarantine_released) = if let Some(backup) = backup {
+        fixture
+            .restore_with_recovery(backup, &repository, &signing_key)
+            .await
+            .unwrap();
+        let replayed = storage.capture_history_lifecycle().await.unwrap();
+        (
+            Some(replayed.control().authority().expiry() == &receipts),
+            Some(
+                storage
+                    .read_application_control()
+                    .await
+                    .unwrap()
+                    .is_released_for(&storage.read_deletion_control().await.unwrap()),
+            ),
+        )
+    } else {
+        (None, None)
+    };
     let report = json!({"shape":shape, "slots":slots, "measured_at":Utc::now(), "batches":batches,
         "worker_seconds":worker_seconds, "oversized_deferred_rows":oversized_deferred_rows,
+        "oversized_preserved_rows":oversized_preserved_rows, "backup_rejected_oversized":shape == "oversized",
+        "oversized_reported_rows":oversized_reported_rows,
         "kernel_peak_rss_bytes":high_water(libc::RUSAGE_SELF), "kernel_child_peak_rss_bytes":high_water(libc::RUSAGE_CHILDREN),
         "replay_preserved_receipts":replay_preserved_receipts, "quarantine_released":quarantine_released});
-    let destination = std::env::var("HUBUUM_HISTORY_QUALIFICATION_REPORT").unwrap();
+    let destination = std::env::var("HUBUUM_TEST_HISTORY_QUALIFICATION_REPORT").unwrap();
     std::fs::write(destination, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     std::fs::remove_dir_all(root).unwrap();
 }

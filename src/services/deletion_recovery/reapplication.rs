@@ -169,7 +169,15 @@ async fn reapply_history(
             )
             .map_err(invalid_control)?;
             if storage.reapply_history_expiry(request).await? {
-                session = publish(session, storage.capture_control_checkpoint().await?).await?;
+                let capture = storage.capture_control_checkpoint().await?;
+                // Reintroduced already-receipted copies leave authority and
+                // original clocks unchanged. Keep their existing protection
+                // until generic replay advances the deletion revision; the
+                // restored image's cleared proofs cannot replace the old
+                // completed checkpoint at the same revision vector.
+                if capture.history_lifecycle() != session.checkpoint().history_lifecycle() {
+                    session = publish(session, capture).await?;
+                }
             }
         }
     }

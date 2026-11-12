@@ -7003,6 +7003,69 @@
       "dynamic_prefix": false
     },
     {
+      "name": "HUBUUM_TEST_HISTORY_QUALIFICATION_REPORT",
+      "owner": "operations",
+      "exposure": "sensitive_metadata",
+      "value_kind": "path",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TEST_HISTORY_QUALIFICATION_SHAPE",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "enum",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [
+        "rows",
+        "bytes",
+        "large_row",
+        "oversized",
+        "authority"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TEST_HISTORY_QUALIFICATION_SLOTS",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [
+        "1",
+        "2"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
       "name": "HUBUUM_TEST_S3_CA",
       "owner": "operations",
       "exposure": "sensitive_metadata",

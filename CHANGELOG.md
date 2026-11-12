@@ -19,6 +19,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   and clocks; retained cleanup precedes fresh scans. Manual admission rechecks
   configured administrator authority, and periodic work retains its policy root.
   Production admission remains disabled pending restore and resource qualification.
+- Gated history expiry reports source rows exceeding its input or identity
+  budgets as explicit task warnings, preserves those rows and advances the
+  bounded scan so later eligible versions can progress.
 
 - Gated history expiry tasks can remove retained exact closed versions in bounded
   transactions after independent membership protection and positive publication

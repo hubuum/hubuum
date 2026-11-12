@@ -93,7 +93,7 @@ pub(crate) async fn admit_on(
             // Defer a row that can fit a fresh page. An individually
             // oversized row cannot pin every later page to this prefix.
             if !row.row_within_budget {
-                window.advance();
+                window.advance_oversized()?;
             }
             stopped = true;
             continue;

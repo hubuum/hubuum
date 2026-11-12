@@ -16,6 +16,31 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
     def test_complete_evidence_passes(self):
         self.assertTrue(all(assess(*self.fixture()).values()))
 
+    def test_largest_supported_row_requires_native_size_evidence(self):
+        report, resources = self.fixture()
+        report["shape"] = "large_row"
+        report["batches"][0]["largest_claimed_row_bytes"] = 4 * 1024 ** 2 - 4096
+        self.assertTrue(all(assess(report, resources).values()))
+        report["batches"][0]["largest_claimed_row_bytes"] = 1024
+        self.assertFalse(assess(report, resources)["h4_pass"])
+
+    def test_unsupported_backup_row_requires_preservation_and_explicit_task_outcome(self):
+        report, resources = self.fixture()
+        report.update(shape="oversized", slots=1, oversized_deferred_rows=1,
+                      oversized_preserved_rows=1, oversized_reported_rows=1,
+                      backup_rejected_oversized=True, replay_preserved_receipts=None,
+                      quarantine_released=None)
+        self.assertTrue(all(assess(report, resources).values()))
+        report["oversized_reported_rows"] = 0
+        self.assertFalse(assess(report, resources)["oversized_outcome_pass"])
+
+    def test_maximum_composite_requires_its_real_publisher_assertions(self):
+        report, resources = self.fixture()
+        report.update(shape="authority", maximum_composite_verified=True)
+        self.assertTrue(all(assess(report, resources).values()))
+        report["maximum_composite_verified"] = False
+        self.assertFalse(all(assess(report, resources).values()))
+
     def test_multiple_periodic_batches_do_not_depend_on_uuid_order(self):
         report, resources = self.fixture()
         report["batches"].insert(0, {"rows": 1, "removed_rows": 1,

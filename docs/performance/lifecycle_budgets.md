@@ -105,10 +105,21 @@ The two-replica shared topology requires its own run; a successful single-proces
 measurement establishes only the worker H1/H4 bounds.
 
 The row shape reaches 1,000 members. The byte shape approaches 16 MiB using full
-native encoded-row sizes, independently summed before deletion. The oversized
-shape retains and reports a row above that ceiling without a false receipt.
-Each run also restores the actual full-history image through signed coordinator
-replay and checks original receipts and quarantine release. Raw samples retain
+native encoded-row sizes, independently summed before deletion. The large-row
+shape exercises supported rows approaching the 4 MiB backup ceiling. The
+oversized shape retains a row above the 16 MiB expiry ceiling, verifies an
+explicit task warning and verifies backup rejection before publication.
+The authority shape measures the real composite publisher with 10,000 task
+receipts, maximum-count task/deletion fixtures and history filled to its actual
+completion-reserved admission ceiling, then populated with terminal receipts.
+It records encoded sizes and includes fixture construction in RSS and elapsed
+time. This supported count/reservation shape does not represent every possible
+4 MiB history encoding; its synthetic receipts provide serialization and resource
+evidence.
+The supported worker shapes also restore the actual full-history image through
+signed coordinator replay and check original receipts and quarantine release.
+Unsupported backup rows and the authority serialization probe do not claim that
+replay evidence. Raw samples retain
 20 ms RSS and kernel high-water measurements, including process baseline, and
 reject unexpected child processes. Build features and binary digests accompany
 the results. These finite runs do not establish P6's steady-state lag or orphan

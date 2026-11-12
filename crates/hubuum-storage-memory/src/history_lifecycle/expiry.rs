@@ -63,6 +63,7 @@ pub(super) async fn process_task(
         .map_err(invalid_contract_value)?;
     let snapshot = guard.history_lifecycle_snapshot()?;
     let mut state = guard.clone();
+    let mut oversized_source_rows = 0;
     let next = if checkpoint.admitted() {
         checkpoint
             .retained_manifest(&snapshot)
@@ -101,6 +102,7 @@ pub(super) async fn process_task(
             .require_selection_authorization(&checkpoint)
             .map_err(invalid_contract_value)?;
         let page = admit_on(&mut state, selection)?;
+        oversized_source_rows = page.oversized_source_rows();
         checkpoint
             .record_page(&page)
             .map_err(invalid_contract_value)?
@@ -126,12 +128,23 @@ pub(super) async fn process_task(
     state.account_task_checkpoint(lease.task_id())?;
     state.append_task_event_record(
         lease.task_id(),
-        StorageTaskEventInput::new("running", "History expiry continuation committed").with_data(
-            Some(serde_json::json!({
-                "batch": next.batch(), "admitted": next.admitted(),
-                "pass_finished": next.pass_finished(), "finished": next.finished(), "removed": removed,
-            })),
-        ),
+        StorageTaskEventInput::new(
+            if oversized_source_rows > 0 {
+                "warning"
+            } else {
+                "running"
+            },
+            if oversized_source_rows > 0 {
+                "History expiry deferred source rows exceeding input or identity budgets"
+            } else {
+                "History expiry continuation committed"
+            },
+        )
+        .with_data(Some(serde_json::json!({
+            "batch": next.batch(), "admitted": next.admitted(),
+            "pass_finished": next.pass_finished(), "finished": next.finished(), "removed": removed,
+            "oversized_source_rows": oversized_source_rows,
+        }))),
     )?;
     task_for_expiry(&state, &lease)?;
     *guard = state;
@@ -455,32 +468,26 @@ fn admit_on(
     let mut consider = |row: &StorageBackupRow,
                         source: Option<&MemoryHistoryEntry>|
      -> Result<ScanStep, StorageError> {
-        let Some(bytes) = bounded_encoded_bytes(
-            row,
-            u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES) - input_bytes,
-        )?
+        let Some(bytes) =
+            bounded_encoded_bytes(row, u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES))?
         else {
-            return Ok(if input_bytes == 0 {
-                ScanStep::Oversized
-            } else {
-                ScanStep::Defer
-            });
+            return Ok(ScanStep::Oversized);
         };
+        if bytes > u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES) - input_bytes {
+            return Ok(ScanStep::Defer);
+        }
         input_bytes += bytes;
         let metadata_before_row = metadata_bytes;
         let raw = row.get("logical_identity").filter(|value| !value.is_null());
         if let Some(raw) = raw {
-            let Some(bytes) = bounded_encoded_bytes(
-                raw,
-                HistoryLifecycleScan::MAX_INPUT_BYTES as u64 - metadata_bytes,
-            )?
+            let Some(bytes) =
+                bounded_encoded_bytes(raw, HistoryLifecycleScan::MAX_INPUT_BYTES as u64)?
             else {
-                return Ok(if metadata_bytes == 0 {
-                    ScanStep::Oversized
-                } else {
-                    ScanStep::Defer
-                });
+                return Ok(ScanStep::Oversized);
             };
+            if bytes > HistoryLifecycleScan::MAX_INPUT_BYTES as u64 - metadata_bytes {
+                return Ok(ScanStep::Defer);
+            }
             metadata_bytes += bytes;
         }
         let time = |field| {
@@ -614,7 +621,7 @@ fn admit_on(
         match step {
             ScanStep::Advance => window.advance(),
             ScanStep::Oversized => {
-                window.advance();
+                window.advance_oversized().map_err(invalid_contract_value)?;
                 stopped = true;
                 break;
             }

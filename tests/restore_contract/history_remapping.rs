@@ -1,5 +1,5 @@
-//! Supported logical restore plus configured authorization. Retained authority is
-//! a signed read-gate fixture, not executable expiry or transport qualification.
+//! Supported logical restore, protected replay and configured authorization.
+//! Retained authority is a signed logical fixture, not H4 or transport qualification.
 use futures_util::FutureExt;
 use std::os::unix::fs::PermissionsExt;
 use std::panic::AssertUnwindSafe;
@@ -437,6 +437,7 @@ async fn remapped_original_history_requires_configured_authorization(
     let mut recovery_paths = None;
     let mut fixture_intent = None;
     let mut retired_permit = None;
+    let mut repair_snapshot = None;
     let result = AssertUnwindSafe(async {
         let directory =
             std::env::temp_dir().join(format!("hubuum-513-read-recovery-{}", Uuid::new_v4()));
@@ -596,6 +597,7 @@ async fn remapped_original_history_requires_configured_authorization(
         let mut backup = mapping
             .snapshot(fixture.capture(true).await?)
             .map_err(fixture_error)?;
+        repair_snapshot = Some(backup.clone());
         let mismatch = match condition {
             "object_uuid" => Some(facts.target().resource()),
             "collection_uuid" => Some(facts.attribution().collection()),
@@ -660,7 +662,36 @@ async fn remapped_original_history_requires_configured_authorization(
                 }
             }
         }
-        prepare_history_read_fixture(storage, authority, &repository, &signing_key).await?;
+        if let Err(error) =
+            prepare_history_read_fixture(storage, authority, &repository, &signing_key).await
+        {
+            if mismatch.is_some() {
+                let expected = if condition == "object_uuid" {
+                    "first receipt"
+                } else {
+                    "differs from retained membership"
+                };
+                assert!(
+                    error.to_string().contains(expected),
+                    "Unexpected correspondence rejection: {error}"
+                );
+                let application = storage.read_application_control().await?;
+                assert!(!application.is_released_for(&storage.read_deletion_control().await?));
+                let retained = storage.capture_history_lifecycle().await?;
+                assert!(
+                    retained
+                        .control()
+                        .authority()
+                        .expiry()
+                        .intent(manifest_identity)
+                        .unwrap()
+                        .removals()
+                        .is_empty()
+                );
+                return Ok(("reapplication_rejected", Some(error)));
+            }
+            return Err(error);
+        }
         let runtime = read.register_history_runtime(None).await?;
         let runtime_owner = runtime.owner();
         pending_runtime = Some(runtime);
@@ -817,7 +848,18 @@ async fn remapped_original_history_requires_configured_authorization(
     }
     if kind == StorageBackendKind::Postgres {
         if let Some((directory, key)) = recovery_paths {
-            if let Err(error) = fixture.resume_restore_with_recovery(&directory, &key).await {
+            // Reintroduce the known correct source before restoring the original
+            // fixture image. A mismatched UUID cannot fabricate a first receipt;
+            // teardown must let real protected replay establish that outcome.
+            if let Some(snapshot) = repair_snapshot {
+                if let Err(error) = fixture
+                    .restore_with_recovery(snapshot, &directory, &key)
+                    .await
+                {
+                    cleanup_errors.push(format!("correct source recovery: {error}"));
+                }
+            } else if let Err(error) = fixture.resume_restore_with_recovery(&directory, &key).await
+            {
                 cleanup_errors.push(format!("committed restore recovery: {error}"));
             }
             if cleanup_errors.is_empty()

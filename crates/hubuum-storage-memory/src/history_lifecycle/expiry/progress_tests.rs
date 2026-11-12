@@ -449,9 +449,21 @@ async fn bounded_pass_revisits_released_prefix_without_reselecting_retained_rows
     }));
 }
 
+#[rstest]
 #[tokio::test]
-async fn oversized_first_row_does_not_starve_later_memory_work() {
+async fn oversized_first_row_does_not_starve_later_memory_work(
+    #[values(false, true)] prefix: bool,
+) {
     let storage = MemoryStorage::new();
+    if prefix {
+        seed(
+            &storage,
+            StorageIdentityHistoryKind::Collection,
+            "small prefix",
+            "before",
+        )
+        .await;
+    }
     let oversized = seed(
         &storage,
         StorageIdentityHistoryKind::Collection,
@@ -471,9 +483,11 @@ async fn oversized_first_row_does_not_starve_later_memory_work() {
         &storage,
         &runtime,
         StorageIdentityHistoryKind::Collection,
-        1,
+        1000,
     )
     .await;
+    let first = run.page().await;
+    assert_eq!(first.oversized_source_rows(), 1);
     let members = run.pass().await;
     storage.unregister_runtime(runtime).await.unwrap();
     assert!(!members.is_empty());

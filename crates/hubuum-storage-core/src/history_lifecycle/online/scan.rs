@@ -88,6 +88,7 @@ pub enum HistoryExpiryScanProgress {
 pub struct HistoryExpiryAdmissionResult {
     manifest: Option<HistoryExpiryManifest>,
     scanned: u32,
+    oversized_source_rows: u32,
     progress: HistoryExpiryScanProgress,
 }
 
@@ -102,6 +103,12 @@ impl HistoryExpiryAdmissionResult {
 
     pub const fn scanned(&self) -> u32 {
         self.scanned
+    }
+
+    /// Examined rows that cannot fit even a fresh input/identity budget. They
+    /// remain untouched, and are advanced past rather than pinning the scan.
+    pub const fn oversized_source_rows(&self) -> u32 {
+        self.oversized_source_rows
     }
 
     pub const fn progress(&self) -> &HistoryExpiryScanProgress {
@@ -119,6 +126,7 @@ pub struct HistoryExpiryScanWindow<'a> {
     through: HistoryExpiryScanPosition,
     observed: HistoryExpiryScanPosition,
     scanned: u32,
+    oversized_source_rows: u32,
 }
 
 impl<'a> HistoryExpiryScanWindow<'a> {
@@ -140,6 +148,7 @@ impl<'a> HistoryExpiryScanWindow<'a> {
             through,
             observed: after,
             scanned: 0,
+            oversized_source_rows: 0,
         })
     }
 
@@ -168,6 +177,17 @@ impl<'a> HistoryExpiryScanWindow<'a> {
 
     pub fn advance(&mut self) {
         self.after = self.observed;
+    }
+
+    pub fn advance_oversized(&mut self) -> Result<(), StorageValidationError> {
+        if self.observed <= self.after {
+            return Err(invalid(
+                "Oversized history outcome requires a newly observed row",
+            ));
+        }
+        self.oversized_source_rows += 1;
+        self.advance();
+        Ok(())
     }
 
     pub fn finish(
@@ -208,6 +228,7 @@ impl<'a> HistoryExpiryScanWindow<'a> {
         Ok(HistoryExpiryAdmissionResult {
             manifest,
             scanned: self.scanned,
+            oversized_source_rows: self.oversized_source_rows,
             progress,
         })
     }
@@ -394,5 +415,21 @@ mod tests {
         let mut window = request.scan_window(10).unwrap();
         window.observe(1).unwrap();
         assert!(window.finish(None, false).is_err());
+    }
+
+    #[test]
+    fn oversized_source_outcome_is_explicit_and_advances_once() {
+        let request = request(2);
+        let mut window = request.scan_window(2).unwrap();
+        assert!(window.advance_oversized().is_err());
+        window.observe(1).unwrap();
+        window.advance_oversized().unwrap();
+        assert!(window.advance_oversized().is_err());
+        let page = window.finish(None, false).unwrap();
+        assert_eq!(page.oversized_source_rows(), 1);
+        assert!(matches!(
+            page.progress(),
+            HistoryExpiryScanProgress::Continue(_)
+        ));
     }
 }
