@@ -47,7 +47,8 @@ assert_literal_include_is_code() {
 # Filesystem adapter implementation and native fault tests remain production
 # inputs even though selecting it for task outputs is a separate activation.
 for expiry_input in .github/workflows/history-expiry-qualification.yml \
-  tests/python/integration/history_expiry.py tests/restore_contract/history_expiry_qualification.rs; do
+  tests/python/integration/history_expiry.py tests/restore_contract/history_expiry_qualification.rs \
+  tests/restore_contract/history_expiry_qualification/replica.rs; do
   expiry_output="$(bash "$classifier" "$expiry_input")"
   assert_flag "$expiry_output" code true
   assert_flag "$expiry_output" rust true

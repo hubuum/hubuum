@@ -1994,6 +1994,8 @@ fn process_environment_metadata(name: &str) -> Option<CliArgumentMetadata> {
             &["rows", "bytes", "large_row", "oversized", "authority"],
         ),
         "HUBUUM_TEST_HISTORY_QUALIFICATION_SLOTS" => ("integer", &[], &["1", "2"]),
+        "HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICAS" => ("integer", &["1"], &["1", "2"]),
+        "HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICA" => ("integer", &[], &["0", "1"]),
         "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY" => {
             ("boolean", &["false"], &["true", "false", "1", "0"])
         }

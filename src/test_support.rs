@@ -57,6 +57,41 @@ pub async fn qualify_history_expiry_iteration(
     crate::tasks::qualify_history_expiry_iteration(context).await
 }
 
+/// Compose a separate qualification process without modifying its database.
+/// Pool limits are supplied explicitly by the resource fixture.
+pub fn history_expiry_qualification_storage(pool: PostgresPool) -> StorageHandle {
+    StorageHandle::postgres(pool)
+}
+
+/// Include the ordinary HTTP router, middleware and driver in measured workers.
+/// The test owns the returned server and must drain it before unregistering.
+pub async fn start_history_expiry_qualification_api(
+    context: &crate::permissions::AppContext,
+) -> std::io::Result<(actix_web::dev::Server, std::net::SocketAddr)> {
+    let mut config = crate::config::get_config()
+        .map_err(|error| std::io::Error::other(error.to_string()))?
+        .clone();
+    config.bind_ip = "127.0.0.1".into();
+    config.port = 0;
+    config.runtime_role = crate::config::RuntimeRole::Api;
+    config.actix_workers = 2;
+    config.tls_cert_path = None;
+    config.tls_key_path = None;
+    let backup = crate::backups::BackupSettings::new(
+        config.backup_output_retention_hours,
+        config
+            .backup_budget()
+            .map_err(|error| std::io::Error::other(error.to_string()))?,
+    )
+    .map_err(std::io::Error::other)?;
+    let restore = crate::restores::RestoreSettings::new(
+        config.restore_stage_retention_minutes,
+        config.restore_max_upload_bytes,
+    )
+    .map_err(std::io::Error::other)?;
+    crate::application::start_http_role(&config, context, &backup, &restore, None).await
+}
+
 static TEST_TRACING_BASELINE: OnceLock<()> = OnceLock::new();
 
 fn ensure_test_tracing_baseline() {

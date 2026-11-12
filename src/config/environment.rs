@@ -307,6 +307,8 @@ pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
     ),
     option!("HUBUUM_TEST_HISTORY_QUALIFICATION_SHAPE", Operations),
     option!("HUBUUM_TEST_HISTORY_QUALIFICATION_SLOTS", Operations),
+    option!("HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICAS", Operations),
+    option!("HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICA", Operations),
     option!(
         "HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL",
         Operations,

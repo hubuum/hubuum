@@ -291,7 +291,7 @@ for path in "$@"; do
       code=true
       openapi=true
       ;;
-    tests/python/integration/history_expiry.py | tests/restore_contract/history_expiry_qualification.rs)
+    tests/python/integration/history_expiry.py | tests/restore_contract/history_expiry_qualification.rs | tests/restore_contract/history_expiry_qualification/*)
       code=true
       rust=true
       container=true

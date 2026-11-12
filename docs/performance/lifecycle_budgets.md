@@ -99,10 +99,22 @@ heartbeat, dispatch and finalization pipeline through a test-only integration
 entry point. Production registration and the standard worker kind set stay
 gated. The dedicated workflow uses `ci:validate` temporarily to measure local
 and shared profiles, with one warm-up and five fresh processes per input shape.
-Each process has two CPUs, a 512 MiB memory ceiling and pool size eight; shared
-processes exercise two slots. PostgreSQL has the declared profile resources.
-The two-replica shared topology requires its own run; a successful single-process
-measurement establishes only the worker H1/H4 bounds.
+Each measured process has two CPUs, a 512 MiB memory ceiling and total pool
+capacity eight (two administrative/control connections and six runtime
+connections). Local runs use one combined API/worker process with one task slot;
+shared runs use two separate combined API/worker processes with two slots each.
+Both run the ordinary HTTP router and middleware with two HTTP workers.
+PostgreSQL has the declared profile resources. A separate unmeasured fixture
+coordinator prepares the shared database and later performs offline restore;
+its memory never substitutes for worker RSS evidence.
+Before task execution, each replica opens a real authenticated, near-4 MiB
+collection response through a constrained receive window. The recipe requires
+native admission with no physical removals while these earlier responses remain
+blocked, then drops the clients and requires both worker replicas to execute
+queued work, retire their HTTP publications and finish all original tasks.
+Every retained admitted batch must also have complete receipts before workers
+stop. Shared runs retain native database round-trip samples and require their
+p95 to remain within the profile's 2 ms ceiling.
 
 The row shape reaches 1,000 members. The byte shape approaches 16 MiB using full
 native encoded-row sizes, independently summed before deletion. The large-row

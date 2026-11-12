@@ -7003,6 +7003,50 @@
       "dynamic_prefix": false
     },
     {
+      "name": "HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICA",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [
+        "0",
+        "1"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICAS",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "1"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [
+        "1",
+        "2"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
       "name": "HUBUUM_TEST_HISTORY_QUALIFICATION_REPORT",
       "owner": "operations",
       "exposure": "sensitive_metadata",

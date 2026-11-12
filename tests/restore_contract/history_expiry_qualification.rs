@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
 use std::time::Instant;
 
+mod replica;
+
 #[derive(QueryableByName)]
 struct NativeInput {
     #[diesel(sql_type = Text)]
@@ -51,19 +53,29 @@ async fn measure() {
         .parse()
         .unwrap();
     assert!(matches!(slots, 1 | 2));
+    let replicas: usize = std::env::var("HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICAS")
+        .unwrap_or_else(|_| "1".into())
+        .parse()
+        .unwrap();
+    assert!(matches!(replicas, 1 | 2));
     let (updates, payload_bytes) = match shape.as_str() {
         "rows" => (1001, 128),
-        "bytes" => (1001, 32 * 1024),
+        // Reach a full byte-limited batch plus a continuation without making
+        // four scopes exceed the supported 256 MiB full-history backup budget.
+        "bytes" => (513, 32 * 1024),
         "large_row" => (4, 4 * 1024 * 1024 - 8192),
         "oversized" => (2, 17 * 1024 * 1024),
         _ => panic!("Unknown qualification shape"),
     };
-    let pool = postgres_test_pool_with_timeout(&database_url(), 8, 0);
+    let pool = postgres_test_pool_with_timeout(&database_url(), 2, 0);
     let fixture = RestoreContractFixture::new(StorageBackendKind::Postgres, pool.clone())
         .await
         .unwrap();
     let storage = fixture.storage();
-    let root = std::env::temp_dir().join(format!("hubuum-expiry-measured-{}", Uuid::new_v4()));
+    let destination = std::path::PathBuf::from(
+        std::env::var("HUBUUM_TEST_HISTORY_QUALIFICATION_REPORT").unwrap(),
+    );
+    let root = replica::runtime_directory(&destination);
     let repository = root.join("repository");
     std::fs::create_dir_all(&repository).unwrap();
     std::fs::set_permissions(&repository, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -86,7 +98,7 @@ async fn measure() {
                 StorageTaskKind::HistoryExpiry,
                 TaskScopeCapacity::new(
                     capacity.outstanding(),
-                    TaskCapacityLimit::new(slots as u64).unwrap(),
+                    TaskCapacityLimit::new((slots * replicas) as u64).unwrap(),
                     capacity.resident_bytes(),
                 ),
                 TaskCapacityLimit::new(8).unwrap(),
@@ -95,7 +107,7 @@ async fn measure() {
         .await
         .unwrap();
     let mut sources = Vec::new();
-    for slot in 0..slots {
+    for slot in 0..slots * replicas {
         let collection = fixture
             .create_collection(
                 &format!("expiry_qualification_{}_{}", Uuid::new_v4(), slot),
@@ -169,6 +181,18 @@ async fn measure() {
         }
         sources.push((key, native_input(&pool, resource).await));
     }
+    let slow_consumer = {
+        let admin = hubuum::tests::create_test_admin(&pool).await;
+        let token = admin.create_token(&pool).await.unwrap().get_token();
+        let collection = fixture
+            .create_collection(
+                &format!("slow_consumer_{}", Uuid::new_v4()),
+                &"s".repeat(4 * 1024 * 1024 - 8192),
+            )
+            .await
+            .unwrap();
+        (collection.id().id(), token)
+    };
     let backup = if shape == "oversized" {
         assert!(
             matches!(
@@ -184,12 +208,12 @@ async fn measure() {
     let registration = storage.register_history_runtime(None).await.unwrap();
     let runtime = fixture.runtime_read_storage(postgres_test_pool_with_timeout(
         &runtime_database_url(),
-        8,
+        6,
         0,
     ));
     let options =
         serde_json::from_value(json!({"directory":repository,"key":signing_key})).unwrap();
-    let (bound, context) = hubuum::test_support::history_expiry_qualification_context(
+    let (bound, _) = hubuum::test_support::history_expiry_qualification_context(
         runtime,
         registration.owner(),
         options,
@@ -231,112 +255,21 @@ async fn measure() {
             }
         })
         .await;
-    let started = Instant::now();
-    let deadline = started + std::time::Duration::from_secs(1800);
-    loop {
-        let iterations =
-            (0..slots).map(|_| hubuum::test_support::qualify_history_expiry_iteration(&context));
-        for result in futures_util::future::join_all(iterations).await {
-            result.unwrap();
-        }
-        let statuses = bound
-            .run_in_scope(scope.clone(), async {
-                let owner = bound
-                    .admit_history_publication(HistoryPublicationKind::TaskOutput)
-                    .await
-                    .unwrap();
-                let values = bound
-                    .run_in_scope(scope.clone().with_history_read(owner.context()), async {
-                        let mut statuses = Vec::new();
-                        for id in &tasks {
-                            statuses.push(
-                                bound
-                                    .get_task_access(*id)
-                                    .await
-                                    .unwrap()
-                                    .into_parts()
-                                    .0
-                                    .status(),
-                            );
-                        }
-                        statuses
-                    })
-                    .await;
-                bound
-                    .settle_history_publication(
-                        owner
-                            .after_drained(std::future::ready(Ok(())), std::future::ready(Ok(())))
-                            .await
-                            .unwrap(),
-                    )
-                    .await
-                    .unwrap();
-                values
-            })
-            .await;
-        if statuses.iter().all(|status| status.is_terminal()) {
-            assert!(
-                statuses
-                    .iter()
-                    .all(|status| *status == StorageTaskStatus::Succeeded),
-                "worker outcomes: {statuses:?}"
-            );
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "Worker did not make bounded terminal progress: {statuses:?}"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    let worker_seconds = started.elapsed().as_secs_f64();
-    let oversized_reported_rows = if shape == "oversized" {
-        bound
-            .run_in_scope(scope.clone(), async {
-                let owner = bound
-                    .admit_history_publication(HistoryPublicationKind::TaskOutput)
-                    .await
-                    .unwrap();
-                let count = bound
-                    .run_in_scope(scope.clone().with_history_read(owner.context()), async {
-                        let mut count = 0;
-                        for task in &tasks {
-                            let events = bound
-                                .list_task_events(StorageTaskChildListQuery::new(
-                                    *task,
-                                    QueryOptions::new(vec![], vec![], Some(100), None, false)
-                                        .unwrap(),
-                                ))
-                                .await
-                                .unwrap()
-                                .into_parts()
-                                .0;
-                            count += events
-                                .iter()
-                                .filter_map(|event| {
-                                    event.data()?.get("oversized_source_rows")?.as_u64()
-                                })
-                                .sum::<u64>();
-                        }
-                        count
-                    })
-                    .await;
-                bound
-                    .settle_history_publication(
-                        owner
-                            .after_drained(std::future::ready(Ok(())), std::future::ready(Ok(())))
-                            .await
-                            .unwrap(),
-                    )
-                    .await
-                    .unwrap();
-                count
-            })
-            .await
-    } else {
-        0
-    };
     bound.unregister_runtime(registration).await.unwrap();
+    let started = Instant::now();
+    let replica_reports = replica::run_replicas(
+        &destination,
+        &root,
+        &tasks,
+        slow_consumer.0,
+        slow_consumer.1,
+        replicas,
+    )
+    .await;
+    let worker_seconds = started.elapsed().as_secs_f64();
+    let oversized_reported_rows = replica_reports[0]["oversized_reported_rows"]
+        .as_u64()
+        .unwrap();
     let completed = storage.capture_history_lifecycle().await.unwrap();
     let mut batches = Vec::new();
     let mut oversized_deferred_rows = 0;
@@ -408,13 +341,13 @@ async fn measure() {
     } else {
         (None, None)
     };
-    let report = json!({"shape":shape, "slots":slots, "measured_at":Utc::now(), "batches":batches,
+    let report = json!({"shape":shape, "slots":slots, "replicas":replicas, "measured_at":Utc::now(), "batches":batches,
         "worker_seconds":worker_seconds, "oversized_deferred_rows":oversized_deferred_rows,
         "oversized_preserved_rows":oversized_preserved_rows, "backup_rejected_oversized":shape == "oversized",
         "oversized_reported_rows":oversized_reported_rows,
-        "kernel_peak_rss_bytes":high_water(libc::RUSAGE_SELF), "kernel_child_peak_rss_bytes":high_water(libc::RUSAGE_CHILDREN),
+        "kernel_peak_rss_bytes":replica_reports.iter().map(|report| report["kernel_peak_rss_bytes"].as_u64().unwrap()).max().unwrap(),
+        "kernel_child_peak_rss_bytes":high_water(libc::RUSAGE_CHILDREN), "replica_reports":replica_reports,
         "replay_preserved_receipts":replay_preserved_receipts, "quarantine_released":quarantine_released});
-    let destination = std::env::var("HUBUUM_TEST_HISTORY_QUALIFICATION_REPORT").unwrap();
     std::fs::write(destination, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     std::fs::remove_dir_all(root).unwrap();
 }

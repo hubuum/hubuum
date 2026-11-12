@@ -591,6 +591,24 @@ async fn run_http_role(
     restore_settings: &RestoreSettings,
     active_event_sinks: Option<i64>,
 ) -> std::io::Result<()> {
+    let (server, _) = start_http_role(
+        config,
+        app_context,
+        backup_settings,
+        restore_settings,
+        active_event_sinks,
+    )
+    .await?;
+    supervise_http_server(server, wait_for_runtime_shutdown()).await
+}
+
+pub(crate) async fn start_http_role(
+    config: &AppConfig,
+    app_context: &AppContext,
+    backup_settings: &BackupSettings,
+    restore_settings: &RestoreSettings,
+    active_event_sinks: Option<i64>,
+) -> std::io::Result<(Server, std::net::SocketAddr)> {
     let storage_backend = app_context.storage_backend_descriptor();
     let authorization_backend = app_context.permission_backend().kind();
     let login_rate_limit_store_settings = login_rate_limit_store_settings(config)
@@ -715,12 +733,13 @@ async fn run_http_role(
 
     // Own the signal path so every successful exit follows an explicit graceful
     // stop. Actix's built-in forced signal path does not wait for its workers.
+    let address = server.addrs()[0];
     let server = server
         .disable_signals()
         .shutdown_timeout(HTTP_SHUTDOWN_TIMEOUT.as_secs())
         .workers(config.actix_workers)
         .run();
-    supervise_http_server(server, wait_for_runtime_shutdown()).await
+    Ok((server, address))
 }
 
 async fn supervise_http_server(

@@ -1,10 +1,13 @@
 """Measure isolated real expiry-worker runs under the lifecycle H1/H4 ceilings."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
 from pathlib import Path
 import platform
 import statistics
+from subprocess import SubprocessError
+import time
 
 from integration.rust_tests import run_tests
 from integration.scheduling_benchmark import Fixture, percentile
@@ -12,6 +15,7 @@ from integration.scheduling_benchmark import Fixture, percentile
 
 TEST = "restore_contract::history_expiry_qualification::qualified_history_expiry_worker"
 PUBLISHER_TEST = "services::deletion_recovery::repository::size_tests::maximum_composite_checkpoint_resource_probe"
+REPLICA_TEST = "restore_contract::history_expiry_qualification::replica::qualified_history_expiry_replica"
 CEILING = 512 * 1024 ** 2
 
 
@@ -36,7 +40,7 @@ def assess(report, resources):
                     and (report["shape"] != "rows" or any(batch["rows"] == 1000 for batch in batches))
                     and (report["shape"] != "bytes" or any(batch["input_bytes"] >= 15 * 1024 ** 2 for batch in batches))
                     and (report["shape"] != "large_row" or any(4 * 1024 ** 2 - 8192 <= batch["largest_claimed_row_bytes"] <= 4 * 1024 ** 2 for batch in batches))
-                    and (report["shape"] != "oversized" or report["oversized_deferred_rows"] == report["slots"])),
+                    and (report["shape"] != "oversized" or report["oversized_deferred_rows"] == report["slots"] * report.get("replicas", 1))),
     }
     if report["shape"] == "oversized":
         checks["oversized_outcome_pass"] = (report["backup_rejected_oversized"]
@@ -44,7 +48,91 @@ def assess(report, resources):
             and report["oversized_reported_rows"] >= report["oversized_deferred_rows"])
     else:
         checks["replay_pass"] = report["replay_preserved_receipts"] and report["quarantine_released"]
+    replicas = report.get("replica_reports", [])
+    measured = resources.get("replicas", [])
+    if replicas and measured:
+        checks["replica_topology_pass"] = (
+            len(replicas) == len(measured) == report["replicas"]
+            and {replica["replica"] for replica in replicas} == set(range(report["replicas"]))
+            and all(replica["slots"] == report["slots"] and replica["http_workers"] == 2
+                    and replica["initial_claimed_slots"] == report["slots"]
+                    and replica["claimed_iterations"] > 0
+                    and replica["slow_consumer_blocked"] and replica["slow_consumer_retired"]
+                    and 0 < replica["kernel_peak_rss_bytes"] <= CEILING
+                    and replica["kernel_child_peak_rss_bytes"] == 0 for replica in replicas)
+            and (report["replicas"] == 1 or all(replica["database_round_trip_us"]
+                    and percentile(replica["database_round_trip_us"], 95) <= 2000 for replica in replicas))
+            and all(process["samples"] > 0
+                    and 0 < process["peak_rss_bytes"] <= CEILING
+                    and 0 < process["peak_hwm_bytes"] <= CEILING for process in measured))
+    else:
+        checks["replica_topology_pass"] = False
     return checks
+
+
+def replica_run(fixture, binary, arguments, name, environment, destination):
+    """Provisioning stays outside the measured API/worker processes."""
+    root = destination.with_suffix(".runtime")
+    replicas = int(environment["HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICAS"])
+    names = [name, *(f"{name}-replica-{index}" for index in range(replicas))]
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        workers = []
+        coordinator = executor.submit(fixture.binary, binary, arguments, name,
+                                      environment=environment)
+
+        def await_path(path):
+            deadline = time.monotonic() + 1800
+            while not path.is_file():
+                if coordinator.done():
+                    coordinator.result()
+                    raise RuntimeError("Coordinator exited before its phase marker")
+                for worker in workers:
+                    if worker.done():
+                        worker.result()
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Shared qualification phase timed out: " + path.name)
+                time.sleep(0.1)
+
+        try:
+            await_path(root / "prepared")
+            for index in range(replicas):
+                replica_env = {**environment, "HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICA": str(index)}
+                workers.append(executor.submit(
+                    fixture.binary, binary, [REPLICA_TEST, "--exact", "--ignored", "--nocapture"],
+                    names[index + 1], worker=True, worker_process=index, environment=replica_env))
+            for index in range(replicas):
+                await_path(root / f"ready-{index}")
+            (root / "start").write_bytes(b"")
+            outputs = {}
+            futures = {coordinator: name, **{worker: names[index + 1] for index, worker in enumerate(workers)}}
+            for future in as_completed(futures, timeout=7200):
+                outputs[futures[future]] = future.result()
+                (destination.parent / f"{futures[future]}.log").write_text(outputs[futures[future]])
+            return outputs[name]
+        except BaseException:
+            # Stop only this run's owned containers before fixture DB teardown.
+            pending = [coordinator, *workers]
+            for future in pending:
+                future.cancel()
+            deadline = time.monotonic() + 60
+            while True:
+                for process in names:
+                    container = fixture.name + "-" + process
+                    if container in fixture.containers:
+                        try:
+                            fixture.docker("rm", "--force", "--volumes", container, timeout=10)
+                        except RuntimeError:
+                            # A returning peer may already have removed its container.
+                            pass
+                        if container in fixture.containers:
+                            fixture.containers.remove(container)
+                if all(future.done() for future in pending):
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Owned qualification processes did not stop after failure")
+                # A running launch may create its container after the first stop.
+                time.sleep(0.1)
+            raise
 
 
 def run(args):
@@ -55,8 +143,9 @@ def run(args):
 
     manifest = {
         "profile": "lifecycle-" + args.profile + "-v1",
-        "topology": "one measured worker process; one local slot or two shared slots",
-        "full_shared_topology_qualified": False,
+        "topology": ("one combined API/worker process, one worker slot and two HTTP workers" if args.profile == "local" else
+                     "two separate combined API/worker processes, two worker slots and two HTTP workers each"),
+        "coordinator": "separate unmeasured fixture/restore process; never part of worker RSS evidence",
         "worker_binary_sha256": digest(args.binary),
         "publisher_binary_sha256": digest(args.publisher_binary),
         "admin_binary_sha256": digest(args.admin_binary),
@@ -92,11 +181,15 @@ def run(args):
                         "HUBUUM_TEST_HISTORY_QUALIFICATION_SHAPE": shape,
                         "HUBUUM_TEST_HISTORY_QUALIFICATION_REPORT": "/reports/" + destination.name,
                         "HUBUUM_TEST_HISTORY_QUALIFICATION_SLOTS": "1" if args.profile == "local" else "2",
+                        "HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICAS": "2" if args.profile == "shared" else "1",
                     })
                     try:
-                        output = fixture.binary(binary, command[1:], name, worker=True,
-                                                environment=measured_env)
-                    except (RuntimeError, OSError):
+                        if shape != "authority":
+                            output = replica_run(fixture, binary, command[1:], name, measured_env, destination)
+                        else:
+                            output = fixture.binary(binary, command[1:], name, worker=True,
+                                                    environment=measured_env)
+                    except (RuntimeError, OSError, SubprocessError):
                         container = fixture.name + "-" + name
                         if container in fixture.containers:
                             fixture.docker("rm", "--force", "--volumes", container)
@@ -109,14 +202,25 @@ def run(args):
                     run_tests([str(binary), test, "--exact", "--ignored", "--nocapture"],
                               args.admin_binary, fixture.url("template_fixture"), execute=execute)
                     report = json.loads(destination.read_text())
-                    resources = json.loads((args.output / f"{name}-container.json").read_text())["resources"]
+                    if shape != "authority" and (report["replicas"] != (1 if args.profile == "local" else 2)
+                                                  or report["slots"] != (1 if args.profile == "local" else 2)):
+                        raise ValueError("Measured process topology differs from the selected profile")
+                    if "replica_reports" in report:
+                        processes = [json.loads((args.output / f"{name}-replica-{index}-container.json").read_text())["resources"]
+                                     for index in range(report["replicas"])]
+                        resources = {"samples": sum(process["samples"] for process in processes),
+                                     "peak_rss_bytes": max(process["peak_rss_bytes"] for process in processes),
+                                     "peak_hwm_bytes": max(process["peak_hwm_bytes"] for process in processes),
+                                     "replicas": processes}
+                    else:
+                        resources = json.loads((args.output / f"{name}-container.json").read_text())["resources"]
                     checks = assess(report, resources)
                     sample = {"shape": shape, "repeat": repeat, "warmup": repeat == 0,
                               "checks": checks, "report": report, "resources": resources}
                     samples.append(sample)
                     if not all(checks.values()):
                         failures.append(name)
-                except (RuntimeError, OSError, ValueError, KeyError) as error:
+                except (RuntimeError, OSError, SubprocessError, ValueError, KeyError) as error:
                     failures.append(name)
                     (args.output / f"{name}-failure.txt").write_text(str(error) + "\n")
                 (args.output / "samples.json").write_text(json.dumps(samples, indent=2) + "\n")
@@ -125,7 +229,7 @@ def run(args):
     expected = 5 * len(manifest["shapes"])
     summary = {"measured_runs": len(measured), "expected_measured_runs": expected,
                "failures": failures, "h1_h4_worker_qualified": len(measured) == expected and not failures,
-               "full_shared_topology_qualified": False}
+               "full_shared_topology_qualified": args.profile == "shared" and len(measured) == expected and not failures}
     for shape in manifest["shapes"]:
         field = "publisher_fixture_seconds" if shape == "authority" else "worker_seconds"
         seconds = [sample["report"][field] for sample in measured if sample["shape"] == shape]
