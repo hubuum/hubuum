@@ -1546,7 +1546,7 @@ mod tests {
         http::{Method, StatusCode},
     };
     use rstest::rstest;
-    use serde_json::Value;
+    use serde_json::{Value, json};
     use std::collections::{BTreeSet, HashSet};
 
     fn openapi_json() -> Value {
@@ -2485,7 +2485,13 @@ mod tests {
                 let is_client_config = path == "/api/v1/config" && method == "get";
                 let is_restore_status =
                     path == "/api/v1/restores/{restore_id}/status" && method == "get";
-                if path.starts_with("/api/v1/auth/interactions/{id}/") {
+                if path == "/api/v1/auth/interactions" && method == "post" {
+                    assert_eq!(
+                        operation.get("security"),
+                        Some(&json!([{}, {"bearer_auth": []}])),
+                        "begin must document anonymous login and privileged bearer authentication"
+                    );
+                } else if path.starts_with("/api/v1/auth/interactions/{id}/") {
                     let security = operation
                         .get("security")
                         .and_then(Value::as_array)

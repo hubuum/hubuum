@@ -58,6 +58,10 @@ origins and targets. Production uses host-only `__Host-` cookies with `Secure`,
 `HttpOnly`, `SameSite=Lax` and a ten-minute maximum age. A reverse proxy must
 preserve the configured public Host; forwarded headers cannot select the origin.
 All replicas must use the same browser configuration.
+Application replicas must also synchronize their system clocks. Interaction
+creation, proof timestamps, transitions and retention use application UTC in
+both storage adapters. Lifecycle validation does not compare those timestamps
+against a separate database-host clock.
 
 A CLI or BFF sends `interaction_mode: "browser"` when beginning an interaction.
 The default remains `credentials` for existing password clients. The browser next
@@ -101,6 +105,11 @@ existing credential-approval response, never a session. Use that response with
 the existing operation endpoint and approval header. Passwords and restore
 capabilities in operations remain on the server-to-server path and are excluded
 from the browser prompt.
+Interaction requests are bounded to 64 KiB, including the serialized operation;
+sealed operations are bounded to 128 KiB within the 256 KiB persisted document.
+For larger credential imports, use the existing direct credential-approval API
+and its separately bounded import flow. Raising only the JSON extractor limit
+would not make those operations fit the durable interaction contract.
 
 Beginning `provider_verification` requires a local recovery administrator's
 unscoped bearer, a `candidate_id`, and the candidate's enabled LDAP provider UUID.
@@ -115,6 +124,11 @@ the initiating client. The existing activation endpoint still requires
 its separate operation-bound administrator approval. A failed, changed, expired,
 revoked or unsupported candidate fails closed. OIDC/OAuth execution and complete
 project configure/test/activate qualification remain separate #577/#578/#581 work.
+For candidates containing multiple enabled LDAP providers, first verify all but
+the final provider through the existing candidate LDAP verification endpoint.
+Hosted verification then verifies the remaining provider and returns the receipt
+for the fully verified candidate. This interaction purpose completes a candidate;
+it does not persist partial verification progress for several hosted requests.
 
 ## Authority and completion
 
@@ -179,11 +193,13 @@ HTTP admission uses `governor`'s GCRA limiter for each IP, allowing bursts of
 every two seconds and one total request every 100 milliseconds. Rejected begins
 still consume the total request budget. `Retry-After: 60` is conservative.
 
-Each replica retains at most 10,000 client-IP buckets. Requests without an
-attributable IP share one bucket. Active buckets are never evicted to admit a
-new address; idle buckets can be reclaimed after a minute, when both quotas
-have fully replenished. These per-replica budgets complement the shared
-global/client/actor storage limits; they do not claim a cluster-wide IP quota.
+Each replica retains at most 10,000 buckets. IPv4 addresses have individual
+buckets; IPv6 addresses within a /64 subnet share a bucket. Requests without an
+attributable IP and new addresses arriving when the registry is full share one
+reserved overflow bucket. Active buckets are never evicted to admit a new address;
+idle buckets can be reclaimed after a minute, when both quotas have fully
+replenished. These per-replica budgets complement the shared global/client/actor
+storage limits; they do not claim a cluster-wide IP quota.
 
 PostgreSQL serializes creation capacity checks and locks settings before
 interaction, principal and credential rows. Terminal rows cannot be reopened.
@@ -202,7 +218,7 @@ The interaction implementation delegates reusable security mechanisms to crates:
 | Password-bearing operation binding | `hmac` HMAC-SHA-256 keyed by the private redemption capability |
 | Operation confidentiality and authentication | Existing `ring` AES-256-GCM envelopes, authenticated with the interaction ID |
 | CSRF, interaction-digest and verification-receipt comparisons | `subtle` constant-time byte comparison; public lengths may differ |
-| Per-IP admission rate calculation | `governor` GCRA; application-owned bounded bucket retention |
+| Address/subnet admission rate calculation | `governor` GCRA, `ipnet` IPv6 aggregation; application-owned bounded bucket retention |
 | HTTP, form and cookie parsing | Actix Web and its cookie implementation |
 | URL parsing and HTML escaping | `url` and MiniJinja autoescaping |
 

@@ -138,8 +138,9 @@ impl BrowserSettings {
         let Some(target) = binding.return_target() else {
             return Ok(None);
         };
-        let current =
-            self.return_target(target.id(), binding.client(), target.nonce().to_owned())?;
+        let current = self
+            .return_target(target.id(), binding.client(), target.nonce().to_owned())
+            .map_err(|_| InteractionError::ConfigurationChanged)?;
         if &current != target {
             return Err(InteractionError::ConfigurationChanged.into());
         }

@@ -88,7 +88,10 @@ OIDC and OAuth definitions are validated and may be stored disabled. Their live
 activation remains blocked until the later provider/interaction implementation
 can produce a real browser sign-in proof. Connectivity alone cannot enable them.
 The accepted browser contract and fixtures remain in [authentication](authentication/contract.md).
-This change does not advertise the future `/auth/interactions` API as available.
+Hosted local/LDAP interactions are available through the shared
+[interaction API](authentication_interactions.md), including candidate verification
+when the selected LDAP provider has the final pending identity check. For several
+enabled LDAP providers, verify the other providers through `verify-ldap` first.
 
 Browser credentials use `keep`, `reference`, `replace` or `clear` actions.
 References resolve in consumer-specific namespaces:

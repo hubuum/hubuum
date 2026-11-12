@@ -218,3 +218,31 @@ Identity/freshness orchestration remains #576, with ecosystem qualification in
 issue #581. Those downstream tasks are not claimed complete by this review. Final CI,
 immutable candidate acceptance and integration commit identities are recorded in
 PR #591, issue #575 and Project 6 when available.
+
+### Final automated-review corrections
+
+The subsequent automated source review identified additional edge cases. Return
+URI bounds now apply after URL normalization; removed bound BFF registrations
+return `configuration_changed`; OpenAPI declares anonymous login and conditional
+human-bearer authentication for privileged begin requests. Interaction transitions
+and cleanup use application UTC consistently with creation and proof timestamps,
+with PostgreSQL regressions for a database clock 100 ms ahead or behind.
+Application replica clocks still require synchronization.
+
+Approval completion locks actor and target principals together before its actor
+fence; a reciprocal-administrator concurrency regression exercises a blocked token
+lock. The maintenance activity guard now survives the admitted handler, preserving
+restore draining. Admission aggregates IPv6 /64 addresses with `ipnet` and reserves
+a shared bounded overflow bucket without evicting active quotas. Focused tests
+cover normalization round trips, removed registrations, subnet/overflow behavior
+and maintenance activity across a handler suspension.
+
+Two existing bounds are retained and documented explicitly. Interaction JSON is
+limited to 64 KiB, its sealed operation to 128 KiB and its persisted document to
+256 KiB; larger credential imports use the direct credential-approval API. Hosted
+candidate verification completes the final pending LDAP identity check; candidates
+with several enabled LDAP providers use the direct candidate verification endpoint
+for the other providers first. Increasing only a JSON extractor limit or treating
+partial verification as a fully verified candidate would violate those bounds.
+The browser matrix above is evidence for the preceding HTTPS qualification
+revision; final automated regression and CI evidence is pinned in the PR ledger.

@@ -91,6 +91,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Authentication interactions consistently use application UTC for lifecycle
+  checks and cleanup, preserve ordered actor/target locks for approvals, and
+  report removed BFF registrations as changed configuration. Normalized return
+  URLs obey their stored size bound. IPv6 subnet and shared overflow quotas keep
+  admission bounded without rejecting every new address when the registry fills.
+- Restore draining now counts admitted HTTP requests until their handlers return,
+  preventing restore replay from overtaking active interaction requests.
+
 - Unregistered deployment LDAP providers no longer hide local interaction login.
   Authentication settings activation and offline recovery now let the database
   advance revoked token revisions, preserving the production revision guard.

@@ -97,13 +97,7 @@ async fn lock_actor(
     connection: &mut PostgresConnection,
     claim: &StorageCredentialClaim,
 ) -> Result<Option<NaiveDateTime>, PostgresStorageError> {
-    // Principal locks precede token locks, matching password updates. Sort the
-    // actor and target so two administrators acting on one another cannot invert them.
-    sql_query("SELECT id FROM principals WHERE id = $1 OR id = $2 ORDER BY id FOR UPDATE")
-        .bind::<Integer, _>(claim.actor_id().id())
-        .bind::<Nullable<Integer>, _>(claim.target_id().map(PrincipalId::id))
-        .execute(connection)
-        .await?;
+    lock_principals(connection, claim).await?;
     let token = sql_query("SELECT t.expires_at FROM tokens t JOIN users u ON u.id=t.principal_id \
         WHERE t.id=$1 AND t.principal_id=$2 AND t.revoked_at IS NULL \
         AND NOT t.permission_scoped AND NOT t.resource_scoped AND u.anonymized_at IS NULL \
@@ -112,6 +106,20 @@ async fn lock_actor(
         .bind::<Timestamp,_>(claim.legacy_valid_after().naive_utc())
         .get_result::<ActiveToken>(connection).await.optional()?.ok_or_else(denied)?;
     Ok(token.expires_at)
+}
+
+pub(super) async fn lock_principals(
+    connection: &mut PostgresConnection,
+    claim: &StorageCredentialClaim,
+) -> Result<(), PostgresStorageError> {
+    // Principal locks precede token locks, matching password updates. Sort the
+    // actor and target so two administrators acting on one another cannot invert them.
+    sql_query("SELECT id FROM principals WHERE id = $1 OR id = $2 ORDER BY id FOR UPDATE")
+        .bind::<Integer, _>(claim.actor_id().id())
+        .bind::<Nullable<Integer>, _>(claim.target_id().map(PrincipalId::id))
+        .execute(connection)
+        .await?;
+    Ok(())
 }
 
 async fn audit(

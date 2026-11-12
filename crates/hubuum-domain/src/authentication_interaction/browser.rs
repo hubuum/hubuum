@@ -34,7 +34,7 @@ impl InteractionReturnTarget {
             || !id
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
-            || uri.len() > 2048
+            || url.as_str().len() > 2048
             || url.host_str().is_none()
             || !(url.scheme() == "https" || url.scheme() == "http" && loopback)
             || !url.username().is_empty()
@@ -226,6 +226,26 @@ impl From<InteractionVerificationDetails> for VerificationDocument {
 mod tests {
     use super::*;
     use rstest::rstest;
+
+    #[rstest]
+    #[case::within_bound(300, true)]
+    #[case::expanded_past_bound(500, false)]
+    fn normalized_return_target_preserves_round_trip(
+        #[case] repetitions: usize,
+        #[case] accepted: bool,
+    ) {
+        let result = InteractionReturnTarget::try_new(
+            "web".into(),
+            format!("https://example.com/{}", "é".repeat(repetitions)),
+            "a".repeat(32),
+        );
+        assert_eq!(result.is_ok(), accepted);
+        if let Ok(target) = result {
+            let restored: InteractionReturnTarget =
+                serde_json::from_value(serde_json::to_value(&target).unwrap()).unwrap();
+            assert_eq!(restored, target);
+        }
+    }
 
     #[rstest]
     #[case::short_nonce("web", "https://web.example/callback", "short")]

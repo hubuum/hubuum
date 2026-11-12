@@ -1,5 +1,8 @@
 //! Lock order: authentication settings, interaction, principals, credentials and
 //! session/candidate rows. Rejected transitions that change state still commit.
+//! Lifecycle times use the application UTC clock, matching proof creation and the
+//! memory adapter. Do not mix it with the database host clock for transitions or
+//! cleanup; replicas must synchronize their application clocks.
 use chrono::{DateTime, Utc};
 use diesel::sql_types::{
     BigInt, Bool, Integer, Jsonb, Nullable, Text, Timestamp, Timestamptz, Uuid as SqlUuid,
@@ -74,13 +77,6 @@ struct Identity {
 
 fn invalid() -> PostgresStorageError {
     PostgresStorageError::authentication_required("Invalid authentication interaction")
-}
-async fn now(connection: &mut PostgresConnection) -> Result<DateTime<Utc>, PostgresStorageError> {
-    Ok(
-        diesel::select(diesel::dsl::sql::<Timestamptz>("clock_timestamp()"))
-            .get_result(connection)
-            .await?,
-    )
 }
 async fn settings(
     connection: &mut PostgresConnection,
@@ -198,7 +194,7 @@ pub async fn create(
         let revision=settings(connection).await?;
         purge_on_connection(connection,128).await?;
         let mut record=request.into_record();
-        let at=now(connection).await?;
+        let at=Utc::now();
         if record.lifecycle().created_at()>at || record.lifecycle().expires_at()<=at || fence(connection,&mut record,revision,at).await?.is_some() { return Err(invalid()); }
         if let Some(provider)=record.provider() {
             let compatible=sql_query("SELECT NOT EXISTS(SELECT 1 FROM authentication_provider_bindings WHERE name=$1 AND (provider_id<>$2 OR kind<>$3 OR namespace<>$4)) AS valid")
@@ -237,7 +233,7 @@ pub async fn bind_browser(
             .optional()?
             .ok_or_else(invalid)?
             .record()?;
-            let at = now(connection).await?;
+            let at = Utc::now();
             let outcome = if let Some(error) = fence(connection, &mut record, revision, at).await? {
                 StorageInteractionOutcome::Rejected(error)
             } else {
@@ -296,7 +292,7 @@ pub async fn advance(
             if !record.authorizes(&command) {
                 return Err(invalid());
             }
-            let at = now(connection).await?;
+            let at = Utc::now();
             let outcome = if let Some(error) = fence(connection, &mut record, revision, at).await? {
                 StorageInteractionOutcome::Rejected(error)
             } else {
@@ -331,7 +327,14 @@ pub async fn complete(
             if !record.allows(request.access()) {
                 return Err(invalid());
             }
-            let at = now(connection).await?;
+            if let StorageInteractionIssuance::Approval { claim, .. } = request.issuance()
+                && record.accepts_issuance(request.issuance())
+            {
+                // The actor fence also locks its principal. Acquire the complete
+                // ordered set first, matching direct credential approval.
+                credential_approval::lock_principals(connection, claim).await?;
+            }
+            let at = Utc::now();
             if let Some(error) = fence(connection, &mut record, revision, at).await? {
                 save(connection, &record).await?;
                 return Ok(StorageInteractionCompletion::Rejected(error));
@@ -423,7 +426,7 @@ pub async fn complete(
                     ));
                 }
             };
-            let completed = now(connection).await?;
+            let completed = Utc::now();
             if !actor_valid(connection, &record, completed).await? {
                 return Err(invalid());
             }
@@ -445,7 +448,7 @@ pub async fn revoke(
             // provider change or revocation of the original initiating credential.
             settings(connection).await?;
             let record = load(connection, access.id().value()).await?;
-            if !record.allows(&access) || now(connection).await? >= record.retain_until() {
+            if !record.allows(&access) || Utc::now() >= record.retain_until() {
                 return Err(invalid());
             }
             let Some(InteractionIssuedResult::Session(id)) = record.lifecycle().issued_result()
@@ -473,8 +476,8 @@ async fn purge_on_connection(
             "Interaction cleanup limit must be at most 4096",
         ));
     }
-    Ok(sql_query("DELETE FROM auth_interactions WHERE id IN (SELECT id FROM auth_interactions WHERE retain_until<=clock_timestamp() ORDER BY retain_until,id LIMIT $1 FOR UPDATE SKIP LOCKED)")
-        .bind::<BigInt,_>(limit as i64).execute(connection).await?)
+    Ok(sql_query("DELETE FROM auth_interactions WHERE id IN (SELECT id FROM auth_interactions WHERE retain_until<=$2 ORDER BY retain_until,id LIMIT $1 FOR UPDATE SKIP LOCKED)")
+        .bind::<BigInt,_>(limit as i64).bind::<Timestamptz,_>(Utc::now()).execute(connection).await?)
 }
 pub async fn purge(runtime: &PostgresRuntime, limit: usize) -> Result<usize, PostgresStorageError> {
     runtime

@@ -1706,8 +1706,8 @@
         "tags": [
           "auth"
         ],
-        "summary": "Post Api V1 Auth Interactions",
-        "description": "Auto-generated documentation for POST /api/v1/auth/interactions.",
+        "summary": "Begin an authentication interaction.",
+        "description": "Login may begin anonymously. Credential approval requires an unscoped human\nbearer; provider verification additionally requires a local recovery administrator.\nThe complete JSON request must fit 64 KiB. Larger credential imports use the\ndirect credential-approval API. Hosted provider verification completes the\nfinal pending LDAP identity check; verify other providers through the direct\ncandidate verification endpoint first.",
         "operationId": "postApiV1AuthInteractions",
         "requestBody": {
           "content": {
@@ -1732,6 +1732,26 @@
           },
           "400": {
             "description": "Invalid purpose/delivery fields or transport",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A valid human bearer is required for a privileged purpose",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The initiating principal cannot perform this privileged purpose",
             "content": {
               "application/json": {
                 "schema": {
@@ -1770,7 +1790,13 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {},
+          {
+            "bearer_auth": []
+          }
+        ]
       }
     },
     "/api/v1/auth/interactions/browser": {

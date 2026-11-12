@@ -52,9 +52,9 @@ state retains only issuance metadata for orphan-session cleanup. Consumers must
 authenticate redemption/browser capabilities, fence configuration and initiating
 credentials, persist each transition under a lock, and commit consumption with
 issuance in the same transaction. A polling slowdown is a committed state change.
-These primitives are the first #575 implementation increment; durable storage,
-HTTP handlers, provider adapters and live browser authentication are subsequent
-implementation work.
+PR #591 implements durable memory/PostgreSQL storage, versioned HTTP operations
+and hosted local/LDAP browser authentication around these primitives. Real
+OIDC/OAuth protocol adapters remain subsequent #577/#578 work.
 
 `BoundedJsonPatch` validates JSON Patch size, operation count, pointer depth,
 and cumulative application work before an adapter sees the document. Patch

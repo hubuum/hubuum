@@ -13,6 +13,7 @@ use governor::{
     middleware::NoOpMiddleware,
     state::{InMemoryState, NotKeyed},
 };
+use ipnet::Ipv6Net;
 
 use crate::errors::{ApiError, InteractionError};
 
@@ -45,15 +46,27 @@ impl<C: Clock + Clone> Budgets<C> {
         }
     }
     fn admit(&mut self, ip: Option<IpAddr>, creation: bool) -> bool {
+        // IPv6 privacy addresses from one subnet share admission authority.
+        let ip = ip.map(|ip| match ip.to_canonical() {
+            IpAddr::V6(ip) => Ipv6Net::new(ip, 64)
+                .expect("valid IPv6 prefix")
+                .network()
+                .into(),
+            ip => ip,
+        });
         let now = self.clock.now();
         if now.duration_since(self.last_pruned) >= IDLE_RETENTION.into() {
             self.entries
                 .retain(|_, budget| now.duration_since(budget.last_seen) < IDLE_RETENTION.into());
             self.last_pruned = now;
         }
-        if self.entries.len() >= MAX_KEYS && !self.entries.contains_key(&ip) {
-            return false;
-        }
+        // Reserve one shared overflow/unknown bucket. Filling the registry must
+        // not itself deny every new client, and must never reset active quotas.
+        let ip = if self.entries.len() >= MAX_KEYS - 1 && !self.entries.contains_key(&ip) {
+            None
+        } else {
+            ip
+        };
         let budget = self.entries.entry(ip).or_insert_with(|| Budget {
             requests: RateLimiter::direct_with_clock(
                 Quota::per_minute(NonZeroU32::new(MAX_REQUESTS).unwrap()),
@@ -144,12 +157,12 @@ mod tests {
     fn full_registry_preserves_active_limits_and_reclaims_only_idle_buckets() {
         let clock = FakeRelativeClock::default();
         let mut budgets = Budgets::new(clock.clone());
-        for ip in 0..MAX_KEYS as u32 {
+        for ip in 0..(MAX_KEYS - 1) as u32 {
             assert!(budgets.admit(Some(Ipv4Addr::from(ip).into()), true));
         }
         let active = Some(Ipv4Addr::from(0).into());
         let new = Some(Ipv4Addr::from(MAX_KEYS as u32).into());
-        assert!(!budgets.admit(new, true));
+        assert!(budgets.admit(new, true));
         clock.advance(IDLE_RETENTION / 2);
         for _ in 0..MAX_BEGINS {
             assert!(budgets.admit(active, true));
@@ -161,6 +174,33 @@ mod tests {
         }
         assert!(!budgets.admit(active, true));
         assert!(budgets.admit(new, true));
+        assert_eq!(budgets.entries.len(), 2);
+    }
+
+    #[test]
+    fn overflow_clients_share_bounded_quota_without_eviction() {
+        let mut budgets = Budgets::new(FakeRelativeClock::default());
+        for ip in 0..(MAX_KEYS - 1) as u32 {
+            assert!(budgets.admit(Some(Ipv4Addr::from(ip).into()), true));
+        }
+        for ip in MAX_KEYS as u32..MAX_KEYS as u32 + MAX_BEGINS {
+            assert!(budgets.admit(Some(Ipv4Addr::from(ip).into()), true));
+        }
+        assert!(!budgets.admit(Some("192.0.2.1".parse().unwrap()), true));
+        assert_eq!(budgets.entries.len(), MAX_KEYS);
+    }
+
+    #[test]
+    fn ipv6_privacy_addresses_share_the_subnet_budget() {
+        let mut budgets = Budgets::new(FakeRelativeClock::default());
+        for suffix in 1..=MAX_BEGINS {
+            assert!(budgets.admit(
+                Some(format!("2001:db8:1:2::{suffix:x}").parse().unwrap()),
+                true
+            ));
+        }
+        assert!(!budgets.admit(Some("2001:db8:1:2::ffff".parse().unwrap()), true));
+        assert!(budgets.admit(Some("2001:db8:1:3::1".parse().unwrap()), true));
         assert_eq!(budgets.entries.len(), 2);
     }
 }

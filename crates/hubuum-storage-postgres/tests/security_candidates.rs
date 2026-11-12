@@ -107,7 +107,7 @@ impl Fixture {
         let url = integration_test_database_url();
         let separator = if url.contains('?') { '&' } else { '?' };
         let settings = PostgresPoolSettings::builder(format!(
-            "{url}{separator}options=-csearch_path%3D{}",
+            "{url}{separator}options=-csearch_path%3D{},pg_catalog",
             self.schema
         ))
         .max_size(2)

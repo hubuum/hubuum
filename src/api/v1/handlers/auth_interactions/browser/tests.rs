@@ -422,11 +422,23 @@ async fn credential_approval_is_bound_to_original_operation(#[case] tampered: bo
     f.cleanup().await;
 }
 
+#[rstest::rstest]
+#[case::changed(false)]
+#[case::removed(true)]
 #[actix_web::test]
-async fn changed_return_registration_prevents_browser_approval() {
+async fn changed_return_registration_prevents_browser_approval(#[case] removed: bool) {
     let mut f = Fixture::new(true).await;
     let (cookie, csrf) = f.authenticate().await;
-    Arc::make_mut(&mut f.config).auth_browser = json!({"origin":"https://auth.example","return_targets":[{"id":"frontend","client_id":f.client,"uri":"https://other.example/callback"}]}).to_string().parse().unwrap();
+    let targets = if removed {
+        json!([])
+    } else {
+        json!([{"id":"frontend","client_id":f.client,"uri":"https://other.example/callback"}])
+    };
+    Arc::make_mut(&mut f.config).auth_browser =
+        json!({"origin":"https://auth.example","return_targets":targets})
+            .to_string()
+            .parse()
+            .unwrap();
     assert_eq!(
         f.decide(&cookie, &csrf, "approve").await.status(),
         StatusCode::CONFLICT

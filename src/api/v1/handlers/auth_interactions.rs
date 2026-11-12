@@ -89,9 +89,19 @@ pub async fn methods(context: AppContext, req: HttpRequest) -> Result<impl Respo
     ))
 }
 
-#[utoipa::path(post, path = "/api/v1/auth/interactions", tag = "auth", request_body = InteractionBeginRequest, responses(
+/// Begin an authentication interaction.
+///
+/// Login may begin anonymously. Credential approval requires an unscoped human
+/// bearer; provider verification additionally requires a local recovery administrator.
+/// The complete JSON request must fit 64 KiB. Larger credential imports use the
+/// direct credential-approval API. Hosted provider verification completes the
+/// final pending LDAP identity check; verify other providers through the direct
+/// candidate verification endpoint first.
+#[utoipa::path(post, path = "/api/v1/auth/interactions", tag = "auth", security((), ("bearer_auth" = [])), request_body = InteractionBeginRequest, responses(
     (status = 201, description = "Purpose-bound interaction created; secret is returned once", body = InteractionBegun),
     (status = 400, description = "Invalid purpose/delivery fields or transport", body = ApiErrorResponse),
+    (status = 401, description = "A valid human bearer is required for a privileged purpose", body = ApiErrorResponse),
+    (status = 403, description = "The initiating principal cannot perform this privileged purpose", body = ApiErrorResponse),
     (status = 422, description = "Provider or delivery capability unsupported", body = ApiErrorResponse),
     (status = 429, description = "Bounded creation budget exhausted; honor Retry-After", body = ApiErrorResponse),
     (status = 503, description = "Provider configuration is unavailable", body = ApiErrorResponse)

@@ -25,6 +25,29 @@ struct Interaction {
     binding: InteractionBinding,
     access: StorageInteractionAccess,
 }
+
+#[rstest::rstest]
+#[case::database_behind(-100)]
+#[case::database_ahead(100)]
+#[tokio::test]
+async fn database_clock_offset_does_not_reject_application_timestamps(#[case] milliseconds: i32) {
+    let f = Fixture::new().await;
+    // The fixture explicitly searches its own schema before pg_catalog, so only
+    // this isolated adapter sees the offset database clock.
+    f.owner(&format!("CREATE FUNCTION clock_timestamp() RETURNS timestamptz LANGUAGE sql VOLATILE AS $$ SELECT pg_catalog.clock_timestamp() + interval '{milliseconds} milliseconds' $$"))
+        .await.unwrap();
+    let backend = f.replica();
+    let interaction = Interaction::create(&backend, Duration::minutes(5)).await;
+    interaction.ready(&backend).await;
+    assert!(matches!(
+        backend
+            .complete_auth_interaction(interaction.complete())
+            .await
+            .unwrap(),
+        StorageInteractionCompletion::Session(_)
+    ));
+    f.cleanup().await;
+}
 impl Interaction {
     async fn create(backend: &PostgresStorage, lifetime: Duration) -> Self {
         let binding = InteractionBinding::try_new(
@@ -67,9 +90,15 @@ impl Interaction {
         else {
             panic!("claim rejected")
         };
+        let actor = self
+            .binding
+            .authority()
+            .actor()
+            .map(|actor| actor.principal_id())
+            .unwrap_or(owner().actor_id());
         let login = StorageLogin::try_new(
             EventSubject::try_new(
-                owner().actor_id(),
+                actor,
                 "recovery_admin".into(),
                 PrincipalKind::Human,
                 "local".into(),
@@ -77,10 +106,14 @@ impl Interaction {
                 true,
             )
             .unwrap(),
-            backend.get_user(UserId::new(1).unwrap()).await.unwrap(),
+            backend
+                .get_user(UserId::new(actor.id()).unwrap())
+                .await
+                .unwrap(),
         )
         .unwrap();
-        let proof = VerifiedInteractionSubject::new(self.binding.clone(), "1").unwrap();
+        let proof =
+            VerifiedInteractionSubject::new(self.binding.clone(), actor.id().to_string()).unwrap();
         let authentication =
             StorageInteractionAuthentication::login(proof, &login, Utc::now()).unwrap();
         assert!(matches!(
@@ -552,5 +585,94 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
         StorageSecurityCandidateState::Verified
     );
     f.owner("DO $$ BEGIN IF EXISTS(SELECT 1 FROM auth_sessions) OR (SELECT count(*) FROM principals) <> 1 OR (SELECT count(*) FROM group_memberships) <> 1 OR (SELECT count(*) FROM tokens) <> 1 THEN RAISE EXCEPTION 'verification changed identity or credential state'; END IF; END $$;").await.unwrap();
+    f.cleanup().await;
+}
+
+#[tokio::test]
+async fn reciprocal_approval_completions_lock_principals_before_tokens() {
+    use hubuum_domain::InteractionActor;
+    use std::time::Duration as StdDuration;
+    use tokio::sync::Notify;
+
+    let f = Fixture::new().await;
+    f.owner("INSERT INTO principals(id,kind,name,identity_scope_id) VALUES(2,'human','second_admin',1); INSERT INTO users(id,kind,password) VALUES(2,'human','fixture-password-hash'); INSERT INTO tokens(id,token,principal_id,expires_at) VALUES(2,'second-token',2,now()+interval '1 hour');").await.unwrap();
+    let backend = f.replica();
+    let mut completions = Vec::new();
+    for (actor, target) in [(1, 2), (2, 1)] {
+        let actor = PrincipalId::new(actor).unwrap();
+        let token = TokenId::new(actor.id()).unwrap();
+        let claim = StorageCredentialClaim::new(
+            actor,
+            token,
+            StorageCredentialOperation::CreateToken,
+            digest(if actor.id() == 1 { 'a' } else { 'c' }),
+            digest('b'),
+            Utc::now() - Duration::hours(24),
+        )
+        .target(Some(PrincipalId::new(target).unwrap()));
+        let operation_digest = InteractionDigest::new(claim.request_digest().as_str()).unwrap();
+        let interaction = privileged_interaction(
+            &backend,
+            InteractionAuthority::approval(
+                InteractionActor::new(actor, token),
+                operation_digest.clone(),
+            ),
+            None,
+        )
+        .await;
+        interaction.ready(&backend).await;
+        completions.push(StorageInteractionComplete::new(
+            interaction.access,
+            StorageInteractionIssuance::Approval {
+                claim,
+                operation_digest,
+                context: EventContext::user(actor, None, None),
+            },
+        ));
+    }
+    let b = completions.pop().unwrap();
+    let a = completions.pop().unwrap();
+    let locked = Notify::new();
+    let blocker = with_transaction(
+        &f.migration_pool,
+        async |connection| -> Result<(), PostgresStorageError> {
+            if database_role_tests_enabled() {
+                connection
+                    .batch_execute(&format!(
+                        "SET LOCAL ROLE \"{}\"",
+                        integration_test_database_roles().owner().as_str()
+                    ))
+                    .await?;
+            }
+            connection
+                .batch_execute(&format!(
+                    "SET LOCAL search_path TO {}; SELECT id FROM tokens WHERE id=1 FOR UPDATE",
+                    f.schema
+                ))
+                .await?;
+            locked.notify_one();
+            tokio::time::sleep(StdDuration::from_millis(300)).await;
+            Ok(())
+        },
+    );
+    let complete = async {
+        locked.notified().await;
+        tokio::join!(
+            backend.complete_auth_interaction(a),
+            backend.complete_auth_interaction(b)
+        )
+    };
+    let (blocker, (a, b)) = tokio::time::timeout(StdDuration::from_secs(5), async {
+        tokio::join!(blocker, complete)
+    })
+    .await
+    .expect("reciprocal approvals must not deadlock");
+    blocker.unwrap();
+    for result in [a, b] {
+        assert!(matches!(
+            result.unwrap(),
+            StorageInteractionCompletion::Approval(_)
+        ));
+    }
     f.cleanup().await;
 }
