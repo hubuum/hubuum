@@ -12,6 +12,7 @@ use hubuum_events_core::{EventContext, EventSubject};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 use crate::{
@@ -307,8 +308,9 @@ impl StorageInteractionAuthentication {
             || actor.token_id() != candidate.owner().token_id()
             || binding.revision() != candidate.base_revision()
             || binding.verification_receipt().is_some_and(|receipt| {
-                candidate.verification_receipt().map(|value| value.as_str())
-                    != Some(receipt.as_str())
+                !candidate.verification_receipt().is_some_and(|value| {
+                    bool::from(value.as_str().as_bytes().ct_eq(receipt.as_str().as_bytes()))
+                })
             })
         {
             return Err(invalid());

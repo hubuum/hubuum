@@ -4,6 +4,7 @@ use std::fmt;
 
 use chrono::{DateTime, Utc};
 use hubuum_domain::{InteractionClientId, InteractionDigest, InteractionId, InteractionProviderId};
+use ring::hkdf::{HKDF_SHA256, Salt};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use utoipa::ToSchema;
@@ -138,11 +139,21 @@ impl InteractionSecret {
         InteractionDigest::new(hex(&mac.finalize().into_bytes()))
             .map_err(|_| ApiError::InternalServerError("Could not bind approval operation".into()))
     }
+    /// Derive independent keys/capabilities with RFC 5869 HKDF-SHA-256.
+    /// The public salt identifies this protocol; the info identifies its purpose.
+    fn derive(&self, purpose: &[u8]) -> [u8; 32] {
+        let salt = Salt::new(HKDF_SHA256, b"hubuum:interaction:derivation:v1:");
+        let prk = salt.extract(self.0.as_bytes());
+        let mut output = [0; 32];
+        prk.expand(&[purpose], HKDF_SHA256)
+            .expect("32 bytes is a valid HKDF-SHA-256 output length")
+            .fill(&mut output)
+            .expect("output length matches HKDF-SHA-256");
+        output
+    }
     fn operation_key(&self) -> hubuum_secrets::SecretValue {
-        let mut hash = Sha256::new();
-        hash.update(b"hubuum:interaction:operation-encryption:v1:");
-        hash.update(self.0.as_bytes());
-        hubuum_secrets::SecretValue::new(hash.finalize().to_vec()).expect("SHA-256 key")
+        hubuum_secrets::SecretValue::new(self.derive(b"operation-encryption").to_vec())
+            .expect("32-byte key")
     }
     pub(crate) fn seal_operation(
         &self,
@@ -153,7 +164,7 @@ impl InteractionSecret {
             .map_err(|_| InteractionError::Invalid)?;
         let envelope = crate::runtime_settings_secrets::encrypt(
             "interaction".into(),
-            "v1".into(),
+            "hkdf-sha256-v1".into(),
             &self.operation_key(),
             &id.value().to_string(),
             &plaintext,
@@ -187,12 +198,9 @@ impl InteractionSecret {
     pub(crate) fn verification_receipt(
         &self,
     ) -> super::security_candidate::SecurityVerificationReceipt {
-        let mut digest = Sha256::new();
-        digest.update(b"hubuum:interaction:verification-receipt:v1:");
-        digest.update(self.0.as_bytes());
-        format!("hcv1.{}", hex(&digest.finalize()))
+        format!("hcv1.{}", hex(&self.derive(b"verification-receipt")))
             .try_into()
-            .expect("SHA-256 receipt")
+            .expect("32-byte receipt")
     }
     pub(crate) fn generate() -> Self {
         let bytes: [u8; 32] = rand::random();
@@ -341,6 +349,22 @@ mod tests {
         );
     }
 
+    // Fixed vectors computed independently with RFC 5869 extract/expand. Keep
+    // derivations stable across replicas and restarts, and separate by purpose.
+    #[rstest]
+    #[case::encryption(
+        b"operation-encryption",
+        "206a36308591d96fc08213c0fbaae4981851ba34d3c14ac7c04b4d73c6ef953b"
+    )]
+    #[case::receipt(
+        b"verification-receipt",
+        "ca42fe00f1aac16429ed31e157f375f228c111577c492c2986a904869fd0dbb3"
+    )]
+    fn capability_derivation_matches_hkdf_vectors(#[case] purpose: &[u8], #[case] expected: &str) {
+        let secret = InteractionSecret::parse(&format!("hai1.{}", "0".repeat(64))).unwrap();
+        assert_eq!(hex(&secret.derive(purpose)), expected);
+    }
+
     #[test]
     fn operation_digest_is_bound_to_private_redemption_capability() {
         let operation = serde_json::json!({"kind":"update_user", "password":"low-entropy"});
@@ -355,10 +379,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case::same_capability(false, true)]
-    #[case::wrong_capability(true, false)]
-    fn encrypted_operation_requires_original_capability(
-        #[case] wrong_secret: bool,
+    #[case::unchanged("none", true)]
+    #[case::wrong_capability("secret", false)]
+    #[case::wrong_interaction("interaction", false)]
+    #[case::tampered_ciphertext("ciphertext", false)]
+    fn encrypted_operation_requires_original_capability_and_context(
+        #[case] change: &str,
         #[case] accepted: bool,
     ) {
         use hubuum_domain::{
@@ -368,8 +394,24 @@ mod tests {
         let secret = InteractionSecret::generate();
         let id = InteractionId::new(uuid::Uuid::new_v4()).unwrap();
         let operation: CredentialOperation = serde_json::from_value(serde_json::json!({"kind":"create_user","user":{"name":"human", "password":"never-retain-plaintext"}})).unwrap();
-        let sealed = secret.seal_operation(id, &operation).unwrap();
+        let mut sealed = secret.seal_operation(id, &operation).unwrap();
         assert!(!sealed.as_str().contains("never-retain-plaintext"));
+        if change == "ciphertext" {
+            let mut envelope: serde_json::Value = serde_json::from_str(sealed.as_str()).unwrap();
+            let ciphertext = envelope["ciphertext"].as_str().unwrap();
+            let first = if ciphertext.starts_with('A') {
+                "B"
+            } else {
+                "A"
+            };
+            envelope["ciphertext"] = format!("{first}{}", &ciphertext[1..]).into();
+            sealed = envelope.to_string().try_into().unwrap();
+        }
+        let id = if change == "interaction" {
+            InteractionId::new(uuid::Uuid::new_v4()).unwrap()
+        } else {
+            id
+        };
         let binding = InteractionBinding::try_new(
             id,
             InteractionProviderId::local(),
@@ -383,7 +425,7 @@ mod tests {
         .unwrap()
         .with_operation(sealed)
         .unwrap();
-        let opener = if wrong_secret {
+        let opener = if change == "secret" {
             InteractionSecret::generate()
         } else {
             secret

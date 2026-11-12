@@ -206,3 +206,12 @@ fn verification_details_cannot_be_attached_to_login_proof() {
         Err(InteractionValidationError::InvalidPurpose)
     );
 }
+
+#[rstest]
+#[case::matching("a".repeat(64), true)]
+#[case::first_byte(format!("b{}", "a".repeat(63)), false)]
+#[case::last_byte(format!("{}b", "a".repeat(63)), false)]
+fn digest_equality_survives_persistence(#[case] value: String, #[case] matches: bool) {
+    let actual: InteractionDigest = serde_json::from_value(json!(value)).unwrap();
+    assert_eq!(actual == digest('a'), matches);
+}

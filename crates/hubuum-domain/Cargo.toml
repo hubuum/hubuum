@@ -28,6 +28,7 @@ thiserror = "2"
 uuid = { version = "1", features = ["serde"] }
 url = "2"
 utoipa = { version = "6", optional = true }
+subtle = "2.6.1"
 
 [features]
 openapi = ["dep:utoipa", "hubuum-schema-diagnostics/openapi"]

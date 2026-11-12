@@ -146,6 +146,8 @@ openssl = { version = "0.10.81", optional = true }
 # Treetop's client API is pre-1.0; review each version bump explicitly.
 treetop-client = { version = "0.2.0", optional = true }
 toml = "1.1"
+governor = { version = "0.10.4", default-features = false, features = ["std"] }
+subtle = "2.6.1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

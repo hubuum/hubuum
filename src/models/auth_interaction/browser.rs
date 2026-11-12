@@ -1,5 +1,6 @@
 use hubuum_domain::{InteractionBrowserBinding, InteractionDigest};
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 
 use crate::errors::{ApiError, InteractionError};
 
@@ -73,7 +74,7 @@ impl BrowserSession {
         &self.csrf
     }
     pub fn validate_csrf(&self, challenge: &str) -> Result<(), ApiError> {
-        if challenge != self.csrf {
+        if !bool::from(challenge.as_bytes().ct_eq(self.csrf.as_bytes())) {
             return Err(InteractionError::Invalid.into());
         }
         Ok(())
@@ -90,5 +91,24 @@ impl BrowserSession {
             digest(b"hubuum:interaction:browser-csrf:v1:", &self.csrf),
         )
         .expect("independent domain-separated digests")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::matching("a".repeat(64), true)]
+    #[case::first_byte(format!("b{}", "a".repeat(63)), false)]
+    #[case::last_byte(format!("{}b", "a".repeat(63)), false)]
+    #[case::short("a".repeat(63), false)]
+    #[case::long("a".repeat(65), false)]
+    #[case::missing(String::new(), false)]
+    fn csrf_requires_exact_challenge(#[case] challenge: String, #[case] accepted: bool) {
+        let session =
+            BrowserSession::parse(&format!("{}.{}", "b".repeat(64), "a".repeat(64))).unwrap();
+        assert_eq!(session.validate_csrf(&challenge).is_ok(), accepted);
     }
 }

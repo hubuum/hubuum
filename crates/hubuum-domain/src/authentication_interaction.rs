@@ -6,6 +6,7 @@ use std::fmt;
 
 use crate::{PrincipalId, ResourceRevision, TokenId};
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 mod browser;
@@ -164,9 +165,17 @@ impl From<InteractionProviderId> for String {
 }
 
 /// A digest of an operation, secret or configuration, never its plaintext.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct InteractionDigest(String);
+
+// Keep content-independent comparisons at the type boundary, so every adapter
+// checks redemption, browser, operation and verification digests consistently.
+impl PartialEq for InteractionDigest {
+    fn eq(&self, other: &Self) -> bool {
+        bool::from(self.0.as_bytes().ct_eq(other.0.as_bytes()))
+    }
+}
 
 impl InteractionDigest {
     pub fn new(value: impl Into<String>) -> Result<Self, InteractionValidationError> {

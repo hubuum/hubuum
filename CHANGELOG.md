@@ -44,6 +44,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- Authentication interactions use `ring` HKDF-SHA-256 for derived keys and
+  receipts, `subtle` for secret comparisons, and `governor` for continuously
+  replenishing per-IP admission limits. **Breaking for earlier #591 preview
+  deployments:** stop old replicas, allow pending interactions to expire (at
+  most ten minutes), then start matching updated binaries and begin fresh
+  interactions; previously derived approval/verification capabilities are
+  incompatible.
+
 - **Breaking (storage SDK 0.9 and deployment):** update all ten SDK crates to
   `0.9.0` and implement durable authentication interactions, atomic purpose-bound
   completion and exact-session cleanup. Stop all API/worker replicas, back up the

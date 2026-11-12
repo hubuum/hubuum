@@ -16,6 +16,7 @@ use hubuum_storage_core::{
     StorageInteractionOutcome, StorageInteractionView, StorageProviderIdentityBinding,
     StorageRuntimeSettingsGroup,
 };
+use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 use crate::errors::{ApiError, InteractionError};
@@ -565,7 +566,14 @@ pub async fn complete(
             return Err(InteractionError::ConfigurationChanged.into());
         }
         let receipt = secret.verification_receipt();
-        if binding.verification_receipt().map(|v| v.as_str()) != Some(receipt.digest().as_str()) {
+        if !binding.verification_receipt().is_some_and(|expected| {
+            bool::from(
+                expected
+                    .as_str()
+                    .as_bytes()
+                    .ct_eq(receipt.digest().as_str().as_bytes()),
+            )
+        }) {
             return Err(InteractionError::Invalid.into());
         }
         let verification = crate::models::security_candidate::SecurityCandidateVerificationPreview::from_interaction(current.verification().ok_or(InteractionError::Pending)?)?;

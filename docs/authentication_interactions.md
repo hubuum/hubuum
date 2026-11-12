@@ -89,8 +89,8 @@ redirect URI, browser-supplied provider or return location is accepted.
 Beginning `credential_approval` requires an existing unscoped human bearer and an
 `operation`. The server authorizes and normalizes that operation, binds its exact
 content and initiating principal/token. The operation is encrypted using the
-existing secret-envelope implementation and a key derived from the private
-redemption capability; only its safe summary reaches the browser. After fresh
+existing `ring` AES-256-GCM secret-envelope implementation and an HKDF-SHA-256
+key derived from the private redemption capability; only its safe summary reaches the browser. After fresh
 authentication as that same principal and any browser approval, `complete` takes
 only the client ID, as for login. Completion returns the
 existing credential-approval response, never a session. Use that response with
@@ -166,16 +166,44 @@ response-loss cleanup. Other rows
 can be removed at expiry. Browser attachment and claim state are bounded within
 each record; persistence documents are limited to 256 KiB.
 
-HTTP admission also bounds each replica to 10,000 client-IP buckets, with 30
-begins and 600 total interaction requests per IP per minute. Requests without
-an attributable IP share one bucket. These per-replica budgets complement the
-shared global/client/actor storage limits; they do not claim a cluster-wide IP
-quota.
+HTTP admission uses `governor`'s GCRA limiter for each IP, allowing bursts of
+30 begins and 600 total requests. Capacity replenishes continuously at one begin
+every two seconds and one total request every 100 milliseconds. Rejected begins
+still consume the total request budget. `Retry-After: 60` is conservative.
+
+Each replica retains at most 10,000 client-IP buckets. Requests without an
+attributable IP share one bucket. Active buckets are never evicted to admit a
+new address; idle buckets can be reclaimed after a minute, when both quotas
+have fully replenished. These per-replica budgets complement the shared
+global/client/actor storage limits; they do not claim a cluster-wide IP quota.
 
 PostgreSQL serializes creation capacity checks and locks settings before
 interaction, principal and credential rows. Terminal rows cannot be reopened.
 The memory adapter stages the whole mutation and commits only after success.
 Both adapters retain transition rejections that intentionally mutate state.
+
+## Security building blocks
+
+The interaction implementation delegates reusable security mechanisms to crates:
+
+| Mechanism | Implementation |
+| --- | --- |
+| Capability generation | `rand` cryptographic thread RNG, 256 bits per secret |
+| Independent encryption keys and verification receipts | `ring::hkdf`, RFC 5869 HKDF-SHA-256 with protocol salt and separate purpose labels |
+| Stored capability fingerprints | `sha2` SHA-256 with distinct protocol domains |
+| Password-bearing operation binding | `hmac` HMAC-SHA-256 keyed by the private redemption capability |
+| Operation confidentiality and authentication | Existing `ring` AES-256-GCM envelopes, authenticated with the interaction ID |
+| CSRF, interaction-digest and verification-receipt comparisons | `subtle` constant-time byte comparison; public lengths may differ |
+| Per-IP admission rate calculation | `governor` GCRA; application-owned bounded bucket retention |
+| HTTP, form and cookie parsing | Actix Web and its cookie implementation |
+| URL parsing and HTML escaping | `url` and MiniJinja autoescaping |
+
+Hubuum still owns the protocol and its policy: CSRF rotation tied to durable
+browser state, exact Host/Origin/Fetch Metadata checks, client-bound return
+registrations, authorization, provider freshness, and atomic single-use issuance.
+A generic cookie-session or CSRF middleware would not enforce those correlated
+database transitions. The crate substitutions do not make this a standard
+OAuth/OIDC flow or eliminate the need to review that composition.
 
 ## Upgrade and recovery
 
@@ -183,6 +211,12 @@ This is an offline migration. Stop all API and worker replicas and take a
 verified backup. Apply migrations and role grants, then start matching binaries
 everywhere. Do not run older recovery or restore tools: they do not know to clear
 interaction authority. Restore the pre-upgrade snapshot before downgrading.
+
+**Existing #591 preview deployments:** HKDF replaces the earlier draft's custom
+hash-based derivation. Pending approval operations and verification receipts
+from that draft are incompatible. Stop every old replica and let pending
+interactions expire (at most ten minutes) before starting the updated binaries;
+clients must begin fresh interactions. No legacy derivation fallback is retained.
 
 Logical backups exclude interactions. Logical restore and offline security
 recovery discard pending, ready and consumed interaction records. External Rust
