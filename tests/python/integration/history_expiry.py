@@ -7,6 +7,7 @@ from pathlib import Path
 import platform
 import statistics
 from subprocess import SubprocessError
+import tarfile
 import time
 
 from integration.rust_tests import run_tests
@@ -17,6 +18,55 @@ TEST = "restore_contract::history_expiry_qualification::qualified_history_expiry
 PUBLISHER_TEST = "services::deletion_recovery::repository::size_tests::maximum_composite_checkpoint_resource_probe"
 REPLICA_TEST = "restore_contract::history_expiry_qualification::replica::qualified_history_expiry_replica"
 CEILING = 512 * 1024 ** 2
+
+
+def verify_binary_reuse(changed_paths, original_workflow, current_workflow):
+    """Reuse permits only known non-Rust inputs and the unchanged build recipe."""
+    allowed = {".github/workflows/history-expiry-qualification.yml",
+               "tests/python/integration/history_expiry.py",
+               "tests/python/integration/scheduling_benchmark.py",
+               "tests/python/unit/deployment/test_history_expiry.py",
+               "docs/storage_adapter_sdk.md"}
+    if set(changed_paths) - allowed:
+        raise ValueError("Binary reuse requires unchanged Rust/build inputs")
+    def recipe(workflow):
+        build = workflow.index("\n  build:\n")
+        start = workflow.index("    runs-on:", build)
+        return workflow[start:workflow.index("\n  measure:\n", start)]
+    if recipe(original_workflow) != recipe(current_workflow):
+        raise ValueError("Binary reuse requires an identical build recipe")
+
+
+def package_measurements(output, destination):
+    """Keep private runtime working directories outside uploaded diagnostics."""
+    extras = [output.parent / ("history-expiry-" + name) for name in
+              ("build.txt", "runner.txt", "reuse.json")]
+    files = [*output.iterdir(), *extras] if output.is_dir() else extras
+    with tarfile.open(destination, "w:gz", dereference=False) as archive:
+        for path in files:
+            if path.is_file() and not path.is_symlink():
+                name = "history-expiry-report/" + path.name if path.parent == output else path.name
+                archive.add(path, arcname=name, recursive=False)
+    destination.chmod(0o644)
+
+
+def measured_resources(output, name):
+    resources = json.loads((output / f"{name}-container.json").read_text())["resources"]
+    count = peak_rss = peak_hwm = first = previous = 0
+    with (output / f"{name}-rss.jsonl").open() as trace:
+        for line in trace:
+            sample = json.loads(line)
+            stamp, rss, hwm = (sample[key] for key in ("monotonic_ns", "rss_bytes", "hwm_bytes"))
+            if any(type(value) is not int for value in (stamp, rss, hwm)) or not previous < stamp or not 0 < rss <= hwm:
+                raise ValueError("Invalid raw process-memory sample")
+            first = first or stamp
+            previous = stamp
+            count += 1
+            peak_rss = max(peak_rss, rss)
+            peak_hwm = max(peak_hwm, hwm)
+    if not count or (count, peak_rss, peak_hwm) != (resources["samples"], resources["peak_rss_bytes"], resources["peak_hwm_bytes"]):
+        raise ValueError("Raw process-memory trace differs from its summary")
+    return {**resources, "rss_trace_verified": True, "first_sample_ns": first, "last_sample_ns": previous}
 
 
 def measurement_environment(environment, database_url, report_name, shape, profile):
@@ -41,6 +91,7 @@ def measurement_environment(environment, database_url, report_name, shape, profi
 def assess(report, resources):
     """Incomplete measurements cannot qualify a worker, even with small numbers."""
     h1 = (resources["samples"] > 0
+                    and resources.get("rss_trace_verified") is True
                     and 0 < resources["peak_rss_bytes"] <= CEILING
                     and 0 < resources["peak_hwm_bytes"] <= CEILING
                     and 0 < report["kernel_peak_rss_bytes"] <= CEILING
@@ -82,8 +133,11 @@ def assess(report, resources):
             and (report["replicas"] == 1 or all(replica["database_round_trip_us"]
                     and percentile(replica["database_round_trip_us"], 95) <= 2000 for replica in replicas))
             and all(process["samples"] > 0
+                    and process.get("rss_trace_verified") is True
                     and 0 < process["peak_rss_bytes"] <= CEILING
-                    and 0 < process["peak_hwm_bytes"] <= CEILING for process in measured))
+                    and 0 < process["peak_hwm_bytes"] <= CEILING for process in measured)
+            and max(process["first_sample_ns"] for process in measured)
+                < min(process["last_sample_ns"] for process in measured))
     else:
         checks["replica_topology_pass"] = False
     return checks
@@ -118,7 +172,8 @@ def replica_run(fixture, binary, arguments, name, environment, destination):
                 replica_env = {**environment, "HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICA": str(index)}
                 workers.append(executor.submit(
                     fixture.binary, binary, [REPLICA_TEST, "--exact", "--ignored", "--nocapture"],
-                    names[index + 1], worker=True, worker_process=index, environment=replica_env))
+                    names[index + 1], worker=True, worker_process=index, environment=replica_env,
+                    retain_samples=True))
             for index in range(replicas):
                 await_path(root / f"ready-{index}")
             (root / "start").write_bytes(b"")
@@ -196,7 +251,7 @@ def run(args):
                             output = replica_run(fixture, binary, command[1:], name, measured_env, destination)
                         else:
                             output = fixture.binary(binary, command[1:], name, worker=True,
-                                                    environment=measured_env)
+                                                    environment=measured_env, retain_samples=True)
                     except (RuntimeError, OSError, SubprocessError):
                         container = fixture.name + "-" + name
                         if container in fixture.containers:
@@ -214,23 +269,26 @@ def run(args):
                                                   or report["slots"] != (1 if args.profile == "local" else 2)):
                         raise ValueError("Measured process topology differs from the selected profile")
                     if "replica_reports" in report:
-                        processes = [json.loads((args.output / f"{name}-replica-{index}-container.json").read_text())["resources"]
+                        processes = [measured_resources(args.output, f"{name}-replica-{index}")
                                      for index in range(report["replicas"])]
                         resources = {"samples": sum(process["samples"] for process in processes),
                                      "peak_rss_bytes": max(process["peak_rss_bytes"] for process in processes),
                                      "peak_hwm_bytes": max(process["peak_hwm_bytes"] for process in processes),
+                                     "rss_trace_verified": all(process["rss_trace_verified"] for process in processes),
                                      "replicas": processes}
                     else:
-                        resources = json.loads((args.output / f"{name}-container.json").read_text())["resources"]
+                        resources = measured_resources(args.output, name)
                     checks = assess(report, resources)
                     sample = {"shape": shape, "repeat": repeat, "warmup": repeat == 0,
                               "checks": checks, "report": report, "resources": resources}
                     samples.append(sample)
                     if not all(checks.values()):
                         failures.append(name)
+                        print(f"{name}: failed acceptance checks: {checks}", flush=True)
                 except (RuntimeError, OSError, SubprocessError, ValueError, KeyError) as error:
                     failures.append(name)
                     (args.output / f"{name}-failure.txt").write_text(str(error) + "\n")
+                    print(f"{name}: {error}", flush=True)
                 (args.output / "samples.json").write_text(json.dumps(samples, indent=2) + "\n")
         fixture.database_evidence("final")
     measured = [sample for sample in samples if not sample["warmup"]]

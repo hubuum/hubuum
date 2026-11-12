@@ -433,7 +433,8 @@ class Fixture:
         if result.returncode:
             raise RuntimeError("Candidate plan probe failed; inspect its retained log")
 
-    def binary(self, binary, arguments, name, *, worker=False, worker_process=0, environment=None):
+    def binary(self, binary, arguments, name, *, worker=False, worker_process=0, environment=None,
+               retain_samples=False):
         container = self.name + "-" + name
         self.containers.append(container)
         binary = binary.resolve()
@@ -453,6 +454,7 @@ class Fixture:
         resources = {"samples": 0, "peak_rss_bytes": 0, "peak_hwm_bytes": 0, "cpu_affinity": mask}
         errors = []
         stop = threading.Event()
+        trace = (self.args.output / f"{name}-rss.jsonl").open("x") if worker and retain_samples else None
 
         def observe():
             try:
@@ -483,6 +485,9 @@ class Fixture:
                         resources["samples"] += 1
                         resources["peak_rss_bytes"] = max(resources["peak_rss_bytes"], measured["VmRSS"])
                         resources["peak_hwm_bytes"] = max(resources["peak_hwm_bytes"], measured["VmHWM"])
+                        if trace is not None:
+                            trace.write(json.dumps({"monotonic_ns": time.monotonic_ns(),
+                                "rss_bytes": measured["VmRSS"], "hwm_bytes": measured["VmHWM"]}) + "\n")
                     stop.wait(0.02)
             except (OSError, ValueError, subprocess.SubprocessError) as error:
                 errors.append(str(error))
@@ -499,6 +504,8 @@ class Fixture:
             stop.set()
             if monitor:
                 monitor.join()
+            if trace is not None:
+                trace.close()
         if worker:
             inspected = json.loads(self.docker("inspect", container))[0]
             config = inspected["HostConfig"]

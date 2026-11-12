@@ -1,11 +1,15 @@
 """Acceptance rejects incomplete resource or physical-input evidence."""
 import copy
+import json
 from pathlib import Path
 import tempfile
+import tarfile
 import threading
 import unittest
 
-from integration.history_expiry import assess, measurement_environment, replica_run
+from integration.history_expiry import (assess, measured_resources, measurement_environment,
+                                       package_measurements, replica_run, verify_binary_reuse)
+from support import ROOT
 
 
 class HistoryExpiryQualificationTests(unittest.TestCase):
@@ -19,18 +23,67 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
                      "claimed_iterations": 10, "slow_consumer_blocked": True,
                      "slow_consumer_retired": True, "kernel_peak_rss_bytes": 100_000_000,
                      "kernel_child_peak_rss_bytes": 0, "database_round_trip_us": [500] * 20}]}
-        resources = {"samples": 10, "peak_rss_bytes": 100_000_000, "peak_hwm_bytes": 110_000_000}
+        resources = {"samples": 10, "peak_rss_bytes": 100_000_000, "peak_hwm_bytes": 110_000_000,
+                     "rss_trace_verified": True, "first_sample_ns": 1, "last_sample_ns": 100}
         resources["replicas"] = [dict(resources)]
         return report, resources
 
     def test_complete_evidence_passes(self):
         self.assertTrue(all(assess(*self.fixture()).values()))
 
+    def test_reuse_requires_identical_rust_inputs_and_build_recipe(self):
+        workflow = (ROOT / ".github/workflows/history-expiry-qualification.yml").read_text()
+        verify_binary_reuse(["tests/python/integration/history_expiry.py"], workflow, workflow)
+        for changed in ("src/application.rs", "Cargo.lock", "Dockerfile", "crates/new/input.json"):
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                verify_binary_reuse([changed], workflow, workflow)
+        with self.assertRaises(ValueError):
+            verify_binary_reuse([], workflow, workflow.replace("--release", "--profile dev", 1))
+
+    def test_packaging_retains_failure_evidence_without_private_runtime_material(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            output = parent / "report"
+            output.mkdir()
+            (output / "rows-failure.txt").write_text("native failure")
+            private = output / "rows.runtime"
+            private.mkdir()
+            (private / "key").write_text("private fixture key")
+            (parent / "history-expiry-build.txt").write_text("original build")
+            private.chmod(0)
+            archive = parent / "evidence.tar.gz"
+            try:
+                package_measurements(output, archive)
+            finally:
+                private.chmod(0o700)
+            with tarfile.open(archive) as packed:
+                self.assertEqual(set(packed.getnames()),
+                                 {"history-expiry-report/rows-failure.txt", "history-expiry-build.txt"})
+                self.assertEqual(packed.extractfile("history-expiry-report/rows-failure.txt").read(), b"native failure")
+            self.assertEqual(archive.stat().st_mode & 0o777, 0o644)
+
+    def test_raw_memory_trace_must_match_count_peaks_and_monotonic_time(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            summary = {"samples": 2, "peak_rss_bytes": 20, "peak_hwm_bytes": 30}
+            (output / "worker-container.json").write_text(json.dumps({"resources": summary}))
+            samples = [{"monotonic_ns": 1, "rss_bytes": 10, "hwm_bytes": 30},
+                       {"monotonic_ns": 2, "rss_bytes": 20, "hwm_bytes": 30}]
+            trace = output / "worker-rss.jsonl"
+            trace.write_text("".join(json.dumps(row) + "\n" for row in samples))
+            self.assertTrue(measured_resources(output, "worker")["rss_trace_verified"])
+            for field, value in [("monotonic_ns", 1), ("rss_bytes", 19), ("hwm_bytes", 1)]:
+                with self.subTest(field=field), self.assertRaises(ValueError):
+                    invalid = copy.deepcopy(samples)
+                    invalid[1][field] = value
+                    trace.write_text("".join(json.dumps(row) + "\n" for row in invalid))
+                    measured_resources(output, "worker")
+
     def test_processes_share_only_the_fixture_hash_key_and_database_authority(self):
         source = {key: "fixture-" + key for key in (
             "HUBUUM_RESTORE_TEST_DATABASE_URL", "HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL",
             "HUBUUM_ARCHIVE_TEST_DATABASE_URL", "HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL")}
-        source.update(GITHUB_TOKEN="host-token", HUBUUM_TOKEN_HASH_KEY="host-key",
+        source.update(GITHUB_TOKEN="host-token", GH_TOKEN="host-gh-token", HUBUUM_TOKEN_HASH_KEY="host-key",
                       HUBUUM_SECRET_SOURCE="host-provider")
         first = measurement_environment(source, "fixture-primary", "rows.json", "rows", "shared")
         second = measurement_environment(source, "fixture-primary", "rows.json", "rows", "shared")
@@ -39,6 +92,7 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
         self.assertNotEqual(first["HUBUUM_TOKEN_HASH_KEY"], source["HUBUUM_TOKEN_HASH_KEY"])
         self.assertEqual(first["HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY"], "true")
         self.assertNotIn("GITHUB_TOKEN", first)
+        self.assertNotIn("GH_TOKEN", first)
         self.assertNotIn("HUBUUM_SECRET_SOURCE", first)
         self.assertEqual(first["HUBUUM_RESTORE_TEST_DATABASE_URL"], source["HUBUUM_RESTORE_TEST_DATABASE_URL"])
 
@@ -59,6 +113,12 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
                 report["replica_reports"][1][field] = value
                 self.assertFalse(assess(report, resources)["replica_topology_pass"])
                 report["replica_reports"][1][field] = original
+        for field, value in [("rss_trace_verified", False), ("first_sample_ns", 101)]:
+            with self.subTest(resource_field=field):
+                original = resources["replicas"][1][field]
+                resources["replicas"][1][field] = value
+                self.assertFalse(assess(report, resources)["replica_topology_pass"])
+                resources["replicas"][1][field] = original
         resources["replicas"].pop()
         self.assertFalse(assess(report, resources)["replica_topology_pass"])
 
