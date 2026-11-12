@@ -806,6 +806,7 @@ assert_flag "$unknown_document" code true
 # New tests are discovered automatically; their changed paths still need the right CI jobs.
 for python_container_input in tests/python/run.py tests/python/support/__init__.py \
   tests/python/support/installer.py tests/python/integration/__init__.py \
+  tests/python/integration/auth_browser_fixture.py tests/python/support/auth_browser/harness.html \
   tests/python/integration/monitoring.py tests/python/integration/monitoring_fixture.py \
   tests/python/unit/deployment/test_new_installer_case.py \
   tests/python/unit/monitoring/test_new_panel_case.py; do

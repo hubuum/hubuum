@@ -232,7 +232,7 @@ class AuthenticationContractTests(unittest.TestCase):
         identifiers = {case["id"] for case in self.fixtures["cases"]}
         required = {
             "local_success", "external_success", "remote_browser_cli_success",
-            "bff_server_completion", "denial", "expiry", "replay", "cross_client",
+            "bff_server_completion", "denial", "expiry", "expiry_reclaimed", "replay", "cross_client",
             "cross_provider", "wrong_browser", "configuration_changed",
             "stale_group_data", "unsupported_freshness", "lost_completion_cleanup",
             "candidate_connectivity_only", "candidate_verification_begin", "candidate_browser_verified",

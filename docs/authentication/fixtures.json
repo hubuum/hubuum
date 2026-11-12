@@ -360,7 +360,8 @@
       "id": "expiry",
       "operation_id": "completeInteraction",
       "requires": [
-        "expired"
+        "expired",
+        "record_retained"
       ],
       "request": {
         "client_id": "hubuum-cli"
@@ -371,6 +372,29 @@
           "error": "AuthenticationFailed",
           "message": "Authentication could not be completed.",
           "reason": "interaction_expired"
+        }
+      },
+      "effects": {
+        "issued_sessions": 0,
+        "activated": false
+      }
+    },
+    {
+      "id": "expiry_reclaimed",
+      "operation_id": "completeInteraction",
+      "requires": [
+        "expired",
+        "record_reclaimed"
+      ],
+      "request": {
+        "client_id": "hubuum-cli"
+      },
+      "response": {
+        "status": 401,
+        "body": {
+          "error": "AuthenticationFailed",
+          "message": "Authentication could not be completed.",
+          "reason": "interaction_invalid"
         }
       },
       "effects": {

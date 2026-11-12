@@ -254,12 +254,19 @@ blindly replaying the code. Restart never releases consumed/terminal state.
 | Ready | `200`, `ready` | Complete once using the same client and secret |
 | Wrong secret, unknown ID or wrong client | `401`, `interaction_invalid` | Stop; do not reveal whether the ID exists |
 | Denied/cancelled | `403`, `access_denied` / `interaction_cancelled` | Stop and let the human explicitly restart |
-| Expired | `410`, `interaction_expired` | Discard secrets and begin again |
+| Expired, with its record still retained | `410`, `interaction_expired` | Discard secrets and begin again |
 | Previously consumed | `409`, `interaction_consumed` | Never replay issuance; see response-loss policy |
 | Changed security revision | `409`, `configuration_changed` | Begin again against current discovery |
 | Early/abusive polls | `429`, `slow_down`, `Retry-After` | Increase interval by at least five seconds; jitter and exponential backoff for transport failures |
 | Unsupported evidence/feature | `422`, `capability_unsupported` | Explain limitation; never fall back to weaker proof |
 | Provider temporarily unavailable | `503`, `provider_unavailable` | Honor Retry-After within expiry; no cached login proof |
+
+An expired unissued record is eligible for bounded cleanup at its expiry. While
+retained, valid initiating credentials receive `410 interaction_expired`. After
+cleanup, the identifier is unknown and receives `401 interaction_invalid`, just
+like another unknown identifier; never keep an unbounded expiry tombstone. Both
+responses require discarding the old interaction and beginning again. Wrong
+client/secret credentials always receive `401`, including before cleanup.
 
 Default interaction TTL is five minutes; deployment ceiling ten minutes. Poll
 interval starts at five seconds. Apply bounded per-IP/client/actor creation,

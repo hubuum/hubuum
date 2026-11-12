@@ -2209,7 +2209,7 @@
         }
       },
       "Error410": {
-        "description": "Sanitized stable reason; see contract.md",
+        "description": "Expired interaction whose record is still retained. After bounded cleanup, an unknown identifier returns 401 interaction_invalid.",
         "content": {
           "application/json": {
             "schema": {

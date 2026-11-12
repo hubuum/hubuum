@@ -30,7 +30,7 @@ use crate::models::auth_interaction::{
 };
 use crate::models::{LOCAL_IDENTITY_SCOPE, LoginUser};
 use crate::permissions::AppContext;
-use crate::storage::storage_handle;
+use crate::storage::{StorageHandle, storage_handle};
 
 struct PasswordProvider {
     id: InteractionProviderId,
@@ -54,8 +54,19 @@ async fn providers(
     let revision = snapshot
         .record(StorageRuntimeSettingsGroup::Authentication)
         .revision();
+    let configured = crate::auth::interaction_password_providers(revision)?;
+    Ok((
+        revision,
+        resolve_password_providers(&storage, configured).await?,
+    ))
+}
+
+async fn resolve_password_providers(
+    storage: &StorageHandle,
+    configured: Vec<(String, String)>,
+) -> Result<Vec<PasswordProvider>, ApiError> {
     let mut providers = Vec::new();
-    for (scope, kind) in crate::auth::interaction_password_providers(revision)? {
+    for (scope, kind) in configured {
         let name = IdentityScopeName::new(scope.clone())
             .map_err(|_| InteractionError::ProviderUnavailable)?;
         let (id, kind, binding) = match kind.as_str() {
@@ -65,11 +76,15 @@ async fn providers(
                 None,
             ),
             "ldap" => {
-                let binding = storage
+                let Some(binding) = storage
                     .authentication_provider_binding(name.clone())
                     .await
                     .map_err(storage_error)?
-                    .ok_or(InteractionError::ProviderUnavailable)?;
+                else {
+                    // Deployment LDAP remains available through legacy login until
+                    // candidate activation persists its immutable interaction identity.
+                    continue;
+                };
                 if binding.kind().as_str() != "ldap" {
                     return Err(InteractionError::ProviderUnavailable.into());
                 }
@@ -92,7 +107,7 @@ async fn providers(
     if providers.len() > 64 {
         return Err(InteractionError::ProviderUnavailable.into());
     }
-    Ok((revision, providers))
+    Ok(providers)
 }
 
 pub async fn methods(context: &AppContext) -> Result<AuthenticationMethods, ApiError> {
@@ -694,5 +709,26 @@ fn api_storage_error(error: ApiError) -> ApiError {
         ApiError::Unauthorized(_) | ApiError::NotFound(_) => InteractionError::Invalid.into(),
         ApiError::ServiceUnavailable(_) => InteractionError::ProviderUnavailable.into(),
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod provider_discovery_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn unregistered_deployment_ldap_does_not_hide_local_login() {
+        let storage = StorageHandle::memory();
+        let providers = resolve_password_providers(
+            &storage,
+            vec![
+                ("local".into(), "local".into()),
+                ("directory".into(), "ldap".into()),
+            ],
+        )
+        .await
+        .unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, InteractionProviderId::local());
     }
 }

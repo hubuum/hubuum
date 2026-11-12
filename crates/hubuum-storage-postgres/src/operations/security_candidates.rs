@@ -300,7 +300,7 @@ async fn invalidate_provider_credentials(
         .bind::<Array<Text>,_>(scopes).execute(connection).await?;
     sql_query("UPDATE auth_sessions SET revoked_at=timezone('UTC',clock_timestamp()), revocation_reason='provider_configuration_changed' WHERE revoked_at IS NULL AND principal_id IN (SELECT p.id FROM principals p JOIN identity_scopes s ON s.id=p.identity_scope_id WHERE s.name=ANY($1))")
         .bind::<Array<Text>,_>(scopes).execute(connection).await?;
-    sql_query("UPDATE tokens SET revoked_at=timezone('UTC',clock_timestamp()), revision=revision+1 WHERE revoked_at IS NULL AND principal_id IN (SELECT p.id FROM principals p JOIN identity_scopes s ON s.id=p.identity_scope_id WHERE s.name=ANY($1))")
+    sql_query("UPDATE tokens SET revoked_at=timezone('UTC',clock_timestamp()) WHERE revoked_at IS NULL AND principal_id IN (SELECT p.id FROM principals p JOIN identity_scopes s ON s.id=p.identity_scope_id WHERE s.name=ANY($1))")
         .bind::<Array<Text>,_>(scopes).execute(connection).await?;
     sql_query("UPDATE credential_approvals SET invalidated_at=timezone('UTC',clock_timestamp()) WHERE consumed_at IS NULL AND invalidated_at IS NULL AND actor_id IN (SELECT p.id FROM principals p JOIN identity_scopes s ON s.id=p.identity_scope_id WHERE s.name=ANY($1))")
         .bind::<Array<Text>,_>(scopes).execute(connection).await?;

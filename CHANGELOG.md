@@ -91,6 +91,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Unregistered deployment LDAP providers no longer hide local interaction login.
+  Authentication settings activation and offline recovery now let the database
+  advance revoked token revisions, preserving the production revision guard.
+
 - Security activation and offline recovery acquire settings before principal locks,
   avoiding a deadlock with concurrent authentication completion.
 - Shared login reservations retain their original expiry when runtime rate-limit

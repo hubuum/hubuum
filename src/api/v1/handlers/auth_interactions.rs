@@ -116,7 +116,7 @@ pub async fn begin(
     (status = 401, description = "Invalid interaction, client, secret or credentials", body = ApiErrorResponse),
     (status = 403, description = "Interaction denied or cancelled", body = ApiErrorResponse),
     (status = 409, description = "Consumed/failed interaction or changed configuration", body = ApiErrorResponse),
-    (status = 410, description = "Interaction expired", body = ApiErrorResponse),
+    (status = 410, description = "Expired interaction whose record is still retained; cleaned-up identifiers return 401", body = ApiErrorResponse),
     (status = 429, description = "Login or request budget exhausted; honor Retry-After", body = ApiErrorResponse),
     (status = 503, description = "Provider unavailable", body = ApiErrorResponse)
 ))]
@@ -141,7 +141,7 @@ pub async fn credentials(
     (status = 401, description = "Invalid interaction, client or secret", body = ApiErrorResponse),
     (status = 403, description = "Denied or cancelled", body = ApiErrorResponse),
     (status = 409, description = "Failed interaction or changed configuration", body = ApiErrorResponse),
-    (status = 410, description = "Expired", body = ApiErrorResponse),
+    (status = 410, description = "Expired interaction whose record is still retained; cleaned-up identifiers return 401", body = ApiErrorResponse),
     (status = 429, description = "Early polling; increase interval and honor Retry-After", body = ApiErrorResponse)
 ))]
 #[post("/interactions/{id}/status")]
@@ -164,7 +164,7 @@ pub async fn status(
     (status = 401, description = "Invalid interaction, client, secret or authority", body = ApiErrorResponse),
     (status = 403, description = "Denied or cancelled", body = ApiErrorResponse),
     (status = 409, description = "Not ready, consumed, failed or configuration changed; never replay issuance", body = ApiErrorResponse),
-    (status = 410, description = "Expired", body = ApiErrorResponse),
+    (status = 410, description = "Expired interaction whose record is still retained; cleaned-up identifiers return 401", body = ApiErrorResponse),
     (status = 429, description = "Request budget exhausted; honor Retry-After", body = ApiErrorResponse)
 ))]
 #[post("/interactions/{id}/complete")]
@@ -193,7 +193,7 @@ pub async fn complete(
     (status = 401, description = "Invalid interaction, client or secret", body = ApiErrorResponse),
     (status = 403, description = "Denied", body = ApiErrorResponse),
     (status = 409, description = "Consumed, failed or configuration changed", body = ApiErrorResponse),
-    (status = 410, description = "Expired", body = ApiErrorResponse),
+    (status = 410, description = "Expired interaction whose record is still retained; cleaned-up identifiers return 401", body = ApiErrorResponse),
     (status = 429, description = "Request budget exhausted", body = ApiErrorResponse)
 ))]
 #[post("/interactions/{id}/cancel")]

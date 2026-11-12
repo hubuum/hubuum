@@ -127,3 +127,94 @@ the POST Origin header under `no-referrer`. Redirects and token responses retain
 `no-referrer`; cross-origin referrers remain suppressed and form submissions still
 require an exact Origin plus cookie/CSRF proof. This browser-tested clarification
 also requires review with #591.
+
+## Expiry and cleanup clarification (PR #591)
+
+The bounded cleanup policy does not retain permanent expiry tombstones. Valid
+initiating credentials receive `410 interaction_expired` while the expired record
+exists; after it is removed they receive `401 interaction_invalid`. Wrong
+client/secret credentials remain `401` in either state. Both terminal responses
+require a fresh interaction. The shared fixtures and HTTP regressions cover both
+retained and reclaimed records. This clarification preserves the implemented
+retention bound and makes the v1 contract's cleanup behavior explicit.
+
+## Interaction implementation review and HTTPS qualification (PR #591)
+
+Implementation review on 2026-11-12 accepts the optional password browser mode,
+LDAP verification envelope, native-form referrer policy and bounded expiry
+clarifications above. This is an implementation review by the coding agent under
+the maintainer's close-out request; it is not an additional independent review.
+The reviewed boundary retains application-specific correlation, purpose and
+transaction rules while delegating cryptography, constant-time comparison,
+rate limiting, cookies, URL parsing and HTML escaping to established libraries.
+
+Fresh-database qualification found and corrected two defects: an unregistered
+deployment LDAP provider hid local interaction discovery, and configuration
+activation manually advanced token revisions during revocation. Discovery now
+advertises only providers with usable interaction identities, keeping local login
+available; deployment LDAP joins after candidate activation. Revocation relies on
+the database revision trigger. The PostgreSQL fixture now installs that production
+trigger, which `CREATE TABLE ... LIKE ... INCLUDING ALL` does not copy.
+
+The final runtime was exercised through a loopback TLS reverse proxy with normal
+certificate validation in Chromium 157 and Safari 27.2. Authentication and BFF
+used different registrable domains. `allow_loopback_http` was disabled. A
+short-lived, hostname-constrained test CA was local environment setup only;
+certificates, keys and trust installation are not repository inputs. Chromium
+rejected the untrusted certificate before the positive run. Both browsers then
+accepted the trusted endpoint without an interstitial bypass or validation flag.
+After qualification, the temporary certificate was removed from the login
+keychain, no user trust settings remained, and operating-system certificate
+validation again rejected the leaf certificate. Temporary keys were deleted.
+
+| Browser check | Chromium | Safari |
+| --- | --- | --- |
+| Public discovery, legacy discovery and protected JSON transport | 13/13 checks passed | 13/13 checks passed |
+| Local login, explicit approval and server-only session completion | Passed | Passed |
+| Verified LDAP login and cross-site HTTPS BFF 303 handoff | Passed | Passed |
+| Candidate verification without a session or provisioning | Passed | Passed |
+| Operation-bound credential approval and candidate activation | Passed | Passed |
+| Explicit denial and failed-password termination | Passed | Passed |
+| Client cancellation prevents browser continuation and issuance | Passed | Passed |
+| Real elapsed expiry followed by bounded cleanup rejects continuation | Passed | Passed |
+| Wrong-browser access to a live bound interaction | Rejected | Rejected |
+| Pending/approval reload preserves the request | Passed | Passed |
+| Secure cookies sent on HTTPS and withheld on plaintext | Passed | Passed |
+| HttpOnly cookies absent from JavaScript | Passed | Passed |
+
+The BFF fixture binds the callback nonce to its own Secure/HttpOnly host cookie
+and consumes that session once. Chromium callback replay was rejected. Repeating
+server completion returned `409 interaction_consumed`; exact-family cleanup
+returned `204` twice. Denial returned `403 access_denied`, cancellation
+`403 interaction_cancelled`, and failed authentication `409 interaction_failed`.
+Expired and reclaimed records returned `401 interaction_invalid`; focused HTTP
+regressions also cover retained expiry (`410`). The run produced exactly four
+browser login sessions and two principals. Verification/approval added neither
+sessions nor principals. Three browser sessions were revoked by explicit cleanup
+or provider-configuration changes. All 142 proxied responses passed the
+redemption-capability leakage check; response headers and cookie attributes were
+recorded without cookie values. One early Safari credential submission failed;
+a fresh interaction with explicitly set fields passed the complete LDAP flow.
+
+Reproduction uses the standard-library fixture described in
+[the interaction guide](../authentication_interactions.md#reproducing-browser-qualification).
+The fixture accepts certificate paths and has no trust-installation or
+certificate-validation bypass. Secrets stay in its disposable private state.
+Rust tests own authorization, persistence, concurrency and domain assertions.
+
+| #575 acceptance criterion | Implementation and evidence |
+| --- | --- |
+| Versioned operations and password compatibility | v1 handlers, generated OpenAPI, shared contract fixtures, `tests/api_identity_suite/auth_interactions.rs` and existing login/session suites |
+| Typed durable bindings and atomic completion | Domain lifecycle/persistence types; complete memory/PostgreSQL adapters; shared storage contracts and `crates/hubuum-storage-postgres/tests/auth_interactions` races/rollback/restart coverage |
+| Hosted entry, separate secrets, approval and bounded polling | Real-browser matrix above; browser handler and admission tests; HTTP polling/backoff, cancellation, expiry and invalid-authority regressions |
+| Callback ownership, exact handoff and origin/CSRF isolation | Browser Host/Origin/Fetch Metadata and cookie/CSRF tests; real cross-site BFF redirect; destination/client registrations; no public-ID redemption |
+| Established issuance and no browser token exposure | Validated proof types, existing session service, atomic completion, sanitized browser responses and exact session/principal counts |
+| Response loss and bounded cleanup | Consumed metadata, repeated-completion rejection, exact-family revocation, retention limits, scheduled/opportunistic purge and production-adapter cleanup tests |
+| Races, replay, mismatch, compatibility and schema | Domain/shared/native adapter tests, browser replay and wrong-browser rejection, HTTP compatibility suite, regenerated OpenAPI and proposed-contract fixtures |
+
+OIDC/OAuth provider callbacks and live upstream protocol behavior remain
+issues #577/#578; #575 proves the shared interaction authority and handoff boundary.
+Identity/freshness orchestration remains #576, with ecosystem qualification in
+issue #581. Those downstream tasks are not claimed complete by this review. Final CI,
+immutable candidate acceptance and integration commit identities are recorded in
+PR #591, issue #575 and Project 6 when available.

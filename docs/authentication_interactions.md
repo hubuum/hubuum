@@ -1,6 +1,6 @@
 # Durable authentication interactions
 
-Status: #575 implementation in progress, draft PR #591 on `project/auth-support`.
+Implementation: PR #591 for #575 on the `project/auth-support` integration branch.
 The domain model, complete storage adapters, atomic session issuance and v1
 password-login transport are implemented. Local and enabled LDAP providers use
 public discovery, begin, credentials, protected status, complete, cancel and
@@ -8,6 +8,10 @@ issued-session revocation. Existing password-login endpoints keep their wire
 behavior. Hosted local/LDAP sign-in, explicit approval, registered BFF handoff,
 credential-approval completion and LDAP candidate verification use the same
 durable lifecycle. Real OIDC/OAuth execution remains in #577/#578.
+
+Deployment LDAP providers enter interaction discovery after the supported
+security-candidate verify/activate workflow persists their immutable provider UUID.
+Until then, legacy LDAP password login and local interactions remain available.
 
 ## Password interaction API
 
@@ -163,7 +167,11 @@ explicit cleanup accepts batches of at most 4,096. The existing 30-second settin
 reconciler removes up to 128 expired records per refresh, including while idle.
 Consumed metadata survives until one hour after the original expiry for
 response-loss cleanup. Other rows
-can be removed at expiry. Browser attachment and claim state are bounded within
+can be removed at expiry. Valid initiating credentials receive
+`410 interaction_expired` while an expired record remains. After cleanup they
+receive `401 interaction_invalid`, as for any unknown identifier. Both require
+a fresh interaction; wrong client/secret credentials always receive `401`.
+Browser attachment and claim state are bounded within
 each record; persistence documents are limited to 256 KiB.
 
 HTTP admission uses `governor`'s GCRA limiter for each IP, allowing bursts of
@@ -222,3 +230,56 @@ Logical backups exclude interactions. Logical restore and offline security
 recovery discard pending, ready and consumed interaction records. External Rust
 adapters must upgrade the complete SDK graph to `0.9.0`; see the
 [SDK migration guide](storage_adapter_sdk.md#upgrading-from-08-to-09).
+
+## Reproducing browser qualification
+
+Use a disposable database and test identities. Start the server on loopback port
+8590 with the public HTTPS origin and an exact BFF callback registration for
+client `browser-qa`. Supply certificates already trusted by the browsers for
+three fixture hostnames: authentication, BFF, and a cross-site attacker. Use
+separate registrable domains for the cross-site check. Keep
+`allow_loopback_http` disabled. Certificate issuance, trust installation and
+private keys are external test-environment responsibilities; this repository
+neither installs trust nor bypasses certificate validation.
+
+The standard-library fixture preserves browser request headers while proxying to
+the server. Its state directory must have mode `0700`; put a disposable
+administrator bearer in `admin.json` as `{"token":"..."}`. Start it with:
+
+```bash
+python3 -I -S tests/python/run.py integration auth-browser-fixture \
+  --state-dir /private/test-state \
+  --certificate /private/test-tls/server.pem \
+  --key /private/test-tls/server.key \
+  --attacker-origin https://attacker.example.test:8593
+```
+
+The TLS listeners use loopback ports 8591–8593. The plaintext listener on 8594
+is only for verifying that Secure cookies are withheld. Fixture controls live on
+`127.0.0.1:8595` and reject browser Origin/Fetch Metadata headers. Never deploy this
+fixture or point it at production. Stop it and remove its credentials after use.
+
+Create a case by posting a JSON object containing `case` and any begin overrides
+to `/control/begin` on the control listener. The response contains only the ID,
+verification URI and user code; redemption capabilities stay server-side. Use the
+real hosted forms to attach, authenticate and approve or deny. Post `case` and
+`action` (`status`, `complete`, `cancel`, or `issued-session/revoke`) to
+`/control/action` to exercise the initiating client. Only sanitized result keys
+and statuses are recorded. Privileged verification results are accessible only
+to the server-side control client through `/control/private-result`.
+
+For BFF delivery, create a case with `delivery: "bff"`, the configured
+`return_target_id`, and a fresh random `return_nonce`. First visit
+`https://BFF-HOST:8592/start?case=CASE` in the browser. The fixture sets its own
+Secure, HttpOnly, SameSite=Lax host cookie and binds that session to the case.
+Follow its hosted sign-in link. The callback checks both session and nonce,
+consumes the fixture session once, and redeems only on the server. Wrong-browser,
+wrong-nonce and replayed callbacks must fail.
+
+Visit `/__qa` on the authentication TLS listener for real-browser discovery and
+transport-rejection checks. `/cookie-probe` displays cookie names only; compare
+HTTPS and plaintext requests to the same hostname. Sanitized request records
+include Origin, Fetch Metadata, cookie names/attributes, response headers and a
+redemption-secret leakage check. Review those records alongside the visible
+forms, completion results and database invariants; the fixture is not a substitute
+for the Rust authorization, race and production-adapter suites.

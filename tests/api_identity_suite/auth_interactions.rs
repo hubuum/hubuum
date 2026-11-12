@@ -6,6 +6,7 @@ use actix_web::{
     http::{StatusCode, header},
     test,
 };
+use diesel::{sql_query, sql_types::Text};
 use hubuum_storage_postgres::{PostgresStorageError, diesel_async_prelude::*, with_connection};
 use rstest::rstest;
 use serde_json::{Value, json};
@@ -525,5 +526,50 @@ async fn malformed_credentials_do_not_claim_an_attempt(#[case] patch: Value) {
         .await;
     }
     fixture.session().await;
+    fixture.cleanup().await;
+}
+
+#[rstest]
+#[case::retained_completion("complete", false, StatusCode::GONE, "interaction_expired")]
+#[case::reclaimed_completion("complete", true, StatusCode::UNAUTHORIZED, "interaction_invalid")]
+#[case::retained_status("status", false, StatusCode::GONE, "interaction_expired")]
+#[case::reclaimed_status("status", true, StatusCode::UNAUTHORIZED, "interaction_invalid")]
+#[actix_web::test]
+async fn expiry_response_distinguishes_retained_from_reclaimed_records(
+    #[case] action: &str,
+    #[case] reclaimed: bool,
+    #[case] status: StatusCode,
+    #[case] expected: &str,
+) {
+    let fixture = Fixture::new().await;
+    // Advance only this fixture's persisted timestamps. The adapter's bounded
+    // purge is covered in its isolated PostgreSQL tests. Keep retain_until in
+    // the future so other parallel begins cannot purge the retained case; remove
+    // only this fixture for the reclaimed case.
+    with_connection(&fixture.context.pool, async |connection| {
+        sql_query(
+            "UPDATE auth_interactions SET
+             created_at=created_at-interval '10 minutes',
+             expires_at=expires_at-interval '10 minutes',
+             document=jsonb_set(jsonb_set(jsonb_set(document,
+               '{lifecycle,created_at}',to_jsonb(created_at-interval '10 minutes')),
+               '{lifecycle,expires_at}',to_jsonb(expires_at-interval '10 minutes')),
+               '{lifecycle,next_poll_at}',to_jsonb((document#>>'{lifecycle,next_poll_at}')::timestamptz-interval '10 minutes'))
+             WHERE client_id=$1",
+        )
+        .bind::<Text, _>(&fixture.client)
+        .execute(connection)
+        .await?;
+        if reclaimed {
+            sql_query("DELETE FROM auth_interactions WHERE client_id=$1")
+                .bind::<Text, _>(&fixture.client)
+                .execute(connection)
+                .await?;
+        }
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
+    .unwrap();
+    reason(fixture.action(action).await, status, expected).await;
     fixture.cleanup().await;
 }

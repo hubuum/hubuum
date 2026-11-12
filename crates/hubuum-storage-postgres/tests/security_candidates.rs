@@ -55,6 +55,10 @@ impl Fixture {
         .map(|table| format!("CREATE TABLE {table} (LIKE public.{table} INCLUDING ALL);"))
         .join("\n");
         f.owner(&format!("CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}; {tables} {APPROVALS} {LEGACY} {SETTINGS} {POLICIES} {CANDIDATES} {INTERACTIONS}
+            -- LIKE INCLUDING ALL does not copy triggers. Reuse the production
+            -- revision guard so credential revocation cannot bypass its contract.
+            CREATE TRIGGER tokens_revision BEFORE INSERT OR UPDATE ON tokens
+                FOR EACH ROW EXECUTE FUNCTION public.hubuum_manage_resource_revision('none', 'coalesce', 'last_used_at');
             CREATE SEQUENCE fixture_token_ids START 2;
             ALTER TABLE tokens ALTER COLUMN id SET DEFAULT nextval('fixture_token_ids');
             INSERT INTO identity_scopes(id,name,provider_kind) VALUES(1,'local','local');
@@ -402,6 +406,7 @@ async fn removing_provider_revokes_its_credentials_and_preserves_manual_grants()
         .unwrap();
     f.owner("DO $$ BEGIN
         IF EXISTS(SELECT 1 FROM tokens WHERE id=2 AND revoked_at IS NULL) OR EXISTS(SELECT 1 FROM auth_sessions WHERE principal_id=2 AND revoked_at IS NULL) THEN RAISE EXCEPTION 'external credentials survived'; END IF;
+        IF NOT EXISTS(SELECT 1 FROM tokens WHERE id=2 AND revision=2) THEN RAISE EXCEPTION 'revocation revision not advanced by database'; END IF;
         IF NOT EXISTS(SELECT 1 FROM group_memberships WHERE principal_id=2 AND group_id=1) THEN RAISE EXCEPTION 'manual grants removed'; END IF;
         IF EXISTS(SELECT 1 FROM tokens WHERE id=1 AND revoked_at IS NOT NULL) THEN RAISE EXCEPTION 'local recovery token revoked'; END IF;
         END $$;").await.unwrap();

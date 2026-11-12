@@ -2011,7 +2011,7 @@
             }
           },
           "410": {
-            "description": "Expired",
+            "description": "Expired interaction whose record is still retained; cleaned-up identifiers return 401",
             "content": {
               "application/json": {
                 "schema": {
@@ -2108,7 +2108,7 @@
             }
           },
           "410": {
-            "description": "Expired",
+            "description": "Expired interaction whose record is still retained; cleaned-up identifiers return 401",
             "content": {
               "application/json": {
                 "schema": {
@@ -2215,7 +2215,7 @@
             }
           },
           "410": {
-            "description": "Interaction expired",
+            "description": "Expired interaction whose record is still retained; cleaned-up identifiers return 401",
             "content": {
               "application/json": {
                 "schema": {
@@ -2392,7 +2392,7 @@
             }
           },
           "410": {
-            "description": "Expired",
+            "description": "Expired interaction whose record is still retained; cleaned-up identifiers return 401",
             "content": {
               "application/json": {
                 "schema": {
