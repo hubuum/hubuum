@@ -433,6 +433,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Concurrent gated history expiry workers preserve the shared restore fence
   without deadlocking routine history readers or other workers.
+- Gated history expiry reduces batch membership to the remaining retained
+  completion capacity, preserving existing exclusions and reservations when
+  workers select concurrently.
 
 - Rolling back the unmerged history lifecycle migration preserves Legacy archive
   entry when the synchronized runtime-settings checkpoint remains installed.

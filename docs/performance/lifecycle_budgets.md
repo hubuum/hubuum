@@ -116,11 +116,18 @@ Every retained admitted batch must also have complete receipts before workers
 stop. Shared runs retain native database round-trip samples and require their
 p95 to remain within the profile's 2 ms ceiling.
 
-The row shape reaches 1,000 members. The byte shape approaches 16 MiB using full
+The row shape reaches 1,000 scanned native source rows, recorded in committed
+task events. Ineligible baseline rows still consume the scan budget, so selected
+membership may be smaller. The byte shape approaches 16 MiB using full
 native encoded-row sizes, independently summed before deletion. The large-row
 shape exercises supported rows approaching the 4 MiB backup ceiling. The
 oversized shape retains a row above the 16 MiB expiry ceiling, verifies an
 explicit task warning and verifies backup rejection before publication.
+Selection also stops before exhausting the retained journal or control envelope,
+including reserved removal/cancellation and hold completion evidence. Concurrent
+workers can therefore admit smaller fixed manifests without evicting earlier
+obligations or increasing any ceiling. An eligible first member that cannot fit
+has an explicit capacity failure; an empty scan needs no new journal capacity.
 The authority shape measures the real composite publisher with 10,000 task
 receipts, maximum-count task/deletion fixtures and history filled to its actual
 completion-reserved admission ceiling, then populated with terminal receipts.

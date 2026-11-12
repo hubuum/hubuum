@@ -108,15 +108,17 @@ def assess(report, resources):
     if report["shape"] == "authority":
         return {"h1_pass": h1, "maximum_composite_pass": report["maximum_composite_verified"]}
     batches = report["batches"]
+    scanned = report.get("max_scanned_source_rows", 0)
     checks = {
         "h1_pass": h1,
-        "h4_pass": (bool(batches)
+        "h4_pass": (type(scanned) is int and 0 < scanned <= 1000
+                    and bool(batches)
                     and all(0 < batch["rows"] <= 1000
                             and 0 < batch["input_bytes"] <= 16 * 1024 ** 2
                             and batch["input_bytes"] == batch["native_input_bytes"]
                             and batch["removed_rows"] == batch["rows"]
                             for batch in batches)
-                    and (report["shape"] != "rows" or any(batch["rows"] == 1000 for batch in batches))
+                    and (report["shape"] != "rows" or scanned == 1000)
                     and (report["shape"] != "bytes" or any(batch["input_bytes"] >= 15 * 1024 ** 2 for batch in batches))
                     and (report["shape"] != "large_row" or any(4 * 1024 ** 2 - 8192 <= batch["largest_claimed_row_bytes"] <= 4 * 1024 ** 2 for batch in batches))
                     and (report["shape"] != "oversized" or report["oversized_deferred_rows"] == report["slots"] * report.get("replicas", 1))),
@@ -137,8 +139,11 @@ def assess(report, resources):
                     and replica["initial_claimed_slots"] == report["slots"]
                     and replica["claimed_iterations"] > 0
                     and replica["slow_consumer_blocked"] and replica["slow_consumer_retired"]
+                    and type(replica.get("max_scanned_source_rows")) is int
+                    and 0 < replica["max_scanned_source_rows"] <= 1000
                     and 0 < replica["kernel_peak_rss_bytes"] <= CEILING
                     and replica["kernel_child_peak_rss_bytes"] == 0 for replica in replicas)
+            and max(replica["max_scanned_source_rows"] for replica in replicas) == scanned
             and (report["replicas"] == 1 or all(replica["database_round_trip_us"]
                     and percentile(replica["database_round_trip_us"], 95) <= 2000 for replica in replicas))
             and all(process["samples"] > 0

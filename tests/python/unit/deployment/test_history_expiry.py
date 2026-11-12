@@ -20,8 +20,10 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
                  "kernel_peak_rss_bytes": 100_000_000, "kernel_child_peak_rss_bytes": 0,
                  "replay_preserved_receipts": True, "quarantine_released": True,
                  "slots": 1, "replicas": 1,
+                 "max_scanned_source_rows": 1000,
                  "replica_reports": [{"replica": 0, "slots": 1, "initial_claimed_slots": 1, "http_workers": 2,
                      "claimed_iterations": 10, "slow_consumer_blocked": True,
+                     "max_scanned_source_rows": 1000,
                      "slow_consumer_retired": True, "kernel_peak_rss_bytes": 100_000_000,
                      "kernel_child_peak_rss_bytes": 0, "database_round_trip_us": [500] * 20}]}
         resources = {"samples": 10, "peak_rss_bytes": 100_000_000, "peak_hwm_bytes": 110_000_000,
@@ -31,6 +33,16 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
 
     def test_complete_evidence_passes(self):
         self.assertTrue(all(assess(*self.fixture()).values()))
+
+    def test_row_boundary_counts_scanned_sources_before_eligibility_filtering(self):
+        report, resources = self.fixture()
+        report["batches"][0].update(rows=998, removed_rows=998)
+        self.assertTrue(all(assess(report, resources).values()))
+        for scanned in (999, 1001, None):
+            with self.subTest(scanned=scanned):
+                report["max_scanned_source_rows"] = scanned
+                report["replica_reports"][0]["max_scanned_source_rows"] = scanned
+                self.assertFalse(assess(report, resources)["h4_pass"])
 
     def test_failed_warmup_stops_measurement_without_qualifying_partial_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -65,11 +65,18 @@ pub(super) async fn run_replicas(
     reports
 }
 
-async fn statuses(
+#[derive(Default)]
+struct TaskObservations {
+    statuses: Vec<StorageTaskStatus>,
+    oversized_source_rows: u64,
+    max_scanned_source_rows: u64,
+}
+
+async fn task_observations(
     storage: &(impl HistoryLifecycleStorage + ExecutionStorage + TaskQueueStorage),
     scope: &StorageExecutionScope,
     tasks: &[TaskId],
-) -> (Vec<StorageTaskStatus>, u64) {
+) -> TaskObservations {
     storage
         .run_in_scope(scope.clone(), async {
             let owner = storage
@@ -78,8 +85,7 @@ async fn statuses(
                 .unwrap();
             let result = storage
                 .run_in_scope(scope.clone().with_history_read(owner.context()), async {
-                    let mut statuses = Vec::new();
-                    let mut oversized = 0;
+                    let mut observations = TaskObservations::default();
                     for id in tasks {
                         let task = storage.get_task_access(*id).await.unwrap().into_parts().0;
                         if task.status().is_terminal()
@@ -91,7 +97,7 @@ async fn statuses(
                                 task.summary()
                             );
                         }
-                        statuses.push(task.status());
+                        observations.statuses.push(task.status());
                         let events = storage
                             .list_task_events(StorageTaskChildListQuery::new(
                                 *id,
@@ -101,14 +107,22 @@ async fn statuses(
                             .unwrap()
                             .into_parts()
                             .0;
-                        oversized += events
+                        observations.oversized_source_rows += events
                             .iter()
                             .filter_map(|event| {
                                 event.data()?.get("oversized_source_rows")?.as_u64()
                             })
                             .sum::<u64>();
+                        observations.max_scanned_source_rows =
+                            observations.max_scanned_source_rows.max(
+                                events
+                                    .iter()
+                                    .filter_map(|event| event.data()?.get("scanned")?.as_u64())
+                                    .max()
+                                    .unwrap_or(0),
+                            );
                     }
-                    (statuses, oversized)
+                    observations
                 })
                 .await;
             storage
@@ -227,6 +241,7 @@ async fn qualified_history_expiry_replica() {
         await_file(&root.join(format!("claimed-{replica}"))).await;
     }
     let mut database_round_trip_us = Vec::new();
+    let mut max_scanned_source_rows = 0;
     let oversized_reported_rows = loop {
         for result in futures_util::future::join_all(
             (0..slots).map(|_| hubuum::test_support::qualify_history_expiry_iteration(&context)),
@@ -249,7 +264,9 @@ async fn qualified_history_expiry_replica() {
             slow_consumer_blocked = true;
             drop(slow.take());
         }
-        let (statuses, oversized) = statuses(&storage, &scope, &plan.tasks).await;
+        let observations = task_observations(&storage, &scope, &plan.tasks).await;
+        max_scanned_source_rows = max_scanned_source_rows.max(observations.max_scanned_source_rows);
+        let statuses = observations.statuses;
         assert!(
             statuses
                 .iter()
@@ -278,7 +295,7 @@ async fn qualified_history_expiry_replica() {
                     .all(|status| *status == StorageTaskStatus::Succeeded),
                 "Shared worker outcomes: {statuses:?}"
             );
-            break oversized;
+            break observations.oversized_source_rows;
         }
         assert!(
             started.elapsed() < std::time::Duration::from_secs(1800),
@@ -297,6 +314,7 @@ async fn qualified_history_expiry_replica() {
     let report = json!({"replica":index, "slots":slots, "initial_claimed_slots":slots, "http_workers":2,
         "claimed_iterations":claimed_iterations, "slow_consumer_blocked":slow_consumer_blocked,
         "slow_consumer_retired":true, "oversized_reported_rows":oversized_reported_rows,
+        "max_scanned_source_rows":max_scanned_source_rows,
         "worker_seconds":started.elapsed().as_secs_f64(),
         "database_round_trip_us":database_round_trip_us,
         "kernel_peak_rss_bytes":high_water(libc::RUSAGE_SELF),

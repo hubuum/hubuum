@@ -108,19 +108,27 @@ fn completion_reserved_history() -> hubuum_storage_core::HistoryLifecycleAuthori
             .unwrap()
             .with_read_span(HistoryExpiryReadSpan::closed(at(110), at(150)).unwrap())
             .unwrap();
-            assert!(matches!(
-                selection
-                    .consider(candidate, HistoryExpiryInputBytes::new(1).unwrap(), &[])
-                    .unwrap(),
-                HistoryExpirySelectionOutcome::Selected
-            ));
-        }
-        match control.admit_expiry(selection.finish().unwrap(), snapshot.fence()) {
-            Ok(change) => control = change.next().clone(),
-            Err(_) => {
-                exhausted = true;
-                break;
+            match selection
+                .consider(candidate, HistoryExpiryInputBytes::new(1).unwrap(), &[])
+                .unwrap()
+            {
+                HistoryExpirySelectionOutcome::Selected => {}
+                HistoryExpirySelectionOutcome::BudgetReached => {
+                    exhausted = true;
+                    break;
+                }
+                HistoryExpirySelectionOutcome::Blocked(_) => {
+                    panic!("Maximum fixture members must remain eligible")
+                }
             }
+        }
+        control = control
+            .admit_expiry(selection.finish().unwrap(), snapshot.fence())
+            .expect("Selected maximum fixture batch must fit its completion reservation")
+            .next()
+            .clone();
+        if exhausted {
+            break;
         }
     }
     assert!(

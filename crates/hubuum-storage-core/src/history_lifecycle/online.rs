@@ -611,7 +611,60 @@ impl HistoryExpiryManifest {
 pub enum HistoryExpirySelectionOutcome {
     Selected,
     Blocked(HistoryExpiryDecision),
+    /// The selected prefix has reached a row, input, metadata or retained
+    /// completion budget. Never advance past the unselected next member.
     BudgetReached,
+}
+
+/// Bound a new manifest together with all of its future completion evidence.
+/// Compute this once from the locked snapshot, before considering source rows.
+struct HistoryExpirySelectionBudget(usize);
+
+impl HistoryExpirySelectionBudget {
+    fn new(
+        snapshot: &HistoryLifecycleSnapshot,
+        manifest: &HistoryExpiryManifest,
+        manifest_bytes: usize,
+    ) -> Result<Self, StorageValidationError> {
+        let control = snapshot.control();
+        let authority = control.authority();
+        let journal = authority.expiry();
+        if journal.intents().len() == HistoryExpiryJournal::MAX_INTENTS {
+            return Ok(Self(0));
+        }
+        let intent_bytes = serde_json::to_vec(&HistoryExpiryIntent::new(manifest.clone()))
+            .map_err(|_| invalid("Cannot encode expiry intent header"))?
+            .len();
+        let overhead = intent_bytes - manifest_bytes
+            + usize::from(!journal.is_empty())
+            + HistoryExpiryJournal::CANCELLATION_RESERVE_BYTES;
+        let pending = journal.completion_reserve_bytes();
+        let journal_bytes = serde_json::to_vec(journal.intents())
+            .map_err(|_| invalid("Cannot encode retained expiry journal"))?
+            .len();
+        let journal_budget =
+            HistoryExpiryJournal::MAX_BYTES.saturating_sub(journal_bytes + pending + overhead);
+        let revision = authority.revision().value();
+        let next_revision = HistoryAuthorityRevision::new(
+            revision
+                .checked_add(1)
+                .ok_or_else(|| invalid("History authority revision exhausted"))?,
+        )?;
+        let revision_growth = next_revision.value().to_string().len() - revision.to_string().len();
+        let control_budget = HistoryLifecycleControl::MAX_BYTES.saturating_sub(
+            control.encode()?.len()
+                + authority.pending_hold_completions()
+                    * HistoryLifecycleControl::HOLD_COMPLETION_RESERVE_BYTES
+                + pending
+                + overhead
+                + revision_growth,
+        );
+        Ok(Self(journal_budget.min(control_budget)))
+    }
+
+    fn includes(&self, manifest_bytes: usize, members: usize) -> bool {
+        manifest_bytes + members * HistoryExpiryJournal::REMOVAL_RESERVE_BYTES <= self.0
+    }
 }
 
 /// The adapter measures native full-row input and evaluates the current source;
@@ -622,6 +675,7 @@ pub struct HistoryExpirySelection<'a> {
     manifest: HistoryExpiryManifest,
     identities: BTreeSet<([u8; 16], [u8; 16])>,
     retained_bytes: usize,
+    completion_budget: HistoryExpirySelectionBudget,
 }
 impl<'a> HistoryExpirySelection<'a> {
     pub fn is_empty(&self) -> bool {
@@ -654,12 +708,15 @@ impl<'a> HistoryExpirySelection<'a> {
                 "Expiry manifest header exceeds its encoded byte bound",
             ));
         }
+        let completion_budget =
+            HistoryExpirySelectionBudget::new(snapshot, &manifest, retained_bytes)?;
         Ok(Self {
             snapshot,
             manifest,
             scan,
             identities: BTreeSet::new(),
             retained_bytes,
+            completion_budget,
         })
     }
 
@@ -733,6 +790,17 @@ impl<'a> HistoryExpirySelection<'a> {
             + next_input.to_string().len()
             - self.manifest.input_bytes.to_string().len();
         if next_retained > HistoryExpiryManifest::MAX_BYTES {
+            return Ok(HistoryExpirySelectionOutcome::BudgetReached);
+        }
+        if !self
+            .completion_budget
+            .includes(next_retained, self.manifest.members.len() + 1)
+        {
+            if self.is_empty() {
+                return Err(invalid(
+                    "Retained history has no completion capacity for another exact member",
+                ));
+            }
             return Ok(HistoryExpirySelectionOutcome::BudgetReached);
         }
         self.identities.insert(identity);
@@ -897,6 +965,142 @@ mod tests {
             None => candidate,
         }
     }
+
+    fn fill_completion_capacity(holds: usize) -> (HistoryLifecycleSnapshot, usize) {
+        let mut current = snapshot();
+        for _ in 0..holds {
+            let hold = HistoryRetentionHold::new(
+                Uuid::new_v4(),
+                HistoryPolicyKey::new(
+                    StorageIdentityHistoryKind::Class,
+                    HistoryPolicyScope::Deployment,
+                )
+                .unwrap(),
+                at(150),
+                None,
+                PrincipalIdentity::generate(),
+            )
+            .unwrap();
+            let change = current
+                .control()
+                .create_hold(hold, current.fence())
+                .unwrap();
+            current = HistoryLifecycleSnapshot::new(
+                change.next().clone(),
+                current.fence().incarnation(),
+                current.fence().deletion_revision(),
+                at(200),
+            )
+            .unwrap();
+        }
+        for _ in 0..HistoryExpiryJournal::MAX_INTENTS {
+            let mut selection = HistoryExpirySelection::new(
+                Uuid::new_v4(),
+                HistoryExpiryOrigin::Manual {
+                    principal: PrincipalIdentity::generate(),
+                },
+                HistoryLifecycleScan::new(key(), 1000).unwrap(),
+                &current,
+            )
+            .unwrap();
+            for _ in 0..1000 {
+                match selection
+                    .consider(
+                        candidate(Some(HistoryRetentionAnchor::Closed(at(110)))),
+                        HistoryExpiryInputBytes::new(1).unwrap(),
+                        &[],
+                    )
+                    .unwrap()
+                {
+                    HistoryExpirySelectionOutcome::Selected => {}
+                    HistoryExpirySelectionOutcome::BudgetReached => break,
+                    HistoryExpirySelectionOutcome::Blocked(_) => {
+                        panic!("Fixture members must remain eligible")
+                    }
+                }
+            }
+            let manifest = selection.finish().unwrap();
+            let count = manifest.members().len();
+            let admitted = current
+                .control()
+                .admit_expiry(manifest, current.fence())
+                .expect(
+                    "Selection must preserve enough capacity to admit and finish its entire batch",
+                );
+            current = HistoryLifecycleSnapshot::new(
+                admitted.next().clone(),
+                current.fence().incarnation(),
+                current.fence().deletion_revision(),
+                at(200),
+            )
+            .unwrap();
+            if count < 1000 {
+                return (current, count);
+            }
+        }
+        panic!("Fixture must reach completion-reserved capacity");
+    }
+
+    #[rstest]
+    #[case::journal(0)]
+    #[case::control_with_pending_holds(16)]
+    fn selection_stops_before_exceeding_retained_completion_capacity(#[case] holds: usize) {
+        let (filled, count) = fill_completion_capacity(holds);
+        assert!((1..1000).contains(&count));
+        assert!(filled.control().encode().is_ok());
+    }
+
+    #[rstest]
+    #[case::journal(0)]
+    #[case::control_with_pending_holds(16)]
+    fn no_completion_capacity_rejects_without_retaining_membership(#[case] holds: usize) {
+        let (filled, _) = fill_completion_capacity(holds);
+        let mut selection = HistoryExpirySelection::new(
+            Uuid::new_v4(),
+            HistoryExpiryOrigin::Manual {
+                principal: PrincipalIdentity::generate(),
+            },
+            HistoryLifecycleScan::new(key(), 1000).unwrap(),
+            &filled,
+        )
+        .unwrap();
+        assert!(
+            selection
+                .consider(
+                    candidate(Some(HistoryRetentionAnchor::Closed(at(110)))),
+                    HistoryExpiryInputBytes::new(1).unwrap(),
+                    &[]
+                )
+                .is_err()
+        );
+        assert!(selection.is_empty());
+    }
+
+    #[test]
+    fn an_ineligible_source_needs_no_new_completion_capacity() {
+        let (filled, _) = fill_completion_capacity(0);
+        let mut selection = HistoryExpirySelection::new(
+            Uuid::new_v4(),
+            HistoryExpiryOrigin::Manual {
+                principal: PrincipalIdentity::generate(),
+            },
+            HistoryLifecycleScan::new(key(), 1000).unwrap(),
+            &filled,
+        )
+        .unwrap();
+        assert!(matches!(
+            selection
+                .consider(
+                    candidate(None),
+                    HistoryExpiryInputBytes::new(1).unwrap(),
+                    &[]
+                )
+                .unwrap(),
+            HistoryExpirySelectionOutcome::Blocked(_)
+        ));
+        assert!(selection.is_empty());
+    }
+
     #[rstest::rstest]
     #[case::missing_copy(0, false)]
     #[case::exact_copy(1, true)]

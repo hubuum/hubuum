@@ -345,6 +345,7 @@ async fn measure() {
         "worker_seconds":worker_seconds, "oversized_deferred_rows":oversized_deferred_rows,
         "oversized_preserved_rows":oversized_preserved_rows, "backup_rejected_oversized":shape == "oversized",
         "oversized_reported_rows":oversized_reported_rows,
+        "max_scanned_source_rows":replica_reports.iter().map(|report| report["max_scanned_source_rows"].as_u64().unwrap()).max().unwrap(),
         "kernel_peak_rss_bytes":replica_reports.iter().map(|report| report["kernel_peak_rss_bytes"].as_u64().unwrap()).max().unwrap(),
         "kernel_child_peak_rss_bytes":high_water(libc::RUSAGE_CHILDREN), "replica_reports":replica_reports,
         "replay_preserved_receipts":replay_preserved_receipts, "quarantine_released":quarantine_released});
