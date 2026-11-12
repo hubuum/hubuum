@@ -81,15 +81,17 @@ async fn statuses(
                     let mut statuses = Vec::new();
                     let mut oversized = 0;
                     for id in tasks {
-                        statuses.push(
-                            storage
-                                .get_task_access(*id)
-                                .await
-                                .unwrap()
-                                .into_parts()
-                                .0
-                                .status(),
-                        );
+                        let task = storage.get_task_access(*id).await.unwrap().into_parts().0;
+                        if task.status().is_terminal()
+                            && task.status() != StorageTaskStatus::Succeeded
+                        {
+                            eprintln!(
+                                "Shared task {id:?} ended {:?}: {:?}",
+                                task.status(),
+                                task.summary()
+                            );
+                        }
+                        statuses.push(task.status());
                         let events = storage
                             .list_task_events(StorageTaskChildListQuery::new(
                                 *id,

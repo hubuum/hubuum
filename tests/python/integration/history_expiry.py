@@ -303,6 +303,10 @@ def run(args):
                     except (OSError, SubprocessError) as diagnostic_error:
                         print(f"{name}: could not capture database diagnostics: {diagnostic_error}", flush=True)
                 (args.output / "samples.json").write_text(json.dumps(samples, indent=2) + "\n")
+                if failures:
+                    break
+            if failures:
+                break
         fixture.database_evidence("final")
     measured = [sample for sample in samples if not sample["warmup"]]
     expected = 5 * len(manifest["shapes"])

@@ -6,10 +6,10 @@ import tempfile
 import tarfile
 import threading
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from integration.history_expiry import (assess, database_failure_log, measured_resources, measurement_environment,
-                                       package_measurements, replica_run, verify_binary_reuse)
+                                       package_measurements, replica_run, run, verify_binary_reuse)
 from support import ROOT
 
 
@@ -31,6 +31,28 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
 
     def test_complete_evidence_passes(self):
         self.assertTrue(all(assess(*self.fixture()).values()))
+
+    def test_failed_warmup_stops_measurement_without_qualifying_partial_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binary = root / "binary"
+            binary.write_bytes(b"fixture")
+            args = Mock(output=root / "report", binary=binary, publisher_binary=binary,
+                        admin_binary=binary, profile="shared")
+            fixture = MagicMock()
+            fixture.__enter__.return_value = fixture
+            with patch("integration.history_expiry.Fixture", return_value=fixture), \
+                    patch("integration.history_expiry.run_tests", side_effect=RuntimeError("worker failed")) as tests, \
+                    patch("integration.history_expiry.database_failure_log") as diagnostic:
+                self.assertEqual(run(args), 1)
+            self.assertEqual(tests.call_count, 1)
+            diagnostic.assert_called_once()
+            fixture.__exit__.assert_called_once()
+            summary = json.loads((args.output / "summary.json").read_text())
+            self.assertEqual(summary["expected_measured_runs"], 25)
+            self.assertEqual(summary["measured_runs"], 0)
+            self.assertFalse(summary["h1_h4_worker_qualified"])
+            self.assertFalse(summary["full_shared_topology_qualified"])
 
     def test_database_failure_log_retains_both_streams_and_redacts_fixture_password(self):
         fixture = Mock(containers=["owned-postgres"], password="fixture-secret")

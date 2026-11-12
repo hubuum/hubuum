@@ -431,6 +431,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Concurrent gated history expiry workers preserve the shared restore fence
+  without deadlocking routine history readers or other workers.
+
 - Rolling back the unmerged history lifecycle migration preserves Legacy archive
   entry when the synchronized runtime-settings checkpoint remains installed.
   Unknown future checkpoints still fail closed; retained lifecycle authority

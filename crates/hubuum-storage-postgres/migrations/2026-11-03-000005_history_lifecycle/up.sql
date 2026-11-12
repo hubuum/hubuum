@@ -824,9 +824,11 @@ DECLARE material JSONB; intent JSONB; member JSONB; source JSONB; source_table T
     replacement JSONB; updated_intent JSONB; receipts JSONB; removed_at TIMESTAMPTZ;
     affected BIGINT; family TEXT; quarantined BOOLEAN; already_removed BOOLEAN;
 BEGIN
-    -- Lock the same authority row as restore and runtime registration before
-    -- inspecting quarantine. Replay never relies on an old task lease.
-    PERFORM 1 FROM hubuum_control.deletion_authority WHERE id=1 FOR UPDATE;
+    -- Restore needs UPDATE on this gate. Keep productive entry's SHARE mode:
+    -- upgrading after history authority would deadlock with a reader holding
+    -- this gate while waiting for history authority. The history tuple below
+    -- serializes removals and runtime registration. Replay uses no old lease.
+    PERFORM 1 FROM hubuum_control.deletion_authority WHERE id=1 FOR SHARE;
     quarantined:=public.hubuum_deletion_exposure_allowed() IS FALSE;
     IF NOT quarantined AND public.hubuum_history_producers_fenced(expected_incarnation,expected_deletion) IS NOT TRUE THEN
         RAISE EXCEPTION 'History producer fencing is unavailable';

@@ -785,6 +785,57 @@ async fn copy_count(
     }).await.unwrap()
 }
 
+#[tokio::test]
+async fn native_removal_preserves_shared_deletion_authority_readers() {
+    let _guard = CONTROL_LOCK.lock().await;
+    let test = TaskFixture::new(StorageIdentityHistoryKind::Collection).await;
+    let result = async {
+        let checkpoint = test.process(true).await?;
+        let before = test.fixture.storage.capture_history_lifecycle().await?;
+        let target = checkpoint
+            .retained_manifest(&before)
+            .map_err(|error| StorageError::unavailable(error.to_string()))?
+            .members()[0]
+            .target();
+        let copies_before = copy_count(&test, StorageIdentityHistoryKind::Collection, target).await;
+        let (locked, ready) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let (reader, removed) = tokio::join!(
+            with_transaction(&test.fixture.owner_pool, async |connection| {
+                owner(connection).await?;
+                // Productive entry holds this shared gate before waiting for
+                // history authority. Removal must not upgrade it behind that
+                // waiter, otherwise the two authority gates form a cycle.
+                sql_query("SELECT 1 FROM hubuum_control.deletion_authority WHERE id=1 FOR SHARE")
+                    .execute(connection)
+                    .await?;
+                locked.send(()).unwrap();
+                released.await.unwrap();
+                Ok::<_, PostgresStorageError>(())
+            }),
+            async {
+                ready.await.unwrap();
+                let removed = tokio::time::timeout(
+                    std::time::Duration::from_secs(2),
+                    remove(&test, protection(&before)),
+                )
+                .await;
+                release.send(()).unwrap();
+                removed
+            }
+        );
+        reader.map_err(|error| StorageError::unavailable(error.to_string()))?;
+        removed.map_err(|_| {
+            StorageError::unavailable("Removal waited for an unrelated shared deletion gate")
+        })??;
+        let copies_after = copy_count(&test, StorageIdentityHistoryKind::Collection, target).await;
+        Ok::<_, StorageError>((copies_before, copies_after))
+    }
+    .await;
+    test.cleanup().await;
+    assert_eq!(result.unwrap(), (1, 0));
+}
+
 #[rstest::rstest]
 #[case::collection(StorageIdentityHistoryKind::Collection)]
 #[case::class(StorageIdentityHistoryKind::Class)]
