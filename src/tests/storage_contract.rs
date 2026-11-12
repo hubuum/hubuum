@@ -4638,6 +4638,27 @@ fn compatibility_completion_payload(kind: StorageTaskKind) -> StorageTaskComplet
 }
 
 #[actix_web::test]
+async fn every_backend_refuses_expiry_task_recovery_without_original_online_admission() {
+    use hubuum_storage_core::HistoryLifecycleStorage;
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
+        let before = backend.capture_history_lifecycle().await.unwrap();
+        let result = backend
+            .recover_history_expiry_task(uuid::Uuid::new_v4())
+            .await;
+        assert_eq!(
+            result.unwrap_err().kind(),
+            hubuum_storage_core::StorageErrorKind::Unavailable
+        );
+        assert_eq!(
+            backend.capture_history_lifecycle().await.unwrap().control(),
+            before.control()
+        );
+    }
+}
+
+#[actix_web::test]
 async fn every_backend_refuses_expiry_task_execution_without_original_online_admission() {
     use hubuum_storage_core::HistoryLifecycleStorage;
     let _permit = postgres_permit().await;

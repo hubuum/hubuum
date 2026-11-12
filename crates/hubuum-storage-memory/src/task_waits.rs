@@ -86,7 +86,7 @@ impl MemoryStorage {
         request: StorageTaskResumeRequest,
     ) -> Result<StorageTaskResumeOutcome, StorageError> {
         let mut guard = self.state.write().await?;
-        let Some(task) = guard.tasks.get(&request.task_id().id()).filter(|task| {
+        let Some(_) = guard.tasks.get(&request.task_id().id()).filter(|task| {
             task.status == StorageTaskStatus::Waiting
                 && task
                     .wait_token
@@ -95,35 +95,42 @@ impl MemoryStorage {
         }) else {
             return Ok(StorageTaskResumeOutcome::Unchanged);
         };
+        let mut state = guard.clone();
+        let outcome = state.resume_history_wait_on(request.task_id())?;
+        *guard = state;
+        Ok(outcome)
+    }
+}
+
+impl MemoryState {
+    /// Caller holds the state lock and has matched the current wait ownership.
+    pub(super) fn resume_history_wait_on(
+        &mut self,
+        id: TaskId,
+    ) -> Result<StorageTaskResumeOutcome, StorageError> {
         let now = Utc::now();
+        let task = self.tasks.get(&id.id()).expect("matched wait");
         if task.control.stop_reason(now).is_some() {
-            let mut state = guard.clone();
-            let task = state.finish_stopped_task(request.task_id(), now, None)?;
-            state.task_capacity = state.task_accounting_snapshot()?;
-            *guard = state;
+            let task = self.finish_stopped_task(id, now, None)?;
+            self.task_capacity = self.task_accounting_snapshot()?;
             return Ok(StorageTaskResumeOutcome::Stopped(task));
         }
-        if guard.maintenance_state != MaintenanceState::Normal {
+        if self.maintenance_state != MaintenanceState::Normal {
             return Err(StorageError::unavailable(
                 "Task resumption is paused during maintenance",
             ));
         }
-        guard.ensure_task_execution_allowed()?;
-        let mut state = guard.clone();
-        let task = state
-            .tasks
-            .get_mut(&request.task_id().id())
-            .expect("matched wait");
+        self.ensure_task_execution_allowed()?;
+        let task = self.tasks.get_mut(&id.id()).expect("matched wait");
         task.status = StorageTaskStatus::Queued;
         task.wait_token = None;
         task.updated_at = now;
         let task = task.projection()?;
-        state.task_capacity = state.task_accounting_snapshot()?;
-        state.append_task_event_record(
-            request.task_id(),
+        self.task_capacity = self.task_accounting_snapshot()?;
+        self.append_task_event_record(
+            id,
             StorageTaskEventInput::new("queued", "Task resumed from durable checkpoint"),
         )?;
-        *guard = state;
         Ok(StorageTaskResumeOutcome::Queued(task))
     }
 }

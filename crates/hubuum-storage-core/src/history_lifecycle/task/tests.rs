@@ -390,3 +390,71 @@ fn removal_rechecks_current_eligibility_and_native_membership(
         "{mode}"
     );
 }
+
+#[rstest]
+#[case::new_run("run")]
+#[case::new_batch("batch")]
+#[case::restart_selection("scanning")]
+fn retained_cleanup_refuses_changed_membership_binding(#[case] change: &str) {
+    let (_, snapshot, manifest) = admitted();
+    let payload = HistoryExpiryTaskPayload::resume_retained(&manifest).unwrap();
+    let run = TaskIdentity::generate();
+    let cleanup = HistoryExpiryTaskCheckpoint::new(run, payload.clone());
+    assert_eq!(cleanup.retained_manifest(&snapshot).unwrap(), &manifest);
+    assert!(cleanup.selection_request(snapshot.fence()).is_err());
+    let encoded = cleanup.encode().unwrap();
+    let mut data = encoded.data().clone();
+    match change {
+        "run" => data["payload"]["recovery"]["run"] = serde_json::json!(Uuid::new_v4()),
+        "batch" => data["position"]["batch"] = serde_json::json!(Uuid::new_v4()),
+        "scanning" => {
+            data["position"] = serde_json::json!({"phase":"scanning", "batch":manifest.identity(), "progress":null})
+        }
+        _ => unreachable!(),
+    }
+    let changed =
+        StorageTaskCheckpoint::try_new(encoded.format(), encoded.version(), data).unwrap();
+    assert!(HistoryExpiryTaskCheckpoint::decode(&changed, run, &payload).is_err());
+}
+
+#[test]
+fn cleanup_task_keeps_manual_origin_after_original_principal_and_task_deletion() {
+    let (_, _, manifest) = admitted();
+    let principal = PrincipalIdentity::generate();
+    let mut encoded = serde_json::to_value(manifest).unwrap();
+    encoded["origin"] = serde_json::to_value(HistoryExpiryOrigin::Manual { principal }).unwrap();
+    let retained: HistoryExpiryManifest = serde_json::from_value(encoded).unwrap();
+    let payload = HistoryExpiryTaskPayload::resume_retained(&retained).unwrap();
+    let run = TaskIdentity::generate();
+    let evidence = StorageIdentityEvidence::try_new(
+        Some(StorageIdentitySubject::Task {
+            identity: IdentityReference::Known { identity: run },
+        }),
+        Default::default(),
+    )
+    .unwrap();
+    let task = StorageTask::builder(
+        TaskId::new(2).unwrap(),
+        StorageTaskKind::HistoryExpiry,
+        StorageTaskStatus::Queued,
+        at(200),
+        at(200),
+    )
+    .metadata(Some(
+        crate::StorageTaskMetadata::new(TaskMetadataDetails::HistoryExpiry {
+            recovery_batch: Some(retained.identity()),
+        })
+        .unwrap(),
+    ))
+    .request_payload(Some(serde_json::to_value(&payload).unwrap()))
+    .try_build()
+    .unwrap();
+    let checkpoint = HistoryExpiryTaskCheckpoint::from_task(&task, &evidence).unwrap();
+    assert_eq!(checkpoint.task_identity(), run);
+    assert_eq!(checkpoint.original_run(), retained.run());
+    assert_eq!(
+        checkpoint.0.payload.origin(),
+        &HistoryExpiryOrigin::Manual { principal }
+    );
+    assert!(checkpoint.selection_request(retained.fence()).is_err());
+}

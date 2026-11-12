@@ -7,8 +7,8 @@
 #![allow(unused_variables)]
 
 use hubuum_domain::PrincipalIdentity;
-use hubuum_storage_core::StorageTaskClaimRequest;
 use hubuum_storage_core::artifacts::TaskArtifactCleanup;
+use hubuum_storage_core::{StorageTask, StorageTaskClaimRequest};
 
 use hubuum_storage_core::{
     DeletionAuditObservation, DeletionControlState, HotObjectHistoryCleanup,
@@ -33,6 +33,12 @@ struct CompleteExternalAdapter;
 
 #[async_trait]
 impl HistoryLifecycleStorage for CompleteExternalAdapter {
+    async fn recover_history_expiry_task(
+        &self,
+        batch: Uuid,
+    ) -> Result<Option<StorageTask>, StorageError> {
+        fixture_result()
+    }
     async fn process_history_expiry_task(
         &self,
         request: HistoryExpiryTaskRequest,

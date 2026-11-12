@@ -621,3 +621,278 @@ async fn removal_failure_preserves_copy_receipt_and_checkpoint(#[case] mode: &st
         .await;
     storage.unregister_runtime(runtime).await.unwrap();
 }
+
+#[tokio::test]
+async fn recovery_wakes_wait_once_and_preserves_original_deadline() {
+    let storage = MemoryStorage::new();
+    let (runtime, scope, lease) = prepare(&storage, StorageIdentityHistoryKind::Object).await;
+    storage
+        .run_in_scope(scope, async {
+            let checkpoint = storage
+                .process_history_expiry_task(HistoryExpiryTaskRequest::new(
+                    lease.clone(),
+                    Some(HistoryExpiryTaskAuthorization::scheduled()),
+                ))
+                .await
+                .unwrap();
+            let waiting = fixture_write(
+                &storage,
+                storage.wait_task(StorageTaskWaitRequest::new(
+                    lease.clone(),
+                    checkpoint.encode().unwrap(),
+                )),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                storage
+                    .recover_history_expiry_task(checkpoint.batch())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .status(),
+                StorageTaskStatus::Waiting
+            );
+            {
+                let mut state = storage.state.write_control().await;
+                let task = state.tasks.get_mut(&lease.task_id().id()).unwrap();
+                task.created_at -= Duration::seconds(31);
+                task.started_at = task.started_at.map(|at| at - Duration::seconds(31));
+                task.updated_at -= Duration::seconds(31);
+            }
+            let (left, right) = tokio::join!(
+                storage.recover_history_expiry_task(checkpoint.batch()),
+                storage.recover_history_expiry_task(checkpoint.batch())
+            );
+            for recovered in [left.unwrap().unwrap(), right.unwrap().unwrap()] {
+                assert_eq!(recovered.id(), lease.task_id());
+                assert_eq!(recovered.status(), StorageTaskStatus::Queued);
+                assert_eq!(
+                    recovered.control().deadline(),
+                    waiting.task().control().deadline()
+                );
+                assert_eq!(recovered.checkpoint(), waiting.task().checkpoint());
+            }
+            assert!(matches!(
+                fixture_write(
+                    &storage,
+                    storage.resume_task(StorageTaskResumeRequest::new(
+                        lease.task_id(),
+                        waiting.token().clone()
+                    ))
+                )
+                .await
+                .unwrap(),
+                StorageTaskResumeOutcome::Unchanged
+            ));
+        })
+        .await;
+    storage.unregister_runtime(runtime).await.unwrap();
+}
+
+#[rstest]
+#[case::cancelled("cancelled")]
+#[case::deadline("deadline")]
+#[case::purged("purged")]
+#[case::audit_rollback("audit")]
+#[tokio::test]
+async fn recovery_adopts_partial_batch_without_reviving_original_task(#[case] mode: &str) {
+    let storage = MemoryStorage::new();
+    let (runtime, scope, lease) = prepare(&storage, StorageIdentityHistoryKind::Object).await;
+    storage
+        .run_in_scope(scope, async {
+            seed(
+                &storage,
+                StorageIdentityHistoryKind::Object,
+                "second retained object",
+                "before",
+            )
+            .await;
+            let checkpoint = storage
+                .process_history_expiry_task(HistoryExpiryTaskRequest::new(
+                    lease.clone(),
+                    Some(HistoryExpiryTaskAuthorization::scheduled()),
+                ))
+                .await
+                .unwrap();
+            let snapshot = storage.capture_history_lifecycle().await.unwrap();
+            storage
+                .process_history_expiry_task(
+                    HistoryExpiryTaskRequest::new(lease.clone(), None)
+                        .with_protection(protection(&snapshot)),
+                )
+                .await
+                .unwrap();
+            let before = storage.capture_history_lifecycle().await.unwrap();
+            let original = before
+                .control()
+                .authority()
+                .expiry()
+                .intent(checkpoint.batch())
+                .unwrap()
+                .clone();
+            let wait = fixture_write(
+                &storage,
+                storage.wait_task(StorageTaskWaitRequest::new(
+                    lease.clone(),
+                    checkpoint.encode().unwrap(),
+                )),
+            )
+            .await
+            .unwrap();
+            if mode == "deadline" {
+                let mut state = storage.state.write_control().await;
+                state.tasks.get_mut(&lease.task_id().id()).unwrap().control =
+                    StorageTaskControl::try_new(
+                        StorageTaskKind::HistoryExpiry,
+                        None,
+                        Some(Utc::now() - Duration::seconds(1)),
+                        StorageTaskExecutionPhase::HistoryAuthority,
+                        None,
+                    )
+                    .unwrap();
+            } else {
+                fixture_write(
+                    &storage,
+                    storage.request_task_cancellation(StorageTaskCancellationRequest::new(
+                        wait.task(),
+                        hubuum_events_core::EventContext::system(),
+                    )),
+                )
+                .await
+                .unwrap();
+                if mode == "purged" {
+                    let mut state = storage.state.write_control().await;
+                    state.tasks.remove(&lease.task_id().id());
+                    state.task_capacity = state.task_accounting_snapshot().unwrap();
+                }
+            }
+            if mode == "audit" {
+                let (sequence, task_count) = {
+                    let mut state = storage.state.write_control().await;
+                    let before = (state.next_event_sequence, state.tasks.len());
+                    state.next_event_sequence = i64::MAX;
+                    before
+                };
+                assert!(
+                    storage
+                        .recover_history_expiry_task(checkpoint.batch())
+                        .await
+                        .is_err()
+                );
+                let mut state = storage.state.write_control().await;
+                assert_eq!(
+                    state.tasks.len(),
+                    task_count,
+                    "failed audit must roll back adoption"
+                );
+                state.next_event_sequence = sequence;
+            }
+            let (left, right) = tokio::join!(
+                storage.recover_history_expiry_task(checkpoint.batch()),
+                storage.recover_history_expiry_task(checkpoint.batch())
+            );
+            let recovered = left.unwrap().unwrap();
+            assert_eq!(right.unwrap().unwrap().id(), recovered.id());
+            assert_ne!(recovered.id(), lease.task_id());
+            assert_eq!(
+                recovered.progress().succeeded(),
+                original.removals().len() as i32
+            );
+            assert!(
+                storage
+                    .process_history_expiry_task(HistoryExpiryTaskRequest::new(lease.clone(), None))
+                    .await
+                    .is_err()
+            );
+            let replacement = claim(&storage).await;
+            fixture_write(
+                &storage,
+                storage.admit_task_execution(StorageTaskExecutionAdmission::new(
+                    replacement.clone(),
+                    TaskExecutionLimit::from_milliseconds(7_200_000).unwrap(),
+                )),
+            )
+            .await
+            .unwrap();
+            let resumed = storage
+                .process_history_expiry_task(HistoryExpiryTaskRequest::new(
+                    replacement.clone(),
+                    None,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(
+                resumed.retained_manifest(&before).unwrap(),
+                original.manifest()
+            );
+            loop {
+                let current = storage.capture_history_lifecycle().await.unwrap();
+                let next = storage
+                    .process_history_expiry_task(
+                        HistoryExpiryTaskRequest::new(replacement.clone(), None)
+                            .with_protection(protection(&current)),
+                    )
+                    .await
+                    .unwrap();
+                if next.finished() {
+                    assert_eq!(
+                        next.removed_count() as usize,
+                        original.manifest().members().len()
+                    );
+                    break;
+                }
+            }
+            let after = storage.capture_history_lifecycle().await.unwrap();
+            let completed = after
+                .control()
+                .authority()
+                .expiry()
+                .intent(checkpoint.batch())
+                .unwrap();
+            assert!(completed.covers(&original));
+            assert!(
+                original
+                    .removals()
+                    .iter()
+                    .all(|receipt| completed.removals().contains(receipt))
+            );
+            let count = completed.removals().len() as i32;
+            let finished = fixture_write(
+                &storage,
+                storage.complete_task(StorageTaskCompletion::new(
+                    StorageTaskTerminalUpdate::new(
+                        replacement,
+                        StorageTaskTerminalStatus::Succeeded,
+                        StorageTaskResultCounts::try_new(count, count, 0).unwrap(),
+                    ),
+                    StorageTaskEventInput::new(
+                        "succeeded",
+                        "Recovered batch protected and complete",
+                    ),
+                    StorageTaskCompletionPayload::HistoryExpiry,
+                )),
+            )
+            .await
+            .unwrap();
+            assert!(finished.checkpoint().is_none());
+            assert_eq!(
+                storage
+                    .recover_history_expiry_task(checkpoint.batch())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .id(),
+                finished.id()
+            );
+            if mode != "purged" {
+                assert!(
+                    storage.state.read_control().await.tasks[&lease.task_id().id()]
+                        .status
+                        .is_terminal()
+                );
+            }
+        })
+        .await;
+    storage.unregister_runtime(runtime).await.unwrap();
+}

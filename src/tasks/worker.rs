@@ -743,9 +743,7 @@ where
     }
 }
 
-async fn maybe_recover_expired_task_leases(
-    backend: &impl crate::storage::StorageContext,
-) -> Result<(), ApiError> {
+async fn maybe_recover_expired_task_leases(backend: &AppContext) -> Result<(), ApiError> {
     let recovery_interval = task_worker_settings().recovery_interval();
     let previous_last_run = {
         let mut state = recovery_state().lock().map_err(|_| {
@@ -762,6 +760,10 @@ async fn maybe_recover_expired_task_leases(
 
     match recover_expired_task_leases(backend, 100).await {
         Ok(recovered) => {
+            if TaskWorkerKinds::STANDARD.contains(TaskKind::HistoryExpiry) {
+                crate::services::deletion_recovery::history_expiry::recover_pending(backend)
+                    .await?;
+            }
             for task in recovered {
                 metrics::task_lease_recovered(&task.kind);
                 warn!(

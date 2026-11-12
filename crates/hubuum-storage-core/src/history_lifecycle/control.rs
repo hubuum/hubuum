@@ -8,6 +8,7 @@ use super::*;
 use crate::{
     ApplicationFence, DeletionCheckpointIdentity, HistoryArchiveExecutionOwner,
     RuntimeIsolationDomain, RuntimeRegistration, StorageError, StorageIdentityEvidence,
+    StorageTask,
 };
 
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -491,10 +492,18 @@ pub trait HistoryLifecycleStorage: Send + Sync {
         &self,
         request: HistoryExpiryAdmissionRequest,
     ) -> Result<HistoryExpiryAdmissionResult, StorageError>;
+    /// Recover one retained batch under original OnlineV1 application admission.
+    /// Wake its waiting owner without changing checkpoint/deadline, or atomically
+    /// adopt a terminal/deleted owner's obligation into one internal cleanup task.
+    /// Never select new members or revive a terminal task. Retry waiting work no
+    /// faster than 30 seconds. Removal still requires positive owner retirement.
+    async fn recover_history_expiry_task(
+        &self,
+        batch: Uuid,
+    ) -> Result<Option<StorageTask>, StorageError>;
     /// Advance one bounded page under the original task lease. Admission,
     /// canonical audit, exclusion projection and the checkpoint commit together.
-    /// A retry resolves its admitted batch before any fresh selection. This
-    /// Without trusted independent read-back this only admits/resumes selection.
+    /// A retry resolves its admitted batch before any fresh selection. Without trusted independent read-back this only admits/resumes selection.
     /// With protection it removes at most one exact closed copy and commits its
     /// first receipt and audit atomically, after positive old-owner retirement
     /// and current eligibility checks. Protected completion finishes that batch;

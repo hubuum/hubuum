@@ -66,7 +66,8 @@ canonical unsigned decimal strings and remain adapter-owned traversal hints.
 They are neither immutable membership nor deletion/recovery authority.
 
 **Breaking expiry task contract:** add `TaskKind::HistoryExpiry` to exhaustive
-matches and implement `HistoryLifecycleStorage::process_history_expiry_task`.
+matches and implement `HistoryLifecycleStorage::process_history_expiry_task` and
+`HistoryLifecycleStorage::recover_history_expiry_task`.
 Read `HistoryExpiryTaskPayload` and the bounded version-1 checkpoint without
 reinterpreting unknown actions, versions, task UUIDs or application images.
 Require initiation-bound authorization for fresh selection. Admission, required
@@ -89,6 +90,21 @@ a first removal. A completed checkpoint requires independently protected receipt
 and finalization checks its exact counts against the ledger. One task processes
 one bounded batch or an empty finite scan pass; future tasks start fresh scans.
 This internal executor does not enable production registration or task producers.
+
+`recover_history_expiry_task` serializes one retained batch under the original
+OnlineV1 control scope. Resume its waiting owner without replacing its checkpoint
+or deadline, no faster than once per 30 seconds. Keep cancelled/timed-out tasks
+terminal; adopt their remaining obligation, or a purged owner's, into one internal
+cleanup task. Its payload v2 binds the original batch/run, origin and application
+image and cannot select a new page. Commit the queued payload, admission accounting
+and audit together; persist the execution checkpoint only after claim/deadline
+admission. `TaskMetadataDetails::HistoryExpiry` has an optional `recovery_batch`;
+retain it through terminal payload/checkpoint redaction for indexed owner discovery. An active owner prevents adoption; a busy row must cause retry.
+Successful finalization clears the task checkpoint, so recognize completion from
+the successful owner and retained receipts. Recovery never grants removal authority
+and remains gated with production expiry. Original clocks and receipts survive
+every ownership change; a changed application image requires separate recovery
+qualification.
 
 Stop older API, worker, restore and administrator processes, back up the database,
 and apply lifecycle 000005 with refreshed grants before starting matching binaries. Its

@@ -191,40 +191,50 @@ pub async fn resume_task(
                 }
                 return Ok(StorageTaskResumeOutcome::Unchanged);
             };
-            let now = database_now(connection).await?;
-            if let Some(reason) = row
-                .control(stored_task_kind(&row)?)?
-                .stop_reason(now.and_utc())
-            {
-                let provenance = system_provenance(&row)?;
-                let stopped = finish_stopped_on(connection, row, reason, &provenance).await?;
-                return Ok(StorageTaskResumeOutcome::Stopped(stopped.into_storage()?));
-            }
-            if !maintenance_is_normal(connection).await? {
-                return Err(PostgresStorageError::unavailable(
-                    "Task resumption is paused during maintenance",
-                ));
-            }
-            append_task_lifecycle_event(
-                connection,
-                &row,
-                StorageTaskEventInput::new("queued", "Task resumed from durable checkpoint"),
-                &system_provenance(&row)?,
-            )
-            .await?;
-            let resumed = diesel::update(tasks::tasks.filter(tasks::id.eq(row.id)))
-                .set((
-                    tasks::status.eq("queued"),
-                    tasks::wait_token.eq::<Option<uuid::Uuid>>(None),
-                    tasks::updated_at.eq(now),
-                ))
-                .returning(TaskRow::as_returning())
-                .get_result::<TaskRow>(connection)
-                .await?;
-            crate::worker_notifications::notify_task_queue(connection, row.id).await?;
-            Ok(StorageTaskResumeOutcome::Queued(resumed.into_storage()?))
+            resume_on(connection, row).await
         })
         .await
+}
+
+/// Caller holds capacity and the matching task row; history recovery also holds
+/// authority before both. Preserve the pinned deadline and original checkpoint.
+pub(super) async fn resume_on(
+    connection: &mut PostgresConnection,
+    row: TaskRow,
+) -> Result<StorageTaskResumeOutcome, PostgresStorageError> {
+    use crate::schema::tasks::dsl as tasks;
+    let now = database_now(connection).await?;
+    if let Some(reason) = row
+        .control(stored_task_kind(&row)?)?
+        .stop_reason(now.and_utc())
+    {
+        let provenance = system_provenance(&row)?;
+        let stopped = finish_stopped_on(connection, row, reason, &provenance).await?;
+        return Ok(StorageTaskResumeOutcome::Stopped(stopped.into_storage()?));
+    }
+    if !maintenance_is_normal(connection).await? {
+        return Err(PostgresStorageError::unavailable(
+            "Task resumption is paused during maintenance",
+        ));
+    }
+    append_task_lifecycle_event(
+        connection,
+        &row,
+        StorageTaskEventInput::new("queued", "Task resumed from durable checkpoint"),
+        &system_provenance(&row)?,
+    )
+    .await?;
+    let resumed = diesel::update(tasks::tasks.filter(tasks::id.eq(row.id)))
+        .set((
+            tasks::status.eq("queued"),
+            tasks::wait_token.eq::<Option<uuid::Uuid>>(None),
+            tasks::updated_at.eq(now),
+        ))
+        .returning(TaskRow::as_returning())
+        .get_result::<TaskRow>(connection)
+        .await?;
+    crate::worker_notifications::notify_task_queue(connection, row.id).await?;
+    Ok(StorageTaskResumeOutcome::Queued(resumed.into_storage()?))
 }
 
 /// Take computed-class locks before task/state locks, matching definition

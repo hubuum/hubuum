@@ -340,6 +340,21 @@ its one admitted batch; a later task starts a fresh pass. Failed protection or a
 blocked removal keeps the original batch waiting. Cancellation
 does not undo exclusions, discharge copy obligations or imply physical cleanup.
 
+Qualified expiry workers reconcile retained batches through
+`recover_history_expiry_task`. Waiting tasks resume with the same checkpoint and
+pinned deadline, with a minimum 30-second retry interval. Cancellation and timeout
+remain terminal; if their obligations survive, or the original task was purged,
+a separate internal cleanup task adopts the exact retained batch. Recovery
+payload v2 names its original run and batch, preserves original initiation and
+first-removal receipts, and cannot select new members. Competing workers serialize
+adoption, including an active-owner uniqueness constraint in PostgreSQL. Its
+non-secret batch reference survives terminal request/checkpoint redaction in task
+discovery metadata. Cleanup
+still requires independent membership/receipt protection and the executor's
+current policy, hold, dependency and publication checks. Stale leases stay fenced.
+Recovery across a changed application incarnation remains a separate qualification
+gate. Production workers do not yet enable this maintenance path.
+
 Lifecycle migration 000005 appends the new per-kind capacity and weight in one
 policy revision while preserving all existing limits, lanes and reservations.
 Persisted eighth-kind work prevents downgrade. Stop older API, worker, restore

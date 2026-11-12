@@ -621,6 +621,15 @@ impl HistoryLifecycleStorage for PostgresStorage {
     ) -> Result<HistoryExpiryAdmissionResult, StorageError> {
         expiry::admit(self, request).await
     }
+    async fn recover_history_expiry_task(
+        &self,
+        batch: Uuid,
+    ) -> Result<Option<StorageTask>, StorageError> {
+        let scope = expiry::current_scope(self)?;
+        crate::operations::history_expiry_task::recover(self.runtime(), scope, batch)
+            .await
+            .map_err(Into::into)
+    }
     async fn process_history_expiry_task(
         &self,
         request: HistoryExpiryTaskRequest,

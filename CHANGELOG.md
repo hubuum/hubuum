@@ -14,7 +14,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   retirement. Deletion, first receipts and canonical audit commit atomically;
   completion requires independent protection of every receipt. Holds, changed
   policies, dependencies, cancellation and stale ownership preserve pending
-  obligations. Production expiry and manual/periodic triggers remain disabled.
+  obligations. Qualified workers can wake retained continuations without changing
+  their deadline, and adopt cancelled, timed-out or purged tasks into separate
+  cleanup tasks while preserving original membership and receipts. Production
+  expiry and manual/periodic triggers remain disabled.
 
 - **Breaking storage SDK 0.20 isolation descriptors:** renderer subprocesses
   inherit configured runtime exclusion across exec. Parent
@@ -67,7 +70,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   enabled-state check before execution.
 - **Breaking storage SDK 0.20 task vocabulary:** `history_expiry` adds a closed
   task kind, versioned payload/checkpoint reader and required
-  `HistoryLifecycleStorage::process_history_expiry_task` capability. Upgrade
+  `HistoryLifecycleStorage::process_history_expiry_task` and
+  `HistoryLifecycleStorage::recover_history_expiry_task` capabilities. Upgrade
   adapters and exhaustive kind matches together. Stop older API, worker, restore
   and administrator processes, back up the database, apply lifecycle migration
   000005 and refresh grants before starting matching binaries. Include the eighth kind and scheduling

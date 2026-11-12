@@ -1,4 +1,7 @@
 //! Exact task ownership and native admission share one authority transaction.
+mod recovery;
+pub(crate) use recovery::recover;
+
 use diesel::dsl::sql;
 use diesel::prelude::*;
 use diesel::sql_types::{Nullable, Timestamp};
@@ -54,11 +57,17 @@ pub(crate) async fn process(
             let snapshot = crate::backend::capture_history_lifecycle_on(connection).await?;
             let (next, total, removed, scanned) = if checkpoint.admitted() {
                 let total = checkpoint.retained_manifest(&snapshot)?.members().len() as i32;
-                let Some(protection) = request.protection() else {
-                    return Ok(checkpoint);
-                };
-                let (next, removed) = crate::backend::remove_history_expiry_on(connection, &checkpoint, protection).await?;
-                (next, total, removed, 0)
+                match request.protection() {
+                    Some(protection) => {
+                        let (next, removed) = crate::backend::remove_history_expiry_on(connection, &checkpoint, protection).await?;
+                        (next, total, removed, 0)
+                    }
+                    None if stored.checkpoint().is_none() => {
+                        let removed = snapshot.control().authority().expiry().intent(checkpoint.batch()).expect("validated retained manifest").removals().len() as u32;
+                        (checkpoint, total, removed, 0)
+                    }
+                    None => return Ok(checkpoint),
+                }
             } else {
                 // A retained original admission without its checkpoint is corruption or
                 // incomplete recovery, never permission to create a replacement batch.

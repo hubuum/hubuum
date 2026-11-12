@@ -502,7 +502,10 @@ impl MemoryState {
         } = request;
         let sequence = EventSequence::new(self.next_event_sequence)
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
-        self.next_event_sequence += 1;
+        self.next_event_sequence = self
+            .next_event_sequence
+            .checked_add(1)
+            .ok_or_else(|| StorageError::backend_failure("Event sequence exhausted"))?;
         let event_id = Uuid::new_v4();
         let actor_user_id = context.actor_user_id();
         let principal = |principal_id| ProvenancePrincipal {

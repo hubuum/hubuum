@@ -8,7 +8,7 @@ use uuid::Uuid;
 use super::*;
 use crate::{
     ApplicationFence, StorageCapturedIdentity, StorageIdentityEvidence, StorageIdentitySubject,
-    StorageTask, StorageTaskCheckpoint, StorageTaskKind, StorageTaskLease,
+    StorageTask, StorageTaskCheckpoint, StorageTaskKind, StorageTaskLease, TaskMetadataDetails,
 };
 
 #[cfg(test)]
@@ -106,12 +106,22 @@ pub struct HistoryExpiryTaskPayload {
     scan: HistoryLifecycleScan,
     origin: HistoryExpiryOrigin,
     application: ApplicationFence,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recovery: Option<RetainedBatch>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RetainedBatch {
+    batch: Uuid,
+    run: Uuid,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum ExpiryAction {
     ExpireConfiguredHotHistory,
+    ResumeRetainedBatch,
 }
 
 #[derive(Deserialize)]
@@ -122,13 +132,22 @@ struct PayloadInput {
     scan: HistoryLifecycleScan,
     origin: HistoryExpiryOrigin,
     application: ApplicationFence,
+    #[serde(default)]
+    recovery: Option<RetainedBatch>,
 }
 
 impl TryFrom<PayloadInput> for HistoryExpiryTaskPayload {
     type Error = StorageValidationError;
 
     fn try_from(input: PayloadInput) -> Result<Self, Self::Error> {
-        if input.version != 1 {
+        let supported = match (input.version, input.action, input.recovery) {
+            (1, ExpiryAction::ExpireConfiguredHotHistory, None) => true,
+            (2, ExpiryAction::ResumeRetainedBatch, Some(binding)) => {
+                !binding.batch.is_nil() && !binding.run.is_nil()
+            }
+            _ => false,
+        };
+        if !supported {
             return Err(invalid("Unsupported history expiry task payload version"));
         }
         Ok(Self {
@@ -137,6 +156,7 @@ impl TryFrom<PayloadInput> for HistoryExpiryTaskPayload {
             scan: input.scan,
             origin: input.origin,
             application: input.application,
+            recovery: input.recovery,
         })
     }
 }
@@ -153,7 +173,33 @@ impl HistoryExpiryTaskPayload {
             scan,
             origin,
             application,
+            recovery: None,
         }
+    }
+
+    /// Cleanup is bound to an existing decision; it can never select a page.
+    /// Its task ownership is separate from the immutable original run/origin.
+    pub fn resume_retained(
+        manifest: &HistoryExpiryManifest,
+    ) -> Result<Self, StorageValidationError> {
+        Ok(Self {
+            version: 2,
+            action: ExpiryAction::ResumeRetainedBatch,
+            scan: HistoryLifecycleScan::new(manifest.key(), manifest.members().len() as u32)?,
+            origin: manifest.origin().clone(),
+            application: ApplicationFence::new(
+                manifest.fence().incarnation(),
+                manifest.fence().deletion_revision().value() as i64,
+            )?,
+            recovery: Some(RetainedBatch {
+                batch: manifest.identity(),
+                run: manifest.run(),
+            }),
+        })
+    }
+
+    pub fn recovery_batch(&self) -> Option<Uuid> {
+        self.recovery.map(|binding| binding.batch)
     }
 
     pub const fn scan(&self) -> &HistoryLifecycleScan {
@@ -233,7 +279,18 @@ impl HistoryExpiryTaskCheckpoint {
             task.request_payload()
                 .ok_or_else(|| invalid("History expiry task payload is absent"))?,
         )?;
-        if let HistoryExpiryOrigin::Manual { principal } = payload.origin() {
+        let owner_batch = match task.metadata().map(|metadata| metadata.details()) {
+            Some(TaskMetadataDetails::HistoryExpiry { recovery_batch }) => *recovery_batch,
+            _ => None,
+        };
+        if owner_batch != payload.recovery_batch() {
+            return Err(invalid(
+                "History cleanup payload differs from its durable owner binding",
+            ));
+        }
+        if let HistoryExpiryOrigin::Manual { principal } = payload.origin()
+            && payload.recovery.is_none()
+        {
             let captured = match evidence.references().get("/submitted_by") {
                 Some(StorageCapturedIdentity::Principal { reference }) => {
                     reference.known_identity()
@@ -257,13 +314,20 @@ impl HistoryExpiryTaskCheckpoint {
     }
 
     pub fn new(run: TaskIdentity, payload: HistoryExpiryTaskPayload) -> Self {
-        Self(CheckpointInput {
-            run,
-            payload,
-            position: ExpiryPosition::Scanning {
+        let position = match payload.recovery {
+            Some(binding) => ExpiryPosition::Admitted {
+                batch: binding.batch,
+                progress: HistoryExpiryScanProgress::PassFinished,
+            },
+            None => ExpiryPosition::Scanning {
                 batch: Uuid::new_v4(),
                 progress: None,
             },
+        };
+        Self(CheckpointInput {
+            run,
+            payload,
+            position,
         })
     }
 
@@ -283,6 +347,14 @@ impl HistoryExpiryTaskCheckpoint {
             ));
         }
         let result = Self(input);
+        if let Some(binding) = payload.recovery
+            && (result.batch() != binding.batch
+                || matches!(result.0.position, ExpiryPosition::Scanning { .. }))
+        {
+            return Err(invalid(
+                "Retained history expiry cleanup cannot restart selection",
+            ));
+        }
         let application = payload.application();
         let fence = HistoryReviewFence::new(
             application.incarnation(),
@@ -328,7 +400,7 @@ impl HistoryExpiryTaskCheckpoint {
         }
         let request = HistoryExpiryAdmissionRequest::new(
             batch,
-            Uuid::from_bytes(*self.0.run.as_bytes()),
+            self.original_run(),
             self.0.payload.origin().clone(),
             self.0.payload.scan().clone(),
             fence,
@@ -348,6 +420,11 @@ impl HistoryExpiryTaskCheckpoint {
         &self,
         fence: HistoryReviewFence,
     ) -> Result<Option<HistoryExpiryAdmissionRequest>, StorageValidationError> {
+        if self.0.payload.recovery.is_some() && !self.finished() {
+            return Err(invalid(
+                "Retained history expiry cleanup cannot select new membership",
+            ));
+        }
         match &self.0.position {
             ExpiryPosition::Scanning {
                 progress: Some(HistoryExpiryScanProgress::PassFinished),
@@ -403,7 +480,7 @@ impl HistoryExpiryTaskCheckpoint {
         manifest: &HistoryExpiryManifest,
     ) -> Result<(), StorageValidationError> {
         if manifest.identity() != self.batch()
-            || manifest.run() != Uuid::from_bytes(*self.0.run.as_bytes())
+            || manifest.run() != self.original_run()
             || manifest.key() != self.0.payload.scan().key()
             || manifest.origin() != self.0.payload.origin()
         {
@@ -411,6 +488,13 @@ impl HistoryExpiryTaskCheckpoint {
         }
         self.request_for(manifest.identity(), None, manifest.fence())?;
         Ok(())
+    }
+
+    fn original_run(&self) -> Uuid {
+        self.0.payload.recovery.map_or_else(
+            || Uuid::from_bytes(*self.0.run.as_bytes()),
+            |binding| binding.run,
+        )
     }
 
     pub const fn batch(&self) -> Uuid {

@@ -15,6 +15,26 @@ use crate::services::authentication::ExecutionPrincipal;
 use crate::services::tasks::{ClaimedTask, TaskStateChange, complete_task};
 use crate::storage::storage_handle;
 
+/// Called only by an expiry-capable qualified worker. The retained journal is
+/// bounded (256 batches), and each adapter serializes one batch with its owner.
+pub(crate) async fn recover_pending(context: &AppContext) -> Result<(), ApiError> {
+    let storage = storage_handle(context);
+    let snapshot = crate::tasks::history::run(&storage, async {
+        Ok(storage.capture_history_lifecycle().await?)
+    })
+    .await?;
+    for intent in snapshot.control().authority().expiry().intents() {
+        crate::tasks::control::checkpoint()?;
+        if let Err(error) = storage
+            .recover_history_expiry_task(intent.manifest().identity())
+            .await
+        {
+            tracing::warn!(message = "History expiry recovery remains pending", batch = %intent.manifest().identity(), error = %error);
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn execute(
     context: &AppContext,
     task: &ClaimedTask,

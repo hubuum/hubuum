@@ -612,6 +612,24 @@ publications stay charged after their original revision is fenced and require
 exact positive settlement. Primary commit grants no deletion authority: capture
 and independently publish its recovery authority before any removal step.
 
+`HistoryLifecycleStorage::recover_history_expiry_task` uses independent original
+OnlineV1 application admission and locks history authority before task capacity
+and owner rows. Resolve one batch from the bounded retained journal, never source
+rows. Indexed original-run and latest-cleanup discovery-metadata lookups bound task work.
+The non-secret cleanup batch reference survives terminal payload redaction. An active
+owner prevents adoption; a busy row is retryable, never evidence of deletion.
+Waiting owners resume through the generic transition, retaining their exact
+checkpoint, deadline, progress and accounting; retries are spaced by 30 seconds.
+Terminal owners remain terminal. A missing, cancelled, timed-out or failed owner
+can be replaced by one internal cleanup task bound to the original batch/run,
+origin and application image. The history lock and active-cleanup unique index
+serialize competing recovery. The queued payload binding, admission accounting
+and required audit commit together. The claimed owner persists its execution
+checkpoint only after the original execution deadline is pinned. Recovery payload v2 cannot select new membership. Protection,
+positive publication retirement and current eligibility are rechecked by the
+physical executor; wakeup grants no removal authority. Restored application images
+fail closed here and still require explicit restore qualification.
+
 `HistoryLifecycleStorage::process_history_expiry_task` requires that same
 independent original OnlineV1 control scope and the current task lease with its
 pinned deadline. Lock history authority before task capacity/accounting, the task

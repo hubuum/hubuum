@@ -1,6 +1,6 @@
 use super::*;
 use diesel::sql_types::Integer;
-use hubuum_domain::{PrincipalId, TaskIdentity, UserId};
+use hubuum_domain::{PrincipalId, TaskId, TaskIdentity, UserId};
 use hubuum_events_core::EventContext;
 use hubuum_task_core::TaskExecutionLimit;
 use std::future::{Future, ready};
@@ -36,6 +36,7 @@ struct TaskFixture {
     task: StorageTask,
     lease: StorageTaskLease,
     task_identity: TaskIdentity,
+    cleanup_task: Option<TaskId>,
     user: UserId,
     restore_target: hubuum_storage_postgres::test_support::IsolatedRestoreTarget,
 }
@@ -200,6 +201,7 @@ impl TaskFixture {
             task_identity,
             user,
             restore_target,
+            cleanup_task: None,
         }
     }
 
@@ -235,6 +237,8 @@ impl TaskFixture {
             task_identity,
             user,
             scope,
+            restore_target,
+            cleanup_task,
             ..
         } = self;
         phase(
@@ -250,6 +254,11 @@ impl TaskFixture {
         fixture.storage.unregister_runtime(runtime).await.unwrap();
         with_transaction(&fixture.owner_pool, async |connection| {
             owner(connection).await?;
+            restore_target.validate_connection(connection).await?;
+            if let Some(id) = cleanup_task {
+                sql_query("DELETE FROM hubuum_control.task_accounting WHERE task_id=$1").bind::<Integer,_>(id.id()).execute(connection).await?;
+                sql_query("DELETE FROM public.tasks WHERE id=$1").bind::<Integer,_>(id.id()).execute(connection).await?;
+            }
             sql_query("DELETE FROM public.tasks WHERE id=$1").bind::<Integer,_>(task.id().id()).execute(connection).await?;
             sql_query("DELETE FROM hubuum_control.task_accounting WHERE task_identity=$1").bind::<SqlUuid,_>(Uuid::from_bytes(*task_identity.as_bytes())).execute(connection).await?;
             sql_query("DELETE FROM hubuum_control.history_expiry_members WHERE intent_uuid IN (SELECT (intent #>> '{manifest,identity}')::uuid FROM hubuum_control.history_lifecycle_control c CROSS JOIN LATERAL jsonb_array_elements(c.material #> '{authority,expiry}') intent WHERE intent #>> '{manifest,run}'=$1)")
@@ -566,7 +575,10 @@ async fn vocabulary_upgrade_preserves_every_existing_task_limit() {
     let up = include_str!("../../migrations/2026-11-03-000005_history_lifecycle/up.sql")
         .split_once("-- Coordinated closed task vocabulary upgrade.")
         .unwrap()
-        .1;
+        .1
+        .split_once("-- Bounded owner lookup and one active cleanup owner per retained batch.")
+        .unwrap()
+        .0;
     // The opening comment continues onto the next lines; retain its SQL comment.
     let up = format!("-- Coordinated closed task vocabulary upgrade.{up}");
     with_transaction(&fixture.owner_pool, async |connection| {
@@ -874,4 +886,148 @@ async fn native_removal_clock_matches_canonical_control_serialization(#[case] cl
     .unwrap()
     .value;
     assert_eq!(actual, serde_json::to_value(at).unwrap().as_str().unwrap());
+}
+
+async fn recover_task(
+    test: &TaskFixture,
+    batch: Uuid,
+) -> Result<Option<StorageTask>, StorageError> {
+    test.fixture
+        .storage
+        .run_in_scope(
+            test.scope.clone(),
+            test.fixture.storage.recover_history_expiry_task(batch),
+        )
+        .await
+}
+
+#[tokio::test]
+async fn native_recovery_wakes_wait_once_without_resetting_deadline() {
+    let _guard = CONTROL_LOCK.lock().await;
+    let test = TaskFixture::new(StorageIdentityHistoryKind::Object).await;
+    let result = async {
+        let checkpoint = test.process(true).await?;
+        let wait = phase(&test.fixture,&test.scope,test.fixture.storage.wait_task(StorageTaskWaitRequest::new(test.lease.clone(),checkpoint.encode().unwrap()))).await?;
+        assert_eq!(recover_task(&test,checkpoint.batch()).await?.unwrap().status(),StorageTaskStatus::Waiting);
+        with_transaction(&test.fixture.owner_pool, async |connection| {
+            owner(connection).await?;
+            test.restore_target.validate_connection(connection).await?;
+            connection.batch_execute("ALTER TABLE public.tasks DISABLE TRIGGER update_tasks_updated_at").await?;
+            sql_query("UPDATE public.tasks SET created_at=created_at-INTERVAL '31 seconds',started_at=started_at-INTERVAL '31 seconds',updated_at=updated_at-INTERVAL '31 seconds' WHERE id=$1").bind::<Integer,_>(test.task.id().id()).execute(connection).await?;
+            connection.batch_execute("ALTER TABLE public.tasks ENABLE TRIGGER update_tasks_updated_at").await?;
+            Ok::<_,PostgresStorageError>(())
+        }).await?;
+        let (left,right) = tokio::join!(recover_task(&test,checkpoint.batch()),recover_task(&test,checkpoint.batch()));
+        for task in [left?.unwrap(), right?.unwrap()] {
+            assert_eq!(task.id(),test.task.id());
+            assert_eq!(task.status(),StorageTaskStatus::Queued);
+            assert_eq!(task.checkpoint(),wait.task().checkpoint());
+            assert_eq!(task.control().deadline(),wait.task().control().deadline());
+        }
+        assert!(matches!(phase(&test.fixture,&test.scope,test.fixture.storage.resume_task(StorageTaskResumeRequest::new(test.task.id(),wait.token().clone()))).await?,StorageTaskResumeOutcome::Unchanged));
+        Ok::<_,StorageError>(())
+    }.await;
+    test.cleanup().await;
+    result.unwrap();
+}
+
+#[rstest::rstest]
+#[case::cancelled("cancelled")]
+#[case::deadline("deadline")]
+#[case::purged("purged")]
+#[case::audit_rollback("audit")]
+#[tokio::test]
+async fn native_recovery_adopts_partial_batch_and_preserves_original_receipts(#[case] mode: &str) {
+    let _guard = CONTROL_LOCK.lock().await;
+    let mut test = TaskFixture::new(StorageIdentityHistoryKind::Object).await;
+    let result = async {
+        let checkpoint = test.process(true).await?;
+        let before = test.fixture.storage.capture_history_lifecycle().await?;
+        assert!(checkpoint.retained_manifest(&before).unwrap().members().len()>1);
+        remove(&test,protection(&before)).await?;
+        let before = test.fixture.storage.capture_history_lifecycle().await?;
+        let original = before.control().authority().expiry().intent(checkpoint.batch()).unwrap().clone();
+        let wait = phase(&test.fixture,&test.scope,test.fixture.storage.wait_task(StorageTaskWaitRequest::new(test.lease.clone(),checkpoint.encode().unwrap()))).await?;
+        if mode == "deadline" {
+            with_transaction(&test.fixture.owner_pool, async |connection| {
+                owner(connection).await?;
+                test.restore_target.validate_connection(connection).await?;
+                sql_query("UPDATE public.tasks SET execution_deadline_at=clock_timestamp()-INTERVAL '1 second' WHERE id=$1").bind::<Integer,_>(test.task.id().id()).execute(connection).await?;
+                Ok::<_,PostgresStorageError>(())
+            }).await?;
+        } else {
+            phase(&test.fixture,&test.scope,test.fixture.storage.request_task_cancellation(StorageTaskCancellationRequest::new(wait.task(),EventContext::system()))).await?;
+            if mode == "purged" {
+                with_transaction(&test.fixture.owner_pool, async |connection| {
+                    owner(connection).await?;
+                    test.restore_target.validate_connection(connection).await?;
+                    sql_query("DELETE FROM public.tasks WHERE id=$1").bind::<Integer,_>(test.task.id().id()).execute(connection).await?;
+                    Ok::<_,PostgresStorageError>(())
+                }).await?;
+            }
+        }
+        if mode == "audit" {
+            with_transaction(&test.fixture.owner_pool, async |connection| {
+                owner(connection).await?;
+                test.restore_target.validate_connection(connection).await?;
+                connection.batch_execute("CREATE FUNCTION public.history_recovery_audit_fault() RETURNS trigger LANGUAGE plpgsql AS $fault$ BEGIN IF NEW.summary='Retained history batch adopted for cleanup' THEN RAISE EXCEPTION 'required history recovery audit fault'; END IF; RETURN NEW; END $fault$; CREATE TRIGGER history_recovery_audit_fault BEFORE INSERT ON public.events FOR EACH ROW EXECUTE FUNCTION public.history_recovery_audit_fault()").await?;
+                Ok::<_,PostgresStorageError>(())
+            }).await?;
+            assert!(recover_task(&test, checkpoint.batch()).await.is_err());
+            with_transaction(&test.fixture.owner_pool, async |connection| {
+                owner(connection).await?;
+                test.restore_target.validate_connection(connection).await?;
+                #[derive(QueryableByName)]
+                struct Count {
+                    #[diesel(sql_type = diesel::sql_types::BigInt)]
+                    value: i64,
+                }
+                let count=sql_query("SELECT count(*) AS value FROM public.tasks WHERE kind='history_expiry' AND request_payload #>> '{recovery,batch}'=$1")
+                    .bind::<Text,_>(checkpoint.batch().to_string()).get_result::<Count>(connection).await?;
+                assert_eq!(count.value,0,"failed audit must roll back adoption");
+                connection.batch_execute("DROP TRIGGER history_recovery_audit_fault ON public.events; DROP FUNCTION public.history_recovery_audit_fault()").await?;
+                Ok::<_,PostgresStorageError>(())
+            }).await?;
+        }
+        let (left,right) = tokio::join!(recover_task(&test,checkpoint.batch()),recover_task(&test,checkpoint.batch()));
+        let recovered = left?.unwrap();
+        test.cleanup_task=Some(recovered.id());
+        assert_eq!(right?.unwrap().id(),recovered.id());
+        assert_ne!(recovered.id(),test.task.id());
+        assert_eq!(recovered.progress().succeeded(),original.removals().len() as i32);
+        assert!(test.process(false).await.is_err(),"old ownership must remain fenced");
+        let replacement = phase(&test.fixture,&test.scope,test.fixture.storage.claim_next_task(TaskFixture::claim_request())).await?.unwrap();
+        assert_eq!(replacement.task().id(),recovered.id());
+        test.lease=replacement.into_parts().1;
+        phase(&test.fixture,&test.scope,test.fixture.storage.admit_task_execution(StorageTaskExecutionAdmission::new(test.lease.clone(),TaskExecutionLimit::from_milliseconds(7_200_000).unwrap()))).await?;
+        let resumed=test.process(false).await?;
+        assert_eq!(resumed.retained_manifest(&before).unwrap(),original.manifest());
+        loop {
+            let current = test.fixture.storage.capture_history_lifecycle().await?;
+            let next = remove(&test,protection(&current)).await?;
+            if next.finished() {
+                assert_eq!(next.removed_count() as usize,original.manifest().members().len());
+                break;
+            }
+        }
+        let after = test.fixture.storage.capture_history_lifecycle().await?;
+        let completed=after.control().authority().expiry().intent(checkpoint.batch()).unwrap();
+        assert!(completed.covers(&original));
+        assert!(original.removals().iter().all(|receipt|completed.removals().contains(receipt)));
+        // The cleanup checkpoint remains repeatable after protected completion.
+        assert!(test.process(false).await?.finished());
+        let count=completed.removals().len() as i32;
+        let finished=phase(&test.fixture,&test.scope,test.fixture.storage.complete_task(StorageTaskCompletion::new(
+            StorageTaskTerminalUpdate::new(test.lease.clone(),StorageTaskTerminalStatus::Succeeded,StorageTaskResultCounts::try_new(count,count,0).unwrap()),
+            StorageTaskEventInput::new("succeeded","Recovered batch protected and complete"),StorageTaskCompletionPayload::HistoryExpiry))).await?;
+        assert!(finished.checkpoint().is_none());
+        assert_eq!(recover_task(&test,checkpoint.batch()).await?.unwrap().id(),finished.id());
+        if mode != "purged" {
+            let old=phase(&test.fixture,&test.scope,test.fixture.storage.get_task_access(test.task.id())).await?.into_parts().0;
+            assert!(old.status().is_terminal());
+        }
+        Ok::<_,StorageError>(())
+    }.await;
+    test.cleanup().await;
+    result.unwrap();
 }

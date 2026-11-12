@@ -6,10 +6,28 @@ use hubuum_storage_core::{
     HistoryLifecycleSnapshot, HistoryLifecycleStorage, HistoryProducerOwner,
     HistoryProducerSettlement, HistoryPublicationKind, HistoryPublicationOwner,
     HistoryPublicationSettlement, HistoryReadContext, RuntimeIsolationDomain, RuntimeRegistration,
+    StorageTask,
 };
+use uuid::Uuid;
 
 #[async_trait]
 impl HistoryLifecycleStorage for StorageHandle {
+    async fn recover_history_expiry_task(
+        &self,
+        batch: Uuid,
+    ) -> Result<Option<StorageTask>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::History,
+            "recover_history_expiry_task",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .recover_history_expiry_task(batch)
+                    .await)
+            },
+        )
+        .await
+    }
     async fn process_history_expiry_task(
         &self,
         request: HistoryExpiryTaskRequest,

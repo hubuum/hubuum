@@ -1,3 +1,6 @@
+mod recovery;
+pub(super) use recovery::recover_task;
+
 use super::*;
 
 enum ExpirySource<'a> {
@@ -62,10 +65,11 @@ pub(super) async fn process_task(
         checkpoint
             .retained_manifest(&snapshot)
             .map_err(invalid_contract_value)?;
-        let Some(protection) = request.protection() else {
-            return Ok(checkpoint);
-        };
-        remove_on(&mut state, &checkpoint, protection)?
+        match request.protection() {
+            Some(protection) => remove_on(&mut state, &checkpoint, protection)?,
+            None if stored.checkpoint().is_none() => checkpoint,
+            None => return Ok(checkpoint),
+        }
     } else {
         if stored.checkpoint().is_none()
             && snapshot
