@@ -431,6 +431,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Gated history expiry retries temporary checkpoint contention and service
+  unavailability under its original execution deadline instead of failing the
+  task immediately. Each attempt rechecks authorization; permission denials
+  remain terminal.
 - Concurrent gated history expiry workers preserve the shared restore fence
   without deadlocking routine history readers or other workers.
 - Gated history expiry reduces batch membership to the remaining retained

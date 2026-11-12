@@ -143,6 +143,12 @@ async fn task_observations(
 #[ignore = "explicit Linux shared-process resource and slow-consumer qualification"]
 async fn qualified_history_expiry_replica() {
     assert_eq!(std::env::consts::OS, "linux");
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_ansi(false)
+        .with_writer(std::io::stderr)
+        .try_init()
+        .unwrap();
     let destination =
         PathBuf::from(std::env::var("HUBUUM_TEST_HISTORY_QUALIFICATION_REPORT").unwrap());
     let root = runtime_directory(&destination);

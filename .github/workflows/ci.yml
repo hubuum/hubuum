@@ -821,6 +821,7 @@ jobs:
     if: needs.changes.outputs.run_default_suite == 'true'
     runs-on: ubuntu-24.04
     env:
+      CARGO_BIN_EXE_hubuum-template-worker: ${{ github.workspace }}/target/release/hubuum-template-worker
       # Match the platform test jobs' faster release compilation settings.
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
       CARGO_PROFILE_RELEASE_LTO: "off"
@@ -1014,6 +1015,7 @@ jobs:
     if: needs.changes.outputs.run_rust_ci == 'true'
     runs-on: ${{ matrix.platform.os }}
     env:
+      CARGO_BIN_EXE_hubuum-template-worker: ${{ github.workspace }}/target/${{ contains(matrix.platform.os, 'windows') && format('{0}/release/hubuum-template-worker.exe', matrix.platform.target) || 'release/hubuum-template-worker' }}
       # Production artifact jobs retain the exact fat-LTO release profile.
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
       CARGO_PROFILE_RELEASE_LTO: "off"

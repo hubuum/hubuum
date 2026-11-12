@@ -51,10 +51,12 @@ def package_measurements(output, destination):
     destination.chmod(0o644)
 
 
-def database_failure_log(fixture, destination):
-    """Retain both Docker log streams before the disposable database is removed."""
-    result = subprocess.run(["docker", "logs", "--tail", "200", fixture.containers[0]],
+def container_failure_log(fixture, destination, container):
+    """Retain both Docker log streams before an owned container is removed."""
+    result = subprocess.run(["docker", "logs", "--tail", "200", container],
                             capture_output=True, text=True, timeout=30, check=False)
+    if result.returncode:
+        return
     diagnostic = (result.stdout + result.stderr).replace(fixture.password, "[fixture password]")
     destination.write_text(diagnostic[-64_000:])
 
@@ -208,6 +210,11 @@ def replica_run(fixture, binary, arguments, name, environment, destination):
                     container = fixture.name + "-" + process
                     if container in fixture.containers:
                         try:
+                            container_failure_log(
+                                fixture, destination.parent / f"{process}-failure.log", container)
+                        except (OSError, SubprocessError):
+                            pass
+                        try:
                             fixture.docker("rm", "--force", "--volumes", container, timeout=10)
                         except RuntimeError:
                             # A returning peer may already have removed its container.
@@ -304,7 +311,8 @@ def run(args):
                     (args.output / f"{name}-failure.txt").write_text(str(error) + "\n")
                     print(f"{name}: {error}", flush=True)
                     try:
-                        database_failure_log(fixture, args.output / f"{name}-postgres.log")
+                        container_failure_log(fixture, args.output / f"{name}-postgres.log",
+                                              fixture.containers[0])
                     except (OSError, SubprocessError) as diagnostic_error:
                         print(f"{name}: could not capture database diagnostics: {diagnostic_error}", flush=True)
                 (args.output / "samples.json").write_text(json.dumps(samples, indent=2) + "\n")

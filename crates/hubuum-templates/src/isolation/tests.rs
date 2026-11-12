@@ -12,6 +12,40 @@ use tokio::time::{sleep, timeout};
 use super::*;
 
 #[tokio::test]
+async fn cargo_worker_path_can_be_outside_test_executable_directory() {
+    let marker = Path::new("cargo-worker-child");
+    if marker.is_file() {
+        validate_syntax("{{ value }}", TemplateLimits::new(32, 1000))
+            .await
+            .unwrap();
+        shutdown_template_workers().await.unwrap();
+        return;
+    }
+
+    let directory = TempDir::new().unwrap();
+    std::fs::write(directory.path().join(marker), []).unwrap();
+    let worker = directory.path().join("worker in separate build directory");
+    std::fs::copy(worker_executable().unwrap(), &worker).unwrap();
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "isolation::tests::cargo_worker_path_can_be_outside_test_executable_directory",
+        ])
+        .current_dir(directory.path())
+        .env("CARGO_BIN_EXE_hubuum-template-worker", worker)
+        .kill_on_drop(true)
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
 async fn lost_supervisor_cannot_confirm_shutdown() {
     let (jobs, _incoming) = mpsc::channel(1);
     let (stopping, _stop) = watch::channel(false);

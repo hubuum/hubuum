@@ -1,5 +1,8 @@
 //! Gated expiry task execution. Admission and exact removal receipts are
 //! independently protected before removal and task completion respectively.
+use std::future::Future;
+use std::time::Duration;
+
 use hubuum_domain::PrincipalId;
 use hubuum_storage_core::{
     ApplicationFence, HistoryExpiryOrigin, HistoryExpiryTaskAdmission,
@@ -9,6 +12,7 @@ use hubuum_storage_core::{
     StorageIdentityTarget, StorageTaskCompletionPayload, StorageTaskWaitRequest,
     TaskExecutionStorage,
 };
+use hubuum_task_core::TaskExecutionContext;
 
 use crate::errors::ApiError;
 use crate::extractors::AdminAccess;
@@ -121,17 +125,25 @@ pub(crate) async fn execute(
             .ok_or_else(|| ApiError::BadRequest("History expiry task payload is absent".into()))?,
     )
     .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let execution = crate::tasks::control::execution_context().ok_or_else(|| {
+        ApiError::InternalServerError("History expiry requires admitted task execution".into())
+    })?;
     loop {
         crate::tasks::control::checkpoint()?;
-        let approval =
-            crate::tasks::history::run(&storage, authorize_selection(context, task, &payload))
-                .await;
-        let request =
-            HistoryExpiryTaskRequest::new(task.lease().clone(), approval.as_ref().ok().cloned());
-        let checkpoint = match storage.process_history_expiry_task(request).await {
-            Ok(checkpoint) => checkpoint,
-            Err(error) => return Err(approval.err().unwrap_or_else(|| error.into())),
-        };
+        let checkpoint = checkpoint_with_retry(&execution, || async {
+            let approval =
+                crate::tasks::history::run(&storage, authorize_selection(context, task, &payload))
+                    .await;
+            let request = HistoryExpiryTaskRequest::new(
+                task.lease().clone(),
+                approval.as_ref().ok().cloned(),
+            );
+            storage
+                .process_history_expiry_task(request)
+                .await
+                .map_err(|error| approval.err().unwrap_or_else(|| error.into()))
+        })
+        .await?;
         if checkpoint.admitted() {
             let encoded = checkpoint
                 .encode()
@@ -196,6 +208,28 @@ pub(crate) async fn execute(
             return TaskStatus::from_db(&finished.status);
         }
         tokio::task::yield_now().await;
+    }
+}
+
+/// Contention and publication fencing can invalidate an otherwise valid turn.
+/// Retry the entire authorization/checkpoint attempt under the original deadline.
+async fn checkpoint_with_retry<T, F, Fut>(
+    execution: &TaskExecutionContext,
+    mut attempt: F,
+) -> Result<T, ApiError>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, ApiError>>,
+{
+    loop {
+        execution.check()?;
+        match attempt().await {
+            Err(error @ (ApiError::Conflict(_) | ApiError::ServiceUnavailable(_))) => {
+                tracing::warn!(message = "History expiry checkpoint remains pending", error = %error);
+                tokio::time::sleep(execution.remaining().min(Duration::from_millis(25))).await;
+            }
+            result => return result,
+        }
     }
 }
 
@@ -269,6 +303,7 @@ async fn authorize_selection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future::ready;
     use std::sync::Arc;
 
     use chrono::Utc;
@@ -278,8 +313,82 @@ mod tests {
         StorageIdentityHistoryKind, StorageTask, StorageTaskClaim, StorageTaskClaimToken,
         StorageTaskKind, StorageTaskLease, StorageTaskScopeSnapshot, StorageTaskStatus,
     };
+    use hubuum_task_core::TaskStopReason;
     use rstest::rstest;
     use uuid::Uuid;
+
+    #[rstest]
+    #[case::busy(false)]
+    #[case::unavailable(true)]
+    #[tokio::test]
+    async fn transient_checkpoint_failure_repeats_the_attempt_until_it_succeeds(
+        #[case] unavailable: bool,
+    ) {
+        let (execution, _) = TaskExecutionContext::new(Duration::from_secs(10)).unwrap();
+        let mut attempts = 0;
+        let completed = checkpoint_with_retry(&execution, || {
+            attempts += 1;
+            ready(if attempts < 3 {
+                Err(if unavailable {
+                    ApiError::ServiceUnavailable("publication changed".into())
+                } else {
+                    ApiError::Conflict("task row is busy".into())
+                })
+            } else {
+                Ok(attempts)
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(completed, 3);
+    }
+
+    #[tokio::test]
+    async fn checkpoint_retries_cannot_extend_the_original_execution_deadline() {
+        let (execution, _) = TaskExecutionContext::new(Duration::from_millis(50)).unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            checkpoint_with_retry::<(), _, _>(&execution, || {
+                ready(Err(ApiError::Conflict("task row is busy".into())))
+            }),
+        )
+        .await
+        .expect("Retries must stop at their original deadline");
+        assert!(matches!(
+            result,
+            Err(ApiError::TaskStopped(TaskStopReason::DeadlineExceeded))
+        ));
+    }
+
+    #[tokio::test]
+    async fn cancellation_stops_checkpoint_retry_before_another_attempt() {
+        let (execution, stop) = TaskExecutionContext::new(Duration::from_secs(10)).unwrap();
+        let mut attempts = 0;
+        let result = checkpoint_with_retry::<(), _, _>(&execution, || {
+            attempts += 1;
+            stop.request_stop(TaskStopReason::Cancelled);
+            ready(Err(ApiError::Conflict("task row is busy".into())))
+        })
+        .await;
+        assert!(matches!(
+            result,
+            Err(ApiError::TaskStopped(TaskStopReason::Cancelled))
+        ));
+        assert_eq!(attempts, 1);
+    }
+
+    #[tokio::test]
+    async fn checkpoint_authorization_denial_is_not_retried() {
+        let (execution, _) = TaskExecutionContext::new(Duration::from_secs(10)).unwrap();
+        let mut attempts = 0;
+        let result = checkpoint_with_retry::<(), _, _>(&execution, || {
+            attempts += 1;
+            ready(Err(ApiError::Forbidden("administrator revoked".into())))
+        })
+        .await;
+        assert!(matches!(result, Err(ApiError::Forbidden(_))));
+        assert_eq!(attempts, 1);
+    }
 
     use crate::permissions::LocalPermissionBackend;
     use crate::permissions::test_support::MockTreetopBackend;

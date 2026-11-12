@@ -38,6 +38,12 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --all --check
 ```
 
+The runner obtains the template worker executable from Cargo's JSON artifact
+report and passes `CARGO_BIN_EXE_hubuum-template-worker` to every Rust suite.
+CI supplies the matching final release binary path, including the Windows target
+directory. This keeps renderer tests independent of Cargo's internal test-binary
+layout; installed applications continue to find the worker beside their binary.
+
 API task tests use 200 completion polls by default. A remote database containing
 the full suite's fixtures can need a longer wait, especially when a full backup
 occupies the shared test worker. Set `HUBUUM_TEST_TASK_POLL_ATTEMPTS=2000` for such
