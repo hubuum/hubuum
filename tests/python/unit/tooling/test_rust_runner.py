@@ -34,11 +34,15 @@ for key in ("HUBUUM_DATABASE_URL", "HUBUUM_MIGRATION_DATABASE_URL",
             "HUBUUM_RESTORE_TEST_DATABASE_URL", "HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL",
             "HUBUUM_DATABASE_ROLE_TESTS", "HUBUUM_DATABASE_ROLE_MODE",
             "HUBUUM_DATABASE_OWNER_ROLE", "HUBUUM_DATABASE_MIGRATOR_ROLE",
-            "HUBUUM_DATABASE_RUNTIME_ROLE", "PGOPTIONS"):
+            "HUBUUM_DATABASE_RUNTIME_ROLE", "PGOPTIONS", "CARGO_BIN_EXE_hubuum-template-worker"):
     call[key] = os.environ.get(key)
 with open(os.environ["RUNNER_CALLS"], "a") as output:
     output.write(json.dumps(call) + "\\n")
 if name == "cargo":
+    if "--message-format=json" in args:
+        print(json.dumps({"reason": "compiler-artifact",
+                          "target": {"name": "hubuum-template-worker"},
+                          "executable": "/fixture/custom target/hubuum-template-worker"}))
     restore_migration = "--migrate" in args and (call["HUBUUM_DATABASE_URL"] or "").endswith("_restore")
     application_tests = args == ["test", "--features", "integration-test-support,embedded-migrations"]
     if (os.environ["RUNNER_FAILURE"] == "migration" and restore_migration
@@ -46,6 +50,8 @@ if name == "cargo":
         sys.exit(17)
 if name == "diesel" and os.environ["RUNNER_FAILURE"] == "diesel":
     sys.exit(17)
+if name == "python3" and args[:1] == ["-c"]:
+    exec(args[1])
 ''')
             stub.chmod(0o755)
             for name in ("cargo", "diesel", "psql", "python3"):
@@ -86,6 +92,15 @@ if name == "diesel" and os.environ["RUNNER_FAILURE"] == "diesel":
                     call["tool"] == "psql" and "scripts/create-test-database-roles.sql" in call["args"]
                     for call in calls
                 ))
+
+    def test_every_suite_receives_cargos_reported_worker_path(self):
+        result, calls = self.run_fixture()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        tests = [call for call in calls if call["tool"] == "cargo" and call["args"][0] == "test"]
+        self.assertEqual(len(tests), 4)
+        for call in tests:
+            self.assertEqual(call["CARGO_BIN_EXE_hubuum-template-worker"],
+                             "/fixture/custom target/hubuum-template-worker")
 
     def test_invalid_role_test_setting_fails_before_building_or_provisioning(self):
         for role_tests in ("", "TRUE", "0", "yes", "false "):

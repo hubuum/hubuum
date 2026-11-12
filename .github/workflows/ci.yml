@@ -815,6 +815,7 @@ jobs:
       # Match the platform test jobs' faster release compilation settings.
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
       CARGO_PROFILE_RELEASE_LTO: "off"
+      CARGO_BIN_EXE_hubuum-template-worker: ${{ github.workspace }}/target/release/hubuum-template-worker
     strategy:
       fail-fast: false
       matrix:
@@ -1001,6 +1002,11 @@ jobs:
       # Production artifact jobs retain the exact fat-LTO release profile.
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
       CARGO_PROFILE_RELEASE_LTO: "off"
+      # Unit tests do not receive Cargo's integration-test executable variables.
+      CARGO_BIN_EXE_hubuum-template-worker: >-
+        ${{ contains(matrix.platform.os, 'windows') &&
+            format('{0}/target/{1}/release/hubuum-template-worker.exe', github.workspace, matrix.platform.target) ||
+            format('{0}/target/release/hubuum-template-worker', github.workspace) }}
     strategy:
       fail-fast: false
       matrix:

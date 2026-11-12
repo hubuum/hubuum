@@ -18,7 +18,19 @@ esac
 python3 scripts/check-python-version.py
 
 # Rendering tests use the same isolated executable shipped in production.
-cargo build --locked -p hubuum-templates --bin hubuum-template-worker
+TEMPLATE_WORKER_BINARY="$(
+    cargo build --locked -p hubuum-templates --bin hubuum-template-worker --message-format=json |
+        python3 -c 'import json, sys
+artifacts = [json.loads(line) for line in sys.stdin]
+print(next(artifact["executable"] for artifact in artifacts
+           if artifact.get("reason") == "compiler-artifact"
+           and artifact["target"]["name"] == "hubuum-template-worker"
+           and artifact.get("executable")))'
+)"
+
+run_cargo_tests() {
+    env "CARGO_BIN_EXE_hubuum-template-worker=$TEMPLATE_WORKER_BINARY" cargo test "$@"
+}
 
 # Fetching database details from environment variables with HUBUUM_TEST_ prefix
 DB_USER="${HUBUUM_TEST_DB_USER:-postgres}"  # Default to 'postgres' if not set
@@ -185,22 +197,22 @@ HUBUUM_DATABASE_URL="$HUBUUM_RESTORE_TEST_DATABASE_URL" \
 
 # Run adapter-native tests before the application suite while the isolated,
 # migrated database is available.
-cargo test --workspace --exclude hubuum --exclude hubuum-storage-postgres "$@"
+run_cargo_tests --workspace --exclude hubuum --exclude hubuum-storage-postgres "$@"
 if [ "$#" -eq 0 ]; then
     python3 tests/python/run.py integration schema-budget
 fi
 if [ "$#" -eq 0 ] && [ "$HUBUUM_DATABASE_ROLE_TESTS" = true ]; then
-    cargo test -p hubuum-storage-postgres \
+    run_cargo_tests -p hubuum-storage-postgres \
         --features integration-test-support \
         --test database_privileges \
         split_role_reconciliation_adopts_existing_single_role_objects \
         -- --exact --ignored
 fi
-cargo test -p hubuum-storage-postgres \
+run_cargo_tests -p hubuum-storage-postgres \
     --features integration-test-support,scale-benchmark-support,embedded-migrations "$@"
 
 # Run the application and request-level suites.
-if cargo test --features integration-test-support,embedded-migrations "$@"; then
+if run_cargo_tests --features integration-test-support,embedded-migrations "$@"; then
     echo "Test database dropped: $TEST_DB_NAME"
 else
     exit 1

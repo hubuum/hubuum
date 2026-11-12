@@ -156,7 +156,8 @@ available; deployment LDAP joins after candidate activation. Revocation relies o
 the database revision trigger. The PostgreSQL fixture now installs that production
 trigger, which `CREATE TABLE ... LIKE ... INCLUDING ALL` does not copy.
 
-The final runtime was exercised through a loopback TLS reverse proxy with normal
+The review-corrected runtime at `282ce376f3d6ab92ae97b89f0e55031915730e99`
+was exercised through a loopback TLS reverse proxy with normal
 certificate validation in Chromium 157 and Safari 27.2. Authentication and BFF
 used different registrable domains. `allow_loopback_http` was disabled. A
 short-lived, hostname-constrained test CA was local environment setup only;
@@ -190,11 +191,14 @@ returned `204` twice. Denial returned `403 access_denied`, cancellation
 Expired and reclaimed records returned `401 interaction_invalid`; focused HTTP
 regressions also cover retained expiry (`410`). The run produced exactly four
 browser login sessions and two principals. Verification/approval added neither
-sessions nor principals. Three browser sessions were revoked by explicit cleanup
-or provider-configuration changes. All 142 proxied responses passed the
+sessions nor principals. Three browser sessions were revoked by repeatable
+exact-family cleanup. All 143 proxied responses passed the
 redemption-capability leakage check; response headers and cookie attributes were
-recorded without cookie values. One early Safari credential submission failed;
-a fresh interaction with explicitly set fields passed the complete LDAP flow.
+recorded without cookie values. Both browsers rejected BFF callback replay.
+Fresh expiry cases were created after the final provider activation, attached
+to their respective browsers and left for their actual five-minute lifetime
+without further configuration changes. Server completion and browser continuation
+then rejected the expired, reclaimed records.
 
 Reproduction uses the standard-library fixture described in
 [the interaction guide](../authentication_interactions.md#reproducing-browser-qualification).
@@ -244,5 +248,9 @@ candidate verification completes the final pending LDAP identity check; candidat
 with several enabled LDAP providers use the direct candidate verification endpoint
 for the other providers first. Increasing only a JSON extractor limit or treating
 partial verification as a fully verified candidate would violate those bounds.
-The browser matrix above is evidence for the preceding HTTPS qualification
-revision; final automated regression and CI evidence is pinned in the PR ledger.
+The browser matrix above was rerun after these corrections. Final automated
+regression and CI evidence is pinned in the PR ledger. CI subsequently exposed
+Cargo 1.100's changed intermediate build layout: template tests could no longer
+find their worker by walking from the test executable. The test runners now pass
+Cargo's reported worker path using its standard `CARGO_BIN_EXE_*` interface;
+packaged applications retain the adjacent-worker convention.
