@@ -3,6 +3,7 @@ use chrono::NaiveDateTime;
 use hubuum_auth_core::AuthenticatedExternalUser;
 use hubuum_auth_core::{AuthProviderError, ExternalIdentityProvider, ExternalUserRefreshRequest};
 use hubuum_auth_ldap::{LdapIdentityProvider, LdapScopeConfig, LdapSecretSource};
+use hubuum_domain::ResourceRevision;
 use hubuum_secrets::{SecretValue, SecretVersion};
 use hubuum_storage_core::{
     RUNTIME_AUTHENTICATION_PASSWORD_ENVELOPE_FIELD, StorageAuthenticationProvider,
@@ -97,6 +98,7 @@ impl ConfiguredLdapScope {
 }
 
 struct AuthProviderRegistry {
+    revision: Option<ResourceRevision>,
     providers: HashMap<String, RegisteredAuthProvider>,
     unavailable: HashMap<String, bool>,
     statuses: HashMap<String, RuntimeAuthenticationProviderStatus>,
@@ -521,6 +523,7 @@ struct LdapAuthProvider {
 impl AuthProviderRegistry {
     fn from_config(config: AuthProvidersConfig) -> Result<Self, ApiError> {
         let mut registry = Self {
+            revision: None,
             providers: HashMap::new(),
             unavailable: HashMap::new(),
             statuses: HashMap::new(),
@@ -803,11 +806,11 @@ pub struct AuthenticatedLogin {
     credential: StorageUser,
     identity_scope: String,
     provider_kind: String,
-    authentication_revision: Option<hubuum_domain::ResourceRevision>,
+    authentication_revision: Option<ResourceRevision>,
 }
 
 impl AuthenticatedLogin {
-    pub(crate) const fn authentication_revision(&self) -> Option<hubuum_domain::ResourceRevision> {
+    pub(crate) const fn authentication_revision(&self) -> Option<ResourceRevision> {
         self.authentication_revision
     }
     pub(crate) fn credential(&self) -> &StorageUser {
@@ -831,29 +834,22 @@ pub async fn login(
     storage: &impl crate::storage::StorageContext,
     login: ValidatedLogin,
 ) -> Result<AuthenticatedLogin, ApiError> {
-    crate::storage::storage_handle(storage)
-        .applied_runtime_settings()
-        .ensure_security_current()?;
-    let revision = if login.identity_scope() == LOCAL_IDENTITY_SCOPE {
-        None
-    } else {
-        Some(
-            crate::storage::storage_handle(storage)
-                .applied_runtime_settings()
-                .snapshot()
-                .ok_or_else(|| {
-                    ApiError::ServiceUnavailable(
-                        "Authentication configuration is not reconciled".into(),
-                    )
-                })?
-                .record(hubuum_storage_core::StorageRuntimeSettingsGroup::Authentication)
-                .revision(),
-        )
-    };
+    let applied = crate::storage::storage_handle(storage).applied_runtime_settings();
+    applied.ensure_security_current()?;
     let registry = auth_provider_registry()?;
-    let mut authenticated = login_with_registry(storage, login, &registry).await?;
-    authenticated.authentication_revision = revision;
-    Ok(authenticated)
+    if login.identity_scope() != LOCAL_IDENTITY_SCOPE {
+        let revision = applied.snapshot().map(|snapshot| {
+            snapshot
+                .record(hubuum_storage_core::StorageRuntimeSettingsGroup::Authentication)
+                .revision()
+        });
+        if revision.is_none() || registry.revision != revision {
+            return Err(ApiError::ServiceUnavailable(
+                "Authentication configuration is not reconciled".into(),
+            ));
+        }
+    }
+    login_with_registry(storage, login, &registry).await
 }
 
 async fn login_with_registry(
@@ -863,6 +859,15 @@ async fn login_with_registry(
 ) -> Result<AuthenticatedLogin, ApiError> {
     let storage = crate::storage::storage_handle(storage);
     let scope = login.identity_scope().to_owned();
+    // Pin the proof to the same immutable registry that authenticates the user.
+    // The shared settings snapshot can advance while this login is in flight.
+    let authentication_revision = if scope == LOCAL_IDENTITY_SCOPE {
+        None
+    } else {
+        Some(registry.revision.ok_or_else(|| {
+            ApiError::ServiceUnavailable("Authentication configuration is not reconciled".into())
+        })?)
+    };
     let provider = registry.provider(&scope)?;
     let span = info_span!(
         "auth.provider",
@@ -888,7 +893,7 @@ async fn login_with_registry(
         credential,
         identity_scope: scope,
         provider_kind: provider.kind.clone(),
-        authentication_revision: None,
+        authentication_revision,
     })
 }
 
@@ -1032,6 +1037,7 @@ pub async fn ensure_configured_identity_scopes(
 
 pub(crate) async fn apply_runtime_authentication_settings(
     providers: Option<&StorageAuthenticationProviders>,
+    revision: ResourceRevision,
 ) -> Result<bool, ApiError> {
     let registry = match providers {
         Some(providers) => {
@@ -1040,7 +1046,7 @@ pub(crate) async fn apply_runtime_authentication_settings(
         }
         None => build_auth_provider_registry(),
     };
-    let registry = match registry {
+    let mut registry = match registry {
         Ok(registry) => registry,
         Err(error) => {
             // Never continue using a removed runtime provider after a failed
@@ -1051,6 +1057,7 @@ pub(crate) async fn apply_runtime_authentication_settings(
             return Err(error);
         }
     };
+    registry.revision = Some(revision);
     let complete = registry.unavailable.is_empty();
     *AUTH_PROVIDER_REGISTRY
         .write()

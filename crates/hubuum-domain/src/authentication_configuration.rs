@@ -305,12 +305,14 @@ impl OAuthProviderDefinition {
         &self.client_id
     }
     pub fn identity_namespace(&self) -> String {
-        format!(
-            "{}:{}:{:?}",
+        // Encode component boundaries so delimiters in a URL path or JSON
+        // Pointer cannot make distinct upstream identities share a binding.
+        serde_json::to_string(&(
             self.profile_endpoint.as_str(),
-            self.subject_pointer,
-            self.subject_type
-        )
+            &self.subject_pointer,
+            &self.subject_type,
+        ))
+        .expect("OAuth identity components are serializable")
     }
 }
 

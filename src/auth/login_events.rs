@@ -85,6 +85,79 @@ impl AuthProviderBackend for DirectoryProvider {
     }
 }
 
+#[test]
+fn external_login_cannot_use_an_old_provider_with_a_new_settings_revision() {
+    const CHILD: &str = "AUTH_REVISION_RACE_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "auth::login_events::external_login_cannot_use_an_old_provider_with_a_new_settings_revision"])
+            .env(CHILD, "1")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            use crate::storage::StorageHandle;
+            use hubuum_storage_core::{
+                StorageRuntimeSettingsAssignment, StorageRuntimeSettingsUpdate,
+                StorageRuntimeSettingsValue,
+            };
+
+            let storage = StorageHandle::memory();
+            let scope = "retired_directory";
+            let mut registry =
+                AuthProviderRegistry::from_config(AuthProvidersConfig { ldap: vec![] }).unwrap();
+            registry.revision = Some(ResourceRevision::INITIAL);
+            registry
+                .register(RegisteredAuthProvider {
+                    name: scope.into(),
+                    kind: LDAP_PROVIDER_KIND.into(),
+                    display_order: 100,
+                    refresh_policy: Some(RefreshPolicy::new(300, 3600).unwrap()),
+                    backend: Box::new(DirectoryProvider {
+                        scope: scope.into(),
+                    }),
+                })
+                .unwrap();
+            *AUTH_PROVIDER_REGISTRY.write().unwrap() = Some(Arc::new(registry));
+            storage
+                .update_runtime_settings(StorageRuntimeSettingsUpdate::new(
+                    StorageRuntimeSettingsAssignment::Managed(
+                        StorageRuntimeSettingsValue::Authentication(
+                            StorageAuthenticationProviders::try_new(vec![]).unwrap(),
+                        ),
+                    ),
+                    ResourceRevision::INITIAL,
+                    EventContext::system(),
+                ))
+                .await
+                .unwrap();
+            // Reproduce the reconciliation window: the shared snapshot is new,
+            // but building/replacing its provider registry has not finished.
+            storage.refresh_runtime_settings().await.unwrap();
+            let result = login(
+                &storage,
+                LoginUser {
+                    identity_scope: Some(scope.into()),
+                    name: "stale_login".into(),
+                    password: "directory-password".into(),
+                }
+                .validate()
+                .unwrap(),
+            )
+            .await;
+            assert!(
+                matches!(result, Err(ApiError::ServiceUnavailable(_))),
+                "stale provider must not authenticate against a new revision"
+            );
+        });
+}
+
 #[rstest]
 #[case::admin(true)]
 #[case::non_admin(false)]
@@ -112,7 +185,8 @@ async fn configured_external_login_snapshots_synced_identity_and_policy(#[case] 
         .unwrap()
         .record(StorageRuntimeSettingsGroup::Authentication)
         .revision();
-    let mut authenticated = login_with_registry(
+    registry.revision = Some(authentication_revision);
+    let authenticated = login_with_registry(
         &context.pool,
         LoginUser {
             identity_scope: Some(scope.clone()),
@@ -125,7 +199,6 @@ async fn configured_external_login_snapshots_synced_identity_and_policy(#[case] 
     )
     .await
     .unwrap();
-    authenticated.authentication_revision = Some(authentication_revision);
     let user = authenticated.user();
     let storage = storage_handle(&context.pool);
     let synced = storage

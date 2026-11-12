@@ -686,6 +686,8 @@ mod tests {
 
     #[test]
     fn failed_authentication_release_discards_previous_runtime_providers() {
+        use hubuum_domain::ResourceRevision;
+
         const CHILD: &str = "RUNTIME_AUTH_RELEASE_FAILURE_TEST_CHILD";
         if std::env::var_os(CHILD).is_none() {
             let missing = std::env::temp_dir().join(format!(
@@ -720,13 +722,19 @@ mod tests {
             ).unwrap()],
                     )
                     .unwrap();
-                crate::auth::apply_runtime_authentication_settings(Some(&providers))
-                    .await
-                    .unwrap();
+                crate::auth::apply_runtime_authentication_settings(
+                    Some(&providers),
+                    ResourceRevision::INITIAL,
+                )
+                .await
+                .unwrap();
                 assert!(
-                    crate::auth::apply_runtime_authentication_settings(None)
-                        .await
-                        .is_err()
+                    crate::auth::apply_runtime_authentication_settings(
+                        None,
+                        ResourceRevision::INITIAL.checked_advance().unwrap()
+                    )
+                    .await
+                    .is_err()
                 );
                 assert!(crate::auth::auth_provider_names().is_err());
             });

@@ -377,8 +377,11 @@ impl AppContext {
             && !applied_authentication_revision
                 .is_some_and(|revision| revision >= authentication_revision)
         {
-            match crate::auth::apply_runtime_authentication_settings(snapshot.authentication())
-                .await
+            match crate::auth::apply_runtime_authentication_settings(
+                snapshot.authentication(),
+                authentication_revision,
+            )
+            .await
             {
                 Ok(true) => {
                     *self

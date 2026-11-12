@@ -196,6 +196,60 @@ fn disabled_oauth() -> Value {
     })
 }
 
+#[actix_web::test]
+async fn oauth_namespace_cannot_be_repointed_with_ambiguous_delimiters() {
+    let backend = StorageHandle::memory();
+    let user = password_admin(&backend).await;
+    let mut provider = disabled_oauth();
+    provider["configuration"]["subject_pointer"] = json!("/nested:/id");
+    let (status, candidate) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::post().uri(CANDIDATES).set_json(json!({
+            "group": "authentication", "expected_revision": 1, "providers": [provider]
+        })),
+    )
+    .await;
+    assert_eq!(status, http::StatusCode::CREATED, "{candidate}");
+    let (status, approval) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::post()
+            .uri("/api/v1/iam/credential-approvals")
+            .set_json(json!({"password": PASSWORD, "operation": {
+                "kind": "activate_security_candidate", "candidate_id": candidate["id"],
+                "group": "authentication", "expected_revision": 1
+            }})),
+    )
+    .await;
+    assert_eq!(status, http::StatusCode::CREATED, "{approval}");
+    let (status, activated) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::post()
+            .uri(&format!("{CANDIDATES}/{}/activate", candidate["id"].as_str().unwrap()))
+            .insert_header(("X-Hubuum-Credential-Approval", approval["approval"].as_str().unwrap()))
+            .set_json(json!({"expected_revision": 1, "verification_receipt": candidate["verification_receipt"]})),
+    )
+    .await;
+    assert_eq!(status, http::StatusCode::OK, "{activated}");
+
+    // Moving a colon-delimited component from the pointer to the endpoint must
+    // not preserve the identity binding for a different upstream subject.
+    provider["provider_id"] = candidate["providers"][0]["provider_id"].clone();
+    provider["configuration"]["profile_endpoint"] = json!("https://identity.example/user:/nested");
+    provider["configuration"]["subject_pointer"] = json!("/id");
+    let (status, body) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::post().uri(CANDIDATES).set_json(json!({
+            "group": "authentication", "expected_revision": activated["revision"], "providers": [provider]
+        })),
+    )
+    .await;
+    assert_eq!(status, http::StatusCode::CONFLICT, "{body}");
+}
+
 #[rstest::rstest]
 #[case::oidc(disabled_oidc())]
 #[case::oauth(disabled_oauth())]
