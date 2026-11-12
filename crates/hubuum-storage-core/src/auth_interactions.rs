@@ -195,6 +195,17 @@ impl StorageInteractionLogin {
     pub const fn subject(&self) -> &EventSubject {
         &self.subject
     }
+    /// Session issuance is attributed to the authenticated proof's principal;
+    /// the redeeming request contributes correlation, never actor authority.
+    pub fn event_context(&self, request: &EventContext) -> EventContext {
+        EventContext::user(
+            self.subject.principal_id(),
+            request.request_id(),
+            request.correlation_id().cloned(),
+        )
+        .with_trace_link(request.trace_link().cloned())
+    }
+
     pub const fn authenticated_at(&self) -> DateTime<Utc> {
         self.authenticated_at
     }

@@ -447,6 +447,14 @@ impl EventContext {
         self.mutation.task_id()
     }
 
+    /// Attach transport provenance without trusting it to choose the actor.
+    #[must_use]
+    pub fn with_request(mut self, request_id: Uuid, correlation_id: Option<CorrelationId>) -> Self {
+        self.request_id = Some(request_id);
+        self.correlation_id = correlation_id;
+        self
+    }
+
     pub fn request_id(&self) -> Option<Uuid> {
         self.request_id
     }

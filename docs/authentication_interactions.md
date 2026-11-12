@@ -1,11 +1,45 @@
 # Durable authentication interactions
 
 Status: #575 implementation in progress, draft PR #591 on `project/auth-support`.
-The domain model, complete storage adapters and session issuance service are
-implemented. Versioned endpoints, the hosted browser page, transport protections
-and scheduling of cleanup remain to be connected. Existing password login is
-unchanged. Real OIDC/OAuth execution remains in #577/#578; this storage foundation
-does not qualify a live provider.
+The domain model, complete storage adapters, atomic session issuance and v1
+password-login transport are implemented. Local and enabled LDAP providers use
+public discovery, begin, credentials, protected status, complete, cancel and
+issued-session revocation. Existing password-login endpoints keep their wire
+behavior. Privileged-purpose transport and the hosted browser flow remain in
+progress; real OIDC/OAuth execution remains in #577/#578.
+
+## Password interaction API
+
+`GET /api/v1/auth/methods` returns protocol version 1 and only public method
+metadata. Begin a `login` with `delivery: "poll"`, the selected provider ID and a
+stable client ID using `POST /api/v1/auth/interactions`. Continue with the same
+client ID and `Authorization: Hubuum-Interaction <redemption_secret>` on the
+interaction's `credentials`, `status`, `complete`, `cancel` and
+`issued-session/revoke` operations. Submit only `name` and `password` alongside
+the client ID for credentials; the server selects the bound provider scope.
+Completion returns the existing session response and preserves that client ID
+through refresh.
+
+The secret-bearing JSON operations are for CLI and BFF server-to-server requests
+and reject browser Origin/Fetch Metadata headers and query parameters. Public
+method discovery is also available to browser callers. All auth responses
+use `Cache-Control: no-store` and `Referrer-Policy: no-referrer`. Redemption
+secrets contain 256 random bits, are stored only as domain-separated digests,
+and cannot authenticate ordinary API routes. Existing password throttling also
+applies to credential continuation. Failed credentials allow explicit retries
+within the interaction's three-attempt limit.
+
+Early polls return `429` with reason `slow_down` and increasing `Retry-After`.
+Terminal and revision errors use stable machine-readable reasons in `ApiError`.
+Status after consumption exposes only issuance metadata, and repeated completion
+returns `interaction_consumed`. Cancellation cannot undo an issued session;
+use the dedicated secret-protected revocation operation after response loss.
+
+The current HTTP implementation rejects privileged purposes, browser providers
+and BFF handoff delivery with `422 capability_unsupported`; it never substitutes
+a different provider, delivery mode or weaker proof. The hosted browser forms,
+privileged completion responses, registered return targets and browser/provider
+end-to-end tests remain required before #575 acceptance.
 
 ## Authority and completion
 
@@ -54,10 +88,18 @@ Configuration changes do not remove this cleanup capability.
 Interactions live at most 600 seconds (default 300). Retention is limited to
 65,536 rows, with at most 4,096 active globally, 256 per client and 32 per
 privileged actor. Creation opportunistically removes up to 128 expired rows;
-explicit cleanup accepts batches of at most 4,096. Consumed metadata survives
-until one hour after the original expiry for response-loss cleanup. Other rows
+explicit cleanup accepts batches of at most 4,096. The existing 30-second settings
+reconciler removes up to 128 expired records per refresh, including while idle.
+Consumed metadata survives until one hour after the original expiry for
+response-loss cleanup. Other rows
 can be removed at expiry. Browser attachment and claim state are bounded within
 each record; persistence documents are limited to 256 KiB.
+
+HTTP admission also bounds each replica to 10,000 client-IP buckets, with 30
+begins and 600 total interaction requests per IP per minute. Requests without
+an attributable IP share one bucket. These per-replica budgets complement the
+shared global/client/actor storage limits; they do not claim a cluster-wide IP
+quota.
 
 PostgreSQL serializes creation capacity checks and locks settings before
 interaction, principal and credential rows. Terminal rows cannot be reopened.

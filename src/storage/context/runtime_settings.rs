@@ -194,6 +194,7 @@ impl StorageHandle {
             .runtime_settings
             .refresh(async {
                 self.purge_security_candidates().await?;
+                self.purge_auth_interactions(128).await?;
                 let snapshot = self.load_runtime_settings().await?;
                 let deployment = crate::config::get_config()
                     .map_err(|error| StorageError::invalid_input(error.to_string()))?;

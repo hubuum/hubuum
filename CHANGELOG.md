@@ -9,6 +9,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Versioned local/LDAP login interactions provide safe method discovery,
+  secret-protected continuation, atomic session completion, polling backoff,
+  cancellation and exact-session cleanup after response loss. Browser and
+  privileged-purpose transport remain unsupported until their implementation.
+
 - Verified security configuration candidates, fresh local-administrator activation
   approvals, immutable provider UUID/scope bindings, bounded runtime Treetop
   profiles and explicit offline `hubuum-admin --recover-security` recovery.
@@ -43,7 +48,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   then restart matching binaries everywhere. Older recovery/restore tools do not
   discard this authority; downgrade requires the pre-upgrade snapshot. See the
   [upgrade guide](docs/authentication_interactions.md#upgrade-and-recovery).
-  This foundation does not yet expose browser interaction endpoints.
+  Browser interaction endpoints remain in progress.
 
 - **Breaking (storage SDK 0.8):** update all ten SDK dependencies to exactly
   `0.8.0`, implement candidate activation/recovery and provider-binding storage,

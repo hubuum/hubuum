@@ -299,7 +299,7 @@ impl MemoryState {
                         .map_err(invalid_contract_value)?,
                     credentials.clone(),
                     *policy,
-                    context.clone(),
+                    evidence.event_context(context),
                 ))?;
                 let id = session.clone().into_value().session_id().value();
                 (

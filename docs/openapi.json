@@ -1701,6 +1701,549 @@
         ]
       }
     },
+    "/api/v1/auth/interactions": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Api V1 Auth Interactions",
+        "description": "Auto-generated documentation for POST /api/v1/auth/interactions.",
+        "operationId": "postApiV1AuthInteractions",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InteractionBeginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Login interaction created; secret is returned once",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InteractionBegun"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid purpose/delivery fields or transport",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Provider, privileged purpose or delivery capability unsupported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Bounded creation budget exhausted; honor Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Provider configuration is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/interactions/{id}/cancel": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Api V1 Auth Interactions By Id Cancel",
+        "description": "Auto-generated documentation for POST /api/v1/auth/interactions/{id}/cancel.",
+        "operationId": "postApiV1AuthInteractionsByIdCancel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InteractionClientRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Cancelled; repeated cancellation is harmless"
+          },
+          "401": {
+            "description": "Invalid interaction, client or secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Consumed, failed or configuration changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Request budget exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "interaction_secret": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/interactions/{id}/complete": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Api V1 Auth Interactions By Id Complete",
+        "description": "Auto-generated documentation for POST /api/v1/auth/interactions/{id}/complete.",
+        "operationId": "postApiV1AuthInteractionsByIdComplete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InteractionClientRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Single-use session issuance using the original client binding",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid interaction, client, secret or authority",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Denied or cancelled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not ready, consumed, failed or configuration changed; never replay issuance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Request budget exhausted; honor Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "interaction_secret": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/interactions/{id}/credentials": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Api V1 Auth Interactions By Id Credentials",
+        "description": "Auto-generated documentation for POST /api/v1/auth/interactions/{id}/credentials.",
+        "operationId": "postApiV1AuthInteractionsByIdCredentials",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InteractionCredentialsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Password proof recorded; no session issued yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InteractionStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid bounded credential input or transport",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid interaction, client, secret or credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Interaction denied or cancelled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Consumed/failed interaction or changed configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Interaction expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Login or request budget exhausted; honor Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Provider unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "interaction_secret": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/interactions/{id}/issued-session/revoke": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Api V1 Auth Interactions By Id Issued Session Revoke",
+        "description": "Auto-generated documentation for POST /api/v1/auth/interactions/{id}/issued-session/revoke.",
+        "operationId": "postApiV1AuthInteractionsByIdIssuedSessionRevoke",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InteractionClientRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Issued session family revoked, including rotated descendants; repeatable"
+          },
+          "401": {
+            "description": "Invalid interaction, client or secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No issued session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Request budget exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "interaction_secret": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/interactions/{id}/status": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Api V1 Auth Interactions By Id Status",
+        "description": "Auto-generated documentation for POST /api/v1/auth/interactions/{id}/status.",
+        "operationId": "postApiV1AuthInteractionsByIdStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InteractionClientRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Pending, ready or consumed metadata; no reusable proof or credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InteractionStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid interaction, client or secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Denied or cancelled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Failed interaction or changed configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Early polling; increase interval and honor Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "interaction_secret": []
+          }
+        ]
+      }
+    },
     "/api/v1/auth/login": {
       "post": {
         "tags": [
@@ -1989,6 +2532,48 @@
             "bearer_auth": []
           }
         ]
+      }
+    },
+    "/api/v1/auth/methods": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Get Api V1 Auth Methods",
+        "description": "Auto-generated documentation for GET /api/v1/auth/methods.",
+        "operationId": "getApiV1AuthMethods",
+        "responses": {
+          "200": {
+            "description": "Public password methods; interaction protocol version 1",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthenticationMethods"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Request budget exhausted; honor Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Provider configuration is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/auth/providers": {
@@ -26504,6 +27089,61 @@
         "format": "uri",
         "maxLength": 2048
       },
+      "AuthenticationMethod": {
+        "type": "object",
+        "required": [
+          "provider_id",
+          "name",
+          "kind",
+          "interaction",
+          "fresh_authentication"
+        ],
+        "properties": {
+          "fresh_authentication": {
+            "type": "boolean"
+          },
+          "interaction": {
+            "$ref": "#/components/schemas/PasswordInteractionMode"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PasswordProviderKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "provider_id": {
+            "type": "string"
+          }
+        }
+      },
+      "AuthenticationMethods": {
+        "type": "object",
+        "required": [
+          "interaction_version",
+          "methods"
+        ],
+        "properties": {
+          "interaction_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuthenticationMethod"
+            }
+          }
+        }
+      },
+      "AuthenticationPurpose": {
+        "type": "string",
+        "enum": [
+          "login",
+          "credential_approval",
+          "provider_verification"
+        ]
+      },
       "AuthenticationSettingsReport": {
         "allOf": [
           {
@@ -34318,6 +34958,215 @@
         ],
         "description": "Per-item collision and optimistic-concurrency behavior for import v2."
       },
+      "InteractionBeginRequest": {
+        "type": "object",
+        "required": [
+          "client_id",
+          "provider_id",
+          "purpose",
+          "delivery"
+        ],
+        "properties": {
+          "candidate_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "client_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+          },
+          "delivery": {
+            "$ref": "#/components/schemas/InteractionDelivery",
+            "description": "Poll is supported. BFF return targets require the later browser transport."
+          },
+          "operation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CredentialOperation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider_id": {
+            "type": "string",
+            "pattern": "^(local|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/AuthenticationPurpose",
+            "description": "This implementation accepts login. Privileged purposes return capability_unsupported."
+          },
+          "return_nonce": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "return_target_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "InteractionBegun": {
+        "type": "object",
+        "required": [
+          "id",
+          "interaction_version",
+          "redemption_secret",
+          "expires_at",
+          "interval_seconds",
+          "next"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "interaction_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "interval_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "next": {
+            "$ref": "#/components/schemas/InteractionNext"
+          },
+          "redemption_secret": {
+            "$ref": "#/components/schemas/InteractionSecret"
+          }
+        }
+      },
+      "InteractionClientRequest": {
+        "type": "object",
+        "required": [
+          "client_id"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InteractionCredentialsRequest": {
+        "type": "object",
+        "required": [
+          "client_id",
+          "name",
+          "password"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1
+          },
+          "password": {
+            "type": "string",
+            "writeOnly": true,
+            "maxLength": 4096,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "InteractionDelivery": {
+        "type": "string",
+        "enum": [
+          "poll",
+          "bff"
+        ]
+      },
+      "InteractionNext": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "credentials"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "InteractionSecret": {
+        "type": "string",
+        "pattern": "^hai1\\.[0-9a-f]{64}$"
+      },
+      "InteractionStatus": {
+        "type": "object",
+        "required": [
+          "id",
+          "state",
+          "expires_at"
+        ],
+        "properties": {
+          "approval_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "state": {
+            "$ref": "#/components/schemas/InteractionStatusState"
+          }
+        }
+      },
+      "InteractionStatusState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "ready",
+          "denied",
+          "expired",
+          "cancelled",
+          "consumed",
+          "failed"
+        ]
+      },
       "LoginRateLimitConfig": {
         "type": "object",
         "required": [
@@ -36062,6 +36911,19 @@
           }
         },
         "additionalProperties": false
+      },
+      "PasswordInteractionMode": {
+        "type": "string",
+        "enum": [
+          "credentials"
+        ]
+      },
+      "PasswordProviderKind": {
+        "type": "string",
+        "enum": [
+          "local",
+          "ldap"
+        ]
       },
       "PatchOperation": {
         "oneOf": [
@@ -44014,6 +44876,12 @@
       "bearer_auth": {
         "type": "http",
         "scheme": "bearer"
+      },
+      "interaction_secret": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Authorization",
+        "description": "Hubuum-Interaction <redemption_secret>; never a normal API bearer token"
       },
       "restore_capability": {
         "type": "apiKey",

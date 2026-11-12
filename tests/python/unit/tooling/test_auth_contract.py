@@ -244,16 +244,23 @@ class AuthenticationContractTests(unittest.TestCase):
         }
         self.assertFalse(required - identifiers, required - identifiers)
 
-    def test_unimplemented_browser_routes_remain_outside_the_live_api(self):
+    def test_live_routes_include_password_interactions_but_not_browser_transport(self):
         current = load_json(ROOT / "docs/openapi.json")
         self.assertIn("proposed", self.spec["info"]["version"])
         self.assertEqual(self.fixtures["status"], "proposed")
-        # #574 delivers configuration candidates; browser interactions remain
-        # reserved for the subsequent implementation issues.
+        # #574 delivers configuration candidates and #575 adds password
+        # interaction routes. Hosted browser transport remains unimplemented.
         self.assertEqual(self.spec["paths"].keys() & current["paths"].keys(), {
             "/api/v1/admin/runtime-settings/security-candidates",
             "/api/v1/admin/runtime-settings/security-candidates/{id}",
             "/api/v1/admin/runtime-settings/security-candidates/{id}/activate",
+            "/api/v1/auth/methods",
+            "/api/v1/auth/interactions",
+            "/api/v1/auth/interactions/{id}/credentials",
+            "/api/v1/auth/interactions/{id}/status",
+            "/api/v1/auth/interactions/{id}/complete",
+            "/api/v1/auth/interactions/{id}/cancel",
+            "/api/v1/auth/interactions/{id}/issued-session/revoke",
         })
 
     def test_existing_result_examples_use_current_required_fields_and_approval_syntax(self):

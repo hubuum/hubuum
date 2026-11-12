@@ -693,6 +693,28 @@ impl AuthProviderRegistry {
     }
 }
 
+/// Resolve password-capable names from one immutable, reconciled registry.
+pub(crate) fn interaction_password_providers(
+    revision: ResourceRevision,
+) -> Result<Vec<(String, String)>, ApiError> {
+    let registry = auth_provider_registry()?;
+    if registry
+        .providers()
+        .any(|provider| provider.name != LOCAL_IDENTITY_SCOPE)
+        && registry.revision != Some(revision)
+    {
+        return Err(crate::errors::InteractionError::ProviderUnavailable.into());
+    }
+    let mut providers = registry
+        .providers()
+        .map(|provider| (provider.name.clone(), provider.kind.clone()))
+        .collect::<Vec<_>>();
+    providers.sort_by(|left, right| {
+        (left.0 != LOCAL_IDENTITY_SCOPE, &left.0).cmp(&(right.0 != LOCAL_IDENTITY_SCOPE, &right.0))
+    });
+    Ok(providers)
+}
+
 pub fn auth_provider_names() -> Result<Vec<String>, ApiError> {
     Ok(auth_provider_registry()?.provider_names())
 }

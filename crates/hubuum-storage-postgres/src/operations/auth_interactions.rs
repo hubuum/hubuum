@@ -372,7 +372,7 @@ pub async fn complete(
                             .map_err(|_| invalid())?,
                             credentials.clone(),
                             *policy,
-                            context.clone(),
+                            evidence.event_context(context),
                         ),
                     )
                     .await?;
