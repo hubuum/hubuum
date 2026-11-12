@@ -6,8 +6,9 @@ import tempfile
 import tarfile
 import threading
 import unittest
+from unittest.mock import Mock, patch
 
-from integration.history_expiry import (assess, measured_resources, measurement_environment,
+from integration.history_expiry import (assess, database_failure_log, measured_resources, measurement_environment,
                                        package_measurements, replica_run, verify_binary_reuse)
 from support import ROOT
 
@@ -30,6 +31,16 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
 
     def test_complete_evidence_passes(self):
         self.assertTrue(all(assess(*self.fixture()).values()))
+
+    def test_database_failure_log_retains_both_streams_and_redacts_fixture_password(self):
+        fixture = Mock(containers=["owned-postgres"], password="fixture-secret")
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "postgres.log"
+            with patch("integration.history_expiry.subprocess.run",
+                       return_value=Mock(stdout="startup\n", stderr="deadlock fixture-secret\n")) as run:
+                database_failure_log(fixture, destination)
+            self.assertEqual(destination.read_text(), "startup\ndeadlock [fixture password]\n")
+            self.assertEqual(run.call_args.args[0], ["docker", "logs", "--tail", "200", "owned-postgres"])
 
     def test_reuse_requires_identical_rust_inputs_and_build_recipe(self):
         workflow = (ROOT / ".github/workflows/history-expiry-qualification.yml").read_text()

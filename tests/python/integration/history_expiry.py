@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import platform
 import statistics
+import subprocess
 from subprocess import SubprocessError
 import tarfile
 import time
@@ -48,6 +49,14 @@ def package_measurements(output, destination):
                 name = "history-expiry-report/" + path.name if path.parent == output else path.name
                 archive.add(path, arcname=name, recursive=False)
     destination.chmod(0o644)
+
+
+def database_failure_log(fixture, destination):
+    """Retain both Docker log streams before the disposable database is removed."""
+    result = subprocess.run(["docker", "logs", "--tail", "200", fixture.containers[0]],
+                            capture_output=True, text=True, timeout=30, check=False)
+    diagnostic = (result.stdout + result.stderr).replace(fixture.password, "[fixture password]")
+    destination.write_text(diagnostic[-64_000:])
 
 
 def measured_resources(output, name):
@@ -289,6 +298,10 @@ def run(args):
                     failures.append(name)
                     (args.output / f"{name}-failure.txt").write_text(str(error) + "\n")
                     print(f"{name}: {error}", flush=True)
+                    try:
+                        database_failure_log(fixture, args.output / f"{name}-postgres.log")
+                    except (OSError, SubprocessError) as diagnostic_error:
+                        print(f"{name}: could not capture database diagnostics: {diagnostic_error}", flush=True)
                 (args.output / "samples.json").write_text(json.dumps(samples, indent=2) + "\n")
         fixture.database_evidence("final")
     measured = [sample for sample in samples if not sample["warmup"]]
