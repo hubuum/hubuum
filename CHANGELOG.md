@@ -431,6 +431,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Retained history visibility uses indexed exact-copy and restore-ancestor
+  lookups, keeping bounded expiry scans responsive as exclusions accumulate.
 - Gated history expiry retries temporary checkpoint contention and service
   unavailability under its original execution deadline instead of failing the
   task immediately. Each attempt rechecks authorization; permission denials

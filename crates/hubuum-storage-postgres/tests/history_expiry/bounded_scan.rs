@@ -1,8 +1,89 @@
 use super::*;
 use chrono::DateTime;
-use diesel::sql_types::{BigInt, Integer, Nullable, Timestamptz};
+use diesel::sql_types::{BigInt, Bool, Integer, Nullable, Timestamptz};
+use hubuum_domain::{IdentityReference, ResourceIdentity, VersionIdentity};
 use hubuum_storage_postgres::test_support::IsolatedRestoreTarget;
 use rstest::rstest;
+use std::collections::BTreeMap;
+
+#[rstest]
+#[case::native_visible(false, false, true)]
+#[case::native_excluded(false, true, false)]
+#[case::restored_visible(true, false, true)]
+#[case::restored_excluded(true, true, false)]
+#[tokio::test]
+async fn native_visibility_keeps_its_budget_with_many_retained_versions(
+    #[case] restored: bool,
+    #[case] excluded: bool,
+    #[case] expected_visible: bool,
+) {
+    let _guard = CONTROL_LOCK.lock().await;
+    let resource = ResourceIdentity::generate();
+    let retained: Vec<_> = (0..3000).map(|_| VersionIdentity::generate()).collect();
+    let evidence: Vec<_> = (0..1000)
+        .map(|index| {
+            let version = if excluded {
+                retained[index]
+            } else {
+                VersionIdentity::generate()
+            };
+            let evidence = StorageIdentityEvidence::try_new(
+                Some(StorageIdentitySubject::Resource {
+                    identity: IdentityReference::Known { identity: resource },
+                    version,
+                }),
+                BTreeMap::new(),
+            )
+            .unwrap();
+            if restored {
+                let mut bytes = *VersionIdentity::generate().as_bytes();
+                bytes[6] = (bytes[6] & 0x0f) | 0x80;
+                evidence
+                    .at_restore_baseline(VersionIdentity::from_bytes(bytes).unwrap())
+                    .unwrap()
+            } else {
+                evidence
+            }
+        })
+        .collect();
+    let versions: Vec<_> = retained
+        .iter()
+        .map(|version| Uuid::from_bytes(*version.as_bytes()))
+        .collect();
+    let intents = [Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
+    #[derive(QueryableByName)]
+    struct Visibility {
+        #[diesel(sql_type = Bool)]
+        value: bool,
+    }
+    // A rolled-back projection fixture isolates the predicate's lookup budget.
+    let mut observed = None;
+    let rollback = with_transaction(&integration_test_migration_pool(1), async |connection| {
+        owner(connection).await?;
+        connection
+            .batch_execute("SET LOCAL statement_timeout='5000ms'; SET LOCAL plan_cache_mode='force_generic_plan'")
+            .await?;
+        sql_query("INSERT INTO hubuum_control.history_expiry_members(family,resource_uuid,version_uuid,intent_uuid,valid_from,valid_to) SELECT 'collection',$1,version,($3::uuid[])[((ordinal-1)/1000+1)::integer],now()-interval '1 day',now() FROM unnest($2::uuid[]) WITH ORDINALITY versions(version,ordinal)")
+            .bind::<SqlUuid, _>(Uuid::from_bytes(*resource.as_bytes()))
+            .bind::<Array<SqlUuid>, _>(versions.as_slice())
+            .bind::<Array<SqlUuid>, _>(intents.as_slice())
+            .execute(connection)
+            .await?;
+        observed = Some(sql_query("SELECT bool_and(public.hubuum_history_version_visible('collection',evidence)) AS value FROM jsonb_array_elements($1) inputs(evidence)")
+            .bind::<Jsonb, _>(serde_json::to_value(&evidence).unwrap())
+            .get_result::<Visibility>(connection)
+            .await
+            .map_err(PostgresStorageError::from));
+        Err::<(), _>(PostgresStorageError::internal("rollback visibility budget fixture"))
+    })
+    .await;
+    rollback.expect_err("The visibility fixture must roll back");
+    let visible = observed
+        .expect("The visibility probes must run")
+        .expect("1,000 probes must fit the native five-second statement budget")
+        .value;
+    assert_eq!(visible, expected_visible);
+}
 
 pub(super) fn source(family: StorageIdentityHistoryKind) -> (&'static str, &'static str) {
     use StorageIdentityHistoryKind as F;

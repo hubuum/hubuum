@@ -406,6 +406,7 @@ REVOKE ALL ON FUNCTION public.hubuum_history_producers_fenced(UUID,BIGINT) FROM 
 CREATE FUNCTION public.hubuum_history_version_visible(history_family TEXT, evidence JSONB)
 RETURNS BOOLEAN LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $function$
 DECLARE resource UUID; version UUID; captured_references JSONB; unknown_source BOOLEAN;
+    source_path TEXT; source_version UUID;
 BEGIN
     -- Preserve pre-expiry legacy reads. Once this family has retained authority,
     -- missing correspondence cannot establish that a copy is unrelated.
@@ -422,12 +423,27 @@ BEGIN
         OR (substring(version::TEXT FROM 15 FOR 1)='8'
             AND NOT EXISTS(SELECT 1 FROM jsonb_object_keys(captured_references) AS source_keys(path)
                 WHERE starts_with(path,'/restore_source_versions/')));
-    RETURN NOT EXISTS(SELECT 1 FROM hubuum_control.history_expiry_members retained
+    IF unknown_source THEN
+        RETURN NOT EXISTS(SELECT 1 FROM hubuum_control.history_expiry_members retained
+            WHERE retained.family=history_family AND retained.resource_uuid=resource);
+    END IF;
+    -- Keep exact copies and each captured ancestor as primary-key probes. An
+    -- OR over all retained versions makes every ordinary source row scan the
+    -- resource's complete exclusion set, including during dependency checks.
+    IF EXISTS(SELECT 1 FROM hubuum_control.history_expiry_members retained
         WHERE retained.family=history_family AND retained.resource_uuid=resource
-          AND (retained.version_uuid=version OR unknown_source
-            OR captured_references -> ('/restore_source_versions/' || retained.version_uuid::TEXT)
-                = jsonb_build_object('kind','version','reference',
-                    jsonb_build_object('state','known','identity',retained.version_uuid))));
+          AND retained.version_uuid=version) THEN RETURN FALSE; END IF;
+    FOR source_path IN SELECT path FROM jsonb_object_keys(captured_references) source_keys(path)
+        WHERE path ~ '^/restore_source_versions/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    LOOP
+        source_version := substring(source_path FROM length('/restore_source_versions/')+1)::UUID;
+        IF captured_references->source_path = jsonb_build_object('kind','version','reference',
+                jsonb_build_object('state','known','identity',source_version))
+            AND EXISTS(SELECT 1 FROM hubuum_control.history_expiry_members retained
+                WHERE retained.family=history_family AND retained.resource_uuid=resource
+                  AND retained.version_uuid=source_version) THEN RETURN FALSE; END IF;
+    END LOOP;
+    RETURN TRUE;
 END
 $function$;
 REVOKE ALL ON FUNCTION public.hubuum_history_version_visible(TEXT,JSONB) FROM PUBLIC;

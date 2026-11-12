@@ -449,8 +449,18 @@ async fn offline_renderer_retirement_uses_the_original_startup_proof(
         .unwrap();
     let settled = fixture.storage.settle_history_publication(settlement).await;
     assert!(live.is_err());
-    assert_eq!(released.is_ok(), protected);
-    assert_eq!(settled.is_err(), protected);
+    assert_eq!(
+        released.is_ok(),
+        protected,
+        "reapplication error: {:?}",
+        released.as_ref().err()
+    );
+    assert_eq!(
+        settled.is_err(),
+        protected,
+        "settlement error: {:?}",
+        settled.as_ref().err()
+    );
 }
 
 #[rstest]
