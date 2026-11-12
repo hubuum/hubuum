@@ -1,6 +1,6 @@
 # `hubuum-storage-core` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.8` release train.
+Status: experimental public API in the storage SDK `0.9` release train.
 
 ## Purpose and Callers
 
@@ -270,3 +270,11 @@ immutable provider binding and offline recovery operations to
 `RuntimeSettingsStorage`. External `StorageLogin` evidence requires a pinned
 configuration revision. See the [0.8 adapter migration guide](../storage_adapter_sdk.md#upgrading-from-07-to-08)
 for transactional guarantees and new closed configuration variants.
+
+## Durable authentication interactions
+
+SDK 0.9 adds mandatory interaction aggregates and purpose-specific atomic
+completion. All adapters must implement the six new `AuthenticationStorage`
+methods and exact-family `SessionRevocation::Session`. See the
+[0.9 migration guide](../storage_adapter_sdk.md#upgrading-from-08-to-09) and
+[interaction contract](../authentication_interactions.md).

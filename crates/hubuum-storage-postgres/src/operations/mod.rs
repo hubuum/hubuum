@@ -64,6 +64,7 @@ pub(crate) mod visibility;
 
 pub mod credential_approval;
 
+pub mod auth_interactions;
 pub mod auth_sessions;
 
 pub mod credential_activity;

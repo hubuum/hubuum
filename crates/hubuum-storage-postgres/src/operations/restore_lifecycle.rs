@@ -611,6 +611,7 @@ async fn apply_restore_replay_parts(
                 let started_at = Utc::now().naive_utc();
                 diesel::sql_query("UPDATE credential_approvals SET invalidated_at=timezone('UTC', clock_timestamp()) WHERE consumed_at IS NULL AND invalidated_at IS NULL").execute(connection).await?;
                 diesel::sql_query("DELETE FROM security_candidates").execute(connection).await?;
+                diesel::sql_query("DELETE FROM auth_interactions").execute(connection).await?;
                 enable_restore_session_settings(connection).await?;
                 replace_backend_replay(connection, snapshot)
                     .await?;

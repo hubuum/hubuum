@@ -8,6 +8,8 @@ mod credential_activity;
 pub use credential_activity::*;
 mod auth_sessions;
 pub use auth_sessions::*;
+mod auth_interactions;
+pub use auth_interactions::*;
 
 mod authorization;
 mod authorization_resources;

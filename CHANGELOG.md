@@ -36,6 +36,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (storage SDK 0.9 and deployment):** update all ten SDK crates to
+  `0.9.0` and implement durable authentication interactions, atomic purpose-bound
+  completion and exact-session cleanup. Stop all API/worker replicas, back up the
+  database, apply the authentication-interactions migration and role grants,
+  then restart matching binaries everywhere. Older recovery/restore tools do not
+  discard this authority; downgrade requires the pre-upgrade snapshot. See the
+  [upgrade guide](docs/authentication_interactions.md#upgrade-and-recovery).
+  This foundation does not yet expose browser interaction endpoints.
+
 - **Breaking (storage SDK 0.8):** update all ten SDK dependencies to exactly
   `0.8.0`, implement candidate activation/recovery and provider-binding storage,
   and construct external login evidence with its authentication revision. See
@@ -67,6 +76,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Security activation and offline recovery acquire settings before principal locks,
+  avoiding a deadlock with concurrent authentication completion.
 - Shared login reservations retain their original expiry when runtime rate-limit
   windows change, so in-flight failures still count toward the captured policy.
 - Shared login lockouts keep their expiry when overlapping requests finish under

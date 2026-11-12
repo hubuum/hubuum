@@ -111,14 +111,18 @@ pub async fn verify(
     candidate: StorageSecurityCandidate,
 ) -> Result<(), PostgresStorageError> {
     runtime
-        .with_transaction(async |connection| -> Result<_, PostgresStorageError> {
-            let mut stored = lock(connection, candidate.id()).await?;
-            stored
-                .accept_verification(candidate, database_now(connection).await?)
-                .map_err(|error| PostgresStorageError::conflict(error.to_string()))?;
-            save(connection, &stored).await
-        })
+        .with_transaction(async move |connection| verify_on_connection(connection, candidate).await)
         .await
+}
+pub(super) async fn verify_on_connection(
+    connection: &mut PostgresConnection,
+    candidate: StorageSecurityCandidate,
+) -> Result<(), PostgresStorageError> {
+    let mut stored = lock(connection, candidate.id()).await?;
+    stored
+        .accept_verification(candidate, database_now(connection).await?)
+        .map_err(|error| PostgresStorageError::conflict(error.to_string()))?;
+    save(connection, &stored).await
 }
 
 pub async fn activate(
@@ -126,7 +130,11 @@ pub async fn activate(
     request: StorageSecurityCandidateActivation,
 ) -> Result<StorageRuntimeSettingsUpdateOutcome, PostgresStorageError> {
     runtime.with_transaction(async |connection| -> Result<_, PostgresStorageError> {
-        // Keep principal/token/approval locks ahead of candidate/settings locks.
+        // Issuance takes the settings fence before principal locks. Activation
+        // must use the same order or a concurrent login can deadlock against it.
+        sql_query("SELECT revision FROM runtime_settings WHERE setting_group=$1 FOR UPDATE")
+            .bind::<Text,_>(request.update().group().as_str())
+            .get_result::<SettingsRevision>(connection).await?;
         super::credential_approval::consume(connection, Some(request.claim()), StorageCredentialOperation::ActivateSecurityCandidate, None, request.update().context()).await?;
         require_local_recovery_administrator(connection, request.claim().actor_id().id(), request.recovery_group()).await?;
         let mut candidate = lock(connection, request.candidate_id()).await?;
@@ -209,7 +217,7 @@ struct RecoveryAdministrator {
     id: i32,
 }
 
-async fn require_local_recovery_administrator(
+pub(super) async fn require_local_recovery_administrator(
     connection: &mut PostgresConnection,
     actor: i32,
     group: &str,
@@ -308,6 +316,8 @@ pub async fn recover(
         Action, AuditDocument, EntityType, EventContext, EventEntityId, NewEvent,
     };
     runtime.with_transaction(async |connection| -> Result<_, PostgresStorageError> {
+        sql_query("SELECT revision FROM runtime_settings WHERE setting_group IN ('authentication','authorization') ORDER BY setting_group FOR UPDATE")
+            .load::<SettingsRevision>(connection).await?;
         sql_query("SELECT id FROM principals WHERE id=$1 FOR UPDATE").bind::<Integer,_>(request.administrator().id()).execute(connection).await?;
         require_local_recovery_administrator(connection, request.administrator().id(), request.recovery_group()).await?;
         let authentication = super::runtime_settings::update_on_connection(connection, &request.updates()[0]).await?;
@@ -315,6 +325,7 @@ pub async fn recover(
         let scopes = sql_query("SELECT name FROM identity_scopes WHERE name <> 'local'").load::<ScopeName>(connection).await?;
         invalidate_provider_credentials(connection, &scopes.into_iter().map(|scope| scope.name).collect::<Vec<_>>()).await?;
         sql_query("DELETE FROM security_candidates").execute(connection).await?;
+        sql_query("DELETE FROM auth_interactions").execute(connection).await?;
         sql_query("UPDATE credential_approvals SET invalidated_at=timezone('UTC',clock_timestamp()) WHERE consumed_at IS NULL AND invalidated_at IS NULL").execute(connection).await?;
         let context = EventContext::system();
         let document = AuditDocument::builder("Offline security recovery: local authorization and local-only authentication")

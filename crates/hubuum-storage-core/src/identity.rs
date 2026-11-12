@@ -688,6 +688,30 @@ impl StorageAuthenticationTokenScope {
 /// only the projections required to build application authentication state.
 #[async_trait]
 pub trait AuthenticationStorage: Send + Sync {
+    async fn create_auth_interaction(
+        &self,
+        request: crate::StorageInteractionCreate,
+    ) -> Result<crate::StorageInteractionView, StorageError>;
+    async fn bind_auth_interaction_browser(
+        &self,
+        code: hubuum_domain::InteractionDigest,
+        browser: hubuum_domain::InteractionBrowserBinding,
+    ) -> Result<crate::StorageInteractionOutcome, StorageError>;
+    async fn advance_auth_interaction(
+        &self,
+        command: crate::StorageInteractionCommand,
+    ) -> Result<crate::StorageInteractionOutcome, StorageError>;
+    async fn complete_auth_interaction(
+        &self,
+        request: crate::StorageInteractionComplete,
+    ) -> Result<crate::StorageInteractionCompletion, StorageError>;
+    async fn revoke_auth_interaction_session(
+        &self,
+        access: crate::StorageInteractionAccess,
+        context: hubuum_events_core::EventContext,
+    ) -> Result<crate::StorageMutationOutcome<usize>, StorageError>;
+    async fn purge_auth_interactions(&self, limit: usize) -> Result<usize, StorageError>;
+
     async fn record_credential_creation(
         &self,
         token: TokenId,

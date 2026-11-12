@@ -18,13 +18,13 @@ fn digest() -> StorageTokenDigest {
     )
     .unwrap()
 }
-fn credentials() -> SessionCredentials {
+pub(super) fn credentials() -> SessionCredentials {
     SessionCredentials::try_new(digest(), digest()).unwrap()
 }
 fn client() -> SessionClientId {
     SessionClientId::try_new("test-client").unwrap()
 }
-async fn create(
+pub(super) async fn create(
     backend: &StorageHandle,
     user: &BackendUserFixture,
     credentials: SessionCredentials,
@@ -69,7 +69,7 @@ fn rotation(current: &SessionCredentials, next: SessionCredentials) -> StorageSe
         EventContext::system(),
     )
 }
-async fn authenticates(backend: &StorageHandle, digest: StorageTokenDigest) -> bool {
+pub(super) async fn authenticates(backend: &StorageHandle, digest: StorageTokenDigest) -> bool {
     backend
         .authenticate_bearer_token(
             StorageAuthenticationAttempt::try_new(

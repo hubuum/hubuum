@@ -21,6 +21,28 @@ pub struct StorageLogin {
 }
 
 impl StorageLogin {
+    /// A credential/change fence suitable for short-lived interaction storage.
+    /// This retains neither the password nor its stored password hash.
+    pub fn interaction_fingerprint(&self) -> hubuum_domain::InteractionDigest {
+        Self::user_interaction_fingerprint(&self.user)
+    }
+
+    pub(crate) fn user_interaction_fingerprint(
+        user: &StorageUser,
+    ) -> hubuum_domain::InteractionDigest {
+        use sha2::{Digest, Sha256};
+        let parts = user.clone().into_parts();
+        let bytes = serde_json::to_vec(&(parts.id(), parts.updated_at(), parts.password_hash()))
+            .expect("credential fence is JSON-compatible");
+        hubuum_domain::InteractionDigest::new(
+            Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>(),
+        )
+        .expect("SHA-256 is a lowercase hexadecimal digest")
+    }
+
     /// Local login does not depend on an external provider revision.
     pub fn try_new(
         subject: EventSubject,

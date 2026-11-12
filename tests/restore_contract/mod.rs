@@ -201,3 +201,29 @@ async fn memory_schema_provenance_survives_postgres_restore(#[case] timezone: &s
         actual_history.unwrap()[&StorageBackupHistorySection::ClassSchemaHistory]
     );
 }
+
+#[tokio::test]
+async fn every_selectable_backend_discards_interaction_authority_on_restore() {
+    let _guard = RESTORE_TEST_LOCK.lock().await;
+    for kind in StorageBackendKind::ALL {
+        let pool =
+            postgres_test_pool_with_timeout(&database_url(), 2, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
+        let fixture = RestoreContractFixture::new(kind, pool).await.unwrap();
+        let access = fixture.seed_auth_interaction().await.unwrap();
+        let snapshot = fixture.capture(true).await.unwrap();
+        assert!(
+            fixture
+                .auth_interaction_exists(access.clone())
+                .await
+                .unwrap()
+        );
+        fixture.restore(snapshot).await.unwrap();
+        let survived = fixture.auth_interaction_exists(access).await.unwrap();
+        fixture.restore_original().await.unwrap();
+        assert!(
+            !survived,
+            "interaction authority survived {} restore",
+            kind.as_str()
+        );
+    }
+}

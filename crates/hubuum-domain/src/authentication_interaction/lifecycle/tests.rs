@@ -278,7 +278,7 @@ fn deadline_arithmetic_is_bounded_near_the_timestamp_limit() {
     let mut value =
         InteractionLifecycle::try_new(binding, InteractionMode::Credentials, now, expires).unwrap();
     let claim = value.claim_authentication(id(3), None, now).unwrap();
-    assert_eq!(claim.deadline(), expires);
+    assert_eq!(claim.deadline(), value.expires_at());
 }
 
 #[rstest]
@@ -317,5 +317,91 @@ fn privileged_purposes_cannot_consume_a_session_result(#[case] purpose: Interact
     assert_eq!(
         value.consume(InteractionIssuedResult::Session(id(4)), at(2)),
         Err(InteractionTransitionError::Invalid)
+    );
+}
+
+#[rstest]
+#[case::pending(interaction(InteractionMode::Credentials))]
+#[case::browser(interaction(InteractionMode::Browser))]
+#[case::ready(ready())]
+#[case::awaiting_approval(awaiting_approval())]
+fn persistence_preserves_active_authority(#[case] value: InteractionLifecycle) {
+    assert_eq!(
+        InteractionLifecycle::from_document(value.to_document()).unwrap(),
+        value
+    );
+}
+
+#[test]
+fn restored_claim_rejects_an_ambiguous_exchange_after_its_deadline() {
+    let mut value = interaction(InteractionMode::Credentials);
+    let claim = value.claim_authentication(id(3), None, at(1)).unwrap();
+    let mut restored = InteractionLifecycle::from_document(value.to_document()).unwrap();
+    let proof = VerifiedInteractionSubject::new(restored.binding().clone(), "subject").unwrap();
+    assert_eq!(
+        restored.finish_authentication(&claim, proof, None, at(31)),
+        Err(InteractionTransitionError::Failed)
+    );
+    assert_eq!(
+        restored.claim_authentication(id(4), None, at(32)),
+        Err(InteractionTransitionError::Failed)
+    );
+}
+
+#[test]
+fn consumed_document_retains_only_issuance_metadata() {
+    let mut value = ready();
+    value
+        .consume(InteractionIssuedResult::Session(id(9)), at(2))
+        .unwrap();
+    let document = value.to_document();
+    assert!(document["phase"].get("subject").is_none());
+    let mut restored = InteractionLifecycle::from_document(document).unwrap();
+    assert_eq!(
+        restored.issued_result(),
+        Some(InteractionIssuedResult::Session(id(9)))
+    );
+    assert_eq!(
+        restored.ready_subject(at(3)),
+        Err(InteractionTransitionError::Consumed)
+    );
+}
+
+#[rstest]
+#[case::unknown_field("/unexpected", serde_json::json!(true))]
+#[case::bad_interval("/interval_seconds", serde_json::json!(6))]
+#[case::future_poll("/next_poll_at", serde_json::json!(at(301)))]
+#[case::duplicate_attempt("/attempts", serde_json::json!([id(3), id(3)]))]
+#[case::no_attempt("/attempts", serde_json::json!([]))]
+#[case::wrong_result("/phase", serde_json::json!({"state":"approval_consumed","approval_id":1}))]
+#[case::unknown_phase_field("/phase", serde_json::json!({"state":"failed","subject":"injected"}))]
+fn corrupt_storage_documents_fail_closed(
+    #[case] pointer: &str,
+    #[case] replacement: serde_json::Value,
+) {
+    let mut document = ready().to_document();
+    if pointer == "/unexpected" {
+        document["unexpected"] = replacement;
+    } else {
+        *document.pointer_mut(pointer).unwrap() = replacement;
+    }
+    assert!(InteractionLifecycle::from_document(document).is_err());
+}
+
+#[test]
+fn storage_deadlines_use_one_microsecond_precision() {
+    let binding = interaction(InteractionMode::Credentials).binding().clone();
+    let created = at(0) + Duration::nanoseconds(123456789);
+    let value = InteractionLifecycle::try_new(
+        binding,
+        InteractionMode::Credentials,
+        created,
+        created + Duration::seconds(300),
+    )
+    .unwrap();
+    assert_eq!(value.created_at(), at(0) + Duration::microseconds(123456));
+    assert_eq!(
+        InteractionLifecycle::from_document(value.to_document()).unwrap(),
+        value
     );
 }

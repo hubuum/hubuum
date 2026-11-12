@@ -169,6 +169,16 @@ for an exception.
   `ExternalIdentityStorage::sync_external_user` is an
   identity-provider reconciliation operation that emits a system-attributed
   audit event and returns its `StorageMutationOutcome`.
+- Authentication interactions: `AuthenticationStorage::create_auth_interaction`,
+  `AuthenticationStorage::bind_auth_interaction_browser`, and
+  `AuthenticationStorage::advance_auth_interaction` maintain bounded ephemeral
+  authority, including committed polling backoff and terminal rejection.
+  `AuthenticationStorage::complete_auth_interaction` atomically consumes that
+  authority with the purpose-specific result. Its session and approval variants
+  require event context and return the existing audited mutation outcomes;
+  provider verification only updates the bound candidate and issues no credential.
+  `AuthenticationStorage::purge_auth_interactions` removes eligible expired rows
+  in bounded batches, preserving consumed-session cleanup metadata for one hour.
 - Workflow state machines:
   `ComputedFieldStorage::request_computed_field_rebuild`,
   `ComputedFieldStorage::execute_computed_field_rebuild`, and

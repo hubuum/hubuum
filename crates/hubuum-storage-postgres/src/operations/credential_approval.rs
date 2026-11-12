@@ -142,14 +142,28 @@ pub async fn create(
     runtime: &PostgresRuntime,
     request: StorageCredentialApprovalCreate,
 ) -> Result<StorageMutationOutcome<StorageCredentialApprovalMetadata>, PostgresStorageError> {
+    runtime
+        .with_transaction(async move |connection| create_on_connection(connection, request).await)
+        .await
+}
+pub(super) async fn create_on_connection(
+    connection: &mut PostgresConnection,
+    request: StorageCredentialApprovalCreate,
+) -> Result<StorageMutationOutcome<StorageCredentialApprovalMetadata>, PostgresStorageError> {
     let (claim, authenticated_at, context) = request.into_parts();
-    runtime.with_transaction(async move |connection| {
-        if context.actor_user_id() != Some(claim.actor_id()) { return Err(denied()); }
-        let token_expiry = lock_actor(connection, &claim).await?;
-        let mut expiry = authenticated_at + chrono::Duration::seconds(CREDENTIAL_APPROVAL_LIFETIME_SECONDS);
-        if let Some(token_expiry) = token_expiry { expiry = expiry.min(token_expiry.and_utc()); }
-        if authenticated_at > Utc::now() || expiry <= Utc::now() { return Err(denied()); }
-        let row = sql_query("INSERT INTO credential_approvals (actor_id,token_id,operation,target_id,secret_digest,request_digest,authenticated_at,expires_at,restore_job_id,security_candidate_id) \
+    if context.actor_user_id() != Some(claim.actor_id()) {
+        return Err(denied());
+    }
+    let token_expiry = lock_actor(connection, &claim).await?;
+    let mut expiry =
+        authenticated_at + chrono::Duration::seconds(CREDENTIAL_APPROVAL_LIFETIME_SECONDS);
+    if let Some(token_expiry) = token_expiry {
+        expiry = expiry.min(token_expiry.and_utc());
+    }
+    if authenticated_at > Utc::now() || expiry <= Utc::now() {
+        return Err(denied());
+    }
+    let row = sql_query("INSERT INTO credential_approvals (actor_id,token_id,operation,target_id,secret_digest,request_digest,authenticated_at,expires_at,restore_job_id,security_candidate_id) \
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *")
             .bind::<Integer,_>(claim.actor_id().id()).bind::<Integer,_>(claim.token_id().id())
             .bind::<Text,_>(claim.operation().as_str()).bind::<Nullable<Integer>,_>(claim.target_id().map(PrincipalId::id))
@@ -158,10 +172,9 @@ pub async fn create(
             .bind::<Nullable<BigInt>,_>(claim.restore_job_id().map(RestoreJobId::id))
             .bind::<Nullable<SqlUuid>,_>(claim.security_candidate_id())
             .get_result::<ApprovalRow>(connection).await?;
-        let metadata = row.metadata()?;
-        let receipt = audit(connection, &metadata, Action::Created, &context).await?;
-        Ok(StorageMutationOutcome::committed(metadata, receipt))
-    }).await
+    let metadata = row.metadata()?;
+    let receipt = audit(connection, &metadata, Action::Created, &context).await?;
+    Ok(StorageMutationOutcome::committed(metadata, receipt))
 }
 
 pub async fn get(

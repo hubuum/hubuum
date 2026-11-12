@@ -6,6 +6,13 @@
 
 #![allow(unused_variables)]
 
+use hubuum_domain::{InteractionBrowserBinding, InteractionDigest};
+use hubuum_storage_core::{
+    StorageInteractionAccess, StorageInteractionCommand, StorageInteractionComplete,
+    StorageInteractionCompletion, StorageInteractionCreate, StorageInteractionOutcome,
+    StorageInteractionView,
+};
+
 use hubuum_storage_core::StorageExternalSyncFailure;
 use std::future::Future;
 use std::pin::Pin;
@@ -270,6 +277,42 @@ impl ObjectRelationStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl AuthenticationStorage for CompleteExternalAdapter {
+    async fn create_auth_interaction(
+        &self,
+        request: StorageInteractionCreate,
+    ) -> Result<StorageInteractionView, StorageError> {
+        fixture_result()
+    }
+    async fn bind_auth_interaction_browser(
+        &self,
+        code: InteractionDigest,
+        browser: InteractionBrowserBinding,
+    ) -> Result<StorageInteractionOutcome, StorageError> {
+        fixture_result()
+    }
+    async fn advance_auth_interaction(
+        &self,
+        command: StorageInteractionCommand,
+    ) -> Result<StorageInteractionOutcome, StorageError> {
+        fixture_result()
+    }
+    async fn complete_auth_interaction(
+        &self,
+        request: StorageInteractionComplete,
+    ) -> Result<StorageInteractionCompletion, StorageError> {
+        fixture_result()
+    }
+    async fn revoke_auth_interaction_session(
+        &self,
+        access: StorageInteractionAccess,
+        context: EventContext,
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+        fixture_result()
+    }
+    async fn purge_auth_interactions(&self, limit: usize) -> Result<usize, StorageError> {
+        fixture_result()
+    }
+
     async fn record_credential_creation(
         &self,
         token: TokenId,

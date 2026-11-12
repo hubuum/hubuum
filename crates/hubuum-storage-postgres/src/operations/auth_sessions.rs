@@ -170,35 +170,42 @@ pub async fn create(
     request: StorageSessionCreate,
 ) -> Result<StorageMutationOutcome<StorageSessionIssued>, PostgresStorageError> {
     runtime
-        .with_transaction(async move |connection| -> Result<_, PostgresStorageError> {
-            super::security_candidates::fence_login(connection, request.login()).await?;
-            let subject = request.login().subject();
-            let principal_id = subject.principal_id().id();
-            if !lock_principal(connection, principal_id).await? {
-                return Err(denied());
-            }
-            let user = crate::schema::users::table
-                .find(principal_id)
-                .select(UserRow::as_select())
-                .first::<UserRow>(connection)
-                .await?
-                .into_storage()?;
-            if !request.login().matches_user(&user) {
-                return Err(denied());
-            }
-            let issued = now(connection).await?;
-            let policy = request.policy();
-            let family = Family {
-                id: Uuid::new_v4(),
-                principal_id,
-                client_id: request.client().as_str().to_owned(),
-                access_seconds: policy.access_seconds(),
-                idle_seconds: policy.idle_seconds(),
-                absolute_expires_at: issued + Duration::seconds(policy.absolute_seconds()),
-                idle_expires_at: issued + Duration::seconds(policy.idle_seconds()),
-                revoked_at: None,
-            };
-            diesel::sql_query("INSERT INTO auth_sessions (id,principal_id,client_id,authenticated_at,last_refreshed_at,access_seconds,idle_seconds,absolute_expires_at,idle_expires_at,retain_until) VALUES ($1,$2,$3,$4,$4,$5,$6,$7,$8,$9)")
+        .with_transaction(async move |connection| create_on_connection(connection, request).await)
+        .await
+}
+
+pub(super) async fn create_on_connection(
+    connection: &mut PostgresConnection,
+    request: StorageSessionCreate,
+) -> Result<StorageMutationOutcome<StorageSessionIssued>, PostgresStorageError> {
+    super::security_candidates::fence_login(connection, request.login()).await?;
+    let subject = request.login().subject();
+    let principal_id = subject.principal_id().id();
+    if !lock_principal(connection, principal_id).await? {
+        return Err(denied());
+    }
+    let user = crate::schema::users::table
+        .find(principal_id)
+        .select(UserRow::as_select())
+        .first::<UserRow>(connection)
+        .await?
+        .into_storage()?;
+    if !request.login().matches_user(&user) {
+        return Err(denied());
+    }
+    let issued = now(connection).await?;
+    let policy = request.policy();
+    let family = Family {
+        id: Uuid::new_v4(),
+        principal_id,
+        client_id: request.client().as_str().to_owned(),
+        access_seconds: policy.access_seconds(),
+        idle_seconds: policy.idle_seconds(),
+        absolute_expires_at: issued + Duration::seconds(policy.absolute_seconds()),
+        idle_expires_at: issued + Duration::seconds(policy.idle_seconds()),
+        revoked_at: None,
+    };
+    diesel::sql_query("INSERT INTO auth_sessions (id,principal_id,client_id,authenticated_at,last_refreshed_at,access_seconds,idle_seconds,absolute_expires_at,idle_expires_at,retain_until) VALUES ($1,$2,$3,$4,$4,$5,$6,$7,$8,$9)")
                 .bind::<SqlUuid, _>(family.id)
                 .bind::<Integer, _>(principal_id)
                 .bind::<Text, _>(&family.client_id)
@@ -212,40 +219,38 @@ pub async fn create(
                 )
                 .execute(connection)
                 .await?;
-            let response = issue(connection, &family, request.credentials(), issued).await?;
-            let token_event = NewEvent::from_document(
-                EntityType::Token,
-                Action::Created,
-                request.context().actor_kind(),
-                AuditDocument::builder("Interactive access token created")
-                    .metadata(serde_json::json!({"session_id": family.id}))
-                    .try_build()?,
-            )
-            .map_err(|e| PostgresStorageError::invalid_input(e.to_string()))?
-            .with_context(request.context())
-            .with_entity_id(EventEntityId::new(response.access_id().id())?);
-            let audit = append_event(connection, &token_event)
-                .await?
-                .into_audit_receipt();
-            let login_event = NewEvent::from_document(
-                EntityType::Authentication,
-                Action::Succeeded,
-                request.context().actor_kind(),
-                subject.successful_login_document(),
-            )
-            .map_err(|e| PostgresStorageError::invalid_input(e.to_string()))?
-            .with_context(request.context())
-            .with_entity_id(EventEntityId::new(principal_id)?)
-            .with_entity_name(subject.name());
-            let login_audit = append_event(connection, &login_event)
-                .await?
-                .into_audit_receipt();
-            Ok(StorageMutationOutcome::committed_with_audits(
-                response,
-                StorageAuditReceipts::new(audit, vec![login_audit]),
-            ))
-        })
-        .await
+    let response = issue(connection, &family, request.credentials(), issued).await?;
+    let token_event = NewEvent::from_document(
+        EntityType::Token,
+        Action::Created,
+        request.context().actor_kind(),
+        AuditDocument::builder("Interactive access token created")
+            .metadata(serde_json::json!({"session_id": family.id}))
+            .try_build()?,
+    )
+    .map_err(|e| PostgresStorageError::invalid_input(e.to_string()))?
+    .with_context(request.context())
+    .with_entity_id(EventEntityId::new(response.access_id().id())?);
+    let audit = append_event(connection, &token_event)
+        .await?
+        .into_audit_receipt();
+    let login_event = NewEvent::from_document(
+        EntityType::Authentication,
+        Action::Succeeded,
+        request.context().actor_kind(),
+        subject.successful_login_document(),
+    )
+    .map_err(|e| PostgresStorageError::invalid_input(e.to_string()))?
+    .with_context(request.context())
+    .with_entity_id(EventEntityId::new(principal_id)?)
+    .with_entity_name(subject.name());
+    let login_audit = append_event(connection, &login_event)
+        .await?
+        .into_audit_receipt();
+    Ok(StorageMutationOutcome::committed_with_audits(
+        response,
+        StorageAuditReceipts::new(audit, vec![login_audit]),
+    ))
 }
 
 pub async fn refresh_principal(
@@ -419,40 +424,62 @@ pub async fn revoke(
     context: EventContext,
 ) -> Result<StorageMutationOutcome<usize>, PostgresStorageError> {
     runtime
-        .with_transaction(async move |connection| -> Result<_, PostgresStorageError> {
-            let (owner, token_id) = match target {
-                SessionRevocation::All(id) => (id.id(), None),
-                SessionRevocation::Current(id) => {
-                    let owner = diesel::sql_query("SELECT principal_id FROM tokens WHERE id=$1 AND auth_session_id IS NOT NULL")
-                        .bind::<Integer, _>(id.id())
-                        .get_result::<Owner>(connection)
-                        .await
-                        .optional()?
-                        .ok_or_else(denied)?;
-                    (owner.principal_id, Some(id.id()))
-                }
-            };
-            lock_principal(connection, owner).await?;
-            let families = diesel::sql_query("SELECT * FROM auth_sessions WHERE principal_id=$1 AND revoked_at IS NULL AND ($2 IS NULL OR id=(SELECT auth_session_id FROM tokens WHERE id=$2)) ORDER BY id FOR UPDATE")
-                .bind::<Integer, _>(owner)
-                .bind::<Nullable<Integer>, _>(token_id)
-                .load::<Family>(connection)
-                .await?;
-            let mut audits = Vec::new();
-            for family in &families {
-                revoke_family(connection, family.id, "logout").await?;
-                audits.push(event(connection, family, Action::Revoked, "logout", &context).await?);
-            }
-            if audits.is_empty() {
-                return Ok(StorageMutationOutcome::unchanged(0));
-            }
-            Ok(StorageMutationOutcome::committed_with_audits(
-                families.len(),
-                StorageAuditReceipts::try_from_vec(audits)
-                    .map_err(|e| PostgresStorageError::invalid_input(e.to_string()))?,
-            ))
+        .with_transaction(async move |connection| {
+            revoke_on_connection(connection, target, context).await
         })
         .await
+}
+
+pub(super) async fn revoke_on_connection(
+    connection: &mut PostgresConnection,
+    target: SessionRevocation,
+    context: EventContext,
+) -> Result<StorageMutationOutcome<usize>, PostgresStorageError> {
+    let (owner, token_id, session_id) = match target {
+        SessionRevocation::All(id) => (id.id(), None, None),
+        SessionRevocation::Session(id) => {
+            let owner = diesel::sql_query("SELECT principal_id FROM auth_sessions WHERE id=$1")
+                .bind::<SqlUuid, _>(id.value())
+                .get_result::<Owner>(connection)
+                .await
+                .optional()?;
+            let Some(owner) = owner else {
+                return Ok(StorageMutationOutcome::unchanged(0));
+            };
+            (owner.principal_id, None, Some(id.value()))
+        }
+        SessionRevocation::Current(id) => {
+            let owner = diesel::sql_query(
+                "SELECT principal_id FROM tokens WHERE id=$1 AND auth_session_id IS NOT NULL",
+            )
+            .bind::<Integer, _>(id.id())
+            .get_result::<Owner>(connection)
+            .await
+            .optional()?
+            .ok_or_else(denied)?;
+            (owner.principal_id, Some(id.id()), None)
+        }
+    };
+    lock_principal(connection, owner).await?;
+    let families = diesel::sql_query("SELECT * FROM auth_sessions WHERE principal_id=$1 AND revoked_at IS NULL AND ($2 IS NULL OR id=(SELECT auth_session_id FROM tokens WHERE id=$2)) AND ($3 IS NULL OR id=$3) ORDER BY id FOR UPDATE")
+                .bind::<Integer, _>(owner)
+                .bind::<Nullable<Integer>, _>(token_id)
+                .bind::<Nullable<SqlUuid>, _>(session_id)
+                .load::<Family>(connection)
+                .await?;
+    let mut audits = Vec::new();
+    for family in &families {
+        revoke_family(connection, family.id, "logout").await?;
+        audits.push(event(connection, family, Action::Revoked, "logout", &context).await?);
+    }
+    if audits.is_empty() {
+        return Ok(StorageMutationOutcome::unchanged(0));
+    }
+    Ok(StorageMutationOutcome::committed_with_audits(
+        families.len(),
+        StorageAuditReceipts::try_from_vec(audits)
+            .map_err(|e| PostgresStorageError::invalid_input(e.to_string()))?,
+    ))
 }
 
 pub async fn purge(runtime: &PostgresRuntime, limit: usize) -> Result<usize, PostgresStorageError> {

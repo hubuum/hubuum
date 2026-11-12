@@ -1,9 +1,74 @@
 use super::*;
 use hubuum_storage_core::StorageExternalSyncFailure;
 use hubuum_storage_core::{StorageAuthorizationResource, StorageAuthorizationResourcesQuery};
+use hubuum_storage_core::{
+    StorageInteractionAccess, StorageInteractionCommand, StorageInteractionComplete,
+    StorageInteractionCompletion, StorageInteractionCreate, StorageInteractionOutcome,
+    StorageInteractionView,
+};
 
 #[async_trait]
 impl AuthenticationStorage for MemoryStorage {
+    async fn create_auth_interaction(
+        &self,
+        request: StorageInteractionCreate,
+    ) -> Result<StorageInteractionView, StorageError> {
+        let mut live = self.state.write().await;
+        let mut staged = live.clone();
+        let result = staged.create_interaction(request)?;
+        *live = staged;
+        Ok(result)
+    }
+    async fn bind_auth_interaction_browser(
+        &self,
+        code: InteractionDigest,
+        browser: InteractionBrowserBinding,
+    ) -> Result<StorageInteractionOutcome, StorageError> {
+        let mut live = self.state.write().await;
+        let mut staged = live.clone();
+        let result = staged.bind_interaction(code, browser)?;
+        *live = staged;
+        Ok(result)
+    }
+    async fn advance_auth_interaction(
+        &self,
+        command: StorageInteractionCommand,
+    ) -> Result<StorageInteractionOutcome, StorageError> {
+        let mut live = self.state.write().await;
+        let mut staged = live.clone();
+        let result = staged.advance_interaction(command)?;
+        *live = staged;
+        Ok(result)
+    }
+    async fn complete_auth_interaction(
+        &self,
+        request: StorageInteractionComplete,
+    ) -> Result<StorageInteractionCompletion, StorageError> {
+        let mut live = self.state.write().await;
+        let mut staged = live.clone();
+        let result = staged.complete_interaction(request)?;
+        *live = staged;
+        Ok(result)
+    }
+    async fn revoke_auth_interaction_session(
+        &self,
+        access: StorageInteractionAccess,
+        context: EventContext,
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+        let mut live = self.state.write().await;
+        let mut staged = live.clone();
+        let result = staged.revoke_interaction(access, context)?;
+        *live = staged;
+        Ok(result)
+    }
+    async fn purge_auth_interactions(&self, limit: usize) -> Result<usize, StorageError> {
+        let mut live = self.state.write().await;
+        let mut staged = live.clone();
+        let result = staged.purge_interactions(limit)?;
+        *live = staged;
+        Ok(result)
+    }
+
     async fn record_credential_creation(
         &self,
         token: TokenId,

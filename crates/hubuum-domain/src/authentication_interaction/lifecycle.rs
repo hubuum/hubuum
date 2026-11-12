@@ -24,7 +24,8 @@ pub enum InteractionState {
     Failed,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum InteractionMode {
     Credentials,
     Browser,
@@ -36,6 +37,8 @@ pub enum InteractionTransitionError {
     InvalidLifetime,
     #[error("invalid interaction binding or transition")]
     Invalid,
+    #[error("authentication configuration changed")]
+    ConfigurationChanged,
     #[error("interaction expired")]
     Expired,
     #[error("interaction was consumed")]
@@ -149,6 +152,12 @@ impl InteractionLifecycle {
         created_at: DateTime<Utc>,
         expires_at: DateTime<Utc>,
     ) -> Result<Self, InteractionTransitionError> {
+        // PostgreSQL timestamps have microsecond precision. Canonicalize once
+        // so persisted JSON and indexed columns carry identical deadlines.
+        let created_at = DateTime::from_timestamp_micros(created_at.timestamp_micros())
+            .ok_or(InteractionTransitionError::InvalidLifetime)?;
+        let expires_at = DateTime::from_timestamp_micros(expires_at.timestamp_micros())
+            .ok_or(InteractionTransitionError::InvalidLifetime)?;
         let lifetime = expires_at.signed_duration_since(created_at);
         if lifetime <= Duration::zero()
             || lifetime > Duration::seconds(MAX_INTERACTION_LIFETIME_SECONDS)
@@ -420,7 +429,32 @@ impl InteractionLifecycle {
             _ => None,
         }
     }
+
+    pub fn authenticated_subject(&self) -> Option<&VerifiedInteractionSubject> {
+        match &self.phase {
+            Phase::Ready(proof) | Phase::AwaitingApproval(proof) => Some(proof),
+            _ => None,
+        }
+    }
+
+    pub fn authentication_claim(&self) -> Option<&InteractionAuthenticationClaim> {
+        match &self.phase {
+            Phase::Authenticating(claim) => Some(claim),
+            _ => None,
+        }
+    }
+
+    /// Discard reusable authority after a failed configuration or actor fence.
+    /// Consumed metadata remains available for orphan-session cleanup.
+    pub fn invalidate(&mut self) {
+        if !matches!(self.phase, Phase::Consumed(_)) {
+            self.phase = Phase::Failed;
+            self.browser = None;
+        }
+    }
 }
+
+mod persistence;
 
 #[cfg(test)]
 mod tests;

@@ -248,11 +248,12 @@ impl MemoryState {
         let ids: Vec<_> = self
             .sessions
             .iter()
-            .filter(|(_, s)| {
+            .filter(|(session_id, s)| {
                 !s.revoked
                     && match target {
                         SessionRevocation::All(id) => s.principal_id() == id,
                         SessionRevocation::Current(id) => s.access_ids.contains(&id),
+                        SessionRevocation::Session(id) => **session_id == id.value(),
                     }
             })
             .map(|(id, _)| *id)

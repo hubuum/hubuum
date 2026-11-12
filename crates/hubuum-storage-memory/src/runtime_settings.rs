@@ -26,6 +26,19 @@ impl MemoryRuntimeSettings {
             .revision()
     }
 
+    pub(super) fn provider_binding(&self, name: &str) -> Option<&StorageProviderIdentityBinding> {
+        self.bindings.get(name)
+    }
+    pub(super) fn verify_candidate(
+        &mut self,
+        candidate: StorageSecurityCandidate,
+    ) -> Result<(), StorageError> {
+        self.candidates
+            .get_mut(&candidate.id())
+            .ok_or_else(|| StorageError::not_found("Security candidate not found"))?
+            .accept_verification(candidate, Utc::now())
+            .map_err(|error| StorageError::conflict(error.to_string()))
+    }
     pub(super) fn discard_candidates(&mut self) {
         self.candidates.clear();
     }
@@ -125,6 +138,7 @@ impl RuntimeSettingsStorage for MemoryStorage {
             .collect();
         staged.invalidate_provider_credentials(&scopes);
         staged.runtime_settings.discard_candidates();
+        staged.auth_interactions.clear();
         for (_, metadata) in staged.credential_approvals.values_mut() {
             metadata.invalidate(Utc::now());
         }
@@ -229,15 +243,11 @@ impl RuntimeSettingsStorage for MemoryStorage {
         &self,
         candidate: StorageSecurityCandidate,
     ) -> Result<(), StorageError> {
-        let mut state = self.state.write().await;
-        let stored = state
+        self.state
+            .write()
+            .await
             .runtime_settings
-            .candidates
-            .get_mut(&candidate.id())
-            .ok_or_else(|| StorageError::not_found("Security candidate not found"))?;
-        stored
-            .accept_verification(candidate, Utc::now())
-            .map_err(|error| StorageError::conflict(error.to_string()))
+            .verify_candidate(candidate)
     }
 
     async fn activate_security_candidate(
@@ -373,7 +383,7 @@ impl MemoryState {
         }
     }
 
-    fn require_local_recovery_administrator(
+    pub(super) fn require_local_recovery_administrator(
         &self,
         actor: PrincipalId,
         group: &str,

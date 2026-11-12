@@ -47,6 +47,13 @@
           "credential_approvals_operation_check"
         ]
       }
+    },
+    {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-11-12-000002_auth_interactions/up.sql",
+      "sha256": "9bd29e7d71ee3177f4a08a13112cdaabdc73113a96e71dba8d8c097a4a6f6e4f",
+      "reason": "Older replicas do not clear durable authentication interactions during security recovery or logical restore. Interaction authority and issuance require matching binaries everywhere.",
+      "upgrade_action": "Stop all API and worker replicas, back up the database, apply migrations and role grants, then restart matching binaries. Restore the pre-upgrade snapshot before downgrading. External Rust adapters must implement the SDK 0.9 interaction contract. See docs/authentication_interactions.md#upgrade-and-recovery.",
+      "drop_constraints": {}
     }
   ]
 }
