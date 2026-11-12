@@ -9,7 +9,9 @@ impl StorageInteractionRecord {
                 self.allows(access)
                     && matches!(
                         action,
-                        StorageInteractionAction::Poll | StorageInteractionAction::Cancel
+                        StorageInteractionAction::Poll
+                            | StorageInteractionAction::Cancel
+                            | StorageInteractionAction::Inspect
                     )
                     || self.allows(access)
                         && matches!(action, StorageInteractionAction::Claim(_))
@@ -22,6 +24,7 @@ impl StorageInteractionRecord {
                         action,
                         StorageInteractionAction::Claim(_)
                             | StorageInteractionAction::Decide { .. }
+                            | StorageInteractionAction::Inspect
                     )
             }
             (StorageInteractionAuthorization::Claim(claim), action) => {
@@ -57,6 +60,9 @@ impl StorageInteractionRecord {
             return Err(InteractionTransitionError::Invalid);
         }
         match (command.authorization, command.action) {
+            (_, StorageInteractionAction::Inspect) => {
+                self.lifecycle.inspect_browser(now)?;
+            }
             (_, StorageInteractionAction::Poll) => {
                 self.lifecycle.poll(now)?;
             }

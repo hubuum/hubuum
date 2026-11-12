@@ -1721,7 +1721,7 @@
         },
         "responses": {
           "201": {
-            "description": "Login interaction created; secret is returned once",
+            "description": "Purpose-bound interaction created; secret is returned once",
             "content": {
               "application/json": {
                 "schema": {
@@ -1741,7 +1741,7 @@
             }
           },
           "422": {
-            "description": "Provider, privileged purpose or delivery capability unsupported",
+            "description": "Provider or delivery capability unsupported",
             "content": {
               "application/json": {
                 "schema": {
@@ -1769,6 +1769,181 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/interactions/browser": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Get Api V1 Auth Interactions Browser",
+        "description": "Auto-generated documentation for GET /api/v1/auth/interactions/browser.",
+        "operationId": "getApiV1AuthInteractionsBrowser",
+        "responses": {
+          "200": {
+            "description": "Hosted user-code entry; sets HttpOnly browser cookie",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Browser transport is not configured"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Api V1 Auth Interactions Browser",
+        "description": "Auto-generated documentation for POST /api/v1/auth/interactions/browser.",
+        "operationId": "postApiV1AuthInteractionsBrowser",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/CodeForm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "303": {
+            "description": "Browser attached; redirect to sign-in"
+          },
+          "401": {
+            "description": "Invalid user code or browser binding"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/interactions/browser/{id}": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Get Api V1 Auth Interactions Browser By Id",
+        "description": "Auto-generated documentation for GET /api/v1/auth/interactions/browser/{id}.",
+        "operationId": "getApiV1AuthInteractionsBrowserById",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bound sign-in or approval page",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid browser binding"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/interactions/browser/{id}/credentials": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Api V1 Auth Interactions Browser By Id Credentials",
+        "description": "Auto-generated documentation for POST /api/v1/auth/interactions/browser/{id}/credentials.",
+        "operationId": "postApiV1AuthInteractionsBrowserByIdCredentials",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialsForm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "303": {
+            "description": "Authenticated; challenge rotated; explicit approval required"
+          },
+          "401": {
+            "description": "Invalid credentials or browser binding"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/interactions/browser/{id}/decision": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Api V1 Auth Interactions Browser By Id Decision",
+        "description": "Auto-generated documentation for POST /api/v1/auth/interactions/browser/{id}/decision.",
+        "operationId": "postApiV1AuthInteractionsBrowserByIdDecision",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionForm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Decision recorded; return to initiating client",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "303": {
+            "description": "Decision recorded; registered BFF handoff with ID and nonce only"
+          },
+          "401": {
+            "description": "Invalid browser binding"
           }
         }
       }
@@ -1897,7 +2072,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SessionResponse"
+                  "$ref": "#/components/schemas/InteractionCompleted"
                 }
               }
             }
@@ -26971,6 +27146,7 @@
       "AuthenticationConfig": {
         "type": "object",
         "required": [
+          "browser",
           "token_lifetime_hours",
           "credential_activity_retention_days",
           "credential_activity_source_cap",
@@ -27006,6 +27182,9 @@
               "string",
               "null"
             ]
+          },
+          "browser": {
+            "$ref": "#/components/schemas/BrowserSettings"
           },
           "credential_activity_enabled": {
             "type": "boolean"
@@ -27096,9 +27275,13 @@
           "name",
           "kind",
           "interaction",
-          "fresh_authentication"
+          "fresh_authentication",
+          "browser_available"
         ],
         "properties": {
+          "browser_available": {
+            "type": "boolean"
+          },
           "fresh_authentication": {
             "type": "boolean"
           },
@@ -27537,6 +27720,30 @@
         },
         "additionalProperties": false
       },
+      "BrowserSettings": {
+        "type": "object",
+        "required": [
+          "allow_loopback_http",
+          "return_targets"
+        ],
+        "properties": {
+          "allow_loopback_http": {
+            "type": "boolean"
+          },
+          "origin": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "return_targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReturnRegistration"
+            }
+          }
+        }
+      },
       "ClassComputationState": {
         "type": "object",
         "required": [
@@ -27777,6 +27984,22 @@
             "minimum": 1
           }
         }
+      },
+      "CodeForm": {
+        "type": "object",
+        "required": [
+          "csrf",
+          "user_code"
+        ],
+        "properties": {
+          "csrf": {
+            "type": "string"
+          },
+          "user_code": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "Collection": {
         "type": "object",
@@ -28825,6 +29048,27 @@
           }
         }
       },
+      "CredentialsForm": {
+        "type": "object",
+        "required": [
+          "csrf",
+          "name",
+          "password"
+        ],
+        "properties": {
+          "csrf": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "additionalProperties": false
+      },
       "CurrentTokenMetadata": {
         "type": "object",
         "description": "Public metadata for the token authenticating the current request.",
@@ -29074,6 +29318,29 @@
             "minimum": 0
           }
         }
+      },
+      "Decision": {
+        "type": "string",
+        "enum": [
+          "approve",
+          "deny"
+        ]
+      },
+      "DecisionForm": {
+        "type": "object",
+        "required": [
+          "csrf",
+          "decision"
+        ],
+        "properties": {
+          "csrf": {
+            "type": "string"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/Decision"
+          }
+        },
+        "additionalProperties": false
       },
       "DiscoveredField": {
         "type": "object",
@@ -34980,7 +35247,11 @@
           },
           "delivery": {
             "$ref": "#/components/schemas/InteractionDelivery",
-            "description": "Poll is supported. BFF return targets require the later browser transport."
+            "description": "Poll directly, or use a deployment-registered BFF return target."
+          },
+          "interaction_mode": {
+            "$ref": "#/components/schemas/PasswordInteractionMode",
+            "description": "Optional hosted password flow. Defaults to direct server-to-server credentials."
           },
           "operation": {
             "oneOf": [
@@ -34998,7 +35269,7 @@
           },
           "purpose": {
             "$ref": "#/components/schemas/AuthenticationPurpose",
-            "description": "This implementation accepts login. Privileged purposes return capability_unsupported."
+            "description": "Login, credential approval or supported candidate-provider verification."
           },
           "return_nonce": {
             "type": [
@@ -35065,6 +35336,19 @@
         },
         "additionalProperties": false
       },
+      "InteractionCompleted": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/SessionResponse"
+          },
+          {
+            "$ref": "#/components/schemas/CredentialApprovalResponse"
+          },
+          {
+            "$ref": "#/components/schemas/SecurityCandidateLdapVerificationResponse"
+          }
+        ]
+      },
       "InteractionCredentialsRequest": {
         "type": "object",
         "required": [
@@ -35111,6 +35395,28 @@
                 "enum": [
                   "credentials"
                 ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "verification_uri",
+              "user_code",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "browser"
+                ]
+              },
+              "user_code": {
+                "type": "string"
+              },
+              "verification_uri": {
+                "type": "string"
               }
             }
           }
@@ -36915,7 +37221,8 @@
       "PasswordInteractionMode": {
         "type": "string",
         "enum": [
-          "credentials"
+          "credentials",
+          "browser"
         ]
       },
       "PasswordProviderKind": {
@@ -39744,6 +40051,26 @@
             ]
           }
         }
+      },
+      "ReturnRegistration": {
+        "type": "object",
+        "required": [
+          "id",
+          "client_id",
+          "uri"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "uri": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "RunningConfig": {
         "type": "object",

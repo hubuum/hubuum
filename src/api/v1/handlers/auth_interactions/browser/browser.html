@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title }} · Hubuum</title>
+<style>
+body{font:17px system-ui;background:#f4f6f9;color:#172838;margin:0;padding:3rem 1rem}
+main{max-width:32rem;margin:auto;background:white;padding:2rem;border:1px solid #d5dee7;border-radius:12px}
+h1{font-size:1.6rem}p{line-height:1.5}label{display:block;margin:1rem 0 .4rem}
+input{box-sizing:border-box;width:100%;font:inherit;padding:.65rem;border:1px solid #718298;border-radius:5px}
+button{font:inherit;margin:1.2rem .5rem 0 0;padding:.7rem 1.1rem;border:1px solid #234b70;border-radius:5px;background:#234b70;color:white}
+button[value=deny]{background:white;color:#234b70}.warning{border-left:3px solid #bd7500;padding-left:1rem}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:.9rem}dt{font-weight:600}dd{margin:0 0 .7rem;overflow-wrap:anywhere}footer{margin-top:2rem;color:#596b7d;font-size:.85rem}
+</style>
+<main><p>HUBUUM</p><h1>{{ title }}</h1>
+{% if page.stage == "entry" %}
+<p>Enter the code shown by the application where you started signing in.</p>
+<form method="post" action="/api/v1/auth/interactions/browser">
+<input type="hidden" name="csrf" value="{{ page.csrf }}">
+<label for="user_code">Verification code</label>
+<input id="user_code" name="user_code" maxlength="16" autocomplete="off" autocapitalize="characters" required>
+<button>Continue</button></form>
+{% elif page.stage == "credentials" or page.stage == "approval" %}
+<dl><dt>Requesting client</dt><dd>{{ page.request.client }}</dd>
+<dt>Provider</dt><dd>{{ page.request.provider }}</dd><dt>Purpose</dt><dd>{{ page.request.purpose }}</dd></dl>
+{% if page.stage == "credentials" %}
+<p>Sign in to review this request. Entering a code does not approve it.</p>
+<form method="post" action="/api/v1/auth/interactions/browser/{{ page.request.id }}/credentials">
+<input type="hidden" name="csrf" value="{{ page.csrf }}">
+<label for="name">Username</label><input id="name" name="name" autocomplete="username" maxlength="255" required>
+<label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" maxlength="4096" required>
+<button>Continue</button></form>
+{% else %}
+{% if page.request.details %}<h2>Request details</h2><pre>{{ page.request.details }}</pre>{% endif %}
+<dl><dt>Signed in as</dt><dd>{{ page.name }}</dd></dl>
+<p class="warning">Only approve if you started this request. Someone else may be trying to act as you.</p>
+<form method="post" action="/api/v1/auth/interactions/browser/{{ page.request.id }}/decision">
+<input type="hidden" name="csrf" value="{{ page.csrf }}">
+<button name="decision" value="approve">Approve</button><button name="decision" value="deny">Deny</button></form>
+{% endif %}
+{% elif page.stage == "complete" %}
+<p>You can return to the application that started this request and close this page.</p>
+{% else %}
+<p>{{ page.message }}</p><p><a href="/api/v1/auth/interactions/browser">Enter a new code</a></p>
+{% endif %}
+<footer>Authentication stays with this Hubuum server.</footer></main>
+</html>

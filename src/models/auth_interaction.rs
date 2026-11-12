@@ -1,4 +1,5 @@
 //! Public v1 interaction DTOs and redacted redemption capabilities.
+pub mod browser;
 use std::fmt;
 
 use chrono::{DateTime, Utc};
@@ -17,10 +18,13 @@ pub struct InteractionBeginRequest {
     pub client_id: InteractionClientId,
     #[schema(value_type = String, pattern = "^(local|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")]
     pub provider_id: InteractionProviderId,
-    /// This implementation accepts login. Privileged purposes return capability_unsupported.
+    /// Login, credential approval or supported candidate-provider verification.
     pub purpose: AuthenticationPurpose,
-    /// Poll is supported. BFF return targets require the later browser transport.
+    /// Poll directly, or use a deployment-registered BFF return target.
     pub delivery: InteractionDelivery,
+    /// Optional hosted password flow. Defaults to direct server-to-server credentials.
+    #[serde(default)]
+    pub interaction_mode: PasswordInteractionMode,
     pub operation: Option<CredentialOperation>,
     pub candidate_id: Option<uuid::Uuid>,
     pub return_target_id: Option<String>,
@@ -57,11 +61,6 @@ impl InteractionBeginRequest {
                 "Interaction fields do not match the purpose and delivery mode".into(),
             ));
         }
-        if self.purpose != AuthenticationPurpose::Login
-            || self.delivery != InteractionDelivery::Poll
-        {
-            return Err(InteractionError::Unsupported.into());
-        }
         Ok(())
     }
 }
@@ -86,6 +85,14 @@ pub enum InteractionDelivery {
 pub struct InteractionClientRequest {
     #[schema(value_type = String, pattern = "^[A-Za-z0-9_.:-]{1,128}$")]
     pub client_id: InteractionClientId,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(untagged)]
+pub enum InteractionCompleted {
+    Session(super::auth_session::SessionResponse),
+    Approval(super::credential_approval::CredentialApprovalResponse),
+    Verification(super::security_candidate::SecurityCandidateLdapVerificationResponse),
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -118,6 +125,75 @@ impl fmt::Debug for InteractionSecret {
     }
 }
 impl InteractionSecret {
+    /// Key operation content with the private capability, so stored digests
+    /// cannot be used to guess passwords embedded in credential operations.
+    pub(crate) fn bind_operation(
+        &self,
+        value: &impl Serialize,
+    ) -> Result<InteractionDigest, ApiError> {
+        use hmac::{Hmac, KeyInit, Mac};
+        let mut mac = Hmac::<Sha256>::new_from_slice(self.0.as_bytes()).expect("HMAC key");
+        mac.update(b"hubuum:interaction:operation:v1:");
+        mac.update(&serde_json::to_vec(value)?);
+        InteractionDigest::new(hex(&mac.finalize().into_bytes()))
+            .map_err(|_| ApiError::InternalServerError("Could not bind approval operation".into()))
+    }
+    fn operation_key(&self) -> hubuum_secrets::SecretValue {
+        let mut hash = Sha256::new();
+        hash.update(b"hubuum:interaction:operation-encryption:v1:");
+        hash.update(self.0.as_bytes());
+        hubuum_secrets::SecretValue::new(hash.finalize().to_vec()).expect("SHA-256 key")
+    }
+    pub(crate) fn seal_operation(
+        &self,
+        id: InteractionId,
+        operation: &CredentialOperation,
+    ) -> Result<hubuum_domain::InteractionSealedOperation, ApiError> {
+        let plaintext = hubuum_secrets::SecretValue::new(serde_json::to_vec(operation)?)
+            .map_err(|_| InteractionError::Invalid)?;
+        let envelope = crate::runtime_settings_secrets::encrypt(
+            "interaction".into(),
+            "v1".into(),
+            &self.operation_key(),
+            &id.value().to_string(),
+            &plaintext,
+        )
+        .map_err(|_| {
+            ApiError::InternalServerError("Could not protect approval operation".into())
+        })?;
+        serde_json::to_string(&envelope)?
+            .try_into()
+            .map_err(|_| ApiError::BadRequest("Approval operation is too large".into()))
+    }
+    pub(crate) fn open_operation(
+        &self,
+        binding: &hubuum_domain::InteractionBinding,
+    ) -> Result<CredentialOperation, ApiError> {
+        let envelope = serde_json::from_str(
+            binding
+                .sealed_operation()
+                .ok_or(InteractionError::Invalid)?
+                .as_str(),
+        )
+        .map_err(|_| InteractionError::Invalid)?;
+        let plaintext = crate::runtime_settings_secrets::decrypt(
+            &envelope,
+            &self.operation_key(),
+            &binding.id().value().to_string(),
+        )
+        .map_err(|_| InteractionError::Invalid)?;
+        serde_json::from_slice(plaintext.expose()).map_err(|_| InteractionError::Invalid.into())
+    }
+    pub(crate) fn verification_receipt(
+        &self,
+    ) -> super::security_candidate::SecurityVerificationReceipt {
+        let mut digest = Sha256::new();
+        digest.update(b"hubuum:interaction:verification-receipt:v1:");
+        digest.update(self.0.as_bytes());
+        format!("hcv1.{}", hex(&digest.finalize()))
+            .try_into()
+            .expect("SHA-256 receipt")
+    }
     pub(crate) fn generate() -> Self {
         let bytes: [u8; 32] = rand::random();
         Self(format!("hai1.{}", hex(&bytes)))
@@ -159,6 +235,10 @@ pub struct InteractionBegun {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InteractionNext {
     Credentials,
+    Browser {
+        verification_uri: String,
+        user_code: String,
+    },
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -226,6 +306,7 @@ pub struct AuthenticationMethod {
     pub kind: PasswordProviderKind,
     pub interaction: PasswordInteractionMode,
     pub fresh_authentication: bool,
+    pub browser_available: bool,
 }
 #[derive(Debug, Clone, Copy, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -233,10 +314,12 @@ pub enum PasswordProviderKind {
     Local,
     Ldap,
 }
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PasswordInteractionMode {
+    #[default]
     Credentials,
+    Browser,
 }
 
 #[cfg(test)]
@@ -256,6 +339,56 @@ mod tests {
             InteractionSecret::parse(&secret.0).unwrap().digest(),
             secret.digest()
         );
+    }
+
+    #[test]
+    fn operation_digest_is_bound_to_private_redemption_capability() {
+        let operation = serde_json::json!({"kind":"update_user", "password":"low-entropy"});
+        assert_ne!(
+            InteractionSecret::generate()
+                .bind_operation(&operation)
+                .unwrap(),
+            InteractionSecret::generate()
+                .bind_operation(&operation)
+                .unwrap()
+        );
+    }
+
+    #[rstest]
+    #[case::same_capability(false, true)]
+    #[case::wrong_capability(true, false)]
+    fn encrypted_operation_requires_original_capability(
+        #[case] wrong_secret: bool,
+        #[case] accepted: bool,
+    ) {
+        use hubuum_domain::{
+            InteractionActor, InteractionAuthority, InteractionBinding, PrincipalId,
+            ResourceRevision, TokenId,
+        };
+        let secret = InteractionSecret::generate();
+        let id = InteractionId::new(uuid::Uuid::new_v4()).unwrap();
+        let operation: CredentialOperation = serde_json::from_value(serde_json::json!({"kind":"create_user","user":{"name":"human", "password":"never-retain-plaintext"}})).unwrap();
+        let sealed = secret.seal_operation(id, &operation).unwrap();
+        assert!(!sealed.as_str().contains("never-retain-plaintext"));
+        let binding = InteractionBinding::try_new(
+            id,
+            InteractionProviderId::local(),
+            InteractionClientId::new("client").unwrap(),
+            ResourceRevision::new(1).unwrap(),
+            InteractionAuthority::approval(
+                InteractionActor::new(PrincipalId::new(1).unwrap(), TokenId::new(1).unwrap()),
+                secret.bind_operation(&operation).unwrap(),
+            ),
+        )
+        .unwrap()
+        .with_operation(sealed)
+        .unwrap();
+        let opener = if wrong_secret {
+            InteractionSecret::generate()
+        } else {
+            secret
+        };
+        assert_eq!(opener.open_operation(&binding).is_ok(), accepted);
     }
 
     #[rstest]

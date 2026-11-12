@@ -131,6 +131,11 @@ use utoipa::{Modify, OpenApi, ToSchema};
         meta::release_login_rate_limit_entry,
         meta::clear_login_rate_limit,
         auth_interactions::methods,
+        auth_interactions::browser::entry,
+        auth_interactions::browser::attach,
+        auth_interactions::browser::resume,
+        auth_interactions::browser::credentials,
+        auth_interactions::browser::decide,
         auth_interactions::begin,
         auth_interactions::credentials,
         auth_interactions::status,
@@ -1685,6 +1690,10 @@ mod tests {
             "/api/v1/auth/providers",
             "/api/v1/auth/methods",
             "/api/v1/auth/interactions",
+            "/api/v1/auth/interactions/browser",
+            "/api/v1/auth/interactions/browser/{id}",
+            "/api/v1/auth/interactions/browser/{id}/credentials",
+            "/api/v1/auth/interactions/browser/{id}/decision",
             "/api/v1/auth/interactions/{id}/credentials",
             "/api/v1/auth/interactions/{id}/status",
             "/api/v1/auth/interactions/{id}/complete",
@@ -2471,6 +2480,8 @@ mod tests {
                     path.as_str(),
                     "/api/v1/auth/providers" | "/api/v1/auth/methods"
                 ) && method == "get";
+                // Hosted forms authenticate through per-interaction cookies and CSRF, not bearer headers.
+                let is_hosted_browser = path.starts_with("/api/v1/auth/interactions/browser");
                 let is_client_config = path == "/api/v1/config" && method == "get";
                 let is_restore_status =
                     path == "/api/v1/restores/{restore_id}/status" && method == "get";
@@ -2507,6 +2518,7 @@ mod tests {
                         "missing restore_capability security for {method} {path}"
                     );
                 } else if !is_login
+                    && !is_hosted_browser
                     && !is_provider_discovery
                     && !is_client_config
                     && !is_public_probe

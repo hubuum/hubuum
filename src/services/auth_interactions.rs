@@ -1,11 +1,12 @@
 //! Resolve current provider authority and orchestrate secret-protected interactions.
+pub mod browser;
 use std::net::IpAddr;
 
 use chrono::{Duration, Utc};
 use hubuum_domain::{
     DEFAULT_INTERACTION_LIFETIME_SECONDS, IdentityScopeName, InteractionAuthority,
-    InteractionBinding, InteractionId, InteractionLifecycle, InteractionMode,
-    InteractionProviderId, ResourceRevision, VerifiedInteractionSubject,
+    InteractionBinding, InteractionBrowserBinding, InteractionId, InteractionLifecycle,
+    InteractionMode, InteractionProviderId, ResourceRevision, VerifiedInteractionSubject,
 };
 use hubuum_events_core::EventContext;
 use hubuum_storage_core::{
@@ -23,8 +24,8 @@ use crate::middlewares::rate_limit::{
 };
 use crate::models::auth_interaction::{
     AuthenticationMethod, AuthenticationMethods, InteractionBeginRequest, InteractionBegun,
-    InteractionCredentialsRequest, InteractionNext, InteractionSecret, InteractionStatus,
-    PasswordInteractionMode, PasswordProviderKind,
+    InteractionCredentialsRequest, InteractionDelivery, InteractionNext, InteractionSecret,
+    InteractionStatus, PasswordInteractionMode, PasswordProviderKind,
 };
 use crate::models::{LOCAL_IDENTITY_SCOPE, LoginUser};
 use crate::permissions::AppContext;
@@ -95,6 +96,7 @@ async fn providers(
 
 pub async fn methods(context: &AppContext) -> Result<AuthenticationMethods, ApiError> {
     let (_, providers) = providers(context).await?;
+    let browser_available = browser::settings(context)?.enabled();
     Ok(AuthenticationMethods {
         interaction_version: 1,
         methods: providers
@@ -105,6 +107,7 @@ pub async fn methods(context: &AppContext) -> Result<AuthenticationMethods, ApiE
                 kind: provider.kind,
                 interaction: PasswordInteractionMode::Credentials,
                 fresh_authentication: true,
+                browser_available,
             })
             .collect(),
     })
@@ -112,31 +115,187 @@ pub async fn methods(context: &AppContext) -> Result<AuthenticationMethods, ApiE
 
 pub async fn begin(
     context: &AppContext,
-    input: InteractionBeginRequest,
+    mut input: InteractionBeginRequest,
+    authenticated: Option<&crate::extractors::Authenticated>,
 ) -> Result<InteractionBegun, ApiError> {
     input.validate()?;
-    let (revision, providers) = providers(context).await?;
-    let provider = providers
-        .into_iter()
-        .find(|provider| provider.id == input.provider_id)
-        .ok_or(InteractionError::Unsupported)?;
-    let binding = InteractionBinding::try_new(
+    let secret = InteractionSecret::generate();
+    let mut verification_provider = None;
+    let mut verification_receipt = None;
+    let (authority, actor_lease) = if let Some(operation) = input.operation.as_mut() {
+        use super::credential_approvals::{CredentialActor, interaction_operation_digest};
+        use hubuum_domain::InteractionActor;
+        use hubuum_storage_core::StorageInteractionActorLease;
+        let authenticated = authenticated
+            .ok_or_else(|| ApiError::Unauthorized("Existing human bearer required".into()))?;
+        let actor = CredentialActor::resolve(context, authenticated).await?;
+        actor.authorize(context, operation).await?;
+        operation.resolve_defaults()?;
+        if let crate::models::credential_approval::CredentialOperation::CreateToken {
+            principal_id,
+            token,
+        } = operation
+        {
+            token.clone().into_create_request(*principal_id)?;
+        }
+        let digest = interaction_operation_digest(context, &actor, operation, &secret).await?;
+        let owner = actor.owner();
+        let expires = authenticated.token_meta.expires_at().unwrap_or(
+            authenticated.token_meta.issued()
+                + Duration::hours(crate::config::get_config()?.token_lifetime_hours),
+        );
+        (
+            InteractionAuthority::approval(
+                InteractionActor::new(owner.actor_id(), owner.token_id()),
+                digest,
+            ),
+            Some(StorageInteractionActorLease::approval(expires)),
+        )
+    } else if let Some(candidate_id) = input.candidate_id {
+        use super::credential_approvals::CredentialActor;
+        use hubuum_domain::{InteractionActor, InteractionDigest};
+        use hubuum_storage_core::StorageInteractionActorLease;
+        let provider_id = input
+            .provider_id
+            .external_id()
+            .ok_or(InteractionError::Unsupported)?;
+        let authenticated = authenticated.ok_or_else(|| {
+            ApiError::Unauthorized("Existing local administrator bearer required".into())
+        })?;
+        let actor = CredentialActor::resolve(context, authenticated).await?;
+        let (candidate, provider) = super::security_candidates::interaction_candidate(
+            context,
+            &actor,
+            candidate_id,
+            provider_id,
+        )
+        .await?;
+        let owner = actor.owner();
+        let authority = InteractionAuthority::verification(
+            InteractionActor::new(owner.actor_id(), owner.token_id()),
+            candidate_id,
+            StorageInteractionAuthentication::candidate_digest(&candidate),
+        )
+        .map_err(|_| InteractionError::Invalid)?;
+        let expires = authenticated.token_meta.expires_at().unwrap_or(
+            authenticated.token_meta.issued()
+                + Duration::hours(crate::config::get_config()?.token_lifetime_hours),
+        );
+        verification_receipt = Some(
+            InteractionDigest::new(secret.verification_receipt().digest().as_str())
+                .map_err(|_| InteractionError::Invalid)?,
+        );
+        verification_provider = Some((
+            candidate.base_revision(),
+            PasswordProvider {
+                id: input.provider_id,
+                scope: IdentityScopeName::new(provider.name())
+                    .map_err(|_| InteractionError::Invalid)?,
+                kind: PasswordProviderKind::Ldap,
+                binding: Some(provider),
+            },
+        ));
+        (
+            authority,
+            Some(
+                StorageInteractionActorLease::verification(
+                    expires,
+                    crate::config::get_config()?.admin_groupname.clone(),
+                )
+                .map_err(|_| InteractionError::Invalid)?,
+            ),
+        )
+    } else {
+        (InteractionAuthority::login(), None)
+    };
+    let (revision, provider) = match verification_provider {
+        Some(prepared) => prepared,
+        None => {
+            let (revision, providers) = providers(context).await?;
+            let provider = providers
+                .into_iter()
+                .find(|provider| provider.id == input.provider_id)
+                .ok_or(InteractionError::Unsupported)?;
+            (revision, provider)
+        }
+    };
+    let browser_settings = browser::settings(context)?;
+    let browser_mode = input.interaction_mode == PasswordInteractionMode::Browser
+        || input.delivery == InteractionDelivery::Bff;
+    if browser_mode {
+        browser_settings.origin()?;
+    }
+    let return_target = match input.delivery {
+        InteractionDelivery::Poll => None,
+        InteractionDelivery::Bff => Some(
+            browser_settings.return_target(
+                input
+                    .return_target_id
+                    .as_deref()
+                    .ok_or(InteractionError::Invalid)?,
+                &input.client_id,
+                input.return_nonce.ok_or(InteractionError::Invalid)?,
+            )?,
+        ),
+    };
+    let mut binding = InteractionBinding::try_new(
         InteractionId::new(Uuid::new_v4()).expect("random UUID"),
         provider.id,
         input.client_id,
         revision,
-        InteractionAuthority::login(),
+        authority,
     )
     .map_err(|_| InteractionError::Invalid)?;
+    if let Some(operation) = input.operation.as_ref() {
+        let sealed = secret.seal_operation(binding.id(), operation)?;
+        binding = binding
+            .with_operation(sealed)
+            .map_err(|_| InteractionError::Invalid)?;
+    }
+    if browser_mode {
+        binding = binding.with_prompt(
+            hubuum_domain::InteractionBrowserPrompt::new(
+                provider.scope.clone(),
+                browser::request_details(input.operation.as_ref(), input.candidate_id)?,
+            )
+            .map_err(|_| {
+                ApiError::BadRequest("Browser approval details exceed the supported bound".into())
+            })?,
+        );
+    }
+    if let Some(receipt) = verification_receipt {
+        binding = binding
+            .with_verification_receipt(receipt)
+            .map_err(|_| InteractionError::Invalid)?;
+    }
+    if let Some(target) = return_target {
+        binding = binding.with_return_target(target);
+    }
     let now = Utc::now();
     let lifecycle = InteractionLifecycle::try_new(
         binding,
-        InteractionMode::Credentials,
+        if browser_mode {
+            InteractionMode::Browser
+        } else {
+            InteractionMode::Credentials
+        },
         now,
         now + Duration::seconds(DEFAULT_INTERACTION_LIFETIME_SECONDS),
     )?;
-    let secret = InteractionSecret::generate();
     let mut create = StorageInteractionCreate::builder(lifecycle, secret.digest());
+    if let Some(actor) = actor_lease {
+        create = create.actor(actor);
+    }
+    let next = if browser_mode {
+        let code = crate::models::auth_interaction::browser::BrowserUserCode::generate();
+        create = create.user_code(code.digest());
+        InteractionNext::Browser {
+            verification_uri: browser_settings.verification_uri()?,
+            user_code: code.display(),
+        }
+    } else {
+        InteractionNext::Credentials
+    };
     if let Some(binding) = provider.binding {
         create = create.provider(binding);
     }
@@ -164,7 +323,7 @@ pub async fn begin(
         redemption_secret: secret,
         expires_at: view.expires_at(),
         interval_seconds: view.interval_seconds(),
-        next: InteractionNext::Credentials,
+        next,
     })
 }
 
@@ -185,6 +344,7 @@ async fn advance(
 fn view(outcome: StorageInteractionOutcome) -> Result<StorageInteractionView, ApiError> {
     match outcome {
         StorageInteractionOutcome::View(view) => Ok(view),
+        StorageInteractionOutcome::Rejected(error) => Err(error.into()),
         _ => Err(ApiError::InternalServerError(
             "Unexpected interaction outcome".into(),
         )),
@@ -227,6 +387,24 @@ pub async fn credentials(
     input: InteractionCredentialsRequest,
     client_ip: Option<IpAddr>,
 ) -> Result<InteractionStatus, ApiError> {
+    authenticate(
+        context,
+        StorageInteractionAuthorization::Redemption(access),
+        input,
+        client_ip,
+        None,
+    )
+    .await
+    .map(Into::into)
+}
+
+async fn authenticate(
+    context: &AppContext,
+    authorization: StorageInteractionAuthorization,
+    input: InteractionCredentialsRequest,
+    client_ip: Option<IpAddr>,
+    approval: Option<InteractionBrowserBinding>,
+) -> Result<StorageInteractionView, ApiError> {
     // Validate the password and account bounds before reserving a one-use claim.
     if input.name.is_empty() || input.name.chars().any(char::is_control) {
         return Err(ApiError::BadRequest(
@@ -241,7 +419,7 @@ pub async fn credentials(
     .validate()?;
     let outcome = advance(
         context,
-        StorageInteractionAuthorization::Redemption(access),
+        authorization,
         StorageInteractionAction::Claim(Uuid::new_v4()),
     )
     .await?;
@@ -251,6 +429,12 @@ pub async fn credentials(
         ));
     };
     let result = async {
+        if claim.binding().authority().purpose()
+            == hubuum_domain::InteractionPurpose::ProviderVerification
+        {
+            return browser::verify_candidate(context, claim.binding(), validated, client_ip).await;
+        }
+
         let (revision, providers) = providers(context).await?;
         if revision != claim.binding().revision() {
             return Err(InteractionError::ConfigurationChanged.into());
@@ -318,12 +502,11 @@ pub async fn credentials(
             StorageInteractionAuthorization::Claim(claim),
             StorageInteractionAction::Authenticate {
                 authentication: Box::new(authentication),
-                approval: None,
+                approval,
             },
         )
         .await?,
     )
-    .map(Into::into)
 }
 
 pub async fn complete(
@@ -331,12 +514,142 @@ pub async fn complete(
     access: StorageInteractionAccess,
     event_context: EventContext,
     source: ObservedSource,
-) -> Result<crate::models::auth_session::SessionResponse, ApiError> {
+    secret: InteractionSecret,
+) -> Result<crate::models::auth_interaction::InteractionCompleted, ApiError> {
+    use crate::models::auth_interaction::InteractionCompleted;
+    use crate::models::credential_approval::{
+        CredentialApprovalResponse, CredentialApprovalSecret,
+    };
+    use hubuum_domain::InteractionPurpose;
+    use hubuum_storage_core::{
+        StorageInteractionComplete, StorageInteractionCompletion, StorageInteractionIssuance,
+    };
+    let current = view(
+        advance(
+            context,
+            StorageInteractionAuthorization::Redemption(access.clone()),
+            StorageInteractionAction::Inspect,
+        )
+        .await?,
+    )?;
+    browser::settings(context)?.handoff(current.binding())?;
+    if current.binding().authority().purpose() == InteractionPurpose::ProviderVerification {
+        let binding = current.binding();
+        let actor = super::credential_approvals::CredentialActor::from_interaction(
+            context,
+            binding
+                .authority()
+                .actor()
+                .ok_or(InteractionError::Invalid)?,
+        )
+        .await?;
+        let id = binding
+            .authority()
+            .candidate_id()
+            .ok_or(InteractionError::Invalid)?;
+        let (candidate, _) = super::security_candidates::interaction_candidate(
+            context,
+            &actor,
+            id,
+            binding
+                .provider()
+                .external_id()
+                .ok_or(InteractionError::Invalid)?,
+        )
+        .await?;
+        if binding.authority().candidate_digest()
+            != Some(&StorageInteractionAuthentication::candidate_digest(
+                &candidate,
+            ))
+        {
+            return Err(InteractionError::ConfigurationChanged.into());
+        }
+        let receipt = secret.verification_receipt();
+        if binding.verification_receipt().map(|v| v.as_str()) != Some(receipt.digest().as_str()) {
+            return Err(InteractionError::Invalid.into());
+        }
+        let verification = crate::models::security_candidate::SecurityCandidateVerificationPreview::from_interaction(current.verification().ok_or(InteractionError::Pending)?)?;
+        return match context
+            .backend()
+            .complete_auth_interaction(StorageInteractionComplete::new(
+                access,
+                StorageInteractionIssuance::ProviderVerification,
+            ))
+            .await
+            .map_err(storage_error)?
+        {
+            StorageInteractionCompletion::ProviderVerification(id) => {
+                let candidate = super::security_candidates::load(context, &actor, id).await?;
+                Ok(InteractionCompleted::Verification(
+                    crate::models::security_candidate::SecurityCandidateLdapVerificationResponse {
+                        verification,
+                        candidate: crate::models::security_candidate::SecurityCandidateReport::new(
+                            &candidate,
+                            Some(receipt),
+                        ),
+                    },
+                ))
+            }
+            StorageInteractionCompletion::Rejected(error) => Err(error.into()),
+            _ => Err(InteractionError::Invalid.into()),
+        };
+    }
+    if current.binding().authority().purpose() == InteractionPurpose::CredentialApproval {
+        let operation = secret.open_operation(current.binding())?;
+        let bound_actor = current
+            .binding()
+            .authority()
+            .actor()
+            .ok_or(InteractionError::Invalid)?;
+        let actor =
+            super::credential_approvals::CredentialActor::from_interaction(context, bound_actor)
+                .await?;
+        let digest = super::credential_approvals::interaction_operation_digest(
+            context, &actor, &operation, &secret,
+        )
+        .await?;
+        if current.binding().authority().operation_digest() != Some(&digest) {
+            return Err(InteractionError::Invalid.into());
+        }
+        actor.authorize(context, &operation).await?;
+        let secret = CredentialApprovalSecret::generate();
+        let claim = actor.claim(context, &secret, &operation).await?;
+        let event_context = EventContext::user(
+            bound_actor.principal_id(),
+            event_context.request_id(),
+            event_context.correlation_id().cloned(),
+        );
+        return match context
+            .backend()
+            .complete_auth_interaction(StorageInteractionComplete::new(
+                access,
+                StorageInteractionIssuance::Approval {
+                    claim,
+                    operation_digest: digest,
+                    context: event_context,
+                },
+            ))
+            .await
+            .map_err(storage_error)?
+        {
+            StorageInteractionCompletion::Approval(result) => {
+                Ok(InteractionCompleted::Approval(CredentialApprovalResponse {
+                    approval: secret,
+                    record: result.into_value().into(),
+                    token_expires_at: operation.token_expiry(),
+                }))
+            }
+            StorageInteractionCompletion::Rejected(error) => Err(error.into()),
+            _ => Err(InteractionError::Invalid.into()),
+        };
+    }
     match super::auth_sessions::complete_interaction(context, access, event_context, source)
         .await
         .map_err(api_storage_error)?
     {
-        super::auth_sessions::InteractionSessionCompletion::Issued(session) => Ok(session),
+        super::auth_sessions::InteractionSessionCompletion::Issued(session) => {
+            Ok(InteractionCompleted::Session(session))
+        }
         super::auth_sessions::InteractionSessionCompletion::Rejected(error) => Err(error.into()),
     }
 }

@@ -376,6 +376,7 @@ async fn credential_approval_is_bound_to_the_original_actor_and_operation() {
     let completion = StorageInteractionComplete::new(
         interaction.access.clone(),
         StorageInteractionIssuance::Approval {
+            operation_digest: InteractionDigest::new(claim.request_digest().as_str()).unwrap(),
             claim,
             context: context(),
         },

@@ -3636,6 +3636,28 @@
       "dynamic_prefix": false
     },
     {
+      "name": "HUBUUM_AUTH_BROWSER",
+      "owner": "authentication",
+      "exposure": "public",
+      "value_kind": "string",
+      "default_is_set": true,
+      "default": [
+        "{}"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
       "name": "HUBUUM_AUTH_CONFIG_HOST_PATH",
       "owner": "operations",
       "exposure": "sensitive_metadata",
@@ -10550,6 +10572,25 @@
             "maximum": 1
           },
           "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "auth_browser",
+          "long": "auth-browser",
+          "short": null,
+          "environment": "HUBUUM_AUTH_BROWSER",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "{}"
+          ],
           "dynamic_default": null,
           "allowed_values": [],
           "required": false,

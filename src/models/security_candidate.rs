@@ -307,6 +307,37 @@ pub struct SecurityCandidateVerificationPreview {
 }
 
 impl SecurityCandidateVerificationPreview {
+    pub(crate) fn from_interaction(
+        proof: &hubuum_domain::VerifiedInteractionSubject,
+    ) -> Result<Self, ApiError> {
+        let invalid = || crate::errors::InteractionError::Invalid;
+        let details = proof.verification().ok_or_else(invalid)?;
+        Ok(Self {
+            candidate_id: proof
+                .binding()
+                .authority()
+                .candidate_id()
+                .ok_or_else(invalid)?,
+            provider_id: proof
+                .binding()
+                .provider()
+                .external_id()
+                .ok_or_else(invalid)?,
+            subject: proof.subject().to_owned(),
+            admitted: details.admitted(),
+            membership: "complete".into(),
+            groups: details
+                .groups()
+                .iter()
+                .map(|(key, name)| SecurityCandidateGroupPreview {
+                    key: key.clone(),
+                    name: name.clone(),
+                })
+                .collect(),
+            issued_session: false,
+            provisioned: false,
+        })
+    }
     pub(crate) fn from_ldap(
         candidate_id: Uuid,
         provider_id: Uuid,

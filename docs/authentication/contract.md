@@ -185,6 +185,11 @@ they cannot authenticate by password. New clients use typed discovery; a genuine
 404/unsupported-version falls back to existing password login, while a timeout,
 503 or malformed success does not trigger a downgrade. Ordinary session responses
 reuse the exact `SessionResponse`; approval completion reuses its existing response.
+Provider verification reuses the existing candidate-verification envelope:
+`candidate` includes the single-use receipt needed for activation, while
+`verification` contains the bounded identity/admission/group preview. Password
+methods accept optional `interaction_mode: "browser"`; omission preserves direct
+credential continuation. Public password discovery adds `browser_available`.
 New provider administration requires new server/client versions, not changes to
 old password bodies. No upstream password grant, implicit flow or client token login.
 
@@ -220,7 +225,9 @@ subsequent session refresh: `hubuum-frontend` for the BFF and `hubuum-cli` for t
 CLI. Completion must install the session with that original client binding.
 No bearer, refresh, approval, redemption secret or upstream credential enters
 browser JavaScript, URLs, logs or local storage. The return nonce is not a bearer
-capability. Use no-store and no-referrer on HTML/redirect/token responses; exclude
+capability. Use no-store on HTML/redirect/token responses, no-referrer on redirects and token
+responses, and same-origin referrer policy on hosted forms so native POSTs retain
+the Origin header required for CSRF checks; exclude
 callback query strings and sensitive bodies/headers from proxy/tracing logs.
 Browser mutation forms and BFF routes require same-origin/CSRF validation.
 

@@ -306,6 +306,10 @@ impl StorageInteractionAuthentication {
             || actor.principal_id() != candidate.owner().actor_id()
             || actor.token_id() != candidate.owner().token_id()
             || binding.revision() != candidate.base_revision()
+            || binding.verification_receipt().is_some_and(|receipt| {
+                candidate.verification_receipt().map(|value| value.as_str())
+                    != Some(receipt.as_str())
+            })
         {
             return Err(invalid());
         }
@@ -342,6 +346,7 @@ impl StorageInteractionAuthentication {
 
 #[derive(Clone, Debug)]
 pub enum StorageInteractionAction {
+    Inspect,
     Poll,
     Cancel,
     Claim(Uuid),
@@ -385,8 +390,16 @@ pub struct StorageInteractionView {
     expires_at: DateTime<Utc>,
     interval_seconds: u32,
     issued: Option<InteractionIssuedResult>,
+    authenticated_name: Option<String>,
+    verification: Option<Box<VerifiedInteractionSubject>>,
 }
 impl StorageInteractionView {
+    pub fn verification(&self) -> Option<&VerifiedInteractionSubject> {
+        self.verification.as_deref()
+    }
+    pub fn authenticated_name(&self) -> Option<&str> {
+        self.authenticated_name.as_deref()
+    }
     pub const fn binding(&self) -> &InteractionBinding {
         &self.binding
     }
@@ -420,6 +433,7 @@ pub enum StorageInteractionIssuance {
     },
     Approval {
         claim: StorageCredentialClaim,
+        operation_digest: InteractionDigest,
         context: EventContext,
     },
     ProviderVerification,
@@ -496,6 +510,22 @@ impl StorageInteractionRecord {
             expires_at: self.lifecycle.expires_at(),
             interval_seconds: self.lifecycle.interval_seconds(),
             issued: self.lifecycle.issued_result(),
+            verification: self
+                .lifecycle
+                .authenticated_subject()
+                .filter(|p| p.verification().is_some())
+                .cloned()
+                .map(Box::new),
+            authenticated_name: match self.authenticated.as_ref() {
+                Some(StorageInteractionEvidence::Login(login)) => {
+                    Some(login.subject().name().to_owned())
+                }
+                Some(StorageInteractionEvidence::Verification(_)) => self
+                    .lifecycle
+                    .authenticated_subject()
+                    .map(|proof| proof.subject().to_owned()),
+                _ => None,
+            },
         }
     }
     pub fn retain_until(&self) -> DateTime<Utc> {
@@ -605,13 +635,17 @@ impl StorageInteractionRecord {
             ) => true,
             (
                 InteractionPurpose::CredentialApproval,
-                StorageInteractionIssuance::Approval { claim, .. },
+                StorageInteractionIssuance::Approval {
+                    claim,
+                    operation_digest,
+                    ..
+                },
             ) => {
                 authority.actor().is_some_and(|actor| {
                     actor.principal_id() == claim.actor_id() && actor.token_id() == claim.token_id()
                 }) && authority
                     .operation_digest()
-                    .is_some_and(|digest| digest.as_str() == claim.request_digest().as_str())
+                    .is_some_and(|digest| digest == operation_digest)
             }
             _ => false,
         }

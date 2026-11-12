@@ -993,19 +993,53 @@
       "response": {
         "status": 200,
         "body": {
-          "candidate_id": "candidate-fixture",
-          "provider_id": "00000000-0000-4000-8000-000000000002",
-          "subject": "fixture-subject",
-          "admitted": false,
-          "membership": "complete",
-          "groups": [
-            {
-              "key": "/engineering",
-              "name": "engineering"
-            }
-          ],
-          "issued_session": false,
-          "provisioned": false
+          "candidate": {
+            "id": "candidate-fixture",
+            "group": "authentication",
+            "base_revision": 7,
+            "expires_at": "2026-11-11T12:05:00Z",
+            "checks": [
+              {
+                "kind": "configuration",
+                "status": "passed",
+                "reason": "valid"
+              },
+              {
+                "kind": "connectivity",
+                "status": "passed",
+                "reason": "reachable"
+              },
+              {
+                "kind": "identity",
+                "status": "passed",
+                "reason": "browser_sign_in_required"
+              }
+            ],
+            "state": "verified",
+            "providers": [
+              {
+                "provider_id": "00000000-0000-4000-8000-000000000002",
+                "name": "employees",
+                "kind": "oidc"
+              }
+            ],
+            "verification_receipt": "FIXTURE-VERIFICATION-RECEIPT-NEVER-USE-IN-PRODUCTION"
+          },
+          "verification": {
+            "candidate_id": "candidate-fixture",
+            "provider_id": "00000000-0000-4000-8000-000000000002",
+            "subject": "fixture-subject",
+            "admitted": false,
+            "membership": "complete",
+            "groups": [
+              {
+                "key": "/engineering",
+                "name": "engineering"
+              }
+            ],
+            "issued_session": false,
+            "provisioned": false
+          }
         }
       },
       "effects": {

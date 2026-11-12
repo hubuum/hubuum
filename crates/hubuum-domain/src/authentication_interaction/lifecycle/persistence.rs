@@ -1,5 +1,6 @@
 //! Explicit trusted-storage decoding; authentication proofs are never request DTOs.
 use super::*;
+use crate::InteractionVerificationDetails;
 use serde_json::Value;
 
 #[derive(Serialize, Deserialize)]
@@ -33,9 +34,13 @@ enum PhaseDocument {
     },
     AwaitingApproval {
         subject: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verification: Option<InteractionVerificationDetails>,
     },
     Ready {
         subject: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verification: Option<InteractionVerificationDetails>,
     },
     Denied {},
     Expired {},
@@ -64,9 +69,11 @@ impl InteractionLifecycle {
             },
             Phase::AwaitingApproval(proof) => PhaseDocument::AwaitingApproval {
                 subject: proof.subject().to_owned(),
+                verification: proof.verification().cloned(),
             },
             Phase::Ready(proof) => PhaseDocument::Ready {
                 subject: proof.subject().to_owned(),
+                verification: proof.verification().cloned(),
             },
             Phase::Denied => PhaseDocument::Denied {},
             Phase::Expired => PhaseDocument::Expired {},
@@ -150,12 +157,20 @@ impl InteractionLifecycle {
                     deadline,
                 })
             }
-            PhaseDocument::AwaitingApproval { subject } => Phase::AwaitingApproval(
+            PhaseDocument::AwaitingApproval {
+                subject,
+                verification,
+            } => Phase::AwaitingApproval(
                 VerifiedInteractionSubject::new(restored.binding.clone(), subject)
+                    .and_then(|proof| proof.with_verification(verification))
                     .map_err(|_| InteractionTransitionError::Invalid)?,
             ),
-            PhaseDocument::Ready { subject } => Phase::Ready(
+            PhaseDocument::Ready {
+                subject,
+                verification,
+            } => Phase::Ready(
                 VerifiedInteractionSubject::new(restored.binding.clone(), subject)
+                    .and_then(|proof| proof.with_verification(verification))
                     .map_err(|_| InteractionTransitionError::Invalid)?,
             ),
             PhaseDocument::Denied {} => Phase::Denied,

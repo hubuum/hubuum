@@ -299,6 +299,10 @@ impl StorageSecurityCandidate {
         Ok(self)
     }
 
+    pub fn verification_receipt(&self) -> Option<&StorageCredentialFingerprint> {
+        self.receipt.as_ref()
+    }
+
     pub fn verify(
         mut self,
         receipt: StorageCredentialFingerprint,

@@ -11,13 +11,13 @@ use crate::events::{EventContext, RequestProvenance};
 use crate::middlewares::rate_limit::client_ip_for_request;
 use crate::models::auth_interaction::{
     AuthenticationMethods, InteractionBeginRequest, InteractionBegun, InteractionClientRequest,
-    InteractionCredentialsRequest, InteractionSecret, InteractionStatus,
+    InteractionCompleted, InteractionCredentialsRequest, InteractionSecret, InteractionStatus,
 };
-use crate::models::auth_session::SessionResponse;
 use crate::permissions::AppContext;
 use crate::services::{auth_interactions, credential_activity};
 
 mod admission;
+pub mod browser;
 
 fn transport(req: &HttpRequest, creation: bool) -> Result<(), ApiError> {
     // These JSON endpoints are for CLI/BFF server-to-server calls. Browser
@@ -38,6 +38,14 @@ fn access(
     id: &str,
     client: InteractionClientId,
 ) -> Result<StorageInteractionAccess, ApiError> {
+    access_with_secret(req, id, client).map(|(access, _)| access)
+}
+
+fn access_with_secret(
+    req: &HttpRequest,
+    id: &str,
+    client: InteractionClientId,
+) -> Result<(StorageInteractionAccess, InteractionSecret), ApiError> {
     let mut headers = req.headers().get_all(header::AUTHORIZATION);
     let raw = headers
         .next()
@@ -55,7 +63,10 @@ fn access(
         .ok()
         .and_then(|id| InteractionId::new(id).ok())
         .ok_or(InteractionError::Invalid)?;
-    Ok(StorageInteractionAccess::new(id, client, secret.digest()))
+    Ok((
+        StorageInteractionAccess::new(id, client, secret.digest()),
+        secret,
+    ))
 }
 
 fn event_context(req: &HttpRequest) -> EventContext {
@@ -79,9 +90,9 @@ pub async fn methods(context: AppContext, req: HttpRequest) -> Result<impl Respo
 }
 
 #[utoipa::path(post, path = "/api/v1/auth/interactions", tag = "auth", request_body = InteractionBeginRequest, responses(
-    (status = 201, description = "Login interaction created; secret is returned once", body = InteractionBegun),
+    (status = 201, description = "Purpose-bound interaction created; secret is returned once", body = InteractionBegun),
     (status = 400, description = "Invalid purpose/delivery fields or transport", body = ApiErrorResponse),
-    (status = 422, description = "Provider, privileged purpose or delivery capability unsupported", body = ApiErrorResponse),
+    (status = 422, description = "Provider or delivery capability unsupported", body = ApiErrorResponse),
     (status = 429, description = "Bounded creation budget exhausted; honor Retry-After", body = ApiErrorResponse),
     (status = 503, description = "Provider configuration is unavailable", body = ApiErrorResponse)
 ))]
@@ -90,10 +101,11 @@ pub async fn begin(
     context: AppContext,
     req: HttpRequest,
     input: web::Json<InteractionBeginRequest>,
+    authenticated: Option<crate::extractors::Authenticated>,
 ) -> Result<impl Responder, ApiError> {
     transport(&req, true)?;
     Ok(ApiResponse::new_no_store(
-        auth_interactions::begin(&context, input.into_inner()).await?,
+        auth_interactions::begin(&context, input.into_inner(), authenticated.as_ref()).await?,
         StatusCode::CREATED,
     ))
 }
@@ -148,7 +160,7 @@ pub async fn status(
 }
 
 #[utoipa::path(post, path = "/api/v1/auth/interactions/{id}/complete", tag = "auth", security(("interaction_secret" = [])), params(("id" = String, Path)), request_body = InteractionClientRequest, responses(
-    (status = 200, description = "Single-use session issuance using the original client binding", body = SessionResponse),
+    (status = 200, description = "Single-use session issuance using the original client binding", body = InteractionCompleted),
     (status = 401, description = "Invalid interaction, client, secret or authority", body = ApiErrorResponse),
     (status = 403, description = "Denied or cancelled", body = ApiErrorResponse),
     (status = 409, description = "Not ready, consumed, failed or configuration changed; never replay issuance", body = ApiErrorResponse),
@@ -163,12 +175,14 @@ pub async fn complete(
     input: web::Json<InteractionClientRequest>,
 ) -> Result<impl Responder, ApiError> {
     transport(&req, false)?;
-    let access = access(&req, &id, input.into_inner().client_id)?;
+    let input = input.into_inner();
+    let (access, secret) = access_with_secret(&req, &id, input.client_id)?;
     let session = auth_interactions::complete(
         &context,
         access,
         event_context(&req),
         credential_activity::request_source(&req),
+        secret,
     )
     .await?;
     Ok(ApiResponse::new_no_store(session, StatusCode::OK))
@@ -218,7 +232,8 @@ pub async fn revoke(
 }
 
 pub fn config(cfg: &mut web::ServiceConfig) {
-    cfg.service(methods)
+    cfg.configure(browser::config)
+        .service(methods)
         .service(begin)
         .service(credentials)
         .service(status)

@@ -107,3 +107,23 @@ After merge into `project/auth-support`, pin the merge commit and JSON
 SHA-256 digests in #573 and Project 6, complete the eight criteria and only then
 make #574 Ready. Later dependencies retain their native blockers. No stable
 release or main promotion is authorized by contract acceptance.
+
+## Hosted password implementation clarification (PR #591)
+
+This implementation follow-up adds an optional password `interaction_mode` and
+public `browser_available` flag. It also reuses #574's existing LDAP verification
+response envelope (`candidate` plus `verification`) so the initiating client
+receives the verification receipt required for activation alongside the identity
+preview. The corresponding proposal and shared vector are updated together.
+Completion retains its client-only request; approval operations stay encrypted
+server-side and are bound to the initiating redemption capability.
+
+These changes require implementation review in #591. They do not retroactively
+extend the independent acceptance recorded above, qualify OIDC/OAuth providers,
+or establish #575 acceptance.
+
+Native HTML forms use `Referrer-Policy: same-origin`: browsers otherwise suppress
+the POST Origin header under `no-referrer`. Redirects and token responses retain
+`no-referrer`; cross-origin referrers remain suppressed and form submissions still
+require an exact Origin plus cookie/CSRF proof. This browser-tested clarification
+also requires review with #591.

@@ -1,4 +1,5 @@
 use hubuum_storage_core::{StorageBackupBudget, StorageRuntimeSettingsGroup};
+pub mod auth_browser;
 pub mod environment;
 pub mod running;
 pub(crate) mod runtime;
@@ -1113,6 +1114,10 @@ pub struct AppConfig {
     /// Optional path to TOML auth provider configuration.
     #[clap(long, env = "HUBUUM_AUTH_CONFIG_PATH", default_value = None)]
     pub auth_config_path: Option<String>,
+
+    /// Browser origin and exact client-bound BFF return targets as JSON; disabled by default.
+    #[clap(long, env = "HUBUUM_AUTH_BROWSER", default_value = "{}")]
+    pub auth_browser: auth_browser::BrowserSettings,
 
     /// Permit private destinations for runtime authentication and authorization profiles.
     #[clap(
@@ -2415,6 +2420,9 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         admin_groupname: env_or_default("HUBUUM_ADMIN_GROUPNAME", "admin"),
         admin_identity_scope: Some(env_or_default("HUBUUM_ADMIN_IDENTITY_SCOPE", "local")),
         auth_config_path: env_or_default_opt("HUBUUM_AUTH_CONFIG_PATH", None),
+        auth_browser: env_or_default("HUBUUM_AUTH_BROWSER", "{}")
+            .parse()
+            .unwrap_or_default(),
         auth_runtime_allow_private_targets: env_or_default(
             "HUBUUM_AUTH_RUNTIME_ALLOW_PRIVATE_TARGETS",
             "false",

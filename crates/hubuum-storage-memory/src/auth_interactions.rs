@@ -309,7 +309,7 @@ impl MemoryState {
             }
             (
                 StorageInteractionEvidence::Login(evidence),
-                StorageInteractionIssuance::Approval { claim, context },
+                StorageInteractionIssuance::Approval { claim, context, .. },
             ) => {
                 let user = self
                     .users

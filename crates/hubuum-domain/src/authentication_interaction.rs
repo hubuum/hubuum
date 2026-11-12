@@ -8,6 +8,12 @@ use crate::{PrincipalId, ResourceRevision, TokenId};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+mod browser;
+pub use browser::{
+    InteractionBrowserPrompt, InteractionReturnTarget, InteractionSealedOperation,
+    InteractionVerificationDetails,
+};
+
 mod lifecycle;
 pub use lifecycle::{
     DEFAULT_INTERACTION_LIFETIME_SECONDS, INITIAL_INTERACTION_POLL_SECONDS,
@@ -40,6 +46,10 @@ pub enum InteractionValidationError {
     InvalidSubject,
     #[error("proof belongs to another interaction or provider revision")]
     BindingMismatch,
+    #[error("invalid browser return target or nonce")]
+    InvalidReturnTarget,
+    #[error("invalid browser prompt")]
+    InvalidPrompt,
 }
 
 /// A public identifier is not an authentication capability.
@@ -319,6 +329,10 @@ pub struct InteractionBinding {
     client: InteractionClientId,
     revision: ResourceRevision,
     authority: InteractionAuthority,
+    return_target: Option<Box<InteractionReturnTarget>>,
+    verification_receipt: Option<InteractionDigest>,
+    prompt: Option<Box<InteractionBrowserPrompt>>,
+    sealed_operation: Option<InteractionSealedOperation>,
 }
 impl InteractionBinding {
     pub fn try_new(
@@ -339,6 +353,10 @@ impl InteractionBinding {
             client,
             revision,
             authority,
+            return_target: None,
+            verification_receipt: None,
+            prompt: None,
+            sealed_operation: None,
         })
     }
     pub const fn id(&self) -> InteractionId {
@@ -356,6 +374,46 @@ impl InteractionBinding {
     pub const fn authority(&self) -> &InteractionAuthority {
         &self.authority
     }
+    pub fn with_operation(
+        mut self,
+        operation: InteractionSealedOperation,
+    ) -> Result<Self, InteractionValidationError> {
+        if self.authority.purpose() != InteractionPurpose::CredentialApproval {
+            return Err(InteractionValidationError::InvalidPurpose);
+        }
+        self.sealed_operation = Some(operation);
+        Ok(self)
+    }
+    pub const fn sealed_operation(&self) -> Option<&InteractionSealedOperation> {
+        self.sealed_operation.as_ref()
+    }
+    pub fn with_prompt(mut self, prompt: InteractionBrowserPrompt) -> Self {
+        self.prompt = Some(Box::new(prompt));
+        self
+    }
+    pub fn prompt(&self) -> Option<&InteractionBrowserPrompt> {
+        self.prompt.as_deref()
+    }
+    pub fn with_return_target(mut self, target: InteractionReturnTarget) -> Self {
+        self.return_target = Some(Box::new(target));
+        self
+    }
+    pub fn return_target(&self) -> Option<&InteractionReturnTarget> {
+        self.return_target.as_deref()
+    }
+    pub fn with_verification_receipt(
+        mut self,
+        receipt: InteractionDigest,
+    ) -> Result<Self, InteractionValidationError> {
+        if self.authority.purpose() != InteractionPurpose::ProviderVerification {
+            return Err(InteractionValidationError::InvalidPurpose);
+        }
+        self.verification_receipt = Some(receipt);
+        Ok(self)
+    }
+    pub const fn verification_receipt(&self) -> Option<&InteractionDigest> {
+        self.verification_receipt.as_ref()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -366,17 +424,34 @@ struct BindingDocument {
     client: InteractionClientId,
     revision: ResourceRevision,
     authority: InteractionAuthority,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    return_target: Option<InteractionReturnTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    verification_receipt: Option<InteractionDigest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    prompt: Option<InteractionBrowserPrompt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sealed_operation: Option<InteractionSealedOperation>,
 }
 impl TryFrom<BindingDocument> for InteractionBinding {
     type Error = InteractionValidationError;
     fn try_from(value: BindingDocument) -> Result<Self, Self::Error> {
-        Self::try_new(
+        let mut binding = Self::try_new(
             value.id,
             value.provider,
             value.client,
             value.revision,
             value.authority,
-        )
+        )?;
+        binding.return_target = value.return_target.map(Box::new);
+        binding.prompt = value.prompt.map(Box::new);
+        if let Some(operation) = value.sealed_operation {
+            binding = binding.with_operation(operation)?;
+        }
+        if let Some(receipt) = value.verification_receipt {
+            binding = binding.with_verification_receipt(receipt)?;
+        }
+        Ok(binding)
     }
 }
 impl From<InteractionBinding> for BindingDocument {
@@ -387,6 +462,10 @@ impl From<InteractionBinding> for BindingDocument {
             client: value.client,
             revision: value.revision,
             authority: value.authority,
+            return_target: value.return_target.map(|value| *value),
+            verification_receipt: value.verification_receipt,
+            prompt: value.prompt.map(|value| *value),
+            sealed_operation: value.sealed_operation,
         }
     }
 }
@@ -397,6 +476,7 @@ impl From<InteractionBinding> for BindingDocument {
 pub struct VerifiedInteractionSubject {
     binding: InteractionBinding,
     subject: String,
+    verification: Option<InteractionVerificationDetails>,
 }
 impl VerifiedInteractionSubject {
     pub fn new(
@@ -407,7 +487,26 @@ impl VerifiedInteractionSubject {
         if subject.is_empty() || subject.len() > 255 || subject.chars().any(char::is_control) {
             return Err(InteractionValidationError::InvalidSubject);
         }
-        Ok(Self { binding, subject })
+        Ok(Self {
+            binding,
+            subject,
+            verification: None,
+        })
+    }
+    pub fn with_verification(
+        mut self,
+        details: Option<InteractionVerificationDetails>,
+    ) -> Result<Self, InteractionValidationError> {
+        if details.is_some()
+            && self.binding.authority().purpose() != InteractionPurpose::ProviderVerification
+        {
+            return Err(InteractionValidationError::InvalidPurpose);
+        }
+        self.verification = details;
+        Ok(self)
+    }
+    pub const fn verification(&self) -> Option<&InteractionVerificationDetails> {
+        self.verification.as_ref()
     }
     pub const fn binding(&self) -> &InteractionBinding {
         &self.binding

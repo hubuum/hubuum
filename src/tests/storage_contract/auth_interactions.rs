@@ -576,6 +576,7 @@ async fn approval_completion_rechecks_the_initiating_credential(#[case] revoke: 
         let completion = StorageInteractionComplete::new(
             f.access.clone(),
             StorageInteractionIssuance::Approval {
+                operation_digest: InteractionDigest::new(claim.request_digest().as_str()).unwrap(),
                 claim,
                 context: EventContext::user(f.user.principal_id, None, None),
             },

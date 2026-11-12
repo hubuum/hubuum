@@ -5,8 +5,9 @@ The domain model, complete storage adapters, atomic session issuance and v1
 password-login transport are implemented. Local and enabled LDAP providers use
 public discovery, begin, credentials, protected status, complete, cancel and
 issued-session revocation. Existing password-login endpoints keep their wire
-behavior. Privileged-purpose transport and the hosted browser flow remain in
-progress; real OIDC/OAuth execution remains in #577/#578.
+behavior. Hosted local/LDAP sign-in, explicit approval, registered BFF handoff,
+credential-approval completion and LDAP candidate verification use the same
+durable lifecycle. Real OIDC/OAuth execution remains in #577/#578.
 
 ## Password interaction API
 
@@ -23,7 +24,9 @@ through refresh.
 The secret-bearing JSON operations are for CLI and BFF server-to-server requests
 and reject browser Origin/Fetch Metadata headers and query parameters. Public
 method discovery is also available to browser callers. All auth responses
-use `Cache-Control: no-store` and `Referrer-Policy: no-referrer`. Redemption
+use `Cache-Control: no-store`. JSON and redirects use
+`Referrer-Policy: no-referrer`; hosted HTML uses `same-origin` so native POST
+forms retain the Origin header while suppressing cross-origin referrers. Redemption
 secrets contain 256 random bits, are stored only as domain-separated digests,
 and cannot authenticate ordinary API routes. Existing password throttling also
 applies to credential continuation. Failed credentials allow explicit retries
@@ -35,11 +38,79 @@ Status after consumption exposes only issuance metadata, and repeated completion
 returns `interaction_consumed`. Cancellation cannot undo an issued session;
 use the dedicated secret-protected revocation operation after response loss.
 
-The current HTTP implementation rejects privileged purposes, browser providers
-and BFF handoff delivery with `422 capability_unsupported`; it never substitutes
-a different provider, delivery mode or weaker proof. The hosted browser forms,
-privileged completion responses, registered return targets and browser/provider
-end-to-end tests remain required before #575 acceptance.
+## Hosted browser flow
+
+Browser transport is opt-in. Configure the public origin and optional exact BFF
+return registrations in deployment settings:
+
+```bash
+export HUBUUM_AUTH_BROWSER='{"origin":"https://auth.example.com","return_targets":[{"id":"web","client_id":"hubuum-web","uri":"https://app.example.com/auth/callback"}]}'
+```
+
+The origin has no path, query, fragment or user information. Return URIs must use
+HTTPS, have no query, fragment or user information, and match a registered client.
+For local development only, `allow_loopback_http: true` permits loopback HTTP
+origins and targets. Production uses host-only `__Host-` cookies with `Secure`,
+`HttpOnly`, `SameSite=Lax` and a ten-minute maximum age. A reverse proxy must
+preserve the configured public Host; forwarded headers cannot select the origin.
+All replicas must use the same browser configuration.
+
+A CLI or BFF sends `interaction_mode: "browser"` when beginning an interaction.
+The default remains `credentials` for existing password clients. The browser next
+step returns `verification_uri` and a short `user_code`. Open that URI and enter
+the code; never pass the redemption secret to the browser. The hosted forms show
+the requesting client identifier and provider, authenticate the user, and show
+an explicit approve/deny page with the identity, purpose and safe request details.
+Client identifiers are correlation labels, not verified application identities.
+The browser never receives session tokens, approval secrets or candidate receipts.
+
+Code attachment consumes the code's ability to attach another browser. The
+cookie and hidden CSRF challenge bind continuation to that browser; authentication
+rotates the challenge before approval. Every form mutation requires the exact
+configured Origin and, when supplied, same-origin Fetch Metadata. HTML is rendered
+by MiniJinja with automatic escaping and a restrictive CSP; no JavaScript is used.
+Reloading a pending sign-in or approval page preserves the bound interaction.
+A failed browser sign-in or expired authentication lease terminates that attempt;
+begin a new interaction to retry. Cancellation, denial and expiry never issue a
+result. Existing credentials-mode interactions retain their three-attempt limit.
+
+For `delivery: "bff"`, supply a registered `return_target_id` and a random
+32–128-character `return_nonce` containing only ASCII letters, digits or `-_.~`.
+BFF delivery always selects browser mode. After either decision the browser gets
+a 303 to the registered URI with **only** `interaction_id` and `nonce`. The BFF
+must bind these to its initiating server-side session, verify the nonce, and
+complete using the redemption capability it retained server-side. It must never
+treat the redirect itself as authentication. Targets are rechecked before both
+handoff and redemption. Removed or changed registrations fail closed. No arbitrary
+redirect URI, browser-supplied provider or return location is accepted.
+
+## Privileged purposes
+
+Beginning `credential_approval` requires an existing unscoped human bearer and an
+`operation`. The server authorizes and normalizes that operation, binds its exact
+content and initiating principal/token. The operation is encrypted using the
+existing secret-envelope implementation and a key derived from the private
+redemption capability; only its safe summary reaches the browser. After fresh
+authentication as that same principal and any browser approval, `complete` takes
+only the client ID, as for login. Completion returns the
+existing credential-approval response, never a session. Use that response with
+the existing operation endpoint and approval header. Passwords and restore
+capabilities in operations remain on the server-to-server path and are excluded
+from the browser prompt.
+
+Beginning `provider_verification` requires a local recovery administrator's
+unscoped bearer, a `candidate_id`, and the candidate's enabled LDAP provider UUID.
+The candidate must be current and have passed every check except this provider's
+identity check. Authentication uses the existing LDAP adapter against the exact
+candidate configuration; it does not provision identities, synchronize groups,
+activate settings or create a session. After explicit browser approval, completion
+atomically verifies the candidate and returns the existing LDAP verification
+response: a `candidate` report with verification receipt and a `verification`
+preview of subject, admission and complete group membership. These reach only
+the initiating client. The existing activation endpoint still requires
+its separate operation-bound administrator approval. A failed, changed, expired,
+revoked or unsupported candidate fails closed. OIDC/OAuth execution and complete
+project configure/test/activate qualification remain separate #577/#578/#581 work.
 
 ## Authority and completion
 

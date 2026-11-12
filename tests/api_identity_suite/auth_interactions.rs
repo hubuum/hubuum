@@ -150,10 +150,10 @@ async fn discovery_exposes_only_public_password_method_metadata() {
     assert_eq!(methods["interaction_version"], 1);
     assert_eq!(
         methods["methods"][0],
-        json!({"provider_id":"local","name":"local","kind":"local","interaction":"credentials","fresh_authentication":true})
+        json!({"provider_id":"local","name":"local","kind":"local","interaction":"credentials","fresh_authentication":true,"browser_available":false})
     );
     for method in methods["methods"].as_array().unwrap() {
-        assert_eq!(method.as_object().unwrap().len(), 5);
+        assert_eq!(method.as_object().unwrap().len(), 6);
         assert!(matches!(method["kind"].as_str().unwrap(), "local" | "ldap"));
     }
 }
@@ -393,7 +393,7 @@ async fn three_failed_passwords_make_the_interaction_terminal() {
 #[case::provider(json!({"provider_id":"11111111-1111-4111-8111-111111111111"}), 422)]
 #[case::bff(json!({"delivery":"bff","return_target_id":"frontend","return_nonce":"01234567890123456789012345678901"}), 422)]
 #[case::verification(json!({"purpose":"provider_verification","candidate_id":"11111111-1111-4111-8111-111111111111"}), 422)]
-#[case::approval(json!({"purpose":"credential_approval","operation":{"kind":"create_token","principal_id":1,"token":{}}}), 422)]
+#[case::approval(json!({"purpose":"credential_approval","operation":{"kind":"create_token","principal_id":1,"token":{}}}), 401)]
 #[case::login_with_candidate(json!({"candidate_id":"11111111-1111-4111-8111-111111111111"}), 400)]
 #[case::poll_with_return(json!({"return_target_id":"frontend"}), 400)]
 #[actix_web::test]

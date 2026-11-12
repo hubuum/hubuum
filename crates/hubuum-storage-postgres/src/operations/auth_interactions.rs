@@ -384,7 +384,7 @@ pub async fn complete(
                 }
                 (
                     StorageInteractionEvidence::Login(evidence),
-                    StorageInteractionIssuance::Approval { claim, context },
+                    StorageInteractionIssuance::Approval { claim, context, .. },
                 ) => {
                     let proof = record
                         .lifecycle()

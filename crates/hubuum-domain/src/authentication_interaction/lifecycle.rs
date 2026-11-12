@@ -159,6 +159,9 @@ impl InteractionLifecycle {
         let expires_at = DateTime::from_timestamp_micros(expires_at.timestamp_micros())
             .ok_or(InteractionTransitionError::InvalidLifetime)?;
         let lifetime = expires_at.signed_duration_since(created_at);
+        if binding.return_target().is_some() && mode != InteractionMode::Browser {
+            return Err(InteractionTransitionError::Invalid);
+        }
         if lifetime <= Duration::zero()
             || lifetime > Duration::seconds(MAX_INTERACTION_LIFETIME_SECONDS)
         {
@@ -435,6 +438,14 @@ impl InteractionLifecycle {
             Phase::Ready(proof) | Phase::AwaitingApproval(proof) => Some(proof),
             _ => None,
         }
+    }
+
+    /// Authenticated browser reloads must preserve the approval challenge.
+    pub fn inspect_browser(
+        &mut self,
+        now: DateTime<Utc>,
+    ) -> Result<(), InteractionTransitionError> {
+        self.active(now)
     }
 
     pub fn authentication_claim(&self) -> Option<&InteractionAuthenticationClaim> {

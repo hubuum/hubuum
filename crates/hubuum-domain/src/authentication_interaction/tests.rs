@@ -196,3 +196,13 @@ fn binding_deserialization_rechecks_correlated_provider_and_purpose() {
     .unwrap();
     assert!(serde_json::from_value::<InteractionBinding>(value).is_err());
 }
+
+#[test]
+fn verification_details_cannot_be_attached_to_login_proof() {
+    let proof = VerifiedInteractionSubject::new(binding(), "subject").unwrap();
+    let details = InteractionVerificationDetails::new(true, vec![]).unwrap();
+    assert_eq!(
+        proof.with_verification(Some(details)),
+        Err(InteractionValidationError::InvalidPurpose)
+    );
+}

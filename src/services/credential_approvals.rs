@@ -26,6 +26,15 @@ pub struct CredentialActor {
     token_id: TokenId,
 }
 impl CredentialActor {
+    pub(crate) async fn from_interaction(
+        context: &AppContext,
+        actor: hubuum_domain::InteractionActor,
+    ) -> Result<Self, ApiError> {
+        Ok(Self {
+            user: identity::get_user(context, actor.principal_id().id()).await?,
+            token_id: actor.token_id(),
+        })
+    }
     pub async fn resolve(
         context: &AppContext,
         authenticated: &Authenticated,
@@ -50,7 +59,7 @@ impl CredentialActor {
             self.token_id,
         )
     }
-    async fn claim(
+    pub(crate) async fn claim(
         &self,
         context: &AppContext,
         secret: &CredentialApprovalSecret,
@@ -80,7 +89,7 @@ impl CredentialActor {
         }
         Ok(claim)
     }
-    async fn authorize(
+    pub(crate) async fn authorize(
         &self,
         context: &AppContext,
         operation: &CredentialOperation,
@@ -140,6 +149,16 @@ impl CredentialActor {
         };
         login.validate()
     }
+}
+
+pub(crate) async fn interaction_operation_digest(
+    context: &AppContext,
+    actor: &CredentialActor,
+    operation: &CredentialOperation,
+    secret: &crate::models::auth_interaction::InteractionSecret,
+) -> Result<hubuum_domain::InteractionDigest, ApiError> {
+    let binding = super::security_candidates::approval_binding(context, actor, operation).await?;
+    secret.bind_operation(&serde_json::json!({"operation": operation, "candidate": binding}))
 }
 
 /// Cannot be constructed without checking current authority and binding the
