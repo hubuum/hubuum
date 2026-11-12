@@ -47,11 +47,18 @@ protection or removal permission.
 
 **Breaking return type:** return `HistoryExpiryAdmissionResult` rather than
 `Option<HistoryExpiryManifest>`. It carries optional membership, the examined row
-count and `HistoryExpiryScanProgress`, including when no batch was admitted.
+count, `oversized_source_rows` and `HistoryExpiryScanProgress`, including when no
+batch was admitted.
 Construct it through `request.scan_window(native_boundary)`, `observe`, `advance`
 and `finish`. Count examined rows before closure, scope, identity, visibility or
 dependency filtering. Stop at a byte boundary; defer a row that fits a fresh page,
-but advance past an individually oversized row. PostgreSQL measures only the
+but use `advance_oversized` after observing an individually oversized row. This
+records one explicit outcome and advances once; it does not grant removal or
+create a receipt. A row that fits a fresh input/identity budget must remain
+deferred, even when the current page has insufficient space. For task pages, commit nonzero
+`oversized_source_rows` as a task warning together with its continuation and
+accounting so later eligible rows can progress without hiding deferred sources.
+PostgreSQL measures only the
 bounded prefix and one over-budget row, suppressing its identity metadata before
 transfer. Size/resource qualification remains separate from these encoding bounds.
 
@@ -111,6 +118,8 @@ qualification.
 operation. It removes only one retained exact version under current independently
 protected authority, application quarantine, and positive runtime/publication
 drain. An absent copy is accepted only with its retained first-removal receipt.
+Return `true` only for one actual physical deletion, or `false` for an absent
+copy with its protected first receipt; reject unproved absence and failed fences.
 Reintroduced copies preserve that receipt and its original clock. Recheck policy,
 holds, intervals and dependencies; never widen removal to a derived version.
 Exposure release must reject incomplete receipts or remaining excluded copies.
