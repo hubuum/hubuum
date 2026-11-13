@@ -562,7 +562,7 @@ async fn protected_batch_removes_native_copies_before_protected_completion(
                     + state.computed_history.len()
                     + state.relation_history.values().map(Vec::len).sum::<usize>()
             };
-            for _ in manifest.members() {
+            for (index, _) in manifest.members().iter().enumerate() {
                 let count = copies(&*storage.state.read_control().await);
                 let next = storage
                     .process_history_expiry_task(
@@ -572,6 +572,10 @@ async fn protected_batch_removes_native_copies_before_protected_completion(
                     .await
                     .unwrap();
                 assert!(next.admitted());
+                assert_eq!(
+                    next.needs_receipt_protection(),
+                    index + 1 == manifest.members().len()
+                );
                 assert_eq!(copies(&*storage.state.read_control().await), count - 1);
             }
             let removed = storage.capture_history_lifecycle().await.unwrap();

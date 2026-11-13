@@ -340,7 +340,10 @@ on retry. Ordered receipt lookups preserve the manifest's original traversal
 order without repeated full receipt scans. Fresh independent read-back must cover
 every receipt before a task completes
 its one admitted batch; a later task starts a fresh pass. Failed protection or a
-blocked removal keeps the original batch waiting. Repository acquisition retries
+blocked removal keeps the original batch waiting. The last-copy adapter result
+requests fresh receipt protection without a per-copy task-progress read. This
+transient request is not persisted or completion proof; fresh execution always
+protects the retained batch on entry. Repository acquisition retries
 only contention under the original execution deadline; authentication failures
 remain terminal. Cancellation
 does not undo exclusions, discharge copy obligations or imply physical cleanup.

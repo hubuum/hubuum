@@ -863,6 +863,7 @@ async fn native_protected_batch_removes_exact_copies_and_requires_protected_comp
             let current = test.fixture.storage.capture_history_lifecycle().await?;
             let next = remove(&test, original_protection.clone()).await?;
             assert!(next.admitted());
+            assert_eq!(next.needs_receipt_protection(), index + 1 == manifest.members().len());
             assert_eq!(copy_count(&test, family, member.target()).await, 0);
             if index == 0 {
                 with_transaction(&test.fixture.owner_pool, async |connection| {

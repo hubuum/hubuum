@@ -177,7 +177,13 @@ fn remove_on(
         .pending_member()
         .expect("incomplete intent has pending membership");
     remove_member_on(state, member, checkpoint.batch(), &snapshot, protection)?;
-    Ok(checkpoint.clone())
+    if intent.removals().len() + 1 == intent.manifest().members().len() {
+        checkpoint
+            .request_receipt_protection()
+            .map_err(invalid_contract_value)
+    } else {
+        Ok(checkpoint.clone())
+    }
 }
 
 pub(super) fn has_exact_copy(state: &MemoryState, member: &HistoryExpiryMember) -> bool {

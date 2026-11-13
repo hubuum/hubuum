@@ -10,7 +10,7 @@ use hubuum_storage_core::{
     HistoryExpiryTaskRequest, HistoryExpiryTaskSubmission, HistoryExposureProtection,
     HistoryLifecycleScan, HistoryLifecycleStorage, HistoryPolicyBinding, HistoryPolicyReference,
     LogicalIdentityStorage, StorageIdentitySubject, StorageIdentityTarget,
-    StorageTaskCompletionPayload, StorageTaskWaitRequest, TaskExecutionStorage, TaskQueueStorage,
+    StorageTaskCompletionPayload, StorageTaskWaitRequest, TaskExecutionStorage,
 };
 use hubuum_task_core::TaskExecutionContext;
 
@@ -157,8 +157,7 @@ pub(crate) async fn execute(
                 .encode()
                 .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
             let protected =
-                protection_for_step(context, task, &checkpoint, membership.as_ref(), &execution)
-                    .await;
+                protection_for_step(context, &checkpoint, membership.as_ref(), &execution).await;
             let result = match protected {
                 Ok(protection) => {
                     membership = Some(protection.clone());
@@ -226,41 +225,19 @@ pub(crate) async fn execute(
 
 /// Membership is immutable and independently protected before the first copy.
 /// Native steps still check current policy, holds, dependencies and ownership.
-/// Progress only decides when to request fresh receipt protection: the native
+/// A transient adapter request triggers fresh receipt protection: the native
 /// completion transition remains the authority for accepting that proof.
 async fn protection_for_step(
     context: &AppContext,
-    task: &ClaimedTask,
     checkpoint: &HistoryExpiryTaskCheckpoint,
     membership: Option<&HistoryExposureProtection>,
     execution: &TaskExecutionContext,
 ) -> Result<HistoryExposureProtection, ApiError> {
     let storage = storage_handle(context);
-    if let Some(protection) = membership {
-        let intent = protection
-            .authority()
-            .expiry()
-            .intent(checkpoint.batch())
-            .ok_or_else(|| {
-                ApiError::ServiceUnavailable("Protected expiry membership changed".into())
-            })?;
-        let progress = crate::tasks::history::retry_control(&storage, || async {
-            Ok(storage
-                .get_task_access(task.lease().task_id())
-                .await?
-                .into_parts()
-                .0
-                .progress())
-        })
-        .await?;
-        if progress.total() as usize != intent.manifest().members().len() {
-            return Err(ApiError::ServiceUnavailable(
-                "Expiry progress differs from original membership".into(),
-            ));
-        }
-        if progress.succeeded() < progress.total() {
-            return Ok(protection.clone());
-        }
+    if let Some(protection) = membership
+        && !checkpoint.needs_receipt_protection()
+    {
+        return Ok(protection.clone());
     }
     crate::tasks::history::run(
         &storage,

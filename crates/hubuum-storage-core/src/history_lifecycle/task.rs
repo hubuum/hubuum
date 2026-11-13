@@ -277,12 +277,46 @@ struct CheckpointInput {
 
 /// Validated task/run binding. Unknown formats, changed scope/origin and stale
 /// application images cannot be treated as permission to restart selection.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HistoryExpiryTaskCheckpoint(CheckpointInput);
+#[derive(Clone, Debug)]
+pub struct HistoryExpiryTaskCheckpoint(CheckpointInput, ReceiptProtectionRequest);
+
+#[derive(Clone, Copy, Debug)]
+enum ReceiptProtectionRequest {
+    Unrequested,
+    Requested,
+}
+
+// The transient scheduling request is not part of the retained checkpoint.
+impl PartialEq for HistoryExpiryTaskCheckpoint {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+impl Eq for HistoryExpiryTaskCheckpoint {}
 
 impl HistoryExpiryTaskCheckpoint {
     const FORMAT: &str = "hubuum.history_expiry";
     const VERSION: u32 = 1;
+
+    fn from_input(input: CheckpointInput) -> Self {
+        Self(input, ReceiptProtectionRequest::Unrequested)
+    }
+
+    /// Ask the service to protect receipts before its next native step. This
+    /// transient request is neither serialized nor completion proof. Fresh
+    /// execution always protects the retained batch before using any hint.
+    pub fn request_receipt_protection(&self) -> Result<Self, StorageValidationError> {
+        if !self.admitted() {
+            return Err(invalid(
+                "Only an admitted batch can request receipt protection",
+            ));
+        }
+        Ok(Self(self.0.clone(), ReceiptProtectionRequest::Requested))
+    }
+
+    pub const fn needs_receipt_protection(&self) -> bool {
+        matches!(self.1, ReceiptProtectionRequest::Requested)
+    }
 
     /// Read the stored task's original UUID and request once. Missing or
     /// derived/uncorrelated identity is not permission to invent a new run.
@@ -364,7 +398,7 @@ impl HistoryExpiryTaskCheckpoint {
                 progress: None,
             },
         };
-        Self(CheckpointInput {
+        Self::from_input(CheckpointInput {
             run,
             payload,
             position,
@@ -386,7 +420,7 @@ impl HistoryExpiryTaskCheckpoint {
                 "History expiry checkpoint differs from its original task",
             ));
         }
-        let result = Self(input);
+        let result = Self::from_input(input);
         if let Some(binding) = payload.recovery
             && (result.batch() != binding.batch
                 || matches!(result.0.position, ExpiryPosition::Scanning { .. }))
@@ -507,7 +541,7 @@ impl HistoryExpiryTaskCheckpoint {
                 progress: Some(page.progress().clone()),
             }
         };
-        let next = Self(CheckpointInput {
+        let next = Self::from_input(CheckpointInput {
             position,
             ..self.0.clone()
         });
@@ -614,7 +648,7 @@ impl HistoryExpiryTaskCheckpoint {
                 "History expiry completion lacks independent protection",
             ));
         }
-        Ok(Self(CheckpointInput {
+        Ok(Self::from_input(CheckpointInput {
             position: ExpiryPosition::Completed {
                 batch: self.batch(),
                 removed: intent.removals().len() as u32,

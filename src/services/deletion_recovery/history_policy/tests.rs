@@ -175,9 +175,20 @@ async fn expiry_worker_protects_membership_once_and_receipts_before_completion()
     struct PublicationTrace {
         head: Mutex<Option<PathBuf>>,
         seen: Mutex<Vec<String>>,
+        operations: Mutex<Vec<String>>,
     }
     impl StorageObserver for PublicationTrace {
         fn operation_finished(&self, observation: &StorageObservation) {
+            if matches!(
+                observation.operation(),
+                "process_history_expiry_task" | "get_task_access"
+            ) && self.head.lock().unwrap().is_some()
+            {
+                self.operations
+                    .lock()
+                    .unwrap()
+                    .push(observation.operation().to_owned());
+            }
             if observation.operation() == "process_history_expiry_task"
                 && observation.result() == "ok"
                 && let Some(head) = self.head.lock().unwrap().as_ref()
@@ -290,6 +301,21 @@ async fn expiry_worker_protects_membership_once_and_receipts_before_completion()
                 crate::tasks::qualify_history_expiry_iteration(&fixture.context)
                     .await
                     .unwrap()
+            );
+            let operations = observer.operations.lock().unwrap().clone();
+            let first = operations
+                .iter()
+                .position(|operation| operation == "process_history_expiry_task")
+                .unwrap();
+            let last = operations
+                .iter()
+                .rposition(|operation| operation == "process_history_expiry_task")
+                .unwrap();
+            assert!(
+                operations[first..=last]
+                    .iter()
+                    .all(|operation| operation != "get_task_access"),
+                "Exact-copy steps must not reread advisory task progress: {operations:?}"
             );
             let completed = crate::tasks::history::retry_control(&bound, || async {
                 Ok(bound

@@ -251,6 +251,72 @@ fn restart_keeps_exact_admitted_membership_and_first_clocks() {
 }
 
 #[test]
+fn receipt_protection_request_does_not_change_retained_checkpoint_encoding() {
+    let (checkpoint, _, _) = admitted();
+    let requested = checkpoint.request_receipt_protection().unwrap();
+    assert!(requested.needs_receipt_protection());
+    assert_eq!(requested.encode().unwrap(), checkpoint.encode().unwrap());
+    let decoded = HistoryExpiryTaskCheckpoint::decode(
+        &requested.encode().unwrap(),
+        requested.0.run,
+        &requested.0.payload,
+    )
+    .unwrap();
+    assert_eq!(decoded, requested);
+    assert!(!decoded.needs_receipt_protection());
+}
+
+#[test]
+fn scanning_checkpoint_cannot_request_receipt_protection() {
+    assert!(initial().request_receipt_protection().is_err());
+}
+
+#[rstest]
+#[case::pending_copy(false)]
+#[case::unprotected_receipt(true)]
+fn receipt_protection_request_is_not_completion_proof(#[case] removed: bool) {
+    let (checkpoint, before, manifest) = admitted();
+    let identity = crate::DeletionCheckpointIdentity::new("a".repeat(64)).unwrap();
+    let protection = HistoryExposureProtection::new(
+        before.control().authority().clone(),
+        checkpoint.0.payload.application(),
+        identity.clone(),
+    );
+    let current = if removed {
+        let change = before
+            .control()
+            .record_expiry_removal(
+                manifest.identity(),
+                HistoryExpiryExactDeletion::from_affected_rows(
+                    manifest.members()[0].target(),
+                    identity,
+                    at(210),
+                    1,
+                )
+                .unwrap(),
+                before.fence(),
+            )
+            .unwrap();
+        HistoryLifecycleSnapshot::new(
+            change.next().clone(),
+            before.fence().incarnation(),
+            before.fence().deletion_revision(),
+            at(210),
+        )
+        .unwrap()
+    } else {
+        before
+    };
+    assert!(
+        checkpoint
+            .request_receipt_protection()
+            .unwrap()
+            .complete_batch(&current, &protection)
+            .is_err()
+    );
+}
+
+#[test]
 fn missing_retained_batch_does_not_allow_reselection() {
     let (checkpoint, snapshot, _) = admitted();
     let missing = HistoryLifecycleSnapshot::new(

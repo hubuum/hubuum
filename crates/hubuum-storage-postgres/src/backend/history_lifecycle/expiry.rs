@@ -254,7 +254,13 @@ pub(crate) async fn remove_on(
         false,
     )
     .await?;
-    Ok((checkpoint.clone(), intent.removals().len() as u32 + 1))
+    let removed = intent.removals().len() + 1;
+    let next = if removed == intent.manifest().members().len() {
+        checkpoint.request_receipt_protection()?
+    } else {
+        checkpoint.clone()
+    };
+    Ok((next, removed as u32))
 }
 
 pub(super) async fn reapply_on(

@@ -1081,8 +1081,12 @@ are implemented. These are incompatible SDK and deployment requirements.
 An admitted expiry batch may reuse its original independently authenticated
 membership proof while removing exact copies. Each native transaction still
 checks current policy, holds, dependencies, application and lease ownership.
-Receipt progress is advisory for requesting fresh protection, never completion
-proof: completion must independently protect and validate every retained receipt.
+The adapter's last-copy result calls `request_receipt_protection()` to request
+fresh protection, avoiding a service-side task-progress read for every copy.
+This transient request is not serialized into the checkpoint and never proves
+completion: completion must independently protect and validate every retained
+receipt. Fresh or restarted execution always protects the retained batch on entry,
+so loss of the transient request cannot bypass protection.
 The service keeps the adapter's admitted checkpoint across successful removal
 steps and does not repeat selection or publish a checkpoint for each copy.
 Repository contention may wait only under the original execution context; lock
