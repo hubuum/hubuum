@@ -92,7 +92,9 @@ impl Fixture {
         let secret = digest();
         let access =
             StorageInteractionAccess::new(binding.id(), binding.client().clone(), secret.clone());
-        let now = Utc::now();
+        // Exercise lifecycle normalization even on clocks with microsecond precision.
+        let now = DateTime::from_timestamp_micros(Utc::now().timestamp_micros()).unwrap()
+            + Duration::nanoseconds(789);
         let lifecycle = InteractionLifecycle::try_new(
             binding.clone(),
             InteractionMode::Credentials,
@@ -100,6 +102,7 @@ impl Fixture {
             now + Duration::minutes(5),
         )
         .unwrap();
+        let started_at = lifecycle.created_at();
         let mut create =
             StorageInteractionCreate::builder(lifecycle, secret).provider(self.provider.clone());
         if approval {
@@ -126,7 +129,7 @@ impl Fixture {
             binding,
             access,
             claim,
-            started_at: now,
+            started_at,
         }
     }
     fn authentication(

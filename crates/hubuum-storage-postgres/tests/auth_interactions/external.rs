@@ -1,4 +1,5 @@
 use super::*;
+use chrono::DateTime;
 use hubuum_domain::{
     ExternalAuthenticationContext, ExternalIdentityProfile, ExternalSubject, IdentityScopeName,
     MembershipClaimSource, MembershipClaims, OidcProviderDefinition,
@@ -402,7 +403,9 @@ async fn fresh_approval_and_login_use_consistent_lock_order(#[case] login_subjec
     let secret = interaction_digest();
     let access =
         StorageInteractionAccess::new(binding.id(), binding.client().clone(), secret.clone());
-    let start = Utc::now();
+    // Exercise lifecycle normalization even on clocks with microsecond precision.
+    let start = DateTime::from_timestamp_micros(Utc::now().timestamp_micros()).unwrap()
+        + Duration::nanoseconds(789);
     let lifecycle = InteractionLifecycle::try_new(
         binding.clone(),
         InteractionMode::Credentials,
@@ -410,6 +413,7 @@ async fn fresh_approval_and_login_use_consistent_lock_order(#[case] login_subjec
         start + Duration::minutes(5),
     )
     .unwrap();
+    let start = lifecycle.created_at();
     f.backend
         .create_auth_interaction(
             StorageInteractionCreate::builder(lifecycle, secret)
