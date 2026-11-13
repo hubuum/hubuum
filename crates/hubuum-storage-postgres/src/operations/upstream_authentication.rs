@@ -2,7 +2,7 @@
 //! encrypted credential. No database transaction remains open during OIDC I/O.
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 use chrono::Utc;
-use diesel::sql_types::{BigInt, Integer, Jsonb, Nullable, Uuid as SqlUuid};
+use diesel::sql_types::{BigInt, Integer, Jsonb, Nullable, Text, Uuid as SqlUuid};
 use diesel::{OptionalExtension, QueryableByName, sql_query};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::PrincipalId;
@@ -155,11 +155,13 @@ pub async fn logout_credentials(
         StorageUpstreamRevocation::Sessions(SessionRevocation::Session(id)) => {
             (None, None, Some(id.value()), None)
         }
-        StorageUpstreamRevocation::Provider(binding) => (None, None, None, Some(binding.id())),
+        StorageUpstreamRevocation::Provider(binding) => (None, None, None, Some(binding)),
     };
     runtime.with_read_connection(async move |connection| {
-        let rows = sql_query("SELECT c.document FROM auth_upstream_credentials c JOIN auth_sessions s ON s.id=c.session_id WHERE s.revoked_at IS NULL AND (($1 IS NOT NULL AND c.principal_id=$1) OR ($2 IS NOT NULL AND c.session_id=(SELECT auth_session_id FROM tokens WHERE id=$2)) OR ($3 IS NOT NULL AND c.session_id=$3) OR ($4 IS NOT NULL AND c.provider_id=$4)) ORDER BY c.session_id LIMIT 32")
-            .bind::<Nullable<Integer>,_>(principal).bind::<Nullable<Integer>,_>(token).bind::<Nullable<SqlUuid>,_>(session).bind::<Nullable<SqlUuid>,_>(provider)
+        let rows = sql_query("SELECT c.document FROM auth_upstream_credentials c JOIN auth_sessions s ON s.id=c.session_id WHERE s.revoked_at IS NULL AND (($1 IS NOT NULL AND c.principal_id=$1) OR ($2 IS NOT NULL AND c.session_id=(SELECT auth_session_id FROM tokens WHERE id=$2)) OR ($3 IS NOT NULL AND c.session_id=$3) OR ($4 IS NOT NULL AND c.provider_id=$4 AND c.document->>'namespace'=$5)) ORDER BY c.session_id LIMIT 32")
+            .bind::<Nullable<Integer>,_>(principal).bind::<Nullable<Integer>,_>(token).bind::<Nullable<SqlUuid>,_>(session)
+            .bind::<Nullable<SqlUuid>,_>(provider.as_ref().map(|binding| binding.id()))
+            .bind::<Nullable<Text>,_>(provider.as_ref().map(|binding| binding.namespace()))
             .load::<Row>(connection).await?;
         rows.into_iter().map(decode).collect()
     }).await

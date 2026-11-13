@@ -316,10 +316,14 @@ async fn identity_lookup_requires_the_exact_provider_subject(
 }
 
 #[rstest::rstest]
-#[case::matching(false)]
-#[case::different_provider(true)]
+#[case::matching(false, false)]
+#[case::different_provider(true, false)]
+#[case::different_namespace(false, true)]
 #[tokio::test]
-async fn logout_snapshot_is_scoped_to_the_requested_provider(#[case] other_provider: bool) {
+async fn logout_snapshot_is_scoped_to_the_requested_provider(
+    #[case] other_provider: bool,
+    #[case] other_namespace: bool,
+) {
     let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
     let principal = f.retained_login().await;
     let provider = StorageProviderIdentityBinding::try_new(
@@ -330,7 +334,11 @@ async fn logout_snapshot_is_scoped_to_the_requested_provider(#[case] other_provi
             f.provider.id()
         },
         StorageAuthenticationProviderKind::Oidc,
-        f.definition.issuer().as_str().into(),
+        if other_namespace {
+            "https://other.example/realm".into()
+        } else {
+            f.definition.issuer().as_str().into()
+        },
     )
     .unwrap();
     let records = f
@@ -345,7 +353,7 @@ async fn logout_snapshot_is_scoped_to_the_requested_provider(#[case] other_provi
             .iter()
             .map(|record| record.principal())
             .collect::<Vec<_>>(),
-        if other_provider {
+        if other_provider || other_namespace {
             vec![]
         } else {
             vec![principal]

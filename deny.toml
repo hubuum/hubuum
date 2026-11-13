@@ -12,7 +12,10 @@ version = 2
 yanked = "deny"
 unmaintained = "workspace"
 unused-ignored-advisory = "deny"
-ignore = []
+ignore = [
+  # OIDC verifies public-key signatures only; see docs/supply-chain-security.md.
+  { id = "RUSTSEC-2023-0071", reason = "openidconnect 4.1 requires rsa 0.9; production OIDC never performs RSA private-key operations. Review expires 2027-02-12." },
+]
 
 [licenses]
 confidence-threshold = 0.93

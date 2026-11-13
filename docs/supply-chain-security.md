@@ -35,6 +35,20 @@ An exception has this shape:
 }
 ```
 
+### OIDC public-key verification exception
+
+The OIDC adapter's `openidconnect` 4.1 dependency requires `rsa` 0.9, which is
+covered by [RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071/).
+The advisory concerns timing leakage during RSA private-key operations.
+Production OIDC code only verifies provider signatures using public keys; it
+does not sign or decrypt with RSA private keys. Test-only signing uses a public,
+disposable fixture under `cfg(test)`.
+
+The matching policy exception is owned by `@terjekv` and expires on 2027-02-12.
+It must be removed when `openidconnect` supports the fixed `rsa` 0.10 series,
+or reassessed before adding any production RSA private-key operation. The
+exception does not suppress other RSA advisories or dependency checks.
+
 ## Immutable build inputs
 
 GitHub Actions are pinned to full commit SHAs with their readable release name
