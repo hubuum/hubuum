@@ -186,7 +186,7 @@ pub async fn recover_expired_task_leases(
     batch_size: usize,
 ) -> Result<Vec<TaskRecord>, ApiError> {
     let storage = storage_handle(backend);
-    crate::tasks::history::run(&storage, async {
+    crate::tasks::history::retry_control(&storage, || async {
         storage
             .recover_expired_task_leases(batch_size)
             .await?

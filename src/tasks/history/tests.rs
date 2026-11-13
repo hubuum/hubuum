@@ -6,9 +6,11 @@ use hubuum_storage_core::{
     DeletionControlStorage, HistoryLifecycleStorage, HistoryPolicyApplication,
     HistoryPolicyApplyRequest, HistoryPolicyBinding, HistoryPolicyChange, HistoryPolicyKey,
     HistoryPolicyRevision, HistoryPolicyScope, RuntimeRegistration, StorageIdentityHistoryKind,
-    TaskCapacityStorage,
+    StorageTaskClaimRequest, StorageTaskLeaseDuration, TaskCapacityStorage, TaskExecutionStorage,
+    TaskWorkerId,
 };
 use hubuum_task_core::TaskStopReason;
+use rstest::rstest;
 
 async fn registered() -> (StorageHandle, StorageHandle, RuntimeRegistration) {
     let control = StorageHandle::memory();
@@ -17,8 +19,13 @@ async fn registered() -> (StorageHandle, StorageHandle, RuntimeRegistration) {
     (control, storage, registration)
 }
 
+#[rstest]
+#[case::read(false)]
+#[case::claim(true)]
 #[tokio::test]
-async fn fenced_control_read_retries_with_a_new_owner_and_original_application() {
+async fn fenced_control_operation_retries_with_a_new_owner_and_original_application(
+    #[case] claim: bool,
+) {
     let (control, storage, registration) = registered().await;
     let initial = control.capture_history_lifecycle().await.unwrap();
     let change = initial
@@ -45,6 +52,10 @@ async fn fenced_control_read_retries_with_a_new_owner_and_original_application()
         .unwrap();
     let attempts = Cell::new(0);
     let owners = RefCell::new(Vec::new());
+    let request = StorageTaskClaimRequest::new(
+        TaskWorkerId::generate(),
+        StorageTaskLeaseDuration::from_milliseconds(30_000).unwrap(),
+    );
     retry_control(&storage, || async {
         let scope = storage.current_execution_scope();
         owners
@@ -54,7 +65,11 @@ async fn fenced_control_read_retries_with_a_new_owner_and_original_application()
         if attempts.get() == 1 {
             control.commit_history_lifecycle(change.clone()).await?;
         }
-        storage.task_policy().await?;
+        if claim {
+            storage.claim_next_task(request).await?;
+        } else {
+            storage.task_policy().await?;
+        }
         Ok(())
     })
     .await

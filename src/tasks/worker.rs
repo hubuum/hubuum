@@ -423,7 +423,10 @@ async fn process_admitted_task(
             .expect("validated worker lease"),
     )
     .with_kinds(kinds);
-    let task = match super::history::run(context.backend(), claim_next_task(context, request)).await
+    let task = match super::history::retry_control(context.backend(), || {
+        claim_next_task(context, request)
+    })
+    .await
     {
         Ok(task) => task,
         Err(error) => {

@@ -437,7 +437,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   unavailability under its original execution deadline instead of failing the
   task immediately. Each attempt rechecks authorization; permission denials
   remain terminal.
-- History-aware task execution admission and expiry wait/completion transitions
+- History-aware queue claims, lease recovery, execution admission and expiry
+  wait/completion transitions
   retry atomic control operations fenced by concurrent expiry, retaining the
   original application permit and execution deadline. A new publication follows
   positive settlement of the previous attempt; inherited producers are never
