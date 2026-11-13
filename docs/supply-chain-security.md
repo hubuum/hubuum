@@ -48,6 +48,9 @@ The matching policy exception is owned by `@terjekv` and expires on 2027-02-12.
 It must be removed when `openidconnect` supports the fixed `rsa` 0.10 series,
 or reassessed before adding any production RSA private-key operation. The
 exception does not suppress other RSA advisories or dependency checks.
+The root dependency audit rejects unused exceptions. The standalone fuzz graph
+omits OIDC and reports unused root exceptions as warnings while retaining all
+other advisory, license, source and ban checks.
 
 ## Immutable build inputs
 
