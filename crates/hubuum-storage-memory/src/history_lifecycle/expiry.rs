@@ -174,15 +174,7 @@ fn remove_on(
         ));
     }
     let member = intent
-        .manifest()
-        .members()
-        .iter()
-        .find(|member| {
-            !intent
-                .removals()
-                .iter()
-                .any(|receipt| receipt.target() == member.target())
-        })
+        .pending_member()
         .expect("incomplete intent has pending membership");
     remove_member_on(state, member, checkpoint.batch(), &snapshot, protection)?;
     Ok(checkpoint.clone())

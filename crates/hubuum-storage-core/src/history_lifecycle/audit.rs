@@ -259,11 +259,9 @@ impl HistoryExpiryJournal {
                         ExpiryAuditTransition::Cancelled(cancellation),
                     )?);
                 }
-                for receipt in intent
-                    .removals()
-                    .iter()
-                    .filter(|receipt| old.is_none_or(|old| !old.removals().contains(receipt)))
-                {
+                for receipt in intent.removals().iter().filter(|receipt| {
+                    old.is_none_or(|old| old.receipt(receipt.target()) != Some(receipt))
+                }) {
                     if intent.manifest().members().iter().any(|member| {
                         member.target() == receipt.target()
                             && member

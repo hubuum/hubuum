@@ -42,6 +42,7 @@ pub(super) async fn run_replicas(
     collection: i32,
     token: String,
     replicas: usize,
+    storage: &impl HistoryLifecycleStorage,
 ) -> Vec<Value> {
     let plan = root.join("plan.json");
     std::fs::write(
@@ -60,7 +61,33 @@ pub(super) async fn run_replicas(
     let mut reports = Vec::new();
     for index in 0..replicas {
         let path = report_path(destination, index);
-        await_file(&path).await;
+        let deadline = Instant::now() + Duration::from_secs(1800);
+        let mut next_diagnostic = Instant::now();
+        while !path.is_file() {
+            assert!(
+                Instant::now() < deadline,
+                "Replica did not finish its bounded phase: {}",
+                path.display()
+            );
+            if Instant::now() >= next_diagnostic {
+                let snapshot = storage.capture_history_lifecycle().await.unwrap();
+                let intents = snapshot.control().authority().expiry().intents();
+                eprintln!(
+                    "Qualification progress: replica={index} intents={} members={} receipts={}",
+                    intents.len(),
+                    intents
+                        .iter()
+                        .map(|intent| intent.manifest().members().len())
+                        .sum::<usize>(),
+                    intents
+                        .iter()
+                        .map(|intent| intent.removals().len())
+                        .sum::<usize>(),
+                );
+                next_diagnostic = Instant::now() + Duration::from_secs(60);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
         reports.push(serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap());
     }
     reports

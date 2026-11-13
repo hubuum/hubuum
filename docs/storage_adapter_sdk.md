@@ -1089,6 +1089,12 @@ Repository contention may wait only under the original execution context; lock
 acquisition still authenticates read-back and authentication failures remain
 terminal. Durable waiting remains available when protected progress cannot proceed.
 
+Retained receipt vectors remain canonically ordered by resource and version UUID.
+Use ordered lookups for original receipts and `pending_member()` to select the
+next unreceipted copy in the original manifest traversal order. Manifest member
+order itself is not UUID order. Decoding, recovery coverage and audit deltas must
+still reject foreign, duplicate, reordered or contradictory original receipts.
+
 Finite `task_output` control scopes retain their original full history epoch
 and an adapter-captured `HistoryReadRevision`. The read revision counts policy,
 hold, intent and cancellation decisions, excluding physical-removal receipts

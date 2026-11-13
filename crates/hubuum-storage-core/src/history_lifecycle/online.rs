@@ -1510,6 +1510,132 @@ mod tests {
         encoded["removals"].as_array_mut().unwrap().push(receipt);
         assert!(serde_json::from_value::<HistoryExpiryIntent>(encoded).is_err());
     }
+
+    fn reverse_ordered_intent() -> HistoryExpiryIntent {
+        let snapshot = snapshot();
+        let mut selection = HistoryExpirySelection::new(
+            Uuid::new_v4(),
+            HistoryExpiryOrigin::Manual {
+                principal: PrincipalIdentity::generate(),
+            },
+            HistoryLifecycleScan::new(key(), 32).unwrap(),
+            &snapshot,
+        )
+        .unwrap();
+        for _ in 0..32 {
+            selection
+                .consider(
+                    candidate(Some(HistoryRetentionAnchor::Closed(at(110)))),
+                    HistoryExpiryInputBytes::new(100).unwrap(),
+                    &[],
+                )
+                .unwrap();
+        }
+        let mut manifest = selection.finish().unwrap();
+        manifest.members.sort_by_key(|member| {
+            (
+                *member.target().resource().as_bytes(),
+                *member.target().version().as_bytes(),
+            )
+        });
+        manifest.members.reverse();
+        HistoryExpiryIntent::new(
+            HistoryExpiryManifest::decode(&serde_json::to_vec(&manifest).unwrap()).unwrap(),
+        )
+    }
+
+    fn remove_fixture_member(
+        intent: &HistoryExpiryIntent,
+        index: usize,
+        byte: char,
+    ) -> HistoryExpiryIntent {
+        intent
+            .record_removed(
+                HistoryExpiryExactDeletion::from_affected_rows(
+                    intent.manifest().members()[index].target(),
+                    checkpoint(byte),
+                    at(210),
+                    1,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn sparse_receipts_preserve_unsorted_membership_and_next_original_copy() {
+        let original = reverse_ordered_intent();
+        let retained = [31, 0, 15]
+            .into_iter()
+            .fold(original.clone(), |intent, index| {
+                remove_fixture_member(&intent, index, 'a')
+            });
+        let decoded: HistoryExpiryIntent =
+            serde_json::from_value(serde_json::to_value(&retained).unwrap()).unwrap();
+        assert_eq!(decoded, retained);
+        assert_eq!(
+            decoded.pending_member(),
+            Some(&original.manifest().members()[1])
+        );
+    }
+
+    #[rstest]
+    #[case::missing_receipt("missing")]
+    #[case::different_original_checkpoint("checkpoint")]
+    #[case::different_original_clock("clock")]
+    fn sparse_receipt_coverage_rejects_lost_or_changed_original_facts(#[case] corruption: &str) {
+        let original = reverse_ordered_intent();
+        let required = [0, 15, 31].into_iter().fold(original, |intent, index| {
+            remove_fixture_member(&intent, index, 'a')
+        });
+        let mut encoded = serde_json::to_value(&required).unwrap();
+        match corruption {
+            "missing" => {
+                encoded["removals"].as_array_mut().unwrap().remove(1);
+            }
+            "checkpoint" => {
+                encoded["removals"][1]["checkpoint"] = serde_json::json!(checkpoint('b'))
+            }
+            "clock" => encoded["removals"][1]["removed_at"] = serde_json::json!(at(211)),
+            _ => unreachable!(),
+        }
+        let changed: HistoryExpiryIntent = serde_json::from_value(encoded).unwrap();
+        assert!(!changed.covers(&required));
+    }
+
+    #[test]
+    fn interleaved_receipt_merge_preserves_original_facts_and_completes_membership() {
+        let original = reverse_ordered_intent();
+        let local = (0..32).step_by(2).fold(original.clone(), |intent, index| {
+            remove_fixture_member(&intent, index, 'a')
+        });
+        let required = (1..32).step_by(2).fold(original, |intent, index| {
+            remove_fixture_member(&intent, index, 'b')
+        });
+        let merged = local.merge(&required).unwrap();
+        assert!(merged.covers(&local) && merged.covers(&required));
+        assert!(merged.is_complete());
+        assert!(merged.pending_member().is_none());
+    }
+
+    #[test]
+    fn sparse_receipt_audit_emits_only_the_new_exact_outcome() {
+        let old = [31, 0, 15]
+            .into_iter()
+            .fold(reverse_ordered_intent(), |intent, index| {
+                remove_fixture_member(&intent, index, 'a')
+            });
+        let next = remove_fixture_member(&old, 8, 'b');
+        let events = HistoryExpiryJournal::new(vec![next])
+            .unwrap()
+            .audit_events_since(&HistoryExpiryJournal::new(vec![old]).unwrap())
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].metadata()["lifecycle"]["name"],
+            "lifecycle.erasure.copy_removed"
+        );
+    }
     #[test]
     fn journal_recovery_merges_descendants_without_losing_local_obligations() {
         let intent = intent();

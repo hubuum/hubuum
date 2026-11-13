@@ -431,6 +431,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Gated history expiry uses ordered receipt lookups during exact-copy removal,
+  recovery and audit generation, avoiding repeated full receipt scans across
+  concurrent batches while preserving original membership and outcome facts.
+
 - Gated history expiry reuses independently protected immutable membership during
   exact-copy removal and freshly protects every receipt before completion.
   Repository contention waits under the original task deadline instead of

@@ -1,10 +1,16 @@
 //! Retained exact-version obligations. A receipt describes a committed outcome;
 //! neither these constructors nor cancellation grant physical cleanup authority.
 
+use std::collections::BTreeSet;
+
 use uuid::Uuid;
 
 use super::*;
 use crate::{DeletionCheckpointIdentity, StorageRecordIdentity};
+
+fn target_key(target: StorageRecordIdentity) -> ([u8; 16], [u8; 16]) {
+    (*target.resource().as_bytes(), *target.version().as_bytes())
+}
 
 /// Adapter-validated result of one exact native DELETE, before publishing its
 /// transaction outcome. No serialization or absent-copy path can create this
@@ -105,19 +111,19 @@ impl TryFrom<IntentInput> for HistoryExpiryIntent {
                 "Invalid retained expiry outcome count or cancellation clock",
             ));
         }
+        // Manifest order is retained source traversal order, not UUID order.
+        let members: BTreeSet<_> = value
+            .manifest
+            .members()
+            .iter()
+            .map(|member| target_key(member.target()))
+            .collect();
         let mut previous = None;
         for receipt in &value.removals {
-            let identity = (
-                *receipt.target().resource().as_bytes(),
-                *receipt.target().version().as_bytes(),
-            );
+            let identity = target_key(receipt.target());
             if previous.is_some_and(|old| old >= identity)
                 || receipt.removed_at() < value.manifest.selected_at()
-                || !value
-                    .manifest
-                    .members()
-                    .iter()
-                    .any(|member| member.target() == receipt.target())
+                || !members.contains(&identity)
             {
                 return Err(invalid(
                     "Retained removal changed membership, ordering or original clock",
@@ -152,8 +158,27 @@ impl HistoryExpiryIntent {
     pub fn removals(&self) -> &[HistoryExpiryRemovalReceipt] {
         &self.removals
     }
+    fn receipt_index(&self, target: StorageRecordIdentity) -> Result<usize, usize> {
+        self.removals
+            .binary_search_by_key(&target_key(target), |receipt| target_key(receipt.target()))
+    }
+    pub(super) fn receipt(
+        &self,
+        target: StorageRecordIdentity,
+    ) -> Option<&HistoryExpiryRemovalReceipt> {
+        self.receipt_index(target)
+            .ok()
+            .map(|index| &self.removals[index])
+    }
     pub fn is_complete(&self) -> bool {
         self.removals.len() == self.manifest.members().len()
+    }
+    /// Preserve original traversal order while skipping exact receipted copies.
+    pub fn pending_member(&self) -> Option<&HistoryExpiryMember> {
+        self.manifest
+            .members()
+            .iter()
+            .find(|member| self.receipt(member.target()).is_none())
     }
     pub fn excludes(
         &self,
@@ -207,18 +232,15 @@ impl HistoryExpiryIntent {
             ));
         }
         let mut next = self.clone();
-        if !next.removals.iter().any(|receipt| receipt.target == target) {
-            next.removals.push(HistoryExpiryRemovalReceipt {
-                target,
-                checkpoint,
-                removed_at: at,
-            });
-            next.removals.sort_by_key(|receipt| {
-                (
-                    *receipt.target.resource().as_bytes(),
-                    *receipt.target.version().as_bytes(),
-                )
-            });
+        if let Err(index) = next.receipt_index(target) {
+            next.removals.insert(
+                index,
+                HistoryExpiryRemovalReceipt {
+                    target,
+                    checkpoint,
+                    removed_at: at,
+                },
+            );
         }
         Ok(next)
     }
@@ -231,7 +253,7 @@ impl HistoryExpiryIntent {
             && required
                 .removals
                 .iter()
-                .all(|receipt| self.removals.contains(receipt))
+                .all(|receipt| self.receipt(receipt.target()) == Some(receipt))
     }
     /// Merge compatible descendants without losing newer local outcomes. Two
     /// contradictory original receipts or cancellation facts fail closed.
@@ -240,9 +262,8 @@ impl HistoryExpiryIntent {
             || matches!((&self.cancellation, &required.cancellation), (Some(local), Some(other)) if local != other)
             || self.removals.iter().any(|local| {
                 required
-                    .removals
-                    .iter()
-                    .any(|other| local.target == other.target && local != other)
+                    .receipt(local.target())
+                    .is_some_and(|other| local != other)
             })
         {
             return Err(invalid(
@@ -255,16 +276,10 @@ impl HistoryExpiryIntent {
             .clone()
             .or_else(|| required.cancellation.clone());
         for receipt in &required.removals {
-            if !merged.removals.contains(receipt) {
-                merged.removals.push(receipt.clone());
+            if let Err(index) = merged.receipt_index(receipt.target()) {
+                merged.removals.insert(index, receipt.clone());
             }
         }
-        merged.removals.sort_by_key(|receipt| {
-            (
-                *receipt.target.resource().as_bytes(),
-                *receipt.target.version().as_bytes(),
-            )
-        });
         Ok(merged)
     }
 }

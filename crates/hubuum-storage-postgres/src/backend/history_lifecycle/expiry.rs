@@ -231,33 +231,25 @@ pub(crate) async fn remove_on(
     connection: &mut PostgresConnection,
     checkpoint: &HistoryExpiryTaskCheckpoint,
     protection: &HistoryExposureProtection,
+    snapshot: &HistoryLifecycleSnapshot,
 ) -> Result<(HistoryExpiryTaskCheckpoint, u32), PostgresStorageError> {
     sql_query("SELECT set_config('statement_timeout', CASE WHEN current_setting('statement_timeout')::INTERVAL=INTERVAL '0' THEN '5000' ELSE GREATEST(1,FLOOR(LEAST(EXTRACT(EPOCH FROM current_setting('statement_timeout')::INTERVAL)*1000,5000)))::BIGINT::TEXT END,true)")
         .execute(connection).await?;
-    let snapshot = capture_on(connection).await?;
-    let intent = checkpoint.protected_intent(&snapshot, protection)?;
+    let intent = checkpoint.protected_intent(snapshot, protection)?;
     if intent.is_complete() {
         return checkpoint
-            .complete_batch(&snapshot, protection)
+            .complete_batch(snapshot, protection)
             .map(|next| (next, intent.removals().len() as u32))
             .map_err(Into::into);
     }
     let member = intent
-        .manifest()
-        .members()
-        .iter()
-        .find(|member| {
-            !intent
-                .removals()
-                .iter()
-                .any(|receipt| receipt.target() == member.target())
-        })
+        .pending_member()
         .expect("incomplete intent has pending membership");
     remove_member_on(
         connection,
         member,
         checkpoint.batch(),
-        &snapshot,
+        snapshot,
         protection,
         false,
     )

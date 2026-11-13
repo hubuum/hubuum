@@ -61,7 +61,7 @@ pub(crate) async fn process(
                 let total = checkpoint.retained_manifest(&snapshot)?.members().len() as i32;
                 match request.protection() {
                     Some(protection) => {
-                        let (next, removed) = crate::backend::remove_history_expiry_on(connection, &checkpoint, protection).await?;
+                        let (next, removed) = crate::backend::remove_history_expiry_on(connection, &checkpoint, protection, &snapshot).await?;
                         (next, total, removed, 0, 0)
                     }
                     None if stored.checkpoint().is_none() => {

@@ -264,6 +264,7 @@ async fn measure() {
         slow_consumer.0,
         slow_consumer.1,
         replicas,
+        storage,
     )
     .await;
     let worker_seconds = started.elapsed().as_secs_f64();

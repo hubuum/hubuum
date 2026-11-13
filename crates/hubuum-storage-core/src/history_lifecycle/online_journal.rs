@@ -77,7 +77,10 @@ impl HistoryExpiryJournal {
         &self.0
     }
     pub fn intent(&self, identity: Uuid) -> Option<&HistoryExpiryIntent> {
-        self.0.iter().find(|intent| intent.identity() == identity)
+        self.0
+            .binary_search_by_key(&identity, HistoryExpiryIntent::identity)
+            .ok()
+            .map(|index| &self.0[index])
     }
     pub fn excludes(
         &self,
