@@ -1701,6 +1701,71 @@
         ]
       }
     },
+    "/api/v1/auth/callbacks/{provider_id}": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Get Api V1 Auth Callbacks By Provider Id",
+        "description": "Auto-generated documentation for GET /api/v1/auth/callbacks/{provider_id}.",
+        "operationId": "getApiV1AuthCallbacksByProviderId",
+        "parameters": [
+          {
+            "name": "provider_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "One-use provider correlation state",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code",
+            "in": "query",
+            "description": "Authorization code on success",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "iss",
+            "in": "query",
+            "description": "Exact authorization-response issuer",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "description": "Provider error on denial",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "OIDC identity verified; explicit Hubuum approval is required"
+          },
+          "401": {
+            "description": "Invalid, expired or replayed callback"
+          }
+        }
+      }
+    },
     "/api/v1/auth/interactions": {
       "post": {
         "tags": [
@@ -1970,6 +2035,52 @@
           },
           "401": {
             "description": "Invalid browser binding"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/interactions/browser/{id}/provider": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Post Api V1 Auth Interactions Browser By Id Provider",
+        "description": "Auto-generated documentation for POST /api/v1/auth/interactions/browser/{id}/provider.",
+        "operationId": "postApiV1AuthInteractionsBrowserByIdProvider",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderForm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Continue at the selected identity provider",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid browser binding or request"
           }
         }
       }
@@ -37101,6 +37212,9 @@
           "membership": {
             "$ref": "#/components/schemas/ProviderMembership"
           },
+          "retain_refresh_tokens": {
+            "type": "boolean"
+          },
           "scopes": {
             "type": "array",
             "items": {
@@ -37255,7 +37369,8 @@
         "type": "string",
         "enum": [
           "local",
-          "ldap"
+          "ldap",
+          "oidc"
         ]
       },
       "PatchOperation": {
@@ -38293,6 +38408,18 @@
             }
           }
         ]
+      },
+      "ProviderForm": {
+        "type": "object",
+        "required": [
+          "csrf"
+        ],
+        "properties": {
+          "csrf": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "ProviderMembership": {
         "oneOf": [

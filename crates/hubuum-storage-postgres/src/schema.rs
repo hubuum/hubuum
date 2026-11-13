@@ -32,6 +32,16 @@ diesel::table! {
 }
 
 diesel::table! {
+    auth_upstream_credentials (session_id) {
+        session_id -> Uuid,
+        principal_id -> Int4,
+        provider_id -> Uuid,
+        revision -> Int8,
+        document -> Jsonb,
+    }
+}
+
+diesel::table! {
     authentication_provider_bindings (name) {
         name -> Text,
         provider_id -> Uuid,
@@ -1125,6 +1135,7 @@ diesel::table! {
 }
 
 diesel::joinable!(auth_sessions -> users (principal_id));
+diesel::joinable!(auth_upstream_credentials -> principals (principal_id));
 diesel::joinable!(backup_task_outputs -> tasks (task_id));
 diesel::joinable!(class_computation_state -> hubuumclass (class_id));
 diesel::joinable!(class_computation_state -> tasks (active_task_id));
@@ -1196,6 +1207,7 @@ diesel::joinable!(tokens -> principals (principal_id));
 diesel::allow_tables_to_appear_in_same_query!(
     auth_interactions,
     auth_sessions,
+    auth_upstream_credentials,
     authentication_provider_bindings,
     backup_task_outputs,
     class_computation_state,

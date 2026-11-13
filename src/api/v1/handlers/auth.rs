@@ -13,6 +13,7 @@ use crate::models::auth_session::{SessionLoginRequest, SessionRefreshRequest, Se
 use crate::models::{REDACTED_DEBUG_VALUE, Token, UserID};
 use crate::observability::metrics;
 use crate::permissions::AppContext;
+use crate::services::auth_interactions::oidc;
 use crate::services::auth_sessions;
 use crate::storage::{AuthenticationStorage, storage_handle};
 use actix_web::http::StatusCode;
@@ -175,10 +176,19 @@ pub async fn logout(
 ) -> Result<impl Responder, ApiError> {
     debug!(message = "token logout requested");
 
+    let upstream = oidc::session_revocations(
+        &context,
+        SessionRevocation::Current(requestor.token_meta.id()),
+    )
+    .await;
+
     let result = requestor.token.delete(&context).await;
 
     match result {
-        Ok(_) => Ok(ApiResponse::message("Logout successful.")),
+        Ok(_) => {
+            crate::services::auth_interactions::oidc::revoke_best_effort(upstream, context);
+            Ok(ApiResponse::message("Logout successful."))
+        }
         Err(e) => {
             warn!(message = "Logout failed", error = e.to_string());
             Err(ApiError::InternalServerError(
@@ -210,6 +220,8 @@ pub async fn logout_all(
         user_access.user.id
     );
 
+    let upstream =
+        oidc::principal_revocations(&context, PrincipalId::new(user_access.user.id)?).await;
     let delete_result = storage_handle(&context)
         .revoke_auth_sessions(
             SessionRevocation::All(crate::models::PrincipalID::new(user_access.user.id)?),
@@ -218,7 +230,10 @@ pub async fn logout_all(
         .await;
 
     match delete_result {
-        Ok(_) => Ok(ApiResponse::message("Logout of all sessions successful.")),
+        Ok(_) => {
+            crate::services::auth_interactions::oidc::revoke_best_effort(upstream, context);
+            Ok(ApiResponse::message("Logout of all sessions successful."))
+        }
         Err(e) => {
             warn!(
                 message = "Logout of all tokens failed",
@@ -253,10 +268,20 @@ pub async fn logout_token(
     let token = Token::try_from(token.into_inner().token)?;
     debug!(message = "administrative token logout requested");
 
+    let upstream = match token.authenticate(&context).await {
+        Ok(authenticated) => {
+            oidc::session_revocations(&context, SessionRevocation::Current(authenticated.id()))
+                .await
+        }
+        Err(_) => Vec::new(),
+    };
     let result = token.delete(&context).await;
 
     match result {
-        Ok(_) => Ok(ApiResponse::message("Logout of token successful.")),
+        Ok(_) => {
+            oidc::revoke_best_effort(upstream, context);
+            Ok(ApiResponse::message("Logout of token successful."))
+        }
         Err(e) => {
             warn!(
                 message = "Logout of token failed",
@@ -298,6 +323,12 @@ pub async fn logout_other(
         user_id = user_id.id()
     );
 
+    let upstream = crate::services::auth_interactions::oidc::principal_revocations(
+        &context,
+        PrincipalId::new(user_id.id())?,
+    )
+    .await;
+
     let delete_result = user_id
         .instance(&context)
         .await?
@@ -305,10 +336,13 @@ pub async fn logout_other(
         .await;
 
     match delete_result {
-        Ok(_) => Ok(ApiResponse::message(format!(
-            "Logout of tokens for {} successful.",
-            user_id.id()
-        ))),
+        Ok(_) => {
+            crate::services::auth_interactions::oidc::revoke_best_effort(upstream, context);
+            Ok(ApiResponse::message(format!(
+                "Logout of tokens for {} successful.",
+                user_id.id()
+            )))
+        }
         Err(e) => {
             warn!(
                 message = "Logout of other tokens failed",

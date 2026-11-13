@@ -944,8 +944,10 @@ pub async fn refresh_principal_if_needed(
         .provider(state.identity_scope())
         .is_ok_and(|provider| provider.kind == LDAP_PROVIDER_KIND);
     if !password_provider
-        && crate::services::auth_interactions::external::check_existing_authority(&storage, &state)
-            .await?
+        && crate::services::auth_interactions::external::check_existing_authority(
+            &storage, id, &state,
+        )
+        .await?
     {
         return Ok(());
     }

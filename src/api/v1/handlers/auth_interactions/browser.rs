@@ -42,6 +42,19 @@ pub struct DecisionForm {
     decision: Decision,
 }
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderForm {
+    csrf: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct OidcCallbackQuery {
+    state: String,
+    code: Option<String>,
+    iss: Option<String>,
+    error: Option<String>,
+}
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 enum Decision {
     Approve,
@@ -69,15 +82,9 @@ fn check_request(
     settings: &BrowserSettings,
     mutation: bool,
 ) -> Result<(), ApiError> {
+    check_host(req, settings)?;
     let origin = settings.origin()?;
-    let authority = origin.split_once("://").ok_or(InteractionError::Invalid)?.1;
     if !req.query_string().is_empty()
-        || req.headers().get_all(header::HOST).count() != 1
-        || req
-            .headers()
-            .get(header::HOST)
-            .and_then(|v| v.to_str().ok())
-            != Some(authority)
         || mutation
             && (req.headers().get_all(header::ORIGIN).count() != 1
                 || req
@@ -97,6 +104,23 @@ fn check_request(
         return Err(InteractionError::Invalid.into());
     }
     super::admission::admit(client_ip_for_request(req), false)
+}
+fn check_host(req: &HttpRequest, settings: &BrowserSettings) -> Result<(), ApiError> {
+    let authority = settings
+        .origin()?
+        .split_once("://")
+        .ok_or(InteractionError::Invalid)?
+        .1;
+    if req.headers().get_all(header::HOST).count() != 1
+        || req
+            .headers()
+            .get(header::HOST)
+            .and_then(|value| value.to_str().ok())
+            != Some(authority)
+    {
+        return Err(InteractionError::Invalid.into());
+    }
+    Ok(())
 }
 fn cookie_name(settings: &BrowserSettings, id: Option<InteractionId>) -> String {
     format!(
@@ -229,7 +253,86 @@ pub async fn resume(
         let id = InteractionId::new(*id).map_err(|_| InteractionError::Invalid)?;
         let session = session(&req, &settings, Some(id))?;
         let view = service::inspect(&context, id, &session).await?;
+        if view.authenticated_name().is_none()
+            && crate::services::auth_interactions::oidc::available(&context, view.binding()).await?
+        {
+            return Ok(response(
+                StatusCode::OK,
+                BrowserPage::Provider {
+                    request: RequestDisplay::new(&view),
+                    csrf: session.csrf(),
+                },
+            ));
+        }
         Ok::<_, ApiError>(interaction_page(&view, &session))
+    }
+    .await
+    .unwrap_or_else(failure))
+}
+
+#[utoipa::path(post, path="/api/v1/auth/interactions/browser/{id}/provider", tag="auth", params(("id"=Uuid, Path)), request_body(content=ProviderForm, content_type="application/x-www-form-urlencoded"), responses((status=200, description="Continue at the selected identity provider", body=String, content_type="text/html"), (status=401, description="Invalid browser binding or request")))]
+#[post("/interactions/browser/{id}/provider")]
+pub async fn provider_start(
+    context: AppContext,
+    req: HttpRequest,
+    id: web::Path<Uuid>,
+    form: web::Form<ProviderForm>,
+) -> Result<impl Responder, ApiError> {
+    Ok(async {
+        let settings = service::settings(&context)?;
+        check_request(&req, &settings, true)?;
+        let id = InteractionId::new(*id).map_err(|_| InteractionError::Invalid)?;
+        let session = session(&req, &settings, Some(id))?;
+        session.validate_csrf(&form.csrf)?;
+        let url = crate::services::auth_interactions::oidc::start(&context, id, &session).await?;
+        Ok::<_, ApiError>(response(
+            StatusCode::OK,
+            BrowserPage::ProviderRedirect { url: &url },
+        ))
+    }
+    .await
+    .unwrap_or_else(failure))
+}
+
+#[utoipa::path(get, path="/api/v1/auth/callbacks/{provider_id}", tag="auth", params(
+    ("provider_id"=Uuid, Path),
+    ("state"=String, Query, description="One-use provider correlation state"),
+    ("code"=Option<String>, Query, description="Authorization code on success"),
+    ("iss"=Option<String>, Query, description="Exact authorization-response issuer"),
+    ("error"=Option<String>, Query, description="Provider error on denial")
+), responses((status=303, description="OIDC identity verified; explicit Hubuum approval is required"), (status=401, description="Invalid, expired or replayed callback")))]
+#[get("/callbacks/{provider_id}")]
+pub async fn oidc_callback(
+    context: AppContext,
+    req: HttpRequest,
+    provider_id: web::Path<Uuid>,
+    query: web::Query<OidcCallbackQuery>,
+) -> Result<impl Responder, ApiError> {
+    Ok(async {
+        let settings = service::settings(&context)?;
+        check_host(&req, &settings)?;
+        super::admission::admit(client_ip_for_request(&req), true)?;
+        if req.query_string().len() > 8192 {
+            return Err(InteractionError::Invalid.into());
+        }
+        let id = crate::services::auth_interactions::oidc::callback_id(&query.state)?;
+        let session = session(&req, &settings, Some(id))?;
+        let (id, rotated) = crate::services::auth_interactions::oidc::callback(
+            &context,
+            crate::services::auth_interactions::oidc::Callback {
+                provider: *provider_id,
+                state: &query.state,
+                issuer: query.iss.as_deref(),
+                code: query.code.as_deref(),
+                error: query.error.as_deref(),
+            },
+            &session,
+        )
+        .await?;
+        with_cookie(
+            redirect(format!("{ENTRY}/{}", id.value())),
+            cookie(&settings, Some(id), &rotated),
+        )
     }
     .await
     .unwrap_or_else(failure))
@@ -301,6 +404,8 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(entry)
         .service(attach)
         .service(resume)
+        .service(provider_start)
+        .service(oidc_callback)
         .service(credentials)
         .service(decide);
 }

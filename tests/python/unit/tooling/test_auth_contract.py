@@ -244,12 +244,12 @@ class AuthenticationContractTests(unittest.TestCase):
         }
         self.assertFalse(required - identifiers, required - identifiers)
 
-    def test_live_routes_include_hosted_password_interactions(self):
+    def test_live_routes_include_hosted_password_and_oidc_interactions(self):
         current = load_json(ROOT / "docs/openapi.json")
         self.assertIn("proposed", self.spec["info"]["version"])
         self.assertEqual(self.fixtures["status"], "proposed")
-        # #574 delivers configuration candidates; #575 now includes hosted
-        # password forms. External provider callback routes remain proposed.
+        # #574 delivers candidates, #575 hosted password forms and #577 OIDC
+        # query callbacks. Other provider profiles remain proposed.
         self.assertEqual(self.spec["paths"].keys() & current["paths"].keys(), {
             "/api/v1/admin/runtime-settings/security-candidates",
             "/api/v1/admin/runtime-settings/security-candidates/{id}",
@@ -257,6 +257,7 @@ class AuthenticationContractTests(unittest.TestCase):
             "/api/v1/auth/methods",
             "/api/v1/auth/interactions",
             "/api/v1/auth/interactions/browser",
+            "/api/v1/auth/callbacks/{provider_id}",
             "/api/v1/auth/interactions/{id}/credentials",
             "/api/v1/auth/interactions/{id}/status",
             "/api/v1/auth/interactions/{id}/complete",

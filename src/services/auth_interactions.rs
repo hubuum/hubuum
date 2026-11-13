@@ -1,6 +1,7 @@
 //! Resolve current provider authority and orchestrate secret-protected interactions.
 pub mod browser;
 pub mod external;
+pub mod oidc;
 use std::net::IpAddr;
 
 use chrono::{Duration, Utc};
@@ -56,10 +57,35 @@ async fn providers(
         .record(StorageRuntimeSettingsGroup::Authentication)
         .revision();
     let configured = crate::auth::interaction_password_providers(revision)?;
-    Ok((
-        revision,
-        resolve_password_providers(&storage, configured).await?,
-    ))
+    let mut providers = resolve_password_providers(&storage, configured).await?;
+    if let Some(configuration) = snapshot.authentication() {
+        for provider in configuration.providers().iter().filter(|provider| {
+            provider.enabled()
+                && provider.kind() == hubuum_storage_core::StorageAuthenticationProviderKind::Oidc
+        }) {
+            let binding = StorageProviderIdentityBinding::from_provider(provider)
+                .map_err(|_| InteractionError::ProviderUnavailable)?;
+            let scope = IdentityScopeName::new(provider.name())
+                .map_err(|_| InteractionError::ProviderUnavailable)?;
+            if storage
+                .authentication_provider_binding(scope.clone())
+                .await
+                .map_err(storage_error)?
+                .as_ref()
+                != Some(&binding)
+            {
+                return Err(InteractionError::ProviderUnavailable.into());
+            }
+            providers.push(PasswordProvider {
+                id: InteractionProviderId::external(binding.id())
+                    .map_err(|_| InteractionError::ProviderUnavailable)?,
+                scope,
+                kind: PasswordProviderKind::Oidc,
+                binding: Some(binding),
+            });
+        }
+    }
+    Ok((revision, providers))
 }
 
 async fn resolve_password_providers(
@@ -122,7 +148,11 @@ pub async fn methods(context: &AppContext) -> Result<AuthenticationMethods, ApiE
                 provider_id: provider.id,
                 name: provider.scope.as_str().to_owned(),
                 kind: provider.kind,
-                interaction: PasswordInteractionMode::Credentials,
+                interaction: if provider.kind == PasswordProviderKind::Oidc {
+                    PasswordInteractionMode::Browser
+                } else {
+                    PasswordInteractionMode::Credentials
+                },
                 fresh_authentication: true,
                 browser_available,
             })
@@ -208,7 +238,13 @@ pub async fn begin(
                 id: input.provider_id,
                 scope: IdentityScopeName::new(provider.name())
                     .map_err(|_| InteractionError::Invalid)?,
-                kind: PasswordProviderKind::Ldap,
+                kind: if provider.kind()
+                    == hubuum_storage_core::StorageAuthenticationProviderKind::Oidc
+                {
+                    PasswordProviderKind::Oidc
+                } else {
+                    PasswordProviderKind::Ldap
+                },
                 binding: Some(provider),
             },
         ));
@@ -238,6 +274,7 @@ pub async fn begin(
     };
     let browser_settings = browser::settings(context)?;
     let browser_mode = input.interaction_mode == PasswordInteractionMode::Browser
+        || provider.kind == PasswordProviderKind::Oidc
         || input.delivery == InteractionDelivery::Bff;
     if browser_mode {
         browser_settings.origin()?;

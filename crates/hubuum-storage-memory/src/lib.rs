@@ -388,6 +388,7 @@ struct MemoryState {
     tokens: BTreeMap<i32, MemoryTokenRecord>,
     sessions: BTreeMap<Uuid, auth_sessions::MemorySession>,
     auth_interactions: BTreeMap<Uuid, hubuum_storage_core::StorageInteractionRecord>,
+    upstream_sessions: BTreeMap<Uuid, hubuum_storage_core::StorageUpstreamSession>,
     credential_activity:
         BTreeMap<credential_activity::ActivityOwner, credential_activity::MemoryActivity>,
     credential_approvals:

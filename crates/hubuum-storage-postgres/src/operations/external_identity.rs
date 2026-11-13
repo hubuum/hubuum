@@ -21,10 +21,45 @@ use hubuum_storage_core::{
 use serde_json::json;
 
 use crate::operations::event_record::append_event;
-use crate::schema::{identity_scopes, principals};
+use crate::schema::{authentication_provider_bindings, identity_scopes, principals};
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
 const HUMAN_PRINCIPAL_KIND: &str = "human";
+
+pub async fn find_external_identity(
+    runtime: &PostgresRuntime,
+    identity: hubuum_domain::ExternalIdentity,
+) -> Result<Option<PrincipalId>, PostgresStorageError> {
+    let id = runtime
+        .with_read_connection(async move |connection| {
+            principals::table
+                .inner_join(identity_scopes::table)
+                .inner_join(
+                    authentication_provider_bindings::table
+                        .on(authentication_provider_bindings::name.eq(identity_scopes::name)),
+                )
+                .filter(
+                    authentication_provider_bindings::provider_id.eq(identity
+                        .provider()
+                        .external_id()
+                        .expect("external identity provider")),
+                )
+                .filter(authentication_provider_bindings::kind.eq(identity.provider_kind()))
+                .filter(authentication_provider_bindings::namespace.eq(identity.namespace()))
+                .filter(identity_scopes::name.eq(identity.scope().as_str()))
+                .filter(identity_scopes::provider_kind.eq(identity.provider_kind()))
+                .filter(principals::kind.eq(HUMAN_PRINCIPAL_KIND))
+                .filter(principals::provider_managed.eq(true))
+                .filter(principals::external_subject.eq(identity.subject().as_str()))
+                .select(principals::id)
+                .first::<i32>(connection)
+                .await
+                .optional()
+        })
+        .await?;
+    id.map(|id| PrincipalId::new(id).map_err(Into::into))
+        .transpose()
+}
 const REJECTED_EXTERNAL_PASSWORD: &str = "!external-identity-rejected-no-login";
 const DATABASE_UTC_NOW_QUERY: &str = "SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now";
 
@@ -183,52 +218,71 @@ pub async fn record_external_sync_failure(
     validate_positive_id(principal_id, "principal id")?;
     runtime
         .with_transaction(async move |connection| {
-            // Lock before invalidating login evidence or revoking tokens, in the same
-            // order as token issuance and successful external synchronization.
-            let (managed, scope_id) = crate::schema::principals::table
-                .find(principal_id)
-                .for_update()
-                .select((principals::provider_managed, principals::identity_scope_id))
-                .first::<(bool, i32)>(connection)
-                .await?;
-            if !managed {
-                return Ok(());
-            }
-            let provider_kind = identity_scopes::table
-                .find(scope_id)
-                .select(identity_scopes::provider_kind)
-                .first::<String>(connection)
-                .await?;
-            // Browser observations use the application clock. Sample after the
-            // principal lock: PostgreSQL's transaction-start clock can predate
-            // callbacks verified while this rejection was waiting for the lock.
-            let attempted_at = if matches!(provider_kind.as_str(), "oidc" | "oauth") {
-                Utc::now().naive_utc()
-            } else {
-                database_now(connection).await?
-            };
-            diesel::update(crate::schema::principals::table.find(principal_id))
-                .set(crate::schema::principals::last_sync_attempted_at.eq(attempted_at))
-                .execute(connection)
-                .await?;
-            if failure == StorageExternalSyncFailure::Rejected {
-                // A timestamp-only user update is suppressed by the revision trigger.
-                // This non-authenticating marker advances the credential snapshot;
-                // successful synchronization clears it without reviving older logins.
-                diesel::update(crate::schema::users::table.find(principal_id))
-                    .set(crate::schema::users::password.eq(Some(REJECTED_EXTERNAL_PASSWORD)))
-                    .execute(connection)
-                    .await?;
-                diesel::update(crate::schema::principals::table.find(principal_id))
-                    .set(crate::schema::principals::last_sync_success_at.eq(None::<NaiveDateTime>))
-                    .execute(connection)
-                    .await?;
-                super::token::revoke_all_principal_tokens_on_connection(connection, principal_id)
-                    .await?;
-            }
-            Ok::<_, PostgresStorageError>(())
+            failure_on_connection(connection, principal_id, failure).await
         })
         .await
+}
+
+pub(super) async fn sync_success_on_connection(
+    connection: &mut PostgresConnection,
+    principal: PrincipalId,
+) -> Result<Option<DateTime<Utc>>, PostgresStorageError> {
+    Ok(principals::table
+        .find(principal.id())
+        .select(principals::last_sync_success_at)
+        .first::<Option<NaiveDateTime>>(connection)
+        .await?
+        .map(|at| at.and_utc()))
+}
+
+pub(super) async fn failure_on_connection(
+    connection: &mut PostgresConnection,
+    principal_id: i32,
+    failure: StorageExternalSyncFailure,
+) -> Result<(), PostgresStorageError> {
+    // Lock before invalidating login evidence or revoking tokens, in the same
+    // order as token issuance and successful external synchronization.
+    let (managed, scope_id) = crate::schema::principals::table
+        .find(principal_id)
+        .for_update()
+        .select((principals::provider_managed, principals::identity_scope_id))
+        .first::<(bool, i32)>(connection)
+        .await?;
+    if !managed {
+        return Ok(());
+    }
+    let provider_kind = identity_scopes::table
+        .find(scope_id)
+        .select(identity_scopes::provider_kind)
+        .first::<String>(connection)
+        .await?;
+    // Browser observations use the application clock. Sample after the
+    // principal lock: PostgreSQL's transaction-start clock can predate
+    // callbacks verified while this rejection was waiting for the lock.
+    let attempted_at = if matches!(provider_kind.as_str(), "oidc" | "oauth") {
+        Utc::now().naive_utc()
+    } else {
+        database_now(connection).await?
+    };
+    diesel::update(crate::schema::principals::table.find(principal_id))
+        .set(crate::schema::principals::last_sync_attempted_at.eq(attempted_at))
+        .execute(connection)
+        .await?;
+    if failure == StorageExternalSyncFailure::Rejected {
+        // A timestamp-only user update is suppressed by the revision trigger.
+        // This non-authenticating marker advances the credential snapshot;
+        // successful synchronization clears it without reviving older logins.
+        diesel::update(crate::schema::users::table.find(principal_id))
+            .set(crate::schema::users::password.eq(Some(REJECTED_EXTERNAL_PASSWORD)))
+            .execute(connection)
+            .await?;
+        diesel::update(crate::schema::principals::table.find(principal_id))
+            .set(crate::schema::principals::last_sync_success_at.eq(None::<NaiveDateTime>))
+            .execute(connection)
+            .await?;
+        super::token::revoke_all_principal_tokens_on_connection(connection, principal_id).await?;
+    }
+    Ok(())
 }
 
 pub async fn sync_external_user(

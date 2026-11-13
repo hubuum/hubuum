@@ -84,15 +84,13 @@ connection and operation timeouts cannot exceed 30 seconds; each verification
 has an overall 30-second deadline. DNS is screened on every connection and the
 screened socket is pinned while LDAP verifies TLS against the original hostname.
 
-OIDC and OAuth definitions are validated and may be stored disabled. Their live
-activation remains blocked until the later provider/interaction implementation
-can produce a real browser sign-in proof. Connectivity alone cannot enable them.
-The accepted browser contract and fixtures remain in [authentication](authentication/contract.md).
-Hosted local/LDAP interactions are available through the shared
-[interaction API](authentication_interactions.md), including candidate verification
-when the selected LDAP provider has the final pending identity check. For several
-enabled LDAP providers, verify the other providers through `verify-ldap` first.
-
+OIDC candidates use a real browser sign-in through the shared interaction API,
+with the same PKCE, nonce, state, issuer, signature and browser checks as live
+login. The test previews admission and mapped groups without provisioning or
+issuing a session. See [Keycloak setup](authentication/keycloak.md). OAuth
+activation remains unavailable until its provider adapter is implemented.
+Hosted local/LDAP interactions remain available through the
+[interaction API](authentication_interactions.md).
 Browser credentials use `keep`, `reference`, `replace` or `clear` actions.
 References resolve in consumer-specific namespaces:
 

@@ -1,6 +1,7 @@
 use super::super::*;
 use hubuum_domain::{InteractionBrowserBinding, InteractionDigest};
 use hubuum_storage_core::StorageExternalSyncFailure;
+use hubuum_storage_core::StorageUpstreamRevocation;
 use hubuum_storage_core::{
     CredentialActivityPolicy, ObservedSource, StorageActivityQuery, StorageCredentialActivity,
     StorageCredentialCreation,
@@ -426,6 +427,48 @@ impl ServiceAccountStorage for PostgresStorage {
 
 #[async_trait]
 impl ExternalIdentityStorage for PostgresStorage {
+    async fn fail_upstream_renewal(
+        &self,
+        claim: hubuum_storage_core::StorageUpstreamClaim,
+        failure: StorageExternalSyncFailure,
+    ) -> Result<(), StorageError> {
+        crate::operations::upstream_authentication::fail(self.runtime(), claim, failure)
+            .await
+            .map_err(StorageError::from)
+    }
+    async fn claim_upstream_credential(
+        &self,
+        principal: PrincipalId,
+    ) -> Result<hubuum_storage_core::StorageUpstreamClaimOutcome, StorageError> {
+        crate::operations::upstream_authentication::claim(self.runtime(), principal)
+            .await
+            .map_err(StorageError::from)
+    }
+    async fn finish_upstream_renewal(
+        &self,
+        request: hubuum_storage_core::StorageUpstreamRenewal,
+    ) -> Result<(), StorageError> {
+        crate::operations::upstream_authentication::finish(self.runtime(), request)
+            .await
+            .map_err(StorageError::from)
+    }
+    async fn upstream_logout_credentials(
+        &self,
+        target: StorageUpstreamRevocation,
+    ) -> Result<Vec<hubuum_storage_core::StorageUpstreamSession>, StorageError> {
+        crate::operations::upstream_authentication::logout_credentials(self.runtime(), target)
+            .await
+            .map_err(StorageError::from)
+    }
+    async fn find_external_identity(
+        &self,
+        identity: hubuum_domain::ExternalIdentity,
+    ) -> Result<Option<PrincipalId>, StorageError> {
+        crate::operations::external_identity::find_external_identity(self.runtime(), identity)
+            .await
+            .map_err(StorageError::from)
+    }
+
     async fn get_external_principal_state(
         &self,
         principal_id: PrincipalId,

@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_storage_core::StorageUpstreamSession;
 use hubuum_storage_core::{
     MAX_ACTIVE_AUTH_INTERACTIONS, MAX_ACTIVE_AUTH_INTERACTIONS_PER_ACTOR,
     MAX_ACTIVE_AUTH_INTERACTIONS_PER_CLIENT, MAX_AUTH_INTERACTIONS, StorageInteractionAccess,
@@ -269,6 +270,9 @@ impl MemoryState {
                 let admitted = authentication
                     .admit(existing.map(|principal| principal.id()))
                     .map_err(|_| invalid())?;
+                record
+                    .retain_upstream(authentication)
+                    .map_err(|_| invalid())?;
                 let user = self
                     .sync_external_user(
                         admitted.synchronization(),
@@ -372,6 +376,17 @@ impl MemoryState {
                     evidence.event_context(context),
                 ))?;
                 let id = session.clone().into_value().session_id().value();
+                if let Some(retained) = record.take_retained() {
+                    self.upstream_sessions.insert(
+                        id,
+                        StorageUpstreamSession::try_new(
+                            AuthSessionId::new(id),
+                            evidence.subject().principal_id(),
+                            retained,
+                        )
+                        .map_err(invalid_contract_value)?,
+                    );
+                }
                 (
                     StorageInteractionCompletion::Session(session),
                     InteractionIssuedResult::Session(id),

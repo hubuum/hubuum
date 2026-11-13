@@ -54,6 +54,13 @@
       "reason": "Older replicas do not clear durable authentication interactions during security recovery or logical restore. Interaction authority and issuance require matching binaries everywhere.",
       "upgrade_action": "Stop all API and worker replicas, back up the database, apply migrations and role grants, then restart matching binaries. Restore the pre-upgrade snapshot before downgrading. External Rust adapters must implement the SDK 0.9 interaction contract. See docs/authentication_interactions.md#upgrade-and-recovery.",
       "drop_constraints": {}
+    },
+    {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-11-13-000001_oidc_credentials/up.sql",
+      "sha256": "2a08904fb6e1f5f5aadeed499b3fd6006212a1b0b5fd939b6faf357a6a0c9226",
+      "reason": "Older replicas cannot deserialize retained OIDC interaction state or enforce encrypted upstream credential invalidation during restore and recovery.",
+      "upgrade_action": "Stop all API and worker replicas, back up the database, apply migrations and role grants, then start matching binaries. Upgrade external adapters to SDK 0.11 and begin fresh interactions. Restore the pre-upgrade snapshot before downgrading. See docs/authentication/keycloak.md#upgrade-and-recovery.",
+      "drop_constraints": {}
     }
   ]
 }

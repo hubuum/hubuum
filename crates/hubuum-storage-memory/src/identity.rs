@@ -1,5 +1,12 @@
 use super::*;
+use hubuum_domain::ExternalIdentity;
+use hubuum_storage_core::StorageExternalInteractionAuthentication;
 use hubuum_storage_core::StorageExternalSyncFailure;
+use hubuum_storage_core::StorageUpstreamClaim;
+use hubuum_storage_core::StorageUpstreamClaimOutcome;
+use hubuum_storage_core::StorageUpstreamRenewal;
+use hubuum_storage_core::StorageUpstreamRevocation;
+use hubuum_storage_core::StorageUpstreamSession;
 use hubuum_storage_core::{StorageAuthorizationResource, StorageAuthorizationResourcesQuery};
 use hubuum_storage_core::{
     StorageInteractionAccess, StorageInteractionCommand, StorageInteractionComplete,
@@ -983,6 +990,193 @@ impl ServiceAccountStorage for MemoryStorage {
 
 #[async_trait]
 impl ExternalIdentityStorage for MemoryStorage {
+    async fn fail_upstream_renewal(
+        &self,
+        claim: StorageUpstreamClaim,
+        failure: StorageExternalSyncFailure,
+    ) -> Result<(), StorageError> {
+        let mut live = self.state.write().await;
+        let mut state = live.clone();
+        let original = claim.session();
+        let record = state
+            .upstream_sessions
+            .get(&original.session().value())
+            .ok_or_else(|| StorageError::authentication_required("Upstream session changed"))?;
+        if !state.upstream_eligible(record, Utc::now())
+            || !record.accepts(&claim, Utc::now())
+            || state
+                .users
+                .get(&original.principal().id())
+                .is_some_and(|user| {
+                    user.last_sync_success_at
+                        .is_some_and(|at| at > claim.started_at())
+                })
+        {
+            return Err(StorageError::authentication_required(
+                "Upstream session changed",
+            ));
+        }
+        state.upstream_sessions.remove(&original.session().value());
+        state.external_sync_failure(original.principal(), failure)?;
+        *live = state;
+        Ok(())
+    }
+    async fn claim_upstream_credential(
+        &self,
+        principal: PrincipalId,
+    ) -> Result<StorageUpstreamClaimOutcome, StorageError> {
+        let mut state = self.state.write().await;
+        let now = Utc::now();
+        let selected = state
+            .upstream_sessions
+            .iter()
+            .filter(|(_, record)| {
+                record.principal() == principal && state.upstream_eligible(record, now)
+            })
+            .max_by_key(|(id, _)| (state.sessions.get(id).map(|session| session.absolute), **id))
+            .map(|(id, _)| *id);
+        let Some(id) = selected else {
+            return Ok(StorageUpstreamClaimOutcome::Unavailable);
+        };
+        Ok(state
+            .upstream_sessions
+            .get_mut(&id)
+            .expect("selected session")
+            .claim(now))
+    }
+    async fn finish_upstream_renewal(
+        &self,
+        request: StorageUpstreamRenewal,
+    ) -> Result<(), StorageError> {
+        let mut live = self.state.write().await;
+        let mut state = live.clone();
+        let original = request.claim().session();
+        let mut record = state
+            .upstream_sessions
+            .get(&original.session().value())
+            .cloned()
+            .ok_or_else(|| StorageError::authentication_required("Upstream session changed"))?;
+        if !state.upstream_eligible(&record, Utc::now()) {
+            return Err(StorageError::authentication_required(
+                "Upstream session changed",
+            ));
+        }
+        record
+            .renewed(
+                request.claim(),
+                request.proof(),
+                request.credential().cloned(),
+                Utc::now(),
+            )
+            .map_err(invalid_contract_value)?;
+        let current = state
+            .users
+            .get(&original.principal().id())
+            .ok_or_else(|| StorageError::authentication_required("Upstream principal changed"))?;
+        if current.external_subject.as_deref()
+            != Some(request.proof().identity().subject().as_str())
+            || current
+                .last_sync_success_at
+                .is_some_and(|at| at > request.proof().verified_at())
+        {
+            return Err(StorageError::authentication_required(
+                "Upstream identity changed",
+            ));
+        }
+        let authentication =
+            StorageExternalInteractionAuthentication::Login(request.proof().clone());
+        let admitted = authentication
+            .admit(Some(original.principal()))
+            .map_err(invalid_contract_value)?;
+        let user = state
+            .sync_external_user(
+                admitted.synchronization(),
+                request.proof().memberships().provider_groups().is_none(),
+                Some(request.proof().verified_at()),
+            )?
+            .into_value();
+        if user.id().id() != original.principal().id() {
+            return Err(StorageError::authentication_required(
+                "Upstream identity changed",
+            ));
+        }
+        state
+            .upstream_sessions
+            .insert(record.session().value(), record);
+        *live = state;
+        Ok(())
+    }
+    async fn upstream_logout_credentials(
+        &self,
+        target: StorageUpstreamRevocation,
+    ) -> Result<Vec<StorageUpstreamSession>, StorageError> {
+        let state = self.state.read().await;
+        Ok(state
+            .upstream_sessions
+            .values()
+            .filter(|record| {
+                state
+                    .sessions
+                    .get(&record.session().value())
+                    .is_some_and(|session| !session.revoked)
+                    && match &target {
+                        StorageUpstreamRevocation::Sessions(SessionRevocation::All(id)) => {
+                            record.principal() == *id
+                        }
+                        StorageUpstreamRevocation::Sessions(SessionRevocation::Session(id)) => {
+                            record.session() == *id
+                        }
+                        StorageUpstreamRevocation::Sessions(SessionRevocation::Current(id)) => {
+                            state.session_for_token(*id) == Some(record.session().value())
+                        }
+                        StorageUpstreamRevocation::Provider(provider) => {
+                            record.binding().provider().external_id() == Some(provider.id())
+                                && record.namespace() == provider.namespace()
+                        }
+                    }
+            })
+            .take(32)
+            .cloned()
+            .collect())
+    }
+
+    async fn find_external_identity(
+        &self,
+        identity: ExternalIdentity,
+    ) -> Result<Option<PrincipalId>, StorageError> {
+        let state = self.state.read().await;
+        if !state
+            .runtime_settings
+            .provider_binding(identity.scope().as_str())
+            .is_some_and(|provider| {
+                Some(provider.id()) == identity.provider().external_id()
+                    && provider.kind().as_str() == identity.provider_kind()
+                    && provider.namespace() == identity.namespace()
+            })
+        {
+            return Ok(None);
+        }
+        let scope = state.identity_scopes.values().find(|scope| {
+            scope.name() == identity.scope().as_str()
+                && scope.provider_kind() == identity.provider_kind()
+        });
+        let Some(scope) = scope else {
+            return Ok(None);
+        };
+        state
+            .users
+            .iter()
+            .find(|(_, record)| {
+                record.identity_scope_id == scope.id()
+                    && record.provider_managed
+                    && record.external_subject.as_deref() == Some(identity.subject().as_str())
+            })
+            .map(|(id, _)| {
+                PrincipalId::new(*id).map_err(|error| StorageError::internal(error.to_string()))
+            })
+            .transpose()
+    }
+
     async fn get_external_principal_state(
         &self,
         principal_id: PrincipalId,
@@ -1019,90 +1213,7 @@ impl ExternalIdentityStorage for MemoryStorage {
     ) -> Result<(), StorageError> {
         let mut live = self.state.write().await;
         let mut state = live.clone();
-        let current = state
-            .users
-            .get(&principal_id.id())
-            .cloned()
-            .ok_or_else(|| {
-                StorageError::not_found(format!("Principal {} was not found", principal_id.id()))
-            })?;
-        if !current.provider_managed {
-            return Ok(());
-        }
-        let now = Utc::now();
-        if failure == StorageExternalSyncFailure::Rejected {
-            // Match PostgreSQL's non-authenticating rejection marker. Clearing it
-            // during recovery advances the snapshot instead of reviving old logins.
-            let parts = current.user.into_parts();
-            let record = state
-                .users
-                .get_mut(&principal_id.id())
-                .expect("external user exists");
-            record.user = StorageUser::try_new(
-                parts.id(),
-                Some("!external-identity-rejected-no-login".into()),
-                parts.proper_name().map(ToOwned::to_owned),
-                parts.email().map(ToOwned::to_owned),
-                parts.created_at(),
-                now,
-                parts.anonymized_at(),
-            )
-            .map_err(invalid_contract_value)?;
-            record.last_sync_success_at = None;
-            state.invalidate_principal_sessions(principal_id.id());
-            for token in state
-                .tokens
-                .values_mut()
-                .filter(|token| token.principal_id == principal_id)
-            {
-                if token.revoked_at.is_none() {
-                    token.revision = token
-                        .revision
-                        .checked_advance()
-                        .map_err(|error| StorageError::internal(error.to_string()))?;
-                    token.revoked_at = Some(now);
-                }
-            }
-        }
-        state
-            .users
-            .get_mut(&principal_id.id())
-            .expect("external user exists")
-            .last_sync_attempted_at = Some(now);
-        let principal = state
-            .principals
-            .get(&principal_id.id())
-            .cloned()
-            .ok_or_else(|| StorageError::internal("external principal is missing"))?;
-        let revision = principal
-            .revision()
-            .checked_advance()
-            .map_err(|error| StorageError::internal(error.to_string()))?;
-        let metadata = StorageRecordMetadata::try_new(
-            ResourceId::new(principal_id.id()).expect("principal resource id is positive"),
-            principal.created_at(),
-            now,
-            revision,
-        )
-        .map_err(invalid_contract_value)?;
-        let updated = StoragePrincipal::builder(
-            metadata,
-            principal.kind(),
-            principal.name(),
-            principal.identity_scope_id(),
-        )
-        .provider_managed(true)
-        .settings(principal.settings().clone())
-        .external_subject(principal.external_subject().map(ToOwned::to_owned))
-        .last_sync_attempted_at(Some(now))
-        .last_sync_success_at(if failure == StorageExternalSyncFailure::Rejected {
-            None
-        } else {
-            principal.last_sync_success_at()
-        })
-        .try_build()
-        .map_err(invalid_contract_value)?;
-        state.principals.insert(principal_id.id(), updated);
+        state.external_sync_failure(principal_id, failure)?;
         *live = state;
         Ok(())
     }
@@ -1140,6 +1251,93 @@ impl MemoryState {
             })
         }
     }
+    pub(super) fn external_sync_failure(
+        &mut self,
+        principal_id: PrincipalId,
+        failure: StorageExternalSyncFailure,
+    ) -> Result<(), StorageError> {
+        let current = self.users.get(&principal_id.id()).cloned().ok_or_else(|| {
+            StorageError::not_found(format!("Principal {} was not found", principal_id.id()))
+        })?;
+        if !current.provider_managed {
+            return Ok(());
+        }
+        let now = Utc::now();
+        if failure == StorageExternalSyncFailure::Rejected {
+            // Match PostgreSQL's non-authenticating rejection marker. Clearing it
+            // during recovery advances the snapshot instead of reviving old logins.
+            let parts = current.user.into_parts();
+            let record = self
+                .users
+                .get_mut(&principal_id.id())
+                .expect("external user exists");
+            record.user = StorageUser::try_new(
+                parts.id(),
+                Some("!external-identity-rejected-no-login".into()),
+                parts.proper_name().map(ToOwned::to_owned),
+                parts.email().map(ToOwned::to_owned),
+                parts.created_at(),
+                now,
+                parts.anonymized_at(),
+            )
+            .map_err(invalid_contract_value)?;
+            record.last_sync_success_at = None;
+            self.invalidate_principal_sessions(principal_id.id());
+            for token in self
+                .tokens
+                .values_mut()
+                .filter(|token| token.principal_id == principal_id)
+            {
+                if token.revoked_at.is_none() {
+                    token.revision = token
+                        .revision
+                        .checked_advance()
+                        .map_err(|error| StorageError::internal(error.to_string()))?;
+                    token.revoked_at = Some(now);
+                }
+            }
+        }
+        self.users
+            .get_mut(&principal_id.id())
+            .expect("external user exists")
+            .last_sync_attempted_at = Some(now);
+        let principal = self
+            .principals
+            .get(&principal_id.id())
+            .cloned()
+            .ok_or_else(|| StorageError::internal("external principal is missing"))?;
+        let revision = principal
+            .revision()
+            .checked_advance()
+            .map_err(|error| StorageError::internal(error.to_string()))?;
+        let metadata = StorageRecordMetadata::try_new(
+            ResourceId::new(principal_id.id()).expect("principal resource id is positive"),
+            principal.created_at(),
+            now,
+            revision,
+        )
+        .map_err(invalid_contract_value)?;
+        let updated = StoragePrincipal::builder(
+            metadata,
+            principal.kind(),
+            principal.name(),
+            principal.identity_scope_id(),
+        )
+        .provider_managed(true)
+        .settings(principal.settings().clone())
+        .external_subject(principal.external_subject().map(ToOwned::to_owned))
+        .last_sync_attempted_at(Some(now))
+        .last_sync_success_at(if failure == StorageExternalSyncFailure::Rejected {
+            None
+        } else {
+            principal.last_sync_success_at()
+        })
+        .try_build()
+        .map_err(invalid_contract_value)?;
+        self.principals.insert(principal_id.id(), updated);
+        Ok(())
+    }
+
     pub(super) fn sync_external_user(
         &mut self,
         request: StorageExternalUserSync,

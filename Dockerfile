@@ -17,6 +17,7 @@ COPY crates/hubuum-budget/Cargo.toml ./crates/hubuum-budget/Cargo.toml
 COPY crates/hubuum-event-rendering/Cargo.toml ./crates/hubuum-event-rendering/Cargo.toml
 COPY crates/hubuum-auth-core/Cargo.toml ./crates/hubuum-auth-core/Cargo.toml
 COPY crates/hubuum-auth-ldap/Cargo.toml ./crates/hubuum-auth-ldap/Cargo.toml
+COPY crates/hubuum-auth-oidc/Cargo.toml ./crates/hubuum-auth-oidc/Cargo.toml
 COPY crates/hubuum-computed-fields/Cargo.toml ./crates/hubuum-computed-fields/Cargo.toml
 COPY crates/hubuum-domain/Cargo.toml ./crates/hubuum-domain/Cargo.toml
 COPY crates/hubuum-event-sink-amqp/Cargo.toml ./crates/hubuum-event-sink-amqp/Cargo.toml

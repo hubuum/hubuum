@@ -20,5 +20,6 @@ tracing = "0.1"
 tracing-opentelemetry = { version = "0.34", default-features = false }
 
 [dev-dependencies]
+rstest = "0.28"
 tokio = { version = "1", features = ["macros", "rt", "test-util"] }
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace"] }

@@ -9,6 +9,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- OIDC authorization-code login with S256 PKCE, verified discovery/JWKS,
+  cookie-bound single-use callbacks, optional encrypted refresh credentials,
+  non-activating candidate previews and fresh credential approval. See the
+  [Keycloak setup](docs/authentication/keycloak.md).
+
 - Versioned local/LDAP login interactions provide safe method discovery,
   secret-protected continuation, atomic session completion, polling backoff,
   cancellation and exact-session cleanup after response loss. Opt-in hosted
@@ -21,8 +26,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   approvals, immutable provider UUID/scope bindings, bounded runtime Treetop
   profiles and explicit offline `hubuum-admin --recover-security` recovery.
   LDAP test sign-ins return bounded identity/group previews without provisioning
-  or session effects. OIDC/OAuth definitions can be staged disabled; browser
-  activation remains gated on the later provider implementation.
+  or session effects. OAuth definitions can be staged disabled; their browser
+  activation remains gated on the later OAuth implementation.
 
 - Administrators can change `pagination.max_page_limit` together with
   `default_page_limit` through runtime settings, without restarting. Explicit
@@ -43,6 +48,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   sensitive policy edits require a local administrator with recovery access.
 
 ### Changed
+
+- **Breaking (storage SDK 0.11 and deployment):** update all ten SDK crates to
+  `0.11.0` and implement the complete encrypted upstream credential lifecycle.
+  Stop all API and worker replicas, back up the database, apply the OIDC
+  credential migration and role grants, then restart matching binaries and
+  begin fresh interactions. Restore the pre-upgrade snapshot before downgrading.
+  Regenerate OpenAPI clients for OIDC browser routes and configuration.
 
 - **Breaking (storage SDK 0.10):** update all ten SDK dependencies to exactly
   `0.10.0`. Implement `AuthenticateExternal` in the existing interaction advance

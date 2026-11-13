@@ -385,6 +385,7 @@ pub struct OutboundRequest {
     body: Option<String>,
     timeout: Duration,
     max_response_bytes: usize,
+    require_complete_body: bool,
     allow_private_targets: bool,
     dangerous_accept_invalid_certs: bool,
     dangerous_allow_localhost: bool,
@@ -399,6 +400,7 @@ impl OutboundRequest {
             body: None,
             timeout,
             max_response_bytes: 64 * 1024,
+            require_complete_body: false,
             allow_private_targets: false,
             dangerous_accept_invalid_certs: false,
             dangerous_allow_localhost: false,
@@ -417,6 +419,13 @@ impl OutboundRequest {
 
     pub fn max_response_bytes(mut self, max_response_bytes: usize) -> Self {
         self.max_response_bytes = max_response_bytes;
+        self
+    }
+
+    /// Protocol consumers must reject truncation and malformed UTF-8 instead of
+    /// interpreting the lossy preview used by diagnostic/task consumers.
+    pub fn require_complete_body(mut self) -> Self {
+        self.require_complete_body = true;
         self
     }
 
@@ -559,7 +568,12 @@ where
         let status = response.status();
         Span::current().record("http.response.status_code", status.as_u16());
         let headers = headers_to_json(response.headers());
-        let body_preview = read_capped_body(response, request.max_response_bytes).await?;
+        let body_preview = read_capped_body(
+            response,
+            request.max_response_bytes,
+            request.require_complete_body,
+        )
+        .await?;
         Span::current().record("http.response.body.size", body_preview.len());
         let duration_ms = i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX);
 
@@ -703,9 +717,10 @@ fn cached_client_or_insert_with(
 async fn read_capped_body(
     mut response: reqwest::Response,
     limit: usize,
+    require_complete: bool,
 ) -> Result<String, OutboundHttpError> {
     let mut buffer: Vec<u8> = Vec::new();
-    while buffer.len() < limit {
+    while require_complete || buffer.len() < limit {
         match response.chunk().await.map_err(|error| {
             warn!(
                 message = "Failed reading outbound HTTP response",
@@ -715,13 +730,20 @@ async fn read_capped_body(
         })? {
             Some(chunk) => {
                 let remaining = limit - buffer.len();
+                if require_complete && chunk.len() > remaining {
+                    return Err(OutboundHttpError::ResponseRead);
+                }
                 let take = remaining.min(chunk.len());
                 buffer.extend_from_slice(&chunk[..take]);
             }
             None => break,
         }
     }
-    Ok(String::from_utf8_lossy(&buffer).replace('\0', "\u{FFFD}"))
+    if require_complete {
+        String::from_utf8(buffer).map_err(|_| OutboundHttpError::ResponseRead)
+    } else {
+        Ok(String::from_utf8_lossy(&buffer).replace('\0', "\u{FFFD}"))
+    }
 }
 
 fn is_sensitive_response_header(name: &str) -> bool {
@@ -786,6 +808,51 @@ mod tests {
     use super::*;
 
     static CLIENT_CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[rstest::rstest]
+    #[case::exact_limit(b"{}", 2, 2, true)]
+    #[case::over_limit(b"{} ", 3, 2, false)]
+    #[case::truncated(b"{}", 3, 3, false)]
+    #[case::invalid_utf8(b"\xff", 1, 2, false)]
+    #[tokio::test]
+    async fn complete_body_rejects_lossy_protocol_responses(
+        #[case] body: &'static [u8],
+        #[case] content_length: usize,
+        #[case] limit: usize,
+        #[case] accepted: bool,
+    ) {
+        use std::io::{Read, Write};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = [0; 4096];
+            assert!(stream.read(&mut request).unwrap() > 0);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {content_length}\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+            stream.write_all(body).unwrap();
+        });
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap()
+            .get(format!("http://{address}/"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            read_capped_body(response, limit, true).await.is_ok(),
+            accepted
+        );
+        server.join().unwrap();
+    }
 
     #[test]
     fn outbound_requests_ignore_proxy_environment() {

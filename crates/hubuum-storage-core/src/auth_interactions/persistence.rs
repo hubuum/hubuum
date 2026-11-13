@@ -9,6 +9,10 @@ struct Document {
     actor: Option<StorageInteractionActorLease>,
     provider: Option<ProviderDocument>,
     authenticated: Option<EvidenceDocument>,
+    #[serde(default)]
+    protocol: Option<StorageProtectedAuthenticationState>,
+    #[serde(default)]
+    retained: Option<crate::StorageRetainedAuthentication>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -50,6 +54,8 @@ impl StorageInteractionRecord {
                 namespace: p.namespace().to_owned(),
             }),
             authenticated,
+            protocol: self.protocol.clone(),
+            retained: self.retained.clone(),
         })
         .map_err(|_| invalid())?;
         if value.to_string().len() > MAX_AUTH_INTERACTION_DOCUMENT_BYTES {
@@ -107,6 +113,8 @@ impl StorageInteractionRecord {
                 })
                 .transpose()?,
             authenticated,
+            protocol: document.protocol,
+            retained: document.retained,
         };
         record.validate_bindings()?;
         if record.authenticated.is_some() != record.lifecycle.authenticated_subject().is_some()

@@ -1,7 +1,9 @@
 use super::credential_approvals::approve_request;
 use crate::models::credential_approval::CredentialOperation;
+use crate::services::auth_interactions::oidc;
 use crate::services::credential_approvals;
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, put, web};
+use hubuum_storage_core::SessionRevocation;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -382,6 +384,8 @@ pub async fn revoke_token(
     .await?;
     let current = PrincipalTokenPointResponse::from(current);
     let precondition = revision_precondition(&req, &current)?;
+    let upstream =
+        oidc::session_revocations(&context, SessionRevocation::Current(path.token_id)).await;
 
     let event_context = requestor.event_context(&req);
     let revoked = with_revision_precondition(
@@ -400,6 +404,7 @@ pub async fn revoke_token(
             "Token not found for this principal".to_string(),
         ));
     }
+    oidc::revoke_best_effort(upstream, context.clone());
     let updated = PrincipalTokenMetadata::load_for_principal_token(
         &context,
         path.principal_id,

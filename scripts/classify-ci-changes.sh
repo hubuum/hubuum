@@ -120,6 +120,11 @@ for path in "$@"; do
   esac
 
   case "$path" in
+    tests/python/integration/keycloak.py | tests/python/unit/tooling/test_keycloak_fixture.py)
+      code=true
+      container=true
+      artifacts=true
+      ;;
     fuzz/* | .github/workflows/regex-fuzz.yml)
       # The standalone fuzz workflow owns these tests and lint checks.
       code=true

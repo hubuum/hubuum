@@ -59,6 +59,7 @@ pub(crate) mod task_rows;
 pub mod token;
 pub mod token_retention;
 pub mod unified_search;
+pub mod upstream_authentication;
 pub mod user;
 pub(crate) mod visibility;
 

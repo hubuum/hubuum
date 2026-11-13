@@ -27,6 +27,9 @@ bootstrap_and_provider_reconciliation = [
     "ExternalIdentityStorage::sync_external_user",
 ]
 workflow_state_machine = [
+    "ExternalIdentityStorage::claim_upstream_credential",
+    "ExternalIdentityStorage::finish_upstream_renewal",
+    "ExternalIdentityStorage::fail_upstream_renewal",
     "AuthenticationStorage::create_auth_interaction",
     "AuthenticationStorage::bind_auth_interaction_browser",
     "AuthenticationStorage::advance_auth_interaction",
@@ -152,8 +155,9 @@ shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_back
 
 [traits.ExternalIdentityStorage]
 source = "crates/hubuum-storage-core/src/identity_operations.rs"
-methods = ["get_external_principal_state", "record_external_sync_failure", "sync_external_user"]
-effects = { point_read = ["get_external_principal_state"], workflow_mutation = ["record_external_sync_failure", "sync_external_user"] }
+methods = ["get_external_principal_state", "record_external_sync_failure", "sync_external_user", "find_external_identity", "claim_upstream_credential", "finish_upstream_renewal", "fail_upstream_renewal", "upstream_logout_credentials"]
+effects = { point_read = ["get_external_principal_state", "find_external_identity"], complete_read = ["upstream_logout_credentials"], workflow_mutation = ["record_external_sync_failure", "sync_external_user", "claim_upstream_credential", "finish_upstream_renewal", "fail_upstream_renewal"] }
+native_scenarios = ["crates/hubuum-storage-postgres/tests/auth_interactions/external/upstream.rs::concurrent_replicas_claim_one_refresh_token", "crates/hubuum-storage-postgres/tests/auth_interactions/external/upstream.rs::renewal_atomically_rotates_credentials_and_removes_provider_membership", "crates/hubuum-storage-postgres/tests/auth_interactions/external/upstream.rs::rejected_refresh_invalidates_external_authority", "crates/hubuum-storage-postgres/tests/auth_interactions/external/upstream.rs::identity_lookup_requires_the_exact_provider_subject", "crates/hubuum-storage-postgres/tests/auth_interactions/external/upstream.rs::logout_snapshot_is_scoped_to_the_requested_provider"]
 shared_scenarios = ["src/tests/storage_contract/authentication.rs::every_backend_preserves_subject_binding", "src/tests/storage_contract/authentication.rs::every_backend_allows_rename_only_for_the_same_external_subject", "src/tests/storage_contract/authentication.rs::every_backend_invalidates_rejected_identity_even_during_later_outage", "src/tests/storage_contract/authentication.rs::every_backend_rejects_pending_login_after_external_identity_recovers", "src/tests/storage_contract/authentication.rs::every_backend_preserves_pending_logins_across_unchanged_external_sync", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
 
 [traits.UserStorage]

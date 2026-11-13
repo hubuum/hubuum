@@ -7,10 +7,12 @@
 #![allow(unused_variables)]
 
 use hubuum_domain::{InteractionBrowserBinding, InteractionDigest};
+use hubuum_storage_core::StorageUpstreamRevocation;
 use hubuum_storage_core::{
     StorageInteractionAccess, StorageInteractionCommand, StorageInteractionComplete,
     StorageInteractionCompletion, StorageInteractionCreate, StorageInteractionOutcome,
-    StorageInteractionView,
+    StorageInteractionView, StorageUpstreamClaim, StorageUpstreamClaimOutcome,
+    StorageUpstreamRenewal, StorageUpstreamSession,
 };
 
 use hubuum_storage_core::StorageExternalSyncFailure;
@@ -564,6 +566,38 @@ impl ServiceAccountStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl ExternalIdentityStorage for CompleteExternalAdapter {
+    async fn fail_upstream_renewal(
+        &self,
+        claim: StorageUpstreamClaim,
+        failure: StorageExternalSyncFailure,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn claim_upstream_credential(
+        &self,
+        principal: PrincipalId,
+    ) -> Result<StorageUpstreamClaimOutcome, StorageError> {
+        fixture_result()
+    }
+    async fn finish_upstream_renewal(
+        &self,
+        request: StorageUpstreamRenewal,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn upstream_logout_credentials(
+        &self,
+        target: StorageUpstreamRevocation,
+    ) -> Result<Vec<StorageUpstreamSession>, StorageError> {
+        fixture_result()
+    }
+    async fn find_external_identity(
+        &self,
+        identity: hubuum_domain::ExternalIdentity,
+    ) -> Result<Option<PrincipalId>, StorageError> {
+        fixture_result()
+    }
+
     async fn get_external_principal_state(
         &self,
         principal_id: PrincipalId,

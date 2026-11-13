@@ -1780,6 +1780,33 @@ pub enum StorageExternalSyncFailure {
 /// External-provider identity refresh and reconciliation.
 #[async_trait]
 pub trait ExternalIdentityStorage: Send + Sync {
+    /// Atomically remove the recoverable token and lease its single renewal attempt.
+    async fn claim_upstream_credential(
+        &self,
+        principal: PrincipalId,
+    ) -> Result<crate::StorageUpstreamClaimOutcome, StorageError>;
+    /// Reconcile current identity/memberships and replace the rotated encrypted token atomically.
+    async fn finish_upstream_renewal(
+        &self,
+        request: crate::StorageUpstreamRenewal,
+    ) -> Result<(), StorageError>;
+    async fn fail_upstream_renewal(
+        &self,
+        claim: crate::StorageUpstreamClaim,
+        failure: StorageExternalSyncFailure,
+    ) -> Result<(), StorageError>;
+    /// Capture credentials for best-effort revocation, after the caller authorizes logout.
+    /// Local session revocation must destroy the stored copies before outbound calls.
+    async fn upstream_logout_credentials(
+        &self,
+        target: crate::StorageUpstreamRevocation,
+    ) -> Result<Vec<crate::StorageUpstreamSession>, StorageError>;
+    /// Resolve only the immutable provider scope and subject, never a profile name or email.
+    async fn find_external_identity(
+        &self,
+        identity: hubuum_domain::ExternalIdentity,
+    ) -> Result<Option<PrincipalId>, StorageError>;
+
     /// Return refresh state only for a provider-managed external human.
     ///
     /// Missing, local, and unmanaged principals return `None`; inconsistent

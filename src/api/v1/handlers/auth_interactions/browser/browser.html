@@ -20,10 +20,17 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:.9rem}dt{
 <label for="user_code">Verification code</label>
 <input id="user_code" name="user_code" maxlength="16" autocomplete="off" autocapitalize="characters" required>
 <button>Continue</button></form>
-{% elif page.stage == "credentials" or page.stage == "approval" %}
+{% elif page.stage == "provider_redirect" %}
+<p><a href="{{ page.url }}" rel="noreferrer">Continue to sign in</a></p>
+<p>You will return here to review and approve the request.</p>
+{% elif page.stage == "credentials" or page.stage == "approval" or page.stage == "provider" %}
 <dl><dt>Requesting client</dt><dd>{{ page.request.client }}</dd>
 <dt>Provider</dt><dd>{{ page.request.provider }}</dd><dt>Purpose</dt><dd>{{ page.request.purpose }}</dd></dl>
-{% if page.stage == "credentials" %}
+{% if page.stage == "provider" %}
+<p>Continue to your identity provider. Signing in does not approve this request.</p>
+<form method="post" action="/api/v1/auth/interactions/browser/{{ page.request.id }}/provider">
+<input type="hidden" name="csrf" value="{{ page.csrf }}"><button>Continue</button></form>
+{% elif page.stage == "credentials" %}
 <p>Sign in to review this request. Entering a code does not approve it.</p>
 <form method="post" action="/api/v1/auth/interactions/browser/{{ page.request.id }}/credentials">
 <input type="hidden" name="csrf" value="{{ page.csrf }}">

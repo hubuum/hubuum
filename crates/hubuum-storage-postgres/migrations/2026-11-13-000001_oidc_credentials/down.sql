@@ -1,0 +1,5 @@
+DROP TRIGGER auth_upstream_configuration_changed ON runtime_settings;
+DROP FUNCTION hubuum_destroy_changed_upstream_credentials();
+DROP TRIGGER auth_upstream_session_revoked ON auth_sessions;
+DROP FUNCTION hubuum_destroy_upstream_session_credentials();
+DROP TABLE auth_upstream_credentials;

@@ -14,6 +14,7 @@ use hubuum_domain::{
     InteractionTransitionError, ResourceRevision,
 };
 use hubuum_events_core::EventContext;
+use hubuum_storage_core::StorageUpstreamSession;
 use hubuum_storage_core::{
     AuthSessionId, MAX_ACTIVE_AUTH_INTERACTIONS, MAX_ACTIVE_AUTH_INTERACTIONS_PER_ACTOR,
     MAX_ACTIVE_AUTH_INTERACTIONS_PER_CLIENT, MAX_AUTH_INTERACTIONS, SessionClientId,
@@ -314,6 +315,7 @@ pub async fn advance(
                     if !bound.valid { return Err(invalid()); }
                     let proof = authentication.prepare(&record, claim, approval.clone(), at).map_err(|_| invalid())?;
                     let (admitted,user) = super::external_identity::synchronize_interaction(connection, authentication).await?;
+                    record.retain_upstream(authentication).map_err(|_| invalid())?;
                     let authenticated = admitted.interaction_authentication(proof,user).map_err(|_| invalid())?;
                     StorageInteractionCommand::new(command.authorization().clone(), StorageInteractionAction::Authenticate {
                         authentication: Box::new(authenticated), approval: approval.clone(),
@@ -413,6 +415,15 @@ pub async fn complete(
                     )
                     .await?;
                     let id = session.clone().into_value().session_id().value();
+                    if let Some(retained) = record.take_retained() {
+                        let upstream = StorageUpstreamSession::try_new(
+                            AuthSessionId::new(id),
+                            evidence.subject().principal_id(),
+                            retained,
+                        )
+                        .map_err(|_| invalid())?;
+                        super::upstream_authentication::insert(connection, &upstream).await?;
+                    }
                     (
                         StorageInteractionCompletion::Session(session),
                         InteractionIssuedResult::Session(id),
