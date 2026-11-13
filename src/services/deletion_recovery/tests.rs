@@ -1,4 +1,5 @@
 use std::fs;
+use std::future::Future;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -78,6 +79,32 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         fs::remove_dir_all(&self.root).unwrap();
+    }
+}
+
+// Use only after the owning operation or child has positively finished. A
+// concurrent fork may briefly retain its CLOEXEC lock descriptor until exec,
+// as covered by repository::tests::after_lock_release. Recovery must still
+// acquire both real locks; live-owner rejection and missing proof stay strict.
+async fn after_repository_release<T, F, Fut>(mut operation: F) -> Result<T, ApiError>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, ApiError>>,
+{
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match operation().await {
+            Err(ApiError::ServiceUnavailable(message))
+                if matches!(
+                    message.as_str(),
+                    "Control repository is busy; retry without bypassing protection"
+                        | "Runtime isolation is busy; stop every server before offline recovery"
+                ) && tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            result => return result,
+        }
     }
 }
 
@@ -340,7 +367,9 @@ async fn renderer_isolation_runtime_child() {
     let root = std::env::current_dir().unwrap();
     let repository =
         CheckpointRepository::open(&root.join("repository"), &root.join("key")).unwrap();
-    let mut guard = repository.runtime_isolation(false).unwrap();
+    let mut guard = after_repository_release(|| async { repository.runtime_isolation(false) })
+        .await
+        .unwrap();
     if fs::read_to_string(root.join("renderer-isolation-case")).unwrap() == "protected" {
         guard.protect_renderers().unwrap();
         let output = TemplateExecution::new(
@@ -437,10 +466,12 @@ async fn offline_renderer_retirement_uses_the_original_startup_proof(
     let live = recover(&fixture.storage, &fixture.directory, &fixture.key).await;
     child.kill().await.unwrap();
     child.wait().await.unwrap();
-    recover(&fixture.storage, &fixture.directory, &fixture.key)
+    after_repository_release(|| recover(&fixture.storage, &fixture.directory, &fixture.key))
         .await
         .unwrap();
-    let released = reapply(&fixture.storage, &fixture.directory, &fixture.key).await;
+    let released =
+        after_repository_release(|| reapply(&fixture.storage, &fixture.directory, &fixture.key))
+            .await;
     // No output producer exists in this fixture. Parent-only owners still
     // require their original positive settlement; protected ones were retired.
     let settlement = owner
