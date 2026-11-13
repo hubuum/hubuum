@@ -330,14 +330,19 @@ does not become a watermark for a later run.
 Manual selection pages require current configured unscoped administrator
 authorization tied to the original principal UUID. Recovery can preserve an
 already admitted batch after that principal is deleted. The executor independently
-publishes and reads back authority before each bounded removal transaction. It
-removes at most one exact closed copy per transaction after current policy/hold,
+publishes and reads back authority before removing an admitted batch, then reuses
+that immutable membership proof across exact-copy transactions. It removes at
+most one exact closed copy per transaction after current policy/hold,
 dependency and positive pre-exclusion publication retirement checks. Deletion,
 first receipt, canonical audit and task checkpoint commit atomically. Missing
 copies cannot manufacture a first-removal clock. Existing receipts are preserved
-on retry. Independent read-back must cover every receipt before a task completes
+on retry. Ordered receipt lookups preserve the manifest's original traversal
+order without repeated full receipt scans. Fresh independent read-back must cover
+every receipt before a task completes
 its one admitted batch; a later task starts a fresh pass. Failed protection or a
-blocked removal keeps the original batch waiting. Cancellation
+blocked removal keeps the original batch waiting. Repository acquisition retries
+only contention under the original execution deadline; authentication failures
+remain terminal. Cancellation
 does not undo exclusions, discharge copy obligations or imply physical cleanup.
 
 Qualified expiry workers reconcile retained batches through
