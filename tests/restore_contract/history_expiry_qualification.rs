@@ -47,6 +47,7 @@ async fn qualified_history_expiry_worker() {
 
 async fn measure() {
     let _guard = RESTORE_TEST_LOCK.lock().await;
+    let preparing = Instant::now();
     let shape = std::env::var("HUBUUM_TEST_HISTORY_QUALIFICATION_SHAPE").unwrap();
     let slots: usize = std::env::var("HUBUUM_TEST_HISTORY_QUALIFICATION_SLOTS")
         .unwrap()
@@ -256,6 +257,8 @@ async fn measure() {
         })
         .await;
     bound.unregister_runtime(registration).await.unwrap();
+    let fixture_seconds = preparing.elapsed().as_secs_f64();
+    eprintln!("Qualification stage: shape={shape} fixture_seconds={fixture_seconds}");
     let started = Instant::now();
     let replica_reports = replica::run_replicas(
         &destination,
@@ -268,6 +271,7 @@ async fn measure() {
     )
     .await;
     let worker_seconds = started.elapsed().as_secs_f64();
+    eprintln!("Qualification stage: shape={shape} worker_seconds={worker_seconds}");
     let oversized_reported_rows = replica_reports[0]["oversized_reported_rows"]
         .as_u64()
         .unwrap();
@@ -323,6 +327,7 @@ async fn measure() {
         }
     }
     let receipts = completed.control().authority().expiry().clone();
+    let replay_started = Instant::now();
     let (replay_preserved_receipts, quarantine_released) = if let Some(backup) = backup {
         fixture
             .restore_with_recovery(backup, &repository, &signing_key)
@@ -342,8 +347,11 @@ async fn measure() {
     } else {
         (None, None)
     };
+    let replay_seconds = replay_started.elapsed().as_secs_f64();
+    eprintln!("Qualification stage: shape={shape} replay_seconds={replay_seconds}");
     let report = json!({"shape":shape, "slots":slots, "replicas":replicas, "measured_at":Utc::now(), "batches":batches,
-        "worker_seconds":worker_seconds, "oversized_deferred_rows":oversized_deferred_rows,
+        "fixture_seconds":fixture_seconds, "worker_seconds":worker_seconds, "replay_seconds":replay_seconds,
+        "oversized_deferred_rows":oversized_deferred_rows,
         "oversized_preserved_rows":oversized_preserved_rows, "backup_rejected_oversized":shape == "oversized",
         "oversized_reported_rows":oversized_reported_rows,
         "max_scanned_source_rows":replica_reports.iter().map(|report| report["max_scanned_source_rows"].as_u64().unwrap()).max().unwrap(),

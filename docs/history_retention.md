@@ -360,6 +360,12 @@ non-secret batch reference survives terminal request/checkpoint redaction in tas
 discovery metadata. Cleanup
 still requires independent membership/receipt protection and the executor's
 current policy, hold, dependency and publication checks. Stale leases stay fenced.
+Offline replay retains the signed proof for copies with an existing first
+receipt, without a composite checkpoint capture per unchanged physical replay.
+The adapter still validates the exact deletion and complete unchanged control;
+new first receipts receive fresh independent protection before the next copy.
+Final quarantine release still requires complete protected authority and no
+remaining excluded copies.
 Recovery across a changed application incarnation remains a separate qualification
 gate. Production workers do not yet enable this maintenance path.
 

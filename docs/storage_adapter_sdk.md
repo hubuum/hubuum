@@ -1099,6 +1099,17 @@ next unreceipted copy in the original manifest traversal order. Manifest member
 order itself is not UUID order. Decoding, recovery coverage and audit deltas must
 still reject foreign, duplicate, reordered or contradictory original receipts.
 
+Native outcome validation may compare the complete returned control document
+against the canonical encoding of already validated expected control. Do not
+reduce that comparison to a revision or receipt count. A physical replay with a
+verified first receipt must leave the complete control document unchanged and
+emit no new removal audit; the exact native deletion and all eligibility checks
+still run in the same transaction. The recovery service may retain the original
+independent proof across these unchanged replay outcomes without recapturing the
+composite checkpoint per copy. New first receipts still require fresh capture
+and independent publication before the next copy; final exposure release still
+checks complete protected authority and remaining excluded copies.
+
 Finite `task_output` control scopes retain their original full history epoch
 and an adapter-captured `HistoryReadRevision`. The read revision counts policy,
 hold, intent and cancellation decisions, excluding physical-removal receipts

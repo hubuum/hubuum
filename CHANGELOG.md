@@ -431,6 +431,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Native history expiry compares complete returned control against validated
+  canonical control without decoding the retained ledger again for every copy.
+  Physical replay preserves existing receipts and audits without rebuilding an
+  unchanged logical transition or recapturing the complete checkpoint per copy.
+  New first receipts still receive independent protection, and all exact outcome
+  and final exposure checks remain enforced.
+
 - Gated history expiry requests fresh receipt protection directly from the last
   exact-copy transaction instead of rereading advisory task progress for every
   removal. The transient request is not persisted or accepted as completion

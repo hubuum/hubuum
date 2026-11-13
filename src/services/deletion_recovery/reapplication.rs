@@ -168,13 +168,13 @@ async fn reapply_history(
                 member.target(),
             )
             .map_err(invalid_control)?;
-            if storage.reapply_history_expiry(request).await? {
+            let has_receipt = request.has_receipt();
+            if storage.reapply_history_expiry(request).await? && !has_receipt {
                 let capture = storage.capture_control_checkpoint().await?;
-                // Reintroduced already-receipted copies leave authority and
-                // original clocks unchanged. Keep their existing protection
-                // until generic replay advances the deletion revision; the
-                // restored image's cleared proofs cannot replace the old
-                // completed checkpoint at the same revision vector.
+                // Protect each new first receipt before the next exact copy.
+                // Already-receipted physical replay leaves complete control
+                // unchanged and retains its original independent proof. Final
+                // read-back and exposure release still check the whole image.
                 if capture.history_lifecycle() != session.checkpoint().history_lifecycle() {
                     session = publish(session, capture).await?;
                 }

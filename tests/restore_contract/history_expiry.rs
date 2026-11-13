@@ -4,6 +4,57 @@ use futures_util::FutureExt;
 use hubuum_domain::PrincipalIdentity;
 use std::os::unix::fs::PermissionsExt;
 use std::panic::{AssertUnwindSafe, resume_unwind};
+use std::sync::{Arc, Mutex};
+
+#[derive(Default)]
+struct ReplayTrace(Mutex<Vec<String>>);
+
+impl StorageObserver for ReplayTrace {
+    fn operation_finished(&self, observation: &StorageObservation) {
+        if observation.result() == "ok"
+            && matches!(
+                observation.operation(),
+                "reapply_history_expiry"
+                    | "capture_control_checkpoint"
+                    | "release_application_exposure"
+            )
+        {
+            self.0.lock().unwrap().push(observation.operation().into());
+        }
+    }
+}
+
+impl ReplayTrace {
+    fn assert_captures(&self, members: usize, new_receipts: bool) {
+        let operations = std::mem::take(&mut *self.0.lock().unwrap());
+        let copies: Vec<_> = operations
+            .iter()
+            .enumerate()
+            .filter_map(|(i, operation)| (operation == "reapply_history_expiry").then_some(i))
+            .collect();
+        assert_eq!(copies.len(), members);
+        assert!(members >= 3, "Exercise repeated replay, not a single copy");
+        for pair in copies.windows(2) {
+            assert_eq!(
+                operations[pair[0] + 1..pair[1]]
+                    .iter()
+                    .any(|operation| operation == "capture_control_checkpoint"),
+                new_receipts,
+                "Only new first receipts require capture between copies: {operations:?}"
+            );
+        }
+        let release = operations
+            .iter()
+            .position(|operation| operation == "release_application_exposure")
+            .expect("Successful restore must release quarantine");
+        assert!(
+            operations[copies.last().unwrap() + 1..release]
+                .iter()
+                .any(|operation| operation == "capture_control_checkpoint"),
+            "Final release must still capture the complete control image"
+        );
+    }
+}
 
 #[rstest]
 #[tokio::test]
@@ -12,7 +63,8 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
 ) {
     let _guard = RESTORE_TEST_LOCK.lock().await;
     let pool = postgres_test_pool_with_timeout(&database_url(), 8, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
-    let fixture = RestoreContractFixture::new(kind, pool.clone())
+    let trace = Arc::new(ReplayTrace::default());
+    let fixture = RestoreContractFixture::new_with_observer(kind, pool.clone(), trace.clone())
         .await
         .unwrap();
     let storage = fixture.storage();
@@ -81,7 +133,9 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             )
             .await
             .unwrap();
-        fixture.close_collection_history().await.unwrap();
+        for _ in 0..3 {
+            fixture.close_collection_history().await.unwrap();
+        }
         let backup = fixture.capture(true).await.unwrap();
         let runtime = storage.register_history_runtime(None).await.unwrap();
         let application = storage
@@ -130,10 +184,12 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             storage.reapply_history_expiry(request).await.is_err(),
             "direct contract call cannot replay a released application"
         );
+        trace.0.lock().unwrap().clear();
         fixture
             .restore_with_recovery(backup.clone(), &repository, &key_file)
             .await
             .unwrap();
+        trace.assert_captures(manifest.members().len(), true);
         let completed = storage.capture_history_lifecycle().await.unwrap();
         let receipts = completed
             .control()
@@ -148,10 +204,12 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             completed.fence().incarnation(),
             manifest.fence().incarnation()
         );
+        trace.0.lock().unwrap().clear();
         fixture
             .restore_with_recovery(backup, &repository, &key_file)
             .await
             .unwrap();
+        trace.assert_captures(manifest.members().len(), false);
         let repeated = storage.capture_history_lifecycle().await.unwrap();
         assert_eq!(
             repeated

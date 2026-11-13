@@ -366,7 +366,7 @@ async fn remove_member_on(
     struct Outcome {
         affected_rows: u64,
         removed_at: DateTime<Utc>,
-        control: HistoryLifecycleControl,
+        control: Value,
     }
     let material =
         sql_query("SELECT public.hubuum_history_expiry_remove($1,$2,$3,$4,$5,$6,$7) AS material")
@@ -391,19 +391,39 @@ async fn remove_member_on(
         outcome.removed_at,
         outcome.affected_rows,
     )?;
+    if may_be_absent {
+        // A verified first receipt already exists. Physical replay must leave
+        // the complete control document unchanged and emit no new audit fact.
+        require_outcome_control(snapshot.control(), &outcome.control)?;
+        return Ok(true);
+    }
     let change = snapshot
         .control()
         .record_expiry_removal(batch, deletion, snapshot.fence())?;
-    if change.next() != &outcome.control {
-        return Err(PostgresStorageError::conflict(
-            "Native removal receipt differs from exact outcome",
-        ));
-    }
+    require_outcome_control(change.next(), &outcome.control)?;
     for event in change.next().audit_events_since(change.expected())? {
         crate::operations::event_record::append_retained_lifecycle_event(connection, &event)
             .await?;
     }
     Ok(true)
+}
+
+fn require_outcome_control(
+    expected: &HistoryLifecycleControl,
+    actual: &Value,
+) -> Result<(), PostgresStorageError> {
+    // The expected document is already validated. Compare every returned field
+    // against its canonical encoding instead of decoding/validating the entire
+    // retained journal again after each exact-copy transaction.
+    let expected = serde_json::to_value(expected).map_err(|error| {
+        PostgresStorageError::invalid_persisted_value("expected removal outcome", error)
+    })?;
+    if &expected != actual {
+        return Err(PostgresStorageError::conflict(
+            "Native removal receipt differs from exact outcome",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) async fn require_reapplied_on(

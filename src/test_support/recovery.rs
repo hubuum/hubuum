@@ -5,8 +5,12 @@ use hubuum_domain::{
 };
 use hubuum_storage_core::*;
 use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
-use hubuum_storage_postgres::{PostgresFaultController, PostgresFaultPoint, PostgresPool};
+use hubuum_storage_memory::MemoryStorage;
+use hubuum_storage_postgres::{
+    PostgresFaultController, PostgresFaultPoint, PostgresPool, PostgresStorage,
+};
 use serde_json::{Value, json};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::errors::ApiError;
@@ -139,6 +143,31 @@ impl RestoreContractFixture {
 
     pub async fn new(kind: StorageBackendKind, pool: PostgresPool) -> Result<Self, ApiError> {
         let storage = super::restore_contract_storage(kind, pool);
+        Self::with_storage(kind, storage).await
+    }
+
+    /// Observe the complete restore/reapplication service on either real adapter.
+    pub async fn new_with_observer(
+        kind: StorageBackendKind,
+        pool: PostgresPool,
+        observer: Arc<dyn StorageObserver>,
+    ) -> Result<Self, ApiError> {
+        let storage = match kind {
+            StorageBackendKind::Postgres => StorageHandle::from_registered_backend_with_observer(
+                PostgresStorage::unobserved(pool),
+                observer,
+            ),
+            StorageBackendKind::Memory => {
+                StorageHandle::from_registered_backend_with_observer(MemoryStorage::new(), observer)
+            }
+        };
+        Self::with_storage(kind, storage).await
+    }
+
+    async fn with_storage(
+        kind: StorageBackendKind,
+        storage: StorageHandle,
+    ) -> Result<Self, ApiError> {
         let original = storage
             .capture_backup_replay(
                 true,

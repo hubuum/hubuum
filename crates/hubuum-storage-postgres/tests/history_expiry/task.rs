@@ -723,6 +723,7 @@ async fn native_quarantined_replay_preserves_first_receipts(
                 sql_query(format!("INSERT INTO public.{table} SELECT * FROM jsonb_populate_record(NULL::public.{table},$1)"))
                     .bind::<Jsonb,_>(copy.material).execute(connection).await?;
             }
+            connection.batch_execute("CREATE FUNCTION public.history_replay_audit_fault() RETURNS trigger LANGUAGE plpgsql AS $fault$ BEGIN IF NEW.metadata #>> '{lifecycle,name}'='lifecycle.erasure.copy_removed' THEN RAISE EXCEPTION 'physical replay must not issue a new removal audit'; END IF; RETURN NEW; END $fault$; CREATE TRIGGER history_replay_audit_fault BEFORE INSERT ON public.events FOR EACH ROW EXECUTE FUNCTION public.history_replay_audit_fault()").await?;
             Ok::<_,PostgresStorageError>(())
         }).await?;
         for member in manifest.members() {
@@ -739,6 +740,7 @@ async fn native_quarantined_replay_preserves_first_receipts(
     with_transaction(&test.fixture.owner_pool, async |connection| {
         owner(connection).await?;
         test.restore_target.validate_connection(connection).await?;
+        connection.batch_execute("DROP TRIGGER IF EXISTS history_replay_audit_fault ON public.events; DROP FUNCTION IF EXISTS public.history_replay_audit_fault()").await?;
         sql_query("UPDATE hubuum_control.application_control SET released_revision=(SELECT (material->>'revision')::bigint FROM hubuum_control.deletion_authority WHERE id=1) WHERE id=1").execute(connection).await?;
         Ok::<_,PostgresStorageError>(())
     }).await.unwrap();
