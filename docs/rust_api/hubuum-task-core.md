@@ -1,6 +1,6 @@
 # `hubuum-task-core` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.9` release train.
+Status: experimental public API in the storage SDK `0.10` release train.
 
 ## Purpose and Callers
 

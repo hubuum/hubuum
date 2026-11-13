@@ -944,7 +944,13 @@ for extracted_input in src/services/exports/execution.rs src/services/exports/hy
   src/tasks/planning/import.rs crates/hubuum-storage-memory/src/imports/relations.rs \
   crates/hubuum-storage-core/src/backup_snapshot/resources.rs \
   crates/hubuum-storage-core/src/backup_snapshot/normalization.rs \
-  crates/hubuum-auth-core/src/credential.rs; do
+  crates/hubuum-auth-core/src/credential.rs \
+  crates/hubuum-domain/src/external_authentication.rs crates/hubuum-domain/src/external_authentication/tests.rs \
+  crates/hubuum-domain/src/external_freshness.rs crates/hubuum-domain/src/external_freshness/tests.rs \
+  crates/hubuum-storage-core/src/auth_interactions/external.rs \
+  crates/hubuum-storage-memory/src/runtime_settings/external_identity_tests.rs \
+  crates/hubuum-storage-postgres/tests/auth_interactions/external.rs \
+  src/services/auth_interactions/external.rs; do
   extracted_output="$(bash "$classifier" "$extracted_input")"
   assert_flag "$extracted_output" rust true
   assert_flag "$extracted_output" container true

@@ -3,12 +3,12 @@ use chrono::NaiveDateTime;
 use hubuum_auth_core::AuthenticatedExternalUser;
 use hubuum_auth_core::{AuthProviderError, ExternalIdentityProvider, ExternalUserRefreshRequest};
 use hubuum_auth_ldap::{LdapIdentityProvider, LdapScopeConfig, LdapSecretSource};
-use hubuum_domain::ResourceRevision;
+use hubuum_domain::{PrincipalId, ResourceRevision};
 use hubuum_secrets::{SecretValue, SecretVersion};
 use hubuum_storage_core::{
-    RUNTIME_AUTHENTICATION_PASSWORD_ENVELOPE_FIELD, StorageAuthenticationProvider,
-    StorageAuthenticationProviderKind, StorageAuthenticationProviders, StorageExternalSyncFailure,
-    StorageUser,
+    ExternalIdentityStorage, RUNTIME_AUTHENTICATION_PASSWORD_ENVELOPE_FIELD,
+    StorageAuthenticationProvider, StorageAuthenticationProviderKind,
+    StorageAuthenticationProviders, StorageExternalSyncFailure, StorageUser,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -935,11 +935,27 @@ pub async fn refresh_principal_if_needed(
     storage
         .applied_runtime_settings()
         .ensure_security_current()?;
-    let Some(state) = get_external_principal_state(&storage, principal_id).await? else {
+    let id = PrincipalId::new(principal_id)?;
+    let Some(state) = storage.get_external_principal_state(id).await? else {
         return Ok(());
     };
     let registry = auth_provider_registry()?;
-    refresh_principal_with_registry(&storage, principal_id, state, &registry).await
+    let password_provider = registry
+        .provider(state.identity_scope())
+        .is_ok_and(|provider| provider.kind == LDAP_PROVIDER_KIND);
+    if !password_provider
+        && crate::services::auth_interactions::external::check_existing_authority(&storage, &state)
+            .await?
+    {
+        return Ok(());
+    }
+    refresh_principal_with_registry(
+        &storage,
+        principal_id,
+        crate::services::identity::external_state_from_storage(state),
+        &registry,
+    )
+    .await
 }
 
 async fn refresh_principal_with_registry(

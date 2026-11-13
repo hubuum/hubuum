@@ -4,6 +4,14 @@ mod credential;
 pub use credential::{BearerCredential, CredentialError, VersionedCredential, keyed_digest};
 
 pub use hubuum_domain::{
+    AdmittedExternalAuthentication, ExternalAuthenticationContext, ExternalAuthenticationError,
+    ExternalIdentity, ExternalIdentityProfile, ExternalMemberships, ExternalSubject,
+    FreshExternalAuthentication, FreshExternalAuthenticationRequest, MembershipClaims,
+    ProviderGroup, VerifiedExternalAuthentication,
+};
+pub use hubuum_domain::{ExternalFreshness, ExternalFreshnessPolicy};
+
+pub use hubuum_domain::{
     DEFAULT_INTERACTION_LIFETIME_SECONDS, INITIAL_INTERACTION_POLL_SECONDS,
     INTERACTION_AUTHENTICATION_CLAIM_SECONDS, InteractionAuthenticationClaim,
     InteractionBrowserBinding, InteractionIssuedResult, InteractionLifecycle, InteractionMode,
@@ -58,9 +66,9 @@ impl ExternalUsername {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ExternalSubject(String);
+struct RefreshSubject(String);
 
-impl ExternalSubject {
+impl RefreshSubject {
     fn new(value: impl Into<String>) -> Result<Self, ExternalIdentityValueError> {
         let value = value.into();
         if value.is_empty() {
@@ -85,7 +93,7 @@ pub enum ExternalIdentityValueError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalUserRefreshRequest {
     username: ExternalUsername,
-    expected_subject: ExternalSubject,
+    expected_subject: RefreshSubject,
 }
 
 impl ExternalUserRefreshRequest {
@@ -95,7 +103,7 @@ impl ExternalUserRefreshRequest {
     ) -> Result<Self, ExternalIdentityValueError> {
         Ok(Self {
             username: ExternalUsername::new(username)?,
-            expected_subject: ExternalSubject::new(expected_subject)?,
+            expected_subject: RefreshSubject::new(expected_subject)?,
         })
     }
 

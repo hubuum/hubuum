@@ -151,11 +151,27 @@ impl Fixture {
                 credentials,
                 policy: SessionPolicy::try_new(900, 604800, 2592000, 2592000).unwrap(),
                 context: EventContext::system(),
+                audit_subject: None,
             },
         )
     }
     async fn cleanup(self) {
         delete_backend_user(&self.backend, self.user).await;
+    }
+
+    async fn inspect(&self) -> hubuum_storage_core::StorageInteractionView {
+        let StorageInteractionOutcome::View(view) = self
+            .backend
+            .advance_auth_interaction(StorageInteractionCommand::new(
+                StorageInteractionAuthorization::Redemption(self.access.clone()),
+                StorageInteractionAction::Inspect,
+            ))
+            .await
+            .unwrap()
+        else {
+            panic!("view");
+        };
+        view
     }
 }
 
@@ -483,6 +499,7 @@ async fn session_service_returns_usable_credentials_once() {
     for backend in available_backends() {
         let f = Fixture::new(backend, InteractionMode::Credentials).await;
         f.authenticate(None).await;
+        let current = f.inspect().await;
         let context = AppContext::new(
             f.backend.clone(),
             Arc::new(LocalPermissionBackend::new(
@@ -493,6 +510,7 @@ async fn session_service_returns_usable_credentials_once() {
         let InteractionSessionCompletion::Issued(response) = complete_interaction(
             &context,
             f.access.clone(),
+            &current,
             EventContext::system(),
             hubuum_storage_core::ObservedSource::Unavailable,
         )
@@ -508,6 +526,7 @@ async fn session_service_returns_usable_credentials_once() {
             complete_interaction(
                 &context,
                 f.access.clone(),
+                &current,
                 EventContext::system(),
                 hubuum_storage_core::ObservedSource::Unavailable
             )

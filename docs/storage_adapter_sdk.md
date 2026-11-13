@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.9`.
+Status: accepted; current experimental release train is `0.10`.
 
 ## Supported Crate Graph
 
@@ -495,3 +495,41 @@ persistence interfaces. Their documents include private correlation and subject
 evidence; never deserialize them from HTTP requests or expose them in responses.
 Only generated secret hashes enter storage. Run the shared interaction scenarios
 and native concurrency, rollback, restart and recovery tests for each adapter.
+
+## Upgrading from 0.9 to 0.10
+
+Update all ten SDK dependencies to exactly `0.10.0` together. The closed
+`StorageInteractionAction` enum adds `AuthenticateExternal`, carrying a
+non-deserializable verified login or fresh approval proof. Implement it in
+`advance_auth_interaction`; treating it as an unsupported action is not a complete
+adapter implementation. `StorageInteractionAuthentication::login` now accepts
+only local/LDAP password evidence. Browser adapters use the new proof path.
+
+`StorageInteractionIssuance::Session` also carries `audit_subject`. For browser
+logins, resolve administrator status through the application's configured
+authorization backend after synchronization, using the authenticated subject in
+`StorageInteractionView`. Supply that snapshot at completion and call
+`StorageInteractionLogin::session_login` after restoring the login evidence.
+Reject missing or mismatched browser snapshots; only administrator status may
+differ from the authenticated identity/profile. Local/LDAP completion supplies
+`None` and retains the authorization snapshot captured during password login.
+
+Hold the authentication revision, claimed interaction and immutable provider
+binding fences. Call `prepare` before identity writes, serialize absent-row
+provisioning by stable scope/subject, and check admission inside that transaction.
+Carry `StorageAdmittedExternalIdentity` through reconciliation and create the
+resulting durable login evidence from that same proof. Persist the observed
+upstream verification time, not the callback commit or session rotation time.
+Reject older observations and callbacks that predate a definitive rejection.
+
+Reconcile only the owning provider's membership sources. Preserve independent
+manual and other-provider sources, including in backup/restore. Local-only
+membership evidence preserves grants; an authoritative empty provider set removes
+only the owning provider's grants. Names and emails never link principals.
+
+Fresh approval requires the same existing actor, original token, exact operation,
+provider/revision and persisted interaction start. Complete through the existing
+atomic approval path and repeat authorization at the final mutation. OAuth without
+verified authentication-time capability remains unsupported. No new database
+migration accompanies this increment; the 0.9 interaction migration is still
+required. Rebuild complete adapters and applications together.

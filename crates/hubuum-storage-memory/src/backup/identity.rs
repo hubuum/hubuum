@@ -43,6 +43,7 @@ pub(super) fn capture(
     sections.insert(StorageBackupStateSection::CollectionHierarchy, hierarchy);
     let mut sources = Vec::new();
     let mut sourced_memberships = BTreeSet::new();
+    let mut external_sources = BTreeSet::new();
     for source in &state.membership_sources {
         progress.scan_row()?;
         let row = Row(source);
@@ -50,11 +51,16 @@ pub(super) fn capture(
         if state.memberships.contains_key(&key) {
             sources.push(retain_row(progress, Ok(source.clone()))?);
             sourced_memberships.insert(key);
+            if row.text("source")? == EXTERNAL_MEMBERSHIP_SOURCE {
+                external_sources.insert(key);
+            }
         }
     }
     for membership in state.memberships.values() {
         let key = (membership.principal_id().id(), membership.group_id().id());
-        if !sourced_memberships.contains(&key) {
+        if !sourced_memberships.contains(&key)
+            || state.external_memberships.contains(&key) && !external_sources.contains(&key)
+        {
             let group = state
                 .groups
                 .get(&key.1)

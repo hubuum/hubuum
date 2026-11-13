@@ -830,7 +830,9 @@ pub struct ExternalPrincipalState {
     pub last_sync_success_at: Option<chrono::NaiveDateTime>,
 }
 
-fn external_state_from_storage(state: StorageExternalPrincipalState) -> ExternalPrincipalState {
+pub(crate) fn external_state_from_storage(
+    state: StorageExternalPrincipalState,
+) -> ExternalPrincipalState {
     ExternalPrincipalState {
         identity_scope: state.identity_scope().to_string(),
         username: state.username().to_string(),

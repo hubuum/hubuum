@@ -1,3 +1,4 @@
+mod external;
 use super::*;
 use hubuum_domain::{
     InteractionAuthority, InteractionBinding, InteractionClientId, InteractionDigest,
@@ -131,12 +132,19 @@ impl Interaction {
         ));
     }
     fn complete(&self) -> StorageInteractionComplete {
+        self.complete_with_subject(None)
+    }
+    fn complete_with_subject(
+        &self,
+        audit_subject: Option<EventSubject>,
+    ) -> StorageInteractionComplete {
         StorageInteractionComplete::new(
             self.access.clone(),
             StorageInteractionIssuance::Session {
                 credentials: credentials(),
                 policy: SessionPolicy::try_new(900, 3600, 86400, 86400).unwrap(),
                 context: context(),
+                audit_subject,
             },
         )
     }

@@ -44,8 +44,10 @@ impl Fixture {
         let tables = [
             "principals",
             "users",
+            "service_accounts",
             "groups",
             "group_memberships",
+            "group_membership_sources",
             "identity_scopes",
             "tokens",
             "auth_sessions",
@@ -61,6 +63,12 @@ impl Fixture {
                 FOR EACH ROW EXECUTE FUNCTION public.hubuum_manage_resource_revision('none', 'coalesce', 'last_used_at');
             CREATE SEQUENCE fixture_token_ids START 2;
             ALTER TABLE tokens ALTER COLUMN id SET DEFAULT nextval('fixture_token_ids');
+            CREATE SEQUENCE fixture_principal_ids START 2;
+            ALTER TABLE principals ALTER COLUMN id SET DEFAULT nextval('fixture_principal_ids');
+            CREATE SEQUENCE fixture_scope_ids START 2;
+            ALTER TABLE identity_scopes ALTER COLUMN id SET DEFAULT nextval('fixture_scope_ids');
+            CREATE SEQUENCE fixture_group_ids START 2;
+            ALTER TABLE groups ALTER COLUMN id SET DEFAULT nextval('fixture_group_ids');
             INSERT INTO identity_scopes(id,name,provider_kind) VALUES(1,'local','local');
             INSERT INTO principals(id,kind,name,identity_scope_id) VALUES(1,'human','recovery_admin',1);
             INSERT INTO users(id,kind,password) VALUES(1,'human','fixture-password-hash');
@@ -104,10 +112,13 @@ impl Fixture {
         .await
     }
     fn replica(&self) -> PostgresStorage {
+        self.replica_with_timezone("UTC")
+    }
+    fn replica_with_timezone(&self, timezone: &str) -> PostgresStorage {
         let url = integration_test_database_url();
         let separator = if url.contains('?') { '&' } else { '?' };
         let settings = PostgresPoolSettings::builder(format!(
-            "{url}{separator}options=-csearch_path%3D{},pg_catalog",
+            "{url}{separator}options=-csearch_path%3D{},pg_catalog%20-cTimeZone%3D{timezone}",
             self.schema
         ))
         .max_size(2)

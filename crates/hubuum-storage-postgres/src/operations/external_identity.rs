@@ -3,21 +3,25 @@
 use hubuum_storage_core::StorageExternalSyncFailure;
 use std::collections::{HashMap, HashSet};
 
-use chrono::NaiveDateTime;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::dsl::not;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
+use diesel::sql_query;
+use diesel::sql_types::Text;
 use diesel::upsert::excluded;
 use diesel::{Insertable, JoinOnDsl, Queryable, QueryableByName, Selectable, SelectableHelper};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::{EXTERNAL_MEMBERSHIP_SOURCE, LOCAL_PROVIDER_KIND, UserId};
+use hubuum_domain::{EXTERNAL_MEMBERSHIP_SOURCE, LOCAL_PROVIDER_KIND, PrincipalId, UserId};
 use hubuum_events_core::{Action, AuditDocument, EntityType, EventContext, NewEvent};
 use hubuum_storage_core::{
+    StorageAdmittedExternalIdentity, StorageExternalInteractionAuthentication,
     StorageExternalPrincipalState, StorageExternalUserSync, StorageMutationOutcome,
     StorageSyncedHuman,
 };
 use serde_json::json;
 
 use crate::operations::event_record::append_event;
+use crate::schema::{identity_scopes, principals};
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
 const HUMAN_PRINCIPAL_KIND: &str = "human";
@@ -181,17 +185,30 @@ pub async fn record_external_sync_failure(
         .with_transaction(async move |connection| {
             // Lock before invalidating login evidence or revoking tokens, in the same
             // order as token issuance and successful external synchronization.
-            let managed = crate::schema::principals::table
+            let (managed, scope_id) = crate::schema::principals::table
                 .find(principal_id)
                 .for_update()
-                .select(crate::schema::principals::provider_managed)
-                .first::<bool>(connection)
+                .select((principals::provider_managed, principals::identity_scope_id))
+                .first::<(bool, i32)>(connection)
                 .await?;
             if !managed {
                 return Ok(());
             }
+            let provider_kind = identity_scopes::table
+                .find(scope_id)
+                .select(identity_scopes::provider_kind)
+                .first::<String>(connection)
+                .await?;
+            // Browser observations use the application clock. Sample after the
+            // principal lock: PostgreSQL's transaction-start clock can predate
+            // callbacks verified while this rejection was waiting for the lock.
+            let attempted_at = if matches!(provider_kind.as_str(), "oidc" | "oauth") {
+                Utc::now().naive_utc()
+            } else {
+                database_now(connection).await?
+            };
             diesel::update(crate::schema::principals::table.find(principal_id))
-                .set(crate::schema::principals::last_sync_attempted_at.eq(diesel::dsl::now))
+                .set(crate::schema::principals::last_sync_attempted_at.eq(attempted_at))
                 .execute(connection)
                 .await?;
             if failure == StorageExternalSyncFailure::Rejected {
@@ -218,6 +235,19 @@ pub async fn sync_external_user(
     runtime: &PostgresRuntime,
     request: StorageExternalUserSync,
 ) -> Result<StorageMutationOutcome<StorageSyncedHuman>, PostgresStorageError> {
+    runtime
+        .with_transaction(async move |connection| {
+            sync_on_connection(connection, request, false, None).await
+        })
+        .await
+}
+
+async fn sync_on_connection(
+    connection: &mut PostgresConnection,
+    request: StorageExternalUserSync,
+    preserve_memberships: bool,
+    observed_at: Option<DateTime<Utc>>,
+) -> Result<StorageMutationOutcome<StorageSyncedHuman>, PostgresStorageError> {
     let (scope_name, provider_kind, subject, name, proper_name, email, groups) =
         request.into_parts();
     validate_required(&scope_name, "identity scope")?;
@@ -237,79 +267,192 @@ pub async fn sync_external_user(
     }
     let synced_group_count = groups.len();
 
-    runtime
-        .with_transaction(async move |connection| {
-            let scope = crate::operations::identity_scope::ensure_identity_scope_on_connection(
-                connection,
-                &scope_name,
-                &provider_kind,
-            )
-            .await?;
-            let sync_time = database_now(connection).await?;
-            let scope_id = scope.id().id();
-            let principal =
-                reconcile_principal(connection, scope_id, &subject, &name, sync_time).await?;
-            if principal.kind != HUMAN_PRINCIPAL_KIND {
-                return Err(PostgresStorageError::conflict(
-                    "external identity subject belongs to a non-human principal",
-                ));
-            }
+    let scope = crate::operations::identity_scope::ensure_identity_scope_on_connection(
+        connection,
+        &scope_name,
+        &provider_kind,
+    )
+    .await?;
+    let sync_time = match observed_at {
+        Some(at) => at.naive_utc(),
+        None => database_now(connection).await?,
+    };
+    let scope_id = scope.id().id();
+    let principal = reconcile_principal(connection, scope_id, &subject, &name, sync_time).await?;
+    if principal.kind != HUMAN_PRINCIPAL_KIND {
+        return Err(PostgresStorageError::conflict(
+            "external identity subject belongs to a non-human principal",
+        ));
+    }
 
-            let user = reconcile_user(connection, principal.id, proper_name, email).await?;
-            diesel::update(
-                crate::schema::principals::table
-                    .filter(crate::schema::principals::id.eq(principal.id)),
-            )
-            .set((
-                crate::schema::principals::provider_managed.eq(true),
-                crate::schema::principals::external_subject.eq(&subject),
-                crate::schema::principals::last_sync_attempted_at.eq(sync_time),
-                crate::schema::principals::last_sync_success_at.eq(sync_time),
-            ))
-            .execute(connection)
-            .await?;
+    let user = reconcile_user(connection, principal.id, proper_name, email).await?;
+    diesel::update(
+        crate::schema::principals::table.filter(crate::schema::principals::id.eq(principal.id)),
+    )
+    .set((
+        crate::schema::principals::provider_managed.eq(true),
+        crate::schema::principals::external_subject.eq(&subject),
+        crate::schema::principals::last_sync_attempted_at.eq(sync_time),
+        crate::schema::principals::last_sync_success_at.eq(sync_time),
+    ))
+    .execute(connection)
+    .await?;
 
-            let synced_group_ids = reconcile_groups(
-                connection,
-                scope_id,
-                principal.id,
-                &provider_kind,
-                groups,
-                sync_time,
-            )
-            .await?;
-            remove_stale_memberships(connection, scope_id, principal.id, &synced_group_ids).await?;
+    if !preserve_memberships {
+        let synced_group_ids = reconcile_groups(
+            connection,
+            scope_id,
+            principal.id,
+            &provider_kind,
+            groups,
+            sync_time,
+        )
+        .await?;
+        remove_stale_memberships(connection, scope_id, principal.id, &synced_group_ids).await?;
+    }
 
-            let context = EventContext::system();
-            let document = AuditDocument::try_new(
-                format!("External identity '{name}' synced in scope '{scope_name}'"),
-                None,
-                None,
-                json!({
-                    "principal_id": principal.id,
-                    "identity_scope": scope_name,
-                    "provider_kind": provider_kind,
-                    "external_subject": subject,
-                    "synced_group_count": synced_group_count,
-                }),
-            )?;
-            let event = NewEvent::from_document(
-                EntityType::ExternalIdentitySync,
-                Action::Succeeded,
-                context.actor_kind(),
-                document,
-            )
-            .map_err(|error| PostgresStorageError::database(error.to_string()))?
-            .with_context(&context)
-            .with_entity_id(hubuum_events_core::EventEntityId::new(principal.id)?)
-            .with_entity_name(name);
-            let audit = append_event(connection, &event).await?.into_audit_receipt();
-            Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(
-                user.into_storage()?,
-                audit,
-            ))
-        })
+    let context = EventContext::system();
+    let document = AuditDocument::try_new(
+        format!("External identity '{name}' synced in scope '{scope_name}'"),
+        None,
+        None,
+        json!({
+            "principal_id": principal.id,
+            "identity_scope": scope_name,
+            "provider_kind": provider_kind,
+            "external_subject": subject,
+            "synced_group_count": synced_group_count,
+        }),
+    )?;
+    let event = NewEvent::from_document(
+        EntityType::ExternalIdentitySync,
+        Action::Succeeded,
+        context.actor_kind(),
+        document,
+    )
+    .map_err(|error| PostgresStorageError::database(error.to_string()))?
+    .with_context(&context)
+    .with_entity_id(hubuum_events_core::EventEntityId::new(principal.id)?)
+    .with_entity_name(name);
+    let audit = append_event(connection, &event).await?.into_audit_receipt();
+    Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(
+        user.into_storage()?,
+        audit,
+    ))
+}
+
+pub(super) async fn lock_interaction_identity(
+    connection: &mut PostgresConnection,
+    authentication: &StorageExternalInteractionAuthentication,
+) -> Result<(), PostgresStorageError> {
+    let fact = authentication.authentication();
+    let identity = fact.identity();
+    // Serialize absent-row provisioning by immutable scope and subject across
+    // replicas. Hash collisions only cause extra serialization, never linking.
+    sql_query("SELECT pg_advisory_xact_lock(hashtextextended($1,576))")
+        .bind::<Text, _>(
+            json!([identity.scope().as_str(), identity.subject().as_str()]).to_string(),
+        )
+        .execute(connection)
+        .await?;
+    // Scope writes precede principal locks in reconciliation, including a
+    // conflicting first login whose display name belongs to another subject.
+    // Lock an existing scope before taking the approval actor's principal lock.
+    // An absent login scope is created later; this preflight has no side effects.
+    let scope = identity_scopes::table
+        .filter(identity_scopes::name.eq(identity.scope().as_str()))
+        .filter(identity_scopes::provider_kind.eq(identity.provider_kind()))
+        .select(identity_scopes::id)
+        .for_update()
+        .first::<i32>(connection)
         .await
+        .optional()?;
+    if let Some(actor) = fact.binding().authority().actor() {
+        let scope = scope.ok_or_else(|| {
+            PostgresStorageError::authentication_required("External approval identity mismatch")
+        })?;
+        let matched = principals::table
+            .filter(principals::id.eq(actor.principal_id().id()))
+            .filter(principals::identity_scope_id.eq(scope))
+            .filter(principals::external_subject.eq(identity.subject().as_str()))
+            .filter(principals::kind.eq(HUMAN_PRINCIPAL_KIND))
+            .filter(principals::provider_managed.eq(true))
+            .select(principals::id)
+            .for_update()
+            .first::<i32>(connection)
+            .await
+            .optional()?;
+        if matched.is_none() {
+            return Err(PostgresStorageError::authentication_required(
+                "External approval identity mismatch",
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(super) async fn synchronize_interaction(
+    connection: &mut PostgresConnection,
+    authentication: &StorageExternalInteractionAuthentication,
+) -> Result<(StorageAdmittedExternalIdentity, StorageSyncedHuman), PostgresStorageError> {
+    let fact = authentication.authentication();
+    let identity = fact.identity();
+    let scope = crate::operations::identity_scope::ensure_identity_scope_on_connection(
+        connection,
+        identity.scope().as_str(),
+        identity.provider_kind(),
+    )
+    .await?;
+    let existing = crate::schema::principals::table
+        .filter(crate::schema::principals::identity_scope_id.eq(scope.id().id()))
+        .filter(crate::schema::principals::external_subject.eq(identity.subject().as_str()))
+        .for_update()
+        .select((
+            crate::schema::principals::id,
+            crate::schema::principals::kind,
+            crate::schema::principals::provider_managed,
+            crate::schema::principals::last_sync_success_at,
+            crate::schema::principals::last_sync_attempted_at,
+        ))
+        .first::<(
+            i32,
+            String,
+            bool,
+            Option<NaiveDateTime>,
+            Option<NaiveDateTime>,
+        )>(connection)
+        .await
+        .optional()?;
+    if existing
+        .as_ref()
+        .is_some_and(|(_, kind, managed, verified, attempted)| {
+            kind != HUMAN_PRINCIPAL_KIND
+                || !managed
+                || verified.is_some_and(|at| at > fact.verified_at().naive_utc())
+                || verified.is_none()
+                    && attempted.is_some_and(|at| at > fact.verified_at().naive_utc())
+        })
+    {
+        return Err(PostgresStorageError::authentication_required(
+            "Invalid external identity",
+        ));
+    }
+    let admitted = authentication
+        .admit(
+            existing
+                .map(|(id, _, _, _, _)| PrincipalId::new(id))
+                .transpose()?,
+        )
+        .map_err(|_| PostgresStorageError::authentication_required("External admission denied"))?;
+    let user = sync_on_connection(
+        connection,
+        admitted.synchronization(),
+        fact.memberships().provider_groups().is_none(),
+        Some(fact.verified_at()),
+    )
+    .await?
+    .into_value();
+    Ok((admitted, user))
 }
 
 async fn reconcile_principal(
