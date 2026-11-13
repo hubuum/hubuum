@@ -387,6 +387,7 @@ pub async fn complete(
                         credentials,
                         policy,
                         context,
+                        audit_subject,
                     },
                 ) => {
                     let proof = record
@@ -394,6 +395,9 @@ pub async fn complete(
                         .authenticated_subject()
                         .ok_or_else(invalid)?;
                     let login = login(connection, &record, &evidence, proof.subject()).await?;
+                    let login = evidence
+                        .session_login(login, audit_subject.as_ref())
+                        .map_err(|_| invalid())?;
                     let session = auth_sessions::create_on_connection(
                         connection,
                         StorageSessionCreate::new(

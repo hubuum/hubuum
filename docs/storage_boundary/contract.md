@@ -508,6 +508,13 @@ from backup. Authoritative empty sets remove owning sources; local-only evidence
 preserves sources. Provider groups are namespaced and confer no implicit local
 administrator privilege.
 
+Browser session completion requires an audit subject resolved through the
+application's selected authorization policy after synchronization. Bind it to the
+stored authenticated principal, scope, provider and profile; only administrator
+status may differ. Missing or mismatched snapshots cannot issue a session. This
+event snapshot does not grant authority or replace request-time authorization.
+Local/LDAP completion retains its existing password-authentication snapshot.
+
 Fresh approval includes signed authentication time and the exact persisted
 interaction start. The existing atomic completion path rechecks the original
 actor/token and operation and consumes the interaction once. OAuth without fresh

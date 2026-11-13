@@ -350,6 +350,7 @@ impl MemoryState {
                     credentials,
                     policy,
                     context,
+                    audit_subject,
                 },
             ) => {
                 let user = self
@@ -359,6 +360,9 @@ impl MemoryState {
                     .user
                     .clone();
                 let login = evidence.restore_login(user).map_err(|_| invalid())?;
+                let login = evidence
+                    .session_login(login, audit_subject.as_ref())
+                    .map_err(|_| invalid())?;
                 let session = self.create_session(StorageSessionCreate::new(
                     login,
                     SessionClientId::try_new(record.lifecycle().binding().client().as_str())

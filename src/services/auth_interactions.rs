@@ -667,9 +667,15 @@ pub async fn complete(
             _ => Err(InteractionError::Invalid.into()),
         };
     }
-    match super::auth_sessions::complete_interaction(context, access, event_context, source)
-        .await
-        .map_err(api_storage_error)?
+    match super::auth_sessions::complete_interaction(
+        context,
+        access,
+        &current,
+        event_context,
+        source,
+    )
+    .await
+    .map_err(api_storage_error)?
     {
         super::auth_sessions::InteractionSessionCompletion::Issued(session) => {
             Ok(InteractionCompleted::Session(session))

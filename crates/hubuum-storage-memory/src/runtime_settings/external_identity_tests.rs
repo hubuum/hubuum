@@ -1,8 +1,9 @@
 use super::*;
 use hubuum_storage_core::{
-    StorageExternalInteractionAuthentication, StorageInteractionAccess, StorageInteractionAction,
-    StorageInteractionAuthorization, StorageInteractionCommand, StorageInteractionCreate,
-    StorageInteractionOutcome,
+    SessionCredentials, SessionPolicy, StorageExternalInteractionAuthentication,
+    StorageInteractionAccess, StorageInteractionAction, StorageInteractionAuthorization,
+    StorageInteractionCommand, StorageInteractionComplete, StorageInteractionCompletion,
+    StorageInteractionCreate, StorageInteractionIssuance, StorageInteractionOutcome,
 };
 use rstest::rstest;
 use serde_json::{Value, json};
@@ -20,6 +21,30 @@ struct Attempt {
 }
 fn digest() -> InteractionDigest {
     InteractionDigest::new(Uuid::new_v4().simple().to_string().repeat(2)).unwrap()
+}
+
+fn session_request(
+    access: StorageInteractionAccess,
+    audit_subject: Option<EventSubject>,
+) -> StorageInteractionComplete {
+    let token = || {
+        StorageTokenDigest::try_new(
+            Uuid::new_v4().to_string(),
+            StorageTokenFormat::Version1,
+            StorageTokenHashAlgorithm::HmacSha256V1,
+            Some(StorageTokenHashKeyId::try_new("test").unwrap()),
+        )
+        .unwrap()
+    };
+    StorageInteractionComplete::new(
+        access,
+        StorageInteractionIssuance::Session {
+            credentials: SessionCredentials::try_new(token(), token()).unwrap(),
+            policy: SessionPolicy::try_new(900, 3600, 86400, 86400).unwrap(),
+            context: EventContext::system(),
+            audit_subject,
+        },
+    )
 }
 impl Fixture {
     async fn new(admission: Value, local_only: bool) -> Self {
@@ -173,6 +198,78 @@ impl Fixture {
             .unwrap()
             .id()
     }
+}
+
+#[rstest]
+#[case::administrator(true)]
+#[case::non_administrator(false)]
+#[tokio::test]
+async fn session_audit_preserves_selected_administrator_status(#[case] is_admin: bool) {
+    let f = Fixture::new(json!({"mode":"provision_without_grants"}), false).await;
+    let attempt = f.start().await;
+    let StorageInteractionOutcome::View(view) = f
+        .backend
+        .advance_auth_interaction(f.command(&attempt, "alice", "alice", json!([])))
+        .await
+        .unwrap()
+    else {
+        panic!("view");
+    };
+    let subject = view
+        .authenticated_subject()
+        .unwrap()
+        .clone()
+        .with_administrator_status(is_admin);
+    let result = f
+        .backend
+        .complete_auth_interaction(session_request(attempt.access, Some(subject.clone())))
+        .await
+        .unwrap();
+    assert!(matches!(result, StorageInteractionCompletion::Session(_)));
+    let state = f.backend.state.read().await;
+    let events: Vec<_> = state
+        .events
+        .iter()
+        .map(|event| serde_json::to_value(event.as_parts().0).unwrap())
+        .filter(|event| event["entity_type"] == "authentication")
+        .collect();
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0]["metadata"]["subject"],
+        serde_json::to_value(subject).unwrap()
+    );
+}
+
+#[rstest]
+#[case::missing(None)]
+#[case::principal(Some(("principal_id", json!(1000000))))]
+#[case::name(Some(("name", json!("someone-else"))))]
+#[case::scope(Some(("identity_scope", json!("another"))))]
+#[case::provider(Some(("authentication_provider_kind", json!("oauth"))))]
+#[tokio::test]
+async fn unbound_audit_snapshot_cannot_issue_a_session(#[case] change: Option<(&str, Value)>) {
+    let f = Fixture::new(json!({"mode":"provision_without_grants"}), false).await;
+    let attempt = f.start().await;
+    let StorageInteractionOutcome::View(view) = f
+        .backend
+        .advance_auth_interaction(f.command(&attempt, "alice", "alice", json!([])))
+        .await
+        .unwrap()
+    else {
+        panic!("view");
+    };
+    let audit = change.map(|(field, value)| {
+        let mut subject = serde_json::to_value(view.authenticated_subject().unwrap()).unwrap();
+        subject[field] = value;
+        serde_json::from_value(subject).unwrap()
+    });
+    assert!(
+        f.backend
+            .complete_auth_interaction(session_request(attempt.access, audit))
+            .await
+            .is_err()
+    );
+    assert!(f.backend.state.read().await.sessions.is_empty());
 }
 
 #[rstest]

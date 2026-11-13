@@ -50,7 +50,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   provider revision and claimed interaction, and atomically reconcile stable
   subjects and provider-owned membership sources. Raw password interaction
   evidence now accepts only local/LDAP authentication. External adapters must
-  implement the new action before upgrading; no database migration is added by
+  implement the new action and supply an identity-bound, policy-resolved browser
+  session audit subject before upgrading; no database migration is added by
   this SDK increment.
 
 - Authentication interactions use `ring` HKDF-SHA-256 for derived keys and

@@ -49,6 +49,13 @@ Older observations and callbacks predating a definitive rejection cannot restore
 authority. The memory adapter now rolls back failed synchronization and retains
 independent membership provenance through removal and backup.
 
+Browser login audit snapshots resolve administrator status through the selected
+application authorization backend after synchronization. Session completion
+rejects absent or identity-mismatched snapshots; password logins retain their
+existing snapshots. Memory/PostgreSQL regressions cover both administrator values
+and invalid bindings, and application regressions cover local and external
+authorization selection.
+
 Fresh approval consumption uses the existing purpose-bound completion path and
 checks the proof's start against the persisted interaction start. Ordinary
 password evidence is limited to local/LDAP. The SDK therefore advances to 0.10;

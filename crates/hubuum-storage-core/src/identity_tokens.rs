@@ -101,6 +101,11 @@ impl StorageLogin {
         &self.subject
     }
 
+    pub(crate) fn with_administrator_status(mut self, is_admin: bool) -> Self {
+        self.subject = self.subject.with_administrator_status(is_admin);
+        self
+    }
+
     pub fn matches_user(&self, current: &StorageUser) -> bool {
         let expected = self.user.clone().into_parts();
         let current = current.clone().into_parts();

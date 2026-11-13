@@ -222,6 +222,35 @@ impl StorageInteractionLogin {
             None => StorageLogin::try_new(self.subject.clone(), user),
         }
     }
+
+    /// Browser synchronization precedes application authorization selection.
+    /// Require its selected audit snapshot at session issuance, bound to the
+    /// same immutable identity and profile; password evidence keeps its snapshot.
+    pub fn session_login(
+        &self,
+        login: StorageLogin,
+        audit_subject: Option<&EventSubject>,
+    ) -> Result<StorageLogin, StorageValidationError> {
+        if login.subject() != &self.subject {
+            return Err(invalid());
+        }
+        let browser = matches!(
+            self.subject.authentication_provider_kind(),
+            "oidc" | "oauth"
+        );
+        match (browser, audit_subject) {
+            (true, Some(subject))
+                if subject
+                    .clone()
+                    .with_administrator_status(self.subject.is_admin())
+                    == self.subject =>
+            {
+                Ok(login.with_administrator_status(subject.is_admin()))
+            }
+            (false, None) => Ok(login),
+            _ => Err(invalid()),
+        }
+    }
     fn validate(&self, binding: &InteractionBinding) -> Result<(), StorageValidationError> {
         if self.subject.kind() != hubuum_domain::PrincipalKind::Human
             || match binding.provider().external_id() {
@@ -413,9 +442,13 @@ pub struct StorageInteractionView {
     interval_seconds: u32,
     issued: Option<InteractionIssuedResult>,
     authenticated_name: Option<String>,
+    authenticated_subject: Option<EventSubject>,
     verification: Option<Box<VerifiedInteractionSubject>>,
 }
 impl StorageInteractionView {
+    pub fn authenticated_subject(&self) -> Option<&EventSubject> {
+        self.authenticated_subject.as_ref()
+    }
     pub fn verification(&self) -> Option<&VerifiedInteractionSubject> {
         self.verification.as_deref()
     }
@@ -452,6 +485,7 @@ pub enum StorageInteractionIssuance {
         credentials: SessionCredentials,
         policy: SessionPolicy,
         context: EventContext,
+        audit_subject: Option<EventSubject>,
     },
     Approval {
         claim: StorageCredentialClaim,
@@ -546,6 +580,10 @@ impl StorageInteractionRecord {
                     .lifecycle
                     .authenticated_subject()
                     .map(|proof| proof.subject().to_owned()),
+                _ => None,
+            },
+            authenticated_subject: match self.authenticated.as_ref() {
+                Some(StorageInteractionEvidence::Login(login)) => Some(login.subject().clone()),
                 _ => None,
             },
         }

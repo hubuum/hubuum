@@ -126,13 +126,19 @@ impl ExternalFixture {
     }
     async fn login(&self, subject: &str, groups: Value) -> PrincipalId {
         let (interaction, claim) = self.start(&self.backend).await;
-        self.backend
+        let StorageInteractionOutcome::View(view) = self
+            .backend
             .advance_auth_interaction(self.command(&claim, subject, subject, groups))
             .await
-            .unwrap();
+            .unwrap()
+        else {
+            panic!("authenticated view");
+        };
         let StorageInteractionCompletion::Session(issued) = self
             .backend
-            .complete_auth_interaction(interaction.complete())
+            .complete_auth_interaction(
+                interaction.complete_with_subject(view.authenticated_subject().cloned()),
+            )
             .await
             .unwrap()
         else {
@@ -140,6 +146,73 @@ impl ExternalFixture {
         };
         issued.into_value().principal_id()
     }
+}
+
+#[rstest::rstest]
+#[case::administrator(true)]
+#[case::non_administrator(false)]
+#[tokio::test]
+async fn session_audit_preserves_selected_administrator_status(#[case] is_admin: bool) {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let (interaction, claim) = f.start(&f.backend).await;
+    let StorageInteractionOutcome::View(view) = f
+        .backend
+        .advance_auth_interaction(f.command(&claim, "alice", "alice", json!([])))
+        .await
+        .unwrap()
+    else {
+        panic!("view");
+    };
+    let subject = view
+        .authenticated_subject()
+        .unwrap()
+        .clone()
+        .with_administrator_status(is_admin);
+    let id = subject.principal_id();
+    let completed = f
+        .backend
+        .complete_auth_interaction(interaction.complete_with_subject(Some(subject)))
+        .await
+        .unwrap();
+    assert!(matches!(
+        completed,
+        StorageInteractionCompletion::Session(_)
+    ));
+    f.database.owner(&format!("DO $$ BEGIN IF (SELECT metadata#>>'{{subject,is_admin}}' FROM events WHERE entity_type='authentication' AND entity_id={}) IS DISTINCT FROM '{}' THEN RAISE EXCEPTION 'incorrect administrator audit'; END IF; END $$", id.id(),is_admin)).await.unwrap();
+    f.database.cleanup().await;
+}
+
+#[rstest::rstest]
+#[case::missing(false)]
+#[case::wrong_principal(true)]
+#[tokio::test]
+async fn unbound_audit_snapshot_cannot_issue_a_session(#[case] wrong_principal: bool) {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let (interaction, claim) = f.start(&f.backend).await;
+    let StorageInteractionOutcome::View(view) = f
+        .backend
+        .advance_auth_interaction(f.command(&claim, "alice", "alice", json!([])))
+        .await
+        .unwrap()
+    else {
+        panic!("view");
+    };
+    let subject = view.authenticated_subject().unwrap();
+    let audit = if wrong_principal {
+        let mut value = serde_json::to_value(subject).unwrap();
+        value["principal_id"] = json!(subject.principal_id().id() + 1);
+        Some(serde_json::from_value(value).unwrap())
+    } else {
+        None
+    };
+    assert!(
+        f.backend
+            .complete_auth_interaction(interaction.complete_with_subject(audit))
+            .await
+            .is_err()
+    );
+    f.database.owner("DO $$ BEGIN IF EXISTS(SELECT 1 FROM auth_sessions) THEN RAISE EXCEPTION 'unbound session issued'; END IF; END $$").await.unwrap();
+    f.database.cleanup().await;
 }
 
 #[tokio::test]
@@ -157,10 +230,12 @@ async fn replicas_provision_one_identity_and_cannot_replay_callback() {
     assert!(left.is_ok() || right.is_ok(), "{left:?} {right:?}");
     let mut ids = Vec::new();
     for (result, interaction) in [(left, a), (right, b)] {
-        if result.is_ok() {
+        if let Ok(StorageInteractionOutcome::View(view)) = result {
             let StorageInteractionCompletion::Session(issued) = f
                 .backend
-                .complete_auth_interaction(interaction.complete())
+                .complete_auth_interaction(
+                    interaction.complete_with_subject(view.authenticated_subject().cloned()),
+                )
                 .await
                 .unwrap()
             else {

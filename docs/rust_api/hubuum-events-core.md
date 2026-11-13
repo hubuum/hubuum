@@ -32,6 +32,9 @@ terminology is not part of the public API.
 `EventSubject` validates a private, immutable identity and authorization snapshot
 stored in `metadata.subject`. Envelope construction parses it once; subject
 filters use that snapshot without resolving current principal or group state.
+`with_administrator_status` produces a new snapshot from the application's
+selected authorization-policy result without changing its identity facts or
+granting authority.
 The `Authentication` catalog variant and subject filter fields expand the Rust
 API: update exhaustive matches and use `Default` for omitted filter fields.
 

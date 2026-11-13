@@ -505,6 +505,15 @@ non-deserializable verified login or fresh approval proof. Implement it in
 adapter implementation. `StorageInteractionAuthentication::login` now accepts
 only local/LDAP password evidence. Browser adapters use the new proof path.
 
+`StorageInteractionIssuance::Session` also carries `audit_subject`. For browser
+logins, resolve administrator status through the application's configured
+authorization backend after synchronization, using the authenticated subject in
+`StorageInteractionView`. Supply that snapshot at completion and call
+`StorageInteractionLogin::session_login` after restoring the login evidence.
+Reject missing or mismatched browser snapshots; only administrator status may
+differ from the authenticated identity/profile. Local/LDAP completion supplies
+`None` and retains the authorization snapshot captured during password login.
+
 Hold the authentication revision, claimed interaction and immutable provider
 binding fences. Call `prepare` before identity writes, serialize absent-row
 provisioning by stable scope/subject, and check admission inside that transaction.
