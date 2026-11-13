@@ -1,5 +1,7 @@
 #![cfg(feature = "integration-test-support")]
 
+mod auth_interactions;
+
 use chrono::{Duration, Utc};
 use diesel_async::SimpleAsyncConnection;
 use hubuum_domain::{PrincipalId, ResourceRevision, TokenId};
@@ -20,6 +22,7 @@ const LEGACY: &str =
 const SETTINGS: &str = include_str!("../migrations/2026-11-06-000001_runtime_settings/up.sql");
 const POLICIES: &str = include_str!("../migrations/2026-11-10-000001_runtime_policies/up.sql");
 const APPROVALS: &str = include_str!("../migrations/2026-09-19-000001_credential_approvals/up.sql");
+const INTERACTIONS: &str = include_str!("../migrations/2026-11-12-000002_auth_interactions/up.sql");
 const CANDIDATES: &str = include_str!("../migrations/2026-11-12-000001_security_candidates/up.sql");
 
 /// Independent security authority per test, using current production table shapes
@@ -46,11 +49,18 @@ impl Fixture {
             "identity_scopes",
             "tokens",
             "auth_sessions",
+            "refresh_tokens",
             "events",
         ]
         .map(|table| format!("CREATE TABLE {table} (LIKE public.{table} INCLUDING ALL);"))
         .join("\n");
-        f.owner(&format!("CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}; {tables} {APPROVALS} {LEGACY} {SETTINGS} {POLICIES} {CANDIDATES}
+        f.owner(&format!("CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}; {tables} {APPROVALS} {LEGACY} {SETTINGS} {POLICIES} {CANDIDATES} {INTERACTIONS}
+            -- LIKE INCLUDING ALL does not copy triggers. Reuse the production
+            -- revision guard so credential revocation cannot bypass its contract.
+            CREATE TRIGGER tokens_revision BEFORE INSERT OR UPDATE ON tokens
+                FOR EACH ROW EXECUTE FUNCTION public.hubuum_manage_resource_revision('none', 'coalesce', 'last_used_at');
+            CREATE SEQUENCE fixture_token_ids START 2;
+            ALTER TABLE tokens ALTER COLUMN id SET DEFAULT nextval('fixture_token_ids');
             INSERT INTO identity_scopes(id,name,provider_kind) VALUES(1,'local','local');
             INSERT INTO principals(id,kind,name,identity_scope_id) VALUES(1,'human','recovery_admin',1);
             INSERT INTO users(id,kind,password) VALUES(1,'human','fixture-password-hash');
@@ -97,7 +107,7 @@ impl Fixture {
         let url = integration_test_database_url();
         let separator = if url.contains('?') { '&' } else { '?' };
         let settings = PostgresPoolSettings::builder(format!(
-            "{url}{separator}options=-csearch_path%3D{}",
+            "{url}{separator}options=-csearch_path%3D{},pg_catalog",
             self.schema
         ))
         .max_size(2)
@@ -396,6 +406,7 @@ async fn removing_provider_revokes_its_credentials_and_preserves_manual_grants()
         .unwrap();
     f.owner("DO $$ BEGIN
         IF EXISTS(SELECT 1 FROM tokens WHERE id=2 AND revoked_at IS NULL) OR EXISTS(SELECT 1 FROM auth_sessions WHERE principal_id=2 AND revoked_at IS NULL) THEN RAISE EXCEPTION 'external credentials survived'; END IF;
+        IF NOT EXISTS(SELECT 1 FROM tokens WHERE id=2 AND revision=2) THEN RAISE EXCEPTION 'revocation revision not advanced by database'; END IF;
         IF NOT EXISTS(SELECT 1 FROM group_memberships WHERE principal_id=2 AND group_id=1) THEN RAISE EXCEPTION 'manual grants removed'; END IF;
         IF EXISTS(SELECT 1 FROM tokens WHERE id=1 AND revoked_at IS NOT NULL) THEN RAISE EXCEPTION 'local recovery token revoked'; END IF;
         END $$;").await.unwrap();

@@ -9,6 +9,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Versioned local/LDAP login interactions provide safe method discovery,
+  secret-protected continuation, atomic session completion, polling backoff,
+  cancellation and exact-session cleanup after response loss. Opt-in hosted
+  browser forms provide cookie/CSRF-bound local and LDAP sign-in, explicit
+  approval and registered BFF handoff. Privileged interactions return existing
+  operation-bound credential approvals or LDAP candidate verification receipts
+  without exposing them to browser JavaScript.
+
 - Verified security configuration candidates, fresh local-administrator activation
   approvals, immutable provider UUID/scope bindings, bounded runtime Treetop
   profiles and explicit offline `hubuum-admin --recover-security` recovery.
@@ -35,6 +43,22 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   sensitive policy edits require a local administrator with recovery access.
 
 ### Changed
+
+- Authentication interactions use `ring` HKDF-SHA-256 for derived keys and
+  receipts, `subtle` for secret comparisons, and `governor` for continuously
+  replenishing per-IP admission limits. **Breaking for earlier #591 preview
+  deployments:** stop old replicas, allow pending interactions to expire (at
+  most ten minutes), then start matching updated binaries and begin fresh
+  interactions; previously derived approval/verification capabilities are
+  incompatible.
+
+- **Breaking (storage SDK 0.9 and deployment):** update all ten SDK crates to
+  `0.9.0` and implement durable authentication interactions, atomic purpose-bound
+  completion and exact-session cleanup. Stop all API/worker replicas, back up the
+  database, apply the authentication-interactions migration and role grants,
+  then restart matching binaries everywhere. Older recovery/restore tools do not
+  discard this authority; downgrade requires the pre-upgrade snapshot. See the
+  [upgrade guide](docs/authentication_interactions.md#upgrade-and-recovery).
 
 - **Breaking (storage SDK 0.8):** update all ten SDK dependencies to exactly
   `0.8.0`, implement candidate activation/recovery and provider-binding storage,
@@ -67,6 +91,20 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Authentication interactions consistently use application UTC for lifecycle
+  checks and cleanup, preserve ordered actor/target locks for approvals, and
+  report removed BFF registrations as changed configuration. Normalized return
+  URLs obey their stored size bound. IPv6 subnet and shared overflow quotas keep
+  admission bounded without rejecting every new address when the registry fills.
+- Restore draining now counts admitted HTTP requests until their handlers return,
+  preventing restore replay from overtaking active interaction requests.
+
+- Unregistered deployment LDAP providers no longer hide local interaction login.
+  Authentication settings activation and offline recovery now let the database
+  advance revoked token revisions, preserving the production revision guard.
+
+- Security activation and offline recovery acquire settings before principal locks,
+  avoiding a deadlock with concurrent authentication completion.
 - Shared login reservations retain their original expiry when runtime rate-limit
   windows change, so in-flight failures still count toward the captured policy.
 - Shared login lockouts keep their expiry when overlapping requests finish under

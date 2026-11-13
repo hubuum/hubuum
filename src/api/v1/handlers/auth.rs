@@ -386,7 +386,8 @@ pub async fn refresh(
 }
 
 pub fn config(cfg: &mut web::ServiceConfig) {
-    cfg.service(get_auth_providers)
+    cfg.configure(super::auth_interactions::config)
+        .service(get_auth_providers)
         .service(login)
         .service(logout)
         .service(logout_all)
@@ -405,5 +406,16 @@ pub async fn no_store(
         actix_web::http::header::CACHE_CONTROL,
         actix_web::http::header::HeaderValue::from_static("no-store"),
     );
+    // Hosted native forms set same-origin so POSTs retain their Origin header.
+    // JSON, redirects and extractor errors keep the restrictive default.
+    if !response
+        .headers()
+        .contains_key(actix_web::http::header::REFERRER_POLICY)
+    {
+        response.headers_mut().insert(
+            actix_web::http::header::REFERRER_POLICY,
+            actix_web::http::header::HeaderValue::from_static("no-referrer"),
+        );
+    }
     Ok(response)
 }

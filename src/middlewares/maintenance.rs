@@ -38,14 +38,16 @@ pub async fn reject_during_maintenance(
                 req.app_data::<Data<RunningConfig>>()
                     .map(|config| config.server.metrics_path.as_str())
             });
-        if !allowed_during_maintenance(req.path(), metrics_path) {
+        let protected = !allowed_during_maintenance(req.path(), metrics_path);
+        let _activity =
+            (protected && !initiates_restore(req.path())).then(MaintenanceActivityGuard::begin);
+        if protected {
             // Begin before reading maintenance state. If draining wins the race,
             // this request is rejected; if the request saw normal first, the
             // coordinator must wait for this guard to drop.
             // The confirmation request owns the drain operation and therefore
             // cannot wait on itself. Its transactional state transition and
             // advisory lock serialize concurrent confirmations.
-            let _activity = (!initiates_restore(req.path())).then(MaintenanceActivityGuard::begin);
             let backend = AppContext::from_http_request(req.request())?;
             let state = with_storage_call_site(
                 backend.backend(),

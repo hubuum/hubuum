@@ -956,6 +956,10 @@
           },
           "fresh_authentication": {
             "type": "boolean"
+          },
+          "browser_available": {
+            "type": "boolean",
+            "description": "Whether this password method also supports the configured hosted browser flow."
           }
         },
         "required": [
@@ -1074,6 +1078,15 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 64
+          },
+          "interaction_mode": {
+            "type": "string",
+            "enum": [
+              "credentials",
+              "browser"
+            ],
+            "default": "credentials",
+            "description": "Password methods may opt into the hosted browser flow. BFF delivery selects browser mode."
           }
         },
         "required": [
@@ -1246,61 +1259,19 @@
       "VerificationResult": {
         "type": "object",
         "properties": {
-          "candidate_id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 64
+          "candidate": {
+            "$ref": "#/components/schemas/CandidateReport"
           },
-          "provider_id": {
-            "$ref": "#/components/schemas/ExternalProviderId"
-          },
-          "subject": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 255
-          },
-          "admitted": {
-            "type": "boolean"
-          },
-          "membership": {
-            "type": "string",
-            "enum": [
-              "local_only",
-              "complete",
-              "invalid"
-            ]
-          },
-          "groups": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/GroupPreview"
-            },
-            "maxItems": 1000
-          },
-          "issued_session": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
-          },
-          "provisioned": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
+          "verification": {
+            "$ref": "#/components/schemas/VerificationPreview"
           }
         },
         "required": [
-          "candidate_id",
-          "provider_id",
-          "subject",
-          "admitted",
-          "membership",
-          "groups",
-          "issued_session",
-          "provisioned"
+          "candidate",
+          "verification"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "description": "Reuse the existing LDAP candidate verification response, including the single-use verification receipt required for later activation. No identity, membership or session writes."
       },
       "Check": {
         "type": "object",
@@ -2064,6 +2035,65 @@
             "additionalProperties": false
           }
         ]
+      },
+      "VerificationPreview": {
+        "type": "object",
+        "properties": {
+          "candidate_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "provider_id": {
+            "$ref": "#/components/schemas/ExternalProviderId"
+          },
+          "subject": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "admitted": {
+            "type": "boolean"
+          },
+          "membership": {
+            "type": "string",
+            "enum": [
+              "local_only",
+              "complete",
+              "invalid"
+            ]
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupPreview"
+            },
+            "maxItems": 1000
+          },
+          "issued_session": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "provisioned": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          }
+        },
+        "required": [
+          "candidate_id",
+          "provider_id",
+          "subject",
+          "admitted",
+          "membership",
+          "groups",
+          "issued_session",
+          "provisioned"
+        ],
+        "additionalProperties": false
       }
     },
     "responses": {
@@ -2179,7 +2209,7 @@
         }
       },
       "Error410": {
-        "description": "Sanitized stable reason; see contract.md",
+        "description": "Expired interaction whose record is still retained. After bounded cleanup, an unknown identifier returns 401 interaction_invalid.",
         "content": {
           "application/json": {
             "schema": {

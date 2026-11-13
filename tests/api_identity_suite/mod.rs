@@ -10,3 +10,5 @@ mod users;
 mod credential_approvals;
 
 mod sessions;
+
+mod auth_interactions;

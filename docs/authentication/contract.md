@@ -185,6 +185,11 @@ they cannot authenticate by password. New clients use typed discovery; a genuine
 404/unsupported-version falls back to existing password login, while a timeout,
 503 or malformed success does not trigger a downgrade. Ordinary session responses
 reuse the exact `SessionResponse`; approval completion reuses its existing response.
+Provider verification reuses the existing candidate-verification envelope:
+`candidate` includes the single-use receipt needed for activation, while
+`verification` contains the bounded identity/admission/group preview. Password
+methods accept optional `interaction_mode: "browser"`; omission preserves direct
+credential continuation. Public password discovery adds `browser_available`.
 New provider administration requires new server/client versions, not changes to
 old password bodies. No upstream password grant, implicit flow or client token login.
 
@@ -220,7 +225,9 @@ subsequent session refresh: `hubuum-frontend` for the BFF and `hubuum-cli` for t
 CLI. Completion must install the session with that original client binding.
 No bearer, refresh, approval, redemption secret or upstream credential enters
 browser JavaScript, URLs, logs or local storage. The return nonce is not a bearer
-capability. Use no-store and no-referrer on HTML/redirect/token responses; exclude
+capability. Use no-store on HTML/redirect/token responses, no-referrer on redirects and token
+responses, and same-origin referrer policy on hosted forms so native POSTs retain
+the Origin header required for CSRF checks; exclude
 callback query strings and sensitive bodies/headers from proxy/tracing logs.
 Browser mutation forms and BFF routes require same-origin/CSRF validation.
 
@@ -247,12 +254,19 @@ blindly replaying the code. Restart never releases consumed/terminal state.
 | Ready | `200`, `ready` | Complete once using the same client and secret |
 | Wrong secret, unknown ID or wrong client | `401`, `interaction_invalid` | Stop; do not reveal whether the ID exists |
 | Denied/cancelled | `403`, `access_denied` / `interaction_cancelled` | Stop and let the human explicitly restart |
-| Expired | `410`, `interaction_expired` | Discard secrets and begin again |
+| Expired, with its record still retained | `410`, `interaction_expired` | Discard secrets and begin again |
 | Previously consumed | `409`, `interaction_consumed` | Never replay issuance; see response-loss policy |
 | Changed security revision | `409`, `configuration_changed` | Begin again against current discovery |
 | Early/abusive polls | `429`, `slow_down`, `Retry-After` | Increase interval by at least five seconds; jitter and exponential backoff for transport failures |
 | Unsupported evidence/feature | `422`, `capability_unsupported` | Explain limitation; never fall back to weaker proof |
 | Provider temporarily unavailable | `503`, `provider_unavailable` | Honor Retry-After within expiry; no cached login proof |
+
+An expired unissued record is eligible for bounded cleanup at its expiry. While
+retained, valid initiating credentials receive `410 interaction_expired`. After
+cleanup, the identifier is unknown and receives `401 interaction_invalid`, just
+like another unknown identifier; never keep an unbounded expiry tombstone. Both
+responses require discarding the old interaction and beginning again. Wrong
+client/secret credentials always receive `401`, including before cleanup.
 
 Default interaction TTL is five minutes; deployment ceiling ten minutes. Poll
 interval starts at five seconds. Apply bounded per-IP/client/actor creation,

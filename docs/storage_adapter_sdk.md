@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.8`.
+Status: accepted; current experimental release train is `0.9`.
 
 ## Supported Crate Graph
 
@@ -475,3 +475,23 @@ Run the shared API/storage contracts and adapter-native activation race,
 transaction rollback, recovery restart and login fencing tests. PostgreSQL
 requires the coordinated offline migration documented in
 [security candidates](security_candidates.md#upgrade-and-recovery).
+
+## Upgrading from 0.8 to 0.9
+
+Update all ten SDK dependencies to exactly `0.9.0` together. This breaking
+release adds six required `AuthenticationStorage` operations: interaction
+creation, browser binding, transition, atomic completion, issued-session cleanup,
+and bounded retention. It also adds `SessionRevocation::Session` and the
+`ConfigurationChanged` interaction rejection.
+
+Implement the complete [interaction contract](authentication_interactions.md),
+including committed rejection outcomes, actor/configuration fences and atomic
+issuance with consumption. Session cleanup targets the exact family even after
+its initial access token is gone. Recovery and logical restore must discard
+interaction authority. Do not provide unsupported default implementations.
+
+`StorageInteractionRecord::to_document` and `from_document` are trusted adapter
+persistence interfaces. Their documents include private correlation and subject
+evidence; never deserialize them from HTTP requests or expose them in responses.
+Only generated secret hashes enter storage. Run the shared interaction scenarios
+and native concurrency, rollback, restart and recovery tests for each adapter.

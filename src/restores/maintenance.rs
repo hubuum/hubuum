@@ -33,3 +33,41 @@ impl Drop for MaintenanceActivityGuard {
 pub(super) fn active_maintenance_work() -> usize {
     ACTIVE_MAINTENANCE_WORK.load(Ordering::Acquire)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use actix_web::{App, HttpResponse, middleware::from_fn, test, web};
+
+    use crate::permissions::{AppContext, LocalPermissionBackend};
+    use crate::storage::StorageHandle;
+
+    #[actix_web::test]
+    async fn admitted_http_handler_remains_counted_until_it_returns() {
+        let storage = StorageHandle::memory();
+        let permissions = Arc::new(LocalPermissionBackend::new(storage.clone(), "admin".into()));
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(AppContext::new(storage, permissions)))
+                .wrap(from_fn(crate::middlewares::reject_during_maintenance))
+                .route(
+                    "/api/v1/auth/interactions",
+                    web::get().to(|| async {
+                        tokio::task::yield_now().await;
+                        assert!(
+                            super::active_maintenance_work() > 0,
+                            "restore draining must still see the admitted handler"
+                        );
+                        HttpResponse::Ok().finish()
+                    }),
+                ),
+        )
+        .await;
+        let response = test::TestRequest::get()
+            .uri("/api/v1/auth/interactions")
+            .send_request(&app)
+            .await;
+        assert!(response.status().is_success());
+    }
+}

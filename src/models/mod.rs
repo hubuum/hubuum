@@ -95,3 +95,5 @@ pub mod credential_activity;
 pub mod schema_profiling;
 
 pub mod security_candidate;
+
+pub mod auth_interaction;

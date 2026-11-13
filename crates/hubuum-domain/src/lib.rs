@@ -4,6 +4,9 @@
 //! Types in this crate own validation and invariants without depending on
 //! Actix, Diesel, application configuration, or transport-facing errors.
 
+mod authentication_interaction;
+pub use authentication_interaction::*;
+
 mod authentication_configuration;
 pub use authentication_configuration::*;
 

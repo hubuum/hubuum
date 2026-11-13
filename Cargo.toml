@@ -91,6 +91,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 sha2 = "0.11"
 hmac = "0.13"
+minijinja = { version = "3", features = ["fuel", "serde"] }
 hubuum-budget = { path = "crates/hubuum-budget" }
 hubuum-auth-core = { path = "crates/hubuum-auth-core" }
 hubuum-auth-ldap = { path = "crates/hubuum-auth-ldap" }
@@ -145,6 +146,8 @@ openssl = { version = "0.10.81", optional = true }
 # Treetop's client API is pre-1.0; review each version bump explicitly.
 treetop-client = { version = "0.2.0", optional = true }
 toml = "1.1"
+governor = { version = "0.10.4", default-features = false, features = ["std"] }
+subtle = "2.6.1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -154,7 +157,6 @@ criterion = "0.8.2"
 gungraun = "0.20.0"
 hubuum-storage-conformance = { path = "crates/hubuum-storage-conformance" }
 hubuum-storage-postgres = { path = "crates/hubuum-storage-postgres", features = ["integration-test-support", "query-capture"] }
-minijinja = { version = "3", features = ["fuel", "serde"] }
 percent-encoding = "2"
 regex = "1"
 rstest = "0.28"

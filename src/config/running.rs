@@ -216,6 +216,7 @@ pub struct RemoteCallConfig {
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct AuthenticationConfig {
+    pub browser: super::auth_browser::BrowserSettings,
     pub token_lifetime_hours: i64,
     pub credential_activity_retention_days: i64,
     pub credential_activity_source_cap: usize,
@@ -480,6 +481,7 @@ impl RunningConfig {
                 projected_symlinks_confined_to_root: true,
             },
             authentication: AuthenticationConfig {
+                browser: config.auth_browser.clone(),
                 token_lifetime_hours: config.token_lifetime_hours,
                 credential_activity_retention_days: config.credential_activity_retention_days,
                 credential_activity_source_cap: config.credential_activity_source_cap,

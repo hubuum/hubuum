@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_domain::{InteractionBrowserBinding, InteractionDigest};
 use hubuum_storage_core::StorageExternalSyncFailure;
 use hubuum_storage_core::{
     CredentialActivityPolicy, ObservedSource, StorageActivityQuery, StorageCredentialActivity,
@@ -9,9 +10,108 @@ use hubuum_storage_core::{
     StorageSessionRotate, StorageSessionRotation,
 };
 use hubuum_storage_core::{StorageAuthorizationResource, StorageAuthorizationResourcesQuery};
+use hubuum_storage_core::{
+    StorageInteractionAccess, StorageInteractionCommand, StorageInteractionComplete,
+    StorageInteractionCompletion, StorageInteractionCreate, StorageInteractionOutcome,
+    StorageInteractionView,
+};
 
 #[async_trait]
 impl AuthenticationStorage for StorageHandle {
+    async fn create_auth_interaction(
+        &self,
+        request: StorageInteractionCreate,
+    ) -> Result<StorageInteractionView, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "create_auth_interaction",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .create_auth_interaction(request)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn bind_auth_interaction_browser(
+        &self,
+        code: InteractionDigest,
+        browser: InteractionBrowserBinding,
+    ) -> Result<StorageInteractionOutcome, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "bind_auth_interaction_browser",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .bind_auth_interaction_browser(code, browser)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn advance_auth_interaction(
+        &self,
+        command: StorageInteractionCommand,
+    ) -> Result<StorageInteractionOutcome, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "advance_auth_interaction",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .advance_auth_interaction(command)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn complete_auth_interaction(
+        &self,
+        request: StorageInteractionComplete,
+    ) -> Result<StorageInteractionCompletion, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "complete_auth_interaction",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .complete_auth_interaction(request)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn revoke_auth_interaction_session(
+        &self,
+        access: StorageInteractionAccess,
+        context: EventContext,
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "revoke_auth_interaction_session",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .revoke_auth_interaction_session(access, context)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn purge_auth_interactions(&self, limit: usize) -> Result<usize, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "purge_auth_interactions",
+            async {
+                dispatch_backend!(self, |backend| backend.purge_auth_interactions(limit).await)
+            },
+        )
+        .await
+    }
+
     async fn record_credential_creation(
         &self,
         token: TokenId,

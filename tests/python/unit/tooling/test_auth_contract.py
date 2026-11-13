@@ -167,7 +167,7 @@ class AuthenticationContractTests(unittest.TestCase):
         submitted = cases["candidate_connectivity_only"]["request"]["providers"][0]
         self.assertNotIn("provider_id", submitted)
         self.assertEqual((provider["name"], provider["kind"]), (submitted["name"], submitted["kind"]))
-        self.assertEqual(cases["candidate_browser_verified"]["response"]["body"]["provider_id"],
+        self.assertEqual(cases["candidate_browser_verified"]["response"]["body"]["verification"]["provider_id"],
                          provider["provider_id"])
 
     def test_bff_flow_preserves_frontend_session_client_binding(self):
@@ -195,7 +195,7 @@ class AuthenticationContractTests(unittest.TestCase):
                 with self.subTest(schema=schema, value=value):
                     self.assertEqual(not self.shape_errors(value, schema, self.spec), valid)
         for name, valid in (("ProviderMethod", True), ("Begin", True),
-                            ("VerificationResult", False)):
+                            ("VerificationPreview", False)):
             with self.subTest(schema=name, value="local"):
                 schema = self.spec["components"]["schemas"][name]["properties"]["provider_id"]
                 self.assertEqual(not self.shape_errors("local", schema, self.spec), valid)
@@ -232,7 +232,7 @@ class AuthenticationContractTests(unittest.TestCase):
         identifiers = {case["id"] for case in self.fixtures["cases"]}
         required = {
             "local_success", "external_success", "remote_browser_cli_success",
-            "bff_server_completion", "denial", "expiry", "replay", "cross_client",
+            "bff_server_completion", "denial", "expiry", "expiry_reclaimed", "replay", "cross_client",
             "cross_provider", "wrong_browser", "configuration_changed",
             "stale_group_data", "unsupported_freshness", "lost_completion_cleanup",
             "candidate_connectivity_only", "candidate_verification_begin", "candidate_browser_verified",
@@ -244,16 +244,24 @@ class AuthenticationContractTests(unittest.TestCase):
         }
         self.assertFalse(required - identifiers, required - identifiers)
 
-    def test_unimplemented_browser_routes_remain_outside_the_live_api(self):
+    def test_live_routes_include_hosted_password_interactions(self):
         current = load_json(ROOT / "docs/openapi.json")
         self.assertIn("proposed", self.spec["info"]["version"])
         self.assertEqual(self.fixtures["status"], "proposed")
-        # #574 delivers configuration candidates; browser interactions remain
-        # reserved for the subsequent implementation issues.
+        # #574 delivers configuration candidates; #575 now includes hosted
+        # password forms. External provider callback routes remain proposed.
         self.assertEqual(self.spec["paths"].keys() & current["paths"].keys(), {
             "/api/v1/admin/runtime-settings/security-candidates",
             "/api/v1/admin/runtime-settings/security-candidates/{id}",
             "/api/v1/admin/runtime-settings/security-candidates/{id}/activate",
+            "/api/v1/auth/methods",
+            "/api/v1/auth/interactions",
+            "/api/v1/auth/interactions/browser",
+            "/api/v1/auth/interactions/{id}/credentials",
+            "/api/v1/auth/interactions/{id}/status",
+            "/api/v1/auth/interactions/{id}/complete",
+            "/api/v1/auth/interactions/{id}/cancel",
+            "/api/v1/auth/interactions/{id}/issued-session/revoke",
         })
 
     def test_existing_result_examples_use_current_required_fields_and_approval_syntax(self):

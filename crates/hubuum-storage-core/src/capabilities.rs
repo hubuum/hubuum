@@ -33,6 +33,7 @@ pub mod resources {
 /// Authentication, identity, group, principal, and authorization capabilities.
 pub mod identity {
     pub use crate::IdentityStorage;
+    pub use crate::auth_interactions::*;
     pub use crate::auth_sessions::*;
     pub use crate::authorization::*;
     pub use crate::authorization_resources::*;

@@ -200,6 +200,7 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_REMOTE_CALL_ALLOW_PRIVATE_TARGETS", RemoteCalls),
     option!("HUBUUM_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER", RemoteCalls),
     option!("HUBUUM_CREDENTIAL_ACTIVITY_ENABLED", Authentication),
+    option!("HUBUUM_AUTH_BROWSER", Authentication),
     option!("HUBUUM_CREDENTIAL_ACTIVITY_RETENTION_DAYS", Authentication),
     option!("HUBUUM_CREDENTIAL_ACTIVITY_SOURCE_CAP", Authentication),
     option!("HUBUUM_SESSION_ACCESS_SECONDS", Authentication),

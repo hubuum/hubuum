@@ -1,7 +1,7 @@
 use crate::api::handlers::{meta, probes};
-use crate::api::v1::handlers::auth;
 use crate::api::v1::handlers::collection_event_sinks;
 use crate::api::v1::handlers::history::HistoryResponse;
+use crate::api::v1::handlers::{auth, auth_interactions};
 use crate::api::v1::handlers::{
     backups, classes, client_config, collections, computed_fields, credential_approvals,
     event_deliveries, event_sinks, event_subscriptions, events, export_templates, exports, groups,
@@ -130,6 +130,18 @@ use utoipa::{Modify, OpenApi, ToSchema};
         meta::get_login_rate_limit_state,
         meta::release_login_rate_limit_entry,
         meta::clear_login_rate_limit,
+        auth_interactions::methods,
+        auth_interactions::browser::entry,
+        auth_interactions::browser::attach,
+        auth_interactions::browser::resume,
+        auth_interactions::browser::credentials,
+        auth_interactions::browser::decide,
+        auth_interactions::begin,
+        auth_interactions::credentials,
+        auth_interactions::status,
+        auth_interactions::complete,
+        auth_interactions::cancel,
+        auth_interactions::revoke,
         auth::get_auth_providers,
         auth::login,
         auth::refresh,
@@ -762,6 +774,13 @@ impl Modify for SecurityAddon {
         components.add_security_scheme(
             "bearer_auth",
             SecurityScheme::Http(Http::new(HttpAuthScheme::Bearer)),
+        );
+        components.add_security_scheme(
+            "interaction_secret",
+            SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::with_description(
+                "Authorization",
+                "Hubuum-Interaction <redemption_secret>; never a normal API bearer token",
+            ))),
         );
         components.add_security_scheme(
             "restore_capability",
@@ -1527,7 +1546,7 @@ mod tests {
         http::{Method, StatusCode},
     };
     use rstest::rstest;
-    use serde_json::Value;
+    use serde_json::{Value, json};
     use std::collections::{BTreeSet, HashSet};
 
     fn openapi_json() -> Value {
@@ -1669,6 +1688,17 @@ mod tests {
             "/api/v1/auth/login",
             "/api/v1/auth/refresh",
             "/api/v1/auth/providers",
+            "/api/v1/auth/methods",
+            "/api/v1/auth/interactions",
+            "/api/v1/auth/interactions/browser",
+            "/api/v1/auth/interactions/browser/{id}",
+            "/api/v1/auth/interactions/browser/{id}/credentials",
+            "/api/v1/auth/interactions/browser/{id}/decision",
+            "/api/v1/auth/interactions/{id}/credentials",
+            "/api/v1/auth/interactions/{id}/status",
+            "/api/v1/auth/interactions/{id}/complete",
+            "/api/v1/auth/interactions/{id}/cancel",
+            "/api/v1/auth/interactions/{id}/issued-session/revoke",
             "/api/v1/auth/logout",
             "/api/v1/auth/logout_all",
             "/api/v1/auth/logout/token",
@@ -2442,14 +2472,43 @@ mod tests {
 
                 let is_public_probe =
                     matches!(path.as_str(), "/healthz" | "/readyz") && method == "get";
-                let is_login =
-                    matches!(path.as_str(), "/api/v1/auth/login" | "/api/v1/auth/refresh")
-                        && method == "post";
-                let is_provider_discovery = path == "/api/v1/auth/providers" && method == "get";
+                let is_login = matches!(
+                    path.as_str(),
+                    "/api/v1/auth/login" | "/api/v1/auth/refresh" | "/api/v1/auth/interactions"
+                ) && method == "post";
+                let is_provider_discovery = matches!(
+                    path.as_str(),
+                    "/api/v1/auth/providers" | "/api/v1/auth/methods"
+                ) && method == "get";
+                // Hosted forms authenticate through per-interaction cookies and CSRF, not bearer headers.
+                let is_hosted_browser = path.starts_with("/api/v1/auth/interactions/browser");
                 let is_client_config = path == "/api/v1/config" && method == "get";
                 let is_restore_status =
                     path == "/api/v1/restores/{restore_id}/status" && method == "get";
-                if is_restore_status {
+                if path == "/api/v1/auth/interactions" && method == "post" {
+                    assert_eq!(
+                        operation.get("security"),
+                        Some(&json!([{}, {"bearer_auth": []}])),
+                        "begin must document anonymous login and privileged bearer authentication"
+                    );
+                } else if path.starts_with("/api/v1/auth/interactions/{id}/") {
+                    let security = operation
+                        .get("security")
+                        .and_then(Value::as_array)
+                        .expect("protected interaction security");
+                    assert!(
+                        security
+                            .iter()
+                            .any(|entry| entry.get("interaction_secret").is_some()),
+                        "missing interaction_secret for {path}"
+                    );
+                    assert!(
+                        !security
+                            .iter()
+                            .any(|entry| entry.get("bearer_auth").is_some()),
+                        "interaction secrets are not bearer tokens"
+                    );
+                } else if is_restore_status {
                     let security = operation
                         .get("security")
                         .and_then(Value::as_array)
@@ -2465,6 +2524,7 @@ mod tests {
                         "missing restore_capability security for {method} {path}"
                     );
                 } else if !is_login
+                    && !is_hosted_browser
                     && !is_provider_discovery
                     && !is_client_config
                     && !is_public_probe

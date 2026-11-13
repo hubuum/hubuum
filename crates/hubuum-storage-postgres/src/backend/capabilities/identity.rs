@@ -1,4 +1,5 @@
 use super::super::*;
+use hubuum_domain::{InteractionBrowserBinding, InteractionDigest};
 use hubuum_storage_core::StorageExternalSyncFailure;
 use hubuum_storage_core::{
     CredentialActivityPolicy, ObservedSource, StorageActivityQuery, StorageCredentialActivity,
@@ -9,9 +10,62 @@ use hubuum_storage_core::{
     StorageSessionRotate, StorageSessionRotation,
 };
 use hubuum_storage_core::{StorageAuthorizationResource, StorageAuthorizationResourcesQuery};
+use hubuum_storage_core::{
+    StorageInteractionAccess, StorageInteractionCommand, StorageInteractionComplete,
+    StorageInteractionCompletion, StorageInteractionCreate, StorageInteractionOutcome,
+    StorageInteractionView,
+};
 
 #[async_trait]
 impl AuthenticationStorage for PostgresStorage {
+    async fn create_auth_interaction(
+        &self,
+        request: StorageInteractionCreate,
+    ) -> Result<StorageInteractionView, StorageError> {
+        crate::operations::auth_interactions::create(self.runtime(), request)
+            .await
+            .map_err(StorageError::from)
+    }
+    async fn bind_auth_interaction_browser(
+        &self,
+        code: InteractionDigest,
+        browser: InteractionBrowserBinding,
+    ) -> Result<StorageInteractionOutcome, StorageError> {
+        crate::operations::auth_interactions::bind_browser(self.runtime(), code, browser)
+            .await
+            .map_err(StorageError::from)
+    }
+    async fn advance_auth_interaction(
+        &self,
+        command: StorageInteractionCommand,
+    ) -> Result<StorageInteractionOutcome, StorageError> {
+        crate::operations::auth_interactions::advance(self.runtime(), command)
+            .await
+            .map_err(StorageError::from)
+    }
+    async fn complete_auth_interaction(
+        &self,
+        request: StorageInteractionComplete,
+    ) -> Result<StorageInteractionCompletion, StorageError> {
+        crate::operations::auth_interactions::complete(self.runtime(), request)
+            .await
+            .map_err(StorageError::from)
+    }
+    async fn revoke_auth_interaction_session(
+        &self,
+        access: StorageInteractionAccess,
+        context: EventContext,
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+        crate::operations::auth_interactions::revoke(self.runtime(), access, context)
+            .await
+            .map_err(StorageError::from)
+    }
+    async fn purge_auth_interactions(&self, limit: usize) -> Result<usize, StorageError> {
+        crate::operations::auth_interactions::purge(self.runtime(), limit)
+            .await
+            .map_err(StorageError::from)
+    }
+
     async fn record_credential_creation(
         &self,
         token: TokenId,

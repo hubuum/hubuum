@@ -1,6 +1,6 @@
 [package]
 name = "hubuum-domain"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Backend-neutral domain types and validation for Hubuum."
@@ -15,17 +15,20 @@ policy-document = "docs/rust_api/hubuum-domain.md"
 release-train = "storage-sdk"
 
 [dependencies]
-hubuum-schema-diagnostics = { path = "../hubuum-schema-diagnostics", version = "=0.8.0" }
+hubuum-schema-diagnostics = { path = "../hubuum-schema-diagnostics", version = "=0.9.0" }
 bigdecimal = "0.4"
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 json-patch = { version = "4.2", default-features = false }
 jsonschema = { version = "0.59", default-features = false }
 lru = "0.19"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 sha2 = "0.11"
+thiserror = "2"
+uuid = { version = "1", features = ["serde"] }
 url = "2"
 utoipa = { version = "6", optional = true }
+subtle = "2.6.1"
 
 [features]
 openapi = ["dep:utoipa", "hubuum-schema-diagnostics/openapi"]

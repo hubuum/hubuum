@@ -279,6 +279,8 @@ jobs:
       - name: Build the isolated renderer
         run: cargo build --locked --release -p hubuum-templates --bin hubuum-template-worker
       - name: Measure concurrent templates and schema validation
+        env:
+          CARGO_BIN_EXE_hubuum-template-worker: ${{ github.workspace }}/target/release/hubuum-template-worker
         shell: bash
         run: cargo bench --locked --features runtime-limit-bench --bench template_schema_concurrency | tee template-schema-evidence.jsonl
       - name: Verify schema budgets under process resource limits

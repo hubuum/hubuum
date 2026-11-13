@@ -806,6 +806,7 @@ assert_flag "$unknown_document" code true
 # New tests are discovered automatically; their changed paths still need the right CI jobs.
 for python_container_input in tests/python/run.py tests/python/support/__init__.py \
   tests/python/support/installer.py tests/python/integration/__init__.py \
+  tests/python/integration/auth_browser_fixture.py tests/python/support/auth_browser/harness.html \
   tests/python/integration/monitoring.py tests/python/integration/monitoring_fixture.py \
   tests/python/unit/deployment/test_new_installer_case.py \
   tests/python/unit/monitoring/test_new_panel_case.py; do
@@ -915,7 +916,9 @@ for repair_path in tests/computed_read_repair.rs crates/hubuum-storage-postgres/
 done
 
 # Interactive auth and activity schemas must regenerate the public contract.
-for session_schema in src/api/v1/handlers/auth.rs src/models/auth_session.rs src/models/credential_activity.rs; do
+for session_schema in src/api/v1/handlers/auth.rs src/models/auth_session.rs src/models/credential_activity.rs \
+  src/api/v1/handlers/auth_interactions.rs src/models/auth_interaction.rs \
+  src/api/v1/handlers/auth_interactions/browser/browser.html src/models/auth_interaction/browser.rs src/config/auth_browser.rs; do
   session_output="$(bash "$classifier" "$session_schema")"
   assert_flag "$session_output" rust true
   assert_flag "$session_output" openapi true

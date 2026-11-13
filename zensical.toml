@@ -65,6 +65,7 @@ nav = [
       { "Configuration reference" = "quick_start.md" },
       { "Runtime settings" = "runtime_settings.md" },
       { "Security configuration candidates" = "security_candidates.md" },
+      { "Authentication interactions" = "authentication_interactions.md" },
       { "PostgreSQL roles" = "database_roles.md" },
       { "Backup & restore" = "backup-restore.md" },
       { "Verify release artifacts" = "supply-chain-security.md" },

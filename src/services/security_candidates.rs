@@ -536,7 +536,35 @@ pub(crate) async fn verify_ldap(
     id: Uuid,
     request: SecurityCandidateLdapVerification,
 ) -> Result<SecurityCandidateLdapVerificationResponse, ApiError> {
-    let mut candidate = load(context, actor, id).await?;
+    let candidate = load(context, actor, id).await?;
+    let receipt = SecurityVerificationReceipt::generate();
+    let (candidate, verification) =
+        authenticate_ldap_candidate(context, candidate, request, receipt.digest()).await?;
+    let receipt =
+        (candidate.state(Utc::now()) == StorageSecurityCandidateState::Verified).then_some(receipt);
+    context
+        .backend()
+        .verify_security_candidate(candidate.clone())
+        .await?;
+    Ok(SecurityCandidateLdapVerificationResponse {
+        candidate: SecurityCandidateReport::new(&candidate, receipt),
+        verification,
+    })
+}
+
+pub(crate) async fn authenticate_ldap_candidate(
+    context: &AppContext,
+    mut candidate: StorageSecurityCandidate,
+    request: SecurityCandidateLdapVerification,
+    receipt: StorageCredentialFingerprint,
+) -> Result<
+    (
+        StorageSecurityCandidate,
+        SecurityCandidateVerificationPreview,
+    ),
+    ApiError,
+> {
+    let id = candidate.id();
     require_current(context, &candidate).await?;
     if candidate.state(Utc::now()) != StorageSecurityCandidateState::Unverified {
         return Err(ApiError::Conflict(
@@ -601,25 +629,58 @@ pub(crate) async fn verify_ldap(
         })
         .collect();
     candidate = candidate.with_checks(checks).map_err(invalid)?;
-    let receipt = if candidate
+
+    if candidate
         .checks()
         .iter()
         .all(|check| check.status() == CheckStatus::Passed)
     {
-        let receipt = SecurityVerificationReceipt::generate();
-        candidate = candidate.verify(receipt.digest()).map_err(invalid)?;
-        Some(receipt)
-    } else {
-        None
+        candidate = candidate.verify(receipt).map_err(invalid)?;
+    }
+    Ok((candidate, verification))
+}
+
+pub(crate) async fn interaction_candidate(
+    context: &AppContext,
+    actor: &CredentialActor,
+    id: Uuid,
+    provider_id: Uuid,
+) -> Result<
+    (
+        StorageSecurityCandidate,
+        hubuum_storage_core::StorageProviderIdentityBinding,
+    ),
+    ApiError,
+> {
+    let candidate = load(context, actor, id).await?;
+    require_current(context, &candidate).await?;
+    if candidate.state(Utc::now()) != StorageSecurityCandidateState::Unverified {
+        return Err(ApiError::Conflict("Unverified candidate required".into()));
+    }
+    let Some(StorageRuntimeSettingsValue::Authentication(providers)) =
+        candidate.verification_assignment().value()
+    else {
+        return Err(ApiError::BadRequest(
+            "Authentication candidate required".into(),
+        ));
     };
-    context
-        .backend()
-        .verify_security_candidate(candidate.clone())
-        .await?;
-    Ok(SecurityCandidateLdapVerificationResponse {
-        candidate: SecurityCandidateReport::new(&candidate, receipt),
-        verification,
-    })
+    let provider = providers
+        .providers()
+        .iter()
+        .find(|provider| provider.id() == Some(provider_id) && provider.enabled())
+        .ok_or(crate::errors::InteractionError::Unsupported)?;
+    if provider.kind() != StorageAuthenticationProviderKind::Ldap
+        || candidate.checks().iter().any(|check| {
+            check.status() != CheckStatus::Passed
+                && !(check.kind() == CheckKind::Identity
+                    && check.provider_id() == Some(provider_id))
+        })
+    {
+        return Err(crate::errors::InteractionError::Unsupported.into());
+    }
+    let binding = hubuum_storage_core::StorageProviderIdentityBinding::from_provider(provider)
+        .map_err(invalid)?;
+    Ok((candidate, binding))
 }
 
 pub(crate) async fn approval_binding(
