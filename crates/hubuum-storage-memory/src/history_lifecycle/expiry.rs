@@ -129,13 +129,9 @@ pub(super) async fn process_task(
     state.append_task_event_record(
         lease.task_id(),
         StorageTaskEventInput::new(
+            "running",
             if oversized_source_rows > 0 {
-                "warning"
-            } else {
-                "running"
-            },
-            if oversized_source_rows > 0 {
-                "History expiry deferred source rows exceeding input or identity budgets"
+                "History expiry warning: source rows exceeding input or identity budgets remain deferred"
             } else {
                 "History expiry continuation committed"
             },

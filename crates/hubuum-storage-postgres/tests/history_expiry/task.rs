@@ -3,6 +3,7 @@ use diesel::sql_types::Integer;
 use futures_util::FutureExt;
 use hubuum_domain::{PrincipalId, TaskId, TaskIdentity, UserId};
 use hubuum_events_core::EventContext;
+use hubuum_query::QueryOptions;
 use hubuum_task_core::TaskExecutionLimit;
 use std::future::{Future, ready};
 use std::panic::{AssertUnwindSafe, resume_unwind};
@@ -1101,6 +1102,42 @@ async fn native_receipt_progress_preserves_only_unassigned_task_control(
         Ok::<_, StorageError>(())
     }
     .await;
+    test.cleanup().await;
+    result.unwrap();
+}
+
+#[tokio::test]
+async fn native_oversized_source_task_commits_its_warning_and_continuation() {
+    let _guard = CONTROL_LOCK.lock().await;
+    let test = TaskFixture::new(StorageIdentityHistoryKind::Collection).await;
+    let result = async {
+        let oversized = with_transaction(&test.fixture.owner_pool, async |connection| {
+            owner(connection).await?;
+            sql_query("UPDATE public.collections SET description=repeat('x',17*1024*1024) WHERE id=$1")
+                .bind::<Integer, _>(test.collection).execute(connection).await?;
+            sql_query("UPDATE public.collections SET description='small again' WHERE id=$1")
+                .bind::<Integer, _>(test.collection).execute(connection).await?;
+            sql_query("SELECT logical_identity AS material FROM public.collections_history WHERE id=$1 AND octet_length(description)>16*1024*1024")
+                .bind::<Integer, _>(test.collection).get_result::<Material>(connection).await.map_err(PostgresStorageError::from)
+        }).await?;
+        let oversized: StorageIdentityEvidence = serde_json::from_value(oversized.material).unwrap();
+        let target = oversized.subject().unwrap().record_identity().unwrap();
+        let checkpoint = test.process(true).await?;
+        let events = phase(&test.fixture, &test.scope, test.fixture.storage.list_task_events(
+            StorageTaskChildListQuery::new(test.task.id(), QueryOptions::new(vec![],vec![],Some(100),None,false).unwrap()),
+        )).await?.into_parts().0;
+        let warning = events.iter().find(|event| event.data().is_some_and(|data|
+            data["oversized_source_rows"].as_u64().is_some_and(|count| count>0)))
+            .expect("Oversized source progress must retain an explicit task warning");
+        assert_eq!(warning.event_type(), "running");
+        assert!(warning.message().contains("warning"));
+        let task = phase(&test.fixture, &test.scope, test.fixture.storage.get_task_access(test.task.id())).await?.into_parts().0;
+        assert_eq!(task.checkpoint(), Some(&checkpoint.encode().unwrap()));
+        let snapshot = test.fixture.storage.capture_history_lifecycle().await?;
+        assert!(snapshot.control().authority().expiry().intents().iter().flat_map(|intent| intent.manifest().members()).all(|member| member.target()!=target));
+        assert_eq!(copy_count(&test, StorageIdentityHistoryKind::Collection, target).await, 1);
+        Ok::<_, StorageError>(())
+    }.await;
     test.cleanup().await;
     result.unwrap();
 }

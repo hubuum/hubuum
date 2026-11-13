@@ -431,6 +431,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Gated history expiry records oversized-source warnings through the supported
+  running event action, preserving explicit diagnostics, deferred rows and
+  continuation progress instead of failing on an unknown event action.
+
 - Gated history expiry control reads retain their original owner across
   receipt-only progress. Policy, hold and exclusion changes still fence them;
   response and external producer scopes keep full-revision fencing. Deploy

@@ -199,6 +199,79 @@ async fn restart_resumes_exact_batch_without_fresh_approval(
     storage.unregister_runtime(runtime).await.unwrap();
 }
 
+#[tokio::test]
+async fn oversized_source_task_commits_its_warning_and_continuation() {
+    let storage = MemoryStorage::new();
+    let oversized = seed(
+        &storage,
+        StorageIdentityHistoryKind::Collection,
+        "oversized task source",
+        &"x".repeat(17 * 1024 * 1024),
+    )
+    .await;
+    let (runtime, scope, lease) = prepare(&storage, StorageIdentityHistoryKind::Collection).await;
+    storage
+        .run_in_scope(scope, async {
+            let checkpoint = storage
+                .process_history_expiry_task(HistoryExpiryTaskRequest::new(
+                    lease.clone(),
+                    Some(HistoryExpiryTaskAuthorization::scheduled()),
+                ))
+                .await
+                .unwrap();
+            let events = fixture_write(
+                &storage,
+                storage.list_task_events(StorageTaskChildListQuery::new(
+                    lease.task_id(),
+                    QueryOptions::new(vec![], vec![], Some(100), None, false).unwrap(),
+                )),
+            )
+            .await
+            .unwrap()
+            .into_parts()
+            .0;
+            let warning = events
+                .iter()
+                .find(|event| {
+                    event.data().is_some_and(|data| {
+                        data["oversized_source_rows"]
+                            .as_u64()
+                            .is_some_and(|count| count > 0)
+                    })
+                })
+                .expect("Oversized source progress must retain an explicit task warning");
+            assert_eq!(warning.event_type(), "running");
+            assert!(warning.message().contains("warning"));
+            let task = fixture_write(&storage, storage.get_task_access(lease.task_id()))
+                .await
+                .unwrap()
+                .into_parts()
+                .0;
+            assert_eq!(task.checkpoint(), Some(&checkpoint.encode().unwrap()));
+            let snapshot = storage.capture_history_lifecycle().await.unwrap();
+            assert!(
+                snapshot
+                    .control()
+                    .authority()
+                    .expiry()
+                    .intents()
+                    .iter()
+                    .flat_map(|intent| intent.manifest().members())
+                    .all(|member| member
+                        .attributions()
+                        .iter()
+                        .all(|scope| !scope.matches(oversized.scope())))
+            );
+            let state = storage.state.read_control().await;
+            assert!(state.history.iter().any(|row| matches!(
+                &row.value, MemoryHistoryValue::Collection(value)
+                    if value.description().len() > 16 * 1024 * 1024
+            )));
+        })
+        .await;
+    storage.unregister_runtime(runtime).await.unwrap();
+}
+
 #[rstest]
 #[case::missing_approval("approval")]
 #[case::required_audit("audit")]

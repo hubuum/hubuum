@@ -101,8 +101,8 @@ pub(crate) async fn process(
             append_task_lifecycle_event(
                 connection,
                 &row,
-                StorageTaskEventInput::new(if oversized_source_rows > 0 { "warning" } else { "running" },
-                    if oversized_source_rows > 0 { "History expiry deferred source rows exceeding input or identity budgets" } else { "History expiry continuation committed" })
+                StorageTaskEventInput::new("running",
+                    if oversized_source_rows > 0 { "History expiry warning: source rows exceeding input or identity budgets remain deferred" } else { "History expiry continuation committed" })
                     .with_data(Some(serde_json::json!({
                         "batch": next.batch(), "admitted": next.admitted(),
                         "pass_finished": next.pass_finished(), "finished": next.finished(), "removed": removed, "scanned": scanned,
