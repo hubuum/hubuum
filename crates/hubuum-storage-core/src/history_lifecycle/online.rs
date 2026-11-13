@@ -818,6 +818,10 @@ impl<'a> HistoryExpirySelection<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::future::{Future, ready};
+    use std::pin::pin;
+    use std::task::{Context, Poll, Waker};
+
     use hubuum_domain::{IdentityReference, VersionIdentity};
     use rstest::rstest;
 
@@ -1662,6 +1666,93 @@ mod tests {
             target,
         )
     }
+    #[rstest]
+    #[case::task_control(HistoryPublicationKind::TaskOutput, false, false, true)]
+    #[case::unknown_read_proof(HistoryPublicationKind::TaskOutput, false, true, false)]
+    #[case::assigned_task(HistoryPublicationKind::TaskOutput, true, false, false)]
+    #[case::http(HistoryPublicationKind::HttpResponse, false, false, false)]
+    #[case::backup(HistoryPublicationKind::Backup, false, false, false)]
+    #[case::export(HistoryPublicationKind::Export, false, false, false)]
+    #[case::archive(HistoryPublicationKind::ArchiveRead, false, false, false)]
+    fn receipt_progress_keeps_original_control_owner_only(
+        #[case] kind: HistoryPublicationKind,
+        #[case] assigned: bool,
+        #[case] unknown: bool,
+        #[case] productive: bool,
+    ) {
+        use crate::{ApplicationFence, RuntimeRegistration, StorageExecutionPermit};
+        let (before, identity, target) = admitted_snapshot();
+        let runtime = RuntimeRegistration::generate_history_aware();
+        let application = StorageExecutionPermit::new(
+            Some(runtime.owner()),
+            ApplicationFence::new(
+                before.fence().incarnation(),
+                before.fence().deletion_revision().value() as i64,
+            )
+            .unwrap(),
+        );
+        let mut registry = HistoryPublicationRegistry::default();
+        let epoch = |snapshot: &HistoryLifecycleSnapshot| {
+            if unknown {
+                HistoryReadEpoch::new(
+                    application.clone(),
+                    snapshot.fence(),
+                    HistoryPublicationGeneration::new(0).unwrap(),
+                )
+                .unwrap()
+            } else {
+                HistoryReadEpoch::for_publication(
+                    kind,
+                    application.clone(),
+                    snapshot,
+                    HistoryPublicationGeneration::new(0).unwrap(),
+                )
+                .unwrap()
+            }
+        };
+        let owner = registry.admit(kind, epoch(&before)).unwrap();
+        let original = owner.context();
+        let child = assigned.then(|| registry.admit_producer(&original, &epoch(&before)).unwrap());
+        let removal = before
+            .control()
+            .record_expiry_removal(
+                identity,
+                HistoryExpiryExactDeletion::from_affected_rows(target, checkpoint('a'), at(210), 1)
+                    .unwrap(),
+                before.fence(),
+            )
+            .unwrap();
+        let after = HistoryLifecycleSnapshot::new(
+            removal.next().clone(),
+            before.fence().incarnation(),
+            before.fence().deletion_revision(),
+            at(220),
+        )
+        .unwrap();
+        assert_ne!(before.fence(), after.fence());
+        assert_eq!(
+            before.control().authority().read_revision(),
+            after.control().authority().read_revision()
+        );
+        assert_eq!(
+            registry.check(&original, &epoch(&after)).is_ok(),
+            productive
+        );
+        assert_eq!(owner.context(), original);
+        assert!(registry.admit_producer(&original, &epoch(&after)).is_err());
+        if let Some(child) = child {
+            let mut completed = pin!(child.after_completed(ready(Ok(()))));
+            let Poll::Ready(completed) =
+                Future::poll(completed.as_mut(), &mut Context::from_waker(Waker::noop()))
+            else {
+                panic!("ready completion")
+            };
+            let completed = completed.unwrap();
+            registry.settle_producer(&completed).unwrap();
+            assert!(registry.check(&original, &epoch(&after)).is_err());
+        }
+    }
+
     #[test]
     fn removal_transition_recovers_original_receipt_and_audit() {
         let (before, identity, target) = admitted_snapshot();

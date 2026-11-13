@@ -47,6 +47,7 @@ impl HistoryPublicationKind {
 pub struct HistoryReadEpoch {
     application: StorageExecutionPermit,
     history: HistoryReviewFence,
+    read_revision: Option<HistoryReadRevision>,
     generation: HistoryPublicationGeneration,
     scope: Box<StorageExecutionScope>,
 }
@@ -84,6 +85,7 @@ impl HistoryReadEpoch {
         Ok(Self {
             application,
             history,
+            read_revision: None,
             generation,
             scope,
         })
@@ -101,7 +103,9 @@ impl HistoryReadEpoch {
                 .owner()
                 .is_some_and(|owner| owner.history_protocol().supports_online())
         {
-            return Self::new(application, snapshot.fence(), generation);
+            let mut epoch = Self::new(application, snapshot.fence(), generation)?;
+            epoch.read_revision = Some(snapshot.control().authority().read_revision());
+            return Ok(epoch);
         }
         let history = snapshot.fence();
         if application.owner().is_none()
@@ -121,6 +125,7 @@ impl HistoryReadEpoch {
         Ok(Self {
             application,
             history,
+            read_revision: None,
             generation,
             scope,
         })
@@ -153,6 +158,9 @@ impl HistoryReadEpoch {
     }
     pub const fn history(&self) -> HistoryReviewFence {
         self.history
+    }
+    pub const fn read_revision(&self) -> Option<HistoryReadRevision> {
+        self.read_revision
     }
     pub const fn generation(&self) -> HistoryPublicationGeneration {
         self.generation
@@ -415,7 +423,11 @@ impl HistoryPublicationRegistry {
             .get(&context.id)
             .is_none_or(|owner| !context.same_publication(owner))
             || context.epoch.application != current.application
-            || context.epoch.history != current.history
+            || (context.epoch.history != current.history
+                && !(context.kind == HistoryPublicationKind::TaskOutput
+                    && !self.producers.contains_key(&context.id)
+                    && context.epoch.read_revision.is_some()
+                    && context.epoch.read_revision == current.read_revision))
             || context.epoch.generation != current.generation
             || context.binding != current.scope
             || current.generation() != self.generation
@@ -450,6 +462,11 @@ impl HistoryPublicationRegistry {
         current: &HistoryReadEpoch,
     ) -> Result<HistoryProducerOwner, StorageError> {
         self.check(context, current)?;
+        if context.epoch.history != current.history {
+            return Err(StorageError::unavailable(
+                "Producer requires its original full history epoch",
+            ));
+        }
         if self.producers.contains_key(&context.id()) {
             return Err(StorageError::unavailable(
                 "Publication producer slot is already assigned",

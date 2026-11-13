@@ -194,6 +194,19 @@ impl HistoryLifecycleAuthority {
     pub const fn revision(&self) -> HistoryAuthorityRevision {
         self.revision
     }
+    /// Policy, hold and exclusion decisions fence control reads. First-removal
+    /// receipts record progress under an already installed exclusion.
+    pub fn read_revision(&self) -> HistoryReadRevision {
+        let decisions = self.policies.records().len()
+            + self.holds.len()
+            + self
+                .expiry
+                .intents()
+                .iter()
+                .map(|intent| 1 + usize::from(intent.cancellation().is_some()))
+                .sum::<usize>();
+        HistoryReadRevision::new(decisions as u64).expect("bounded history read decisions")
+    }
     pub const fn policies(&self) -> &HistoryPolicyCatalog {
         &self.policies
     }

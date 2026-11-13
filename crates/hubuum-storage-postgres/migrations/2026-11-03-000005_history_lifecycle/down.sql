@@ -662,7 +662,7 @@ DROP FUNCTION IF EXISTS public.hubuum_history_producers_fenced(UUID,BIGINT);
 DROP FUNCTION public.hubuum_history_read_authority(UUID,UUID,BOOLEAN);
 DROP FUNCTION public.hubuum_history_publication_generation();
 DROP FUNCTION public.hubuum_history_publication_admit(UUID,UUID,TEXT,UUID,UUID,UUID,BIGINT,BIGINT,BIGINT,UUID);
-DROP FUNCTION public.hubuum_history_publication_execution(UUID,UUID,UUID,BIGINT,BIGINT,BIGINT);
+DROP FUNCTION public.hubuum_history_publication_execution(UUID,UUID,UUID,BIGINT,BIGINT,BIGINT,TEXT,BIGINT);
 DROP FUNCTION public.hubuum_history_publication_settle(UUID,UUID);
 DROP FUNCTION public.hubuum_history_producer_execution(UUID,UUID,UUID);
 DROP FUNCTION public.hubuum_history_producer_admit(UUID,UUID,UUID,UUID,UUID,UUID,UUID,BIGINT,BIGINT,BIGINT);
@@ -674,6 +674,7 @@ DROP TABLE hubuum_control.history_publication_producers;
 DROP TABLE hubuum_control.history_publication_owners;
 DROP TABLE hubuum_control.history_publication_control;
 DROP TABLE hubuum_control.history_lifecycle_control;
+DROP FUNCTION hubuum_control.history_read_revision(JSONB);
 
 CREATE OR REPLACE FUNCTION public.hubuum_history_archive_capture_save(replacement jsonb, expected_work bigint,
     registration uuid, ownership uuid, image uuid, revision bigint) RETURNS boolean

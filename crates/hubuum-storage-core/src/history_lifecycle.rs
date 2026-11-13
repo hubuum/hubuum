@@ -90,6 +90,7 @@ macro_rules! decimal {
 }
 decimal!(HistoryPolicyRevision, i64::MAX as u64);
 decimal!(HistoryAuthorityRevision, i64::MAX as u64);
+decimal!(HistoryReadRevision, i64::MAX as u64);
 decimal!(HistoryDeletionRevision, i64::MAX as u64);
 // Bounds keep addition representable for ordinary supported UTC history clocks.
 decimal!(HistoryRetentionSeconds, 315_360_000);

@@ -978,6 +978,134 @@ async fn native_pre_exclusion_publication_requires_positive_settlement(
 }
 
 #[rstest::rstest]
+#[case::task_control(HistoryPublicationKind::TaskOutput, false, true)]
+#[case::assigned_task(HistoryPublicationKind::TaskOutput, true, false)]
+#[case::http(HistoryPublicationKind::HttpResponse, false, false)]
+#[case::backup(HistoryPublicationKind::Backup, false, false)]
+#[case::export(HistoryPublicationKind::Export, false, false)]
+#[case::archive(HistoryPublicationKind::ArchiveRead, false, false)]
+#[tokio::test]
+async fn native_receipt_progress_preserves_only_unassigned_task_control(
+    #[case] kind: HistoryPublicationKind,
+    #[case] assigned: bool,
+    #[case] productive: bool,
+) {
+    let _guard = CONTROL_LOCK.lock().await;
+    let test = TaskFixture::new(StorageIdentityHistoryKind::Object).await;
+    let result = async {
+        let checkpoint = test.process(true).await?;
+        let before = test.fixture.storage.capture_history_lifecycle().await?;
+        let target = checkpoint.retained_manifest(&before).unwrap().members()[0].target();
+        let owner = test
+            .fixture
+            .storage
+            .run_in_scope(
+                test.scope.clone(),
+                test.fixture.storage.admit_history_publication(kind),
+            )
+            .await?;
+        let original = owner.context();
+        let scope = test.scope.clone().with_history_read(original.clone());
+        let child = if assigned {
+            Some(
+                test.fixture
+                    .storage
+                    .run_in_scope(
+                        scope.clone(),
+                        test.fixture
+                            .storage
+                            .admit_history_producer(original.clone()),
+                    )
+                    .await?,
+            )
+        } else {
+            None
+        };
+        assert_eq!(
+            copy_count(&test, StorageIdentityHistoryKind::Object, target).await,
+            1
+        );
+        remove(&test, protection(&before)).await?;
+        assert_eq!(
+            copy_count(&test, StorageIdentityHistoryKind::Object, target).await,
+            0
+        );
+        let after = test.fixture.storage.capture_history_lifecycle().await?;
+        assert_eq!(
+            after.control().authority().revision().value(),
+            before.control().authority().revision().value() + 1
+        );
+        assert_eq!(
+            after.control().authority().read_revision(),
+            before.control().authority().read_revision()
+        );
+        assert_eq!(
+            after
+                .control()
+                .authority()
+                .expiry()
+                .intent(checkpoint.batch())
+                .unwrap()
+                .removals()
+                .len(),
+            1
+        );
+        // Reuse the exact original owner and epoch, with no re-admission.
+        let read = test
+            .fixture
+            .storage
+            .run_in_scope(
+                scope.clone(),
+                test.fixture
+                    .storage
+                    .get_collection(hubuum_domain::CollectionId::new(test.collection).unwrap()),
+            )
+            .await;
+        assert_eq!(read.is_ok(), productive, "{kind:?}: {read:?}");
+        assert_eq!(owner.context(), original);
+        if !assigned && productive {
+            assert!(
+                test.fixture
+                    .storage
+                    .run_in_scope(scope, test.fixture.storage.admit_history_producer(original))
+                    .await
+                    .is_err(),
+                "A receipt-tolerant control scope cannot become an external producer"
+            );
+        }
+        if let Some(child) = child {
+            let settled = child.after_completed(ready(Ok(()))).await?;
+            test.fixture
+                .storage
+                .settle_history_producer(&settled)
+                .await?;
+            assert!(
+                test.fixture
+                    .storage
+                    .run_in_scope(
+                        test.scope.clone().with_history_read(owner.context()),
+                        test.fixture.storage.get_collection(
+                            hubuum_domain::CollectionId::new(test.collection).unwrap()
+                        ),
+                    )
+                    .await
+                    .is_err(),
+                "Retiring a child must not restore receipt tolerance"
+            );
+        }
+        let settled = owner.after_drained(ready(Ok(())), ready(Ok(()))).await?;
+        test.fixture
+            .storage
+            .settle_history_publication(settled)
+            .await?;
+        Ok::<_, StorageError>(())
+    }
+    .await;
+    test.cleanup().await;
+    result.unwrap();
+}
+
+#[rstest::rstest]
 #[case::independent_membership("protection")]
 #[case::current_hold("hold")]
 #[case::canonical_audit("audit")]

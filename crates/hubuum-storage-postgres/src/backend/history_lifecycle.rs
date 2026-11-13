@@ -1139,10 +1139,11 @@ mod scan_tests {
             if mode=="publication" {
                 // Uncertain pre-restore ownership stays an obligation even
                 // without a live registry row. Absence is not quiescence.
-                sql_query("INSERT INTO hubuum_control.history_publication_owners(id,ownership_token,runtime_id,incarnation,deletion_revision,history_revision,generation,kind) VALUES($1,$2,$3,$4,$5,$6,0,'backup')")
+                sql_query("INSERT INTO hubuum_control.history_publication_owners(id,ownership_token,runtime_id,incarnation,deletion_revision,history_revision,read_revision,generation,kind) VALUES($1,$2,$3,$4,$5,$6,$7,0,'backup')")
                     .bind::<SqlUuid,_>(Uuid::new_v4()).bind::<SqlUuid,_>(Uuid::new_v4()).bind::<SqlUuid,_>(Uuid::new_v4())
                     .bind::<SqlUuid,_>(captured.fence().incarnation()).bind::<BigInt,_>(captured.fence().deletion_revision().value() as i64)
-                    .bind::<BigInt,_>(retained.next().authority().revision().value() as i64).execute(connection).await?;
+                    .bind::<BigInt,_>(retained.next().authority().revision().value() as i64)
+                    .bind::<BigInt,_>(retained.next().authority().read_revision().value() as i64).execute(connection).await?;
             }
             // Use the real trusted restore identity branch; no source ancestry
             // or original event/closure clock is rewritten by the exposure gate.

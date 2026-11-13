@@ -1078,6 +1078,21 @@ before enabling expiry, and roll forward after retained expiry is published.
 Production must not advertise the new protocol until all read/publication fences
 are implemented. These are incompatible SDK and deployment requirements.
 
+Finite `task_output` control scopes retain their original full history epoch
+and an adapter-captured `HistoryReadRevision`. The read revision counts policy,
+hold, intent and cancellation decisions, excluding physical-removal receipts
+under an already installed exclusion. Only an owner with no assigned producer
+may remain productive across receipt-only progress, with unchanged application,
+read revision, publication generation and original scope bindings. Preserve the
+exact registered owner and full epoch; never refresh an inherited context or its
+task deadline. Owners constructed without the read proof remain strictly fenced
+by the full revision. Response, backup, export and archive owners, and any owner
+that has ever assigned a producer, also keep full-revision fencing. A control
+owner whose full epoch changed cannot subsequently admit a producer. Native
+adapters must retain and compare the captured proof atomically, rather than
+recompute and substitute a current epoch for the original owner. Deploy matching
+adapters and lifecycle migration 000005 together during the offline upgrade.
+
 ### Unreleased producer slot contract
 
 Admit the single-assignment producer slot before issuing external work. Its

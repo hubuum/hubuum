@@ -431,6 +431,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Gated history expiry control reads retain their original owner across
+  receipt-only progress. Policy, hold and exclusion changes still fence them;
+  response and external producer scopes keep full-revision fencing. Deploy
+  matching storage SDK adapters and lifecycle migration 000005 together as part
+  of the coordinated offline upgrade.
+
 - Retained history visibility uses indexed exact-copy and restore-ancestor
   lookups, keeping bounded expiry scans responsive as exclusions accumulate.
 - Gated history expiry retries temporary checkpoint contention and service

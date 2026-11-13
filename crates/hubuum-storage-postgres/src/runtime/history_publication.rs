@@ -198,6 +198,14 @@ impl PostgresRuntime {
                 .bind::<BigInt, _>(epoch.history().authority_revision().value() as i64)
                 .sql(",")
                 .bind::<BigInt, _>(epoch.generation().value() as i64)
+                .sql(",")
+                .bind::<Text, _>(publication.kind().as_str())
+                .sql(",")
+                .bind::<Nullable<BigInt>, _>(
+                    epoch
+                        .read_revision()
+                        .map(|revision| revision.value() as i64),
+                )
                 .sql(")"),
         )
         .get_result::<bool>(connection)
