@@ -1,6 +1,8 @@
 //! Administrator policy review/application with independent recovery protection.
 
+use hubuum_task_core::TaskExecutionContext;
 use std::collections::BTreeSet;
+use std::time::Duration;
 
 use hubuum_domain::{PrincipalId, PrincipalIdentity};
 use hubuum_storage_core::{
@@ -206,11 +208,47 @@ async fn protect_snapshot(
     Ok((applied, session))
 }
 
+/// Wait only for publication ownership, before capture or mutation. Every
+/// acquired session authenticates independent read-back; failures are terminal.
+/// The caller's execution context bounds contention without renewing its clock.
+async fn expiry_session(
+    options: &ControlRecoveryOptions,
+    execution: &TaskExecutionContext,
+) -> Result<CheckpointSession, ApiError> {
+    let (directory, key) = options.paths()?.ok_or_else(|| {
+        unavailable("History expiry requires configured independent control recovery")
+    })?;
+    loop {
+        execution.check()?;
+        let directory = directory.to_owned();
+        let key = key.to_owned();
+        let session = tokio::task::spawn_blocking(move || {
+            CheckpointRepository::open(&directory, &key)?.try_into_session()
+        })
+        .await
+        .map_err(|_| unavailable("History expiry checkpoint worker failed"))??;
+        execution.check()?;
+        if let Some(session) = session {
+            return Ok(session);
+        }
+        tokio::time::sleep(execution.remaining().min(Duration::from_millis(25))).await;
+    }
+}
+
 pub(super) async fn protect_expiry(
     context: &AppContext,
     checkpoint: &HistoryExpiryTaskCheckpoint,
+    execution: &TaskExecutionContext,
 ) -> Result<HistoryExposureProtection, ApiError> {
-    let session = protected_session(context, context.history_retention()).await?;
+    let session = expiry_session(context.history_retention(), execution).await?;
+    if !covers_checkpoint(
+        &storage_handle(context).capture_control_checkpoint().await?,
+        session.checkpoint(),
+    ) {
+        return Err(unavailable(
+            "Recover current control authority before changing retention protection",
+        ));
+    }
     let snapshot = storage_handle(context).capture_history_lifecycle().await?;
     checkpoint
         .retained_manifest(&snapshot)

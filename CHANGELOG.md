@@ -431,6 +431,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Gated history expiry reuses independently protected immutable membership during
+  exact-copy removal and freshly protects every receipt before completion.
+  Repository contention waits under the original task deadline instead of
+  repeatedly suspending the batch; current eligibility and lease checks remain
+  native to every deletion.
+
 - Gated history expiry records oversized-source warnings through the supported
   running event action, preserving explicit diagnostics, deferred rows and
   continuation progress instead of failing on an unknown event action.

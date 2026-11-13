@@ -108,6 +108,228 @@ async fn both_admission_services_share_the_original_initiation(#[case] manual_fi
     storage.unregister_runtime(registration).await.unwrap();
 }
 
+#[rstest::rstest]
+#[case::released("released")]
+#[case::original_deadline("deadline")]
+#[case::cancelled("cancelled")]
+#[case::authentication_failure("authentication")]
+#[actix_web::test]
+async fn expiry_publication_wait_preserves_original_execution_and_authentication(
+    #[case] mode: &str,
+) {
+    use hubuum_task_core::{TaskExecutionContext, TaskStopReason};
+    use std::time::Duration as StdDuration;
+    let fixture = Fixture::new().await;
+    let held = session(&fixture.options).await.unwrap();
+    let original = held.checkpoint().identity().to_owned();
+    let (execution, stop) = TaskExecutionContext::new(if mode == "deadline" {
+        StdDuration::from_millis(50)
+    } else {
+        StdDuration::from_secs(5)
+    })
+    .unwrap();
+    let release = async {
+        tokio::time::sleep(if mode == "deadline" {
+            StdDuration::from_millis(100)
+        } else {
+            StdDuration::from_millis(30)
+        })
+        .await;
+        if mode == "cancelled" {
+            stop.request_stop(TaskStopReason::Cancelled);
+        }
+        if mode == "authentication" {
+            fs::write(fixture.root.join("repository/HEAD"), b"invalid checkpoint").unwrap();
+        }
+        drop(held);
+    };
+    let (result, ()) = tokio::join!(expiry_session(&fixture.options, &execution), release);
+    match mode {
+        "released" => assert_eq!(result.unwrap().checkpoint().identity(), original),
+        "deadline" => assert!(matches!(
+            result,
+            Err(ApiError::TaskStopped(TaskStopReason::DeadlineExceeded))
+        )),
+        "cancelled" => assert!(matches!(
+            result,
+            Err(ApiError::TaskStopped(TaskStopReason::Cancelled))
+        )),
+        "authentication" => assert!(matches!(result, Err(ApiError::ServiceUnavailable(_)))),
+        _ => unreachable!(),
+    }
+}
+
+#[cfg(feature = "integration-test-support")]
+#[actix_web::test]
+async fn expiry_worker_protects_membership_once_and_receipts_before_completion() {
+    use hubuum_domain::GroupId;
+    use hubuum_events_core::EventContext;
+    use hubuum_storage_core::{
+        DeletionControlStorage, ExecutionStorage, HistoryExpiryTrigger, HistoryRetentionSeconds,
+        LogicalIdentityStorage, StorageCollectionCreate, StorageCollectionUpdate,
+        StorageExecutionScope, StorageIdentityResourceKind, StorageIdentityTarget,
+        StorageObservation, StorageObserver, StorageTaskStatus, TaskQueueStorage,
+    };
+    use std::sync::Mutex;
+    #[derive(Default)]
+    struct PublicationTrace {
+        head: Mutex<Option<PathBuf>>,
+        seen: Mutex<Vec<String>>,
+    }
+    impl StorageObserver for PublicationTrace {
+        fn operation_finished(&self, observation: &StorageObservation) {
+            if observation.operation() == "process_history_expiry_task"
+                && observation.result() == "ok"
+                && let Some(head) = self.head.lock().unwrap().as_ref()
+            {
+                let signed: serde_json::Value =
+                    serde_json::from_slice(&fs::read(head).unwrap()).unwrap();
+                self.seen
+                    .lock()
+                    .unwrap()
+                    .push(signed["payload"]["sha256"].as_str().unwrap().to_owned());
+            }
+        }
+    }
+    let observer = Arc::new(PublicationTrace::default());
+    let storage = StorageHandle::from_registered_backend_with_observer(
+        hubuum_storage_memory::MemoryStorage::new(),
+        observer.clone(),
+    );
+    let mut fixture = Fixture::with_storage(storage.clone()).await;
+    let event = EventContext::system();
+    let collection = storage
+        .collection_store()
+        .create_collection(
+            StorageCollectionCreate::new(
+                format!("expiry_protection_{}", Uuid::new_v4().simple()),
+                "before",
+                GroupId::new(1).unwrap(),
+                None,
+            ),
+            &event,
+        )
+        .await
+        .unwrap()
+        .into_value();
+    let identity = storage
+        .resolve_logical_identity(StorageIdentityTarget::Resource {
+            kind: StorageIdentityResourceKind::Collection,
+            id: collection.id().into(),
+        })
+        .await
+        .unwrap()
+        .subject()
+        .unwrap()
+        .record_identity()
+        .unwrap()
+        .resource();
+    let key = HistoryPolicyKey::new(
+        StorageIdentityHistoryKind::Collection,
+        HistoryPolicyScope::Collection { identity },
+    )
+    .unwrap();
+    apply(
+        &fixture.context,
+        &fixture.admin,
+        &fixture.options,
+        HistoryPolicyApplyRequest::new(
+            HistoryPolicyChange::new(
+                key,
+                HistoryPolicyRevision::new(0).unwrap(),
+                HistoryPolicyBinding::Expire {
+                    trigger: HistoryExpiryTrigger::Age {
+                        age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+                        deleted_age_seconds: None,
+                    },
+                    minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+                },
+                HistoryPolicyApplication::Prospective,
+            )
+            .unwrap(),
+            None,
+        ),
+    )
+    .await
+    .unwrap();
+    for description in ["first", "second", "third"] {
+        storage
+            .collection_store()
+            .update_collection(
+                collection.id(),
+                StorageCollectionUpdate::new(None, Some(description.into())),
+                &event,
+            )
+            .await
+            .unwrap()
+            .into_value();
+    }
+    let registration = storage.register_history_runtime(None).await.unwrap();
+    let bound = storage.clone().with_runtime_owner(registration.owner());
+    fixture.context = AppContext::new(
+        bound.clone(),
+        Arc::new(LocalPermissionBackend::new(bound.clone(), "admin".into())),
+    )
+    .with_history_retention(fixture.options.clone());
+    let application = bound
+        .capture_application_execution(Some(registration.owner()))
+        .await
+        .unwrap();
+    let scope = StorageExecutionScope::default().with_application_access(application);
+    bound
+        .run_in_scope(scope, async {
+            let admitted = super::super::history_expiry::submit_manual(
+                &fixture.context,
+                &fixture.admin,
+                HistoryLifecycleScan::new(key, 1000).unwrap(),
+            )
+            .await
+            .unwrap();
+            *observer.head.lock().unwrap() = Some(fixture.root.join("repository/HEAD"));
+            assert!(
+                crate::tasks::qualify_history_expiry_iteration(&fixture.context)
+                    .await
+                    .unwrap()
+            );
+            let completed = crate::tasks::history::retry_control(&bound, || async {
+                Ok(bound
+                    .get_task_access(admitted.task().id())
+                    .await?
+                    .into_parts()
+                    .0)
+            })
+            .await
+            .unwrap();
+            assert_eq!(completed.status(), StorageTaskStatus::Succeeded);
+            assert!(completed.progress().succeeded() >= 3);
+            let seen = observer.seen.lock().unwrap().clone();
+            assert_eq!(seen.len(), completed.progress().succeeded() as usize + 2);
+            let mut distinct = seen.clone();
+            distinct.dedup();
+            assert_eq!(
+                distinct.len(),
+                3,
+                "Only admission and completion may publish after the initial checkpoint: {seen:?}"
+            );
+            assert!(
+                seen[1..seen.len() - 1]
+                    .iter()
+                    .all(|identity| identity == &seen[1])
+            );
+            let session = session(&fixture.options).await.unwrap();
+            let primary = bound.capture_history_lifecycle().await.unwrap();
+            assert!(
+                session
+                    .checkpoint()
+                    .history_lifecycle()
+                    .unwrap()
+                    .covers(primary.control().authority())
+            );
+        })
+        .await;
+    storage.unregister_runtime(registration).await.unwrap();
+}
+
 struct Fixture {
     root: PathBuf,
     context: AppContext,

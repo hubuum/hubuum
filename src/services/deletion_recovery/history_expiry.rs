@@ -6,11 +6,11 @@ use std::time::Duration;
 use hubuum_domain::PrincipalId;
 use hubuum_storage_core::{
     ApplicationFence, HistoryExpiryOrigin, HistoryExpiryTaskAdmission,
-    HistoryExpiryTaskAuthorization, HistoryExpiryTaskPayload, HistoryExpiryTaskRequest,
-    HistoryExpiryTaskSubmission, HistoryLifecycleScan, HistoryLifecycleStorage,
-    HistoryPolicyBinding, HistoryPolicyReference, LogicalIdentityStorage, StorageIdentitySubject,
-    StorageIdentityTarget, StorageTaskCompletionPayload, StorageTaskWaitRequest,
-    TaskExecutionStorage,
+    HistoryExpiryTaskAuthorization, HistoryExpiryTaskCheckpoint, HistoryExpiryTaskPayload,
+    HistoryExpiryTaskRequest, HistoryExpiryTaskSubmission, HistoryExposureProtection,
+    HistoryLifecycleScan, HistoryLifecycleStorage, HistoryPolicyBinding, HistoryPolicyReference,
+    LogicalIdentityStorage, StorageIdentitySubject, StorageIdentityTarget,
+    StorageTaskCompletionPayload, StorageTaskWaitRequest, TaskExecutionStorage, TaskQueueStorage,
 };
 use hubuum_task_core::TaskExecutionContext;
 
@@ -128,43 +128,53 @@ pub(crate) async fn execute(
     let execution = crate::tasks::control::execution_context().ok_or_else(|| {
         ApiError::InternalServerError("History expiry requires admitted task execution".into())
     })?;
+    let mut resumed = None;
+    let mut membership = None;
     loop {
         crate::tasks::control::checkpoint()?;
-        let checkpoint = checkpoint_with_retry(&execution, || async {
-            let approval =
-                crate::tasks::history::run(&storage, authorize_selection(context, task, &payload))
-                    .await;
-            let request = HistoryExpiryTaskRequest::new(
-                task.lease().clone(),
-                approval.as_ref().ok().cloned(),
-            );
-            storage
-                .process_history_expiry_task(request)
-                .await
-                .map_err(|error| approval.err().unwrap_or_else(|| error.into()))
-        })
-        .await?;
+        let checkpoint = if let Some(checkpoint) = resumed.take() {
+            checkpoint
+        } else {
+            checkpoint_with_retry(&execution, || async {
+                let approval = crate::tasks::history::run(
+                    &storage,
+                    authorize_selection(context, task, &payload),
+                )
+                .await;
+                let request = HistoryExpiryTaskRequest::new(
+                    task.lease().clone(),
+                    approval.as_ref().ok().cloned(),
+                );
+                storage
+                    .process_history_expiry_task(request)
+                    .await
+                    .map_err(|error| approval.err().unwrap_or_else(|| error.into()))
+            })
+            .await?
+        };
         if checkpoint.admitted() {
             let encoded = checkpoint
                 .encode()
                 .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
-            let protected = crate::tasks::history::run(
-                &storage,
-                super::history_policy::protect_expiry(context, &checkpoint),
-            )
-            .await;
+            let protected =
+                protection_for_step(context, task, &checkpoint, membership.as_ref(), &execution)
+                    .await;
             let result = match protected {
-                Ok(protection) => storage
-                    .process_history_expiry_task(
-                        HistoryExpiryTaskRequest::new(task.lease().clone(), None)
-                            .with_protection(protection),
-                    )
-                    .await
-                    .map_err(ApiError::from),
+                Ok(protection) => {
+                    membership = Some(protection.clone());
+                    storage
+                        .process_history_expiry_task(
+                            HistoryExpiryTaskRequest::new(task.lease().clone(), None)
+                                .with_protection(protection),
+                        )
+                        .await
+                        .map_err(ApiError::from)
+                }
                 Err(error) => Err(error),
             };
             match result {
-                Ok(_) => {
+                Ok(next) => {
+                    resumed = Some(next);
                     tokio::task::yield_now().await;
                     continue;
                 }
@@ -212,6 +222,51 @@ pub(crate) async fn execute(
         }
         tokio::task::yield_now().await;
     }
+}
+
+/// Membership is immutable and independently protected before the first copy.
+/// Native steps still check current policy, holds, dependencies and ownership.
+/// Progress only decides when to request fresh receipt protection: the native
+/// completion transition remains the authority for accepting that proof.
+async fn protection_for_step(
+    context: &AppContext,
+    task: &ClaimedTask,
+    checkpoint: &HistoryExpiryTaskCheckpoint,
+    membership: Option<&HistoryExposureProtection>,
+    execution: &TaskExecutionContext,
+) -> Result<HistoryExposureProtection, ApiError> {
+    let storage = storage_handle(context);
+    if let Some(protection) = membership {
+        let intent = protection
+            .authority()
+            .expiry()
+            .intent(checkpoint.batch())
+            .ok_or_else(|| {
+                ApiError::ServiceUnavailable("Protected expiry membership changed".into())
+            })?;
+        let progress = crate::tasks::history::retry_control(&storage, || async {
+            Ok(storage
+                .get_task_access(task.lease().task_id())
+                .await?
+                .into_parts()
+                .0
+                .progress())
+        })
+        .await?;
+        if progress.total() as usize != intent.manifest().members().len() {
+            return Err(ApiError::ServiceUnavailable(
+                "Expiry progress differs from original membership".into(),
+            ));
+        }
+        if progress.succeeded() < progress.total() {
+            return Ok(protection.clone());
+        }
+    }
+    crate::tasks::history::run(
+        &storage,
+        super::history_policy::protect_expiry(context, checkpoint, execution),
+    )
+    .await
 }
 
 /// Contention and publication fencing can invalidate an otherwise valid turn.

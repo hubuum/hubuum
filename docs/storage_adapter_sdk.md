@@ -1078,6 +1078,17 @@ before enabling expiry, and roll forward after retained expiry is published.
 Production must not advertise the new protocol until all read/publication fences
 are implemented. These are incompatible SDK and deployment requirements.
 
+An admitted expiry batch may reuse its original independently authenticated
+membership proof while removing exact copies. Each native transaction still
+checks current policy, holds, dependencies, application and lease ownership.
+Receipt progress is advisory for requesting fresh protection, never completion
+proof: completion must independently protect and validate every retained receipt.
+The service keeps the adapter's admitted checkpoint across successful removal
+steps and does not repeat selection or publish a checkpoint for each copy.
+Repository contention may wait only under the original execution context; lock
+acquisition still authenticates read-back and authentication failures remain
+terminal. Durable waiting remains available when protected progress cannot proceed.
+
 Finite `task_output` control scopes retain their original full history epoch
 and an adapter-captured `HistoryReadRevision`. The read revision counts policy,
 hold, intent and cancellation decisions, excluding physical-removal receipts

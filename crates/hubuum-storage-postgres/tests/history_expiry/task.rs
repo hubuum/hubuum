@@ -861,7 +861,7 @@ async fn native_protected_batch_removes_exact_copies_and_requires_protected_comp
         for (index, member) in manifest.members().iter().enumerate() {
             assert_eq!(copy_count(&test, family, member.target()).await, 1);
             let current = test.fixture.storage.capture_history_lifecycle().await?;
-            let next = remove(&test, protection(&current)).await?;
+            let next = remove(&test, original_protection.clone()).await?;
             assert!(next.admitted());
             assert_eq!(copy_count(&test, family, member.target()).await, 0);
             if index == 0 {

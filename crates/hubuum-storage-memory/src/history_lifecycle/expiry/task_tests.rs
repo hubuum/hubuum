@@ -564,11 +564,10 @@ async fn protected_batch_removes_native_copies_before_protected_completion(
             };
             for _ in manifest.members() {
                 let count = copies(&*storage.state.read_control().await);
-                let current = storage.capture_history_lifecycle().await.unwrap();
                 let next = storage
                     .process_history_expiry_task(
                         HistoryExpiryTaskRequest::new(lease.clone(), None)
-                            .with_protection(protection(&current)),
+                            .with_protection(original.clone()),
                     )
                     .await
                     .unwrap();
