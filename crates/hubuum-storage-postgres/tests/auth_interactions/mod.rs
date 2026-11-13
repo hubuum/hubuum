@@ -375,33 +375,63 @@ async fn privileged_interaction(
     Interaction { binding, access }
 }
 
+#[rstest::rstest]
+#[case::session("session")]
+#[case::actor_token("actor_token")]
+#[case::operation_digest("operation_digest")]
 #[tokio::test]
-async fn credential_approval_is_bound_to_the_original_actor_and_operation() {
+async fn credential_approval_is_bound_to_the_original_actor_and_operation(#[case] invalid: &str) {
     use hubuum_domain::InteractionActor;
     let f = Fixture::new().await;
+    f.owner("INSERT INTO tokens(id,token,principal_id,expires_at) VALUES(2,'second-token',1,now()+interval '1 hour')")
+        .await.unwrap();
     let backend = f.replica();
-    let claim = StorageCredentialClaim::new(
-        owner().actor_id(),
-        owner().token_id(),
-        StorageCredentialOperation::CreateToken,
-        digest('a'),
-        digest('b'),
-        Utc::now() - Duration::hours(24),
-    )
-    .target(Some(owner().actor_id()));
+    let claim_for = |token_id| {
+        StorageCredentialClaim::new(
+            owner().actor_id(),
+            token_id,
+            StorageCredentialOperation::CreateToken,
+            digest('a'),
+            digest('b'),
+            Utc::now() - Duration::hours(24),
+        )
+        .target(Some(owner().actor_id()))
+    };
+    let claim = claim_for(owner().token_id());
+    let operation_digest = InteractionDigest::new(claim.request_digest().as_str()).unwrap();
     let interaction = privileged_interaction(
         &backend,
         InteractionAuthority::approval(
             InteractionActor::new(owner().actor_id(), owner().token_id()),
-            InteractionDigest::new(claim.request_digest().as_str()).unwrap(),
+            operation_digest.clone(),
         ),
         None,
     )
     .await;
     interaction.ready(&backend).await;
+    let invalid_completion = match invalid {
+        "session" => interaction.complete(),
+        "actor_token" => StorageInteractionComplete::new(
+            interaction.access.clone(),
+            StorageInteractionIssuance::Approval {
+                claim: claim_for(TokenId::new(2).unwrap()),
+                operation_digest: operation_digest.clone(),
+                context: context(),
+            },
+        ),
+        "operation_digest" => StorageInteractionComplete::new(
+            interaction.access.clone(),
+            StorageInteractionIssuance::Approval {
+                claim: claim.clone(),
+                operation_digest: InteractionDigest::new(digest('c').as_str()).unwrap(),
+                context: context(),
+            },
+        ),
+        _ => panic!("unknown invalid completion"),
+    };
     assert!(matches!(
         backend
-            .complete_auth_interaction(interaction.complete())
+            .complete_auth_interaction(invalid_completion)
             .await
             .unwrap(),
         StorageInteractionCompletion::Rejected(InteractionTransitionError::Invalid)
@@ -409,7 +439,7 @@ async fn credential_approval_is_bound_to_the_original_actor_and_operation() {
     let completion = StorageInteractionComplete::new(
         interaction.access.clone(),
         StorageInteractionIssuance::Approval {
-            operation_digest: InteractionDigest::new(claim.request_digest().as_str()).unwrap(),
+            operation_digest,
             claim,
             context: context(),
         },
@@ -480,14 +510,14 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
         ResourceRevision::INITIAL,
         context(),
     );
-    let candidate = StorageSecurityCandidate::try_new(
-        Uuid::new_v4(),
-        owner(),
-        &update,
-        StorageSecurityCandidateBinding::new(digest('a'), digest('b'), digest('c')),
-    )
-    .unwrap();
-    let candidate = candidate
+    let pending_candidate = || {
+        StorageSecurityCandidate::try_new(
+            Uuid::new_v4(),
+            owner(),
+            &update,
+            StorageSecurityCandidateBinding::new(digest('a'), digest('b'), digest('c')),
+        )
+        .unwrap()
         .with_checks(vec![
             StorageSecurityCheck::try_new(
                 StorageSecurityCheckKind::Configuration,
@@ -497,9 +527,20 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
             )
             .unwrap(),
         ])
-        .unwrap();
+        .unwrap()
+    };
+    let candidate = pending_candidate();
+    let other_candidate = pending_candidate();
+    assert_eq!(
+        other_candidate.state(Utc::now()),
+        StorageSecurityCandidateState::Unverified
+    );
     backend
         .create_security_candidate(candidate.clone())
+        .await
+        .unwrap();
+    backend
+        .create_security_candidate(other_candidate.clone())
         .await
         .unwrap();
     let authority = InteractionAuthority::verification(
@@ -583,6 +624,13 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
             .unwrap()
             .state(Utc::now()),
         StorageSecurityCandidateState::Verified
+    );
+    assert_eq!(
+        backend
+            .get_security_candidate(other_candidate.id(), owner())
+            .await
+            .unwrap(),
+        other_candidate
     );
     f.owner("DO $$ BEGIN IF EXISTS(SELECT 1 FROM auth_sessions) OR (SELECT count(*) FROM principals) <> 1 OR (SELECT count(*) FROM group_memberships) <> 1 OR (SELECT count(*) FROM tokens) <> 1 THEN RAISE EXCEPTION 'verification changed identity or credential state'; END IF; END $$;").await.unwrap();
     f.cleanup().await;

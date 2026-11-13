@@ -209,12 +209,17 @@ async fn concurrent_completion_issues_one_session_and_replay_only_returns_metada
                 sessions[0].session_id().value()
             ))
         );
-        let active =
-            usize::from(super::auth_sessions::authenticates(&f.backend, a.access().clone()).await)
-                + usize::from(
-                    super::auth_sessions::authenticates(&f.backend, b.access().clone()).await,
-                );
-        assert_eq!(active, 1);
+        let active = [
+            super::auth_sessions::authenticates(&f.backend, a.access().clone()).await,
+            super::auth_sessions::authenticates(&f.backend, b.access().clone()).await,
+        ];
+        assert_eq!(active.iter().filter(|active| **active).count(), 1);
+        for (result, active) in results.iter().zip(active) {
+            assert_eq!(
+                active,
+                matches!(result, StorageInteractionCompletion::Session(_))
+            );
+        }
         f.cleanup().await;
     }
 }

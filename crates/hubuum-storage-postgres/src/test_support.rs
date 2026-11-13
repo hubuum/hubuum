@@ -15,7 +15,7 @@ use diesel::{
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{
     ClassId, CollectionId, EventDeliveryId, EventDeliverySettings, EventDeliveryStatus, GroupId,
-    ObjectId, PrincipalId, ResourceRevision, RestoreJobId, TaskId,
+    InteractionClientId, ObjectId, PrincipalId, ResourceRevision, RestoreJobId, TaskId,
 };
 use hubuum_events_core::{Action, EntityType, EventEntityId, EventSequence, NewEvent};
 use hubuum_storage_core::{
@@ -56,6 +56,46 @@ pub fn integration_test_pool(max_size: u32) -> PostgresPool {
         .build()
         .expect("integration-test PostgreSQL settings must be valid");
     build_postgres_pool(&settings).expect("integration-test PostgreSQL pool must be constructed")
+}
+
+/// Remove interactions belonging to one test's scoped client.
+pub async fn delete_auth_interaction_fixtures(
+    pool: &PostgresPool,
+    client: &InteractionClientId,
+) -> Result<(), PostgresStorageError> {
+    crate::with_connection(pool, async |connection| {
+        diesel::sql_query("DELETE FROM auth_interactions WHERE client_id=$1")
+            .bind::<Text, _>(client.as_str())
+            .execute(connection)
+            .await?;
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
+}
+
+/// Expire one test's interactions while retaining them for expiry-response checks.
+/// Keep retain_until unchanged so parallel begins cannot reclaim these fixtures.
+pub async fn expire_auth_interaction_fixtures(
+    pool: &PostgresPool,
+    client: &InteractionClientId,
+) -> Result<(), PostgresStorageError> {
+    crate::with_connection(pool, async |connection| {
+        diesel::sql_query(
+            "UPDATE auth_interactions SET
+             created_at=created_at-interval '10 minutes',
+             expires_at=expires_at-interval '10 minutes',
+             document=jsonb_set(jsonb_set(jsonb_set(document,
+               '{lifecycle,created_at}',to_jsonb(created_at-interval '10 minutes')),
+               '{lifecycle,expires_at}',to_jsonb(expires_at-interval '10 minutes')),
+               '{lifecycle,next_poll_at}',to_jsonb((document#>>'{lifecycle,next_poll_at}')::timestamptz-interval '10 minutes'))
+             WHERE client_id=$1",
+        )
+        .bind::<Text, _>(client.as_str())
+        .execute(connection)
+        .await?;
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
 }
 
 /// Manufacture a retained collection transition that public object updates do

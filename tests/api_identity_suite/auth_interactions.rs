@@ -6,26 +6,29 @@ use actix_web::{
     http::{StatusCode, header},
     test,
 };
-use diesel::{sql_query, sql_types::Text};
-use hubuum_storage_postgres::{PostgresStorageError, diesel_async_prelude::*, with_connection};
+use hubuum_domain::InteractionClientId;
+use hubuum_storage_postgres::test_support::{
+    delete_auth_interaction_fixtures, expire_auth_interaction_fixtures,
+};
 use rstest::rstest;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use crate::api::v1::handlers::me::MeResponse;
 use crate::tests::api_operations::{get_request, get_request_with_headers, post_request};
 use crate::tests::asserts::assert_response_status;
 use crate::tests::{TestContext, app_context};
 
 struct Fixture {
     context: TestContext,
-    client: String,
+    client: InteractionClientId,
     peer: SocketAddr,
     begun: Value,
 }
 impl Fixture {
     async fn new() -> Self {
         let context = TestContext::new().await;
-        let client = context.scoped_name("interaction-http");
+        let client = InteractionClientId::new(context.scoped_name("interaction-http")).unwrap();
         let peer = SocketAddr::new(
             IpAddr::V6(Ipv6Addr::from(*Uuid::new_v4().as_bytes())),
             31337,
@@ -113,15 +116,9 @@ impl Fixture {
         .await
     }
     async fn cleanup(self) {
-        with_connection(&self.context.pool, async |connection| {
-            diesel::sql_query("DELETE FROM auth_interactions WHERE client_id=$1")
-                .bind::<diesel::sql_types::Text, _>(self.client)
-                .execute(connection)
-                .await?;
-            Ok::<_, PostgresStorageError>(())
-        })
-        .await
-        .unwrap();
+        delete_auth_interaction_fixtures(&self.context.pool, &self.client)
+            .await
+            .unwrap();
     }
 }
 
@@ -163,16 +160,23 @@ async fn discovery_exposes_only_public_password_method_metadata() {
 async fn completion_issues_existing_session_with_the_original_client_binding() {
     let fixture = Fixture::new().await;
     let session = fixture.session().await;
-    assert_response_status(
-        get_request(
-            &fixture.context.pool,
-            session["access_token"].as_str().unwrap(),
-            "/api/v1/auth/validate",
+    let identity: MeResponse = test::read_body_json(
+        assert_response_status(
+            get_request(
+                &fixture.context.pool,
+                session["access_token"].as_str().unwrap(),
+                "/api/v1/iam/me",
+            )
+            .await,
+            StatusCode::OK,
         )
         .await,
-        StatusCode::OK,
     )
     .await;
+    assert_eq!(
+        identity.principal.principal_id,
+        fixture.context.normal_user.id
+    );
     assert_response_status(
         post_request(
             &fixture.context.pool,
@@ -264,6 +268,17 @@ async fn lost_response_cleanup_revokes_only_the_issued_family_and_rotated_descen
     )
     .await;
     assert_response_status(
+        post_request(
+            &fixture.context.pool,
+            "",
+            "/api/v1/auth/refresh",
+            json!({"client_id":fixture.client,"refresh_token":rotated["refresh_token"]}),
+        )
+        .await,
+        StatusCode::UNAUTHORIZED,
+    )
+    .await;
+    assert_response_status(
         get_request(
             &fixture.context.pool,
             &fixture.context.normal_token,
@@ -309,7 +324,7 @@ async fn invalid_authority_has_one_non_disclosing_response(#[case] invalid: &str
     let response = fixture
         .call(
             &path,
-            json!({"client_id":if invalid=="client" { "other-client" } else { &fixture.client }}),
+            json!({"client_id":if invalid=="client" { "other-client" } else { fixture.client.as_str() }}),
             auth,
             &extras,
         )
@@ -542,34 +557,16 @@ async fn expiry_response_distinguishes_retained_from_reclaimed_records(
     #[case] expected: &str,
 ) {
     let fixture = Fixture::new().await;
-    // Advance only this fixture's persisted timestamps. The adapter's bounded
-    // purge is covered in its isolated PostgreSQL tests. Keep retain_until in
-    // the future so other parallel begins cannot purge the retained case; remove
-    // only this fixture for the reclaimed case.
-    with_connection(&fixture.context.pool, async |connection| {
-        sql_query(
-            "UPDATE auth_interactions SET
-             created_at=created_at-interval '10 minutes',
-             expires_at=expires_at-interval '10 minutes',
-             document=jsonb_set(jsonb_set(jsonb_set(document,
-               '{lifecycle,created_at}',to_jsonb(created_at-interval '10 minutes')),
-               '{lifecycle,expires_at}',to_jsonb(expires_at-interval '10 minutes')),
-               '{lifecycle,next_poll_at}',to_jsonb((document#>>'{lifecycle,next_poll_at}')::timestamptz-interval '10 minutes'))
-             WHERE client_id=$1",
-        )
-        .bind::<Text, _>(&fixture.client)
-        .execute(connection)
-        .await?;
-        if reclaimed {
-            sql_query("DELETE FROM auth_interactions WHERE client_id=$1")
-                .bind::<Text, _>(&fixture.client)
-                .execute(connection)
-                .await?;
-        }
-        Ok::<_, PostgresStorageError>(())
-    })
-    .await
-    .unwrap();
+    // The adapter's bounded purge is covered in its isolated PostgreSQL tests.
+    if reclaimed {
+        delete_auth_interaction_fixtures(&fixture.context.pool, &fixture.client)
+            .await
+            .unwrap();
+    } else {
+        expire_auth_interaction_fixtures(&fixture.context.pool, &fixture.client)
+            .await
+            .unwrap();
+    }
     reason(fixture.action(action).await, status, expected).await;
     fixture.cleanup().await;
 }
