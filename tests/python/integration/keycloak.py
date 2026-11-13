@@ -189,7 +189,7 @@ class Fixture:
         realm = {
             "realm": "hubuum", "enabled": True, "sslRequired": "all",
             "revokeRefreshToken": True, "refreshTokenMaxReuse": 0,
-            "groups": [{"name": "engineering"}],
+            "groups": [{"name": "engineering"}, {"name": "authenticated"}],
             "clients": [{"clientId": "hubuum", "enabled": True, "protocol": "openid-connect",
                 "publicClient": False, "secret": self.client_secret, "standardFlowEnabled": True,
                 "directAccessGrantsEnabled": False, "implicitFlowEnabled": False,
@@ -200,7 +200,7 @@ class Fixture:
                                "access.token.claim": "true", "userinfo.token.claim": "true"}}]}],
             "users": [{"username": "alice", "enabled": True, "emailVerified": True,
                 "email": "alice@example.invalid", "firstName": "Alice", "lastName": "Fixture",
-                "groups": ["/engineering"], "credentials": [{"type": "password", "value": self.password,
+                "groups": ["/engineering", "/authenticated"], "credentials": [{"type": "password", "value": self.password,
                                                                "temporary": False}]}],
         }
         realm["users"].append({"username": "logout", "enabled": True, "emailVerified": True,
@@ -478,8 +478,18 @@ class Fixture:
         self.provider_api(f'/users/{user["id"]}/groups/{group["id"]}', method="DELETE")
         time.sleep(6)
         self.api("/api/v1/auth/validate", token=self.pat)
-        assert self.sql(f"SELECT count(*) FROM group_membership_sources WHERE principal_id={principal} AND source='external'") == "0"
+        assert self.sql(f"SELECT count(*) FROM group_membership_sources WHERE principal_id={principal} AND source='external' AND source_key='/engineering'") == "0"
         self.passed("due refresh removes provider-owned memberships")
+        baseline = self.provider_api("/groups?search=authenticated&exact=true")[0]
+        self.provider_api(f'/users/{user["id"]}/groups/{baseline["id"]}', method="DELETE")
+        time.sleep(6)
+        self.api("/api/v1/auth/validate", token=self.pat, expected=(401,))
+        assert self.sql(f"SELECT count(*) FROM auth_upstream_credentials WHERE principal_id={principal}") == "0"
+        self.passed("stock mapper omitting the final group claim fails closed")
+        self.provider_api(f'/users/{user["id"]}/groups/{baseline["id"]}', method="PUT")
+        recovered = self.begin()
+        self.authorize(recovered, browser)
+        self.session = self.complete(recovered)
         user["enabled"] = False
         self.provider_api("/users/" + user["id"], user, method="PUT")
         time.sleep(6)

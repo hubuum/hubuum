@@ -80,6 +80,15 @@ fail closed. An explicit empty group array removes provider-owned memberships;
 manual local assignments remain. Choose an admission policy deliberately;
 `provision_without_grants` creates the identity without granting local access.
 
+Keycloak 26.8.2's stock mapper omits `groups` when the user has no groups; it does
+not emit an empty array. Hubuum rejects that missing claim. For users who should
+remain eligible after their last access group is removed, assign a baseline
+realm group such as `/authenticated` with **no Hubuum permissions**, or deploy a
+reviewed mapper that emits an explicit empty array. The qualification fixture
+checks both access-group removal while the baseline remains and rejection after
+the final group disappears. See Keycloak's
+[claim mapping implementation](https://github.com/keycloak/keycloak/blob/26.8.2/services/src/main/java/org/keycloak/protocol/oidc/mappers/OIDCAttributeMapperHelper.java).
+
 ## Configure, test and activate
 
 Use the [security candidate workflow](../security_candidates.md). Candidate
