@@ -46,7 +46,10 @@ binding and purpose, check admission under the stable-identity lock, and commit
 identity/membership writes with interaction progress. PostgreSQL serializes
 absent-row provisioning across replicas before taking actor/principal locks.
 Older observations and callbacks predating a definitive rejection cannot restore
-authority. The memory adapter now rolls back failed synchronization and retains
+authority. Browser synchronization failures sample the application clock after
+the principal lock, matching callback observations even when the database clock
+or session time zone differs. Native regressions cover UTC and time zones ahead
+of and behind UTC. The memory adapter now rolls back failed synchronization and retains
 independent membership provenance through removal and backup.
 
 Browser login audit snapshots resolve administrator status through the selected

@@ -185,17 +185,30 @@ pub async fn record_external_sync_failure(
         .with_transaction(async move |connection| {
             // Lock before invalidating login evidence or revoking tokens, in the same
             // order as token issuance and successful external synchronization.
-            let managed = crate::schema::principals::table
+            let (managed, scope_id) = crate::schema::principals::table
                 .find(principal_id)
                 .for_update()
-                .select(crate::schema::principals::provider_managed)
-                .first::<bool>(connection)
+                .select((principals::provider_managed, principals::identity_scope_id))
+                .first::<(bool, i32)>(connection)
                 .await?;
             if !managed {
                 return Ok(());
             }
+            let provider_kind = identity_scopes::table
+                .find(scope_id)
+                .select(identity_scopes::provider_kind)
+                .first::<String>(connection)
+                .await?;
+            // Browser observations use the application clock. Sample after the
+            // principal lock: PostgreSQL's transaction-start clock can predate
+            // callbacks verified while this rejection was waiting for the lock.
+            let attempted_at = if matches!(provider_kind.as_str(), "oidc" | "oauth") {
+                Utc::now().naive_utc()
+            } else {
+                database_now(connection).await?
+            };
             diesel::update(crate::schema::principals::table.find(principal_id))
-                .set(crate::schema::principals::last_sync_attempted_at.eq(diesel::dsl::now))
+                .set(crate::schema::principals::last_sync_attempted_at.eq(attempted_at))
                 .execute(connection)
                 .await?;
             if failure == StorageExternalSyncFailure::Rejected {

@@ -337,16 +337,36 @@ async fn admission_denial_rolls_back_identity_scope(#[case] admission: Value) {
     f.database.cleanup().await;
 }
 
+#[rstest::rstest]
+#[case::utc("UTC")]
+#[case::behind("America/Los_Angeles")]
+#[case::ahead("Asia/Tokyo")]
 #[tokio::test]
-async fn rejection_fences_a_previously_verified_callback() {
+async fn rejection_fences_a_previously_verified_callback(#[case] timezone: &str) {
     let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
     let id = f.login("alice", json!([])).await;
     let (_, claim) = f.start(&f.backend).await;
     let stale = f.command(&claim, "alice", "alice", json!(["/team"]));
-    f.backend
+    // A non-UTC database session exposes accidental timestamptz-to-timestamp
+    // conversion. The rejection must remain on the callback's application clock.
+    let rejection = f.database.replica_with_timezone(timezone);
+    let before = Utc::now();
+    rejection
         .record_external_sync_failure(id, StorageExternalSyncFailure::Rejected)
         .await
         .unwrap();
+    let after = Utc::now();
+    let attempted = f
+        .backend
+        .get_external_principal_state(id)
+        .await
+        .unwrap()
+        .unwrap()
+        .last_sync_attempted_at()
+        .unwrap();
+    // PostgreSQL stores microseconds, while the application clock has nanoseconds.
+    assert!(attempted.timestamp_micros() >= before.timestamp_micros());
+    assert!(attempted <= after);
     assert!(f.backend.advance_auth_interaction(stale).await.is_err());
     f.database.cleanup().await;
 }
