@@ -200,6 +200,12 @@ impl TryFrom<OidcDefinitionInput> for OidcProviderDefinition {
     }
 }
 impl OidcProviderDefinition {
+    pub fn membership(&self) -> &ProviderMembership {
+        &self.membership
+    }
+    pub fn admission(&self) -> &ProviderAdmission {
+        &self.admission
+    }
     pub fn issuer(&self) -> &AuthenticationEndpoint {
         &self.issuer
     }
@@ -294,6 +300,21 @@ impl TryFrom<OAuthDefinitionInput> for OAuthProviderDefinition {
     }
 }
 impl OAuthProviderDefinition {
+    pub fn subject_pointer(&self) -> &str {
+        &self.subject_pointer
+    }
+    pub fn subject_type(&self) -> &OAuthSubjectType {
+        &self.subject_type
+    }
+    pub fn name_pointer(&self) -> &str {
+        &self.name_pointer
+    }
+    pub fn membership(&self) -> &ProviderMembership {
+        &self.membership
+    }
+    pub fn admission(&self) -> &ProviderAdmission {
+        &self.admission
+    }
     pub fn endpoints(&self) -> [&AuthenticationEndpoint; 3] {
         [
             &self.authorization_endpoint,

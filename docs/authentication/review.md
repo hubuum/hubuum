@@ -5,6 +5,50 @@ acceptance for [#573](https://github.com/hubuum/hubuum/issues/573). The [contrac
 [OpenAPI proposal](openapi.proposed.json) and [47 shared vectors](fixtures.json)
 form one review unit.
 
+## Identity proof implementation in progress (#576)
+
+Implementation starts from accepted integration commit
+`04937a948c6b29055c4bcaf858b5ef1b5ada6fb1` on `project/auth-support`.
+The sole native prerequisite, #575, is closed as completed with its accepted
+interaction candidate and contract handoff. #576 remains In progress; its
+acceptance criteria are not completed by this initial proof increment.
+
+`hubuum-auth-core` now defines private-fielded, non-deserializable external
+identity, membership, admission and fresh-authentication proofs. A context pins
+the validated provider definition and complete interaction binding. OIDC identity
+uses the exact issuer/subject within the provider instance and scope. OAuth
+subjects use the configured JSON pointer and exact string/integer type, preserving
+integers above the floating-point precision and machine-integer limits. Optional
+profile metadata cannot link identities. Admission returns a proof only for login;
+verification and credential approval cannot use it to provision a principal.
+
+Membership evidence distinguishes local-only preservation, authoritative empty
+sets, missing/malformed claims and incomplete observations. Only the configured
+source and pointer contribute groups. Full-path keys make renames remove/add;
+immutable keys ignore display metadata. These groups confer no implicit local
+administrative authority. The pure freshness policy defaults to 300/900 seconds
+and accepts stricter bounds; it takes upstream verification time, never session
+rotation time. LDAP's existing public password API and freshness defaults remain
+unchanged.
+
+Fresh approval requires an OIDC approval request bound to the existing immutable
+identity, actor, token, operation and complete interaction. It checks signed
+authentication time against the request start with at most 60 seconds of skew
+and reapplies admission. OAuth returns unsupported capability. These constructors
+do not verify signatures or perform network authentication: the owning adapters
+must validate responses, request `max_age=0` and check any supported required
+`acr`/`amr` evidence before calling them.
+
+Remaining #576 work includes application and storage consumption of these proofs,
+transactional provisioning and uniqueness, source-owned membership reconciliation,
+cross-replica refresh/fencing, invalidation and retained upstream credentials,
+operation-bound approval completion, and persistence/concurrency/revocation
+qualification. Atomic interaction consumption and final credential/authorization
+checks remain mandatory; an in-memory proof alone does not prevent replay.
+Real OIDC/OAuth execution remains #577/#578, which stay Blocked. This increment
+does not enable browser providers or change HTTP schemas and has no independently
+shipped user-facing behavior; no changelog entry is needed for it.
+
 ## Reviewed baseline
 
 The accepted #568/#572 foundation is server integration commit
