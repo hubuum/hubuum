@@ -8,8 +8,9 @@ import threading
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
-from integration.history_expiry import (assess, container_failure_log, measured_resources, measurement_environment,
-                                       package_measurements, replica_run, run, verify_binary_reuse)
+from integration.history_expiry import (SHAPES, aggregate_measurements, assess, container_failure_log,
+                                       measured_resources, measurement_environment, package_measurements,
+                                       replica_run, run, sample_resources, summarize, verify_binary_reuse)
 from support import ROOT
 
 
@@ -50,7 +51,7 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
             binary = root / "binary"
             binary.write_bytes(b"fixture")
             args = Mock(output=root / "report", binary=binary, publisher_binary=binary,
-                        admin_binary=binary, profile="shared")
+                        admin_binary=binary, profile="shared", shape=None)
             fixture = MagicMock()
             fixture.__enter__.return_value = fixture
             with patch("integration.history_expiry.Fixture", return_value=fixture), \
@@ -65,6 +66,84 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
             self.assertEqual(summary["measured_runs"], 0)
             self.assertFalse(summary["h1_h4_worker_qualified"])
             self.assertFalse(summary["full_shared_topology_qualified"])
+
+    def measurement_shards(self, parent):
+        roots = []
+        for shape in SHAPES:
+            root = parent / shape / "history-expiry-report"
+            root.mkdir(parents=True)
+            roots.append(root)
+            (root.parent / "history-expiry-build.txt").write_text("same production build")
+            manifest = {"profile": "lifecycle-local-v1", "worker_binary_sha256": "same digest", "shapes": [shape]}
+            samples = []
+            for repeat in range(6):
+                report, _ = self.fixture()
+                report.update(shape=shape, worker_seconds=1, publisher_fixture_seconds=1)
+                if shape == "bytes":
+                    report["batches"][0].update(input_bytes=15 * 1024**2, native_input_bytes=15 * 1024**2)
+                elif shape == "large_row":
+                    report["batches"][0]["largest_claimed_row_bytes"] = 4 * 1024**2 - 4096
+                elif shape == "oversized":
+                    report.update(oversized_deferred_rows=1, oversized_preserved_rows=1,
+                                  oversized_reported_rows=1, backup_rejected_oversized=True)
+                elif shape == "authority":
+                    report.pop("replica_reports")
+                    report["maximum_composite_verified"] = True
+                name = f"{shape}-{repeat}"
+                process = name if shape == "authority" else name + "-replica-0"
+                (root / (process + "-container.json")).write_text(json.dumps({"resources": {
+                    "samples": 2, "peak_rss_bytes": 100_000_000, "peak_hwm_bytes": 110_000_000}}))
+                (root / (process + "-rss.jsonl")).write_text("".join(json.dumps({
+                    "monotonic_ns": stamp, "rss_bytes": 100_000_000, "hwm_bytes": 110_000_000}) + "\n"
+                    for stamp in (1, 100)))
+                resources = sample_resources(root, name, report)
+                samples.append({"shape": shape, "repeat": repeat, "warmup": repeat == 0,
+                                "report": report, "resources": resources, "checks": assess(report, resources)})
+                (root / (name + ".json")).write_text(json.dumps(report))
+            for name, data in (("manifest", manifest), ("samples", samples),
+                               ("summary", summarize(manifest, samples, []))):
+                (root / (name + ".json")).write_text(json.dumps(data))
+        return roots
+
+    def test_shape_shards_only_qualify_after_complete_raw_evidence_aggregation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            roots = self.measurement_shards(parent)
+            self.assertTrue(all(json.loads((root / "summary.json").read_text())["selected_shapes_passed"]
+                                for root in roots))
+            self.assertFalse(any(json.loads((root / "summary.json").read_text())["h1_h4_worker_qualified"]
+                                 for root in roots))
+            summary = aggregate_measurements(roots, parent / "combined")
+            self.assertTrue(summary["h1_h4_worker_qualified"])
+            self.assertEqual(summary["measured_runs"], 25)
+            self.assertEqual(len(json.loads((parent / "combined/samples.json").read_text())), 30)
+
+    def test_aggregation_rejects_incomplete_duplicate_or_mixed_provenance_shards(self):
+        for invalid in ("missing", "duplicate", "manifest", "build", "sample", "raw", "failed"):
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as temporary:
+                parent = Path(temporary)
+                roots = self.measurement_shards(parent)
+                if invalid == "missing":
+                    roots.pop()
+                elif invalid == "duplicate":
+                    roots[-1] = roots[0]
+                elif invalid == "build":
+                    (roots[0].parent / "history-expiry-build.txt").write_text("different build")
+                elif invalid == "raw":
+                    (roots[0] / "rows-0-replica-0-rss.jsonl").write_text("{}\n")
+                else:
+                    name = "manifest" if invalid == "manifest" else "samples"
+                    path = roots[0] / (name + ".json")
+                    data = json.loads(path.read_text())
+                    if invalid == "manifest":
+                        data["worker_binary_sha256"] = "different digest"
+                    elif invalid == "sample":
+                        data.pop()
+                    else:
+                        data[0]["checks"]["h1_pass"] = False
+                    path.write_text(json.dumps(data))
+                with self.assertRaises((ValueError, KeyError)):
+                    aggregate_measurements(roots, parent / "combined")
 
     def test_container_failure_log_retains_both_streams_and_redacts_fixture_password(self):
         fixture = Mock(containers=["owned-postgres"], password="fixture-secret")

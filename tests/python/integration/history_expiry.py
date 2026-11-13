@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import platform
+import shutil
 import statistics
 import subprocess
 from subprocess import SubprocessError
@@ -19,6 +20,7 @@ TEST = "restore_contract::history_expiry_qualification::qualified_history_expiry
 PUBLISHER_TEST = "services::deletion_recovery::repository::size_tests::maximum_composite_checkpoint_resource_probe"
 REPLICA_TEST = "restore_contract::history_expiry_qualification::replica::qualified_history_expiry_replica"
 CEILING = 512 * 1024 ** 2
+SHAPES = ("rows", "bytes", "large_row", "oversized", "authority")
 
 
 def verify_binary_reuse(changed_paths, original_workflow, current_workflow):
@@ -230,6 +232,91 @@ def replica_run(fixture, binary, arguments, name, environment, destination):
             raise
 
 
+def sample_resources(output, name, report):
+    if "replica_reports" not in report:
+        return measured_resources(output, name)
+    processes = [measured_resources(output, f"{name}-replica-{index}")
+                 for index in range(report["replicas"])]
+    return {"samples": sum(process["samples"] for process in processes),
+            "peak_rss_bytes": max(process["peak_rss_bytes"] for process in processes),
+            "peak_hwm_bytes": max(process["peak_hwm_bytes"] for process in processes),
+            "rss_trace_verified": all(process["rss_trace_verified"] for process in processes),
+            "replicas": processes}
+
+
+def summarize(manifest, samples, failures):
+    measured = [sample for sample in samples if not sample["warmup"]]
+    expected = {(shape, repeat) for shape in manifest["shapes"] for repeat in range(6)}
+    observed = [(sample["shape"], sample["repeat"]) for sample in samples]
+    passed = (len(observed) == len(expected) and set(observed) == expected and not failures
+              and all(sample["warmup"] is (sample["repeat"] == 0)
+                      and sample["report"]["shape"] == sample["shape"]
+                      and sample["checks"] == assess(sample["report"], sample["resources"])
+                      and all(sample["checks"].values()) for sample in samples))
+    qualified = passed and manifest["shapes"] == list(SHAPES)
+    summary = {"measured_runs": len(measured), "expected_measured_runs": 5 * len(manifest["shapes"]),
+               "failures": failures, "selected_shapes_passed": passed,
+               "h1_h4_worker_qualified": qualified,
+               "full_shared_topology_qualified": manifest["profile"] == "lifecycle-shared-v1" and qualified}
+    for shape in manifest["shapes"]:
+        field = "publisher_fixture_seconds" if shape == "authority" else "worker_seconds"
+        seconds = [sample["report"][field] for sample in measured if sample["shape"] == shape]
+        summary[shape] = {"runs": len(seconds), "timed_stage": field,
+                          "seconds_median": statistics.median(seconds) if seconds else None,
+                          "seconds_p95": percentile(seconds, 95) if seconds else None}
+    return summary
+
+
+def aggregate_measurements(inputs, output):
+    """Require every shape with identical provenance before qualifying a profile."""
+    output.mkdir(parents=True, exist_ok=False)
+    manifests, samples, shapes = [], [], []
+    build = None
+    for root in inputs:
+        manifest = json.loads((root / "manifest.json").read_text())
+        shape, = manifest["shapes"]
+        if shape not in SHAPES or shape in shapes:
+            raise ValueError("Expected exactly one distinct supported shape per shard")
+        shapes.append(shape)
+        common = {key: value for key, value in manifest.items() if key != "shapes"}
+        if manifests and common != manifests[0]:
+            raise ValueError("Measurement shards have different provenance or settings")
+        manifests.append(common)
+        shard_samples = json.loads((root / "samples.json").read_text())
+        summary = summarize(manifest, shard_samples, [])
+        if not summary["selected_shapes_passed"] or summary != json.loads((root / "summary.json").read_text()):
+            raise ValueError("Measurement shard is incomplete or failed acceptance")
+        for sample in shard_samples:
+            name = f"{shape}-{sample['repeat']}"
+            if (sample["report"] != json.loads((root / (name + ".json")).read_text())
+                    or sample["resources"] != sample_resources(root, name, sample["report"])):
+                raise ValueError("Measurement shard differs from its raw evidence")
+        samples.extend(shard_samples)
+        source = (root.parent / "history-expiry-build.txt").read_bytes()
+        if build is not None and source != build:
+            raise ValueError("Measurement shards use different binary builds")
+        build = source
+        for path in root.iterdir():
+            if path.name in {"manifest.json", "samples.json", "summary.json"}:
+                continue
+            if not path.is_file() or path.is_symlink():
+                raise ValueError("Aggregating requires packaged regular measurement files")
+            name = path.name if path.name.startswith(shape + "-") else shape + "-" + path.name
+            shutil.copyfile(path, output / name)
+        for name in ("runner.txt", "reuse.json"):
+            path = root.parent / ("history-expiry-" + name)
+            if path.exists():
+                shutil.copyfile(path, output / (shape + "-" + name))
+    if set(shapes) != set(SHAPES):
+        raise ValueError("Every shape is required for complete profile qualification")
+    manifest = {**manifests[0], "shapes": list(SHAPES), "measurement_shards": list(SHAPES)}
+    summary = summarize(manifest, samples, [])
+    for name, data in (("manifest", manifest), ("samples", samples), ("summary", summary)):
+        (output / (name + ".json")).write_text(json.dumps(data, indent=2) + "\n")
+    (output.parent / "history-expiry-build.txt").write_bytes(build)
+    return summary
+
+
 def run(args):
     args.output.mkdir(parents=True, exist_ok=False)
     def digest(path):
@@ -247,7 +334,7 @@ def run(args):
         "sample_interval_ms": 20, "worker_memory_limit_bytes": CEILING,
         "worker_cpu_limit": 2, "pool_size": 8,
         "warmup_runs_per_shape": 1, "fresh_measured_runs_per_shape": 5,
-        "shapes": ["rows", "bytes", "large_row", "oversized", "authority"],
+        "shapes": [args.shape] if args.shape else list(SHAPES),
         "p6": "deferred to #561; these finite runs do not establish steady-state expiry lag",
         "process_model": "real production worker pipeline in an isolated integration executable",
     }
@@ -289,16 +376,7 @@ def run(args):
                     if shape != "authority" and (report["replicas"] != (1 if args.profile == "local" else 2)
                                                   or report["slots"] != (1 if args.profile == "local" else 2)):
                         raise ValueError("Measured process topology differs from the selected profile")
-                    if "replica_reports" in report:
-                        processes = [measured_resources(args.output, f"{name}-replica-{index}")
-                                     for index in range(report["replicas"])]
-                        resources = {"samples": sum(process["samples"] for process in processes),
-                                     "peak_rss_bytes": max(process["peak_rss_bytes"] for process in processes),
-                                     "peak_hwm_bytes": max(process["peak_hwm_bytes"] for process in processes),
-                                     "rss_trace_verified": all(process["rss_trace_verified"] for process in processes),
-                                     "replicas": processes}
-                    else:
-                        resources = measured_resources(args.output, name)
+                    resources = sample_resources(args.output, name, report)
                     checks = assess(report, resources)
                     sample = {"shape": shape, "repeat": repeat, "warmup": repeat == 0,
                               "checks": checks, "report": report, "resources": resources}
@@ -321,24 +399,15 @@ def run(args):
             if failures:
                 break
         fixture.database_evidence("final")
-    measured = [sample for sample in samples if not sample["warmup"]]
-    expected = 5 * len(manifest["shapes"])
-    summary = {"measured_runs": len(measured), "expected_measured_runs": expected,
-               "failures": failures, "h1_h4_worker_qualified": len(measured) == expected and not failures,
-               "full_shared_topology_qualified": args.profile == "shared" and len(measured) == expected and not failures}
-    for shape in manifest["shapes"]:
-        field = "publisher_fixture_seconds" if shape == "authority" else "worker_seconds"
-        seconds = [sample["report"][field] for sample in measured if sample["shape"] == shape]
-        summary[shape] = {"runs": len(seconds), "timed_stage": field,
-                          "seconds_median": statistics.median(seconds) if seconds else None,
-                          "seconds_p95": percentile(seconds, 95) if seconds else None}
+    summary = summarize(manifest, samples, failures)
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-    return int(not summary["h1_h4_worker_qualified"])
+    return int(not summary["selected_shapes_passed"])
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=("local", "shared"), required=True)
+    parser.add_argument("--shape", choices=SHAPES, help="Measure one shape; complete qualification requires aggregation")
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--publisher-binary", type=Path, required=True)
     parser.add_argument("--admin-binary", type=Path, required=True)

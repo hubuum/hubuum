@@ -89,6 +89,7 @@ jobs:
       fail-fast: false
       matrix:
         profile: [local, shared]
+        shape: [rows, bytes, large_row, oversized, authority]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -117,9 +118,10 @@ jobs:
       - name: Measure warm-up and five fresh repeats for every shape
         env:
           HISTORY_PROFILE: ${{ matrix.profile }}
+          HISTORY_SHAPE: ${{ matrix.shape }}
         run: >-
           sudo "$(command -v python3)" -I -S tests/python/run.py integration history-expiry
-          --profile "$HISTORY_PROFILE" --binary target/release/history-expiry-driver
+          --profile "$HISTORY_PROFILE" --shape "$HISTORY_SHAPE" --binary target/release/history-expiry-driver
           --publisher-binary target/release/history-checkpoint-driver
           --admin-binary target/release/hubuum-admin --output target/history-expiry-report
       - name: Package readable measurements without private runtime material
@@ -135,6 +137,53 @@ jobs:
       - name: Retain raw measurements including failures
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: history-expiry-${{ matrix.profile }}-${{ matrix.shape }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: target/history-expiry-evidence.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  aggregate:
+    needs: measure
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [local, shared]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: history-expiry-${{ matrix.profile }}-*-${{ github.event.pull_request.head.sha || github.sha }}
+          path: target/history-expiry-shards
+      - name: Verify complete shape coverage and recompute raw evidence
+        run: |
+          python3 -I -S - <<'PY'
+          from pathlib import Path
+          import sys, tarfile
+          sys.path.insert(0, str(Path('tests/python').resolve()))
+          from integration.history_expiry import aggregate_measurements, package_measurements
+          roots = []
+          for artifact in sorted(Path('target/history-expiry-shards').iterdir()):
+              with tarfile.open(artifact / 'history-expiry-evidence.tar.gz') as archive:
+                  for member in archive.getmembers():
+                      if not member.isfile() or member.name.startswith('/') or '..' in Path(member.name).parts:
+                          raise ValueError('Expected packaged regular measurement files')
+                  archive.extractall(artifact, filter='data')
+              roots.append(artifact / 'history-expiry-report')
+          output = Path('target/history-expiry-report')
+          summary = aggregate_measurements(roots, output)
+          if not summary['h1_h4_worker_qualified']:
+              raise ValueError('Complete profile did not qualify')
+          package_measurements(output, Path('target/history-expiry-evidence.tar.gz'))
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: history-expiry-${{ matrix.profile }}-${{ github.event.pull_request.head.sha || github.sha }}
           path: target/history-expiry-evidence.tar.gz

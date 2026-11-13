@@ -113,6 +113,14 @@ and remains gated with production expiry. Original clocks and receipts survive
 every ownership change; a changed application image requires separate recovery
 qualification.
 
+Finite H1/H4 qualification runs each shape on a separate isolated CI runner, with
+one warm-up and five fresh measurements per shape. Every shape retains the same
+30-minute phase bounds, four-hour job limit and worker/database resource caps.
+A shape report cannot qualify the complete profile. Aggregation requires all five
+shapes, identical settings and binary provenance, and recomputes acceptance and raw
+RSS evidence before publishing the 30-run profile. Restore/replay must preserve
+first receipts and release quarantine. P6 sustained-load acceptance remains #561.
+
 **Breaking recovery capability:**
 `HistoryLifecycleStorage::reapply_history_expiry` is a required, trusted recovery
 operation. It removes only one retained exact version under current independently
