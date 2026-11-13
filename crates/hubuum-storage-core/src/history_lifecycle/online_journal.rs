@@ -10,10 +10,7 @@ use crate::{StorageIdentityEvidence, StorageRecordIdentity};
 
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(
-    try_from = "Vec<HistoryExpiryIntent>",
-    into = "Vec<HistoryExpiryIntent>"
-)]
+#[serde(try_from = "Vec<HistoryExpiryIntent>")]
 pub struct HistoryExpiryJournal(Vec<HistoryExpiryIntent>);
 impl HistoryExpiryJournal {
     pub const MAX_INTENTS: usize = 256;
@@ -47,17 +44,21 @@ impl HistoryExpiryJournal {
             }
         }
         let journal = Self(intents);
-        if serde_json::to_vec(&journal.0)
+        journal.validate_capacity()?;
+        Ok(journal)
+    }
+    fn validate_capacity(&self) -> Result<(), StorageValidationError> {
+        if serde_json::to_vec(&self.0)
             .map_err(|_| invalid("Cannot encode retained expiry journal"))?
             .len()
-            + journal.completion_reserve_bytes()
+            + self.completion_reserve_bytes()
             > Self::MAX_BYTES
         {
             return Err(invalid(
                 "Retained expiry journal must preserve completion capacity",
             ));
         }
-        Ok(journal)
+        Ok(())
     }
     pub fn completion_reserve_bytes(&self) -> usize {
         self.0
@@ -167,20 +168,24 @@ impl HistoryExpiryJournal {
     /// Outcome/cancellation updates may only add original facts to this exact
     /// retained manifest. The owning adapter serializes this transition.
     pub fn retain(&self, updated: HistoryExpiryIntent) -> Result<Self, StorageValidationError> {
-        let mut intents = self.0.clone();
-        let Some(existing) = intents
-            .iter_mut()
-            .find(|intent| intent.identity() == updated.identity())
-        else {
-            return Err(invalid("Online expiry intent was not admitted"));
-        };
-        if !updated.covers(existing) {
+        let index = self
+            .0
+            .binary_search_by_key(&updated.identity(), HistoryExpiryIntent::identity)
+            .map_err(|_| invalid("Online expiry intent was not admitted"))?;
+        if !updated.covers(&self.0[index]) {
             return Err(invalid(
                 "Online expiry transition would lose retained evidence",
             ));
         }
-        *existing = updated;
-        Self::new(intents)
+        let mut intents = Vec::with_capacity(self.0.len());
+        intents.extend(self.0[..index].iter().cloned());
+        intents.push(updated);
+        intents.extend(self.0[index + 1..].iter().cloned());
+        // The private journal and exact manifest equality already prove order,
+        // identities and unique membership. Only encoded capacity can change.
+        let journal = Self(intents);
+        journal.validate_capacity()?;
+        Ok(journal)
     }
     pub fn covers(&self, required: &Self) -> bool {
         required.0.iter().all(|intent| {

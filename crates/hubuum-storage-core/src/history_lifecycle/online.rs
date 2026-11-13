@@ -1636,6 +1636,40 @@ mod tests {
             "lifecycle.erasure.copy_removed"
         );
     }
+    #[rstest::rstest]
+    #[case::empty(0)]
+    #[case::single(1)]
+    #[case::multiple(2)]
+    fn journal_serialization_preserves_the_array_wire_format(#[case] count: usize) {
+        let journal = HistoryExpiryJournal::new((0..count).map(|_| intent()).collect()).unwrap();
+        let encoded = serde_json::to_vec(&journal).unwrap();
+        assert_eq!(encoded, serde_json::to_vec(journal.intents()).unwrap());
+        let decoded: HistoryExpiryJournal = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded, journal);
+    }
+
+    #[test]
+    fn retained_receipt_changes_only_its_original_intent() {
+        let original = intent();
+        let other = intent();
+        let journal = HistoryExpiryJournal::new(vec![original.clone(), other.clone()]).unwrap();
+        let updated = original
+            .record_removed(
+                HistoryExpiryExactDeletion::from_affected_rows(
+                    original.manifest().members()[0].target(),
+                    checkpoint('a'),
+                    at(210),
+                    1,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let retained = journal.retain(updated.clone()).unwrap();
+        let expected = HistoryExpiryJournal::new(vec![updated, other]).unwrap();
+        assert_eq!(retained, expected);
+        assert_eq!(journal.intent(original.identity()), Some(&original));
+    }
+
     #[test]
     fn journal_recovery_merges_descendants_without_losing_local_obligations() {
         let intent = intent();

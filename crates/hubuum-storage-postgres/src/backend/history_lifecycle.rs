@@ -158,6 +158,12 @@ struct Capture {
     incarnation: Uuid,
     deletion_revision: HistoryDeletionRevision,
 }
+
+#[derive(QueryableByName)]
+struct EncodedCapture {
+    #[diesel(sql_type = Text)]
+    material: String,
+}
 pub(crate) async fn scope_known_on(
     connection: &mut PostgresConnection,
     scope: HistoryPolicyScope,
@@ -381,10 +387,10 @@ fn observe_exposure_identities(
 pub(crate) async fn capture_on(
     connection: &mut PostgresConnection,
 ) -> Result<HistoryLifecycleSnapshot, PostgresStorageError> {
-    let row = sql_query("SELECT public.hubuum_history_lifecycle_capture() AS material")
-        .get_result::<MaterialRow>(connection)
+    let row = sql_query("SELECT public.hubuum_history_lifecycle_capture()::text AS material")
+        .get_result::<EncodedCapture>(connection)
         .await?;
-    let capture: Capture = serde_json::from_value(row.material).map_err(|error| {
+    let capture: Capture = serde_json::from_str(&row.material).map_err(|error| {
         PostgresStorageError::invalid_persisted_value("history lifecycle control", error)
     })?;
     HistoryLifecycleSnapshot::new(

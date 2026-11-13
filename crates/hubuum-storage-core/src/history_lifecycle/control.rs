@@ -129,8 +129,10 @@ impl HistoryLifecycleControl {
         deletion: HistoryExpiryExactDeletion,
         fence: HistoryReviewFence,
     ) -> Result<HistoryExpiryRemovalChange, StorageValidationError> {
-        let mut next = self.clone();
-        next.authority = self.authority.record_expiry_removal(identity, deletion)?;
+        let next = Self {
+            authority: self.authority.record_expiry_removal(identity, deletion)?,
+            previews: self.previews.clone(),
+        };
         self.change(next, fence).map(HistoryExpiryRemovalChange)
     }
     pub fn issue_preview(

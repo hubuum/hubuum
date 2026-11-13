@@ -368,20 +368,21 @@ async fn remove_member_on(
         removed_at: DateTime<Utc>,
         control: Value,
     }
-    let material =
-        sql_query("SELECT public.hubuum_history_expiry_remove($1,$2,$3,$4,$5,$6,$7) AS material")
-            .bind::<Jsonb, _>(serde_json::to_value(snapshot.control()).map_err(|error| {
-                PostgresStorageError::invalid_persisted_value("removal predecessor", error)
-            })?)
-            .bind::<SqlUuid, _>(batch)
-            .bind::<SqlUuid, _>(Uuid::from_bytes(*member.target().resource().as_bytes()))
-            .bind::<SqlUuid, _>(Uuid::from_bytes(*member.target().version().as_bytes()))
-            .bind::<Text, _>(protection.checkpoint().as_str())
-            .bind::<SqlUuid, _>(snapshot.fence().incarnation())
-            .bind::<BigInt, _>(snapshot.fence().deletion_revision().value() as i64)
-            .get_result::<MaterialRow>(connection)
-            .await?
-            .material;
+    let material = sql_query(
+        "SELECT public.hubuum_history_expiry_remove($1::jsonb,$2,$3,$4,$5,$6,$7) AS material",
+    )
+    .bind::<Text, _>(serde_json::to_string(snapshot.control()).map_err(|error| {
+        PostgresStorageError::invalid_persisted_value("removal predecessor", error)
+    })?)
+    .bind::<SqlUuid, _>(batch)
+    .bind::<SqlUuid, _>(Uuid::from_bytes(*member.target().resource().as_bytes()))
+    .bind::<SqlUuid, _>(Uuid::from_bytes(*member.target().version().as_bytes()))
+    .bind::<Text, _>(protection.checkpoint().as_str())
+    .bind::<SqlUuid, _>(snapshot.fence().incarnation())
+    .bind::<BigInt, _>(snapshot.fence().deletion_revision().value() as i64)
+    .get_result::<MaterialRow>(connection)
+    .await?
+    .material;
     let outcome: Outcome = serde_json::from_value(material).map_err(|error| {
         PostgresStorageError::invalid_persisted_value("native removal outcome", error)
     })?;

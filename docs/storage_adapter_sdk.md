@@ -1099,9 +1099,19 @@ next unreceipted copy in the original manifest traversal order. Manifest member
 order itself is not UUID order. Decoding, recovery coverage and audit deltas must
 still reject foreign, duplicate, reordered or contradictory original receipts.
 
+Journal serialization borrows retained facts and preserves the existing JSON
+array encoding. An outcome or cancellation update carries forward the private
+journal's validated order and unique membership only after proving exact
+manifest equality and monotonic receipt coverage. It still checks the complete
+encoded byte bound and completion reserve. Raw decoding and new admission must
+validate all identities and membership; an update cannot retarget or erase them.
+
 Native outcome validation may compare the complete returned control document
 against the canonical encoding of already validated expected control. Do not
-reduce that comparison to a revision or receipt count. A physical replay with a
+reduce that comparison to a revision or receipt count. Adapters may decode
+encoded database JSON directly into validated control and serialize validated
+predecessors once, without constructing an intermediate untyped JSON tree.
+A physical replay with a
 verified first receipt must leave the complete control document unchanged and
 emit no new removal audit; the exact native deletion and all eligibility checks
 still run in the same transaction. The recovery service may retain the original

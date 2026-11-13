@@ -431,6 +431,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Gated history expiry avoids copying the retained journal during serialization
+  and discarding complete ledger copies during exact receipt updates. Updates
+  preserve validated fixed membership, original receipts and the existing array
+  encoding while still enforcing encoded capacity and completion reserves.
+  PostgreSQL captures decode directly into validated control and encode removal
+  predecessors once, retaining the complete native outcome comparison.
+
 - Native history expiry compares complete returned control against validated
   canonical control without decoding the retained ledger again for every copy.
   Physical replay preserves existing receipts and audits without rebuilding an

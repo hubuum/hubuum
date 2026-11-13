@@ -292,12 +292,14 @@ impl HistoryLifecycleAuthority {
         if !expiry.covers(&self.expiry) {
             return Err(invalid("Expiry authority would lose retained evidence"));
         }
-        let mut next = self.clone();
-        next.revision = HistoryAuthorityRevision::new(
-            self.revision.value() + expiry.revision().value() - self.expiry.revision().value(),
-        )?;
-        next.expiry = expiry;
-        Ok(next)
+        Ok(Self {
+            revision: HistoryAuthorityRevision::new(
+                self.revision.value() + expiry.revision().value() - self.expiry.revision().value(),
+            )?,
+            policies: self.policies.clone(),
+            holds: self.holds.clone(),
+            expiry,
+        })
     }
     pub(super) fn merge_retained(&self, required: &Self) -> Result<Self, StorageValidationError> {
         let mut merged = if self
