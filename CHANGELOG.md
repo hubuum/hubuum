@@ -44,6 +44,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (storage SDK 0.10):** update all ten SDK dependencies to exactly
+  `0.10.0`. Implement `AuthenticateExternal` in the existing interaction advance
+  operation: preserve verified identity/fresh-authentication proofs, fence the
+  provider revision and claimed interaction, and atomically reconcile stable
+  subjects and provider-owned membership sources. Raw password interaction
+  evidence now accepts only local/LDAP authentication. External adapters must
+  implement the new action before upgrading; no database migration is added by
+  this SDK increment.
+
 - Authentication interactions use `ring` HKDF-SHA-256 for derived keys and
   receipts, `subtle` for secret comparisons, and `governor` for continuously
   replenishing per-IP admission limits. **Breaking for earlier #591 preview

@@ -478,3 +478,37 @@ semantics: all requested permissions must occur in one group grant for that
 collection. Do not combine partial grants from different groups. Local permission
 batches use this operation for both endpoints of relations, including non-admin
 callers, without per-resource database calls.
+
+## External interaction authentication
+
+`AuthenticateExternal` carries either verified external login evidence or fresh
+OIDC approval evidence. The adapter checks the complete interaction binding,
+claim lease, purpose, immutable provider UUID/scope/kind/namespace and current
+configuration revision before identity writes. PostgreSQL acquires the identity
+serialization lock before the actor/principal lock on both paths. Cancellation,
+expired claims, callback replay or mismatched proof authority cannot provision or
+reconcile a principal. Recheck the claim after synchronization; expiry during
+lock waits or writes must roll back every identity and membership change.
+
+Resolve principals by immutable scope and subject, never by profile name/email.
+Admission is checked under the identity lock, including for existing allowlisted
+identities. Fresh approvals require the resolved principal to be the existing
+actor and never provision. Concurrent absent-row provisioning is serialized;
+unique constraints remain authoritative. Identity changes, provider-owned group
+sources, audit records and interaction progress share one transaction.
+
+An upstream observation cannot overwrite a newer successful observation or undo
+a later definitive rejection. A rejection invalidates pending login evidence,
+sessions and tokens. A later interactive sign-in can establish new evidence but
+cannot revive old bearer credentials or operation approvals.
+
+Membership reconciliation removes only sources owned by the selected provider
+scope. Independent manual/other-provider grants survive, including grants restored
+from backup. Authoritative empty sets remove owning sources; local-only evidence
+preserves sources. Provider groups are namespaced and confer no implicit local
+administrator privilege.
+
+Fresh approval includes signed authentication time and the exact persisted
+interaction start. The existing atomic completion path rechecks the original
+actor/token and operation and consumes the interaction once. OAuth without fresh
+authentication capability cannot substitute password or ordinary login evidence.

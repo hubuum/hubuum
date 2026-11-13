@@ -2,10 +2,10 @@ use super::*;
 use hubuum_storage_core::{
     MAX_ACTIVE_AUTH_INTERACTIONS, MAX_ACTIVE_AUTH_INTERACTIONS_PER_ACTOR,
     MAX_ACTIVE_AUTH_INTERACTIONS_PER_CLIENT, MAX_AUTH_INTERACTIONS, StorageInteractionAccess,
-    StorageInteractionAction, StorageInteractionCommand, StorageInteractionComplete,
-    StorageInteractionCompletion, StorageInteractionCreate, StorageInteractionEvidence,
-    StorageInteractionIssuance, StorageInteractionLogin, StorageInteractionOutcome,
-    StorageInteractionRecord, StorageInteractionView,
+    StorageInteractionAction, StorageInteractionAuthorization, StorageInteractionCommand,
+    StorageInteractionComplete, StorageInteractionCompletion, StorageInteractionCreate,
+    StorageInteractionEvidence, StorageInteractionIssuance, StorageInteractionLogin,
+    StorageInteractionOutcome, StorageInteractionRecord, StorageInteractionView,
 };
 
 fn invalid() -> StorageError {
@@ -224,16 +224,82 @@ impl MemoryState {
             return Err(invalid());
         }
         let now = Utc::now();
+        let external = matches!(
+            command.action(),
+            StorageInteractionAction::AuthenticateExternal { .. }
+        );
         let result = if let Some(error) = self.interaction_fence(&mut record, now) {
             rejected(error)
-        } else if let StorageInteractionAction::Authenticate { authentication, .. } =
-            command.action()
-            && let StorageInteractionEvidence::Login(login) = authentication.evidence()
-            && !self.interaction_login_valid(&record, login, authentication.proof().subject())
-        {
-            return Err(invalid());
         } else {
-            record.apply(command, now)
+            let command = if let StorageInteractionAction::AuthenticateExternal {
+                authentication,
+                approval,
+            } = command.action()
+            {
+                let StorageInteractionAuthorization::Claim(claim) = command.authorization() else {
+                    return Err(invalid());
+                };
+                let provider = record.provider().ok_or_else(invalid)?;
+                if self.runtime_settings.provider_binding(provider.name()) != Some(provider) {
+                    return Err(invalid());
+                }
+                let proof = authentication
+                    .prepare(&record, claim, approval.clone(), now)
+                    .map_err(|_| invalid())?;
+                let fact = authentication.authentication();
+                let identity = fact.identity();
+                let scope = self.identity_scope_by_name(identity.scope().as_str());
+                let existing = self.principals.values().find(|principal| {
+                    scope.is_some_and(|scope| principal.identity_scope_id() == scope.id())
+                        && principal.external_subject() == Some(identity.subject().as_str())
+                });
+                if existing.is_some_and(|principal| {
+                    !principal.provider_managed()
+                        || principal.kind() != PrincipalKind::Human
+                        || principal
+                            .last_sync_success_at()
+                            .is_some_and(|at| at > fact.verified_at())
+                        || principal.last_sync_success_at().is_none()
+                            && principal
+                                .last_sync_attempted_at()
+                                .is_some_and(|at| at > fact.verified_at())
+                }) {
+                    return Err(invalid());
+                }
+                let admitted = authentication
+                    .admit(existing.map(|principal| principal.id()))
+                    .map_err(|_| invalid())?;
+                let user = self
+                    .sync_external_user(
+                        admitted.synchronization(),
+                        fact.memberships().provider_groups().is_none(),
+                        Some(fact.verified_at()),
+                    )?
+                    .into_value();
+                let authentication = admitted
+                    .interaction_authentication(proof, user)
+                    .map_err(|_| invalid())?;
+                StorageInteractionCommand::new(
+                    command.authorization().clone(),
+                    StorageInteractionAction::Authenticate {
+                        authentication: Box::new(authentication),
+                        approval: approval.clone(),
+                    },
+                )
+            } else {
+                command
+            };
+            if let StorageInteractionAction::Authenticate { authentication, .. } = command.action()
+                && let StorageInteractionEvidence::Login(login) = authentication.evidence()
+                && !self.interaction_login_valid(&record, login, authentication.proof().subject())
+            {
+                return Err(invalid());
+            }
+            let result = record.apply(command, if external { Utc::now() } else { now });
+            if external && matches!(result, StorageInteractionOutcome::Rejected(_)) {
+                return Err(invalid());
+            }
+            result
         };
         self.store_interaction(record)?;
         Ok(result)

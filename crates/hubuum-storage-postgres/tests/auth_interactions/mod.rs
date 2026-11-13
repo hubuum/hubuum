@@ -1,3 +1,4 @@
+mod external;
 use super::*;
 use hubuum_domain::{
     InteractionAuthority, InteractionBinding, InteractionClientId, InteractionDigest,

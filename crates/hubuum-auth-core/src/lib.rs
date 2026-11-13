@@ -3,15 +3,13 @@
 mod credential;
 pub use credential::{BearerCredential, CredentialError, VersionedCredential, keyed_digest};
 
-mod external;
-pub use external::{
+pub use hubuum_domain::{
     AdmittedExternalAuthentication, ExternalAuthenticationContext, ExternalAuthenticationError,
     ExternalIdentity, ExternalIdentityProfile, ExternalMemberships, ExternalSubject,
     FreshExternalAuthentication, FreshExternalAuthenticationRequest, MembershipClaims,
     ProviderGroup, VerifiedExternalAuthentication,
 };
-mod freshness;
-pub use freshness::{ExternalFreshness, ExternalFreshnessPolicy};
+pub use hubuum_domain::{ExternalFreshness, ExternalFreshnessPolicy};
 
 pub use hubuum_domain::{
     DEFAULT_INTERACTION_LIFETIME_SECONDS, INITIAL_INTERACTION_POLL_SECONDS,

@@ -417,3 +417,6 @@ impl MemoryState {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod external_identity_tests;

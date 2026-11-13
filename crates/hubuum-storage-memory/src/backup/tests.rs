@@ -733,3 +733,55 @@ fn oversized_membership_sources_stop_before_building_an_index_of_the_corpus() {
     assert!(progress.scanned_rows() < 20);
     assert!(progress.retained_bytes() <= limit);
 }
+
+#[test]
+fn backup_retains_both_manual_and_provider_membership_sources() {
+    run(async {
+        let storage = MemoryStorage::new();
+        let id = storage
+            .sync_external_user(
+                StorageExternalUserSync::builder(
+                    "directory",
+                    LDAP_PROVIDER_KIND,
+                    "subject",
+                    "alice",
+                )
+                .groups(vec![StorageExternalGroup::new("stable-key", "team", None)])
+                .build(),
+            )
+            .await
+            .unwrap()
+            .into_value()
+            .id();
+        let group = {
+            let mut state = storage.state.write().await;
+            let group = state
+                .groups
+                .values()
+                .find(|group| group.external_key() == Some("stable-key"))
+                .unwrap()
+                .id();
+            state.membership_sources.push(row(json!({"principal_id":id.id(),"group_id":group.id(),"source":"manual","source_scope_id":1,"source_key":"","created_at":Utc::now(),"updated_at":Utc::now()})).unwrap());
+            group
+        };
+        let (sections, _) = storage
+            .capture_backup_replay(
+                false,
+                StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+            )
+            .await
+            .unwrap()
+            .materialize()
+            .unwrap()
+            .into_parts();
+        let sources: BTreeSet<_> = sections[&StorageBackupStateSection::GroupMembershipSources]
+            .iter()
+            .filter(|row| row.get("group_id") == Some(&json!(group.id())))
+            .map(|row| row.get("source").and_then(Value::as_str).unwrap())
+            .collect();
+        assert_eq!(
+            sources,
+            BTreeSet::from([EXTERNAL_MEMBERSHIP_SOURCE, MANUAL_MEMBERSHIP_SOURCE])
+        );
+    });
+}

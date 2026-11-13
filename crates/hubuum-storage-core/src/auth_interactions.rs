@@ -1,5 +1,8 @@
 //! Bounded interaction aggregates. Adapters commit rejections that change state,
 //! and commit purpose-specific issuance in the same transaction as consumption.
+mod external;
+pub use external::{StorageAdmittedExternalIdentity, StorageExternalInteractionAuthentication};
+
 use crate::StorageProviderIdentityBinding;
 use chrono::{DateTime, Duration, Utc};
 use hubuum_domain::{
@@ -262,6 +265,19 @@ impl StorageInteractionAuthentication {
         login: &StorageLogin,
         authenticated_at: DateTime<Utc>,
     ) -> Result<Self, StorageValidationError> {
+        if !matches!(
+            login.subject().authentication_provider_kind(),
+            "local" | "ldap"
+        ) {
+            return Err(invalid());
+        }
+        Self::from_login(proof, login, authenticated_at)
+    }
+    fn from_login(
+        proof: VerifiedInteractionSubject,
+        login: &StorageLogin,
+        authenticated_at: DateTime<Utc>,
+    ) -> Result<Self, StorageValidationError> {
         let snapshot = StorageInteractionLogin {
             subject: login.subject().clone(),
             fingerprint: login.interaction_fingerprint(),
@@ -354,6 +370,10 @@ pub enum StorageInteractionAction {
     Claim(Uuid),
     Authenticate {
         authentication: Box<StorageInteractionAuthentication>,
+        approval: Option<InteractionBrowserBinding>,
+    },
+    AuthenticateExternal {
+        authentication: Box<StorageExternalInteractionAuthentication>,
         approval: Option<InteractionBrowserBinding>,
     },
     Reject,

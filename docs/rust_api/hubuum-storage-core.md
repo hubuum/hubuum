@@ -1,6 +1,6 @@
 # `hubuum-storage-core` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.9` release train.
+Status: experimental public API in the storage SDK `0.10` release train.
 
 ## Purpose and Callers
 
@@ -278,3 +278,9 @@ completion. All adapters must implement the six new `AuthenticationStorage`
 methods and exact-family `SessionRevocation::Session`. See the
 [0.9 migration guide](../storage_adapter_sdk.md#upgrading-from-08-to-09) and
 [interaction contract](../authentication_interactions.md).
+
+SDK 0.10 adds proof-carrying external interaction authentication. Both login and
+fresh approval evidence must remain attached to the stable identity until the
+adapter commits admission, membership reconciliation and interaction progress
+atomically. The new closed action variant is a breaking adapter change; see the
+[0.10 migration guide](../storage_adapter_sdk.md#upgrading-from-09-to-010).

@@ -44,8 +44,10 @@ impl Fixture {
         let tables = [
             "principals",
             "users",
+            "service_accounts",
             "groups",
             "group_memberships",
+            "group_membership_sources",
             "identity_scopes",
             "tokens",
             "auth_sessions",

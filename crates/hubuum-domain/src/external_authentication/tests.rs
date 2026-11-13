@@ -1,5 +1,5 @@
 use super::*;
-use hubuum_domain::{
+use crate::{
     InteractionActor, InteractionAuthority, InteractionClientId, InteractionDigest, InteractionId,
     PrincipalId, ResourceRevision, TokenId,
 };

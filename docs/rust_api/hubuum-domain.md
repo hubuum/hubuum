@@ -1,6 +1,6 @@
 # `hubuum-domain` Rust API Policy
 
-Status: experimental public API in the storage SDK `0.9` release train.
+Status: experimental public API in the storage SDK `0.10` release train.
 
 ## Purpose and Callers
 
@@ -68,3 +68,13 @@ Hubuum maintainers own the crate. Ordinary workspace tests and storage
 consumers verify its behavior. CI packages it, builds rustdoc with warnings
 denied, and compares it with the latest crates.io release when a baseline
 exists.
+
+## External authentication proofs
+
+SDK 0.10 adds private-fielded external identity, membership, admission and fresh
+approval proofs, also re-exported by the internal `hubuum-auth-core` crate.
+Constructors validate facts from trusted protocol adapters; they do not verify
+signatures or authenticate client-supplied profiles. These proof types cannot be
+deserialized. Fresh evidence retains the interaction start for the storage fence.
+`ExternalFreshnessPolicy` measures upstream eligibility independently of session
+rotation, with fallible conversion from a membership policy.

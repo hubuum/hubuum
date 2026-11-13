@@ -1,6 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
 
-use crate::ExternalAuthenticationError;
+use crate::{ExternalAuthenticationError, ProviderMembership};
 
 /// Eligibility and membership age, independent of Hubuum token rotation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,3 +79,21 @@ impl Default for ExternalFreshnessPolicy {
 
 #[cfg(test)]
 mod tests;
+
+impl TryFrom<&ProviderMembership> for ExternalFreshnessPolicy {
+    type Error = ExternalAuthenticationError;
+    fn try_from(membership: &ProviderMembership) -> Result<Self, Self::Error> {
+        let (refresh, stale) = match membership {
+            ProviderMembership::LocalOnly {
+                refresh_interval_seconds,
+                max_stale_seconds,
+            }
+            | ProviderMembership::ProviderGroups {
+                refresh_interval_seconds,
+                max_stale_seconds,
+                ..
+            } => (*refresh_interval_seconds, *max_stale_seconds),
+        };
+        Self::new(refresh, stale)
+    }
+}

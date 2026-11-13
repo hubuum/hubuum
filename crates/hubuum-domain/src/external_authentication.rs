@@ -4,12 +4,12 @@
 //! client-supplied token or profile as authentication. Proofs are not deserializable.
 use std::{collections::BTreeSet, fmt};
 
-use chrono::{DateTime, Duration, Utc};
-use hubuum_domain::{
+use crate::{
     IdentityScopeName, InteractionBinding, InteractionProviderId, InteractionPurpose,
     MembershipClaimSource, MembershipKeyMode, OAuthProviderDefinition, OAuthSubjectType,
     OidcProviderDefinition, ProviderAdmission, ProviderMembership,
 };
+use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
 
 use crate::ExternalFreshnessPolicy;
@@ -165,6 +165,17 @@ impl ExternalIdentity {
     }
     pub fn subject(&self) -> &ExternalSubject {
         &self.subject
+    }
+    pub fn provider_kind(&self) -> &'static str {
+        match self.namespace {
+            Namespace::Oidc(_) => "oidc",
+            Namespace::OAuth(_) => "oauth",
+        }
+    }
+    pub fn namespace(&self) -> &str {
+        match &self.namespace {
+            Namespace::Oidc(value) | Namespace::OAuth(value) => value,
+        }
     }
 }
 
@@ -386,19 +397,8 @@ impl ExternalAuthenticationContext {
     }
 
     pub fn freshness_policy(&self) -> ExternalFreshnessPolicy {
-        let (interval, stale) = match self.configuration.membership() {
-            ProviderMembership::LocalOnly {
-                refresh_interval_seconds,
-                max_stale_seconds,
-            }
-            | ProviderMembership::ProviderGroups {
-                refresh_interval_seconds,
-                max_stale_seconds,
-                ..
-            } => (refresh_interval_seconds, max_stale_seconds),
-        };
-        ExternalFreshnessPolicy::new(*interval, *stale)
-            .expect("provider definitions validate membership freshness")
+        ExternalFreshnessPolicy::try_from(self.configuration.membership())
+            .expect("validated provider membership policy")
     }
 
     /// Call only after the adapter validates the signed OIDC response and any
@@ -628,19 +628,24 @@ impl FreshExternalAuthenticationRequest {
         Ok(FreshExternalAuthentication {
             authentication,
             authenticated_at: auth_time,
+            started_at: self.started_at,
         })
     }
 }
 
 /// Fresh evidence is still subject to atomic interaction consumption, origin
 /// token validity, current authorization and operation checks at the final write.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FreshExternalAuthentication {
     authentication: VerifiedExternalAuthentication,
     authenticated_at: DateTime<Utc>,
+    started_at: DateTime<Utc>,
 }
 
 impl FreshExternalAuthentication {
+    pub fn started_at(&self) -> DateTime<Utc> {
+        self.started_at
+    }
     pub fn authentication(&self) -> &VerifiedExternalAuthentication {
         &self.authentication
     }

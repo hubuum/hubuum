@@ -6,6 +6,7 @@ use hubuum_storage_core::{
     StorageInteractionCompletion, StorageInteractionCreate, StorageInteractionOutcome,
     StorageInteractionView,
 };
+use serde_json::{Value, json};
 
 #[async_trait]
 impl AuthenticationStorage for MemoryStorage {
@@ -1110,9 +1111,44 @@ impl ExternalIdentityStorage for MemoryStorage {
         &self,
         request: StorageExternalUserSync,
     ) -> Result<StorageMutationOutcome<StorageSyncedHuman>, StorageError> {
+        let mut live = self.state.write().await;
+        let mut staged = live.clone();
+        let result = staged.sync_external_user(request, false, None)?;
+        *live = staged;
+        Ok(result)
+    }
+}
+
+fn source_has_membership(source: &StorageBackupRow, key: (i32, i32)) -> bool {
+    source.get("principal_id").and_then(Value::as_i64) == Some(i64::from(key.0))
+        && source.get("group_id").and_then(Value::as_i64) == Some(i64::from(key.1))
+}
+
+impl MemoryState {
+    fn owns_external_membership(&self, key: (i32, i32), scope: IdentityScopeId) -> bool {
+        let sources = self.membership_sources.iter().filter(|source| {
+            source_has_membership(source, key)
+                && source.get("source").and_then(Value::as_str) == Some(EXTERNAL_MEMBERSHIP_SOURCE)
+        });
+        if sources.clone().count() == 0 {
+            self.groups
+                .get(&key.1)
+                .is_some_and(|group| group.identity_scope_id() == scope)
+        } else {
+            sources.clone().any(|source| {
+                source.get("source_scope_id").and_then(Value::as_i64) == Some(i64::from(scope.id()))
+            })
+        }
+    }
+    pub(super) fn sync_external_user(
+        &mut self,
+        request: StorageExternalUserSync,
+        preserve_memberships: bool,
+        observed_at: Option<DateTime<Utc>>,
+    ) -> Result<StorageMutationOutcome<StorageSyncedHuman>, StorageError> {
         let (scope_name, provider_kind, subject, name, proper_name, email, groups) =
             request.into_parts();
-        let mut state = self.state.write().await;
+        let state = self;
         let scope = if let Some(scope) = state.identity_scope_by_name(&scope_name).cloned() {
             if scope.provider_kind() != provider_kind {
                 return Err(StorageError::conflict(format!(
@@ -1162,6 +1198,7 @@ impl ExternalIdentityStorage for MemoryStorage {
             })
             .map(|(id, _)| *id);
         let now = Utc::now();
+        let sync_time = observed_at.unwrap_or(now);
         let principal_id = if let Some(id) = existing_id {
             let record = state
                 .users
@@ -1194,8 +1231,8 @@ impl ExternalIdentityStorage for MemoryStorage {
             record.name = name.clone();
             record.provider_managed = true;
             record.external_subject = Some(subject.clone());
-            record.last_sync_attempted_at = Some(now);
-            record.last_sync_success_at = Some(now);
+            record.last_sync_attempted_at = Some(sync_time);
+            record.last_sync_success_at = Some(sync_time);
             let current = state
                 .principals
                 .get(&id)
@@ -1217,8 +1254,8 @@ impl ExternalIdentityStorage for MemoryStorage {
                     .provider_managed(true)
                     .settings(current.settings().clone())
                     .external_subject(Some(subject.clone()))
-                    .last_sync_attempted_at(Some(now))
-                    .last_sync_success_at(Some(now))
+                    .last_sync_attempted_at(Some(sync_time))
+                    .last_sync_success_at(Some(sync_time))
                     .try_build()
                     .map_err(invalid_contract_value)?;
             state.principals.insert(id, principal);
@@ -1238,8 +1275,8 @@ impl ExternalIdentityStorage for MemoryStorage {
                 StoragePrincipal::builder(metadata, PrincipalKind::Human, name.clone(), scope.id())
                     .provider_managed(true)
                     .external_subject(Some(subject.clone()))
-                    .last_sync_attempted_at(Some(now))
-                    .last_sync_success_at(Some(now))
+                    .last_sync_attempted_at(Some(sync_time))
+                    .last_sync_success_at(Some(sync_time))
                     .try_build()
                     .map_err(invalid_contract_value)?;
             let user_id = UserId::new(principal_id.id()).expect("external user id is positive");
@@ -1262,74 +1299,116 @@ impl ExternalIdentityStorage for MemoryStorage {
                     name: name.clone(),
                     provider_managed: true,
                     external_subject: Some(subject.clone()),
-                    last_sync_attempted_at: Some(now),
-                    last_sync_success_at: Some(now),
+                    last_sync_attempted_at: Some(sync_time),
+                    last_sync_success_at: Some(sync_time),
                 },
             );
             principal_id
         };
 
-        let mut current_external_groups = BTreeSet::new();
-        for external_group in groups {
-            let group = if let Some(group) = state.groups.values().find(|group| {
-                group.identity_scope_id() == scope.id()
-                    && (group.external_key() == Some(external_group.key())
-                        || group.name() == external_group.name())
-            }) {
-                group.clone()
-            } else {
-                let group_id = GroupId::new(state.next_group_id)
-                    .expect("memory external group id is positive");
-                state.next_group_id += 1;
-                let metadata = StorageRecordMetadata::try_new(
-                    ResourceId::new(group_id.id()).expect("group resource id is positive"),
-                    now,
-                    now,
-                    ResourceRevision::INITIAL,
-                )
-                .map_err(invalid_contract_value)?;
-                let group = StorageIdentityGroup::builder(
-                    metadata,
-                    external_group.name(),
-                    external_group.description().unwrap_or_default(),
-                    scope.id(),
-                    provider_kind.clone(),
-                )
-                .external_key(Some(external_group.key().to_string()))
-                .last_sync_attempted_at(Some(now))
-                .last_sync_success_at(Some(now))
-                .try_build()
-                .map_err(invalid_contract_value)?;
-                state.groups.insert(group_id.id(), group.clone());
-                group
-            };
-            let key = (principal_id.id(), group.id().id());
-            current_external_groups.insert(key);
-            if let std::collections::btree_map::Entry::Vacant(entry) = state.memberships.entry(key)
-            {
-                let membership = StoragePrincipalGroup::try_new(
-                    principal_id,
-                    group.id(),
-                    now,
-                    now,
-                    ResourceRevision::INITIAL,
-                )
-                .map_err(invalid_contract_value)?;
-                entry.insert(membership);
+        if !preserve_memberships {
+            let mut current_external_groups = BTreeSet::new();
+            for external_group in groups {
+                if state.groups.values().any(|group| {
+                    group.identity_scope_id() == scope.id()
+                        && group.name() == external_group.name()
+                        && group.external_key() != Some(external_group.key())
+                }) {
+                    return Err(StorageError::conflict("External group name collision"));
+                }
+                let group = if let Some(group) = state.groups.values().find(|group| {
+                    group.identity_scope_id() == scope.id()
+                        && group.external_key() == Some(external_group.key())
+                }) {
+                    group.clone()
+                } else {
+                    let group_id = GroupId::new(state.next_group_id)
+                        .expect("memory external group id is positive");
+                    state.next_group_id += 1;
+                    let metadata = StorageRecordMetadata::try_new(
+                        ResourceId::new(group_id.id()).expect("group resource id is positive"),
+                        now,
+                        now,
+                        ResourceRevision::INITIAL,
+                    )
+                    .map_err(invalid_contract_value)?;
+                    let group = StorageIdentityGroup::builder(
+                        metadata,
+                        external_group.name(),
+                        external_group.description().unwrap_or_default(),
+                        scope.id(),
+                        provider_kind.clone(),
+                    )
+                    .external_key(Some(external_group.key().to_string()))
+                    .last_sync_attempted_at(Some(sync_time))
+                    .last_sync_success_at(Some(sync_time))
+                    .try_build()
+                    .map_err(invalid_contract_value)?;
+                    state.groups.insert(group_id.id(), group.clone());
+                    group
+                };
+                let key = (principal_id.id(), group.id().id());
+                current_external_groups.insert(key);
+                if !state.membership_sources.iter().any(|source| {
+                    source_has_membership(source, key)
+                        && source.get("source").and_then(Value::as_str)
+                            == Some(EXTERNAL_MEMBERSHIP_SOURCE)
+                        && source.get("source_scope_id").and_then(Value::as_i64)
+                            == Some(i64::from(scope.id().id()))
+                        && source.get("source_key").and_then(Value::as_str)
+                            == Some(external_group.key())
+                }) {
+                    state.membership_sources.push(StorageBackupRow::try_from_value(json!({
+                        "principal_id":key.0,"group_id":key.1,"source":EXTERNAL_MEMBERSHIP_SOURCE,
+                        "source_scope_id":scope.id().id(),"source_key":external_group.key(),
+                        "created_at":sync_time,"updated_at":sync_time,
+                    })).map_err(invalid_contract_value)?);
+                }
+                if let std::collections::btree_map::Entry::Vacant(entry) =
+                    state.memberships.entry(key)
+                {
+                    let membership = StoragePrincipalGroup::try_new(
+                        principal_id,
+                        group.id(),
+                        now,
+                        now,
+                        ResourceRevision::INITIAL,
+                    )
+                    .map_err(invalid_contract_value)?;
+                    entry.insert(membership);
+                }
             }
+            let stale_groups = state
+                .external_memberships
+                .iter()
+                .filter(|(id, _)| *id == principal_id.id())
+                .filter(|key| state.owns_external_membership(**key, scope.id()))
+                .filter(|key| !current_external_groups.contains(key))
+                .copied()
+                .collect::<Vec<_>>();
+            for key in stale_groups {
+                state.membership_sources.retain(|source| {
+                    !(source_has_membership(source, key)
+                        && source.get("source").and_then(Value::as_str)
+                            == Some(EXTERNAL_MEMBERSHIP_SOURCE)
+                        && source.get("source_scope_id").and_then(Value::as_i64)
+                            == Some(i64::from(scope.id().id())))
+                });
+                let retained = state
+                    .membership_sources
+                    .iter()
+                    .filter(|source| source_has_membership(source, key));
+                if !retained.clone().any(|source| {
+                    source.get("source").and_then(Value::as_str) == Some(EXTERNAL_MEMBERSHIP_SOURCE)
+                }) {
+                    state.external_memberships.remove(&key);
+                }
+                if retained.count() == 0 {
+                    state.memberships.remove(&key);
+                }
+            }
+            state.external_memberships.extend(current_external_groups);
         }
-        let stale_groups = state
-            .external_memberships
-            .iter()
-            .filter(|(id, _)| *id == principal_id.id())
-            .filter(|key| !current_external_groups.contains(key))
-            .copied()
-            .collect::<Vec<_>>();
-        for key in stale_groups {
-            state.external_memberships.remove(&key);
-            state.memberships.remove(&key);
-        }
-        state.external_memberships.extend(current_external_groups);
         let user = state
             .users
             .get(&principal_id.id())

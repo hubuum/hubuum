@@ -32,6 +32,7 @@ impl StorageInteractionRecord {
                     && matches!(
                         action,
                         StorageInteractionAction::Authenticate { .. }
+                            | StorageInteractionAction::AuthenticateExternal { .. }
                             | StorageInteractionAction::Reject
                     )
             }

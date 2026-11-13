@@ -13,7 +13,8 @@ The sole native prerequisite, #575, is closed as completed with its accepted
 interaction candidate and contract handoff. #576 remains In progress; its
 acceptance criteria are not completed by this initial proof increment.
 
-`hubuum-auth-core` now defines private-fielded, non-deserializable external
+`hubuum-domain` now defines (and `hubuum-auth-core` re-exports) private-fielded,
+non-deserializable external
 identity, membership, admission and fresh-authentication proofs. A context pins
 the validated provider definition and complete interaction binding. OIDC identity
 uses the exact issuer/subject within the provider instance and scope. OAuth
@@ -39,15 +40,33 @@ do not verify signatures or perform network authentication: the owning adapters
 must validate responses, request `max_age=0` and check any supported required
 `acr`/`amr` evidence before calling them.
 
-Remaining #576 work includes application and storage consumption of these proofs,
-transactional provisioning and uniqueness, source-owned membership reconciliation,
-cross-replica refresh/fencing, invalidation and retained upstream credentials,
-operation-bound approval completion, and persistence/concurrency/revocation
-qualification. Atomic interaction consumption and final credential/authorization
-checks remain mandatory; an in-memory proof alone does not prevent replay.
-Real OIDC/OAuth execution remains #577/#578, which stay Blocked. This increment
-does not enable browser providers or change HTTP schemas and has no independently
-shipped user-facing behavior; no changelog entry is needed for it.
+The service/storage integration adds `AuthenticateExternal` to the existing
+interaction operation. Both adapters preflight the claimed interaction, provider
+binding and purpose, check admission under the stable-identity lock, and commit
+identity/membership writes with interaction progress. PostgreSQL serializes
+absent-row provisioning across replicas before taking actor/principal locks.
+Older observations and callbacks predating a definitive rejection cannot restore
+authority. The memory adapter now rolls back failed synchronization and retains
+independent membership provenance through removal and backup.
+
+Fresh approval consumption uses the existing purpose-bound completion path and
+checks the proof's start against the persisted interaction start. Ordinary
+password evidence is limited to local/LDAP. The SDK therefore advances to 0.10;
+external adapters must implement the new action and upgrade all ten crates.
+
+Existing browser authority now uses its upstream verification timestamp for both
+bearer use and session refresh. Without a usable renewal mechanism, an identity
+due for refresh must sign in again. A recorded temporary upstream failure permits
+existing authority only inside max-stale and returns 503 afterward. Neither
+session rotation nor profile persistence substitutes for upstream verification.
+LDAP retains its existing refresh path and avoids an extra binding lookup.
+
+Validation of this integration is in progress. Retained upstream credentials,
+protocol-specific renewal/revocation and real-provider qualification still need
+their owning adapter implementation and handoff review; no browser provider is
+enabled by this increment. #576 remains In progress, #577/#578 remain Blocked,
+and PR #592 remains draft against `project/auth-support`. No HTTP schema changes
+are introduced by these service/storage boundaries.
 
 ## Reviewed baseline
 

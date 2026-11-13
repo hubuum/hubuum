@@ -1,5 +1,5 @@
-//! Lock order: authentication settings, interaction, principals, credentials and
-//! session/candidate rows. Rejected transitions that change state still commit.
+//! Lock order: authentication settings, interaction, external identity/scope,
+//! principals, credentials and session/candidate rows. Rejected transitions that change state still commit.
 //! Lifecycle times use the application UTC clock, matching proof creation and the
 //! memory adapter. Do not mix it with the database host clock for transitions or
 //! cleanup; replicas must synchronize their application clocks.
@@ -18,11 +18,11 @@ use hubuum_storage_core::{
     AuthSessionId, MAX_ACTIVE_AUTH_INTERACTIONS, MAX_ACTIVE_AUTH_INTERACTIONS_PER_ACTOR,
     MAX_ACTIVE_AUTH_INTERACTIONS_PER_CLIENT, MAX_AUTH_INTERACTIONS, SessionClientId,
     SessionRevocation, StorageCredentialApprovalCreate, StorageErrorKind, StorageInteractionAccess,
-    StorageInteractionAction, StorageInteractionCommand, StorageInteractionComplete,
-    StorageInteractionCompletion, StorageInteractionCreate, StorageInteractionEvidence,
-    StorageInteractionIssuance, StorageInteractionLogin, StorageInteractionOutcome,
-    StorageInteractionRecord, StorageInteractionView, StorageLogin, StorageMutationOutcome,
-    StorageSessionCreate,
+    StorageInteractionAction, StorageInteractionAuthorization, StorageInteractionCommand,
+    StorageInteractionComplete, StorageInteractionCompletion, StorageInteractionCreate,
+    StorageInteractionEvidence, StorageInteractionIssuance, StorageInteractionLogin,
+    StorageInteractionOutcome, StorageInteractionRecord, StorageInteractionView, StorageLogin,
+    StorageMutationOutcome, StorageSessionCreate,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -293,9 +293,32 @@ pub async fn advance(
                 return Err(invalid());
             }
             let at = Utc::now();
+            let external = matches!(command.action(), StorageInteractionAction::AuthenticateExternal { .. });
+            if let StorageInteractionAction::AuthenticateExternal { authentication, approval } = command.action() {
+                let StorageInteractionAuthorization::Claim(claim) = command.authorization() else { return Err(invalid()); };
+                authentication.prepare(&record, claim, approval.clone(), at).map_err(|_| invalid())?;
+                // Identity serialization precedes the actor/principal fence on
+                // both login and approval paths, avoiding inverse lock order.
+                super::external_identity::lock_interaction_identity(connection, authentication).await?;
+            }
             let outcome = if let Some(error) = fence(connection, &mut record, revision, at).await? {
                 StorageInteractionOutcome::Rejected(error)
             } else {
+                let command = if let StorageInteractionAction::AuthenticateExternal { authentication, approval } = command.action() {
+                    let StorageInteractionAuthorization::Claim(claim) = command.authorization() else { return Err(invalid()); };
+                    let provider = record.provider().ok_or_else(invalid)?;
+                    let bound = sql_query("SELECT EXISTS(SELECT 1 FROM authentication_provider_bindings WHERE name=$1 AND provider_id=$2 AND kind=$3 AND namespace=$4) AS valid")
+                        .bind::<Text,_>(provider.name()).bind::<SqlUuid,_>(provider.id())
+                        .bind::<Text,_>(provider.kind().as_str()).bind::<Text,_>(provider.namespace())
+                        .get_result::<Valid>(connection).await?;
+                    if !bound.valid { return Err(invalid()); }
+                    let proof = authentication.prepare(&record, claim, approval.clone(), at).map_err(|_| invalid())?;
+                    let (admitted,user) = super::external_identity::synchronize_interaction(connection, authentication).await?;
+                    let authenticated = admitted.interaction_authentication(proof,user).map_err(|_| invalid())?;
+                    StorageInteractionCommand::new(command.authorization().clone(), StorageInteractionAction::Authenticate {
+                        authentication: Box::new(authenticated), approval: approval.clone(),
+                    })
+                } else { command };
                 if let StorageInteractionAction::Authenticate { authentication, .. } =
                     command.action()
                     && let StorageInteractionEvidence::Login(evidence) = authentication.evidence()
@@ -308,7 +331,13 @@ pub async fn advance(
                     )
                     .await?;
                 }
-                record.apply(command, at)
+                // Locks and synchronization may outlive the claim. Recheck at
+                // the end and roll back all identity writes on rejection.
+                let result = record.apply(command, if external { Utc::now() } else { at });
+                if external && matches!(result, StorageInteractionOutcome::Rejected(_)) {
+                    return Err(invalid());
+                }
+                result
             };
             save(connection, &record).await?;
             Ok(outcome)

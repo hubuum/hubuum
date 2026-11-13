@@ -1,5 +1,6 @@
 //! Resolve current provider authority and orchestrate secret-protected interactions.
 pub mod browser;
+pub mod external;
 use std::net::IpAddr;
 
 use chrono::{Duration, Utc};
