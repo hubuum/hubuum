@@ -1,6 +1,6 @@
 use hubuum_domain::{
     InteractionAuthority, InteractionBinding, InteractionClientId, InteractionId,
-    InteractionProviderId, ResourceRevision,
+    InteractionProviderId, PrincipalId, ResourceRevision,
 };
 use hubuum_storage_core::{AuthSessionId, StorageRetainedAuthentication, StorageUpstreamSession};
 use rstest::rstest;
