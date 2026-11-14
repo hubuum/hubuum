@@ -217,6 +217,9 @@ impl OAuthAdapter {
         self.check_credentials(&credentials)?;
         let request = self.profile_request(&credentials.access)?;
         let response = client.call(request).await?;
+        if *self.definition.profile() == OAuthProfile::Github && github_rate_limited(&response) {
+            return Err(OAuthError::Unavailable);
+        }
         if response.status() != http::StatusCode::OK {
             return Err(OAuthError::Denied);
         }
@@ -376,6 +379,27 @@ impl OAuthAdapter {
         }
         Ok(true)
     }
+}
+
+fn github_rate_limited(response: &http::Response<Vec<u8>>) -> bool {
+    response.status() == http::StatusCode::FORBIDDEN
+        && (response
+            .headers()
+            .get("x-ratelimit-remaining")
+            .is_some_and(|value| value == "0")
+            || response.headers().contains_key(http::header::RETRY_AFTER)
+            || serde_json::from_slice::<Value>(response.body())
+                .ok()
+                .is_some_and(|document| {
+                    document
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .is_some_and(|message| {
+                            message
+                                .to_ascii_lowercase()
+                                .contains("secondary rate limit")
+                        })
+                }))
 }
 
 fn basic_auth(client: &str, secret: &str) -> String {

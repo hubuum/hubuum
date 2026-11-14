@@ -14,6 +14,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   previews, CLI polling and BFF login share cookie-bound one-use callbacks and
   local authorization. Encrypted access tokens support bounded eligibility
   checks; GitHub logout attempts token revocation after local logout commits.
+  GitHub rate-limit responses preserve the bounded stale-authority window.
   OAuth fresh credential approval explicitly returns `capability_unsupported`.
   See [OAuth setup and qualification](docs/authentication/oauth.md) for provider
   limitations, app registration and authorized live qualification.

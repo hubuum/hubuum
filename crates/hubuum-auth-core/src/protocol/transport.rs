@@ -75,23 +75,34 @@ impl Transport {
                 OutboundHttpError::ResponseRead => ProtocolError::InvalidResponse,
                 _ => ProtocolError::Unavailable,
             })?;
-        if response.status_code() >= 500 || response.status_code() == 429 {
+        Self::response(
+            response.status_code(),
+            response.headers(),
+            response.body_preview().as_bytes().to_vec(),
+        )
+    }
+
+    fn response(
+        status: u16,
+        headers: &serde_json::Value,
+        body: Vec<u8>,
+    ) -> Result<HttpResponse, ProtocolError> {
+        if status >= 500 || status == 429 {
             return Err(ProtocolError::Unavailable);
         }
-        if (300..400).contains(&response.status_code()) {
+        if (300..400).contains(&status) {
             return Err(ProtocolError::InvalidResponse);
         }
-        let mut output = http::Response::builder().status(response.status_code());
-        // Protocol clients only need Content-Type. Never propagate provider cookies.
-        if let Some(content_type) = response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.as_str())
-        {
-            output = output.header(http::header::CONTENT_TYPE, content_type);
+        let mut output = http::Response::builder().status(status);
+        // Preserve only protocol metadata, including GitHub's 403 rate-limit
+        // signals. Never propagate provider cookies.
+        for name in ["content-type", "retry-after", "x-ratelimit-remaining"] {
+            if let Some(value) = headers.get(name).and_then(serde_json::Value::as_str) {
+                output = output.header(name, value);
+            }
         }
         output
-            .body(response.body_preview().as_bytes().to_vec())
+            .body(body)
             .map_err(|_| ProtocolError::InvalidResponse)
     }
 
@@ -106,5 +117,30 @@ impl Transport {
             return Err(ProtocolError::InvalidResponse);
         }
         serde_json::from_slice(response.body()).map_err(|_| ProtocolError::InvalidResponse)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rate_limit_metadata_survives_transport_without_provider_cookies() {
+        let response = Transport::response(
+            403,
+            &serde_json::json!({
+                "content-type": "application/json",
+                "retry-after": "60",
+                "x-ratelimit-remaining": "0",
+                "set-cookie": "provider-session=secret"
+            }),
+            Vec::new(),
+        )
+        .unwrap();
+        let headers = response.headers();
+        assert_eq!(headers.len(), 3);
+        assert_eq!(headers["content-type"], "application/json");
+        assert_eq!(headers["retry-after"], "60");
+        assert_eq!(headers["x-ratelimit-remaining"], "0");
     }
 }

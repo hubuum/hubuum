@@ -313,6 +313,49 @@ async fn renewal_requires_same_subject_and_complete_memberships(#[case] changed_
 }
 
 #[rstest]
+#[case::primary(true, 403, Some(("x-ratelimit-remaining", "0")), "API rate limit exceeded", OAuthError::Unavailable)]
+#[case::secondary_retry(true, 403, Some(("retry-after", "60")), "Please wait", OAuthError::Unavailable)]
+#[case::secondary_message(
+    true,
+    403,
+    None,
+    "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+    OAuthError::Unavailable
+)]
+#[case::forbidden(true, 403, Some(("x-ratelimit-remaining", "100")), "Resource not accessible", OAuthError::Denied)]
+#[case::revoked(true, 401, Some(("x-ratelimit-remaining", "0")), "Bad credentials", OAuthError::Denied)]
+#[case::generic_provider(false, 403, Some(("x-ratelimit-remaining", "0")), "Resource not accessible", OAuthError::Denied)]
+#[tokio::test]
+async fn renewal_distinguishes_github_rate_limits_from_rejection(
+    #[case] github: bool,
+    #[case] status: u16,
+    #[case] header: Option<(&str, &str)>,
+    #[case] message: &str,
+    #[case] expected: OAuthError,
+) {
+    let (adapter, context) = fixture(github);
+    let credentials = adapter.credentials(token()).unwrap();
+    let client = |_: oauth2::HttpRequest| {
+        let mut response = http::Response::builder()
+            .status(status)
+            .header("content-type", "application/json");
+        if let Some((name, value)) = header {
+            response = response.header(name, value);
+        }
+        std::future::ready(Ok(response
+            .body(serde_json::to_vec(&json!({"message": message})).unwrap())
+            .unwrap()))
+    };
+    assert_eq!(
+        adapter
+            .authenticate_using(credentials, &context, &client)
+            .await
+            .err(),
+        Some(expected)
+    );
+}
+
+#[rstest]
 #[case::error_response(400, "application/json", json!({"error":"invalid_grant"}))]
 #[case::wrong_type(200, "text/html", json!({"access_token":"access", "token_type":"bearer"}))]
 #[tokio::test]

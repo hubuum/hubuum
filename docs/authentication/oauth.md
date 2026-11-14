@@ -101,6 +101,10 @@ membership claims. An upstream rejection invalidates authority; a temporary
 failure permits only the existing bounded stale window. Local session rotation
 does not extend upstream identity evidence.
 
+GitHub primary and secondary rate limits are temporary failures, including HTTP
+403 responses identified by rate-limit metadata or the secondary-limit error
+message. They do not immediately revoke existing Hubuum sessions.
+
 This profile does **not** perform refresh-token grants. GitHub OAuth Apps may
 issue expiring tokens and refresh tokens; the adapter honors access-token expiry
 and requires a new sign-in then. It does not retain a returned refresh token.
