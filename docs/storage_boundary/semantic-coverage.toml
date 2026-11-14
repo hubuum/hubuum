@@ -98,6 +98,7 @@ maintenance = [
 
     "HistoryLifecycleStorage::register_history_runtime",
     "HistoryLifecycleStorage::commit_history_lifecycle",
+    "HistoryLifecycleStorage::observe_history_size",
     "HistoryLifecycleStorage::admit_history_expiry",
     "HistoryLifecycleStorage::process_history_expiry_task",
     "HistoryLifecycleStorage::recover_history_expiry_task",

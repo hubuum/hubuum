@@ -1138,25 +1138,7 @@
               "lifecycle": {
                 "properties": {
                   "name": {
-                    "enum": [
-                      "lifecycle.policy.changed",
-                      "lifecycle.policy.reviewed",
-                      "lifecycle.hold.released",
-                      "lifecycle.hold.expired",
-                      "lifecycle.archive.verified",
-                      "lifecycle.archive.published",
-                      "lifecycle.archive.source_retired",
-                      "lifecycle.archive.blocked",
-                      "lifecycle.data_request.provider_wait",
-                      "lifecycle.data_request.result_expired",
-                      "lifecycle.erasure.access_restricted",
-                      "lifecycle.erasure.recovery_protected",
-                      "lifecycle.erasure.copy_removed",
-                      "lifecycle.erasure.blocked",
-                      "lifecycle.delivery_gap.acknowledged",
-                      "lifecycle.policy.size_pressure_started",
-                      "lifecycle.policy.size_pressure_ended"
-                    ]
+                    "pattern": "^lifecycle\\.(?:archive\\.(?:verified|published|source_retired|blocked)|data_request\\.(?:provider_wait|result_expired)|delivery_gap\\.acknowledged|erasure\\.(?:access_restricted|recovery_protected|copy_removed|blocked)|hold\\.(?:released|expired)|policy\\.(?:changed|reviewed|size_pressure_started|size_pressure_ended))$"
                   }
                 }
               }

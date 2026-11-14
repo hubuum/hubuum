@@ -550,3 +550,13 @@ fn committed_pressure_audit_satisfies_the_closed_contract(#[case] active: bool) 
         }
     );
 }
+
+#[rstest]
+#[case("lifecycle.policy.size_pressure_started")]
+#[case("lifecycle.policy.size_pressure_ended")]
+fn pressure_audit_requires_the_updated_action(#[case] name: &str) {
+    let mut value = example("system_policy_audit");
+    value["metadata"]["lifecycle"]["name"] = json!(name);
+    value["action"] = json!("failed");
+    assert_invalid("audit", &value);
+}

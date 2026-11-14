@@ -23,6 +23,11 @@ entity, while subscription creation, updates and test delivery reject it.
 The broader transition catalog, public evidence endpoints and safe sink projection
 below remain proposals requiring their owning implementation and qualification.
 
+The audit schema groups the exact updated-action names by family in one anchored
+pattern. Its accepted name/action pairs match the closed catalog; pressure start
+and end remain audit-only. This avoids repeating long event names while keeping
+the existing schema expansion and instance-work limits unchanged.
+
 ## Existing guarantees and gaps
 
 Reuse the [canonical event stream](events.md), `AuditDocument`, event catalog,

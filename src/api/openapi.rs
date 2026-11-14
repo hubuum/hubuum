@@ -1817,6 +1817,7 @@ mod tests {
             "/api/v1/admin/history-lifecycle/policies",
             "/api/v1/admin/history-lifecycle/policy-previews",
             "/api/v1/admin/history-lifecycle/inspect",
+            "/api/v1/admin/history-lifecycle/accounting",
             "/api/v1/admin/history-lifecycle/runs",
             "/api/v1/admin/history-lifecycle/holds",
             "/api/v1/admin/history-lifecycle/holds/{hold_id}/release",

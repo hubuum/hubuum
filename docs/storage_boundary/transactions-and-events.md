@@ -687,3 +687,15 @@ admission and cleanup adoption. A later prospective override does not erase olde
 closure obligations. Both adapters reject stale application images, maintenance,
 unknown scopes and unavailable admission capacity. Production workers remain
 gated until restore and resource qualification is complete.
+
+### Complete logical-size pressure observation
+
+`HistoryLifecycleStorage::observe_history_size` is a context-free workflow write
+with an explicit stable principal UUID. It exhausts the complete retained family,
+measures compact JSON v1 logical bytes and resolves captured original policy
+attribution under the same control transaction that retains any start/end
+pressure receipt and canonical audit. Incomplete, ambiguous and over-budget
+scans cannot publish a partial gauge or mutate pressure. Intermediate gauges are
+no-ops; terminal capacity is reserved for active episodes. Independent recovery
+publication and read-back are required before service acknowledgement. Pressure
+observation authorizes no physical expiry, and P6 remains deferred.
