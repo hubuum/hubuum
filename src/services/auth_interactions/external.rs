@@ -146,6 +146,7 @@ pub async fn authenticate(
 /// sync-failure operation, preserving only the bounded verified snapshot.
 pub(crate) async fn check_existing_authority(
     storage: &StorageHandle,
+    principal: hubuum_domain::PrincipalId,
     state: &StorageExternalPrincipalState,
 ) -> Result<bool, ApiError> {
     use hubuum_domain::ProviderAdmission;
@@ -186,11 +187,22 @@ pub(crate) async fn check_existing_authority(
             "External identity is no longer admitted".into(),
         ));
     }
-    existing_authority(
-        ExternalFreshnessPolicy::try_from(membership).map_err(|_| InteractionError::Invalid)?,
-        state,
-        Utc::now(),
-    )?;
+    let policy =
+        ExternalFreshnessPolicy::try_from(membership).map_err(|_| InteractionError::Invalid)?;
+    if policy.evaluate(state.last_sync_success_at(), Utc::now())
+        != hubuum_auth_core::ExternalFreshness::Current
+    {
+        if let Some(provider) = provider
+            && super::oidc::renew(storage, principal, provider).await?
+        {
+            return Ok(true);
+        }
+        let current = storage
+            .get_external_principal_state(principal)
+            .await?
+            .ok_or(InteractionError::Invalid)?;
+        existing_authority(policy, &current, Utc::now())?;
+    }
     Ok(true)
 }
 

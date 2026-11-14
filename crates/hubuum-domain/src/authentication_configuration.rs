@@ -155,6 +155,8 @@ pub struct OidcProviderDefinition {
     signing_algorithms: Vec<OidcSigningAlgorithm>,
     membership: ProviderMembership,
     admission: ProviderAdmission,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    retain_refresh_tokens: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -166,6 +168,8 @@ struct OidcDefinitionInput {
     signing_algorithms: Vec<OidcSigningAlgorithm>,
     membership: ProviderMembership,
     admission: ProviderAdmission,
+    #[serde(default)]
+    retain_refresh_tokens: bool,
 }
 impl TryFrom<OidcDefinitionInput> for OidcProviderDefinition {
     type Error = AuthenticationConfigurationError;
@@ -196,10 +200,20 @@ impl TryFrom<OidcDefinitionInput> for OidcProviderDefinition {
             signing_algorithms: value.signing_algorithms,
             membership: value.membership,
             admission: value.admission,
+            retain_refresh_tokens: value.retain_refresh_tokens,
         })
     }
 }
 impl OidcProviderDefinition {
+    pub fn retain_refresh_tokens(&self) -> bool {
+        self.retain_refresh_tokens
+    }
+    pub fn scopes(&self) -> &[String] {
+        &self.scopes
+    }
+    pub fn signing_algorithms(&self) -> &[OidcSigningAlgorithm] {
+        &self.signing_algorithms
+    }
     pub fn membership(&self) -> &ProviderMembership {
         &self.membership
     }

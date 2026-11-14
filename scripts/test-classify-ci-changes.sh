@@ -53,6 +53,13 @@ for auth_contract_input in docs/authentication/openapi.proposed.json docs/authen
   assert_flag "$auth_contract_output" openapi false
 done
 
+for oidc_input in tests/python/integration/keycloak.py tests/python/unit/tooling/test_keycloak_fixture.py \
+  crates/hubuum-auth-oidc/tests/fixtures/signing.pem; do
+  oidc_output="$(bash "$classifier" "$oidc_input")"
+  assert_flag "$oidc_output" code true
+  assert_flag "$oidc_output" container true
+done
+
 for operator_path in observability/prometheus/alerts.json observability/prometheus/tests.json \
   observability/dashboards/overview.json scripts/observability.py; do
   operator_output="$(bash "$classifier" "$operator_path")"

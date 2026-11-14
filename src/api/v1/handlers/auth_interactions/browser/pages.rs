@@ -58,6 +58,13 @@ impl RequestDisplay {
 #[derive(Serialize)]
 #[serde(tag = "stage", rename_all = "snake_case")]
 pub(super) enum BrowserPage<'a> {
+    Provider {
+        request: RequestDisplay,
+        csrf: &'a str,
+    },
+    ProviderRedirect {
+        url: &'a str,
+    },
     Entry {
         csrf: &'a str,
     },
@@ -82,6 +89,7 @@ impl BrowserPage<'_> {
         match self {
             Self::Entry { .. } => "Connect your application",
             Self::Credentials { .. } => "Sign in",
+            Self::Provider { .. } | Self::ProviderRedirect { .. } => "Continue to your provider",
             Self::Approval { .. } => "Approve this request?",
             Self::Complete { approved: true } => "Request approved",
             Self::Complete { approved: false } => "Request denied",

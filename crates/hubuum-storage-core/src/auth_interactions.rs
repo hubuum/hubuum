@@ -31,6 +31,9 @@ pub const MAX_ACTIVE_AUTH_INTERACTIONS_PER_ACTOR: usize = 32;
 pub const AUTH_INTERACTION_CLEANUP_SECONDS: i64 = 3600;
 pub const MAX_AUTH_INTERACTION_DOCUMENT_BYTES: usize = 262_144;
 
+mod protocol;
+pub use protocol::{StorageProtectedAuthenticationState, StorageProtocolClaim};
+
 fn invalid() -> StorageValidationError {
     StorageValidationError::invalid("Invalid authentication interaction")
 }
@@ -178,6 +181,8 @@ impl StorageInteractionCreateBuilder {
             actor: self.actor,
             provider: self.provider,
             authenticated: None,
+            protocol: None,
+            retained: None,
         };
         record.validate_bindings()?;
         record.to_document()?;
@@ -397,6 +402,12 @@ pub enum StorageInteractionAction {
     Poll,
     Cancel,
     Claim(Uuid),
+    PrepareProtocol(StorageProtectedAuthenticationState),
+    ClaimProtocol {
+        attempt: Uuid,
+        state: InteractionDigest,
+    },
+    Fail,
     Authenticate {
         authentication: Box<StorageInteractionAuthentication>,
         approval: Option<InteractionBrowserBinding>,
@@ -474,6 +485,7 @@ impl StorageInteractionView {
 
 #[derive(Clone, Debug)]
 pub enum StorageInteractionOutcome {
+    ProtocolClaim(Box<StorageProtocolClaim>),
     View(StorageInteractionView),
     Claim(InteractionAuthenticationClaim),
     Rejected(InteractionTransitionError),
@@ -531,8 +543,32 @@ pub struct StorageInteractionRecord {
     actor: Option<StorageInteractionActorLease>,
     provider: Option<StorageProviderIdentityBinding>,
     authenticated: Option<StorageInteractionEvidence>,
+    protocol: Option<StorageProtectedAuthenticationState>,
+    retained: Option<crate::StorageRetainedAuthentication>,
 }
 impl StorageInteractionRecord {
+    pub fn retain_upstream(
+        &mut self,
+        authentication: &StorageExternalInteractionAuthentication,
+    ) -> Result<(), StorageValidationError> {
+        if authentication.authentication().binding() != self.lifecycle.binding() {
+            return Err(invalid());
+        }
+        if let StorageExternalInteractionAuthentication::LoginWithCredential {
+            authentication,
+            credential,
+        } = authentication
+        {
+            self.retained = Some(crate::StorageRetainedAuthentication::new(
+                authentication,
+                credential.clone(),
+            )?);
+        }
+        Ok(())
+    }
+    pub fn take_retained(&mut self) -> Option<crate::StorageRetainedAuthentication> {
+        self.retained.take()
+    }
     pub const fn lifecycle(&self) -> &InteractionLifecycle {
         &self.lifecycle
     }
@@ -606,6 +642,8 @@ impl StorageInteractionRecord {
     pub fn invalidate(&mut self) {
         self.lifecycle.invalidate();
         self.authenticated = None;
+        self.protocol = None;
+        self.retained = None;
     }
     pub fn bind_browser(
         &mut self,
@@ -641,6 +679,22 @@ impl StorageInteractionRecord {
         Ok(())
     }
     fn validate_bindings(&self) -> Result<(), StorageValidationError> {
+        if self
+            .retained
+            .as_ref()
+            .is_some_and(|retained| retained.binding() != self.lifecycle.binding())
+        {
+            return Err(invalid());
+        }
+        if self.protocol.is_some()
+            && (self.lifecycle.mode() != InteractionMode::Browser
+                || self.lifecycle.browser().is_none()
+                || self.lifecycle.binding().provider().external_id().is_none()
+                || self.lifecycle.authentication_claim().is_some()
+                || self.lifecycle.authenticated_subject().is_some())
+        {
+            return Err(invalid());
+        }
         if (self.lifecycle.mode() == InteractionMode::Browser) != self.user_code.is_some()
             || self.user_code.as_ref() == Some(&self.redemption)
             || self
@@ -682,6 +736,8 @@ impl StorageInteractionRecord {
             // Otherwise a restart would see a ready phase without its evidence.
             let _ = self.lifecycle.ready_subject(now);
             self.authenticated = None;
+            self.protocol = None;
+            self.retained = None;
         }
     }
 

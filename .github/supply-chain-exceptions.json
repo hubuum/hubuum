@@ -1,4 +1,12 @@
 {
   "schema_version": 1,
-  "exceptions": []
+  "exceptions": [
+    {
+      "kind": "advisory",
+      "id": "RUSTSEC-2023-0071",
+      "reason": "openidconnect 4.1 requires rsa 0.9. Hubuum's OIDC adapter only verifies provider signatures with public keys; it does not decrypt or sign with RSA private keys. Private signing exists only under cfg(test) using a committed disposable fixture. Upgrade when openidconnect supports rsa >=0.10 and remove this exception; any production RSA private-key use invalidates it. See docs/supply-chain-security.md and issue #577.",
+      "owner": "@terjekv",
+      "expires": "2027-02-12"
+    }
+  ]
 }

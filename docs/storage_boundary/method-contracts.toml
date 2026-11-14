@@ -1117,3 +1117,21 @@ unsupported_error = "InvalidInput"
 effect = "page_read"
 carrier = "StorageActivityQuery"
 profile = "credential_activity"
+
+[collection_profiles.upstream_logout]
+shape = "complete"
+ordering = "session UUID ascending"
+duplicate_inputs = "one target; not applicable"
+missing_inputs = "unknown target returns an empty collection"
+multiplicity = "one record per issued session"
+completeness = "bounded best-effort upstream revocation snapshot; local revocation still covers every matching session"
+bounds = "at most 32 records"
+visibility = "unrevoked sessions matching exactly the principal, token family, session, or provider UUID and issuer namespace"
+snapshot = "one read snapshot; local revocation commits separately and destroys stored credentials"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[methods."ExternalIdentityStorage::upstream_logout_credentials"]
+effect = "complete_read"
+carrier = "StorageUpstreamRevocation"
+profile = "upstream_logout"

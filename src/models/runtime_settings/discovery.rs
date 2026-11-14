@@ -402,7 +402,7 @@ impl SecurityConfigurationCapabilities {
         Ok(Self {
             candidate_endpoint: "/api/v1/admin/runtime-settings/security-candidates",
             configurable_provider_kinds: vec!["ldap", "oidc", "oauth"],
-            activatable_provider_kinds: vec!["ldap"],
+            activatable_provider_kinds: vec!["ldap", "oidc"],
             deployment_locked_providers: config.auth_runtime_locked_providers.clone(),
             private_targets_allowed: config.auth_runtime_allow_private_targets,
             replacement_credentials_available: config.runtime_settings_encryption_key_ref.is_some(),

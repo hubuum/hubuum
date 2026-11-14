@@ -134,6 +134,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
         auth_interactions::browser::entry,
         auth_interactions::browser::attach,
         auth_interactions::browser::resume,
+        auth_interactions::browser::provider_start,
+        auth_interactions::browser::oidc_callback,
         auth_interactions::browser::credentials,
         auth_interactions::browser::decide,
         auth_interactions::begin,
@@ -1693,7 +1695,9 @@ mod tests {
             "/api/v1/auth/interactions/browser",
             "/api/v1/auth/interactions/browser/{id}",
             "/api/v1/auth/interactions/browser/{id}/credentials",
+            "/api/v1/auth/interactions/browser/{id}/provider",
             "/api/v1/auth/interactions/browser/{id}/decision",
+            "/api/v1/auth/callbacks/{provider_id}",
             "/api/v1/auth/interactions/{id}/credentials",
             "/api/v1/auth/interactions/{id}/status",
             "/api/v1/auth/interactions/{id}/complete",
@@ -2481,7 +2485,8 @@ mod tests {
                     "/api/v1/auth/providers" | "/api/v1/auth/methods"
                 ) && method == "get";
                 // Hosted forms authenticate through per-interaction cookies and CSRF, not bearer headers.
-                let is_hosted_browser = path.starts_with("/api/v1/auth/interactions/browser");
+                let is_hosted_browser = path.starts_with("/api/v1/auth/interactions/browser")
+                    || path == "/api/v1/auth/callbacks/{provider_id}";
                 let is_client_config = path == "/api/v1/config" && method == "get";
                 let is_restore_status =
                     path == "/api/v1/restores/{restore_id}/status" && method == "get";

@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.10`.
+Status: accepted; current experimental release train is `0.11`.
 
 ## Supported Crate Graph
 
@@ -533,3 +533,33 @@ atomic approval path and repeat authorization at the final mutation. OAuth witho
 verified authentication-time capability remains unsupported. No new database
 migration accompanies this increment; the 0.9 interaction migration is still
 required. Rebuild complete adapters and applications together.
+
+## Upgrading from 0.10 to 0.11
+
+Update all ten SDK dependencies to exactly `0.11.0` together. This is a breaking
+adapter contract: `ExternalIdentityStorage` now owns lookup of immutable external
+identities and the complete retained upstream credential lifecycle. Implement
+`find_external_identity`, `claim_upstream_credential`, `finish_upstream_renewal`,
+`fail_upstream_renewal` and `upstream_logout_credentials` on every backend.
+
+Persist encrypted `StorageRetainedAuthentication` with an authenticated login,
+then transfer it atomically to the issued session as `StorageUpstreamSession`.
+Handle `LoginWithCredential`, `PrepareProtocol`, `ClaimProtocol`, `Fail` and the
+new protocol-claim outcome. Browser protocol state must be single-use and subject
+to the existing cookie, revision, expiry and authentication-lease fences.
+
+Claiming an upstream credential removes it before network I/O and grants one
+30-second lease. Commit a `StorageUpstreamRenewal` only against that lease, the
+same live session/principal/provider revision and immutable external identity.
+Membership reconciliation and replacement credentials must commit atomically.
+Never retry an ambiguous refresh with a consumed token. Reject stale failures
+that arrive after a newer successful login. Preserve a bounded last-success
+snapshot on temporary failure; definitive rejection invalidates external
+authority and sessions. Logout, configuration changes, deletion, security
+recovery and logical restore destroy retained credentials. Portable backups
+exclude both interaction protocol state and upstream credentials.
+
+OIDC definitions add `retain_refresh_tokens`, defaulting to `false`. This setting
+does not enable an incomplete backend or relax the mandatory lifecycle contract.
+See the [Keycloak upgrade procedure](authentication/keycloak.md#upgrade-and-recovery)
+and PostgreSQL regression tests for transaction, concurrency and rollback cases.

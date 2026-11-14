@@ -1,0 +1,27 @@
+[package]
+name = "hubuum-auth-oidc"
+version = "0.0.1"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[package.metadata.hubuum]
+rust-api = "workspace-internal"
+
+[dependencies]
+chrono = "0.4"
+hubuum-auth-core = { path = "../hubuum-auth-core" }
+hubuum-domain = { version = "=0.11.0", path = "../hubuum-domain" }
+hubuum-outbound-http = { path = "../hubuum-outbound-http" }
+hubuum-secrets = { path = "../hubuum-secrets" }
+openidconnect = { version = "4.1", default-features = false, features = ["timing-resistant-secret-traits"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["sync", "time"] }
+url = "2"
+
+[dev-dependencies]
+uuid = { version = "1", features = ["v4"] }
+rstest = "0.28"
+tokio = { version = "1", features = ["macros", "rt"] }

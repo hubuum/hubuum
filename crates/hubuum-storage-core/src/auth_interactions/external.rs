@@ -9,13 +9,21 @@ use hubuum_domain::{
 #[derive(Clone, Debug)]
 pub enum StorageExternalInteractionAuthentication {
     Login(VerifiedExternalAuthentication),
+    LoginWithCredential {
+        authentication: VerifiedExternalAuthentication,
+        credential: crate::StorageEncryptedUpstreamCredential,
+    },
     Approval(FreshExternalAuthentication),
 }
 
 impl StorageExternalInteractionAuthentication {
     pub fn authentication(&self) -> &VerifiedExternalAuthentication {
         match self {
-            Self::Login(proof) => proof,
+            Self::Login(proof)
+            | Self::LoginWithCredential {
+                authentication: proof,
+                ..
+            } => proof,
             Self::Approval(proof) => proof.authentication(),
         }
     }
@@ -25,7 +33,11 @@ impl StorageExternalInteractionAuthentication {
     /// This never extends an approval's lifetime using a future timestamp.
     pub fn authenticated_at(&self) -> DateTime<Utc> {
         match self {
-            Self::Login(proof) => proof.verified_at(),
+            Self::Login(proof)
+            | Self::LoginWithCredential {
+                authentication: proof,
+                ..
+            } => proof.verified_at(),
             Self::Approval(proof) => proof
                 .authenticated_at()
                 .min(proof.authentication().verified_at()),
@@ -54,7 +66,9 @@ impl StorageExternalInteractionAuthentication {
             || authentication.verified_at() > now
             || self.authenticated_at() > now
             || match self {
-                Self::Login(_) => binding.authority().purpose() != InteractionPurpose::Login,
+                Self::Login(_) | Self::LoginWithCredential { .. } => {
+                    binding.authority().purpose() != InteractionPurpose::Login
+                }
                 Self::Approval(fresh) => {
                     fresh.started_at() != record.lifecycle().created_at()
                         || binding.authority().purpose() != InteractionPurpose::CredentialApproval
@@ -82,7 +96,7 @@ impl StorageExternalInteractionAuthentication {
         existing: Option<PrincipalId>,
     ) -> Result<StorageAdmittedExternalIdentity, StorageValidationError> {
         match self {
-            Self::Login(authentication) => {
+            Self::Login(authentication) | Self::LoginWithCredential { authentication, .. } => {
                 authentication
                     .clone()
                     .admit(existing.map(|_| authentication.identity()))

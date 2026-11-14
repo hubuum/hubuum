@@ -245,6 +245,12 @@ pub async fn delete_user(
     let etag = current.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
 
+    let upstream = crate::services::auth_interactions::oidc::principal_revocations(
+        &context,
+        hubuum_domain::PrincipalId::new(user_id.id())?,
+    )
+    .await;
+
     let event_context = requestor.event_context(&req);
     let delete_result = with_revision_precondition(
         &context,
@@ -254,7 +260,10 @@ pub async fn delete_user(
     .await;
 
     match delete_result {
-        Ok(_) => Ok(ApiResponse::no_content_with_etag(etag)),
+        Ok(_) => {
+            crate::services::auth_interactions::oidc::revoke_best_effort(upstream, context);
+            Ok(ApiResponse::no_content_with_etag(etag))
+        }
         Err(e) => Err(e),
     }
 }
@@ -281,6 +290,11 @@ pub async fn anonymize_user(
 ) -> Result<impl Responder, ApiError> {
     let target_id = user_id.id();
     let user_id = user_id.into_inner();
+    let upstream = crate::services::auth_interactions::oidc::principal_revocations(
+        &context,
+        hubuum_domain::PrincipalId::new(target_id)?,
+    )
+    .await;
     debug!(
         message = "User anonymize requested",
         target = target_id,
@@ -299,6 +313,7 @@ pub async fn anonymize_user(
         user_id.anonymize(&context, &event_context),
     )
     .await?;
+    crate::services::auth_interactions::oidc::revoke_best_effort(upstream, context.clone());
     let updated = user_id
         .user(&context)
         .await?

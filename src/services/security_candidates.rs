@@ -1,17 +1,18 @@
 //! Prepare and verify security settings without granting live authentication authority.
-mod providers;
+pub(crate) mod providers;
 
 use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
 use hubuum_auth_core::ExternalIdentityProvider;
 use hubuum_auth_ldap::LdapIdentityProvider;
 use hubuum_storage_core::{
-    RuntimeSettingsStorage, StorageAuthenticationProvider, StorageAuthenticationProviderKind,
-    StorageAuthenticationProviders, StorageAuthorizationBackend, StorageCredentialFingerprint,
-    StorageRuntimeSettingsAssignment, StorageRuntimeSettingsGroup, StorageRuntimeSettingsUpdate,
-    StorageRuntimeSettingsValue, StorageSecurityCandidate, StorageSecurityCandidateActivation,
-    StorageSecurityCandidateBinding, StorageSecurityCandidateState, StorageSecurityCheck,
-    StorageSecurityCheckKind as CheckKind, StorageSecurityCheckStatus as CheckStatus,
+    ExternalIdentityStorage, RuntimeSettingsStorage, StorageAuthenticationProvider,
+    StorageAuthenticationProviderKind, StorageAuthenticationProviders, StorageAuthorizationBackend,
+    StorageCredentialFingerprint, StorageRuntimeSettingsAssignment, StorageRuntimeSettingsGroup,
+    StorageRuntimeSettingsUpdate, StorageRuntimeSettingsValue, StorageSecurityCandidate,
+    StorageSecurityCandidateActivation, StorageSecurityCandidateBinding,
+    StorageSecurityCandidateState, StorageSecurityCheck, StorageSecurityCheckKind as CheckKind,
+    StorageSecurityCheckStatus as CheckStatus,
 };
 use serde_json::{Value, json};
 use sha2::Sha256;
@@ -298,11 +299,22 @@ pub(crate) async fn create(
                         for endpoint in providers::browser_endpoints(&provider)? {
                             providers::screen_endpoint(&endpoint).await?;
                         }
+                        if provider.kind() == StorageAuthenticationProviderKind::Oidc {
+                            crate::services::auth_interactions::oidc::adapter(context, &provider)
+                                .await?
+                                .check_configuration()
+                                .await
+                                .map_err(crate::services::auth_interactions::oidc::error)?;
+                        }
                         checks.push(check(
                             CheckKind::Identity,
                             CheckStatus::NotRun,
                             Some(id),
-                            "browser_verification_not_implemented",
+                            if provider.kind() == StorageAuthenticationProviderKind::Oidc {
+                                "test_sign_in_required"
+                            } else {
+                                "browser_verification_not_implemented"
+                            },
                         ));
                         identified.push(provider);
                         continue;
@@ -640,6 +652,107 @@ pub(crate) async fn authenticate_ldap_candidate(
     Ok((candidate, verification))
 }
 
+pub(crate) async fn verify_oidc_interaction(
+    context: &AppContext,
+    authentication: &hubuum_auth_core::VerifiedExternalAuthentication,
+) -> Result<hubuum_storage_core::StorageInteractionAuthentication, ApiError> {
+    use crate::errors::InteractionError;
+    use hubuum_domain::{
+        InteractionPurpose, InteractionVerificationDetails, VerifiedInteractionSubject,
+    };
+    use hubuum_storage_core::StorageInteractionAuthentication;
+    let binding = authentication.binding();
+    if binding.authority().purpose() != InteractionPurpose::ProviderVerification {
+        return Err(InteractionError::Invalid.into());
+    }
+    let actor = CredentialActor::from_interaction(
+        context,
+        binding
+            .authority()
+            .actor()
+            .ok_or(InteractionError::Invalid)?,
+    )
+    .await?;
+    let provider_id = binding
+        .provider()
+        .external_id()
+        .ok_or(InteractionError::Invalid)?;
+    let (candidate, _) = interaction_candidate(
+        context,
+        &actor,
+        binding
+            .authority()
+            .candidate_id()
+            .ok_or(InteractionError::Invalid)?,
+        provider_id,
+    )
+    .await?;
+    if StorageInteractionAuthentication::candidate_digest(&candidate)
+        != *binding
+            .authority()
+            .candidate_digest()
+            .ok_or(InteractionError::Invalid)?
+    {
+        return Err(InteractionError::ConfigurationChanged.into());
+    }
+    let existing = context
+        .backend()
+        .find_external_identity(authentication.identity().clone())
+        .await?;
+    let admitted = authentication
+        .preview_admission(existing.map(|_| authentication.identity()))
+        .map_err(|_| InteractionError::Invalid)?;
+    let details = InteractionVerificationDetails::new(
+        admitted,
+        authentication
+            .memberships()
+            .provider_groups()
+            .unwrap_or_default()
+            .iter()
+            .map(|group| (group.key().to_owned(), group.key().to_owned()))
+            .collect(),
+    )
+    .map_err(|_| InteractionError::Invalid)?;
+    let proof = VerifiedInteractionSubject::new(
+        binding.clone(),
+        authentication.identity().subject().as_str(),
+    )
+    .and_then(|proof| proof.with_verification(Some(details)))
+    .map_err(|_| InteractionError::Invalid)?;
+    let checks = candidate
+        .checks()
+        .iter()
+        .map(|existing| {
+            if existing.provider_id() == Some(provider_id) && existing.kind() == CheckKind::Identity
+            {
+                check(
+                    CheckKind::Identity,
+                    CheckStatus::Passed,
+                    Some(provider_id),
+                    "test_sign_in_verified",
+                )
+            } else {
+                existing.clone()
+            }
+        })
+        .collect();
+    let receipt = StorageCredentialFingerprint::new(
+        binding
+            .verification_receipt()
+            .ok_or(InteractionError::Invalid)?
+            .as_str()
+            .to_owned(),
+    )
+    .map_err(invalid)?;
+    let candidate = candidate
+        .with_checks(checks)
+        .map_err(invalid)?
+        .verify(receipt)
+        .map_err(invalid)?;
+    // No identity synchronization, membership writes or session issuance occurs.
+    StorageInteractionAuthentication::verification(proof, candidate).map_err(invalid)
+}
+
 pub(crate) async fn interaction_candidate(
     context: &AppContext,
     actor: &CredentialActor,
@@ -669,13 +782,13 @@ pub(crate) async fn interaction_candidate(
         .iter()
         .find(|provider| provider.id() == Some(provider_id) && provider.enabled())
         .ok_or(crate::errors::InteractionError::Unsupported)?;
-    if provider.kind() != StorageAuthenticationProviderKind::Ldap
-        || candidate.checks().iter().any(|check| {
-            check.status() != CheckStatus::Passed
-                && !(check.kind() == CheckKind::Identity
-                    && check.provider_id() == Some(provider_id))
-        })
-    {
+    if !matches!(
+        provider.kind(),
+        StorageAuthenticationProviderKind::Ldap | StorageAuthenticationProviderKind::Oidc
+    ) || candidate.checks().iter().any(|check| {
+        check.status() != CheckStatus::Passed
+            && !(check.kind() == CheckKind::Identity && check.provider_id() == Some(provider_id))
+    }) {
         return Err(crate::errors::InteractionError::Unsupported.into());
     }
     let binding = hubuum_storage_core::StorageProviderIdentityBinding::from_provider(provider)
@@ -744,10 +857,40 @@ pub(crate) async fn activate(
         crate::config::get_config()?.admin_groupname.clone(),
     )
     .map_err(invalid)?;
+    // Capture the previous trusted definitions before the commit destroys their
+    // credentials. Revocation may use only those definitions after activation.
+    let mut upstream = Vec::new();
+    if candidate.assignment().group() == StorageRuntimeSettingsGroup::Authentication {
+        let previous = context.backend().load_runtime_settings().await?;
+        if let Some(providers) = previous.authentication() {
+            for provider in providers.providers().iter().filter(|provider| {
+                provider.enabled() && provider.kind() == StorageAuthenticationProviderKind::Oidc
+            }) {
+                let binding =
+                    hubuum_storage_core::StorageProviderIdentityBinding::from_provider(provider)
+                        .map_err(invalid)?;
+                let records = context
+                    .backend()
+                    .upstream_logout_credentials(
+                        hubuum_storage_core::StorageUpstreamRevocation::Provider(binding),
+                    )
+                    .await
+                    .unwrap_or_default();
+                upstream.push((provider.clone(), records));
+            }
+        }
+    }
     let outcome = context
         .backend()
         .activate_security_candidate(activation)
         .await?;
+    if outcome.is_committed() {
+        for (provider, records) in upstream {
+            crate::services::auth_interactions::oidc::revoke_provider_best_effort(
+                records, provider,
+            );
+        }
+    }
     if let Err(error) = context.refresh_runtime_settings().await {
         tracing::warn!(%error, "Security settings committed; replica reconciliation remains pending");
     }

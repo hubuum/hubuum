@@ -392,6 +392,9 @@ async fn process_one_task_snapshot(
             claim_started_at + settings.lease_duration(),
         );
         let execution = async {
+            // Keep the task's large dispatch future out of every nested
+            // cancellation/provenance scope, including for unrelated task kinds.
+            let execution_task = Box::pin(process_claimed_task(context, &task, backup_settings));
             match shutdown {
                 Some(shutdown) => {
                     tokio::select! {
@@ -399,10 +402,10 @@ async fn process_one_task_snapshot(
                         _ = shutdown.requested() => Err(ApiError::ServiceUnavailable(
                             "Task interrupted by graceful server shutdown".to_string(),
                         )),
-                        result = super::control::execute(context, &task, settings.execution_limit(task_kind_from_db(&task.kind)?), process_claimed_task(context, &task, backup_settings)) => result,
+                        result = super::control::execute(context, &task, settings.execution_limit(task_kind_from_db(&task.kind)?), execution_task) => result,
                     }
                 }
-                None => super::control::execute(context, &task, settings.execution_limit(task_kind_from_db(&task.kind)?), process_claimed_task(context, &task, backup_settings)).await,
+                None => super::control::execute(context, &task, settings.execution_limit(task_kind_from_db(&task.kind)?), execution_task).await,
             }
         };
         let mut ownership_lost = false;
@@ -842,9 +845,36 @@ fn task_span_outcome(terminal_status: Option<TaskStatus>) -> &'static str {
 
 #[cfg(test)]
 mod task_span_outcome_tests {
+    use std::future::Future;
+    use std::mem::size_of;
+
     use rstest::rstest;
 
-    use super::{TaskStatus, task_span_outcome};
+    use super::{
+        AppContext, BackupSettings, ShutdownSignal, TaskStatus, process_one_task_snapshot,
+        task_span_outcome,
+    };
+
+    #[test]
+    fn task_supervision_future_fits_worker_stack_budget() {
+        fn future_size<F: Future>(
+            _: impl FnOnce(
+                &'static AppContext,
+                Option<&'static ShutdownSignal>,
+                &'static BackupSettings,
+            ) -> F,
+        ) -> usize {
+            size_of::<F>()
+        }
+
+        // Nested cancellation/provenance scopes poll this on a default-size
+        // worker stack. Task implementations must not inflate every scope.
+        let bytes = future_size(process_one_task_snapshot);
+        assert!(
+            bytes <= 32 * 1024,
+            "task supervision future uses {bytes} bytes"
+        );
+    }
 
     #[rstest]
     #[case::succeeded(Some(TaskStatus::Succeeded), "succeeded")]

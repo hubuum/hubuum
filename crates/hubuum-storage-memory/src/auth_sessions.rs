@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_storage_core::StorageUpstreamSession;
 
 #[derive(Clone)]
 pub(super) struct MemorySession {
@@ -25,7 +26,38 @@ fn denied() -> StorageError {
     StorageError::authentication_required("Authentication failed")
 }
 impl MemoryState {
+    pub(super) fn upstream_eligible(
+        &self,
+        record: &StorageUpstreamSession,
+        now: DateTime<Utc>,
+    ) -> bool {
+        record.binding().revision() == self.runtime_settings.authentication_revision()
+            && self
+                .sessions
+                .get(&record.session().value())
+                .is_some_and(|session| {
+                    session.active(now) && session.principal_id() == record.principal()
+                })
+            && self
+                .users
+                .get(&record.principal().id())
+                .is_some_and(|user| {
+                    user.provider_managed
+                        && user.user.clone().into_parts().anonymized_at().is_none()
+                        && user.last_sync_success_at.is_some()
+                        && user.external_subject.as_deref() == Some(record.subject())
+                })
+            && self
+                .runtime_settings
+                .provider_binding(record.scope())
+                .is_some_and(|provider| {
+                    Some(provider.id()) == record.binding().provider().external_id()
+                        && provider.namespace() == record.namespace()
+                })
+    }
     pub(super) fn invalidate_principal_sessions(&mut self, principal: i32) {
+        self.upstream_sessions
+            .retain(|_, session| session.principal().id() != principal);
         for session in self.sessions.values_mut() {
             if session.principal_id().id() == principal {
                 session.revoked = true;
@@ -260,6 +292,7 @@ impl MemoryState {
             .collect();
         let mut audits = Vec::new();
         for id in &ids {
+            self.upstream_sessions.remove(id);
             let mut session = self.sessions.get(id).cloned().ok_or_else(denied)?;
             self.revoke_family(&mut session)?;
             audits.push(self.append_simple_event(
@@ -302,6 +335,7 @@ impl MemoryState {
             .collect();
         for id in &ids {
             if let Some(session) = self.sessions.remove(id) {
+                self.upstream_sessions.remove(id);
                 for token in session.access_ids {
                     self.tokens.remove(&token.id());
                 }

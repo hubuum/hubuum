@@ -45,6 +45,7 @@ pub mod identity {
     pub use crate::identity_resources::*;
     pub use crate::identity_tokens::*;
     pub use crate::identity_users::*;
+    pub use crate::upstream_authentication::*;
 }
 
 /// Backend-neutral read-model capabilities.

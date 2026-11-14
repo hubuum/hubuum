@@ -24,6 +24,7 @@ const POLICIES: &str = include_str!("../migrations/2026-11-10-000001_runtime_pol
 const APPROVALS: &str = include_str!("../migrations/2026-09-19-000001_credential_approvals/up.sql");
 const INTERACTIONS: &str = include_str!("../migrations/2026-11-12-000002_auth_interactions/up.sql");
 const CANDIDATES: &str = include_str!("../migrations/2026-11-12-000001_security_candidates/up.sql");
+const UPSTREAM: &str = include_str!("../migrations/2026-11-13-000001_oidc_credentials/up.sql");
 
 /// Independent security authority per test, using current production table shapes
 /// and the actual settings/candidate migrations. Connections use the runtime role.
@@ -56,7 +57,7 @@ impl Fixture {
         ]
         .map(|table| format!("CREATE TABLE {table} (LIKE public.{table} INCLUDING ALL);"))
         .join("\n");
-        f.owner(&format!("CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}; {tables} {APPROVALS} {LEGACY} {SETTINGS} {POLICIES} {CANDIDATES} {INTERACTIONS}
+        f.owner(&format!("CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}; {tables} {APPROVALS} {LEGACY} {SETTINGS} {POLICIES} {CANDIDATES} {INTERACTIONS} {UPSTREAM}
             -- LIKE INCLUDING ALL does not copy triggers. Reuse the production
             -- revision guard so credential revocation cannot bypass its contract.
             CREATE TRIGGER tokens_revision BEFORE INSERT OR UPDATE ON tokens

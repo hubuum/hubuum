@@ -141,7 +141,7 @@ pub(super) async fn prepare_browser(
     Ok(provider)
 }
 
-pub(super) async fn browser_secret(
+pub(crate) async fn browser_secret(
     provider: &StorageAuthenticationProvider,
 ) -> Result<Option<SecretValue>, ApiError> {
     let Some(credential) = provider

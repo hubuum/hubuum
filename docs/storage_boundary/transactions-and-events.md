@@ -180,6 +180,13 @@ for an exception.
   `AuthenticationStorage::purge_auth_interactions` removes eligible expired rows
   in bounded batches, preserving consumed-session cleanup metadata for one hour.
 - Workflow state machines:
+  `ExternalIdentityStorage::claim_upstream_credential` consumes an encrypted
+  upstream credential before network I/O and assigns a bounded lease.
+  `ExternalIdentityStorage::finish_upstream_renewal` validates the lease, live
+  session, immutable subject and provider revision before atomically updating
+  memberships and replacing the credential.
+  `ExternalIdentityStorage::fail_upstream_renewal` destroys the consumed credential
+  and records bounded outage or definitive rejection without reviving old authority.
   `ComputedFieldStorage::request_computed_field_rebuild`,
   `ComputedFieldStorage::execute_computed_field_rebuild`, and
   `TaskQueueStorage::create_task` create or advance durable work whose task row,

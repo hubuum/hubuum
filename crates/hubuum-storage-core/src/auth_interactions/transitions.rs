@@ -23,6 +23,8 @@ impl StorageInteractionRecord {
                     && matches!(
                         action,
                         StorageInteractionAction::Claim(_)
+                            | StorageInteractionAction::PrepareProtocol(_)
+                            | StorageInteractionAction::ClaimProtocol { .. }
                             | StorageInteractionAction::Decide { .. }
                             | StorageInteractionAction::Inspect
                     )
@@ -34,6 +36,7 @@ impl StorageInteractionRecord {
                         StorageInteractionAction::Authenticate { .. }
                             | StorageInteractionAction::AuthenticateExternal { .. }
                             | StorageInteractionAction::Reject
+                            | StorageInteractionAction::Fail
                     )
             }
         }
@@ -61,6 +64,44 @@ impl StorageInteractionRecord {
             return Err(InteractionTransitionError::Invalid);
         }
         match (command.authorization, command.action) {
+            (
+                StorageInteractionAuthorization::Browser { binding, .. },
+                StorageInteractionAction::PrepareProtocol(protocol),
+            ) => {
+                if self.protocol.is_some()
+                    || self.lifecycle.binding().provider().external_id().is_none()
+                {
+                    return Err(InteractionTransitionError::Invalid);
+                }
+                self.lifecycle.bind_browser(binding, now)?;
+                self.protocol = Some(protocol);
+            }
+            (
+                StorageInteractionAuthorization::Browser { binding, .. },
+                StorageInteractionAction::ClaimProtocol { attempt, state },
+            ) => {
+                if self
+                    .protocol
+                    .as_ref()
+                    .is_none_or(|protocol| protocol.state() != &state)
+                {
+                    return Err(InteractionTransitionError::Invalid);
+                }
+                let claim = self
+                    .lifecycle
+                    .claim_authentication(attempt, Some(&binding), now)?;
+                let protocol = self.protocol.take().expect("validated protocol state");
+                return Ok(StorageInteractionOutcome::ProtocolClaim(Box::new(
+                    StorageProtocolClaim {
+                        claim,
+                        lifecycle: self.lifecycle.clone(),
+                        protocol,
+                    },
+                )));
+            }
+            (StorageInteractionAuthorization::Claim(_), StorageInteractionAction::Fail) => {
+                self.invalidate();
+            }
             (_, StorageInteractionAction::Inspect) => {
                 self.lifecycle.inspect_browser(now)?;
             }
@@ -71,6 +112,9 @@ impl StorageInteractionRecord {
                 self.lifecycle.cancel(now)?;
             }
             (authorization, StorageInteractionAction::Claim(attempt)) => {
+                if self.protocol.is_some() {
+                    return Err(InteractionTransitionError::Invalid);
+                }
                 let browser = match &authorization {
                     StorageInteractionAuthorization::Browser { binding, .. } => Some(binding),
                     _ => None,

@@ -592,3 +592,203 @@ async fn fresh_approval_completion_requires_live_actor_and_exact_operation(
         ));
     }
 }
+
+impl Fixture {
+    async fn retained_session(&self) -> (Attempt, PrincipalId) {
+        use hubuum_storage_core::StorageEncryptedUpstreamCredential;
+        let attempt = self.start().await;
+        let StorageExternalInteractionAuthentication::Login(authentication) =
+            self.authentication(&attempt, "alice", "alice", json!(["/team"]))
+        else {
+            panic!("login");
+        };
+        let StorageInteractionOutcome::View(view) = self
+            .backend
+            .advance_auth_interaction(StorageInteractionCommand::new(
+                StorageInteractionAuthorization::Claim(attempt.claim.clone()),
+                StorageInteractionAction::AuthenticateExternal {
+                    authentication: Box::new(
+                        StorageExternalInteractionAuthentication::LoginWithCredential {
+                            authentication,
+                            credential: StorageEncryptedUpstreamCredential::new(
+                                "encrypted-token".into(),
+                            )
+                            .unwrap(),
+                        },
+                    ),
+                    approval: None,
+                },
+            ))
+            .await
+            .unwrap()
+        else {
+            panic!("view");
+        };
+        let StorageInteractionCompletion::Session(issued) = self
+            .backend
+            .complete_auth_interaction(session_request(
+                attempt.access.clone(),
+                view.authenticated_subject().cloned(),
+            ))
+            .await
+            .unwrap()
+        else {
+            panic!("session");
+        };
+        (attempt, issued.into_value().principal_id())
+    }
+}
+
+#[tokio::test]
+async fn retained_token_is_consumed_once_across_memory_handles() {
+    use hubuum_storage_core::StorageUpstreamClaimOutcome;
+    let f = Fixture::new(json!({"mode":"provision_without_grants"}), false).await;
+    let (_, principal) = f.retained_session().await;
+    let other = f.backend.clone();
+    let (a, b) = tokio::join!(
+        f.backend.claim_upstream_credential(principal),
+        other.claim_upstream_credential(principal)
+    );
+    let outcomes = [a.unwrap(), b.unwrap()];
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, StorageUpstreamClaimOutcome::Claim(_)))
+            .count(),
+        1
+    );
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, StorageUpstreamClaimOutcome::Busy))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn retained_renewal_updates_membership_and_rotates_atomically() {
+    use hubuum_storage_core::{
+        StorageEncryptedUpstreamCredential, StorageUpstreamClaimOutcome, StorageUpstreamRenewal,
+    };
+    let f = Fixture::new(json!({"mode":"provision_without_grants"}), false).await;
+    let (attempt, principal) = f.retained_session().await;
+    let StorageUpstreamClaimOutcome::Claim(claim) = f
+        .backend
+        .claim_upstream_credential(principal)
+        .await
+        .unwrap()
+    else {
+        panic!("claim");
+    };
+    let StorageExternalInteractionAuthentication::Login(proof) =
+        f.authentication(&attempt, "alice", "alice", json!([]))
+    else {
+        panic!("proof");
+    };
+    f.backend
+        .finish_upstream_renewal(
+            StorageUpstreamRenewal::new(
+                *claim,
+                proof,
+                Some(StorageEncryptedUpstreamCredential::new("rotated".into()).unwrap()),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let StorageUpstreamClaimOutcome::Claim(claim) = f
+        .backend
+        .claim_upstream_credential(principal)
+        .await
+        .unwrap()
+    else {
+        panic!("rotated claim");
+    };
+    assert_eq!(claim.credential().ciphertext(), "rotated");
+    assert!(
+        f.backend
+            .state
+            .read()
+            .await
+            .external_memberships
+            .iter()
+            .all(|(id, _)| *id != principal.id())
+    );
+}
+
+#[rstest]
+#[case::temporary(StorageExternalSyncFailure::Unavailable, true)]
+#[case::rejected(StorageExternalSyncFailure::Rejected, false)]
+#[tokio::test]
+async fn failed_memory_renewal_never_reuses_consumed_credentials(
+    #[case] failure: StorageExternalSyncFailure,
+    #[case] preserves_snapshot: bool,
+) {
+    use hubuum_storage_core::StorageUpstreamClaimOutcome;
+    let f = Fixture::new(json!({"mode":"provision_without_grants"}), false).await;
+    let (_, principal) = f.retained_session().await;
+    let StorageUpstreamClaimOutcome::Claim(claim) = f
+        .backend
+        .claim_upstream_credential(principal)
+        .await
+        .unwrap()
+    else {
+        panic!("claim");
+    };
+    f.backend
+        .fail_upstream_renewal(*claim, failure)
+        .await
+        .unwrap();
+    assert_eq!(
+        f.backend
+            .get_external_principal_state(principal)
+            .await
+            .unwrap()
+            .unwrap()
+            .last_sync_success_at()
+            .is_some(),
+        preserves_snapshot
+    );
+    assert!(matches!(
+        f.backend
+            .claim_upstream_credential(principal)
+            .await
+            .unwrap(),
+        StorageUpstreamClaimOutcome::Unavailable
+    ));
+}
+
+#[rstest]
+#[case::matching(false, true)]
+#[case::different_provider(true, false)]
+#[tokio::test]
+async fn identity_lookup_preserves_provider_instance(#[case] other: bool, #[case] found: bool) {
+    let f = Fixture::new(json!({"mode":"provision_without_grants"}), false).await;
+    let (_, principal) = f.retained_session().await;
+    let binding = InteractionBinding::try_new(
+        InteractionId::new(Uuid::new_v4()).unwrap(),
+        InteractionProviderId::external(if other {
+            Uuid::new_v4()
+        } else {
+            f.provider.id()
+        })
+        .unwrap(),
+        InteractionClientId::new("lookup").unwrap(),
+        ResourceRevision::INITIAL,
+        InteractionAuthority::login(),
+    )
+    .unwrap();
+    let identity = ExternalAuthenticationContext::oidc(
+        binding,
+        IdentityScopeName::new("company").unwrap(),
+        &f.definition,
+    )
+    .unwrap()
+    .identity(ExternalSubject::new("alice").unwrap())
+    .unwrap();
+    assert_eq!(
+        f.backend.find_external_identity(identity).await.unwrap(),
+        found.then_some(principal)
+    );
+}

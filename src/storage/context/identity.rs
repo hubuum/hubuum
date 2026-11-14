@@ -1,6 +1,12 @@
 use super::*;
+use hubuum_domain::ExternalIdentity;
 use hubuum_domain::{InteractionBrowserBinding, InteractionDigest};
 use hubuum_storage_core::StorageExternalSyncFailure;
+use hubuum_storage_core::StorageUpstreamClaim;
+use hubuum_storage_core::StorageUpstreamClaimOutcome;
+use hubuum_storage_core::StorageUpstreamRenewal;
+use hubuum_storage_core::StorageUpstreamRevocation;
+use hubuum_storage_core::StorageUpstreamSession;
 use hubuum_storage_core::{
     CredentialActivityPolicy, ObservedSource, StorageActivityQuery, StorageCredentialActivity,
     StorageCredentialCreation,
@@ -677,6 +683,88 @@ impl ServiceAccountStorage for StorageHandle {
 
 #[async_trait]
 impl ExternalIdentityStorage for StorageHandle {
+    async fn fail_upstream_renewal(
+        &self,
+        claim: StorageUpstreamClaim,
+        failure: StorageExternalSyncFailure,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::ExternalIdentity,
+            "fail_upstream_renewal",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.fail_upstream_renewal(claim, failure).await
+                })
+            },
+        )
+        .await
+    }
+    async fn claim_upstream_credential(
+        &self,
+        principal: PrincipalId,
+    ) -> Result<StorageUpstreamClaimOutcome, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::ExternalIdentity,
+            "claim_upstream_credential",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.claim_upstream_credential(principal).await
+                })
+            },
+        )
+        .await
+    }
+    async fn finish_upstream_renewal(
+        &self,
+        request: StorageUpstreamRenewal,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::ExternalIdentity,
+            "finish_upstream_renewal",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.finish_upstream_renewal(request).await
+                })
+            },
+        )
+        .await
+    }
+    async fn upstream_logout_credentials(
+        &self,
+        target: StorageUpstreamRevocation,
+    ) -> Result<Vec<StorageUpstreamSession>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::ExternalIdentity,
+            "upstream_logout_credentials",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.upstream_logout_credentials(target).await
+                })
+            },
+        )
+        .await
+    }
+    async fn find_external_identity(
+        &self,
+        identity: ExternalIdentity,
+    ) -> Result<Option<PrincipalId>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::ExternalIdentity,
+            "find_external_identity",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.find_external_identity(identity).await
+                })
+            },
+        )
+        .await
+    }
+
     async fn get_external_principal_state(
         &self,
         principal_id: PrincipalId,

@@ -3,5 +3,7 @@ __pycache__/
 .env
 .env*.local
 *.pem
+# Public disposable key used only by the OIDC signature regression tests.
+!crates/hubuum-auth-oidc/tests/fixtures/signing.pem
 /*.sql
 .claude

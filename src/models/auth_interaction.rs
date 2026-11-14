@@ -316,11 +316,12 @@ pub struct AuthenticationMethod {
     pub fresh_authentication: bool,
     pub browser_available: bool,
 }
-#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PasswordProviderKind {
     Local,
     Ldap,
+    Oidc,
 }
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]

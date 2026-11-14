@@ -139,6 +139,7 @@ impl RuntimeSettingsStorage for MemoryStorage {
         staged.invalidate_provider_credentials(&scopes);
         staged.runtime_settings.discard_candidates();
         staged.auth_interactions.clear();
+        staged.upstream_sessions.clear();
         for (_, metadata) in staged.credential_approvals.values_mut() {
             metadata.invalidate(Utc::now());
         }
@@ -331,6 +332,10 @@ impl RuntimeSettingsStorage for MemoryStorage {
             };
         let result = staged.runtime_settings.update(request.update())?;
         staged.invalidate_provider_credentials(&revoked_scopes);
+        let revision = staged.runtime_settings.authentication_revision();
+        staged
+            .upstream_sessions
+            .retain(|_, record| record.binding().revision() == revision);
         *live = staged;
         Ok(result)
     }

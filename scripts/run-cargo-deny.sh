@@ -35,9 +35,16 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   } >> "$GITHUB_STEP_SUMMARY"
 fi
 
+policy_args=(check)
+if [[ "$manifest_path" == "fuzz/Cargo.toml" || "$manifest_path" == "$repo_root/fuzz/Cargo.toml" ]]; then
+  # The standalone fuzz graph omits application dependencies. The root audit
+  # remains authoritative for unused exceptions; retain a notice here.
+  policy_args+=(--warn advisory-not-detected)
+fi
+
 set +e
 cargo deny --manifest-path "$manifest_path" --config "$repo_root/deny.toml" \
-  --all-features --locked check 2>&1 | tee "$report_path"
+  --all-features --locked "${policy_args[@]}" 2>&1 | tee "$report_path"
 status="${PIPESTATUS[0]}"
 set -e
 exit "$status"

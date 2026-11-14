@@ -534,6 +534,21 @@ impl VerifiedExternalAuthentication {
             authentication: self,
         })
     }
+
+    /// A non-mutating preview cannot be used as a login admission proof.
+    pub fn preview_admission(
+        &self,
+        existing: Option<&ExternalIdentity>,
+    ) -> Result<bool, ExternalAuthenticationError> {
+        if self.binding.authority().purpose() != InteractionPurpose::ProviderVerification {
+            return Err(ExternalAuthenticationError::InvalidAdmissionPurpose);
+        }
+        match self.check_admission(existing) {
+            Ok(()) => Ok(true),
+            Err(ExternalAuthenticationError::AdmissionDenied) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
 }
 
 #[derive(Debug)]
