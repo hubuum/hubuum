@@ -16,11 +16,12 @@ authorization backend. Responses use `Cache-Control: no-store`.
 | --- | --- |
 | `GET /policies?after_revision=0&limit=100` | Immutable policy page and independent-protection status. |
 | `POST /inspect` | Bounded effective sources, original anchors, deadlines and blockers. |
+| `POST /accounting` | Complete bounded logical bytes and independently protected pressure start/end transitions for an exact policy revision. |
 | `POST /policy-previews` | Issued review of one exact proposed change. |
 | `PUT /policies` | Revision-bound application with independent checkpoint protection. |
 | `POST /holds` | Create an identity-bound hold with an optional fixed expiry. |
 | `POST /holds/{hold_id}/release` | Release a hold without rewriting its creation or expiry clock. |
-| `GET /operations/{operation_id}` | Bounded policy, hold or review evidence referenced by an audit receipt. |
+| `GET /operations/{operation_id}` | Bounded policy, hold, pressure transition or review evidence referenced by an audit receipt. |
 
 Write/inspection JSON bodies are limited to 16 KiB.
 
@@ -69,10 +70,58 @@ and cannot become an eligible preview candidate.
 
 Age, size, age-or-size and age-and-size are separate rule variants. Size pressure
 uses measured logical bytes and persists hysteresis until its lower target is
-reached. The policy model includes these semantics; native complete accounting
-and destructive size-rule execution still require qualification. Inspection
-reports size accounting as unavailable when that measurement is needed, rather
-than guessing from a bounded sample or PostgreSQL physical table size. A proven
+reached. Administrators can refresh complete accounting through
+`POST /api/v1/admin/history-lifecycle/accounting`, supplying the exact policy
+reference (`key` and immutable `revision`) returned by the policy catalog.
+The response reports its original observation clock and authority fence,
+`compact_json_v1`, scanned and governed row counts, measured bytes, current
+pressure, and an optional retained transition UUID. Responses use `no-store`.
+The configured authorization backend is rechecked. Any transition must be
+published and read back through independent recovery protection before success;
+a protection failure can leave a committed transition pending protection.
+
+The v1 measure counts the complete retained record's compact UTF-8 JSON before
+compression, including its metadata and payload. Numbers use normalized plain
+decimal spelling: no exponent, insignificant fractional zeros or negative zero.
+Object ordering and source whitespace do not affect the count. String escaping
+uses JSON's standard short escapes and six-byte control escapes. Nesting is
+limited to 128 levels; totals must fit signed 64-bit bytes. PostgreSQL computes
+this measure inside the database and streams only identity/anchor metadata to
+the adapter. Each adapter measures its retained record representation; this is
+not a portable archive length, PostgreSQL heap/index size or disk-space promise.
+
+A refresh exhausts all retained rows in the family in one serialized control
+transaction. It includes open versions, holds, dependency-protected records and
+copies already excluded by an expiry intent. Original captured ownership and
+closure/deletion/schema-event clocks determine the effective immutable policy;
+open versions use the observation clock only for accounting resolution and never
+acquire a closure proof. More-specific overrides are excluded from the broader
+policy's governed set. A relation governed by the same source at both endpoints
+counts once for that source. A distinct source at each endpoint charges each
+source once. Missing attribution, unknown restore ancestry and duplicate version
+identities fail the entire refresh, including when a bounded sample looks clear.
+
+Complete scans are limited to 100,000 rows, 1 MiB identity metadata per row and
+64 MiB cumulative identity metadata. PostgreSQL uses a statement timeout of at
+most five seconds; both adapters enforce a five-second complete-fold deadline.
+Exhausting a budget returns unavailable and commits no partial total or pressure
+transition. This bounded full scan is an initial accounting implementation;
+larger scopes need transactionally maintained counters and separate qualification.
+
+Pressure starts strictly above the upper threshold, remains active above the
+lower target, and ends at or below that target. Only start/end transitions create
+new authority and canonical audit events; intermediate gauges and exact retries
+create no new receipt. Each exact immutable policy revision has its own episode.
+The append-only journal reserves a terminal slot and control bytes for every
+active episode, and preserves original actors, clocks, policy references and
+pressure through signed recovery. Operation inspection returns exact retained
+transition evidence. Pressure alone changes no history visibility or expiry
+membership.
+
+Destructive size-rule execution remains gated pending oldest-eligible bounded
+selection and cleanup qualification. Existing inspection and policy previews
+continue to report size accounting as unavailable when it would be required for
+an executable expiry decision; their bounded samples are never complete gauges. A proven
 age condition suffices for age-or-size; a false age condition makes age-and-size
 false without consulting size.
 
@@ -142,9 +191,11 @@ cleanup while any runtime remains active. This alternative is not approved.
 
 Neither boundary relies on a filesystem or S3 artifact adapter. Both preserve
 delete/restore authority, holds, protected minimums, original anchors and the
-revision-bound review/application contract. Complete size accounting, persistent
-hysteresis, run admission/progress/cancellation and fair repeated claims remain
-executor work; inspection results are not executable membership manifests.
+revision-bound review/application contract. Complete bounded accounting and
+persistent pressure observation are available to administrators. Size-driven
+oldest-first selection, cleanup and liveness qualification remain executor work;
+inspection results and pressure receipts are not executable membership manifests.
+P6 remains deferred under #561, and production expiry remains disabled.
 
 ### Request ownership and publication lifetime
 

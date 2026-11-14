@@ -18,6 +18,7 @@ release-train = "storage-sdk"
 hubuum-budget = { version = "=0.20.0", path = "../hubuum-budget" }
 async-trait = "0.1"
 base64 = "0.23"
+bigdecimal = "0.4"
 chrono = "0.4"
 hubuum-computed-fields = { version = "=0.20.0", path = "../hubuum-computed-fields" }
 hubuum-domain = { version = "=0.20.0", path = "../hubuum-domain" }
@@ -25,7 +26,7 @@ hubuum-events-core = { version = "=0.20.0", path = "../hubuum-events-core" }
 hubuum-query = { version = "=0.20.0", path = "../hubuum-query" }
 hubuum-task-core = { version = "=0.20.0", path = "../hubuum-task-core" }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["arbitrary_precision"] }
 ipnet = "2"
 sha2 = "0.11"
 tempfile = "3"

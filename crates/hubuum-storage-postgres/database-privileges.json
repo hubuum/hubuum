@@ -54,6 +54,7 @@
     "hubuum_history_as_of_visible",
     "hubuum_history_requested_as_of_visible",
     "hubuum_history_lifecycle_capture",
+    "hubuum_history_logical_bytes_v1",
     "hubuum_history_lifecycle_commit",
     "hubuum_history_expiry_admit",
     "hubuum_history_expiry_remove",

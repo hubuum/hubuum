@@ -284,13 +284,23 @@ review lifetime or freeze a hold's expiry. Native deletion points retain
 deletion gap. Unknown restore ancestry cannot produce an eligible scan candidate.
 
 Complete adapters must implement `register_history_runtime`, `capture_history_lifecycle`,
-`scan_history_lifecycle`, `admit_history_expiry`,
+`scan_history_lifecycle`, `observe_history_size`, `admit_history_expiry`,
 `commit_history_lifecycle` and `recover_history_lifecycle`. Capture returns the
 adapter clock with application incarnation and history/deletion revision fences.
 The unreleased 0.20 contract also requires `reapply_history_expiry`, a trusted
 quarantined exact-copy recovery operation taking `HistoryExpiryReapplication`.
 External adapters must implement positive drain, current protection, preserved
 first receipts, and fail-closed exposure checks; this is a breaking trait addition.
+
+The breaking `observe_history_size` addition requires complete bounded accounting
+and pressure transition/audit retention under one control transaction. Finish
+`HistorySizeCensus` only after source exhaustion; preserve unresolved attribution
+and budget failures as unavailable rather than a partial total. The compact
+JSON v1 measure normalizes decimal numbers before compression. Preserve the
+append-only `HistorySizeTransition` journal and its terminal capacity reserves
+through independent checkpoints and restore. `HistorySizeObservation` requires
+service-side independent publication/readback before acknowledgement. It grants
+no physical expiry permission; P6 remains deferred.
 
 The unreleased 0.20 contract also requires `submit_history_expiry_task`,
 `process_history_expiry_task` and `recover_history_expiry_task`. Shared admission

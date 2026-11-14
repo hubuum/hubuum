@@ -9,6 +9,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Administrator history accounting refresh measures complete bounded retained
+  sets using compact JSON v1 logical bytes and records independently protected
+  pressure start/end transitions with durable hysteresis and audit evidence.
+  Partial, ambiguous and over-budget scans fail closed. Size-driven deletion
+  and production expiry remain gated; P6 remains deferred.
+- **Breaking storage SDK 0.20 accounting capability:** complete adapters must
+  implement `HistoryLifecycleStorage::observe_history_size` and preserve pressure
+  transition lineage and reserved terminal capacity through recovery. Deploy
+  matching adapters and binaries with lifecycle migration 000005 and refreshed
+  grants; older binaries cannot decode retained pressure facts.
+
 - **Breaking storage SDK 0.20 recovery capability:** complete adapters must
   implement `HistoryLifecycleStorage::reapply_history_expiry` for quarantined,
   independently protected exact-copy replay. Restore preserves first-removal
@@ -430,6 +441,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   [0.7 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-06-to-07).
 
 ### Fixed
+
+- History control writes pin application authority before history authority,
+  avoiding a deadlock between runtime registration and a later control commit.
 
 - Gated history expiry avoids copying the retained journal during serialization
   and discarding complete ledger copies during exact receipt updates. Updates

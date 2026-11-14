@@ -109,6 +109,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         client_config::get_client_config,
         history_lifecycle::policies,
         history_lifecycle::inspect,
+        history_lifecycle::accounting,
         history_lifecycle::run,
         history_lifecycle::preview,
         history_lifecycle::apply,

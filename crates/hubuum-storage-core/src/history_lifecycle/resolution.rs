@@ -47,6 +47,21 @@ impl HistoryPolicyCatalog {
     pub fn records(&self) -> &[HistoryPolicyRecord] {
         &self.0
     }
+    pub fn exact(
+        &self,
+        reference: &HistoryPolicyReference,
+    ) -> Result<HistoryEffectivePolicy, StorageValidationError> {
+        let record = self
+            .0
+            .iter()
+            .find(|record| HistoryPolicyReference::from(*record) == *reference)
+            .ok_or_else(|| invalid("Unknown immutable history policy revision"))?;
+        Ok(HistoryEffectivePolicy {
+            source: Some(reference.clone()),
+            inherited: Vec::new(),
+            binding: record.proposal().binding().clone(),
+        })
+    }
     pub fn current_revision(&self, key: HistoryPolicyKey) -> HistoryPolicyRevision {
         self.0
             .iter()
@@ -98,6 +113,28 @@ impl HistoryPolicyCatalog {
         attribution: HistoryScopeAttribution,
         anchor: HistoryRetentionAnchor,
     ) -> HistoryEffectivePolicy {
+        self.resolve_at(family, attribution, anchor.at())
+    }
+    /// Accounting includes open versions without manufacturing a closure proof.
+    pub fn resolve_accounting(
+        &self,
+        family: StorageIdentityHistoryKind,
+        attribution: HistoryScopeAttribution,
+        anchor: Option<HistoryRetentionAnchor>,
+        observed_at: DateTime<Utc>,
+    ) -> HistoryEffectivePolicy {
+        self.resolve_at(
+            family,
+            attribution,
+            anchor.map_or(observed_at, HistoryRetentionAnchor::at),
+        )
+    }
+    fn resolve_at(
+        &self,
+        family: StorageIdentityHistoryKind,
+        attribution: HistoryScopeAttribution,
+        at: DateTime<Utc>,
+    ) -> HistoryEffectivePolicy {
         let scopes = attribution
             .class()
             .map(|identity| HistoryPolicyScope::Class { identity })
@@ -113,7 +150,7 @@ impl HistoryPolicyCatalog {
             let record = self.0.iter().rev().find(|record| {
                 record.proposal().key().family() == family
                     && record.proposal().key().scope() == scope
-                    && record.governs(anchor)
+                    && record.governs_at(at)
             });
             if let Some(record) = record {
                 if *record.proposal().binding() == HistoryPolicyBinding::Inherit {

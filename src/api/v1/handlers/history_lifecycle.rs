@@ -1,5 +1,8 @@
 use actix_web::{Responder, error::JsonPayloadError, get, http::StatusCode, post, put, web};
-use hubuum_storage_core::{HistoryPolicyPreview, HistoryPolicyRecord, HistoryRetentionHold};
+use hubuum_storage_core::{
+    HistoryPolicyPreview, HistoryPolicyRecord, HistoryPolicyReference, HistoryRetentionHold,
+    HistorySizeAccounting,
+};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
@@ -43,6 +46,19 @@ pub async fn inspect(
     let scan = request.into_inner().resolve(&context).await?;
     Ok(ApiResponse::new_no_store(
         history_policy::inspect(&context, &admin, scan).await?,
+        StatusCode::OK,
+    ))
+}
+
+#[utoipa::path(post, path = "/api/v1/admin/history-lifecycle/accounting", tag = "admin", security(("bearer_auth" = [])), request_body = HistoryPolicyReference, responses((status = 200, description = "Complete bounded compact-JSON-v1 accounting and independently protected pressure transition; authorizes no deletion", body = HistorySizeAccounting), (status = 400, description = "Unknown revision or policy without a size trigger", body = ApiErrorResponse), (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse), (status = 503, description = "Incomplete accounting, exhausted budget or independent protection unavailable", body = ApiErrorResponse)))]
+#[post("/accounting")]
+pub async fn accounting(
+    context: AppContext,
+    admin: AdminAccess,
+    request: web::Json<HistoryPolicyReference>,
+) -> Result<impl Responder, ApiError> {
+    Ok(ApiResponse::new_no_store(
+        history_policy::observe_size(&context, &admin, request.into_inner()).await?,
         StatusCode::OK,
     ))
 }
@@ -167,6 +183,7 @@ pub fn config(config: &mut web::ServiceConfig) {
     config
         .service(policies)
         .service(inspect)
+        .service(accounting)
         .service(run)
         .service(preview)
         .service(apply)

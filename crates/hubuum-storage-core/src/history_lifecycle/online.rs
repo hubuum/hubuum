@@ -653,7 +653,7 @@ impl HistoryExpirySelectionBudget {
         let revision_growth = next_revision.value().to_string().len() - revision.to_string().len();
         let control_budget = HistoryLifecycleControl::MAX_BYTES.saturating_sub(
             control.encode()?.len()
-                + authority.pending_hold_completions()
+                + (authority.pending_hold_completions() + authority.pending_size_completions())
                     * HistoryLifecycleControl::HOLD_COMPLETION_RESERVE_BYTES
                 + pending
                 + overhead

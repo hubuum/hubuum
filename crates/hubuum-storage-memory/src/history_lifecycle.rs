@@ -1,9 +1,17 @@
+mod accounting;
 mod expiry;
 use super::*;
 use serde_json::Value;
 
 #[async_trait]
 impl HistoryLifecycleStorage for MemoryStorage {
+    async fn observe_history_size(
+        &self,
+        policy: HistoryPolicyReference,
+        actor: PrincipalIdentity,
+    ) -> Result<HistorySizeObservation, StorageError> {
+        accounting::observe(self, policy, actor).await
+    }
     async fn reapply_history_expiry(
         &self,
         request: HistoryExpiryReapplication,

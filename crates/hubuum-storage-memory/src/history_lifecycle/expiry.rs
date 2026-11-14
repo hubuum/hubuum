@@ -5,7 +5,7 @@ pub(super) use recovery::recover_task;
 
 use super::*;
 
-enum ExpirySource<'a> {
+pub(super) enum ExpirySource<'a> {
     History(&'a MemoryHistoryEntry),
     Backup(&'a StorageBackupRow),
     Computed(&'a StorageComputedFieldHistory),
@@ -398,25 +398,11 @@ fn task_for_expiry(
     task.projection()
 }
 
-fn admit_on(
-    state: &mut MemoryState,
-    request: HistoryExpiryAdmissionRequest,
-) -> Result<HistoryExpiryAdmissionResult, StorageError> {
-    if state
-        .runtime_registrations
-        .values()
-        .any(|runtime| !runtime.history_protocol.supports_online())
-    {
-        return Err(StorageError::unavailable(
-            "A registered producer lacks online history fencing",
-        ));
-    }
-    let snapshot = state.history_lifecycle_snapshot()?;
-    let mut selection = request.selection(&snapshot).map_err(|_| {
-        StorageError::conflict("Expiry authority changed or batch already admitted")
-    })?;
-    let family = request.scan().key().family();
-    let rows: Box<dyn ExactSizeIterator<Item = ExpirySource<'_>>> = match family {
+pub(super) fn sources(
+    state: &MemoryState,
+    family: StorageIdentityHistoryKind,
+) -> Box<dyn ExactSizeIterator<Item = ExpirySource<'_>> + '_> {
+    match family {
         StorageIdentityHistoryKind::ClassSchema => {
             Box::new(state.schema_history.iter().map(ExpirySource::Backup))
         }
@@ -446,7 +432,28 @@ fn admit_on(
         | StorageIdentityHistoryKind::RemoteTarget => {
             Box::new(state.history.iter().map(ExpirySource::History))
         }
-    };
+    }
+}
+
+fn admit_on(
+    state: &mut MemoryState,
+    request: HistoryExpiryAdmissionRequest,
+) -> Result<HistoryExpiryAdmissionResult, StorageError> {
+    if state
+        .runtime_registrations
+        .values()
+        .any(|runtime| !runtime.history_protocol.supports_online())
+    {
+        return Err(StorageError::unavailable(
+            "A registered producer lacks online history fencing",
+        ));
+    }
+    let snapshot = state.history_lifecycle_snapshot()?;
+    let mut selection = request.selection(&snapshot).map_err(|_| {
+        StorageError::conflict("Expiry authority changed or batch already admitted")
+    })?;
+    let family = request.scan().key().family();
+    let rows = sources(state, family);
     let mut window = request
         .scan_window(rows.len() as u64)
         .map_err(invalid_contract_value)?;
@@ -648,7 +655,7 @@ fn admit_on(
     Ok(result)
 }
 
-fn bounded_encoded_bytes(
+pub(super) fn bounded_encoded_bytes(
     value: &impl serde::Serialize,
     limit: u64,
 ) -> Result<Option<u64>, StorageError> {

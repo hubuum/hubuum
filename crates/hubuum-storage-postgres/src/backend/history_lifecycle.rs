@@ -1,3 +1,4 @@
+mod accounting;
 mod expiry;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -487,6 +488,15 @@ async fn admit_producer_on(
 
 #[async_trait]
 impl HistoryLifecycleStorage for PostgresStorage {
+    async fn observe_history_size(
+        &self,
+        policy: HistoryPolicyReference,
+        actor: hubuum_domain::PrincipalIdentity,
+    ) -> Result<HistorySizeObservation, StorageError> {
+        accounting::observe(self, policy, actor)
+            .await
+            .map_err(Into::into)
+    }
     async fn reapply_history_expiry(
         &self,
         request: HistoryExpiryReapplication,
@@ -862,51 +872,49 @@ impl HistoryLifecycleStorage for PostgresStorage {
         );
         self.runtime()
             .with_history_control_transaction(fallback, async move |connection| {
-                for scope in change.scopes_to_validate() {
-                    if !change.expected().retains_scope(scope)
-                        && !scope_known_on(connection, scope).await?
-                    {
-                        return Err(PostgresStorageError::not_found(
-                            "History policy scope was not found",
-                        ));
-                    }
-                }
-                let expected = serde_json::to_value(change.expected()).map_err(|_| {
-                    PostgresStorageError::invalid_input(
-                        "Cannot encode history lifecycle predecessor",
-                    )
-                })?;
-                let replacement = serde_json::to_value(change.next()).map_err(|_| {
-                    PostgresStorageError::invalid_input(
-                        "Cannot encode history lifecycle transition",
-                    )
-                })?;
-                let committed = sql_query(
-                    "SELECT public.hubuum_history_lifecycle_commit($1,$2,$3,$4) AS committed",
-                )
-                .bind::<Jsonb, _>(expected)
-                .bind::<Jsonb, _>(replacement)
-                .bind::<SqlUuid, _>(change.fence().incarnation())
-                .bind::<BigInt, _>(change.fence().deletion_revision().value() as i64)
-                .get_result::<CommittedRow>(connection)
-                .await?
-                .committed;
-                if !committed {
-                    return Err(PostgresStorageError::conflict(
-                        "History policy authority or application incarnation changed",
-                    ));
-                }
-                for event in change.next().audit_events_since(change.expected())? {
-                    crate::operations::event_record::append_retained_lifecycle_event(
-                        connection, &event,
-                    )
-                    .await?;
-                }
-                capture_on(connection).await
+                commit_on(connection, change).await
             })
             .await
             .map_err(Into::into)
     }
+}
+
+async fn commit_on(
+    connection: &mut PostgresConnection,
+    change: HistoryLifecycleControlChange,
+) -> Result<HistoryLifecycleSnapshot, PostgresStorageError> {
+    for scope in change.scopes_to_validate() {
+        if !change.expected().retains_scope(scope) && !scope_known_on(connection, scope).await? {
+            return Err(PostgresStorageError::not_found(
+                "History policy scope was not found",
+            ));
+        }
+    }
+    let expected = serde_json::to_value(change.expected()).map_err(|_| {
+        PostgresStorageError::invalid_input("Cannot encode history lifecycle predecessor")
+    })?;
+    let replacement = serde_json::to_value(change.next()).map_err(|_| {
+        PostgresStorageError::invalid_input("Cannot encode history lifecycle transition")
+    })?;
+    let committed =
+        sql_query("SELECT public.hubuum_history_lifecycle_commit($1,$2,$3,$4) AS committed")
+            .bind::<Jsonb, _>(expected)
+            .bind::<Jsonb, _>(replacement)
+            .bind::<SqlUuid, _>(change.fence().incarnation())
+            .bind::<BigInt, _>(change.fence().deletion_revision().value() as i64)
+            .get_result::<CommittedRow>(connection)
+            .await?
+            .committed;
+    if !committed {
+        return Err(PostgresStorageError::conflict(
+            "History policy authority or application incarnation changed",
+        ));
+    }
+    for event in change.next().audit_events_since(change.expected())? {
+        crate::operations::event_record::append_retained_lifecycle_event(connection, &event)
+            .await?;
+    }
+    capture_on(connection).await
 }
 
 #[cfg(all(test, feature = "integration-test-support"))]

@@ -9,10 +9,11 @@ use hubuum_storage_core::{
     ApplicationFence, DeletionCheckpointIdentity, HistoryAuthorityRevision,
     HistoryExpiryTaskCheckpoint, HistoryExposureProtection, HistoryHoldTransition,
     HistoryLifecycleControlChange, HistoryLifecycleOperationEvidence, HistoryLifecycleScan,
-    HistoryLifecycleSnapshot, HistoryLifecycleStorage, HistoryPolicyApplyError,
-    HistoryPolicyApplyRequest, HistoryPolicyChange, HistoryPolicyPreview, HistoryPolicyRecord,
-    HistoryPolicyReviewConflict, HistoryPreviewCoverage, HistoryPreviewImpact,
-    HistoryRetentionHold, LogicalIdentityStorage, StorageIdentitySubject, StorageIdentityTarget,
+    HistoryLifecycleSnapshot, HistoryLifecycleStorage, HistoryLogicalBytes,
+    HistoryPolicyApplyError, HistoryPolicyApplyRequest, HistoryPolicyChange, HistoryPolicyPreview,
+    HistoryPolicyRecord, HistoryPolicyReference, HistoryPolicyReviewConflict,
+    HistoryPreviewCoverage, HistoryPreviewImpact, HistoryRetentionHold, HistorySizeAccounting,
+    HistorySizePressure, LogicalIdentityStorage, StorageIdentitySubject, StorageIdentityTarget,
     TaskRetentionStorage,
 };
 
@@ -330,6 +331,37 @@ pub(crate) async fn list(
         records,
         next_revision,
     })
+}
+
+/// Observe complete logical accounting and independently protect any durable
+/// hysteresis transition. Inspection/preview samples never supply these gauges.
+pub(crate) async fn observe_size(
+    context: &AppContext,
+    admin: &AdminAccess,
+    policy: HistoryPolicyReference,
+) -> Result<HistorySizeAccounting, ApiError> {
+    let actor = principal(context, admin).await?;
+    let storage = storage_handle(context);
+    let current = storage.capture_history_lifecycle().await?;
+    let effective = current
+        .control()
+        .authority()
+        .policies()
+        .exact(&policy)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    HistorySizePressure::measure(
+        &effective,
+        HistoryLogicalBytes::new(0).expect("zero logical bytes"),
+        None,
+    )
+    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let session = protected_session(context, context.history_retention()).await?;
+    let (accounting, applied) = storage
+        .observe_history_size(policy, actor)
+        .await?
+        .into_parts();
+    protect_snapshot(context, session, applied).await?;
+    Ok(accounting)
 }
 
 pub(crate) async fn inspect(

@@ -1030,3 +1030,168 @@ fn online_expiry_metadata_matches_the_reviewed_audit_schema() {
             .unwrap();
     }
 }
+
+#[rstest::rstest]
+#[case::administrator(true, false, 200)]
+#[case::anonymous(false, false, 401)]
+#[case::scoped_token(true, true, 403)]
+#[actix_web::test]
+async fn accounting_requires_unscoped_administrator_and_publishes_complete_measurement(
+    #[case] authenticated: bool,
+    #[case] scoped: bool,
+    #[case] status: u16,
+) {
+    use actix_web::{App, test, web};
+    use hubuum_storage_core::{
+        HistoryExpiryTrigger, HistoryLogicalBytes, HistoryPolicyReference, HistoryRetentionSeconds,
+    };
+    let fixture = Fixture::new().await;
+    let proposal = HistoryPolicyChange::new(
+        fixture.proposal().key(),
+        HistoryPolicyRevision::new(0).unwrap(),
+        HistoryPolicyBinding::Expire {
+            trigger: HistoryExpiryTrigger::LogicalSize {
+                upper_logical_bytes: HistoryLogicalBytes::new(100).unwrap(),
+                lower_logical_bytes: HistoryLogicalBytes::new(50).unwrap(),
+            },
+            minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+        },
+        HistoryPolicyApplication::Prospective,
+    )
+    .unwrap();
+    let record = apply(
+        &fixture.context,
+        &fixture.admin,
+        &fixture.options,
+        HistoryPolicyApplyRequest::new(proposal, None),
+    )
+    .await
+    .unwrap();
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(fixture.context.clone()))
+            .configure(crate::api::config),
+    )
+    .await;
+    let mut request = test::TestRequest::post()
+        .uri("/api/v1/admin/history-lifecycle/accounting")
+        .set_json(HistoryPolicyReference::from(&record));
+    if authenticated {
+        request = request.insert_header((
+            "Authorization",
+            format!("Bearer {}", fixture.bearer(scoped).await),
+        ));
+    }
+    let response = test::call_service(&app, request.to_request()).await;
+    assert_eq!(response.status().as_u16(), status);
+    if status == 200 {
+        assert_eq!(response.headers().get("Cache-Control").unwrap(), "no-store");
+        let body: serde_json::Value = test::read_body_json(response).await;
+        assert_eq!(body["format"], "compact_json_v1");
+        assert_eq!(body["pressure"]["measured_bytes"], "0");
+        assert_eq!(body["pressure"]["reclaiming"], false);
+        assert!(body["transition"].is_null());
+    }
+}
+
+#[derive(Default)]
+struct HideSizeRecovery(std::sync::Mutex<Option<PathBuf>>);
+impl hubuum_storage_core::StorageObserver for HideSizeRecovery {
+    fn operation_finished(&self, observation: &hubuum_storage_core::StorageObservation) {
+        if observation.operation() == "observe_history_size"
+            && observation.result() == "ok"
+            && let Some(path) = self.0.lock().unwrap().take()
+        {
+            fs::rename(&path, path.with_extension("withheld")).unwrap();
+            fs::write(path, b"repository unavailable").unwrap();
+        }
+    }
+}
+
+#[rstest::rstest]
+#[case::protected(false)]
+#[case::publication_failure(true)]
+#[actix_web::test]
+async fn pressure_acknowledgement_requires_independent_recovery_protection(
+    #[case] unavailable: bool,
+) {
+    use hubuum_storage_core::{
+        HistoryExpiryTrigger, HistoryLogicalBytes, HistoryPolicyReference, HistoryRetentionSeconds,
+        StorageClassCreate,
+    };
+    let observer = Arc::new(HideSizeRecovery::default());
+    let storage = StorageHandle::from_registered_backend_with_observer(
+        hubuum_storage_memory::MemoryStorage::new(),
+        observer.clone(),
+    );
+    let fixture = Fixture::with_storage(storage.clone()).await;
+    let proposal = HistoryPolicyChange::new(
+        HistoryPolicyKey::new(
+            StorageIdentityHistoryKind::ClassSchema,
+            HistoryPolicyScope::Deployment,
+        )
+        .unwrap(),
+        HistoryPolicyRevision::new(0).unwrap(),
+        HistoryPolicyBinding::Expire {
+            trigger: HistoryExpiryTrigger::LogicalSize {
+                upper_logical_bytes: HistoryLogicalBytes::new(1).unwrap(),
+                lower_logical_bytes: HistoryLogicalBytes::new(0).unwrap(),
+            },
+            minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+        },
+        HistoryPolicyApplication::Prospective,
+    )
+    .unwrap();
+    let record = apply(
+        &fixture.context,
+        &fixture.admin,
+        &fixture.options,
+        HistoryPolicyApplyRequest::new(proposal, None),
+    )
+    .await
+    .unwrap();
+    let _ = storage
+        .class_store()
+        .create_class(
+            StorageClassCreate::builder(
+                "pressure checkpoint",
+                hubuum_domain::CollectionId::new(1).unwrap(),
+                "",
+            )
+            .build(),
+            &crate::events::EventContext::system(),
+        )
+        .await
+        .unwrap();
+    let directory = fixture.root.join("repository");
+    if unavailable {
+        *observer.0.lock().unwrap() = Some(directory.clone());
+    }
+    let result = observe_size(
+        &fixture.context,
+        &fixture.admin,
+        HistoryPolicyReference::from(&record),
+    )
+    .await;
+    if unavailable {
+        fs::remove_file(&directory).unwrap();
+        fs::rename(directory.with_extension("withheld"), &directory).unwrap();
+        assert!(matches!(result, Err(ApiError::ServiceUnavailable(_))));
+    } else {
+        assert!(result.is_ok());
+    }
+    let committed = storage.capture_history_lifecycle().await.unwrap();
+    assert_eq!(committed.control().authority().size_transitions().len(), 1);
+    let protected = session(&fixture.options).await.unwrap();
+    let authority = protected.checkpoint().history_lifecycle().unwrap();
+    assert_eq!(
+        authority.size_transitions().len(),
+        usize::from(!unavailable)
+    );
+    if !unavailable {
+        assert_eq!(
+            authority.size_transitions(),
+            committed.control().authority().size_transitions()
+        );
+    }
+}

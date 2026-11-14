@@ -108,6 +108,19 @@ impl HistoryLifecycleAuthority {
                 caused_by: record.review().map(|review| event_identity(review.reference().preview_id(), "lifecycle.policy.reviewed")), observed_at: None,
             }.into_event(json!({"policy_id": policy_id, "policy_revision": record.revision(), "review_id": record.review().map(|review| review.reference().preview_id()), "hold_generation": null, "deletion_generation": null}))?);
         }
+        for entry in &self.size_transitions()[previous.size_transitions().len()..] {
+            let policy_id = self
+                .policies()
+                .records()
+                .iter()
+                .find(|record| HistoryPolicyReference::from(*record) == *entry.pressure().policy())
+                .expect("validated pressure policy")
+                .operation();
+            events.push(HistoryAuditRecord {
+                operation: entry.operation(), name: if entry.pressure().reclaiming() { "lifecycle.policy.size_pressure_started" } else { "lifecycle.policy.size_pressure_ended" }, action: Action::Updated,
+                attribution: HistoryAuditAttribution::manual(entry.actor()), at: entry.observed_at(), caused_by: None, observed_at: Some(entry.observed_at()),
+            }.into_event(json!({"policy_id": policy_id, "policy_revision": entry.pressure().policy().revision(), "review_id": null, "hold_generation": null, "deletion_generation": null}))?);
+        }
         for entry in &self.hold_revisions()[previous.hold_revisions().len()..] {
             let (name, action, at, attribution, observed_at) = match entry.transition() {
                 HistoryHoldTransition::Created => (

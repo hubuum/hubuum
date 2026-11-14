@@ -78,6 +78,8 @@ transition returns its original event identity and emits nothing new.
 | --- | --- | --- | --- | --- |
 | `policy.created` | created | #513 | Policy identity, initial revision, scope and original time anchor committed | Eligible |
 | `policy.changed` | updated | #513 | Expected revision and prospective/retrospective effect committed | Eligible |
+| `policy.size_pressure_started` | updated | #513 | Complete logical-byte census exceeds the exact policy revision's upper threshold; pressure receipt and original observation clock commit atomically | Audit |
+| `policy.size_pressure_ended` | updated | #513 | Complete census reaches the active episode's lower target; terminal receipt and original observation clock commit atomically | Audit |
 | `policy.reviewed` | updated | #513/#518 | Review identity, fingerprint, coverage, expiry and authorizing revision committed; reserves nothing | Audit |
 | `hold.created` | created | #513 | Hold identity, scope and hold generation committed | Eligible |
 | `hold.released` | updated | #513 | Explicit release and new generation committed | Eligible |

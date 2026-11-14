@@ -125,11 +125,13 @@ impl TryFrom<HoldInput> for HistoryRetentionHold {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(try_from = "AuthorityInput")]
 pub struct HistoryLifecycleAuthority {
-    revision: HistoryAuthorityRevision,
+    pub(super) revision: HistoryAuthorityRevision,
     policies: HistoryPolicyCatalog,
     holds: Vec<HistoryHoldRevision>,
     #[serde(default, skip_serializing_if = "HistoryExpiryJournal::is_empty")]
     expiry: HistoryExpiryJournal,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) size_transitions: Vec<HistorySizeTransition>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -139,6 +141,8 @@ struct AuthorityInput {
     holds: Vec<HistoryHoldRevision>,
     #[serde(default)]
     expiry: HistoryExpiryJournal,
+    #[serde(default)]
+    size_transitions: Vec<HistorySizeTransition>,
 }
 /// Holds retain their creation/release evidence as an append-only sequence.
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -183,6 +187,7 @@ impl HistoryLifecycleAuthority {
             policies: HistoryPolicyCatalog::default(),
             holds: Vec::new(),
             expiry: HistoryExpiryJournal::default(),
+            size_transitions: Vec::new(),
         }
     }
     /// Exact pristine authority: zero revision, empty policy/review catalog,
@@ -299,6 +304,7 @@ impl HistoryLifecycleAuthority {
             policies: self.policies.clone(),
             holds: self.holds.clone(),
             expiry,
+            size_transitions: self.size_transitions.clone(),
         })
     }
     pub(super) fn merge_retained(&self, required: &Self) -> Result<Self, StorageValidationError> {
@@ -307,6 +313,9 @@ impl HistoryLifecycleAuthority {
             .records()
             .starts_with(required.policies.records())
             && self.holds.starts_with(&required.holds)
+            && self
+                .size_transitions
+                .starts_with(&required.size_transitions)
         {
             self.clone()
         } else if required
@@ -314,6 +323,9 @@ impl HistoryLifecycleAuthority {
             .records()
             .starts_with(self.policies.records())
             && required.holds.starts_with(&self.holds)
+            && required
+                .size_transitions
+                .starts_with(&self.size_transitions)
         {
             required.clone()
         } else {
@@ -321,7 +333,8 @@ impl HistoryLifecycleAuthority {
         };
         merged.expiry = self.expiry.merge(&required.expiry)?;
         merged.revision = HistoryAuthorityRevision::new(
-            (merged.policies.records().len() + merged.holds.len()) as u64
+            (merged.policies.records().len() + merged.holds.len() + merged.size_transitions.len())
+                as u64
                 + merged.expiry.revision().value(),
         )?;
         Ok(merged)
@@ -505,6 +518,9 @@ impl HistoryLifecycleAuthority {
                 .records()
                 .starts_with(previous.policies.records())
             && self.holds.starts_with(&previous.holds)
+            && self
+                .size_transitions
+                .starts_with(&previous.size_transitions)
             && self.expiry.covers(&previous.expiry)
     }
 }
@@ -518,7 +534,9 @@ impl TryFrom<AuthorityInput> for HistoryLifecycleAuthority {
     fn try_from(value: AuthorityInput) -> Result<Self, Self::Error> {
         if value.holds.len() > Self::MAX_HOLD_REVISIONS
             || value.revision.value()
-                != (value.policies.records().len() + value.holds.len()) as u64
+                != (value.policies.records().len()
+                    + value.holds.len()
+                    + value.size_transitions.len()) as u64
                     + value.expiry.revision().value()
         {
             return Err(invalid("Invalid history authority revision or capacity"));
@@ -610,12 +628,14 @@ impl TryFrom<AuthorityInput> for HistoryLifecycleAuthority {
             policies: value.policies,
             holds: value.holds,
             expiry: value.expiry,
+            size_transitions: value.size_transitions,
         };
         if authority.holds.len() + authority.pending_hold_completions() > Self::MAX_HOLD_REVISIONS {
             return Err(invalid(
                 "History authority must reserve terminal hold revisions",
             ));
         }
+        authority.validate_size_transitions()?;
         Ok(authority)
     }
 }

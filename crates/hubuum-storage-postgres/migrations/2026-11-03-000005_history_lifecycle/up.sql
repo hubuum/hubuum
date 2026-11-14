@@ -1,6 +1,38 @@
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 
+-- Compact UTF-8 JSON v1, with normalized plain decimal numbers. This is a
+-- logical record measure, not PostgreSQL heap/index or compressed storage size.
+CREATE FUNCTION hubuum_control.history_logical_bytes_v1(input_data JSONB, depth INTEGER)
+RETURNS BIGINT LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
+SET search_path=pg_catalog AS $function$
+DECLARE result BIGINT;
+BEGIN
+    IF depth NOT BETWEEN 0 AND 128 THEN
+        RAISE EXCEPTION 'Logical history JSON exceeds the v1 depth bound' USING ERRCODE='23514';
+    END IF;
+    CASE jsonb_typeof(input_data)
+        WHEN 'object' THEN
+            SELECT 2 + coalesce(sum(octet_length(convert_to(to_jsonb(entry.key)::TEXT,'UTF8'))
+                + 1 + hubuum_control.history_logical_bytes_v1(entry.value,depth+1)),0)
+                + greatest(count(*)-1,0) INTO result FROM jsonb_each(input_data) entry;
+        WHEN 'array' THEN
+            SELECT 2 + coalesce(sum(hubuum_control.history_logical_bytes_v1(entry.value,depth+1)),0)
+                + greatest(count(*)-1,0) INTO result FROM jsonb_array_elements(input_data) entry(value);
+        WHEN 'number' THEN
+            result:=octet_length(convert_to(trim_scale((input_data #>> '{}')::NUMERIC)::TEXT,'UTF8'));
+        ELSE result:=octet_length(convert_to(input_data::TEXT,'UTF8'));
+    END CASE;
+    RETURN result;
+END
+$function$;
+REVOKE ALL ON FUNCTION hubuum_control.history_logical_bytes_v1(JSONB,INTEGER) FROM PUBLIC;
+
+CREATE FUNCTION public.hubuum_history_logical_bytes_v1(input_data JSONB) RETURNS BIGINT
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE SECURITY DEFINER
+SET search_path=pg_catalog RETURN hubuum_control.history_logical_bytes_v1(input_data,0);
+REVOKE ALL ON FUNCTION public.hubuum_history_logical_bytes_v1(JSONB) FROM PUBLIC;
+
 -- No references into replaceable application tables. Original policy/hold
 -- identities and clocks survive logical replacement.
 -- Immutable read decisions exclude physical-removal receipts. Material remains
@@ -114,6 +146,13 @@ RETURNS SMALLINT LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_c
 DECLARE material JSONB; protocol SMALLINT;
 BEGIN
     IF write_mode IS TRUE THEN
+        -- Control commits recheck application authority. Pin it before history
+        -- UPDATE so concurrent registration cannot hold app and wait on history
+        -- while this transaction later waits on app. Exposure alone is a read.
+        PERFORM 1 FROM hubuum_control.deletion_authority WHERE id=1 FOR SHARE;
+        IF NOT FOUND THEN RAISE EXCEPTION 'Deletion authority is unavailable'; END IF;
+        PERFORM 1 FROM hubuum_control.application_control WHERE id=1 FOR SHARE;
+        IF NOT FOUND THEN RAISE EXCEPTION 'Application authority is unavailable'; END IF;
         PERFORM 1 FROM hubuum_control.history_lifecycle_control c WHERE id=1 FOR UPDATE;
     ELSE
         PERFORM 1 FROM hubuum_control.history_lifecycle_control c WHERE id=1 FOR SHARE;
@@ -542,7 +581,8 @@ REVOKE ALL ON FUNCTION public.hubuum_history_lifecycle_capture() FROM PUBLIC;
 CREATE FUNCTION public.hubuum_history_lifecycle_commit(expected JSONB, replacement JSONB, expected_incarnation UUID, expected_deletion BIGINT)
 RETURNS BOOLEAN LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog AS $function$
 DECLARE current_material JSONB; old_authority JSONB; new_authority JSONB;
-    previous_count INTEGER; next_count INTEGER; additions INTEGER; pending_completions INTEGER;
+    previous_count INTEGER; next_count INTEGER; additions INTEGER; pending_completions INTEGER; pending_size INTEGER;
+    old_size JSONB; new_size JSONB;
     new_policy JSONB; issued JSONB; old_preview JSONB; next_preview JSONB;
 BEGIN
     PERFORM id FROM hubuum_control.deletion_authority WHERE id=1
@@ -561,13 +601,23 @@ BEGIN
     IF jsonb_typeof(replacement) IS DISTINCT FROM 'object'
        OR replacement - ARRAY['authority','previews'] <> '{}'::jsonb
        OR jsonb_typeof(replacement->'authority') IS DISTINCT FROM 'object'
-       OR (replacement->'authority') - ARRAY['revision','policies','holds','expiry'] <> '{}'::jsonb
+       OR (replacement->'authority') - ARRAY['revision','policies','holds','expiry','size_transitions'] <> '{}'::jsonb
        OR jsonb_typeof(replacement #> '{authority,policies}') IS DISTINCT FROM 'array'
        OR jsonb_typeof(replacement #> '{authority,holds}') IS DISTINCT FROM 'array'
+       OR jsonb_typeof(coalesce(replacement #> '{authority,size_transitions}','[]')) IS DISTINCT FROM 'array'
        OR jsonb_typeof(replacement->'previews') IS DISTINCT FROM 'array'
        OR octet_length(replacement::text)>4194304 THEN RETURN FALSE; END IF;
     old_authority := current_material->'authority';
     new_authority := replacement->'authority';
+    old_size := coalesce(old_authority->'size_transitions','[]'::JSONB);
+    new_size := coalesce(new_authority->'size_transitions','[]'::JSONB);
+    IF jsonb_array_length(new_size)>1024 THEN RETURN FALSE; END IF;
+    SELECT count(*) INTO pending_size FROM (
+        SELECT DISTINCT ON (value #> '{pressure,policy}') value
+        FROM jsonb_array_elements(new_size) WITH ORDINALITY AS entries(value,ordinal)
+        ORDER BY value #> '{pressure,policy}',ordinal DESC
+    ) latest WHERE value #>> '{pressure,reclaiming}'='true';
+    IF jsonb_array_length(new_size)+pending_size>1024 THEN RETURN FALSE; END IF;
     IF jsonb_array_length(new_authority->'policies')>4096 OR jsonb_array_length(new_authority->'holds')>4096
        OR jsonb_array_length(replacement->'previews')>256 THEN RETURN FALSE; END IF;
     SELECT count(*) INTO pending_completions FROM (
@@ -576,15 +626,17 @@ BEGIN
         ORDER BY value #>> '{hold,identity}',ordinal DESC
     ) latest WHERE value->>'transition'='created';
     IF jsonb_array_length(new_authority->'holds')+pending_completions>4096
-       OR octet_length(replacement::text)+pending_completions*1024>4194304 THEN RETURN FALSE; END IF;
+       OR octet_length(replacement::text)+(pending_completions+pending_size)*1024>4194304 THEN RETURN FALSE; END IF;
     -- Prefix comparisons preserve order and exact immutable records. JSONB
     -- containment alone would incorrectly accept reordered or rewritten history.
     IF (SELECT coalesce(jsonb_agg(value ORDER BY ordinal),'[]') FROM jsonb_array_elements(new_authority->'policies') WITH ORDINALITY AS entries(value,ordinal)
           WHERE ordinal<=jsonb_array_length(old_authority->'policies')) <> old_authority->'policies'
        OR (SELECT coalesce(jsonb_agg(value ORDER BY ordinal),'[]') FROM jsonb_array_elements(new_authority->'holds') WITH ORDINALITY AS entries(value,ordinal)
-          WHERE ordinal<=jsonb_array_length(old_authority->'holds')) <> old_authority->'holds' THEN RETURN FALSE; END IF;
-    previous_count := jsonb_array_length(old_authority->'policies')+jsonb_array_length(old_authority->'holds');
-    next_count := jsonb_array_length(new_authority->'policies')+jsonb_array_length(new_authority->'holds');
+          WHERE ordinal<=jsonb_array_length(old_authority->'holds')) <> old_authority->'holds'
+       OR (SELECT coalesce(jsonb_agg(value ORDER BY ordinal),'[]') FROM jsonb_array_elements(new_size) WITH ORDINALITY AS entries(value,ordinal)
+          WHERE ordinal<=jsonb_array_length(old_size)) <> old_size THEN RETURN FALSE; END IF;
+    previous_count := jsonb_array_length(old_authority->'policies')+jsonb_array_length(old_authority->'holds')+jsonb_array_length(old_size);
+    next_count := jsonb_array_length(new_authority->'policies')+jsonb_array_length(new_authority->'holds')+jsonb_array_length(new_size);
     additions := next_count-previous_count;
     IF additions NOT IN (0,1) OR jsonb_typeof(new_authority->'revision') IS DISTINCT FROM 'string'
        OR new_authority->>'revision' !~ '^(0|[1-9][0-9]*)$'

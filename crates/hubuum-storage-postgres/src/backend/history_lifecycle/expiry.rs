@@ -501,7 +501,7 @@ struct SourcePosition {
     position: i64,
 }
 
-fn source(family: StorageIdentityHistoryKind) -> (&'static str, &'static str) {
+pub(super) fn source(family: StorageIdentityHistoryKind) -> (&'static str, &'static str) {
     use StorageIdentityHistoryKind as F;
     let table = match family {
         F::Collection => "collections_history",

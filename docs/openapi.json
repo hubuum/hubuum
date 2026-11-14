@@ -565,6 +565,73 @@
         ]
       }
     },
+    "/api/v1/admin/history-lifecycle/accounting": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Post Api V1 Admin History Lifecycle Accounting",
+        "description": "Auto-generated documentation for POST /api/v1/admin/history-lifecycle/accounting.",
+        "operationId": "postApiV1AdminHistoryLifecycleAccounting",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HistoryPolicyReference"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Complete bounded compact-JSON-v1 accounting and independently protected pressure transition; authorizes no deletion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistorySizeAccounting"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown revision or policy without a size trigger",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped human administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Incomplete accounting, exhausted budget or independent protection unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/admin/history-lifecycle/holds": {
       "post": {
         "tags": [
@@ -34600,6 +34667,24 @@
               "kind": {
                 "type": "string",
                 "enum": [
+                  "size_pressure"
+                ]
+              },
+              "record": {
+                "$ref": "#/components/schemas/HistorySizeTransition"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "record",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
                   "expiry_intent"
                 ]
               },
@@ -36285,6 +36370,66 @@
         },
         "additionalProperties": false
       },
+      "HistorySizeAccounting": {
+        "type": "object",
+        "description": "Complete bounded census for one immutable size-bearing policy. This proof is\nproduced only after the adapter exhausts the family source in one snapshot.",
+        "required": [
+          "format",
+          "fence",
+          "observed_at",
+          "scanned_rows",
+          "governed_rows",
+          "pressure"
+        ],
+        "properties": {
+          "fence": {
+            "$ref": "#/components/schemas/HistoryReviewFence"
+          },
+          "format": {
+            "type": "string"
+          },
+          "governed_rows": {
+            "type": "string"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "pressure": {
+            "$ref": "#/components/schemas/HistorySizePressure"
+          },
+          "scanned_rows": {
+            "type": "string"
+          },
+          "transition": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "HistorySizePressure": {
+        "type": "object",
+        "description": "A complete logical-byte measurement for one exact effective policy. The\nadapter must measure the full governed set; bounded preview samples cannot\nestablish this value. Hysteresis persists until the lower target is reached.",
+        "required": [
+          "policy",
+          "measured_bytes",
+          "reclaiming"
+        ],
+        "properties": {
+          "measured_bytes": {
+            "$ref": "#/components/schemas/HistoryLogicalBytes"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/HistoryPolicyReference"
+          },
+          "reclaiming": {
+            "type": "boolean"
+          }
+        }
+      },
       "HistorySizeRule": {
         "type": "object",
         "required": [
@@ -36299,6 +36444,38 @@
             "$ref": "#/components/schemas/HistoryLogicalBytes"
           }
         }
+      },
+      "HistorySizeTransition": {
+        "type": "object",
+        "description": "Immutable pressure start/end receipt; gauges between transitions are not\nretained as new authority. Exact policy revision and original clock survive\nrestore, with a terminal slot reserved for every active episode.",
+        "required": [
+          "operation",
+          "revision",
+          "actor",
+          "observed_at",
+          "pressure"
+        ],
+        "properties": {
+          "actor": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "operation": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "pressure": {
+            "$ref": "#/components/schemas/HistorySizePressure"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/HistoryAuthorityRevision"
+          }
+        },
+        "additionalProperties": false
       },
       "HubuumClass": {
         "type": "object",

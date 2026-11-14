@@ -29,6 +29,23 @@ settings during restore, and emit runtime-settings notifications. The
 [runtime settings integration contract](#runtime-settings-integration-in-the-019-train)
 applies with all ten exact dependencies pinned to `0.20.0`.
 
+**Breaking size-accounting capability:** implement
+`HistoryLifecycleStorage::observe_history_size` on every complete adapter.
+Capture authority, exhaust the complete retained family, resolve captured
+attribution, fold `HistorySizeCensus`, and retain any pressure transition with
+canonical audit in one serialized history control transaction. A truncated,
+ambiguous or over-budget scan cannot produce a complete gauge. Use the versioned
+`HistoryLogicalBytes::measure_json_v1` / `measure_fields_json_v1` format or its
+native equivalent, never compressed or physical table bytes. Persist immutable
+`HistorySizeTransition` lineage, including terminal capacity reserves, through
+checkpoint, merge and recovery; preserve exact clocks and actors. Keep pressure
+progress out of history read revisions because it changes no exclusion or
+permission. Return `HistorySizeObservation` for independent protection by the
+trusted service before acknowledgement. This capability authorizes no deletion.
+Upgrade matching adapters, binaries, lifecycle migration 000005 and grants
+together; older decoders cannot retain pressure evidence. See the
+[accounting contract](history_retention.md#scope-and-original-clocks).
+
 **Breaking expiry-admission capability:** implement
 `HistoryLifecycleStorage::admit_history_expiry` using native selection under the
 same authority transaction as intent and canonical-audit retention. Require the

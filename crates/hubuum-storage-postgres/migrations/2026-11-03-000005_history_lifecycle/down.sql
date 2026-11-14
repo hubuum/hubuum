@@ -658,6 +658,8 @@ DROP TABLE IF EXISTS hubuum_control.history_expiry_members;
 
 DROP FUNCTION public.hubuum_history_lifecycle_commit(JSONB,JSONB,UUID,BIGINT);
 DROP FUNCTION public.hubuum_history_lifecycle_capture();
+DROP FUNCTION public.hubuum_history_logical_bytes_v1(JSONB);
+DROP FUNCTION hubuum_control.history_logical_bytes_v1(JSONB,INTEGER);
 DROP FUNCTION IF EXISTS public.hubuum_history_producers_fenced(UUID,BIGINT);
 DROP FUNCTION public.hubuum_history_read_authority(UUID,UUID,BOOLEAN);
 DROP FUNCTION public.hubuum_history_publication_generation();

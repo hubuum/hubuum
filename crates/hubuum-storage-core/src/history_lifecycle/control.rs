@@ -42,7 +42,7 @@ impl HistoryPolicyApplyRequest {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(try_from = "ControlInput")]
 pub struct HistoryLifecycleControl {
-    authority: HistoryLifecycleAuthority,
+    pub(super) authority: HistoryLifecycleAuthority,
     previews: Vec<HistoryPolicyPreview>,
 }
 #[derive(Deserialize)]
@@ -78,7 +78,8 @@ impl HistoryLifecycleControl {
             .map_err(|_| invalid("Cannot encode history lifecycle control"))?;
         let completion_reserve = self.authority.pending_hold_completions()
             * Self::HOLD_COMPLETION_RESERVE_BYTES
-            + self.authority.expiry().completion_reserve_bytes();
+            + self.authority.expiry().completion_reserve_bytes()
+            + self.authority.pending_size_completions() * Self::HOLD_COMPLETION_RESERVE_BYTES;
         if bytes.len() + completion_reserve > Self::MAX_BYTES {
             return Err(invalid(
                 "History control capacity must preserve reserved hold completion space",
@@ -261,7 +262,7 @@ impl HistoryLifecycleControl {
         next.authority = self.authority.release_hold(identity, actor, now)?;
         self.change(next, fence)
     }
-    fn change(
+    pub(super) fn change(
         &self,
         next: Self,
         fence: HistoryReviewFence,
@@ -444,6 +445,13 @@ impl HistoryLifecycleSnapshot {
 /// application; previews alone require no recovery checkpoint.
 #[async_trait]
 pub trait HistoryLifecycleStorage: Send + Sync {
+    /// Complete accounting and pressure transition in one serialized control
+    /// transaction. Errors/partial scans commit nothing; this authorizes no deletion.
+    async fn observe_history_size(
+        &self,
+        policy: HistoryPolicyReference,
+        actor: PrincipalIdentity,
+    ) -> Result<HistorySizeObservation, StorageError>;
     /// Atomic parent/child archive admission. No usable permit escapes before
     /// commit; rollback issues no work and preserves capacity exactly.
     async fn admit_history_archive_execution(
@@ -758,6 +766,7 @@ impl HistoryLifecycleControl {
 pub enum HistoryLifecycleOperationEvidence {
     Policy(HistoryPolicyRecord),
     Hold(HistoryHoldRevision),
+    SizePressure(HistorySizeTransition),
     ExpiryIntent(HistoryExpiryIntent),
     Review {
         proposal: HistoryPolicyChange,
@@ -782,6 +791,16 @@ impl HistoryLifecycleControl {
             .find(|record| record.operation() == identity)
         {
             return Some(HistoryLifecycleOperationEvidence::Hold(record.clone()));
+        }
+        if let Some(record) = self
+            .authority
+            .size_transitions()
+            .iter()
+            .find(|record| record.operation() == identity)
+        {
+            return Some(HistoryLifecycleOperationEvidence::SizePressure(
+                record.clone(),
+            ));
         }
         if let Some(intent) = self.authority.expiry().intent(identity) {
             return Some(HistoryLifecycleOperationEvidence::ExpiryIntent(

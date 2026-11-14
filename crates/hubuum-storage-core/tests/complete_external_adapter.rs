@@ -9,7 +9,8 @@
 use hubuum_domain::PrincipalIdentity;
 use hubuum_storage_core::artifacts::TaskArtifactCleanup;
 use hubuum_storage_core::{
-    HistoryExpiryTaskAdmission, HistoryExpiryTaskSubmission, StorageTask, StorageTaskClaimRequest,
+    HistoryExpiryTaskAdmission, HistoryExpiryTaskSubmission, HistoryPolicyReference,
+    HistorySizeObservation, StorageTask, StorageTaskClaimRequest,
 };
 
 use hubuum_storage_core::{
@@ -35,6 +36,13 @@ struct CompleteExternalAdapter;
 
 #[async_trait]
 impl HistoryLifecycleStorage for CompleteExternalAdapter {
+    async fn observe_history_size(
+        &self,
+        policy: HistoryPolicyReference,
+        actor: PrincipalIdentity,
+    ) -> Result<HistorySizeObservation, StorageError> {
+        fixture_result()
+    }
     async fn reapply_history_expiry(
         &self,
         request: HistoryExpiryReapplication,

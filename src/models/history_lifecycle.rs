@@ -11,8 +11,8 @@ use hubuum_storage_core::{
     HistoryPolicyKey, HistoryPolicyRecord, HistoryPolicyReference, HistoryPolicyReviewEvidence,
     HistoryPolicyReviewReference, HistoryPolicyRevision, HistoryPolicyScope,
     HistoryPreviewCoverage, HistoryRetentionAnchor, HistoryReviewFence, HistoryScopeAttribution,
-    LogicalIdentityStorage, StorageIdentityHistoryKind, StorageIdentityResourceKind,
-    StorageIdentityTarget, StorageRecordIdentity,
+    HistorySizeTransition, LogicalIdentityStorage, StorageIdentityHistoryKind,
+    StorageIdentityResourceKind, StorageIdentityTarget, StorageRecordIdentity,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -258,6 +258,7 @@ where
 pub enum HistoryLifecycleOperationResponse {
     Policy(HistoryPolicyRecord),
     Hold(HistoryHoldRevision),
+    SizePressure(HistorySizeTransition),
     ExpiryIntent(HistoryExpiryOperationRecord),
     Review {
         proposal: HistoryPolicyChange,
@@ -306,6 +307,7 @@ impl TryFrom<HistoryLifecycleOperationEvidence> for HistoryLifecycleOperationRes
         Ok(match value {
             HistoryLifecycleOperationEvidence::Policy(record) => Self::Policy(record),
             HistoryLifecycleOperationEvidence::Hold(record) => Self::Hold(record),
+            HistoryLifecycleOperationEvidence::SizePressure(record) => Self::SizePressure(record),
             HistoryLifecycleOperationEvidence::Review { proposal, review } => {
                 Self::Review { proposal, review }
             }

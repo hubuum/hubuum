@@ -260,6 +260,8 @@ fn unknown_membership_expiry_is_not_indefinite_protection(
 
 #[rstest]
 #[case("lifecycle.archive.verified")]
+#[case("lifecycle.policy.size_pressure_started")]
+#[case("lifecycle.policy.size_pressure_ended")]
 #[case("lifecycle.delivery_gap.acknowledged")]
 fn audit_only_transition_cannot_be_delivered_as_a_sink_view(#[case] name: &str) {
     let mut value = example("published_sink");
@@ -438,4 +440,113 @@ fn proposal_does_not_silently_activate_lifecycle_delivery() {
     .unwrap_err();
     assert_eq!(error.kind(), StorageErrorKind::InvalidInput);
     assert!(error.to_string().contains("audit-only"));
+}
+
+#[rstest]
+#[case(true)]
+#[case(false)]
+fn committed_pressure_audit_satisfies_the_closed_contract(#[case] active: bool) {
+    use chrono::Utc;
+    use hubuum_domain::{PrincipalIdentity, ResourceIdentity, VersionIdentity};
+    use hubuum_storage_core::{
+        HistoryDeletionRevision, HistoryExpiryCandidate, HistoryExpiryTrigger,
+        HistoryLifecycleControl, HistoryLifecycleSnapshot, HistoryLogicalBytes,
+        HistoryPolicyApplication, HistoryPolicyApplyRequest, HistoryPolicyBinding,
+        HistoryPolicyChange, HistoryPolicyKey, HistoryPolicyReference, HistoryPolicyRevision,
+        HistoryPolicyScope, HistoryRetentionSeconds, HistoryScopeAttribution, HistorySizeCensus,
+        StorageIdentityHistoryKind, StorageRecordIdentity,
+    };
+    use uuid::Uuid;
+    let actor = PrincipalIdentity::generate();
+    let initial = HistoryLifecycleSnapshot::new(
+        HistoryLifecycleControl::empty(),
+        Uuid::new_v4(),
+        HistoryDeletionRevision::new(0).unwrap(),
+        Utc::now(),
+    )
+    .unwrap();
+    let proposal = HistoryPolicyChange::new(
+        HistoryPolicyKey::new(
+            StorageIdentityHistoryKind::Object,
+            HistoryPolicyScope::Deployment,
+        )
+        .unwrap(),
+        HistoryPolicyRevision::new(0).unwrap(),
+        HistoryPolicyBinding::Expire {
+            trigger: HistoryExpiryTrigger::LogicalSize {
+                upper_logical_bytes: HistoryLogicalBytes::new(100).unwrap(),
+                lower_logical_bytes: HistoryLogicalBytes::new(50).unwrap(),
+            },
+            minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+        },
+        HistoryPolicyApplication::Prospective,
+    )
+    .unwrap();
+    let applied = initial
+        .control()
+        .apply(
+            HistoryPolicyApplyRequest::new(proposal, None),
+            actor,
+            initial.fence(),
+            initial.observed_at(),
+        )
+        .unwrap();
+    let mut snapshot = HistoryLifecycleSnapshot::new(
+        applied.next().clone(),
+        initial.fence().incarnation(),
+        initial.fence().deletion_revision(),
+        Utc::now(),
+    )
+    .unwrap();
+    let policy =
+        HistoryPolicyReference::from(&snapshot.control().authority().policies().records()[0]);
+    for bytes in if active { vec![101] } else { vec![101, 50] } {
+        let mut census = HistorySizeCensus::new(snapshot.clone(), &policy).unwrap();
+        let row = HistoryExpiryCandidate::new(
+            StorageIdentityHistoryKind::Object,
+            StorageRecordIdentity::new(ResourceIdentity::generate(), VersionIdentity::generate()),
+            None,
+            vec![HistoryScopeAttribution::new(
+                ResourceIdentity::generate(),
+                Some(ResourceIdentity::generate()),
+            )],
+            false,
+        )
+        .unwrap();
+        census
+            .observe(Some(&row), HistoryLogicalBytes::new(bytes).unwrap(), 1)
+            .unwrap();
+        let mut accounting = census.finish().unwrap();
+        let change = snapshot
+            .control()
+            .observe_size(&mut accounting, actor)
+            .unwrap();
+        snapshot = HistoryLifecycleSnapshot::new(
+            change.next().clone(),
+            snapshot.fence().incarnation(),
+            snapshot.fence().deletion_revision(),
+            Utc::now(),
+        )
+        .unwrap();
+    }
+    let events = snapshot
+        .control()
+        .authority()
+        .audit_events_since(applied.next().authority())
+        .unwrap();
+    let event = events.last().unwrap();
+    let mut envelope = example("system_policy_audit");
+    envelope["metadata"] = event.document().metadata().clone();
+    envelope["action"] = json!(event.action());
+    envelope["actor_kind"] = json!(event.actor_kind());
+    envelope["provenance"]["actor"]["kind"] = json!(event.actor_kind());
+    validate_json_value(&schema("audit"), &envelope).unwrap();
+    assert_eq!(
+        envelope["metadata"]["lifecycle"]["name"],
+        if active {
+            "lifecycle.policy.size_pressure_started"
+        } else {
+            "lifecycle.policy.size_pressure_ended"
+        }
+    );
 }

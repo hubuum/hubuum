@@ -4,15 +4,32 @@ use hubuum_storage_core::{
     HistoryExpiryReapplication, HistoryExpiryTaskAdmission, HistoryExpiryTaskCheckpoint,
     HistoryExpiryTaskRequest, HistoryExpiryTaskSubmission, HistoryLifecycleControlChange,
     HistoryLifecycleRecovery, HistoryLifecycleScan, HistoryLifecycleScanResult,
-    HistoryLifecycleSnapshot, HistoryLifecycleStorage, HistoryProducerOwner,
-    HistoryProducerSettlement, HistoryPublicationKind, HistoryPublicationOwner,
-    HistoryPublicationSettlement, HistoryReadContext, RuntimeIsolationDomain, RuntimeRegistration,
-    StorageTask,
+    HistoryLifecycleSnapshot, HistoryLifecycleStorage, HistoryPolicyReference,
+    HistoryProducerOwner, HistoryProducerSettlement, HistoryPublicationKind,
+    HistoryPublicationOwner, HistoryPublicationSettlement, HistoryReadContext,
+    HistorySizeObservation, RuntimeIsolationDomain, RuntimeRegistration, StorageTask,
 };
 use uuid::Uuid;
 
 #[async_trait]
 impl HistoryLifecycleStorage for StorageHandle {
+    async fn observe_history_size(
+        &self,
+        policy: HistoryPolicyReference,
+        actor: hubuum_domain::PrincipalIdentity,
+    ) -> Result<HistorySizeObservation, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::History,
+            "observe_history_size",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .observe_history_size(policy, actor)
+                    .await)
+            },
+        )
+        .await
+    }
     async fn reapply_history_expiry(
         &self,
         request: HistoryExpiryReapplication,

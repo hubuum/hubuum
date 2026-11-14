@@ -9,6 +9,8 @@ use crate::{StorageIdentityHistoryKind, StorageValidationError};
 
 mod authorization;
 pub use authorization::*;
+mod accounting;
+pub use accounting::*;
 mod online_journal;
 pub use online_journal::*;
 mod online_intent;
@@ -288,12 +290,13 @@ impl HistoryPolicyRecord {
         self.principal
     }
     pub fn governs(&self, anchor: HistoryRetentionAnchor) -> bool {
-        anchor.at() > self.applied_at
+        self.governs_at(anchor.at())
+    }
+    fn governs_at(&self, at: DateTime<Utc>) -> bool {
+        at > self.applied_at
             || match self.proposal.application() {
                 HistoryPolicyApplication::Prospective => false,
-                HistoryPolicyApplication::Retrospective { closed_through } => {
-                    anchor.at() <= *closed_through
-                }
+                HistoryPolicyApplication::Retrospective { closed_through } => at <= *closed_through,
             }
     }
 }
