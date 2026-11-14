@@ -14,8 +14,7 @@ use hubuum_secrets::SecretValue;
 use openidconnect::{
     AccessTokenHash, AdditionalClaims, AuthorizationCode, ClientId, ClientSecret, CsrfToken,
     EndpointMaybeSet, EndpointNotSet, EndpointSet, IdToken, Nonce, NonceVerifier,
-    OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken, Scope,
-    TokenResponse,
+    OAuth2TokenResponse, PkceCodeVerifier, RedirectUrl, RefreshToken, Scope, TokenResponse,
     core::{
         CoreAuthenticationFlow, CoreClient, CoreGenderClaim, CoreJsonWebKeySet,
         CoreJweContentEncryptionAlgorithm, CoreJwsSigningAlgorithm, CoreProviderMetadata,
@@ -26,20 +25,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
-mod transport;
-use transport::Transport;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum OidcError {
-    #[error("OIDC provider configuration is unsupported")]
-    Configuration,
-    #[error("OIDC provider is temporarily unavailable")]
-    Unavailable,
-    #[error("OIDC response failed validation")]
-    InvalidResponse,
-    #[error("OIDC authentication was denied or revoked")]
-    Denied,
-}
+pub use hubuum_auth_core::protocol::ProtocolError as OidcError;
+use hubuum_auth_core::protocol::{CodeState, Transport};
 
 type Client = CoreClient<
     EndpointSet,
@@ -96,9 +83,7 @@ impl OidcAdapter {
             secret,
             callback: RedirectUrl::new(callback.to_owned())
                 .map_err(|_| OidcError::Configuration)?,
-            transport: Transport {
-                allow_private_targets,
-            },
+            transport: Transport::new(allow_private_targets),
         })
     }
 
@@ -131,7 +116,7 @@ impl OidcAdapter {
                 hubuum_outbound_http::screen_host(
                     parts.host(),
                     parts.port(),
-                    self.transport.allow_private_targets,
+                    self.transport.allow_private_targets(),
                     false,
                 )
                 .await
@@ -186,18 +171,14 @@ impl OidcAdapter {
         fresh: bool,
     ) -> Result<Authorization, OidcError> {
         let discovered = self.discover().await?;
-        let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
+        let code_state = CodeState::new(interaction);
+        let challenge = code_state.challenge();
+        let state = code_state.state().to_owned();
         let mut request = discovered
             .client
             .authorize_url(
                 CoreAuthenticationFlow::AuthorizationCode,
-                move || {
-                    CsrfToken::new(format!(
-                        "{}.{}",
-                        interaction.value(),
-                        CsrfToken::new_random().secret()
-                    ))
-                },
+                move || CsrfToken::new(state),
                 Nonce::new_random,
             )
             .set_pkce_challenge(challenge)
@@ -213,13 +194,12 @@ impl OidcAdapter {
         if fresh {
             request = request.set_max_age(Duration::ZERO);
         }
-        let (url, state, nonce) = request.url();
+        let (url, _state, nonce) = request.url();
         Ok(Authorization {
             url: url.to_string(),
             pending: PendingLogin {
-                state: state.secret().to_owned(),
+                code_state,
                 nonce: nonce.secret().to_owned(),
-                verifier: verifier.secret().to_owned(),
                 issuer: self.definition.issuer().as_str().to_owned(),
                 client_id: self.definition.client_id().to_owned(),
                 callback: self.callback.as_str().to_owned(),
@@ -252,7 +232,9 @@ impl OidcAdapter {
             .client
             .exchange_code(AuthorizationCode::new(accepted.code))
             .map_err(|_| OidcError::Configuration)?
-            .set_pkce_verifier(PkceCodeVerifier::new(accepted.pending.verifier))
+            .set_pkce_verifier(PkceCodeVerifier::new(
+                accepted.pending.code_state.verifier().to_owned(),
+            ))
             .request_async(&|request| self.transport.send(request))
             .await
             .map_err(token_error)?;
@@ -494,11 +476,10 @@ impl Authorization {
 /// Serialize only into the application's encrypted, interaction-bound storage.
 /// The application also binds browser cookie, revision, deadline and single use.
 #[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PendingLogin {
-    state: String,
+    #[serde(flatten)]
+    code_state: CodeState,
     nonce: String,
-    verifier: String,
     issuer: String,
     client_id: String,
     callback: String,
@@ -506,7 +487,7 @@ pub struct PendingLogin {
 }
 impl PendingLogin {
     pub fn state(&self) -> &str {
-        &self.state
+        self.code_state.state()
     }
     pub fn protectable(&self) -> Result<SecretValue, OidcError> {
         serialize_secret(self)
@@ -521,21 +502,15 @@ impl PendingLogin {
         code: Option<&str>,
         error: Option<&str>,
     ) -> Result<AcceptedCallback, OidcError> {
-        if CsrfToken::new(self.state.clone()) != CsrfToken::new(state.to_owned())
-            || issuer.is_some_and(|issuer| issuer != self.issuer)
+        let code = self.code_state.accept(state, code, error)?;
+        if issuer.is_some_and(|issuer| issuer != self.issuer)
             || self.response_issuer && issuer.is_none()
-            || error.is_some()
         {
             return Err(OidcError::Denied);
         }
-        let code = code
-            .filter(|code| {
-                !code.is_empty() && code.len() <= 4096 && !code.chars().any(char::is_control)
-            })
-            .ok_or(OidcError::Denied)?;
         Ok(AcceptedCallback {
             pending: self,
-            code: code.to_owned(),
+            code,
         })
     }
 }

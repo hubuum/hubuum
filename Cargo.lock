@@ -2338,6 +2338,7 @@ dependencies = [
  "hmac 0.13.0",
  "hubuum-auth-core",
  "hubuum-auth-ldap",
+ "hubuum-auth-oauth",
  "hubuum-auth-oidc",
  "hubuum-budget",
  "hubuum-computed-fields",
@@ -2399,9 +2400,13 @@ version = "0.0.1"
 dependencies = [
  "hmac 0.13.0",
  "hubuum-domain",
+ "hubuum-outbound-http",
+ "oauth2",
  "serde",
+ "serde_json",
  "sha2 0.11.1",
  "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
@@ -2422,6 +2427,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hubuum-auth-oauth"
+version = "0.0.1"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "hubuum-auth-core",
+ "hubuum-domain",
+ "hubuum-secrets",
+ "oauth2",
+ "rstest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tokio",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "hubuum-auth-oidc"
 version = "0.0.1"
 dependencies = [
@@ -2434,7 +2458,6 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
- "thiserror 2.0.21",
  "tokio",
  "url",
  "uuid",

@@ -322,6 +322,7 @@ pub enum PasswordProviderKind {
     Local,
     Ldap,
     Oidc,
+    Oauth,
 }
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]

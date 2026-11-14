@@ -1,4 +1,5 @@
 #![allow(async_fn_in_trait)]
+pub mod protocol;
 
 mod credential;
 pub use credential::{BearerCredential, CredentialError, VersionedCredential, keyed_digest};

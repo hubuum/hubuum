@@ -1340,6 +1340,15 @@ jobs:
           name: keycloak-qualification
           path: target/keycloak-evidence
           if-no-files-found: ignore
+      - name: Qualify synthetic OAuth against the production image
+        run: python3 -I -S tests/python/integration/oauth.py --image hubuum-server:ci --evidence target/oauth-evidence/synthetic
+      - name: Retain OAuth qualification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oauth-qualification
+          path: target/oauth-evidence
+          if-no-files-found: ignore
       - name: Export static release binaries
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:

@@ -1758,7 +1758,7 @@
         ],
         "responses": {
           "303": {
-            "description": "OIDC identity verified; explicit Hubuum approval is required"
+            "description": "Provider identity verified; explicit Hubuum approval is required"
           },
           "401": {
             "description": "Invalid, expired or replayed callback"
@@ -1772,7 +1772,7 @@
           "auth"
         ],
         "summary": "Begin an authentication interaction.",
-        "description": "Login may begin anonymously. Credential approval requires an unscoped human\nbearer; provider verification additionally requires a local recovery administrator.\nThe complete JSON request must fit 64 KiB. Larger credential imports use the\ndirect credential-approval API. Hosted provider verification completes the\nfinal pending LDAP identity check; verify other providers through the direct\ncandidate verification endpoint first.",
+        "description": "Login may begin anonymously. Credential approval requires an unscoped human\nbearer; provider verification additionally requires a local recovery administrator.\nThe complete JSON request must fit 64 KiB. Larger credential imports use the\ndirect credential-approval API. Hosted provider verification completes the\npending LDAP, OIDC or OAuth identity check after the candidate's connection\nand trust checks pass. OAuth does not support fresh credential approval.",
         "operationId": "postApiV1AuthInteractions",
         "requestBody": {
           "content": {
@@ -36798,6 +36798,15 @@
           "profile_endpoint": {
             "$ref": "#/components/schemas/AuthenticationEndpoint"
           },
+          "profile_headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
           "scopes": {
             "type": "array",
             "items": {
@@ -37370,7 +37379,8 @@
         "enum": [
           "local",
           "ldap",
-          "oidc"
+          "oidc",
+          "oauth"
         ]
       },
       "PatchOperation": {

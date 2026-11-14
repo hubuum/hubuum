@@ -1,6 +1,9 @@
-//! Server-owned OIDC redirects and single-use, cookie-bound callbacks.
+//! Shared server-owned OIDC/OAuth redirects and single-use, cookie-bound callbacks.
 use hubuum_auth_core::ExternalAuthenticationContext;
-use hubuum_auth_oidc::{OidcAdapter, OidcError, PendingLogin};
+use hubuum_auth_oidc::{OidcAdapter, OidcError};
+
+mod adapters;
+use adapters::{BrowserAdapter, PendingLogin, RetainedCredentials};
 use hubuum_domain::PrincipalId;
 use hubuum_domain::{
     IdentityScopeName, InteractionBinding, InteractionDigest, InteractionId, InteractionPurpose,
@@ -36,18 +39,14 @@ pub(crate) fn error(error: OidcError) -> ApiError {
 pub(crate) async fn adapter(
     context: &AppContext,
     provider: &StorageAuthenticationProvider,
-) -> Result<OidcAdapter, ApiError> {
+) -> Result<BrowserAdapter, ApiError> {
     super::browser::settings(context)?;
     configured_adapter(provider).await
 }
 
 async fn configured_adapter(
     provider: &StorageAuthenticationProvider,
-) -> Result<OidcAdapter, ApiError> {
-    let Some(StorageBrowserProviderDefinition::Oidc(definition)) = provider.browser_definition()
-    else {
-        return Err(InteractionError::Unsupported.into());
-    };
+) -> Result<BrowserAdapter, ApiError> {
     let secret = crate::services::security_candidates::providers::browser_secret(provider)
         .await?
         .ok_or(InteractionError::ProviderUnavailable)?;
@@ -56,12 +55,18 @@ async fn configured_adapter(
         crate::config::get_config()?.auth_browser.origin()?,
         provider.id().ok_or(InteractionError::Invalid)?
     );
-    OidcAdapter::new(
-        definition.clone(),
-        secret,
-        &callback,
-        crate::config::get_config()?.auth_runtime_allow_private_targets,
-    )
+    let private = crate::config::get_config()?.auth_runtime_allow_private_targets;
+    match provider.browser_definition() {
+        Some(StorageBrowserProviderDefinition::Oidc(definition)) => {
+            OidcAdapter::new(definition.clone(), secret, &callback, private)
+                .map(BrowserAdapter::Oidc)
+        }
+        Some(StorageBrowserProviderDefinition::Oauth(definition)) => {
+            hubuum_auth_oauth::OAuthAdapter::new(definition.clone(), secret, &callback, private)
+                .map(BrowserAdapter::OAuth)
+        }
+        None => return Err(InteractionError::Unsupported.into()),
+    }
     .map_err(error)
 }
 
@@ -199,7 +204,9 @@ pub async fn available(
     let provider = provider(context, binding).await?;
     Ok(matches!(
         provider.browser_definition(),
-        Some(StorageBrowserProviderDefinition::Oidc(_))
+        Some(
+            StorageBrowserProviderDefinition::Oidc(_) | StorageBrowserProviderDefinition::Oauth(_)
+        )
     ))
 }
 
@@ -217,8 +224,7 @@ pub async fn start(
             view.binding().authority().purpose() == InteractionPurpose::CredentialApproval,
         )
         .await
-        .map_err(error)?
-        .into_parts();
+        .map_err(error)?;
     let protocol = StorageProtectedAuthenticationState::new(
         state_digest(pending.state()),
         protect(
@@ -298,16 +304,25 @@ pub async fn callback(
         let accepted = pending
             .accept(input.state, input.issuer, input.code, input.error)
             .map_err(error)?;
-        let Some(StorageBrowserProviderDefinition::Oidc(definition)) =
-            selected.browser_definition()
-        else {
-            return Err(InteractionError::Unsupported.into());
-        };
-        let provider_context = ExternalAuthenticationContext::oidc(
-            claim.claim().binding().clone(),
-            IdentityScopeName::new(selected.name()).map_err(|_| InteractionError::Invalid)?,
-            definition,
-        )
+        let scope =
+            IdentityScopeName::new(selected.name()).map_err(|_| InteractionError::Invalid)?;
+        let provider_context = match selected.browser_definition() {
+            Some(StorageBrowserProviderDefinition::Oidc(definition)) => {
+                ExternalAuthenticationContext::oidc(
+                    claim.claim().binding().clone(),
+                    scope,
+                    definition,
+                )
+            }
+            Some(StorageBrowserProviderDefinition::Oauth(definition)) => {
+                ExternalAuthenticationContext::oauth(
+                    claim.claim().binding().clone(),
+                    scope,
+                    definition,
+                )
+            }
+            None => return Err(InteractionError::Unsupported.into()),
+        }
         .map_err(|_| InteractionError::Invalid)?;
         let authentication = adapter(context, &selected)
             .await?
@@ -315,7 +330,7 @@ pub async fn callback(
             .await
             .map_err(error)?;
         if view.binding().authority().purpose() == InteractionPurpose::ProviderVerification {
-            let verified = crate::services::security_candidates::verify_oidc_interaction(
+            let verified = crate::services::security_candidates::verify_browser_interaction(
                 context,
                 authentication.proof(),
             )
@@ -340,7 +355,7 @@ pub async fn callback(
                 )
             } else {
                 let (proof, credentials) = authentication.into_parts();
-                if definition.retain_refresh_tokens() {
+                if retain_credentials(&selected) {
                     let credentials = credentials.ok_or(InteractionError::Unsupported)?;
                     let ciphertext = protect(
                         proof.binding(),
@@ -387,16 +402,11 @@ pub(crate) async fn renew(
     principal: PrincipalId,
     provider: &StorageAuthenticationProvider,
 ) -> Result<bool, ApiError> {
-    use hubuum_auth_oidc::RetainedCredentials;
     use hubuum_storage_core::{
         ExternalIdentityStorage, StorageEncryptedUpstreamCredential, StorageExternalSyncFailure,
         StorageUpstreamClaimOutcome, StorageUpstreamRenewal,
     };
-    let Some(StorageBrowserProviderDefinition::Oidc(definition)) = provider.browser_definition()
-    else {
-        return Ok(false);
-    };
-    if !definition.retain_refresh_tokens() {
+    if !retain_credentials(provider) {
         return Ok(false);
     }
     let claim = match storage.claim_upstream_credential(principal).await? {
@@ -413,11 +423,17 @@ pub(crate) async fn renew(
     let outcome = tokio::time::timeout(std::time::Duration::from_secs(25), async {
         let original = claim.session();
         let purpose = format!("upstream:{}", original.subject());
-        let provider_context = ExternalAuthenticationContext::oidc(
-            original.binding().clone(),
-            IdentityScopeName::new(original.scope()).map_err(|_| InteractionError::Invalid)?,
-            definition,
-        )
+        let scope =
+            IdentityScopeName::new(original.scope()).map_err(|_| InteractionError::Invalid)?;
+        let provider_context = match provider.browser_definition() {
+            Some(StorageBrowserProviderDefinition::Oidc(definition)) => {
+                ExternalAuthenticationContext::oidc(original.binding().clone(), scope, definition)
+            }
+            Some(StorageBrowserProviderDefinition::Oauth(definition)) => {
+                ExternalAuthenticationContext::oauth(original.binding().clone(), scope, definition)
+            }
+            None => return Err(InteractionError::Unsupported.into()),
+        }
         .map_err(|_| InteractionError::Invalid)?;
         let credentials = RetainedCredentials::restore(
             &unprotect(
@@ -509,7 +525,7 @@ pub(crate) async fn session_revocations(
         Ok(records) => records,
         Err(_) => {
             tracing::warn!(
-                message = "OIDC revocation snapshot unavailable; continuing local revocation"
+                message = "Upstream revocation snapshot unavailable; continuing local revocation"
             );
             Vec::new()
         }
@@ -540,7 +556,7 @@ fn queue_revocations(records: Vec<StorageUpstreamSession>, selection: Revocation
     for record in records {
         let Ok(permit) = REVOCATIONS.try_acquire() else {
             tracing::warn!(
-                message = "OIDC revocation capacity reached; local logout remains complete"
+                message = "Upstream revocation capacity reached; local logout remains complete"
             );
             continue;
         };
@@ -557,7 +573,7 @@ fn queue_revocations(records: Vec<StorageUpstreamSession>, selection: Revocation
                     }
                     RevocationProvider::Previous(provider) => provider,
                 };
-                let credentials = hubuum_auth_oidc::RetainedCredentials::restore(
+                let credentials = RetainedCredentials::restore(
                     &unprotect(
                         record.binding(),
                         &format!("upstream:{}", record.subject()),
@@ -576,9 +592,19 @@ fn queue_revocations(records: Vec<StorageUpstreamSession>, selection: Revocation
             .await;
             if !matches!(result, Ok(Ok(()))) {
                 tracing::warn!(
-                    message = "OIDC revocation unavailable; local logout remains complete"
+                    message = "Upstream revocation unavailable; local logout remains complete"
                 );
             }
         });
+    }
+}
+
+fn retain_credentials(provider: &StorageAuthenticationProvider) -> bool {
+    match provider.browser_definition() {
+        Some(StorageBrowserProviderDefinition::Oidc(definition)) => {
+            definition.retain_refresh_tokens()
+        }
+        Some(StorageBrowserProviderDefinition::Oauth(_)) => true,
+        None => false,
     }
 }

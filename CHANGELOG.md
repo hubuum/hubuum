@@ -9,6 +9,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Server-owned OAuth authorization-code login with S256 PKCE, a pinned GitHub.com
+  OAuth App profile and bounded authenticated-user JSON profiles. Candidate
+  previews, CLI polling and BFF login share cookie-bound one-use callbacks and
+  local authorization. Encrypted access tokens support bounded eligibility
+  checks; GitHub logout attempts token revocation after local logout commits.
+  OAuth fresh credential approval explicitly returns `capability_unsupported`.
+  See [OAuth setup and qualification](docs/authentication/oauth.md) for provider
+  limitations, app registration and authorized live qualification.
+
 - OIDC authorization-code login with S256 PKCE, verified discovery/JWKS,
   cookie-bound single-use callbacks, optional encrypted refresh credentials,
   non-activating candidate previews and fresh credential approval. See the
@@ -26,8 +35,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   approvals, immutable provider UUID/scope bindings, bounded runtime Treetop
   profiles and explicit offline `hubuum-admin --recover-security` recovery.
   LDAP test sign-ins return bounded identity/group previews without provisioning
-  or session effects. OAuth definitions can be staged disabled; their browser
-  activation remains gated on the later OAuth implementation.
+  or session effects. OAuth definitions support non-activating browser verification before approved
+  activation.
 
 - Administrators can change `pagination.max_page_limit` together with
   `default_page_limit` through runtime settings, without restarting. Explicit

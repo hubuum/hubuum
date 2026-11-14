@@ -299,7 +299,11 @@ pub(crate) async fn create(
                         for endpoint in providers::browser_endpoints(&provider)? {
                             providers::screen_endpoint(&endpoint).await?;
                         }
-                        if provider.kind() == StorageAuthenticationProviderKind::Oidc {
+                        if matches!(
+                            provider.kind(),
+                            StorageAuthenticationProviderKind::Oidc
+                                | StorageAuthenticationProviderKind::Oauth
+                        ) {
                             crate::services::auth_interactions::oidc::adapter(context, &provider)
                                 .await?
                                 .check_configuration()
@@ -310,11 +314,7 @@ pub(crate) async fn create(
                             CheckKind::Identity,
                             CheckStatus::NotRun,
                             Some(id),
-                            if provider.kind() == StorageAuthenticationProviderKind::Oidc {
-                                "test_sign_in_required"
-                            } else {
-                                "browser_verification_not_implemented"
-                            },
+                            "test_sign_in_required",
                         ));
                         identified.push(provider);
                         continue;
@@ -652,7 +652,7 @@ pub(crate) async fn authenticate_ldap_candidate(
     Ok((candidate, verification))
 }
 
-pub(crate) async fn verify_oidc_interaction(
+pub(crate) async fn verify_browser_interaction(
     context: &AppContext,
     authentication: &hubuum_auth_core::VerifiedExternalAuthentication,
 ) -> Result<hubuum_storage_core::StorageInteractionAuthentication, ApiError> {
@@ -784,7 +784,9 @@ pub(crate) async fn interaction_candidate(
         .ok_or(crate::errors::InteractionError::Unsupported)?;
     if !matches!(
         provider.kind(),
-        StorageAuthenticationProviderKind::Ldap | StorageAuthenticationProviderKind::Oidc
+        StorageAuthenticationProviderKind::Ldap
+            | StorageAuthenticationProviderKind::Oidc
+            | StorageAuthenticationProviderKind::Oauth
     ) || candidate.checks().iter().any(|check| {
         check.status() != CheckStatus::Passed
             && !(check.kind() == CheckKind::Identity && check.provider_id() == Some(provider_id))
@@ -864,7 +866,12 @@ pub(crate) async fn activate(
         let previous = context.backend().load_runtime_settings().await?;
         if let Some(providers) = previous.authentication() {
             for provider in providers.providers().iter().filter(|provider| {
-                provider.enabled() && provider.kind() == StorageAuthenticationProviderKind::Oidc
+                provider.enabled()
+                    && matches!(
+                        provider.kind(),
+                        StorageAuthenticationProviderKind::Oidc
+                            | StorageAuthenticationProviderKind::Oauth
+                    )
             }) {
                 let binding =
                     hubuum_storage_core::StorageProviderIdentityBinding::from_provider(provider)

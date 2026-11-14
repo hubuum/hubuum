@@ -24,6 +24,7 @@ members = [
     "crates/hubuum-auth-core",
     "crates/hubuum-auth-ldap",
     "crates/hubuum-auth-oidc",
+    "crates/hubuum-auth-oauth",
     "crates/hubuum-computed-fields",
     "crates/hubuum-domain",
     "crates/hubuum-event-rendering",
@@ -97,6 +98,7 @@ hubuum-budget = { path = "crates/hubuum-budget" }
 hubuum-auth-core = { path = "crates/hubuum-auth-core" }
 hubuum-auth-ldap = { path = "crates/hubuum-auth-ldap" }
 hubuum-auth-oidc = { path = "crates/hubuum-auth-oidc" }
+hubuum-auth-oauth = { path = "crates/hubuum-auth-oauth" }
 hubuum-computed-fields = { path = "crates/hubuum-computed-fields" }
 hubuum-domain = { path = "crates/hubuum-domain", features = ["openapi"] }
 hubuum-event-sink-amqp = { path = "crates/hubuum-event-sink-amqp", optional = true }
