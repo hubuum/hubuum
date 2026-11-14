@@ -1,9 +1,12 @@
 """Acceptance rejects incomplete resource or physical-input evidence."""
 import copy
+from contextlib import chdir
 import json
 from pathlib import Path
 import tempfile
 import tarfile
+import sys
+import textwrap
 import threading
 import unittest
 from unittest.mock import MagicMock, Mock, patch
@@ -163,6 +166,65 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
                 verify_binary_reuse([changed], workflow, workflow)
         with self.assertRaises(ValueError):
             verify_binary_reuse([], workflow, workflow.replace("--release", "--profile dev", 1))
+
+    def test_aggregation_dispatch_requires_successful_unchanged_measurement_provenance(self):
+        workflow = (ROOT / ".github/workflows/history-expiry-qualification.yml").read_text()
+        aggregate = workflow.split("\n  aggregate:\n")[1].split("\n  reuse:\n")[0]
+        self.assertIn("if: ${{ !cancelled() && (needs.measure.result == 'success' || inputs.measurement_run_id != '') }}", aggregate)
+        step = aggregate.split("- name: Verify measurement source and all ten completed shape jobs")[1]
+        script = textwrap.dedent(step.split("<<'PY'\n")[1].split("\n          PY")[0])
+        for invalid in (None, "driver", "production", "missing", "failed", "branch", "recipe"):
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                path = root / ".github/workflows/history-expiry-qualification.yml"
+                path.parent.mkdir(parents=True)
+                path.write_text(workflow)
+                current = {"workflow_id": 1, "head_branch": "branch", "head_sha": "b" * 40,
+                           "repository": {"full_name": "owner/repo"},
+                           "head_repository": {"full_name": "owner/repo"}}
+                source = {**current, "head_sha": "a" * 40}
+                jobs = [{"name": f"measure ({profile}, {shape})", "id": index * 5 + position,
+                         "conclusion": "success"} for index, profile in enumerate(("local", "shared"))
+                        for position, shape in enumerate(SHAPES)]
+                changed = [".github/workflows/history-expiry-qualification.yml",
+                           "tests/python/unit/deployment/test_history_expiry.py"]
+                if invalid == "branch":
+                    source["head_branch"] = "other"
+                elif invalid == "missing":
+                    jobs.pop()
+                elif invalid == "failed":
+                    jobs[0]["conclusion"] = "failure"
+                elif invalid == "driver":
+                    changed.append("tests/python/integration/history_expiry.py")
+                elif invalid == "production":
+                    changed.append("src/application.rs")
+
+                def command(arguments, **kwargs):
+                    if arguments[0] == "gh":
+                        endpoint = arguments[2]
+                        return json.dumps({"jobs": jobs} if "/jobs?" in endpoint else
+                                          current if endpoint.endswith("/43") else source)
+                    if arguments[1] == "diff":
+                        return "\n".join(changed)
+                    if arguments[1] == "show":
+                        return workflow.replace("--release", "--profile dev", 1) if invalid == "recipe" else workflow
+                    if arguments[1] == "rev-parse":
+                        return current["head_sha"]
+                    raise AssertionError(arguments)
+
+                with chdir(root), patch("sys.path", list(sys.path)), \
+                        patch.dict("os.environ", {"GITHUB_REPOSITORY": "owner/repo", "GITHUB_RUN_ID": "43",
+                                   "MEASUREMENT_RUN_ID": "42", "GITHUB_OUTPUT": str(root / "outputs")}), \
+                        patch("subprocess.check_output", side_effect=command), patch("subprocess.run"):
+                    if invalid:
+                        with self.assertRaises(ValueError):
+                            exec(compile(script, "measurement provenance", "exec"), {})
+                    else:
+                        exec(compile(script, "measurement provenance", "exec"), {})
+                        proof = json.loads((root / "target/aggregation-provenance.json").read_text())
+                        self.assertEqual(proof["measurement_commit"], source["head_sha"])
+                        self.assertEqual(len(proof["shape_jobs"]), 10)
+                        self.assertEqual((root / "outputs").read_text(), "source_sha=" + source["head_sha"] + "\n")
 
     def test_packaging_retains_failure_evidence_without_private_runtime_material(self):
         with tempfile.TemporaryDirectory() as temporary:
